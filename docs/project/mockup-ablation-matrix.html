@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ablation matrix, two mockups</title>
+<style>
+/* Tokens copied from crates/weaver-web/assets/style.css so these screens
+   share the app's look. Nothing here is a new design system. */
+:root {
+  --bg: #1a161d; --side: #16121a; --panel: #211c26; --inset: #282230;
+  --line: #362e3f; --line-soft: #2c2533;
+  --fg: #e6e1e9; --dim: #9a8fa5; --faint: #6b6175;
+  --human: #5f87e0; --agent: #74a44e; --model: #9a78d6;
+  --ok: #4f9e7a; --warn: #d9a04b; --danger: #e0596e;
+  --accent: #c9527e; --accent-soft: #c9527e2e;
+  --danger-soft: #e0596e1a; --warn-soft: #d9a04b1a; --ok-soft: #4f9e7a1a;
+  --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+  --radius: 10px; --radius-sm: 7px;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #faf9fb; --side: #f3eff6; --panel: #ffffff; --inset: #f0ecf4;
+    --line: #ddd5e3; --line-soft: #e9e3ef;
+    --fg: #26212b; --dim: #5f5669; --faint: #90869b;
+    --human: #3b62c4; --agent: #41762a; --model: #8a55c9;
+    --ok: #1e7a52; --warn: #9a6a1c; --danger: #c23a50;
+    --accent: #a63d68; --accent-soft: #a63d6822;
+    --danger-soft: #c23a5014; --warn-soft: #9a6a1c14; --ok-soft: #1e7a5214;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.55 var(--sans); -webkit-font-smoothing: antialiased; }
+a { color: var(--fg); }
+.masthead { display: flex; gap: 1.2rem; align-items: baseline; padding: .8rem 1.4rem; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--bg) 88%, transparent); font-size: .92rem; }
+.masthead .brand { font-weight: 600; margin-right: .4rem; }
+.masthead a { color: var(--dim); text-decoration: none; }
+.masthead a.here { color: var(--fg); border-bottom: 2px solid var(--accent); }
+.masthead .who { margin-left: auto; color: var(--faint); }
+main { max-width: 1180px; margin: 0 auto; padding: 1.6rem 1.4rem 4rem; }
+.mockup-note { color: var(--dim); font-size: .9rem; margin: 0 0 1.2rem; padding: .6rem .9rem; border-left: 3px solid var(--line); }
+h1 { font-size: 1.35rem; font-weight: 600; margin: 0 0 .3rem; }
+h2.screen { font-size: .95rem; color: var(--dim); font-weight: 500; margin: 3.2rem 0 .8rem; padding-top: 1.6rem; border-top: 1px dashed var(--line); }
+.crumb { color: var(--dim); font-size: .9rem; margin-bottom: 1rem; }
+.crumb b { color: var(--fg); font-weight: 500; }
+.mono { font-family: var(--mono); font-size: .86em; }
+.pill { display: inline-block; font-family: var(--mono); font-size: .76rem; padding: .05rem .5rem; border-radius: 999px; border: 1px solid var(--line); color: var(--dim); white-space: nowrap; }
+.pill.ok { color: var(--ok); border-color: var(--ok); background: var(--ok-soft); }
+.pill.warn { color: var(--warn); border-color: var(--warn); background: var(--warn-soft); }
+.pill.danger { color: var(--danger); border-color: var(--danger); background: var(--danger-soft); }
+.pill.quiet { color: var(--faint); border-style: dashed; }
+button, .btn { font: inherit; font-size: .9rem; padding: .35rem .8rem; border-radius: var(--radius-sm); border: 1px solid var(--line); background: var(--inset); color: var(--fg); cursor: pointer; text-decoration: none; }
+button.primary, .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--bg); font-weight: 600; }
+button.subtle { background: transparent; color: var(--dim); }
+
+/* Screen 1: Record list */
+.record { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.record th, .record td { text-align: left; padding: .6rem .8rem; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+.record th { font-weight: 500; color: var(--dim); font-size: .85rem; }
+.record tr:last-child td { border-bottom: 0; }
+.record td.run { font-family: var(--mono); font-size: .86rem; }
+.record td.tuple { color: var(--dim); font-size: .86rem; font-family: var(--mono); }
+.record td.act { text-align: right; white-space: nowrap; }
+.record tr.parent-candidate { background: var(--inset); }
+
+/* Screen 2: the matrix */
+.plan-head { display: grid; grid-template-columns: 1fr auto; gap: 1rem; align-items: start; margin-bottom: 1rem; }
+.plan-head .facts { color: var(--dim); font-size: .9rem; }
+.plan-head .facts b { color: var(--fg); font-weight: 500; }
+.plan-head .actions { display: flex; gap: .5rem; flex-wrap: wrap; justify-content: flex-end; }
+.legend { display: flex; gap: 1.2rem; flex-wrap: wrap; font-size: .82rem; color: var(--dim); margin: .4rem 0 .9rem; }
+.legend span::before { content: ""; display: inline-block; width: .7rem; height: .7rem; border-radius: 3px; margin-right: .4rem; vertical-align: -1px; border: 1px solid var(--line); }
+.legend .l-held::before { background: var(--inset); }
+.legend .l-moved::before { background: var(--accent-soft); border-color: var(--accent); }
+.legend .l-freed::before { background: transparent; border-style: dashed; border-color: var(--model); }
+.legend .l-queued::before { background: var(--warn-soft); border-color: var(--warn); }
+.legend .l-not::before { background: transparent; border-color: var(--line-soft); }
+.wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }
+.matrix { border-collapse: separate; border-spacing: 0; min-width: 900px; width: 100%; font-size: .88rem; }
+.matrix th, .matrix td { padding: .5rem .7rem; border-bottom: 1px solid var(--line-soft); border-right: 1px solid var(--line-soft); vertical-align: top; }
+.matrix th:last-child, .matrix td:last-child { border-right: 0; }
+.matrix thead th { text-align: left; font-weight: 500; background: var(--side); position: sticky; top: 0; }
+.matrix th.field { text-align: left; font-family: var(--mono); font-size: .84rem; color: var(--dim); width: 11rem; background: var(--side); position: sticky; left: 0; white-space: nowrap; }
+.matrix th.field small { display: block; color: var(--faint); font-family: var(--sans); font-size: .78rem; font-weight: 400; }
+.matrix th.col { min-width: 9.5rem; }
+.matrix th.col.parent { border-left: 3px solid var(--agent); }
+.matrix th.col a { font-family: var(--mono); font-size: .86rem; text-decoration: none; border-bottom: 1px dotted var(--dim); }
+.matrix th.col .status { margin-top: .3rem; }
+.matrix th.col .score { margin-top: .35rem; font-size: .8rem; color: var(--dim); font-family: var(--mono); line-height: 1.4; }
+.matrix th.col .score b { color: var(--fg); font-weight: 500; }
+.matrix td { font-family: var(--mono); font-size: .84rem; color: var(--dim); background: var(--inset); }
+.matrix td.moved { background: var(--accent-soft); color: var(--fg); box-shadow: inset 3px 0 0 var(--accent); }
+.matrix td.freed { background: transparent; color: var(--model); box-shadow: inset 0 0 0 1px var(--model); border-style: dashed; }
+.matrix td.freed small { display: block; color: var(--dim); font-family: var(--sans); font-size: .78rem; }
+.matrix td.queued { background: var(--warn-soft); color: var(--warn); }
+.matrix td.not { background: transparent; color: var(--faint); font-style: italic; font-family: var(--sans); }
+.matrix tr.outcome td { font-family: var(--sans); background: var(--panel); }
+.matrix tr.outcome th.field { font-family: var(--sans); }
+.matrix tr.foot td { background: var(--panel); border-bottom: 0; }
+.matrix tr.foot button { font-size: .8rem; padding: .2rem .55rem; }
+.matrix tr.foot .tagged { color: var(--agent); font-family: var(--sans); font-size: .82rem; }
+.after { color: var(--dim); font-size: .88rem; margin-top: 1rem; max-width: 70ch; }
+</style>
+</head>
+<body>
+<nav class="masthead">
+  <span class="brand">weaver-web</span>
+  <a href="#">Compose</a><a href="#">Live</a><a href="#">Measure</a><a href="#">Trace</a><a href="#">Stage</a>
+  <a href="#">Agents</a><a href="#">Models</a><a href="#">Experiments</a><a href="#" class="here">Record</a>
+  <span class="who">todd (admin)</span>
+</nav>
+<main>
+
+<p class="mockup-note">Two screens, static. Screen 1 is the entry: a run on the Record list gets an Ablate action. Screen 2 is the matrix that action opens, shown mid-batch so all four entry states are visible at once. Tokens are weaver-web's own; the masthead is the PRD's ten surfaces and not the built app's nav.</p>
+
+<h2 class="screen">Screen 1. Record, with the entry point</h2>
+<h1>Record</h1>
+<p class="crumb">Chip: <span class="pill">task: herobench copper-dagger</span> <span class="pill">map: 41</span> <span class="pill quiet">clear</span></p>
+<table class="record">
+  <thead><tr><th>Run</th><th>Declared tuple</th><th>Reproduced</th><th>Outcome</th><th></th></tr></thead>
+  <tbody>
+    <tr class="parent-candidate">
+      <td class="run">run 7c3e91<br><span style="color:var(--faint)">2026-09-08 21:14</span></td>
+      <td class="tuple">w a91f&hellip; &middot; q bf16 &middot; d rtx-a6000 &middot; k cuda12.6/cutlass3.5 &middot; sigma t=0 seed=17 &middot; b 1</td>
+      <td><span class="pill ok">3 of 3 byte-equal</span></td>
+      <td>pass, 12 turns of 12 optimal</td>
+      <td class="act"><a class="btn" href="#">Open</a> <a class="btn primary" href="#screen2">Ablate</a></td>
+    </tr>
+    <tr>
+      <td class="run">run 5b02aa<br><span style="color:var(--faint)">2026-09-08 20:31</span></td>
+      <td class="tuple">w a91f&hellip; &middot; q bf16 &middot; d rtx-a6000 &middot; k cuda12.6/cutlass3.5 &middot; sigma t=0 seed=17 &middot; b 1</td>
+      <td><span class="pill quiet">not rerun</span></td>
+      <td>pass, 15 turns of 12 optimal</td>
+      <td class="act"><a class="btn" href="#">Open</a> <a class="btn" href="#">Ablate</a></td>
+    </tr>
+    <tr>
+      <td class="run">run 2e77c0<br><span style="color:var(--faint)">2026-09-08 19:02</span></td>
+      <td class="tuple">w a91f&hellip; &middot; q q8_0 &middot; d rtx-a6000 &middot; k cuda12.6/cutlass3.5 &middot; sigma t=0 seed=17 &middot; b 1</td>
+      <td><span class="pill quiet">not rerun</span></td>
+      <td><span class="pill danger">fail</span> stalled at turn 20</td>
+      <td class="act"><a class="btn" href="#">Open</a> <a class="btn" href="#">Ablate</a></td>
+    </tr>
+  </tbody>
+</table>
+<p class="after">Ablate is offered on any run. The useful parent is one that reproduces, which the Reproduced column says, so the operator can see which row is a baseline before clicking.</p>
+
+<h2 class="screen" id="screen2">Screen 2. The ablation matrix, mid-batch</h2>
+<div class="plan-head">
+  <div>
+    <h1>Ablate run 7c3e91</h1>
+    <div class="facts">
+      Parent held every field and reproduced 3 of 3. Task <b>herobench copper-dagger</b>, map <b>41</b>, optimal <b>12 turns</b>.
+      Plan authored by <b>todd</b>, 2026-09-09. Columns are one staged experiment each. Rows are the tuple.
+    </div>
+  </div>
+  <div class="actions">
+    <button class="subtle">Add column</button>
+    <button>Save plan</button>
+    <button class="primary">Schedule batch</button>
+  </div>
+</div>
+<div class="legend">
+  <span class="l-held">held at parent value</span>
+  <span class="l-moved">held at a moved value</span>
+  <span class="l-freed">freed, values drawn at authoring and frozen at registration, landed from the run</span>
+  <span class="l-queued">queued</span>
+  <span class="l-not">not exercised</span>
+</div>
+
+<div class="wrap">
+<table class="matrix">
+  <thead>
+    <tr>
+      <th class="field">Field</th>
+      <th class="col parent"><a href="#">parent 7c3e91</a><div class="status"><span class="pill ok">ran</span></div><div class="score"><b>pass</b> 12 of 12 opt<br>n 1, byte-equal</div></th>
+      <th class="col"><a href="#">A &middot; staged 41 &middot; 8 runs</a><div class="status"><span class="pill ok">ran</span></div><div class="score"><b>pass 8 of 8</b><br>worst 1.25x opt<br>n 8 seeds</div></th>
+      <th class="col"><a href="#">B &middot; staged 42 &middot; 8 runs</a><div class="status"><span class="pill danger">2 fail</span></div><div class="score"><b>pass 6 of 8</b><br>worst 2.1x opt<br>n 8 seeds</div></th>
+      <th class="col"><a href="#">C &middot; staged 44</a><div class="status"><span class="pill warn">queued</span></div><div class="score">runs at 02:00<br>n 8 seeds</div></th>
+      <th class="col"><span class="mono" style="color:var(--faint)">D</span><div class="status"><span class="pill quiet">not scheduled</span></div><div class="score">&nbsp;</div></th>
+      <th class="col"><span class="mono" style="color:var(--faint)">E</span><div class="status"><span class="pill quiet">editing</span></div><div class="score">&nbsp;</div></th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th class="field">w<small>weights by hash</small></th>
+      <td>a91f3c&hellip;</td><td>a91f3c&hellip;</td><td>a91f3c&hellip;</td><td class="queued">a91f3c&hellip;</td><td class="not">not exercised</td><td>a91f3c&hellip;</td>
+    </tr>
+    <tr>
+      <th class="field">q<small>precision</small></th>
+      <td>bf16</td><td>bf16</td><td class="moved">q8_0</td><td class="queued">bf16</td><td class="not">not exercised</td><td class="moved">q4_k_m</td>
+    </tr>
+    <tr>
+      <th class="field">d<small>device</small></th>
+      <td>rtx-a6000</td><td>rtx-a6000</td><td>rtx-a6000</td><td class="queued">rtx-a6000</td><td class="not">not exercised</td><td>rtx-a6000</td>
+    </tr>
+    <tr>
+      <th class="field">k<small>kernel stack</small></th>
+      <td>cuda12.6 / cutlass3.5</td><td>cuda12.6 / cutlass3.5</td><td>cuda12.6 / cutlass3.5</td><td class="queued moved">cuda12.6 / cutlass3.6</td><td class="not">not exercised</td><td>cuda12.6 / cutlass3.5</td>
+    </tr>
+    <tr>
+      <th class="field">sigma.temperature<small>sampler</small></th>
+      <td>0</td><td class="moved">0.7</td><td class="moved">0.7</td><td class="queued">0</td><td class="not">not exercised</td><td class="moved">0.7</td>
+    </tr>
+    <tr>
+      <th class="field">sigma.seed<small>sampler</small></th>
+      <td>17</td><td class="freed">freed<small>8 seeds frozen, see run</small></td><td class="freed">freed<small>8 seeds frozen, see run</small></td><td class="queued freed">freed<small>8 seeds frozen</small></td><td class="not">not exercised</td><td class="freed">freed<small>8 seeds, draft</small></td>
+    </tr>
+    <tr>
+      <th class="field">b<small>batch composition</small></th>
+      <td>1</td><td>1</td><td>1</td><td class="queued">1</td><td class="not">not exercised</td><td>1</td>
+    </tr>
+    <tr class="outcome">
+      <th class="field">Moved from parent</th>
+      <td style="color:var(--faint)">control</td><td>temperature, seed</td><td>precision, temperature, seed</td><td>kernel, seed</td><td class="not">&nbsp;</td><td>precision, temperature, seed</td>
+    </tr>
+    <tr class="foot">
+      <th class="field"></th>
+      <td><span class="tagged">exemplar</span></td>
+      <td><button>Tag exemplar</button></td>
+      <td><button class="subtle">Open failures</button></td>
+      <td><button class="subtle">Unschedule</button></td>
+      <td><button class="subtle">Schedule</button></td>
+      <td><button class="subtle">Drop</button></td>
+    </tr>
+  </tbody>
+</table>
+</div>
+<p class="after">A column is one staged experiment against the parent, and its hypothesis is the row labeled Moved from parent, which is a diff and not a field anyone typed. The header of a ran column is a link to the staged experiment's sweep, the fourth read, where each arm's run is reached by its value, so the matrix never reads below the run row and never presents one arm as the column. A column with a freed seed is a sweep on that one member, its values drawn at authoring and frozen at registration, so it is a distribution, and its score reports the count and the worst ratio rather than a mean, because the envelope is stated over the tail.</p>
+
+</main>
+</body>
+</html>

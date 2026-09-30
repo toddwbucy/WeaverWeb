@@ -1,0 +1,80 @@
+[package]
+name = "weaver-web"
+version = "0.1.0"
+# **Aligned to the workspace 2026-09-06, and the migration was not what this
+# comment predicted.** It read that the move was real work because the sqlx
+# and askama derives are where an edition move bites. They do not bite: with
+# the edition set, `cargo check` and `cargo test` passed unchanged. What the
+# move cost was twelve `collapsible_if` warnings against 2021's none, each
+# collapsed into the let-chains 2024 stabilizes, and one `cargo fmt` run,
+# whose 2024 rules reorder imports and rewrap long strings. The lockfile did
+# not move. Recorded here rather than deleted because the estimate was the
+# reason the act waited.
+edition = "2024"
+default-run = "weaver-web"
+# **Explicit rather than inherited, because the licences disagree.** The
+# workspace publishes nothing and carries UNLICENSED. This crate carries
+# Apache-2.0 with its LICENSE file beside it. The suite's licence boundary
+# is an open operator question, held rather than resolved by inheritance.
+# **Held at `weaver-web-Spec` section 10**, which carries it again as of
+# 2026-09-06: it stood at section 15 of the Spec this crate was written to
+# and the rewrite dropped it, so this pointer named nothing until the
+# edition act restored the election.
+license = "Apache-2.0"
+publish = false
+description = "The WeaverTools suite's frontend: channel, lifecycle, and trace surfaces over weaver agents."
+
+# **This crate's store is Postgres and it is not the workspace's only one.**
+# A frontend holding its own store is ordinary. `weaver-state` carries
+# `rusqlite` on by default, as the sqlx note below turns on, so the claim
+# that nothing else in the workspace carries a database was false from that
+# dependency's arrival. **Whether the tree now has a database, or whether
+# this stays a property of one member, was the retired Spec's section 15
+# election, and the rewrite dropped it.** The licence election stood beside
+# it in that same section and was dropped too, then restored at section 10
+# on 2026-09-06, which is the shape a restore takes here and is why the
+# pointer eight lines above resolves and this one does not. No standing
+# section holds this one, so restoring it is the operator's rather than
+# this manifest's.
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+axum = "0.8"
+askama = "0.14"
+# **0.9 rather than 0.8, and the reason is the workspace rather than this
+# crate.** On 0.8 the elected features resolved `sqlx-sqlite` into the graph,
+# and that driver reached a `libsqlite3-sys` at a version `weaver-state`
+# cannot share through rusqlite. Cargo permits one package linking `sqlite3`
+# in a graph, so the two made the whole workspace unresolvable rather than
+# only the crates that collide.
+#
+# **On 0.9 the driver is optional and these features do not enable it**, so
+# it is absent from the built graph rather than present at a reconciled
+# version: `cargo tree -p weaver-web` carries `sqlx-core`, `sqlx-macros`, and
+# `sqlx-postgres` and no sqlite at all. The one `libsqlite3-sys` in the tree
+# is reached through `weaver-state` and rusqlite alone, which `cargo tree -i
+# libsqlite3-sys` shows as its only path. Nothing of `weaver-state` moved.
+#
+# The lock file still lists `sqlx-sqlite`, as it lists any optional
+# dependency that resolves, and reading the lock for what is enabled is the
+# error this comment first made.
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "postgres", "chrono", "migrate", "macros"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# The bearer is hashed before it is stored or looked up, per Spec 2.8.
+sha2 = "0.10"
+toml = "0.9"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+futures = "0.3"
+anyhow = "1"
+uuid = { version = "1", features = ["v4"] }
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+
+[dev-dependencies]
+# `oneshot` drives the router in a test without binding a port, which is
+# what lets the Record surface's watch ask the real route for real HTML
+# rather than calling the handler and trusting the wiring.
+tower = { version = "0.5", features = ["util"] }

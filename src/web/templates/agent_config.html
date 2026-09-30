@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}config:{{ agent }} - weaver-web{% endblock %}
+{% block body %}
+<h1>Agent declaration: {{ agent }}</h1>
+<p class="tracenote">{{ path }} - read-only. This is the operator's own
+deployment declaration; admin validates it at load. Edit it on the box,
+then validate.</p>
+<pre class="verb-outcome">{{ content }}</pre>
+{% endblock %}

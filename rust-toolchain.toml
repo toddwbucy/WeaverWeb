@@ -1,0 +1,7 @@
+# The workspace pin, carried from the archived tree's toolchain: one nightly so
+# rustfmt and clippy agree across machines. weaver-traits and weaver-types use no
+# nightly feature and compile on stable, per their Specs, and the pin is a
+# workspace-uniformity election rather than a requirement of the floor.
+[toolchain]
+channel = "nightly-2026-02-13"
+components = ["rustfmt", "clippy"]

@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}trace:{{ agent }} - weaver-web{% endblock %}
+{% block body %}
+<h1>Trace: {{ agent }}</h1>
+<p class="tracenote">Live view over the agent's NDJSON stream. Unknown
+event kinds render raw. Discontinuities are marked, never smoothed, and
+ignore the filters below. Search runs over the full raw event, so a
+hidden field still matches.</p>
+<form class="trace-controls" method="get" action="/admin/trace/{{ agent }}">
+  <input name="q" value="{{ q }}" aria-label="Search the trace"
+         placeholder="search the trace...">
+  <button type="submit">Apply</button>
+  <a href="/admin/trace/{{ agent }}">clear</a>
+  <div class="fieldpick">
+    <span class="fieldpick-label">hide fields:</span>
+    {% for c in controls %}
+    <label><input type="checkbox" name="{{ c.param }}"
+                  {% if c.hidden %}checked{% endif %}> {{ c.label }}</label>
+    {% endfor %}
+  </div>
+</form>
+<section class="trace"
+         hx-ext="sse"
+         sse-connect="{{ stream_url }}">
+  <div id="trace-events" sse-swap="trace" hx-swap="beforeend">
+    {% for ev in events %}{{ ev|safe }}{% endfor %}
+  </div>
+</section>
+<script>
+  /* Display behavior only: cap retained trace nodes so a long-running
+     tab does not grow without bound; the stream itself is unaffected. */
+  (function () {
+    const el = document.getElementById("trace-events");
+    const CAP = 5000;
+    new MutationObserver(function () {
+      while (el.children.length > CAP) el.removeChild(el.firstChild);
+    }).observe(el, { childList: true });
+  })();
+</script>
+{% endblock %}

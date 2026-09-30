@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}lifecycle - weaver-web{% endblock %}
+{% block body %}
+<h1>Lifecycle</h1>
+<table class="agents">
+  <tr><th>agent</th><th>state (inferred)</th><th>verbs</th><th></th></tr>
+  {% for a in agents %}
+  <tr>
+    <td>{{ a.name }}</td>
+    <td class="state-{{ a.state }}">{{ a.state }} <span class="inferred">(socket {{ a.socket }})</span></td>
+    <td>
+      <form method="post" action="/admin/lifecycle/{{ a.name }}/validate"><button>validate</button></form>
+      <form method="post" action="/admin/lifecycle/{{ a.name }}/load"><button>load</button></form>
+      <form method="post" action="/admin/lifecycle/{{ a.name }}/unload"><button>unload</button></form>
+    </td>
+    <td><a href="/admin/agents/{{ a.name }}/config">config</a></td>
+  </tr>
+  {% endfor %}
+</table>
+{% if !outcome.is_empty() %}
+<h2>Last verb</h2>
+<pre class="verb-outcome">{{ outcome }}</pre>
+{% endif %}
+{% endblock %}

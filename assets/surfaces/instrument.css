@@ -1,0 +1,60 @@
+/* The instrument's surfaces, per weaver-web-PRD section 3.
+ *
+ * This is the surfaces tree's own stylesheet and is served by the surfaces
+ * tree's own route. The conversation half's `style.css` is served by
+ * `web/`'s router, which retires with that half, so a surface linking it
+ * would lose its stylesheet on the day the register's retirement lands -
+ * the exact coupling this tree's own layout exists to avoid.
+ *
+ * Hue is reserved for meaning, per the epic's ruling 11: status owns green,
+ * amber and red, and emphasis is weight and luminance. */
+:root {
+  --bg: #1a161d; --panel: #211c26; --inset: #282230;
+  --line: #362e3f; --line-soft: #2c2533;
+  --fg: #e6e1e9; --dim: #9a8fa5; --faint: #6b6175;
+  --accent: #c9527e; --accent-soft: #c9527e2e;
+  --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: ui-monospace, "SF Mono", "Menlo", "Consolas", monospace;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #faf9fb; --panel: #ffffff; --inset: #f0ecf4;
+    --line: #ddd5e3; --line-soft: #e9e3ef;
+    --fg: #26212b; --dim: #5f5669; --faint: #90869b;
+    --accent: #a63d68; --accent-soft: #a63d6822;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.55 var(--sans); }
+a { color: var(--fg); }
+
+.masthead { display: flex; gap: 1.2rem; align-items: baseline; padding: .8rem 1.4rem;
+  border-bottom: 1px solid var(--line); font-size: .92rem; }
+.masthead .brand { font-weight: 600; }
+.masthead a { color: var(--dim); text-decoration: none; }
+.masthead a.here { color: var(--fg); border-bottom: 2px solid var(--accent); }
+.masthead .who { margin-left: auto; color: var(--faint); }
+
+main.listing { max-width: 1180px; margin: 0 auto; padding: 1.6rem 1.4rem 4rem; }
+.listing-head h1 { font-size: 1.35rem; font-weight: 600; margin: 0 0 .3rem; }
+.listing-head .destination { color: var(--dim); font-size: .92rem; margin: 0 0 1rem; }
+
+.chip-row { display: flex; gap: .6rem; align-items: center; margin: 0 0 1.2rem; flex-wrap: wrap; }
+.chip-note { color: var(--faint); font-size: .84rem; }
+.pill { display: inline-block; font-family: var(--mono); font-size: .78rem;
+  padding: .1rem .6rem; border-radius: 999px; border: 1px solid var(--accent);
+  background: var(--accent-soft); color: var(--fg); text-decoration: none; }
+.pill.quiet { border-color: var(--line); background: transparent; color: var(--dim);
+  border-style: dashed; }
+
+.wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+table.record { border-collapse: collapse; width: 100%; min-width: 900px; font-size: .88rem; }
+table.record th, table.record td { text-align: left; padding: .55rem .8rem;
+  border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+table.record th { font-weight: 500; color: var(--dim); font-size: .84rem; background: var(--inset); }
+table.record tr:last-child td { border-bottom: 0; }
+.mono { font-family: var(--mono); font-size: .86em; }
+
+.empty { color: var(--dim); padding: 2rem 0; }
+.more { margin-top: 1rem; }
+.more a { font-family: var(--mono); font-size: .86rem; }

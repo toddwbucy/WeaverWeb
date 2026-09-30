@@ -1,0 +1,8 @@
+<div class="tev{% if is_mark %} tev-mark{% endif %}{% if kind == "fault" %} tev-fault{% endif %}" id="tev-{{ seq }}">
+  {% if is_mark %}
+    <span class="mark">DISCONTINUITY: {{ mark }}</span>
+  {% else %}
+    <span class="tev-head">{% if !run.is_empty() %}run {{ run }}{% endif %}{% if !turn.is_empty() %} turn {{ turn }}{% endif %} <span class="tev-kind">{{ kind }}</span></span>
+    <pre class="tev-raw">{{ raw }}</pre>
+  {% endif %}
+</div>

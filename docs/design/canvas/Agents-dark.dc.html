@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Agents and registration (dark)</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#141519;color:#E8E6E0;font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:14px;line-height:1.45}
+a{color:#7FB0D6}a:hover{color:#A9CCE8}
+button{font:inherit;cursor:pointer}
+button:disabled{cursor:not-allowed}
+.mono{font-family:'IBM Plex Mono',ui-monospace,monospace}
+.absent{font-family:'IBM Plex Mono',ui-monospace,monospace;color:#A3A6AE;border:1px dashed #6E727C;border-radius:3px;padding:0 6px;font-size:12px}
+.pill{display:inline-block;border:1px solid #2E313A;border-radius:999px;padding:2px 10px;font-size:12px;background:#1C1E24;color:#E8E6E0}
+.nav a{color:#E8E6E0;text-decoration:none;padding:6px 2px}
+.nav a[aria-current]{border-bottom:2px solid #7FB0D6;font-weight:600}
+th{font-weight:500;color:#A3A6AE;font-size:12px;text-align:left;padding:8px 10px;border-bottom:1px solid #2E313A;white-space:nowrap}
+td{padding:8px 10px;border-bottom:1px solid #262930;vertical-align:top;font-size:13px}
+.verb{height:32px;padding:0 10px;border:1px solid #7FB0D6;border-radius:4px;background:#1C1E24;color:#7FB0D6;font-size:12px}
+.verb:disabled{border-color:#4A4E58;color:#A3A6AE;background:#141519}
+.step{width:28px;height:28px;border-radius:999px;display:inline-flex;align-items:center;justify-content:center;font-weight:600;font-size:13px;flex-shrink:0}
+</style>
+</helmet>
+<div style="min-height: 100vh; display: flex; flex-direction: column">
+
+<header style="display: flex; align-items: center; gap: 28px; padding: 0 32px; height: 52px; background: #1C1E24; border-bottom: 1px solid #2E313A">
+  <a href="Record-dark.dc.html" style="font-weight: 600; letter-spacing: 0.02em; text-decoration: none; color: #E8E6E0">weaver-web</a>
+  <nav class="nav" aria-label="Surfaces" style="display: flex; gap: 22px; font-size: 14px">
+    <a href="Record-dark.dc.html">Record</a>
+    <a href="Main-dark.dc.html">Open a trace</a>
+    <a href="Live-dark.dc.html">Live</a>
+    <a href="Matrix-dark.dc.html">Experiments</a>
+    <a href="Matrix-dark.dc.html">Stage</a>
+    <a href="Agents-dark.dc.html" aria-current="page">Agents</a>
+    <a href="Record-dark.dc.html">Models</a>
+  </nav>
+  <div style="margin-left: auto; display: flex; align-items: center; gap: 10px; font-size: 12px; color: #A3A6AE">
+    <span class="pill">todd &middot; operator &middot; claimed, not proven</span>
+    <span class="pill" style="border-color: #7CC08A; color: #7CC08A">2 clients connected</span>
+    <span role="group" aria-label="Theme" style="display: inline-flex; margin-left: 6px"><button type="button" aria-pressed="false" style="height: 28px; padding: 0 10px; border: 1px solid #2E313A; border-radius: 4px 0 0 4px; background: #1C1E24; color: #E8E6E0; font-size: 12px">auto</button><button type="button" aria-pressed="false" style="height: 28px; padding: 0 10px; margin-left: -1px; border: 1px solid #2E313A; background: #1C1E24; color: #E8E6E0; font-size: 12px">light</button><button type="button" aria-pressed="true" style="height: 28px; padding: 0 10px; margin-left: -1px; border: 1px solid #7FB0D6; border-radius: 0 4px 4px 0; background: #7FB0D6; color: #141519; font-size: 12px">dark</button></span>
+  </div>
+</header>
+
+<main style="flex-grow: 1; display: flex; flex-direction: column; gap: 16px; padding: 20px 32px 28px; max-width: 1440px; box-sizing: border-box; width: 100%; margin: 0 auto">
+
+  <div style="display: flex; flex-direction: column; gap: 4px">
+    <h1 style="margin: 0; font-size: 24px; font-weight: 600">Agents</h1>
+    <p style="margin: 0; color: #A3A6AE">Every agent registered with this weaver-web server, through the client that runs beside it. The server never dials an agent; each client dials in with its own key.</p>
+  </div>
+
+  <section aria-label="Deployment topology" style="display: grid; grid-template-columns: minmax(0, 5fr) 150px minmax(0, 4fr) 150px minmax(0, 3fr); gap: 0; align-items: stretch; padding: 16px; background: #1C1E24; border: 1px solid #2E313A; border-radius: 6px">
+    <div style="display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid #E8E6E0; border-radius: 6px">
+      <div style="font-size: 12px; color: #A3A6AE">the agent's box</div>
+      <div style="display: flex; gap: 8px">
+        <div style="flex-grow: 1; padding: 8px 10px; border: 1px solid #2E313A; border-radius: 4px; background: #141519">
+          <div style="font-weight: 600">weaver-agent</div>
+          <div class="mono" style="font-size: 12px; color: #A3A6AE">gate socket &middot; admin socket &middot; trace</div>
+        </div>
+        <div style="flex-grow: 1; padding: 8px 10px; border: 1px solid #7FB0D6; border-radius: 4px; background: #1F2A35">
+          <div style="font-weight: 600">weaver-web-client</div>
+          <div class="mono" style="font-size: 12px; color: #A3A6AE">web-con + admin-con</div>
+          <div class="mono" style="font-size: 12px; color: #A3A6AE">client.toml: server, key</div>
+        </div>
+      </div>
+      <div style="font-size: 12px; color: #A3A6AE">the only party that touches the sockets; installed by the script, runs as the operator's uid</div>
+    </div>
+    <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 12px; color: #A3A6AE; text-align: center">
+      <div class="mono" style="color: #7FB0D6; font-weight: 500">dials out</div>
+      <div style="height: 2px; width: 100%; background: #7FB0D6"></div>
+      <div>TLS, one connection, NDJSON frames, hello carries the key's proof</div>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid #E8E6E0; border-radius: 6px">
+      <div style="font-size: 12px; color: #A3A6AE">weaver-web server, anywhere on the network</div>
+      <div style="display: flex; gap: 8px">
+        <div style="flex-grow: 1; padding: 8px 10px; border: 1px solid #2E313A; border-radius: 4px; background: #141519">
+          <div style="font-weight: 600">link listener</div>
+          <div class="mono" style="font-size: 12px; color: #A3A6AE">link_listen &middot; one row per client</div>
+        </div>
+        <div style="flex-grow: 1; padding: 8px 10px; border: 1px solid #2E313A; border-radius: 4px; background: #141519">
+          <div style="font-weight: 600">store + surfaces</div>
+          <div class="mono" style="font-size: 12px; color: #A3A6AE">Postgres &middot; listen</div>
+        </div>
+      </div>
+      <div style="font-size: 12px; color: #A3A6AE">issues keys, admits a hello only under a live key, routes verbs and turns to the client that owns the agent</div>
+    </div>
+    <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 12px; color: #A3A6AE; text-align: center">
+      <div class="mono" style="color: #7FB0D6; font-weight: 500">serves</div>
+      <div style="height: 2px; width: 100%; background: #7FB0D6"></div>
+      <div>HTTPS, session cookie</div>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid #E8E6E0; border-radius: 6px">
+      <div style="font-size: 12px; color: #A3A6AE">the browser</div>
+      <div style="padding: 8px 10px; border: 1px solid #2E313A; border-radius: 4px; background: #141519">
+        <div style="font-weight: 600">researcher, operator</div>
+        <div class="mono" style="font-size: 12px; color: #A3A6AE">these surfaces</div>
+      </div>
+      <div style="font-size: 12px; color: #A3A6AE">controls and interviews every registered agent from here</div>
+    </div>
+  </section>
+
+  <div style="display: grid; grid-template-columns: minmax(0, 1fr) 460px; gap: 16px; align-items: start">
+
+    <section aria-labelledby="ro-h" style="display: flex; flex-direction: column; gap: 10px; background: #1C1E24; border: 1px solid #2E313A; border-radius: 6px; overflow: hidden">
+      <div style="display: flex; align-items: baseline; justify-content: space-between; padding: 16px 16px 0">
+        <h2 id="ro-h" style="margin: 0; font-size: 14px; font-weight: 600">Registered agents</h2>
+        <span style="font-size: 12px; color: #A3A6AE">load state is admin's own word over the client, never inferred from the connection</span>
+      </div>
+      <table style="width: 100%; border-collapse: collapse">
+        <thead><tr><th>agent</th><th>client</th><th>key</th><th>link</th><th>state</th><th>verbs</th></tr></thead>
+        <tbody>
+          <sc-for list="{{ agents }}" as="a" hint-placeholder-count="4">
+            <tr>
+              <td><a href="Live-dark.dc.html" class="mono">{{ a.name }}</a><div style="font-size: 12px; color: #A3A6AE">{{ a.decl }}</div></td>
+              <td class="mono" style="font-size: 12px">{{ a.client }}<div style="color: #A3A6AE">{{ a.clientVer }}</div></td>
+              <td class="mono" style="font-size: 12px">{{ a.key }}<div style="color: #A3A6AE">issued {{ a.issued }}</div></td>
+              <td><span class="pill" style="border-color: {{ a.linkColor }}; color: {{ a.linkColor }}">{{ a.link }}</span><div style="font-size: 12px; color: #A3A6AE">{{ a.since }}</div></td>
+              <td><span class="pill" style="border-color: {{ a.stateColor }}; color: {{ a.stateColor }}">{{ a.state }}</span></td>
+              <td style="white-space: nowrap">
+                <div style="display: flex; gap: 6px">
+                  <button type="button" class="verb" disabled="{{ a.noLoad }}">load</button>
+                  <button type="button" class="verb" disabled="{{ a.noUnload }}">unload</button>
+                  <button type="button" class="verb" disabled="{{ a.noVerbs }}">validate</button>
+                  <button type="button" class="verb" disabled="{{ a.noVerbs }}" style="color: #E08A7A; border-color: #E08A7A">revoke key</button>
+                </div>
+              </td>
+            </tr>
+          </sc-for>
+        </tbody>
+      </table>
+      <p style="margin: 0; padding: 0 16px 16px; font-size: 12px; color: #A3A6AE">A revoked key drops that client alone. Its agents stay listed as unreachable until a new key is issued and the client re-dials. Names are admitted per client: a hello claiming a name another live client owns is refused, not overwritten.</p>
+    </section>
+
+    <section aria-labelledby="rg-h" style="display: flex; flex-direction: column; gap: 14px; padding: 16px; background: #1C1E24; border: 1px solid #2E313A; border-radius: 6px">
+      <h2 id="rg-h" style="margin: 0; font-size: 14px; font-weight: 600">Register a client</h2>
+
+      <div style="display: flex; gap: 12px">
+        <span class="step" style="background: #7FB0D6; color: #141519">1</span>
+        <div style="display: flex; flex-direction: column; gap: 6px; flex-grow: 1">
+          <div style="font-weight: 600">Name the box</div>
+          <label for="rg-box" style="font-size: 12px; color: #A3A6AE">Box name, as the roster will show it</label>
+          <input id="rg-box" type="text" value="olympus" style="font: inherit; height: 36px; padding: 0 10px; border: 1px solid #2E313A; border-radius: 4px">
+        </div>
+      </div>
+
+      <div style="display: flex; gap: 12px">
+        <span class="step" style="background: #7FB0D6; color: #141519">2</span>
+        <div style="display: flex; flex-direction: column; gap: 6px; flex-grow: 1">
+          <div style="font-weight: 600">Issue the client's key</div>
+          <div style="font-size: 12px; color: #A3A6AE">One key per client per server. Shown once, here. The server keeps only its fingerprint; the file it lands in never enters a repository.</div>
+          <div class="mono" style="display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: #141519; border: 1px solid #2E313A; border-radius: 4px; font-size: 12px">
+            <span style="flex-grow: 1">wwk_[SHOWN ONCE AT ISSUE]</span>
+            <button type="button" class="verb">copy</button>
+          </div>
+          <div class="mono" style="font-size: 12px; color: #A3A6AE">fingerprint kept: sha256:b41e...09d2</div>
+        </div>
+      </div>
+
+      <div style="display: flex; gap: 12px">
+        <span class="step" style="background: #7FB0D6; color: #141519">3</span>
+        <div style="display: flex; flex-direction: column; gap: 6px; flex-grow: 1">
+          <div style="font-weight: 600">Run the install script on the agent's box</div>
+          <div style="font-size: 12px; color: #A3A6AE">Installs weaver-web-client as a service under the operator's uid, writes client.toml with the server address and the key, and points it at the agents' sockets.</div>
+          <div class="mono" style="padding: 8px 10px; background: #0C0D10; color: #E8E6E0; border-radius: 4px; font-size: 12px; white-space: pre-line">curl -fsSL https://[WEAVERWEB HOST]/install.sh | sh -s -- \
+  --server [WEAVERWEB HOST]:9443 \
+  --key-file ./wwk.txt \
+  --agents rusty,pyra</div>
+          <label style="display: inline-flex; align-items: center; gap: 8px; font-size: 12px"><input type="checkbox" checked> pin this server's certificate in client.toml</label>
+        </div>
+      </div>
+
+      <div style="display: flex; gap: 12px">
+        <span class="step" style="background: #1C1E24; color: #7FB0D6; border: 1px solid #7FB0D6">4</span>
+        <div style="display: flex; flex-direction: column; gap: 6px; flex-grow: 1">
+          <div style="font-weight: 600">Wait for the hello</div>
+          <div style="display: flex; align-items: center; gap: 10px; padding: 10px; border: 1px dashed #4A4E58; border-radius: 4px; font-size: 13px">
+            <span style="width: 10px; height: 10px; border-radius: 999px; background: #E0A24A"></span>
+            <span>Listening on the link for a hello under key <span class="mono">b41e...</span>. The roster it carries appears above the moment it is admitted.</span>
+          </div>
+        </div>
+      </div>
+
+      <div style="display: flex; gap: 8px; margin-top: 4px">
+        <button type="button" style="height: 40px; padding: 0 16px; border: 1px solid #7FB0D6; border-radius: 4px; background: #7FB0D6; color: #141519">Issue key and show script</button>
+        <button type="button" class="verb" style="height: 40px">Cancel</button>
+      </div>
+    </section>
+  </div>
+
+  <div style="display: flex; gap: 12px; padding: 12px 16px; background: #1C1E24; border: 1px solid #2E313A; border-radius: 6px; font-size: 12px; color: #A3A6AE; align-items: baseline">
+    <span style="font-weight: 600; color: #E8E6E0">What the key changes</span>
+    <span>Today the link admits a hello by name alone and the first hello wins a name. With the key, a hello without a live key is refused before its roster is read, the client's principal crosses the door with each verb and turn, and the gate and admin decide what that principal may do.</span>
+  </div>
+
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1180}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const agents = [
+      { name: 'rusty', decl: 'rusty-hb-v3', client: 'olympus', clientVer: 'client 0.1.0', key: 'sha256:b41e...09d2', issued: '2026-09-30', link: 'connected', linkColor: '#7CC08A', since: 'since 10:02, 2 agents', state: 'quiesced', stateColor: '#E0A24A', noLoad: true, noUnload: false, noVerbs: false },
+      { name: 'pyra', decl: 'pyra-hb-v1', client: 'olympus', clientVer: 'client 0.1.0', key: 'sha256:b41e...09d2', issued: '2026-09-30', link: 'connected', linkColor: '#7CC08A', since: 'since 10:02, 2 agents', state: 'running', stateColor: '#7CC08A', noLoad: true, noUnload: false, noVerbs: false },
+      { name: 'sable', decl: 'sable-chat-v2', client: 'thinkpad', clientVer: 'client 0.1.0', key: 'sha256:7c02...e3a1', issued: '2026-09-28', link: 'connected', linkColor: '#7CC08A', since: 'since 09:41, 1 agent', state: 'unloaded', stateColor: '#A3A6AE', noLoad: false, noUnload: true, noVerbs: false },
+      { name: 'ember', decl: 'ember-hb-v1', client: 'lab-2', clientVer: 'client 0.1.0', key: 'sha256:1f9a...44c7', issued: '2026-09-26', link: 'unreachable', linkColor: '#E08A7A', since: 'last hello 2026-09-29 18:12', state: 'unknown', stateColor: '#A3A6AE', noLoad: true, noUnload: true, noVerbs: true },
+    ];
+    return { agents };
+  }
+}
+</script>
+</body>
+</html>

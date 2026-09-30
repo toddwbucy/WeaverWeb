@@ -1,0 +1,150 @@
+{
+  "v": 3,
+  "createdOnFiles": {
+    "v": 1,
+    "at": "2026-09-30T18:00:00Z"
+  },
+  "title": "WeaverTools Frontend Design",
+  "launch": {
+    "view": "canvas"
+  },
+  "pages": [],
+  "boards": {
+    "Main.dc.html": {
+      "x": 0,
+      "y": 0,
+      "w": 1440,
+      "h": 1180,
+      "title": "HeroBench Replay",
+      "expand": "fill",
+      "is_interactive": true
+    },
+    "Live.dc.html": {
+      "x": 1520,
+      "y": 0,
+      "w": 1440,
+      "h": 1180,
+      "title": "HeroBench Live",
+      "expand": "fill"
+    },
+    "Record.dc.html": {
+      "x": 3040,
+      "y": 0,
+      "w": 1440,
+      "h": 1180,
+      "title": "Record",
+      "expand": "fill"
+    },
+    "Matrix.dc.html": {
+      "x": 0,
+      "y": 1440,
+      "w": 1440,
+      "h": 1000,
+      "title": "Ablation Matrix",
+      "expand": "fill"
+    },
+    "Foundations.dc.html": {
+      "x": 1520,
+      "y": 1440,
+      "w": 1440,
+      "h": 1000,
+      "title": "Foundations and IA",
+      "expand": "fill"
+    },
+    "Main-dark.dc.html": {
+      "x": 0,
+      "y": 2600,
+      "w": 1440,
+      "h": 1180,
+      "title": "HeroBench Replay, dark",
+      "expand": "fill",
+      "is_interactive": true
+    },
+    "Live-dark.dc.html": {
+      "x": 1520,
+      "y": 2600,
+      "w": 1440,
+      "h": 1180,
+      "title": "HeroBench Live, dark",
+      "expand": "fill"
+    },
+    "Record-dark.dc.html": {
+      "x": 3040,
+      "y": 2600,
+      "w": 1440,
+      "h": 1180,
+      "title": "Record, dark",
+      "expand": "fill"
+    },
+    "Foundations-dark.dc.html": {
+      "x": 4560,
+      "y": 2600,
+      "w": 1440,
+      "h": 1000,
+      "title": "Foundations, dark",
+      "expand": "fill"
+    },
+    "Matrix-dark.dc.html": {
+      "x": 6080,
+      "y": 2600,
+      "w": 1440,
+      "h": 1000,
+      "title": "Ablation Matrix, dark",
+      "expand": "fill"
+    },
+    "Agents.dc.html": {
+      "x": 4560,
+      "y": 0,
+      "w": 1440,
+      "h": 1180,
+      "title": "Agents and registration",
+      "expand": "fill"
+    },
+    "Agents-dark.dc.html": {
+      "x": 7600,
+      "y": 2600,
+      "w": 1440,
+      "h": 1180,
+      "title": "Agents and registration, dark",
+      "expand": "fill"
+    }
+  },
+  "order": [
+    "Main.dc.html",
+    "Live.dc.html",
+    "Record.dc.html",
+    "Matrix.dc.html",
+    "Foundations.dc.html",
+    "Main-dark.dc.html",
+    "Live-dark.dc.html",
+    "Record-dark.dc.html",
+    "Foundations-dark.dc.html",
+    "Matrix-dark.dc.html",
+    "Agents.dc.html",
+    "Agents-dark.dc.html"
+  ],
+  "notes": {
+    "t1": {
+      "x": 0,
+      "y": -300,
+      "text": "Weaver-Web: what a researcher sees of the suite",
+      "kind": "title1",
+      "maxW": 6000
+    },
+    "t2": {
+      "x": 0,
+      "y": 1150,
+      "text": "Instruments and foundations",
+      "kind": "title1",
+      "maxW": 4480
+    },
+    "t3": {
+      "x": 0,
+      "y": 2310,
+      "text": "Dark mode: the same surfaces on a dark ground",
+      "kind": "title1",
+      "maxW": 9040
+    }
+  },
+  "designSystems": []
+}

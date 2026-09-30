@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>HeroBench Live (dark)</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#141519;color:#E8E6E0;font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:14px;line-height:1.45}
+a{color:#7FB0D6}a:hover{color:#A9CCE8}
+button{font:inherit;cursor:pointer}
+button:disabled{cursor:not-allowed}
+.mono{font-family:'IBM Plex Mono',ui-monospace,monospace}
+.absent{font-family:'IBM Plex Mono',ui-monospace,monospace;color:#A3A6AE;border:1px dashed #6E727C;border-radius:3px;padding:0 6px;font-size:12px}
+.pill{display:inline-block;border:1px solid #2E313A;border-radius:999px;padding:2px 10px;font-size:12px;background:#1C1E24;color:#E8E6E0}
+.nav a{color:#E8E6E0;text-decoration:none;padding:6px 2px}
+.nav a[aria-current]{border-bottom:2px solid #7FB0D6;font-weight:600}
+.verb{height:36px;padding:0 14px;border:1px solid #7FB0D6;border-radius:4px;background:#1C1E24;color:#7FB0D6}
+.verb:disabled{border-color:#4A4E58;color:#A3A6AE;background:#141519}
+</style>
+</helmet>
+<div style="min-height: 100vh; display: flex; flex-direction: column">
+
+<header style="display: flex; align-items: center; gap: 28px; padding: 0 32px; height: 52px; background: #1C1E24; border-bottom: 1px solid #2E313A">
+  <a href="Record-dark.dc.html" style="font-weight: 600; letter-spacing: 0.02em; text-decoration: none; color: #E8E6E0">weaver-web</a>
+  <nav class="nav" aria-label="Surfaces" style="display: flex; gap: 22px; font-size: 14px">
+    <a href="Record-dark.dc.html">Record</a>
+    <a href="Main-dark.dc.html">Open a trace</a>
+    <a href="Live-dark.dc.html" aria-current="page">Live</a>
+    <a href="Matrix-dark.dc.html">Experiments</a>
+    <a href="Matrix-dark.dc.html">Stage</a>
+    <a href="Agents-dark.dc.html">Agents</a>
+    <a href="Record-dark.dc.html">Models</a>
+  </nav>
+  <div style="margin-left: auto; display: flex; align-items: center; gap: 10px; font-size: 12px; color: #A3A6AE">
+    <span class="pill">todd &middot; operator &middot; claimed, not proven</span>
+    <span class="pill" style="border-color: #B58A3A; color: #E0A24A">web-con: stub</span>
+    <span class="pill" style="border-color: #B58A3A; color: #E0A24A">admin-con: stub</span>
+    <span role="group" aria-label="Theme" style="display: inline-flex; margin-left: 6px"><button type="button" aria-pressed="false" style="height: 28px; padding: 0 10px; border: 1px solid #2E313A; border-radius: 4px 0 0 4px; background: #1C1E24; color: #E8E6E0; font-size: 12px">auto</button><button type="button" aria-pressed="false" style="height: 28px; padding: 0 10px; margin-left: -1px; border: 1px solid #2E313A; background: #1C1E24; color: #E8E6E0; font-size: 12px">light</button><button type="button" aria-pressed="true" style="height: 28px; padding: 0 10px; margin-left: -1px; border: 1px solid #7FB0D6; border-radius: 0 4px 4px 0; background: #7FB0D6; color: #141519; font-size: 12px">dark</button></span>
+  </div>
+</header>
+
+<main style="flex-grow: 1; display: flex; flex-direction: column; gap: 16px; padding: 20px 32px 28px; max-width: 1440px; box-sizing: border-box; width: 100%; margin: 0 auto">
+
+  <div style="display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap">
+    <h1 style="margin: 0; font-size: 24px; font-weight: 600">Live: rusty on HeroBench session hb-2026-09-30</h1>
+    <span class="pill" style="border-color: #E0A24A; color: #E0A24A; background: #33281A">quiesced at turn 27</span>
+    <span class="pill">task 17 of 50 &middot; score 2 &middot; elapsed 9m 48s</span>
+    <span style="margin-left: auto; font-size: 12px; color: #A3A6AE">state over admin-con &middot; turns over the trace as it grows &middot; refreshed 2s ago</span>
+  </div>
+
+  <div style="display: grid; grid-template-columns: 380px minmax(0, 1fr) 380px; gap: 16px">
+
+    <section aria-labelledby="ag-h" style="display: flex; flex-direction: column; gap: 12px; padding: 16px; background: #1C1E24; border: 1px solid #2E313A; border-radius: 6px">
+      <h2 id="ag-h" style="margin: 0; font-size: 14px; font-weight: 600">Agent</h2>
+      <dl style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; margin: 0; font-size: 12px">
+        <div><dt style="color: #A3A6AE">name</dt><dd class="mono" style="margin: 0">rusty</dd></div>
+        <div><dt style="color: #A3A6AE">state</dt><dd class="mono" style="margin: 0; color: #E0A24A">quiesced</dd></div>
+        <div><dt style="color: #A3A6AE">declaration</dt><dd class="mono" style="margin: 0">rusty-hb-v3</dd></div>
+        <div><dt style="color: #A3A6AE">validated</dt><dd class="mono" style="margin: 0; color: #7CC08A">ok, 2026-09-30 10:02</dd></div>
+        <div><dt style="color: #A3A6AE">device</dt><dd class="mono" style="margin: 0">cuda:0</dd></div>
+        <div><dt style="color: #A3A6AE">engine</dt><dd style="margin: 0"><span class="absent">absent</span></dd></div>
+      </dl>
+      <h3 style="margin: 4px 0 0; font-size: 12px; font-weight: 600; color: #A3A6AE">Lifecycle verbs (admin-con)</h3>
+      <div style="display: flex; flex-wrap: wrap; gap: 8px">
+        <button type="button" class="verb" disabled aria-disabled="true">load</button>
+        <button type="button" class="verb">unload</button>
+        <button type="button" class="verb">validate</button>
+        <button type="button" class="verb" disabled aria-disabled="true">quiesce</button>
+        <button type="button" class="verb" style="background: #7FB0D6; color: #141519">resume</button>
+      </div>
+      <p style="margin: 0; font-size: 12px; color: #A3A6AE">A verb that does not apply in this state is shown disabled, not hidden. quiesce and resume wait on the rewind sketch's apex ruling and admin-con's Spec.</p>
+      <h3 style="margin: 4px 0 0; font-size: 12px; font-weight: 600; color: #A3A6AE">Score by task</h3>
+      <div style="display: flex; gap: 3px; flex-wrap: wrap">
+        <sc-for list="{{ tasks }}" as="t" hint-placeholder-count="50">
+          <div title="task {{ t.n }}: {{ t.label }}" style="width: 18px; height: 18px; border-radius: 2px; background: {{ t.fill }}; border: 1px solid {{ t.border }}; box-sizing: border-box"></div>
+        </sc-for>
+      </div>
+      <div style="display: flex; gap: 12px; font-size: 12px; color: #A3A6AE">
+        <span><span style="display: inline-block; width: 10px; height: 10px; background: #7CC08A; border-radius: 2px; vertical-align: -1px"></span> pass</span>
+        <span><span style="display: inline-block; width: 10px; height: 10px; background: #E08A7A; border-radius: 2px; vertical-align: -1px"></span> fail</span>
+        <span><span style="display: inline-block; width: 10px; height: 10px; background: #7FB0D6; border-radius: 2px; vertical-align: -1px"></span> in progress</span>
+        <span><span style="display: inline-block; width: 10px; height: 10px; background: #1C1E24; border: 1px dashed #4A4E58; border-radius: 2px; vertical-align: -1px"></span> not reached</span>
+      </div>
+    </section>
+
+    <section aria-labelledby="feed-h" style="display: flex; flex-direction: column; gap: 10px; padding: 16px; background: #1C1E24; border: 1px solid #2E313A; border-radius: 6px">
+      <div style="display: flex; align-items: baseline; justify-content: space-between">
+        <h2 id="feed-h" style="margin: 0; font-size: 14px; font-weight: 600">Task 17, the flooded mine: turns as they land</h2>
+        <span class="mono" style="font-size: 12px; color: #A3A6AE">27 turns &middot; 6 actions</span>
+      </div>
+      <ol style="list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px">
+        <sc-for list="{{ feed }}" as="f" hint-placeholder-count="6">
+          <li style="display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border-radius: 4px; border: 1px solid {{ f.border }}; background: {{ f.bg }}">
+            <div style="display: flex; gap: 8px; align-items: baseline; font-size: 12px; color: #A3A6AE">
+              <span class="mono">turn {{ f.n }}</span>
+              <span>{{ f.who }}</span>
+              <span class="mono" style="margin-left: auto">{{ f.at }}</span>
+            </div>
+            <div style="font-size: 13px">{{ f.text }}</div>
+            <sc-if value="{{ f.action }}" hint-placeholder-val="{{ false }}">
+              <div class="mono" style="font-size: 12px; color: #7FB0D6">action: {{ f.action }}</div>
+            </sc-if>
+          </li>
+        </sc-for>
+        <li style="display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: 4px; border: 1px dashed #6B5CA5; background: #2A2440; font-size: 13px">
+          <span style="width: 10px; height: 10px; border-radius: 999px; background: #E0A24A"></span>
+          <span>Quiesced. No tool runs while quiesced. Events authored now carry interrupt <span class="mono">iq-3c8</span> and can be replayed out.</span>
+        </li>
+      </ol>
+    </section>
+
+    <section aria-labelledby="iv-h" style="display: flex; flex-direction: column; gap: 12px; padding: 16px; background: #1C1E24; border: 1px solid #2E313A; border-radius: 6px">
+      <h2 id="iv-h" style="margin: 0; font-size: 14px; font-weight: 600">Interview</h2>
+      <dl style="display: flex; flex-direction: column; gap: 6px; margin: 0; font-size: 12px">
+        <div style="display: flex; justify-content: space-between"><dt style="color: #A3A6AE">interrupt identifier</dt><dd class="mono" style="margin: 0">iq-3c8</dd></div>
+        <div style="display: flex; justify-content: space-between"><dt style="color: #A3A6AE">bearer capability</dt><dd class="mono" style="margin: 0; color: #7CC08A">minted over admin, held</dd></div>
+        <div style="display: flex; justify-content: space-between"><dt style="color: #A3A6AE">enters through</dt><dd class="mono" style="margin: 0">web-con, as ordinary traffic</dd></div>
+      </dl>
+      <label for="iv-q" style="font-size: 12px; color: #A3A6AE">Question to rusty</label>
+      <textarea id="iv-q" rows="5" style="font: inherit; padding: 10px; border: 1px solid #2E313A; border-radius: 4px; resize: vertical">Why did you leave the east gallery before checking the water level?</textarea>
+      <div style="display: flex; gap: 8px">
+        <button type="button" style="height: 40px; padding: 0 16px; border: 1px solid #7FB0D6; border-radius: 4px; background: #7FB0D6; color: #141519">Ask under iq-3c8</button>
+        <button type="button" class="verb">Resume after</button>
+      </div>
+      <p style="margin: 0; font-size: 12px; color: #A3A6AE">Asking is enabled only while quiesced and the capability is held. Resume ends the interview and drops the capability.</p>
+      <h3 style="margin: 8px 0 0; font-size: 12px; font-weight: 600; color: #A3A6AE">Answered this session</h3>
+      <div style="display: flex; flex-direction: column; gap: 6px; font-size: 13px">
+        <div style="padding: 8px 10px; border-radius: 4px; border: 1px solid #6B5CA5; background: #2A2440">
+          <div class="mono" style="font-size: 12px; color: #A3A6AE">iq-2a1 &middot; turn 19</div>
+          <div>Q: What do you expect behind the pump-room door?</div>
+          <div>A: A valve wheel or a switch. The sign named the room, not the control.</div>
+        </div>
+      </div>
+      <div style="margin-top: auto; display: flex; gap: 8px">
+        <a href="Main-dark.dc.html" style="display: inline-flex; align-items: center; height: 36px; padding: 0 14px; border: 1px solid #7FB0D6; border-radius: 4px; background: #1C1E24; color: #7FB0D6; text-decoration: none">Open this run's replay</a>
+      </div>
+    </section>
+  </div>
+
+  <section aria-labelledby="ss-h" style="display: flex; flex-direction: column; gap: 8px; padding: 12px 16px; background: #1C1E24; border: 1px solid #2E313A; border-radius: 6px">
+    <h2 id="ss-h" style="margin: 0; font-size: 12px; font-weight: 600; color: #A3A6AE">Where each panel's data comes from</h2>
+    <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; font-size: 12px">
+      <div><div style="font-weight: 600">Agent state and verbs</div><div style="color: #A3A6AE">admin-con, weaver-admin-operator-contract</div></div>
+      <div><div style="font-weight: 600">Turns and actions</div><div style="color: #A3A6AE">the trace as it grows (drained stream, seam owed to the connector planning)</div></div>
+      <div><div style="font-weight: 600">Interview</div><div style="color: #A3A6AE">web-con request line, weaver-gate-world-contract, capability returned over admin</div></div>
+      <div><div style="font-weight: 600">Score by task</div><div style="color: #A3A6AE">score events in the trace; the full map stays the environment's</div></div>
+    </div>
+  </section>
+
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1180}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const outcomes = 'PPFPPPFPPPPFPPPFPP'.split('');
+    const tasks = [];
+    for (let i = 0; i < 50; i++) {
+      let fill = '#1C1E24', border = '#4A4E58', label = 'not reached';
+      if (i < 16) { const p = outcomes[i] === 'P'; fill = p ? '#7CC08A' : '#E08A7A'; border = fill; label = p ? 'pass' : 'fail'; }
+      else if (i === 16) { fill = '#7FB0D6'; border = fill; label = 'in progress'; }
+      tasks.push({ n: i + 1, fill, border, label });
+    }
+    const feed = [
+      { n: 22, who: 'environment', at: '10:11:04', text: 'You move north. A sign reads: PUMP ROOM, LOWER LEVEL. Water laps at your boots.', border: '#2E313A', bg: '#1C1E24' },
+      { n: 23, who: 'rusty', at: '10:11:09', text: 'Go north through the pump-room door and look for the valve wheel.', action: 'move north', border: '#2E313A', bg: '#1C1E24' },
+      { n: 24, who: 'environment', at: '10:11:10', text: 'The door is stuck. Water is at your knees.', border: '#2E313A', bg: '#1C1E24' },
+      { n: 25, who: 'rusty', at: '10:11:16', text: 'Force the door with the crowbar from the mine mouth.', action: 'use crowbar on door', border: '#2E313A', bg: '#1C1E24' },
+      { n: 26, who: 'environment', at: '10:11:17', text: 'The door gives. Beyond it a wheel, rust-red, above a humming box.', border: '#2E313A', bg: '#1C1E24' },
+      { n: 27, who: 'researcher (interview)', at: '10:12:40', text: 'Why did you leave the east gallery before checking the water level?', border: '#6B5CA5', bg: '#2A2440' },
+    ];
+    return { tasks, feed };
+  }
+}
+</script>
+</body>
+</html>

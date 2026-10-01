@@ -14,8 +14,13 @@ split #689, destination commit `f2f01d8`) and pushed here as a single fresh root
 without `deploy/`. **It is a seed, not an authority.** The split's 55 commits carry the
 reasoning behind each election. They are kept locally on the `seed-history` branch, which is
 **never pushed**, and in WeaverTools' own history. This repository owns its own charter,
-stack, editorial rules, and review process. Nothing in WeaverTools' process documents binds it. The founding document
-is `docs/project/HANDOFF-2026-09-30-weaver-web-session.md`. Read it before structural work.
+stack, editorial rules, and review process. Nothing in WeaverTools' process documents binds
+it. The suite `CLAUDE.md` one directory up, at `WeaverTools_Project/`, loads in every session
+opened here; it describes the suite and binds nothing in this repository. The founding
+documents are `docs/project/HANDOFF-2026-09-30-weaver-web-session.md` and, beside it, the
+second handoff `docs/project/HANDOFF-2026-09-30-the-workspace-turns-to-weaver-web.md`. The
+connectors' brief is `docs/project/brief-2026-10-01-the-link-the-registry-and-the-two-connectors.md`.
+Read them before structural work.
 
 ### The big picture (operator's whiteboard, 2026-09-30)
 
@@ -24,7 +29,7 @@ is `docs/project/HANDOFF-2026-09-30-weaver-web-session.md`. Read it before struc
                   /                 \
                gate                admin <-> diagnostic
                  |                   |           |
-            (web-con)           (admin-con)      v
+            (gate-con)          (admin-con)      v
                  \                  /      weaver-analysis
                   v                v           |
                      Weaver-Web  <-------------+
@@ -33,18 +38,25 @@ is `docs/project/HANDOFF-2026-09-30-weaver-web-session.md`. Read it before struc
 Weaver-Web has three inputs and no others:
 
 - **gate (the data plane)** carries the work entering an agent and the answers leaving it.
-  Contract: `weaver-gate-world-contract`. Reached only through **web-con**.
-- **admin (the management plane)** carries the lifecycle verbs (load / unload / validate, and
-  later quiesce / resume) and agent state. Contract: `weaver-admin-operator-contract`. Reached
-  only through **admin-con**.
+  Contract: `weaver-gate-world-contract`. Reached only through **gate-con**.
+- **admin (the management plane)** carries the lifecycle verbs (`load`, `unload`, `validate`,
+  `stop`, `show`, `list`, and later quiesce / resume) and the agent's trace, which leaves the
+  agent through the sink admin opens at load. Contract: `weaver-admin-operator-contract`.
+  Reached only through **admin-con**. There is no admin socket; the verbs are invocations
+  and the sink is the one crossing.
 - **weaver-analysis** reads the diagnostic record and sends finished records here: a
   per-position series (turn, ordinal, token, entropy, surprisal) and a per-generation summary.
   Contract: `weaver-analysis-web-contract`. They land in this repository's own Postgres store.
 
-The connectors (web-con, admin-con) are network clients of the agent's two sockets. They are
-not on the whiteboard. They live in WeaverTools, **and neither they nor their Specs exist
-yet.** Build against stubs that answer the door contracts' shapes. All three contracts live in
-WeaverTools under `docs/crates/contracts/`, not here.
+**The connectors are this repository's** (design session 2026-09-30, operator 2026-10-01).
+gate-con and admin-con are two binaries that stand on the agent's box and are the one party
+that reaches it: gate-con dials the gate socket, admin-con runs the verbs and tails the trace
+file. gate-con is the operator's name for what the whiteboard called web-con. Both are
+**clients** of this server's listener over a mutually authenticated link, and the server
+keeps a register of agents with two credentials per agent. The design is Spec section 8 and
+the brief named above. The seed holds the start of each (`src/adapters/gate.rs`,
+`src/lifecycle.rs`); neither binary exists yet. The three contracts live in WeaverAgents
+under `docs/crates/contracts/`, not here, and are the pages the connectors build against.
 
 The first concrete consumer is the **HeroBench view**, where a researcher watches and
 interviews an agent on a long-horizon benchmark. The suggested order is to render the landed
@@ -52,14 +64,18 @@ deposits first (a trace plus its state store, as a replay), then build live view
 
 ## Hard boundaries
 
-- **Consumers never reach the agent.** Open no agent socket and run no agent binary, even
-  during development. A connector stub is the development surface.
+- **The server never reaches the agent.** Only gate-con and admin-con do, on the agent's
+  box, and only through the two door contracts. The server opens no agent socket and runs no
+  agent binary, even during development. A connector's tests use a fake at the socket, never
+  an agent; the server's tests use fake connectors holding minted credentials.
 - **No credential, box path, or security posture enters the repository.** Credentials are
-  issued server-side and dropped into a client's config file. The connectors authenticate;
-  the gate and admin authorize.
-- **Do not edit WeaverTools.** When a connector interface lacks something, file an issue on
-  `toddwbucy/WeaverTools`, one issue per interface question. Say what was measured, what is
-  asked, and which document would have to move. The olympus Planning seat answers there.
+  minted on the server at registration and dropped into a client's config file by an install
+  script; the server keeps fingerprints and never keys. The connectors authenticate; the gate
+  and admin authorize.
+- **Do not edit WeaverAgents.** When a door contract lacks something, file an issue on
+  `toddwbucy/WeaverAgents`, one issue per interface question, until the operator rules
+  otherwise. Say what was measured, what is asked, and which document would have to move. The
+  olympus Planning seat answers there.
 - Do not link the agent's interior crates (`weaver-harness`, `weaver-spu`, `weaver-admin`,
   `weaver-gate`, `weaver-state`).
 - **The remote is `git@github.com:toddwbucy/WeaverWeb.git`.** A different repository,
@@ -70,9 +86,9 @@ deposits first (a trace plus its state store, as a replay), then build live view
 
 Two Claude Code sessions share this workspace, and the operator (Todd) closes every loop.
 
-- **thinkpad-WeaverWeb-planner** plans the work, directs the executor, reviews its PRs, and
+- **Thinkpad-WeaverWeb-Planner** plans the work, directs the executor, reviews its PRs, and
   handles the third-party review.
-- **thinkpad-WeaverWeb-executor** implements what the planner directs. It works on a branch
+- **Thinkpad-WeaverWeb-Executor** implements what the planner directs. It works on a branch
   and opens a **draft** PR when the work is done.
 
 Each unit of work goes through this loop:
@@ -145,21 +161,34 @@ weaver-analysis's arrow lands.
   SPA, and the browser is a display engine. This is inherited. The handoff leaves the stack to
   this repository, so treat it as the current choice, not a ruling.
 
-**Leaves (about 2.2k lines): everything that reaches the agent directly.** This is the
-`weaver-web-connector` binary, `wire.rs`, `lifecycle.rs` (`sudo weaver-admin`),
-`adapters/gate.rs` (dials the gate socket), the trace tailers in `traceview.rs`, and `web/`
-(the legacy `/admin` routes, already answering 503). `deploy/` was left out of the fresh root
-because it held box paths and a sudoers rule. The
-boundaries above forbid it, and web-con and admin-con replace it. Do not extend it.
-`src/bin/weaver-web.rs` currently wires both halves together (legacy router, link listener,
-and trace pump beside `surfaces::routes()`), so removing the legacy half starts there.
+**Becomes the connectors (reruled 2026-09-30 and 2026-10-01): the half that reaches the
+agent.** `adapters/gate.rs` (dials the gate socket per turn, the section 5 refusals typed) is
+the seed of gate-con. `lifecycle.rs` (`sudo weaver-admin`, three verbs, load state still
+inferred from the socket's existence) is the seed of admin-con, which gains the other three
+verbs and the trace tailer. `traceview.rs`, which tails the trace file tracking its identity,
+is the seed of that tailer and carries forward (operator's ruling of 2026-10-01: the agent's
+sink is a file, not a socket). `wire.rs` and `src/bin/weaver-web-connector.rs` are the seed's
+one dialed link and are replaced by the mutual-TLS link of Spec section 8, two client
+binaries and one listener. Build the connectors as their own binaries; do not extend the
+seed's shape.
+
+**Still leaves: `web/`**, the legacy `/admin` routes, already answering 503, and
+`src/registry.rs`, the legacy participant model (not the register of agents). `deploy/` was
+left out of the fresh root because it held box paths and a sudoers rule. Two facts for the
+removal act: `askama.toml` lists `src/web/templates` beside `src/surfaces/templates`, and
+the legacy router in `src/web/mod.rs` is the only thing serving `htmx.min.js` and `sse.js`,
+so the surfaces need their own asset route before `web/` goes. `src/bin/weaver-web.rs`
+currently wires both halves together (legacy router, link listener, and trace pump beside
+`surfaces::routes()`), so the removal starts there.
 
 ## Inherited documents
 
 - `docs/weaver-web-Spec.md` and `docs/weaver-web-PRD.md` were written inside WeaverTools
-  (2026-09-04). They describe the store and the read path well. The handoff's step 2 rewrites
-  the charter for this repository and trims the Spec to the store and read path. Until then,
-  use them as reference for the store; where they conflict with the handoff, the handoff wins.
+  (2026-09-04). They describe the store and the read path well, and since 2026-10-01 the
+  Spec's sections 2.12, 7 and 8 carry the register of agents, the connectors and the link.
+  The handoff's step 2 rewrites the charter for this repository and trims the Spec to the
+  store, the read path and the link. Until then, use them as reference; where they conflict
+  with the handoffs or the brief, the later document wins.
   `README.md` and `docs/technical/` describe the older chat/lifecycle/trace product and are
   stale.
 - `docs/project/inventory-weaver-web-code.md` is a register of the code against the Spec.

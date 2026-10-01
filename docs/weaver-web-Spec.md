@@ -36,16 +36,38 @@ src/
   authoring/    section 3.2, the writes a surface makes to its own table
   queue/        staged experiments and their states
   surfaces/     one module per surface of charter section 3
-  seams/        gate client, admin verbs, analysis stream reader
-  link/         the connector and server halves, the dialed link
-                of section 8 and not the seam kind the clause below names
+  seams/        the box-bound reaches of section 7, the gate client, the
+                admin verbs and the trace tailer, beside the analysis
+                stream reader of section 7.3
+  link/         the link of section 8, both halves: the listener and the
+                register verbs the server runs, and the client each
+                connector runs. The link of this entry is a connection and
+                not the seam kind the clause below names
+  bin/          weaver-web, the server, and gate-con and admin-con, the two
+                connectors of section 8
 ```
+
+**Two entries changed on 2026-10-01 and one was added, and the reason is the
+same for all three.** `seams/` had named the gate client and the admin verbs
+without saying which binary runs them, and `link/` had described one dialed
+link between two processes, which section 8 no longer says. The two
+connectors are named as binaries under `bin/` because the split between them
+is a split of posture and not of module: admin-con holds the sudo rule and
+the trace tailer, gate-con holds a uid the agent admits and nothing more,
+and a module tree cannot say which process carries which. **The box-bound
+reaches are linked by the two connector binaries and never by the server**,
+which is how the server's never reaching an agent is a build fact rather
+than a sentence.
 
 **This crate links no crate of the agent** and reaches it exactly as an
 outside consumer does: a socket dialed by path, a binary run by the
-operator's verb, and a record read where the operator keeps it. That
-property is load-bearing and is not spent by the seam of section 7.3, which
-is a stream this crate reads rather than a crate it links.
+operator's verb, and a record read where the operator keeps it. **The party
+that does each of those is one of the two connectors of section 8 and never
+the server**, per the design session of 2026-09-30 and the operator's ruling
+of 2026-10-01: the connectors are this crate's, they stand on the agent's
+box, they reach the server, and the server reaches nothing past them. That
+property is load-bearing and is not spent by the seam of section 7.3, which is a stream
+this crate reads rather than a crate it links.
 
 **The line is the agent's process boundary and not the cargo workspace**, as
 of 2026-09-07. `axiom-floor-is-vocabulary-behavior-is-socket` forbids "a
@@ -95,9 +117,12 @@ instrument or the work. It is admitted on the same ground section 2.6 was: a rul
 elsewhere needs somewhere to land. **Sections 2.9, 2.10 and 2.11 are authored rows
 sitting outside their half**, the plan, the refs and the batch, appended after the
 session rather than placed among 2.3 through 2.5 because renumbering would break every
-citation of sections 2.6 through 2.8 in this document and outside it. **The grouping is
-stated here rather than carried by the numbering**, which is the cost of a document
-whose sections are cited by number.
+citation of sections 2.6 through 2.8 in this document and outside it. **Section 2.12 is
+the registered agent**, appended 2026-10-01 on the same reasoning: an authored row the
+register verb of section 8 writes and the link reads, about an agent rather than about
+the work, sitting outside both halves as the session does. **The grouping is stated
+here rather than carried by the numbering**, which is the cost of a document whose
+sections are cited by number.
 
 **An authored row's identity says what it addresses.** A key this store generates is
 spelled as two letters naming the kind and sixteen hex: `pl-` a plan, `ar-` an arm,
@@ -135,7 +160,7 @@ depends on, which is the same reasoning section 3.2's author member was landed u
 
 **Three authored tables do not carry it yet.** Sections 2.3, 2.4 and 2.5 - the artifact,
 the declaration and the staged experiment - were built before this convention and keep
-their sequences, so the rule above describes three of the six authored rows and not all
+their sequences, so the rule above describes four of the seven authored rows and not all
 of them. **A convention with an undeclared exception is worse than none**, so the
 exception is declared and the act that closes it is owed.
 
@@ -1030,9 +1055,137 @@ already implied it and nothing wrote it down, and because the interface that que
 act 4's and act 5's at issue #434. The act that builds the queueing gesture builds the
 table, and its assertion above gets its instrument there.
 
+### 2.12 The registered agent
+
+**The register of agents, which is not what section 1's tree calls the
+registry.** That entry names the whole store, every table and the reads over
+them, and the word stood there before any agent was registered here. This
+section is the one table that holds agents, and the operator's word for it on
+2026-10-01 was the registry too, so the two readings are told apart here
+rather than left to collide: the store is the registry, this row is the
+register of agents, and section 8's verbs are the register verbs.
+
+**It exists because the server serves many agents at once and must tell them
+apart positively.** Per the operator's ruling of 2026-10-01, a row says which
+agent this is, where it runs and what it declared, and the two credentials of
+section 8 are bound to it, so that a connection is an agent's connection and
+never a bare socket's. Each row carries:
+
+- **the agent's identity, `ag-` and sixteen hex**, generated here under the
+  convention this section opens with, since the row is authored here and the
+  name is not the key, for the reason section 2.9's arm gives
+- **the agent's name**, the name admin knows it by on its box, which is what
+  every verb of section 7.2 takes
+- **the box it reports from**, as registered, **and the address the server
+  observed** its connectors connecting from, with its date. The two are kept
+  apart because one is a claim the operator made at registration and the
+  other is a fact the listener saw
+- **the declared tuple as admin reported it, and when**, from `show` and from
+  the load event the trace carries, per section 7.2. It is admin's word and
+  carries admin's date, and nothing on the data plane may fill it, per
+  section 8
+- **the two credentials**, each as the fingerprint of its client certificate
+  and never the key, each with its plane, gate or admin, its state, live or
+  revoked, and the date the state was set. The posture is section 2.8's
+  digest rule applied to a certificate: a read of this table is not a set of
+  credentials anyone can present
+- **each connector's link state**, connected or not, with the date it last
+  changed, which is what a surface renders where the agent is not present:
+  the plane that is missing, per section 8. **It is the listener's word
+  about its own connections and is therefore reset when the listener
+  starts**: a persisted flag outlives the process that set it, so a server
+  that died with both planes connected would otherwise restart reading both
+  connected with no socket behind either, and the heartbeat cannot clear
+  what no connection holds. Section 8 states the reset, and it binds every
+  link-state write to the connection it describes, so a stale teardown
+  cannot mark a plane missing after its replacement was admitted
+- **the load state as admin's word, with its date**, which is section 7.2's
+  rule restated at the row: the state is what `show` or `list` last answered
+  or the trace last carried, never an inference from a socket's existence,
+  and never fresher than its date says
+
+**It is an authored row and takes section 3.2's members.** Registration is a
+write the operator makes, so the row carries the author member and the
+store's version like sections 2.3, 2.4, 2.5, 2.9 and 2.10, and an edit to
+what registration authored is ordered on the version like any edit. **The
+edits registration permits are the box and a credential's state, and never
+the name**: admin knows the agent by that name on its box and both
+connectors' configs carry it, so a renamed row would refuse its own
+connectors at the hello of section 8, and a different name is a different
+registration. **At most one row per box and name holds live credentials**,
+held at the schema by a partial unique index over the rows whose
+credentials are live, so one physical agent cannot be registered twice into
+two rows with independent credentials; re-registering a live pair retires
+the previous row by revoking its credentials in the same act.
+
+```graph
+node: web-one-live-row-per-box-and-name
+kind: assertion
+tag: perturbation
+
+edge: asserts
+from: weaver-web
+to: web-one-live-row-per-box-and-name
+```
+
+**What the link observes is not an edit.** The observed address, the link states, the tuple and the load state
+are facts the listener and admin reported, and the link writes them as it
+learns them, each with its own date, so a reader can tell when the server
+last knew each one. **Observations are ordered on the server's own arrival
+sequence and never on their source date.** The sequence has two members
+ordered lexicographically: the listener's epoch, a counter the server
+persists and increments once at every listener start, and the arrival
+number within that epoch, which the listener assigns to every observation
+in the order it arrived over the link. A member takes the observation with
+the higher sequence, and an observation from a later epoch always orders
+above one from an earlier, so a restarted server's first `show` answer
+supersedes whatever the last process left and nothing persisted is reset.
+A process-local counter alone would begin below the sequences already on
+the row after a restart and reject every new observation until it caught
+up. The epoch is the server's own and is written once per start, in the
+same act as the startup reset of section 8. The source date stays on the
+row for display and decides nothing, because the server's own epoch and
+counter cannot step backward or collide and a date from the box can do
+both. **A replayed event never writes a
+member of this row at all**: every event admin-con relays from behind the
+file's tail, at a reconnection or a backfill, is marked as replayed on the
+link per section 7.2 and feeds the server's live window and nothing else.
+The tuple and the load state are written only by `show` and `list` answers
+and by events relayed live, which the arrival sequence orders, of a `list`
+answer only the summary for the connection's own row landing per section
+7.2, and the
+arrival sequence carries the source's own order because admin-con sends
+everything on its connection as one ordered stream, per section 7.2, so a
+`show` answer can never overtake a lifecycle event that followed it. A rule
+that
+only kept replayed events behind what this process observed would still
+let a backfilled load event after a restart overwrite the state a newer
+`show` answer had set before it, which is why the rule is absolute rather
+than ordered. **And on every admission of an admin-con connection the
+server first fixes the replay boundary and then asks `show` for that row**:
+the boundary is the file position admin-con reports as its tail at that
+moment, every event at or beyond it is live and every event behind it is
+replayed, and `show`'s answer, taken after the boundary, is admin's word
+from after it, so a change before the boundary is in the answer and a
+change after it arrives as a live event. Asked before the boundary, a load
+or unload landing between the answer and the boundary would be classified
+replayed and could never reach the row. So the row's tuple and load state
+are admin's current word at the moment the window reopens rather than
+whatever the last process left. Section 8's startup reset is excepted from the ordering: it
+is the listener's own act on its own state and lands unconditionally. They are observations rather than the operator's
+authorship, which is why each carries its date in the row rather than riding
+the row's version.
+
+**The row holds no key material and no path of the agent's own.** The server
+holds fingerprints and the agent's box holds keys, per section 8, and the box
+is named by the name the operator registered rather than by a host or a path
+the repository would have to carry, which is the publish boundary every
+document here stands under.
+
 ## 3. The write path
 
-**Five writers, and each owns its tables.** Section 3.1's ingest lands what the
+**Six writers, and each owns its tables, one table being owned at the member by two
+of them as the paragraph below explains.** Section 3.1's ingest lands what the
 instrument recorded. Section 3.2's authoring path lands what the engineer authored.
 **The read path writes too**, one row and only one: section 4 admits an open query on
 the condition that the query is recorded, so the read that serves it writes section
@@ -1043,9 +1196,23 @@ either. **The fifth is queueing**, which writes section 2.11's batch and its ent
 touches nothing else: section 5.1 has registering and queueing as two acts, and the
 second of them is the one that records an order, so it is a writer rather than a state
 change on a row another writer owns. **It was four until 2026-09-11**, the batch having
-had no row and queueing having had nothing to write. No writer touches another's tables,
-and **no surface writes through 3.1**, which is what section 6's rule means and all it
-means.
+had no row and queueing having had nothing to write. **The sixth is the link**, as of
+2026-10-01, which writes the observed members of section 2.12's registered agent, the
+address it saw, each connector's link state, and the tuple and the load state as admin
+reported them, and touches nothing else. It is a
+writer rather than an author because nobody authored what it writes: a link state is
+what the listener saw and a tuple is what admin said, each with its own date, and
+section 2.12 keeps them off the row's version for that reason. **Its writes are ordered
+on the listener's own arrival sequence, its epoch and its number within it, rather than
+on the row's version or the observation's date**, and a replayed event writes no member
+of the row at all, per section 2.12. The register verb is not a seventh: it authors the
+row's other members, the name, the box and the credentials, through section 3.2 like
+any author. **So one table has two writers at disjoint members**, and the rule below
+holds at the member for that row rather than at the table, which is stated here rather
+than left for a reader to find: the register verb never writes what the link observed
+and the link never writes what the operator registered. No writer otherwise touches
+another's tables, and **no surface writes through 3.1**, which is what section 6's rule
+means and all it means.
 
 ### 3.1 The ingest
 
@@ -1241,11 +1408,15 @@ reproduces, and one computed in a view is one nobody can.
 **A surface that authors writes the rows it authors and nothing else.** Compose writes a
 declaration. Models writes an artifact row on import. Stage writes a staged experiment,
 and since the plan of section 2.9 it writes that row with its entries and the refs of
-section 2.10, all four being what one surface composes and registers. **Each writes only
-tables of the authored half**, and **none of them may write a position or a run**, which
-is the whole of what keeps a recorded fact a recorded fact and is what the pin below
-holds. The sentence read that each writes one table until 2026-09-09, which was true
-while Stage authored one.
+section 2.10, all four being what one surface composes and registers. **The register
+verb of section 8 writes the authored members of section 2.12's registered agent and
+nothing else**, as of 2026-10-01, the observed members being the link's as section 3's
+opening counts them. It is the operator's verb on the server rather than a surface: its
+author member holds the name the verb was given, or names none, which is the rule below
+with no session behind it. **Each writes only tables of the authored half**, and **none
+of them may write a position or a run**, which is the whole of what keeps a recorded
+fact a recorded fact and is what the pin below holds. The sentence read that each
+writes one table until 2026-09-09, which was true while Stage authored one.
 
 ```graph
 node: web-no-surface-writes-the-recorded-half
@@ -1258,12 +1429,13 @@ to: web-no-surface-writes-the-recorded-half
 ```
 
 - **Every authored row carries a version, and it is the store's own counter rather than
-anything the author supplies.** Sections 2.3, 2.4, 2.5, 2.9 and 2.10 each carry it. It
+anything the author supplies.** Sections 2.3, 2.4, 2.5, 2.9, 2.10 and 2.12 each carry
+it. It
 has nothing to do with the declaration's corpus commit, which pins the floor's field
 shape and answers staleness against `weaver-types-Spec`: **one says whether the shape is
 current, the other says whether this row has moved since you read it.**
 - **Every authored row names its author, and the member is nullable.** Sections 2.3,
-  2.4, 2.5, 2.9 and 2.10 each carry it. **Null means the store could not
+  2.4, 2.5, 2.9, 2.10 and 2.12 each carry it. **Null means the store could not
   name an author when the row was written, and it never means the
   operator**, because a default that guesses writes a fact nobody can
   correct later and an unknown that says so can be filled by anyone who
@@ -1876,13 +2048,204 @@ named local Unix socket, per `weaver-gate-PRD` section 2 and that page's
 section 0, so the client end stands on the box the agent runs on by
 construction rather than by a placement clause.
 
+**gate-con is that client, and it is this crate's binary**, per the design
+session of 2026-09-30 and the operator's ruling of 2026-10-01 that the two
+connectors are this crate's. It is the operator's name for what the
+whiteboard called web-con. It stands on the agent's box, dials the gate's
+socket by path once per turn as the seed's gate adapter does, carries one
+request line in and one close line out, and is admitted by the kernel's peer
+credential under the declaration's allow list, so what gate-con needs on the
+box is a uid that list names and nothing more. Everything it carries crosses
+the link of section 8 to the server, which never dials the gate itself.
+**It learns nothing of the interior and the server learns nothing through
+it**: the tuple and the load state come by admin-con alone, per sections 7.2
+and 8, and a gate-con that reported either would be reporting what the
+contract's section 6 says it cannot know.
+
 ### 7.2 The admin verbs
 
-`validate`, `load`, `unload`, and as of 2026-09-04 the observation exchange:
+**There is no admin socket.** It retired on 2026-08-05, per
+`weaver-admin-operator-contract` section 1, and nothing crosses into admin by
+a channel. Each verb is an invocation, `sudo weaver-admin <verb> <agent>`,
+answering one JSON object on stdout with the exit status agreeing, per
+`weaver-admin-Spec` section 2. Six parse as of 2026-10-01: `load`, `unload`,
+`validate`, `stop`, `show` and `list`, the last taking no agent. **Of a
+`list` answer only the summary for the connection's own credential-bound
+row lands on the row, and the other summaries write nothing**: a connection
+is bound to one row and its stream orders that row's events alone, so a
+delayed `list` answer through one agent's connection would otherwise
+overwrite another agent's newer state with nothing to order it. **admin-con
+runs them, and it is this crate's binary**, the management plane's one
+reach, so the sudo rule stands on admin-con's box and never on the server's,
+and the server asks admin-con over the link of section 8 rather than running
+anything.
+
 `show` answers one agent's load facts and `list` answers one summary per
-admitted agent in a single ask. Load state is therefore **the harness's own
-word rather than an inference from a socket's existence**, and no surface
-labels it as inferred.
+admitted agent in a single ask, the observation exchange of 2026-09-04. Load
+state is therefore **the harness's own word rather than an inference from a
+socket's existence**, and no surface labels it as inferred. The seed's
+`lifecycle.rs` still infers it from the gate socket's existence, which is
+what the admin-con act replaces.
+
+**What crosses out of the agent is the trace, and admin-con tails the file
+it lands in.** The trace crosses as NDJSON, one event per line, to a sink
+admin opens at load under root, per `weaver-admin-Spec` section 5, and the
+contract's section 3 names a file as a conforming sink and the record behind
+it as the operator's own. **Per the operator's ruling of 2026-10-01, the
+agent's declaration names a `File` sink, root-owned and append-only, and
+admin-con tails that file**, as the seed's `traceview.rs` already does,
+tracking the file's identity. The ruling replaced a socket sink with
+admin-con as its listener, and the reason is stated here: admin opens a
+socket sink once at load and never reconnects, so an admin-con crash while
+an agent was loaded would have lost the rest of the run's trace until the
+agent was reloaded, and closing that is WeaverAgents' work. A file sink
+loses nothing to an admin-con restart, a load needs nothing of this crate's
+to succeed, and the file is the durable record itself, so nothing needs
+teeing. The stream is one-way and nothing behind the sink reaches back; what
+admin-con decides from reading it comes back by running a verb, per the
+contract's section 6. The load event in that stream carries the
+declaration's digest, which admin computes at the inventory, so the trace and
+`show` are the two sources of section 2.12's tuple and both are admin's word.
+
+**The trace file is replayed from an acknowledged position, and this is this
+document's election of 2026-10-01 and not a ruling.** A tailer that relays
+what it reads and sends none of what it read while the link was down leaves
+the server's copy of the trace permanently short of every outage. So the
+server answers admin-con's hello with the last position it holds for that
+row's trace, admin-con resumes relaying from there, and the server
+acknowledges as it lands, so the position advances. **The acknowledged
+position has three members: a generation, the byte offset within the file,
+always a record boundary per the rule stated below so that no offset in
+this document names the inside of a record, and a digest of the last
+acknowledged line.** **The generation
+is derived from the file's durable identity and never from process state**:
+the device and inode `traceview.rs` tracks, together with the file's birth
+time where the filesystem reports it, so that a reused inode after a
+rotation still reads as a new generation and a restarted admin-con derives
+the same generation for the same file. Minted from process state it would
+fail the other way, a restarted admin-con reading the hello's generation as
+a replacement, emitting a false discontinuity and replaying the unchanged
+file from its start. **The bound is stated**: on a filesystem reporting no
+birth time the generation rests on device and inode and the last-line
+digest below, and a replacement that reuses the inode and repeats the final
+line at the same offset is accepted as the old generation. This is named
+rather than closed because closing it would need a marker of admin-con's
+own persisted beside the file, and the operator's sinks stand on
+filesystems that report birth time, so the act that meets one that does
+not is the act that adds the marker. The identifier is admin-con's own, in
+a form the act chooses, and carries no trace field, for the same reason
+the offset is
+elected over the event's sequence: resuming then reads none of the event
+schema this document restates none of, and a sequence would make the link
+depend on a trace field. **The digest is of the bytes
+immediately before the offset**, and admin-con reads those bytes and compares
+before resuming at the offset. A file truncated in place while admin-con
+was stopped and regrown past the offset before it reconnected keeps its
+device, inode and birth time, and its length hides the truncation, so the
+identity alone would resume past the new prefix with no mark; the digest
+catches it, and a mismatch is treated exactly as a different generation,
+the old tail marked as a discontinuity and the file relayed from its
+start. The digest is admin-con's own and reads no event schema, for the
+same reason as the offset. **The guard's bound is stated**: the digest
+guards against truncation, which the contract's append-only open and root
+ownership already make an operator's act rather than the program's; it does
+not guard against an in-place rewrite that preserves the final line at the
+same offset, which only root can perform and which a digest of the whole
+prefix would catch at a cost proportional to the file at every reconnect,
+declined for that reason. The position crosses the link with every event, the
+server acknowledges it, and the hello's answer carries it.
+
+**The acknowledged position lives for the life of a server process and is
+not persisted**, per the operator's ruling of 2026-10-01: the server's copy
+of the live trace is a live window and not a record, and durability stays
+on the agent's box, per the contract's section 3 and the file-sink ruling
+above. A persisted position would outlive the events it names, since the
+server holds relayed events in memory and section 3.1's store holds a
+projection and not the trace, so admin-con would resume past a hole no mark
+covers. So within one server process a reconnection resumes from the
+acknowledged position as written here; a server that restarts answers the hello
+with no position, and admin-con then relays from a bounded tail of the
+file, the bound a member of admin-con's config, with a discontinuity mark
+at the front saying what was not relayed, as the seed's backfill in
+`traceview.rs` does. This is right because the record is the file on the
+box and the Replay surface renders landed deposits through the analysis
+seam of section 7.3, so the server's window owes completeness only to the
+process that holds it. **An offset alone would not do**: a trace file rotated during
+the outage and grown past the acknowledged offset before admin-con
+reconnects is indistinguishable from the old one by offset, and a resume at
+the old offset would skip the replacement's prefix silently, which is why
+`traceview.rs` tracks file identity. On reconnect admin-con compares the
+acknowledged generation with the file it holds: the same generation resumes
+at the offset; a different generation means the old file was replaced, so
+any unreplayed tail of the old generation that admin-con no longer has is
+sent as a marked discontinuity and the new generation is relayed from its
+start. A file truncated below the acknowledged offset fails the digest
+read and is sent the same way. Nothing
+is smoothed, which is `traceview.rs`'s own rule and the contract's rule in
+section 3 that nothing is shed silently. Section 8's one-connection
+paragraph refers here for what a reconnection carries. **Every event
+relayed from behind the file's tail at a reconnection is marked as replayed
+on the link**, and replayed events reach the server's live window only:
+they write no member of section 2.12's row, whose tuple and load state come
+from `show`, `list` and live events alone. On every admission of an
+admin-con connection the server first fixes the replay boundary, the file
+position admin-con reports as its tail at that moment, so that every event
+at or beyond it is live and every event behind it is replayed, and then
+asks `show` for the row, so the answer is admin's word from after the
+boundary and nothing that lands in the file between the two can be
+classified as history, per section 2.12. **admin-con emits everything it
+sends over its connection, verb answers and file events alike, as one
+ordered stream**, and a verb answer takes its place in that stream at the
+invocation rather than at the receipt: before invoking a verb admin-con
+records the file's current tail and drains to it, reading and emitting
+every event up to that position, then invokes with the tailer paused,
+receives, emits the answer, and resumes from the recorded tail. The drain
+is what makes "every event read before the invocation is ahead of the
+answer" true of every event written before it and not only of those the
+tailer happened to have read: without it an unread older load event
+behind the tail would be emitted after a newer `show` answer and overwrite
+it. Every event read after the receipt is behind the answer, and nothing
+is read in between, so the snapshot the verb took somewhere inside that
+span is newer than everything ahead of it and older than everything
+behind. This holds for every verb answer and not only the admission-time
+`show`. **admin-con runs one verb at a time per connection**, each from
+its pre-invocation drain through the emission of its answer, and a second
+ask that arrives while one is in flight waits its turn in arrival order,
+so invocation spans never overlap and the ordering above holds for every
+answer; two verbs run at once would let an older answer be emitted after a
+newer one. The gate contract's rule for the data plane, one turn in flight
+per agent and a second request waits, is the same shape on this plane. The
+pause and the wait are bounded because the invocation is, the seed's
+`lifecycle.rs` capping it, and the drain is bounded by the backlog, which
+is the tailer's lag and not the file. **Every position admin-con records
+or acknowledges is a record boundary, the byte after a delimiter**, so the
+tail it records before a verb is the end of the last complete record at
+that moment, the drain emits through it, and a record still unterminated
+at that moment is read after the answer and ordered behind it. That order
+is right rather than a concession: an event is in the file only once its
+delimiter is, so a record unterminated at the invocation was not yet
+written when the verb ran and is concurrent with the snapshot rather than
+before it, which is what the gate contract's own framing rule says of a
+line without its delimiter, and what the seed's `traceview.rs` already
+says of an unterminated tail. A byte tail recorded inside an unfinished
+record would make neither draining through it nor resuming from it well
+defined. Placed at the receipt
+instead, a file event the tailer read between the verb's snapshot and the
+answer's arrival would stand ahead of the answer and the older snapshot
+would overwrite it. The server's arrival number then carries the source
+order, so a `show` answer still in flight when a load or unload lands
+after the boundary cannot reach the row after the live event and overwrite
+it, which two sources ordered only by server arrival would allow.
+
+```graph
+node: web-trace-file-is-replayed-from-the-acknowledged-position
+kind: assertion
+tag: perturbation
+
+edge: asserts
+from: weaver-web
+to: web-trace-file-is-replayed-from-the-acknowledged-position
+```
 
 **The observation answers from any position, a running turn included**, as
 of 2026-09-05. It is served from inside the turn between tokens, touching no
@@ -1935,15 +2298,285 @@ owed.
 
 ## 8. Placement and the link
 
-Two processes joined by one dialed link: a connector holding the box-bound
-reaches, a server holding the presentation stack. Colocated by default and
-separated by changing one address.
+**Three processes: the server, and two connectors beside each agent.** The
+server holds the presentation stack, the store and the listener. gate-con and
+admin-con hold the box-bound reaches of sections 7.1 and 7.2 and stand on the
+box the agent runs on, by the construction section 7.1 names. The server
+never reaches an agent, so the one party that does is a client of this
+crate's own, and **both connectors are clients of the server**: they connect
+and the server listens, per the operator's ruling of 2026-10-01. Nothing of
+the interior crosses by either plane. The seed's one dialed link between two
+colocated processes, which this section described until 2026-10-01, is
+superseded. **This is the bulk of the backend**, on the operator's word of
+the same date: everything after it is presentation of what comes out of the
+two connectors.
 
 **Nothing in the read or write path is box-bound to the agents.** The reader
 is a store client, the runner is a queue consumer, and the front end with
 its store runs on one machine while the agents run on another. That crossing
 is a declared boundary under the charter's section 5 rule and appears in the
 trial record like any other.
+
+**The link is mutual TLS with the server as its own certificate authority.**
+Registration mints one client certificate per connector, two per agent, each
+bound to the agent's row of section 2.12 and to its plane, so a gate-con
+credential cannot speak as admin-con. The client's config carries its own
+key and the server's certificate; the server stores the fingerprint of each
+client certificate and never the key, per section 2.12. The client holds the
+server's identity and the server holds the client's, which is the operator's
+two-way confirmation, and the traffic is encrypted by the same handshake, so
+**nothing crosses the link in the clear** and no plaintext accept path
+exists. The charter's section 6 defers transport encryption on the browser's
+listener to a named trigger; this listener is a different one, crossing
+machines by construction, and is not under that deferral.
+
+**The server's authority is durable state and is never minted at start.**
+Its key and certificate are created once by an explicit register verb, the
+first of them, run before any agent is registered; they are stored at a
+path the server's config names and never in a repository, loaded before
+the listener starts, and **the server refuses to start rather than mint a
+new one when they are absent**. An authority minted at start would strand
+every installed connector after the first restart, since each client
+config pins the server's certificate and each credential is signed by that
+authority. Rotation of the authority is its own register verb and, because
+every client config pins the old certificate, it is by definition a
+re-registration of every agent, said plainly rather than hidden.
+
+```graph
+node: web-servers-authority-is-loaded-and-never-minted-at-start
+kind: assertion
+tag: perturbation
+
+edge: asserts
+from: weaver-web
+to: web-servers-authority-is-loaded-and-never-minted-at-start
+```
+
+```graph
+node: web-nothing-crosses-the-link-in-the-clear
+kind: assertion
+tag: perturbation
+
+edge: asserts
+from: weaver-web
+to: web-nothing-crosses-the-link-in-the-clear
+```
+
+```graph
+node: web-client-credential-stored-as-fingerprint-never-key
+kind: assertion
+tag: perturbation
+
+edge: asserts
+from: weaver-web
+to: web-client-credential-stored-as-fingerprint-never-key
+```
+
+**Keys are made on the server at registration and handed to the client
+through its config file at setup**, per the operator's ruling of 2026-10-01.
+Registration is a register verb run on the server: it writes the row of
+section 2.12, mints both credentials, and writes a client config to a path
+the operator names. An install script carries that config to the agent's
+box, and nothing of it enters any repository. **A rename is a new
+registration**, the name being immutable per section 2.12, and the old row's
+credentials are revoked by it, as they are by any re-registration of a live
+box and name, so one agent never holds live credentials on two rows. **A
+credential is bound to one instance of this server**: it names the server
+whose authority signed it and no other, so moving an agent to another
+instance is a re-registration there rather than a copy.
+
+**The hello is refused before its roster is read when the credential is not
+live in the register.** A connection presents its certificate at the
+handshake; the server looks the fingerprint up in section 2.12 and refuses
+one that is absent or revoked at that layer, before any byte of the
+connector's roster, its agent name and plane, is read. The order is the
+point: a roster read first is a claim the server has to hold while deciding
+whether to believe it, and the gate's own contract refuses a failed peer
+before any content is read for the same reason.
+
+**Identity is the certificate's binding, and the hello carries no identity
+claim the server acts on.** Registration bound the certificate to one row
+and one plane, so the server knows which agent and which plane is connecting
+before the roster arrives, and the roster's name and plane are a check and
+not a source: a hello naming an agent or a plane other than its credential's
+is refused as a mismatch and logged against the row. The seed's link took a
+names-only hello and let the first one win, which is the failure this
+sentence keeps out: a credential in two hands could otherwise name any
+agent, and the register would hold a fact the certificate never vouched for.
+
+```graph
+node: web-link-identity-is-the-certificates-binding-never-the-roster
+kind: assertion
+tag: perturbation
+
+edge: asserts
+from: weaver-web
+to: web-link-identity-is-the-certificates-binding-never-the-roster
+```
+
+```graph
+node: web-link-refuses-a-credential-not-live-before-the-roster
+kind: assertion
+tag: perturbation
+
+edge: asserts
+from: weaver-web
+to: web-link-refuses-a-credential-not-live-before-the-roster
+```
+
+**One connection at a time per connector, ever.** A second connection on a
+credential already connected is refused rather than replacing the first, per
+the operator's ruling of 2026-10-01. Replacement would let a credential in
+two hands displace the live connector silently, with the row reading
+connected throughout; refusal makes the second hand visible as a refusal the
+server logs against the row. A reconnection on the admin plane carries the
+replay of section 7.2: within one server process the hello's answer names
+the acknowledged position and admin-con resumes from it, so a link drop is
+a delay in the server's window and never a hole in it, and across a server
+restart the window begins at a marked discontinuity.
+
+```graph
+node: web-one-live-connection-per-credential
+kind: assertion
+tag: perturbation
+
+edge: asserts
+from: weaver-web
+to: web-one-live-connection-per-credential
+```
+
+**A heartbeat on the link lets the server close a silent connection after a
+bounded interval**, so a dropped connector can reconnect under the rule above
+rather than being refused against its own dead connection. **The silence
+bound is the one tunable, a member of the server's config and set nowhere
+else**: the server tells each connector its send cadence in the answer to
+its hello, and the cadence is the bound divided by four, so an operator who
+changes the bound changes both and a client can never be configured to send
+slower than the server tolerates. **This document elects the bound at sixty
+seconds, as the planner's election of 2026-10-01 and not the operator's
+ruling**, which puts the cadence at fifteen. The reason: a turn through the
+gate takes seconds to minutes and never rides the heartbeat's path, so the
+bound answers only how long a dropped connector shows as present on every
+surface. A minute is short enough that a surface is not wrong for long and
+long enough that a link's brief loss does not churn the row. The operator
+confirms or resets it in review.
+
+**At listener start the server sets every plane recorded as connected to
+disconnected, with the start's date, before it accepts a connection.** A
+plane already disconnected keeps its date, so a surface still shows how long
+a connector has been gone. The listener's epoch of section 2.12 is
+incremented in the same act, so every observation this process lands orders
+above every one the last process left. **The reset is not an observation and is not
+subject to section 2.12's ordering rule**: it is the listener's own act on
+its own state and is unconditional for every plane recorded as connected,
+so a wall clock that moved backward across the restart, leaving the reset's
+date no newer than the stored connected date, cannot leave a row connected
+with no socket behind it.
+The link state of section 2.12 is persisted in the row and presence is
+derived from it, so without the reset a server that died and restarted
+would find both planes recorded connected with no socket behind either,
+and the heartbeat cannot clear a connection that does not exist to go
+silent. With it, **presence is only ever asserted by a connection this
+server process admitted**, and a connector that was up through the restart
+reconnects under the heartbeat's rule and is recorded again by the process
+that is actually holding it.
+
+```graph
+node: web-link-state-is-reset-when-the-listener-starts
+kind: assertion
+tag: perturbation
+
+edge: asserts
+from: weaver-web
+to: web-link-state-is-reset-when-the-listener-starts
+```
+
+**An agent is present only when both its connectors are connected from
+credentials on its row.** An agent must have both connectors on the same
+server and they must match, per the operator's ruling of 2026-10-01:
+positive identification of an agent to a server is both keys. Each
+connection is bound to one row by its certificate, so the server never has
+two planes of one agent to correlate across rows: a gate credential of one
+row and an admin credential of another are, to the server, two rows each
+missing a plane, and nothing authenticated says they were deployed
+together. So there is no cross-row mark to set. The row says which plane is
+missing, with the date, and every surface renders that rather than
+presence. One plane alone is not presence: an agent with a live gate-con
+and no admin-con has a tuple and a load state nobody has confirmed since
+the link last dropped. The address each connection came from stands in
+section 2.12 as an observation a surface may show, and never as a mark.
+
+```graph
+node: web-agent-present-only-when-both-planes-match-one-row
+kind: assertion
+tag: perturbation
+
+edge: asserts
+from: weaver-web
+to: web-agent-present-only-when-both-planes-match-one-row
+```
+
+**The tuple and the load state arrive through admin-con only**, by `show`
+and by the load event in the trace, per section 7.2. gate-con is forbidden by
+its contract from learning any of it, so a server that accepted either from
+the data plane would be writing a fact from a party that cannot know it, and
+section 2.12's row would carry a value with no source. The row's tuple and
+load state are admin's word and carry admin's date.
+
+```graph
+node: web-tuple-is-admins-word-and-never-gate-cons
+kind: assertion
+tag: perturbation
+
+edge: asserts
+from: weaver-web
+to: web-tuple-is-admins-word-and-never-gate-cons
+```
+
+**Revocation is per credential and server-side, and rotation mints a fresh
+pair.** Both are register verbs run on the server rather than surface
+edits, and each is an authored edit under section 3.2, ordered on the
+row's version, so a concurrent revoke, rotate or re-registration refuses on
+a stale version rather than overwriting a fingerprint or a state. Revoking
+sets one credential's state in section 2.12 and the next hello on it is
+refused before its roster is read, and rotating mints two new credentials
+for the row, revokes the old two, and writes a new client config for the
+install script to carry. Per the founding handoff's rule that credentials are
+revocable one at a time, and the operator's ruling that both connectors must
+match, which is why rotation is a pair and not one.
+
+**Revoking a credential closes its live connection at once, and this is
+this document's election of 2026-10-01 and not a ruling.** The reason: a
+revocation is the operator saying a credential is no longer trusted, and a
+connection that stays up until the heartbeat's sixty seconds expire, or
+until the connector chooses to reconnect, is sixty seconds or longer of a
+party the operator distrusts still relaying. So the server closes the link
+in the revoking act, the row's link state for that plane reads disconnected
+with the act's date, and the agent is no longer present under the rule
+above. Rotation therefore drops both planes until the install script carries
+the new config, and the row reads disconnected on both planes in between.
+The operator confirms or resets this in review. **Admission and revocation
+are serialized per credential**: a connection is installed as the
+credential's live connection under the same exclusion the revoking act
+takes, so the revoking act either finds the connection installed and
+closes it, or runs first and the admission rechecks liveness after
+installing and closes itself. Without that, a revocation racing a
+connection that had passed the live-fingerprint lookup but was not yet
+installed would find nothing to close, and the admission would complete on
+a revoked credential and relay until the next hello. No interleaving leaves
+a revoked credential relaying.
+
+**A link-state write is bound to the connection it describes, under the
+same exclusion.** Every connection the listener admits carries an
+incarnation of the listener's own, a link-state write names the incarnation
+it describes, and a disconnect lands only while that incarnation is still
+the credential's live connection; admission, the connected write, teardown
+and the disconnected write all run under the per-credential exclusion the
+paragraph above takes. Without the binding, a dropped connection removed
+from the live set and replaced before its socket's teardown finished would
+have the replacement record connected and the old teardown then land
+disconnected with a higher arrival number, so the row would read the plane
+missing while it was relaying.
 
 ## 9. What is enforced, and by which instrument
 
@@ -1982,16 +2615,29 @@ trial record like any other.
 | an arm frees at most one member | perturbation, at the schema: drop the partial index, one arm frees two and registers a sweep whose row carries one member and one value set |
 | an entry states the value its disposition names | perturbation, at the schema: drop the check, an entry says held and carries nothing, which is the absent-not-empty failure moved from the view into the store |
 | the task's verdict is landed and never scored here | perturbation: score a run in this crate, the verdict carries no scorer and the row claims a reading it did not receive |
+| a connection whose credential is not live is refused before its roster is read | perturbation, **owed** to the link act: accept the hello and check the register after, a revoked connector's roster lands before the refusal and a surface renders an agent nobody admitted |
+| one live connection per credential | perturbation, **owed**: let a second connection replace the first, a credential in two hands displaces the live connector silently and the row reads connected throughout; drop the serialization of admission and revocation, revoke while a hello is between its lookup and its installation, and the revoked credential relays until the next hello; let a stale teardown write disconnected after its replacement was admitted, and the row reads the plane missing while it relays |
+| a hello's identity is its certificate's binding and never its roster | perturbation, **owed**: act on the roster's name and plane, a hello on a gate credential naming another agent, or naming admin, is believed, and the seed's first-hello-wins returns through the roster |
+| at most one row per box and name holds live credentials | perturbation, **owed**, at the schema: drop the partial index, register one agent twice, and two rows each hold live credentials for one agent, so the server attributes one agent's observations and verbs to two rows |
+| the link state is reset when the listener starts | perturbation, **owed**: skip the reset, restart the server with no connector up, and a surface reads an agent present whose sockets are gone |
+| the trace file is replayed from the acknowledged position | perturbation, **owed**: drop the replay, break the link during a run and reconnect, and the server's window has a hole with no mark; truncate the file in place during the outage, let it regrow past the offset, reconnect, and the window carries the new prefix nowhere and marks nothing; drop the generation from the position, rotate the trace file during the outage, let the replacement grow past the offset, reconnect, and the window carries the replacement's prefix nowhere and marks nothing; mint the generation from process state, restart admin-con against the unchanged file, and the server receives a false discontinuity and the file again from its start; restart the server and resume from a remembered position, and the window has a hole with no mark; record a tail inside an unterminated record and resume from it, and the window carries half a record and a parse failure where an event was |
+| an agent is present only when both planes connect from one row | perturbation, **owed**: mark present on either plane alone, an agent whose admin-con is down reads present with a tuple and a load state nobody has confirmed |
+| the server's authority is loaded before the listener starts and never minted at start | perturbation, **owed**: mint the authority at start instead of loading it, restart the server, and every connector's hello is refused against a certificate it does not pin |
+| the client credential is stored as a fingerprint and never the key | perturbation, **owed**, at the schema: store the key, a read of the register is a set of credentials anyone can present |
+| the tuple is admin's word and never gate-con's | perturbation, **owed**: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it; let a replayed load event write the tuple, restart the server after an unload, backfill, and the row reads loaded; ask `show` before fixing the replay boundary, unload between the two, and the row reads loaded until the next `show`; let a `show` answer cross the link out of order with the file events around it, unload during the `show`, and the row reads loaded until the next `show`; place the answer in the stream at receipt and unload between the snapshot and the receipt, and the row reads loaded; let a `list` answer through one connection write another row, and that row reads a state its own connection never relayed; skip the drain, leave an unread load event behind the tail, invoke `show` after an unload, and the row reads loaded; run two verbs at once on one connection, and an older answer lands after a newer one |
+| nothing crosses the link in the clear | perturbation, **owed**: offer a plaintext hello to the listener, it is refused below any roster; and review, over the listener, that no plaintext accept path exists |
 
 **A watch that cannot fail is not a test.** For each perturbation above, the
 act that lands it states what removal makes it fail and confirms it does.
 
-**A row marked owed has no instrument and is not counted as enforced.** One
-stands so marked as of 2026-09-11, the batch's order, whose table section 2.11
-describes and no migration builds. The marking is the point: a row reading like
-the thirty-two beside it would tell a reader the claim is held, which is the
-same failure as a watch that passes either way and is why this table says which
-it is.
+**A row marked owed has no instrument and is not counted as enforced.** Twelve
+stand so marked as of 2026-10-01: the batch's order, whose table section 2.11
+describes and no migration builds, and the eleven rows of the link, whose
+section 8 is written before its code and whose act, the link and the register,
+lands each with the perturbation its row names. The marking is the point: a row
+reading like the enforced ones beside it would tell a reader the claim is held,
+which is the same failure as a watch that passes either way and is why this
+table says which it is.
 
 **One row left this table on 2026-09-08 rather than becoming an assertion.**
 It read that an undeclared boundary refuses the load, with a perturbation at

@@ -26,7 +26,7 @@ founding handoff's five steps, none of which has started.
   one crate at root. `toddwbucy/WeaverTools` (`44bb1ca`) is the suite repository, holding
   `experiments/` and a README; the contracts, vision and process documents are still to
   come to it. The monorepo is renamed `toddwbucy/WeaverTools-old2`, to be archived, its
-  clone at `/home/todd/Projects/WeaverTools_Project-old/WeaverTools/`. Every
+  clone beside this workspace on the thinkpad. Every
   `toddwbucy/WeaverTools` reference in this tree's documents predates the rename and
   means the monorepo.
 - **Where a connector issue goes.** This repository's `CLAUDE.md` says to file interface
@@ -83,41 +83,45 @@ carries (section 6 below).
 
 ## 4. What the next session finds on this box
 
+The box's paths, the uid and the database role were removed from this section on
+2026-10-01 before it landed, per `CLAUDE.md`'s boundary that no box path or security
+posture enters the repository, which is public. Where the layout matters it is in
+WeaverAgents' `deploy/REDEPLOY.md` and `deploy/HowToDeployANewAgent.md`.
+
 - **An installed agent stack, redeployed today from WeaverAgents at
-  `nogit-eda642e70b70`**, the tree that became `a9d9827`. Members at `/opt/weaver/bin`,
-  engine libraries at `/opt/weaver/lib`, admin's config at `/etc/weaver/admin`, agent
-  config directory `/home/todd/.weaveragents`. Two agents declared and verified: `karl`
-  (q6_k gguf, no store) and `m1` (postgres store, database and role `weaver_m1`). Neither
-  is loaded. Loading is `sudo deploy/verify-load.sh <name> --keep` from `WeaverAgents/`,
-  and the loop was proven: two turns through karl's gate answered in about 0.1 s each.
-  The procedure is `WeaverAgents/deploy/REDEPLOY.md` and
-  `deploy/HowToDeployANewAgent.md`; the log is
+  `nogit-eda642e70b70`**, the tree that became `a9d9827`: the installed members, the
+  engine libraries, admin's config and the agent config directory, where the two deploy
+  documents put them. Two agents declared and verified: `karl` (q6_k gguf, no store) and
+  `m1` (postgres store, with its own database and role). Neither is loaded. Loading is
+  `sudo deploy/verify-load.sh <name> --keep` from `WeaverAgents/`, and the loop was
+  proven: two turns through karl's gate answered in about 0.1 s each. The procedure is
+  the two deploy documents; the log is
   `WeaverAgents/docs/project/redeploy-2026-09-30-thinkpad.md`.
 - **`WeaverAgents/deploy/turn.py`**, the smallest gate client: one JSON line
-  `{"text": ...}` in on `/run/weaver-<agent>/gate.sock`, one line out, run as uid 1000
-  with no sudo, per `weaver-gate-world-contract` sections 2 and 3. **This is the reach the
-  frontend is forbidden.** It exists for proving the loop and for the matrix harness; a
-  web-con stub is the frontend's development surface, and nothing in this repository
-  dials that socket. The close line the gate returns is worth knowing the shape of:
+  `{"text": ...}` in on the agent's gate socket, one line out, run as a uid the agent's
+  declaration admits and with no sudo, per `weaver-gate-world-contract` sections 2 and
+  3. **This is the reach the frontend is forbidden.** It exists for proving the loop and
+  for the matrix harness; a web-con stub is the frontend's development surface, and
+  nothing in this repository dials that socket. The close line the gate returns is worth
+  knowing the shape of:
   `{"kind":"answered","run":"<run ref>","text":"...","turn":"t-1"}`, with `finish:
   "length"` only when the generation was cut.
 - **The operator's shell needs a fresh login after an agent is created** to carry the
   agent's group; the box was rebooted today, so it does now.
-- **PostgreSQL 18 is active and the operator has no role.** `psql` as todd fails with
-  `role "todd" does not exist`. The store's DB-backed tests and the server itself need a
-  database this repository owns; `CLAUDE.md`'s commands assume
+- **PostgreSQL 18 is active and the operator has no role.** `psql` as the operator fails
+  for want of one. The store's DB-backed tests and the server itself need a database
+  this repository owns; `CLAUDE.md`'s commands assume
   `DATABASE_URL=postgres:///<db>?host=/run/postgresql`. Making the role and database is
   the first environment act, and how the store's tests stop asserting nothing.
-- **Deposits to render** are on the bulk store, `/mnt/bulk-store/weaver-testing/`, per
-  the founding handoff: the HeroBench sessions of 2026-09-29 and 2026-09-30
+- **Deposits to render** are on the bulk store, in the testing directory the founding
+  handoff names: the HeroBench sessions of 2026-09-29 and 2026-09-30
   (`herobench-sessions-2026-09-30`, `herobench-agents-2026-09-29`,
   `herobench-positions-2026-09-29`), each with `trace.ndjson` and a state store, and the
   determinism-matrix deposits with `matrix.jsonl` and `summary.json`. Two fresh deposits
   were made today for a matrix run on the new stack,
   `determinism-matrix-thinkpad-2026-09-30-eda642e7` and its `-smoke`, each holding only a
-  `config.json` so far. The bulk store squashes root to nobody; write to it as the
-  operator.
-- **The old stack's archive** is at `/mnt/bulk-store/dev-archive-20260930-thinkpad/`:
+  `config.json` so far. Write to the bulk store as the operator.
+- **The old stack's archive** is on the bulk store too, in a directory dated 2026-09-30:
   every trace the previous agents wrote, karl's 3.8 GB among them, the m1 database dump,
   and the old declarations, verified by checksum. Old traces for a replay view are there.
 

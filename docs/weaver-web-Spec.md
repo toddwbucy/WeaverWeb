@@ -1090,8 +1090,8 @@ never a bare socket's. Each row carries:
   digest rule applied to a certificate: a read of this table is not a set of
   credentials anyone can present
 - **each connector's link state**, connected or not, with the date it last
-  changed, and **the mismatch mark** section 8 sets when the two planes
-  connect from credentials of two rows
+  changed, which is what a surface renders where the agent is not present:
+  the plane that is missing, per section 8
 - **the load state as admin's word, with its date**, which is section 7.2's
   rule restated at the row: the state is what `show` or `list` last answered
   or the trace last carried, never an inference from a socket's existence,
@@ -1130,8 +1130,8 @@ second of them is the one that records an order, so it is a writer rather than a
 change on a row another writer owns. **It was four until 2026-09-11**, the batch having
 had no row and queueing having had nothing to write. **The sixth is the link**, as of
 2026-10-01, which writes the observed members of section 2.12's registered agent, the
-address it saw, each connector's link state, the mismatch mark, and the tuple and the
-load state as admin reported them, and touches nothing else. It is a writer rather than
+address it saw, each connector's link state, and the tuple and the load state as admin
+reported them, and touches nothing else. It is a writer rather than
 an author because nobody authored what it writes: a link state is what the listener saw
 and a tuple is what admin said, each with its own date, and section 2.12 keeps them off
 the row's version for that reason. The register verb is not a seventh: it authors the
@@ -2218,14 +2218,19 @@ link's brief loss does not churn the row. The operator confirms or resets it
 in review.
 
 **An agent is present only when both its connectors are connected from
-credentials on the same row.** An agent must have both connectors on the
-same server and they must match, per the operator's ruling of 2026-10-01:
-positive identification of an agent to a server is both keys. Where the two
-planes connect from credentials of two rows the server marks both rows
-mismatched and every surface says so, rather than rendering either agent as
-present. One plane alone is not presence: an agent with a live gate-con and
-no admin-con has a tuple and a load state nobody has confirmed since the
-link last dropped.
+credentials on its row.** An agent must have both connectors on the same
+server and they must match, per the operator's ruling of 2026-10-01:
+positive identification of an agent to a server is both keys. Each
+connection is bound to one row by its certificate, so the server never has
+two planes of one agent to correlate across rows: a gate credential of one
+row and an admin credential of another are, to the server, two rows each
+missing a plane, and nothing authenticated says they were deployed
+together. So there is no cross-row mark to set. The row says which plane is
+missing, with the date, and every surface renders that rather than
+presence. One plane alone is not presence: an agent with a live gate-con
+and no admin-con has a tuple and a load state nobody has confirmed since
+the link last dropped. The address each connection came from stands in
+section 2.12 as an observation a surface may show, and never as a mark.
 
 ```graph
 node: web-agent-present-only-when-both-planes-match-one-row
@@ -2272,9 +2277,8 @@ party the operator distrusts still relaying. So the server closes the link
 in the revoking act, the row's link state for that plane reads disconnected
 with the act's date, and the agent is no longer present under the rule
 above. Rotation therefore drops both planes until the install script carries
-the new config, and the row reads disconnected and not mismatched in
-between, since both credentials are the row's own and neither came from
-another row. The operator confirms or resets this in review.
+the new config, and the row reads disconnected on both planes in between.
+The operator confirms or resets this in review.
 
 ## 9. What is enforced, and by which instrument
 

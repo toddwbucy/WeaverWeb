@@ -13,8 +13,9 @@ purpose clause is what changed and every section below it was that clause's
 consequence.
 
 **Placement is held.** The deployment topology is ruled: this crate and its
-store run on one machine, the agents on another, and the only crossing is
-store traffic and a queue. Whether these papers eventually move to a
+store run on one machine, the agents on another, and the crossings are
+store traffic, a queue, and since 2026-10-01 the connectors' link of the
+Spec's section 8. Whether these papers eventually move to a
 separate corpus follows from that but is not identical to it, and stays
 decision two of #439.
 

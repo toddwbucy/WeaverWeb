@@ -2048,15 +2048,29 @@ leaves the server's copy of the trace permanently short of every outage,
 which is the loss the tee exists to prevent. So the server answers
 admin-con's hello with the last position it holds for that row's trace,
 admin-con resumes relaying from there, and the server acknowledges as it
-lands, so the position advances. **The position is the tee file's byte
-offset**, elected over the event's sequence because the file is admin-con's
-own, written by it, so resuming needs no reading of the event schema this
-document restates none of, and a sequence would make the link depend on a
-trace field. A gap admin-con cannot fill, because the file rotated or was
-truncated below the acknowledged position, is sent as a marked discontinuity
-and never smoothed, which is the seed's own rule in `traceview.rs` and the
-contract's rule in section 3 that nothing is shed silently. Section 8's
-one-connection paragraph refers here for what a reconnection carries.
+lands, so the position advances. **The position is a pair, the tee file's
+generation and the byte offset within it.** admin-con owns the tee file, so
+it mints a generation identifier whenever it opens a new one; the identifier
+is admin-con's own, in a form the act chooses, and carries no trace field,
+for the same reason the offset is elected over the event's sequence: the
+file is admin-con's own, written by it, so resuming reads none of the event
+schema this document restates none of, and a sequence would make the link
+depend on a trace field. Both halves cross the link with every event, the
+server acknowledges both, and the hello's answer carries both. **An offset
+alone would not do**: a tee file rotated during the outage and grown past
+the acknowledged offset before admin-con reconnects is indistinguishable
+from the old one by offset, and a resume at the old offset would skip the
+replacement's prefix silently, which is why the seed's `traceview.rs`
+tracks file identity. On reconnect admin-con compares the acknowledged
+generation with the file it holds: the same generation resumes at the
+offset; a different generation means the old file was replaced, so any
+unreplayed tail of the old generation that admin-con no longer has is sent
+as a marked discontinuity and the new generation is relayed from its start.
+A gap admin-con cannot fill within one generation, because the file was
+truncated below the acknowledged offset, is sent the same way. Nothing is
+smoothed, which is the seed's own rule in `traceview.rs` and the contract's
+rule in section 3 that nothing is shed silently. Section 8's one-connection
+paragraph refers here for what a reconnection carries.
 
 ```graph
 node: web-tee-is-replayed-from-the-acknowledged-position
@@ -2384,7 +2398,7 @@ The operator confirms or resets this in review.
 | one live connection per credential | perturbation, **owed**: let a second connection replace the first, a credential in two hands displaces the live connector silently and the row reads connected throughout |
 | a hello's identity is its certificate's binding and never its roster | perturbation, **owed**: act on the roster's name and plane, a hello on a gate credential naming another agent, or naming admin, is believed, and the seed's first-hello-wins returns through the roster |
 | the link state is reset when the listener starts | perturbation, **owed**: skip the reset, restart the server with no connector up, and a surface reads an agent present whose sockets are gone |
-| the tee is replayed from the acknowledged position | perturbation, **owed**: drop the replay, break the link during a run and reconnect, and the server's trace has a hole with no mark |
+| the tee is replayed from the acknowledged position | perturbation, **owed**: drop the replay, break the link during a run and reconnect, and the server's trace has a hole with no mark; and drop the generation from the position, rotate the tee file during the outage, let the replacement grow past the offset, reconnect, and the server's trace carries the replacement's prefix nowhere and marks nothing |
 | an agent is present only when both planes connect from one row | perturbation, **owed**: mark present on either plane alone, an agent whose admin-con is down reads present with a tuple and a load state nobody has confirmed |
 | the client credential is stored as a fingerprint and never the key | perturbation, **owed**, at the schema: store the key, a read of the register is a set of credentials anyone can present |
 | the tuple is admin's word and never gate-con's | perturbation, **owed**: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it |

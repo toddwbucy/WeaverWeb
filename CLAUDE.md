@@ -50,8 +50,8 @@ Weaver-Web has three inputs and no others:
 
 **The connectors are this repository's** (design session 2026-09-30, operator 2026-10-01).
 gate-con and admin-con are two binaries that stand on the agent's box and are the one party
-that reaches it: gate-con dials the gate socket, admin-con runs the verbs and listens for the
-sink. gate-con is the operator's name for what the whiteboard called web-con. Both are
+that reaches it: gate-con dials the gate socket, admin-con runs the verbs and tails the trace
+file. gate-con is the operator's name for what the whiteboard called web-con. Both are
 **clients** of this server's listener over a mutually authenticated link, and the server
 keeps a register of agents with two credentials per agent. The design is Spec section 8 and
 the brief named above. The seed holds the start of each (`src/adapters/gate.rs`,
@@ -165,10 +165,12 @@ weaver-analysis's arrow lands.
 agent.** `adapters/gate.rs` (dials the gate socket per turn, the section 5 refusals typed) is
 the seed of gate-con. `lifecycle.rs` (`sudo weaver-admin`, three verbs, load state still
 inferred from the socket's existence) is the seed of admin-con, which gains the other three
-verbs and the sink listener. `wire.rs` and `src/bin/weaver-web-connector.rs` are the seed's
+verbs and the trace tailer. `traceview.rs`, which tails the trace file tracking its identity,
+is the seed of that tailer and carries forward (operator's ruling of 2026-10-01: the agent's
+sink is a file, not a socket). `wire.rs` and `src/bin/weaver-web-connector.rs` are the seed's
 one dialed link and are replaced by the mutual-TLS link of Spec section 8, two client
-binaries and one listener. `traceview.rs` tails a file; admin-con listens on a socket
-instead. Build the connectors as their own binaries; do not extend the seed's shape.
+binaries and one listener. Build the connectors as their own binaries; do not extend the
+seed's shape.
 
 **Still leaves: `web/`**, the legacy `/admin` routes, already answering 503, and
 `src/registry.rs`, the legacy participant model (not the register of agents). `deploy/` was

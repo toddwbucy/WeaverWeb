@@ -37,7 +37,7 @@ src/
   queue/        staged experiments and their states
   surfaces/     one module per surface of charter section 3
   seams/        the box-bound reaches of section 7, the gate client, the
-                admin verbs and the sink listener, beside the analysis
+                admin verbs and the trace tailer, beside the analysis
                 stream reader of section 7.3
   link/         the link of section 8, both halves: the listener and the
                 register verbs the server runs, and the client each
@@ -53,7 +53,7 @@ without saying which binary runs them, and `link/` had described one dialed
 link between two processes, which section 8 no longer says. The two
 connectors are named as binaries under `bin/` because the split between them
 is a split of posture and not of module: admin-con holds the sudo rule and
-the sink listener, gate-con holds a uid the agent admits and nothing more,
+the trace tailer, gate-con holds a uid the agent admits and nothing more,
 and a module tree cannot say which process carries which. **The box-bound
 reaches are linked by the two connector binaries and never by the server**,
 which is how the server's never reaching an agent is a build fact rather
@@ -1101,6 +1101,11 @@ never a bare socket's. Each row carries:
   rule restated at the row: the state is what `show` or `list` last answered
   or the trace last carried, never an inference from a socket's existence,
   and never fresher than its date says
+- **the acknowledged replay position**, the generation and the byte offset
+  of section 7.2, which the server answers admin-con's hello with. It is
+  advanced in the same transaction that lands the event it acknowledges, so
+  an acknowledgement never names an event the store does not hold, and it is
+  persisted here so a server restart can still answer the hello
 
 **It is an authored row and takes section 3.2's members.** Registration is a
 write the operator makes, so the row carries the author member and the
@@ -1110,7 +1115,11 @@ ordered on the version like any edit. **What the link observes is not an
 edit.** The observed address, the link states, the tuple and the load state
 are facts the listener and admin reported, and the link writes them as it
 learns them, each with its own date, so a reader can tell when the server
-last knew each one. They are observations rather than the operator's
+last knew each one. **An observation lands only where its source date is
+newer than the one stored for that member**: the replay of section 7.2 can
+deliver an old load event after a newer `show` answer has set the tuple or
+the load state, and a write ordered on arrival would let the older fact
+overwrite the newer one. They are observations rather than the operator's
 authorship, which is why each carries its date in the row rather than riding
 the row's version.
 
@@ -1136,11 +1145,13 @@ second of them is the one that records an order, so it is a writer rather than a
 change on a row another writer owns. **It was four until 2026-09-11**, the batch having
 had no row and queueing having had nothing to write. **The sixth is the link**, as of
 2026-10-01, which writes the observed members of section 2.12's registered agent, the
-address it saw, each connector's link state, and the tuple and the load state as admin
-reported them, and touches nothing else. It is a writer rather than
-an author because nobody authored what it writes: a link state is what the listener saw
-and a tuple is what admin said, each with its own date, and section 2.12 keeps them off
-the row's version for that reason. The register verb is not a seventh: it authors the
+address it saw, each connector's link state, the acknowledged replay position, and the
+tuple and the load state as admin reported them, and touches nothing else. It is a
+writer rather than an author because nobody authored what it writes: a link state is
+what the listener saw and a tuple is what admin said, each with its own date, and
+section 2.12 keeps them off the row's version for that reason. **Its writes are ordered
+on the observation's own date rather than on the row's version**, an older observation
+arriving late being kept out rather than refused, per section 2.12. The register verb is not a seventh: it authors the
 row's other members, the name, the box and the credentials, through section 3.2 like
 any author. **So one table has two writers at disjoint members**, and the rule below
 holds at the member for that row rather than at the table, which is stated here rather
@@ -2017,69 +2028,65 @@ socket's existence**, and no surface labels it as inferred. The seed's
 `lifecycle.rs` still infers it from the gate socket's existence, which is
 what the admin-con act replaces.
 
-**admin-con is also the sink's listener, which is the one crossing the
-contract binds.** What crosses out of the agent is the trace, NDJSON, one
-event per line, to a sink admin opens at load under root, per
-`weaver-admin-Spec` section 5. Of its three kinds, `Socket { path }` is the
-one this crate meets: admin connects to a listener the operator's tooling
-already holds, and a load with nothing listening is refused. admin-con is
-that tooling, so **admin-con is up before any agent loads with a socket
-sink**, and a load refused for want of a listener is admin-con's absence and
-renders as that. The stream is one-way and nothing behind the sink reaches
-back; what admin-con decides from reading it comes back by running a verb,
-per the contract's section 6. The load event in that stream carries the
+**What crosses out of the agent is the trace, and admin-con tails the file
+it lands in.** The trace crosses as NDJSON, one event per line, to a sink
+admin opens at load under root, per `weaver-admin-Spec` section 5, and the
+contract's section 3 names a file as a conforming sink and the record behind
+it as the operator's own. **Per the operator's ruling of 2026-10-01, the
+agent's declaration names a `File` sink, root-owned and append-only, and
+admin-con tails that file**, as the seed's `traceview.rs` already does,
+tracking the file's identity. The ruling replaced a socket sink with
+admin-con as its listener, and the reason is stated here: admin opens a
+socket sink once at load and never reconnects, so an admin-con crash while
+an agent was loaded would have lost the rest of the run's trace until the
+agent was reloaded, and closing that is WeaverAgents' work. A file sink
+loses nothing to an admin-con restart, a load needs nothing of this crate's
+to succeed, and the file is the durable record itself, so nothing needs
+teeing. The stream is one-way and nothing behind the sink reaches back; what
+admin-con decides from reading it comes back by running a verb, per the
+contract's section 6. The load event in that stream carries the
 declaration's digest, which admin computes at the inventory, so the trace and
 `show` are the two sources of section 2.12's tuple and both are admin's word.
 
-**admin-con tees the stream to an append-only file beside the agent before
-relaying it, and this is this document's election of 2026-10-01 and not a
-ruling.** The reason: durability of the record is the operator's and not the
-program's, per the contract's section 3, so what stands behind the sink is
-what decides whether a link drop loses the record. A relay alone loses
-whatever crossed while the link was down, and the trace is the primary
-artifact. The file is the operator's, at a place the client config names and
-never this repository. The planner recommended it on 2026-10-01 and the
-operator confirms or refuses it in review.
-
-**What the tee kept is replayed from an acknowledged position, and this too
-is this document's election of 2026-10-01 and not a ruling.** A tee that
-saves what crossed while the link was down and sends none of it afterward
-leaves the server's copy of the trace permanently short of every outage,
-which is the loss the tee exists to prevent. So the server answers
-admin-con's hello with the last position it holds for that row's trace,
-admin-con resumes relaying from there, and the server acknowledges as it
-lands, so the position advances. **The position is a pair, the tee file's
-generation and the byte offset within it.** admin-con owns the tee file, so
-it mints a generation identifier whenever it opens a new one; the identifier
-is admin-con's own, in a form the act chooses, and carries no trace field,
-for the same reason the offset is elected over the event's sequence: the
-file is admin-con's own, written by it, so resuming reads none of the event
-schema this document restates none of, and a sequence would make the link
-depend on a trace field. Both halves cross the link with every event, the
-server acknowledges both, and the hello's answer carries both. **An offset
-alone would not do**: a tee file rotated during the outage and grown past
-the acknowledged offset before admin-con reconnects is indistinguishable
-from the old one by offset, and a resume at the old offset would skip the
-replacement's prefix silently, which is why the seed's `traceview.rs`
-tracks file identity. On reconnect admin-con compares the acknowledged
-generation with the file it holds: the same generation resumes at the
-offset; a different generation means the old file was replaced, so any
-unreplayed tail of the old generation that admin-con no longer has is sent
-as a marked discontinuity and the new generation is relayed from its start.
-A gap admin-con cannot fill within one generation, because the file was
-truncated below the acknowledged offset, is sent the same way. Nothing is
-smoothed, which is the seed's own rule in `traceview.rs` and the contract's
-rule in section 3 that nothing is shed silently. Section 8's one-connection
+**The trace file is replayed from an acknowledged position, and this is this
+document's election of 2026-10-01 and not a ruling.** A tailer that relays
+what it reads and sends none of what it read while the link was down leaves
+the server's copy of the trace permanently short of every outage. So the
+server answers admin-con's hello with the last position it holds for that
+row's trace, admin-con resumes relaying from there, and the server
+acknowledges as it lands, so the position advances. **The position is a
+pair, a generation and the byte offset within the file.** admin-con mints a
+generation identifier whenever it observes a new file identity at the sink
+path, the device and inode `traceview.rs` tracks; the identifier is
+admin-con's own, in a form the act chooses, and carries no trace field, for
+the same reason the offset is elected over the event's sequence: resuming
+then reads none of the event schema this document restates none of, and a
+sequence would make the link depend on a trace field. Both halves cross the
+link with every event, the server acknowledges both, and the hello's answer
+carries both, the server holding the acknowledged pair on the row per
+section 2.12. **An offset alone would not do**: a trace file rotated during
+the outage and grown past the acknowledged offset before admin-con
+reconnects is indistinguishable from the old one by offset, and a resume at
+the old offset would skip the replacement's prefix silently, which is why
+`traceview.rs` tracks file identity. On reconnect admin-con compares the
+acknowledged generation with the file it holds: the same generation resumes
+at the offset; a different generation means the old file was replaced, so
+any unreplayed tail of the old generation that admin-con no longer has is
+sent as a marked discontinuity and the new generation is relayed from its
+start. A gap admin-con cannot fill within one generation, because the file
+was truncated below the acknowledged offset, is sent the same way. Nothing
+is smoothed, which is `traceview.rs`'s own rule and the contract's rule in
+section 3 that nothing is shed silently. Section 8's one-connection
 paragraph refers here for what a reconnection carries.
 
 ```graph
-node: web-tee-is-replayed-from-the-acknowledged-position
+node: web-trace-file-is-replayed-from-the-acknowledged-position
 kind: assertion
 tag: perturbation
 
 edge: asserts
 from: weaver-web
-to: web-tee-is-replayed-from-the-acknowledged-position
+to: web-trace-file-is-replayed-from-the-acknowledged-position
 ```
 
 **The observation answers from any position, a running turn included**, as
@@ -2270,8 +2277,10 @@ surface. A minute is short enough that a surface is not wrong for long and
 long enough that a link's brief loss does not churn the row. The operator
 confirms or resets it in review.
 
-**At listener start the server sets every row's link state for both planes
-to disconnected, with the start's date, before it accepts a connection.**
+**At listener start the server sets every plane recorded as connected to
+disconnected, with the start's date, before it accepts a connection.** A
+plane already disconnected keeps its date, so a surface still shows how long
+a connector has been gone.
 The link state of section 2.12 is persisted in the row and presence is
 derived from it, so without the reset a server that died and restarted
 would find both planes recorded connected with no socket behind either,
@@ -2398,7 +2407,7 @@ The operator confirms or resets this in review.
 | one live connection per credential | perturbation, **owed**: let a second connection replace the first, a credential in two hands displaces the live connector silently and the row reads connected throughout |
 | a hello's identity is its certificate's binding and never its roster | perturbation, **owed**: act on the roster's name and plane, a hello on a gate credential naming another agent, or naming admin, is believed, and the seed's first-hello-wins returns through the roster |
 | the link state is reset when the listener starts | perturbation, **owed**: skip the reset, restart the server with no connector up, and a surface reads an agent present whose sockets are gone |
-| the tee is replayed from the acknowledged position | perturbation, **owed**: drop the replay, break the link during a run and reconnect, and the server's trace has a hole with no mark; and drop the generation from the position, rotate the tee file during the outage, let the replacement grow past the offset, reconnect, and the server's trace carries the replacement's prefix nowhere and marks nothing |
+| the trace file is replayed from the acknowledged position | perturbation, **owed**: drop the replay, break the link during a run and reconnect, and the server's trace has a hole with no mark; and drop the generation from the position, rotate the trace file during the outage, let the replacement grow past the offset, reconnect, and the server's trace carries the replacement's prefix nowhere and marks nothing |
 | an agent is present only when both planes connect from one row | perturbation, **owed**: mark present on either plane alone, an agent whose admin-con is down reads present with a tuple and a load state nobody has confirmed |
 | the client credential is stored as a fingerprint and never the key | perturbation, **owed**, at the schema: store the key, a read of the register is a set of credentials anyone can present |
 | the tuple is admin's word and never gate-con's | perturbation, **owed**: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it |

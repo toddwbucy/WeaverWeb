@@ -20,7 +20,15 @@
 //! without noticing. `load` verifies the set the same way and refuses one
 //! that does not hold together. Replacing a standing set renames it aside
 //! first and the new set into place second, so the old set stays whole
-//! through the switch.
+//! through the switch. **Each invocation stages into its own directory**,
+//! named with the process id and a nonce beside the live path, and `init`
+//! switches with a rename that refuses to replace: two inits racing
+//! (`init` takes no lock, since there is no store to lock on) cannot rename
+//! each other's partial sets, the second fails cleanly with the first's
+//! set intact, and the loser's staging is removed. (An empty directory at
+//! the path, as an operator may make, is removed before the switch; a
+//! non-empty one is what the refusal names.) `rotate` runs under the
+//! authority lock and keeps its retire-then-switch shape.
 //!
 //! **The only accept path is mutual TLS with this authority as the sole
 //! trust root for client certificates**, which `server_tls` builds and
@@ -141,6 +149,61 @@ fn sibling(dir: &Path, role: &str) -> PathBuf {
     dir.with_file_name(format!("{name}.{role}"))
 }
 
+/// A staging directory of this invocation's own, beside the live path.
+fn staging_sibling(dir: &Path) -> PathBuf {
+    static NONCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let n = NONCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    sibling(
+        dir,
+        &format!("staging-{}-{n}-{nanos:x}", std::process::id()),
+    )
+}
+
+/// Whether a staging directory of any invocation stands beside the live
+/// path.
+#[cfg(test)]
+pub(crate) fn staging_stands(dir: &Path) -> bool {
+    let prefix = format!(
+        "{}.staging",
+        dir.file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "authority".into())
+    );
+    dir.parent()
+        .and_then(|parent| std::fs::read_dir(parent).ok())
+        .into_iter()
+        .flatten()
+        .flatten()
+        .any(|entry| entry.file_name().to_string_lossy().starts_with(&prefix))
+}
+
+/// Rename a directory into place, refusing to replace anything there.
+fn rename_noreplace(from: &Path, to: &Path) -> std::io::Result<()> {
+    use std::os::unix::ffi::OsStrExt;
+    let from = std::ffi::CString::new(from.as_os_str().as_bytes())
+        .map_err(|_| std::io::Error::other("a path with a NUL"))?;
+    let to = std::ffi::CString::new(to.as_os_str().as_bytes())
+        .map_err(|_| std::io::Error::other("a path with a NUL"))?;
+    // SAFETY: two NUL-terminated paths relative to the working directory.
+    let r = unsafe {
+        libc::renameat2(
+            libc::AT_FDCWD,
+            from.as_ptr(),
+            libc::AT_FDCWD,
+            to.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+    if r < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
+}
+
 fn stands(dir: &Path) -> bool {
     dir.join(AUTHORITY_CERT).exists() || dir.join(AUTHORITY_KEY).exists()
 }
@@ -160,11 +223,13 @@ fn switch_failed_message(dir: &Path) -> String {
     )
 }
 
-// A test's lever on the switch: the second rename fails once, on the
-// thread that set it, so parallel tests do not trip each other's switch.
+// Two test levers, each firing once on the thread that set it, so parallel
+// tests do not trip each other's: the switch's second rename fails, and a
+// whole second `init` runs between this one's verification and its switch.
 #[cfg(test)]
 thread_local! {
     pub(crate) static FAIL_SWITCH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    pub(crate) static CONCURRENT_INIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 impl Authority {
@@ -181,7 +246,7 @@ impl Authority {
                 dir.display()
             );
         }
-        Self::mint_into(dir, server_name, sans)
+        Self::mint_into(dir, server_name, sans, false)
     }
 
     /// Replace the authority. The caller revokes every credential in the
@@ -203,12 +268,19 @@ impl Authority {
                 dir.display()
             );
         }
-        Self::mint_into(dir, server_name, sans)
+        Self::mint_into(dir, server_name, sans, true)
     }
 
-    /// Mint a whole set into the staging directory, verify it by loading
-    /// it, and switch it into place by renaming the directory.
-    fn mint_into(dir: &Path, server_name: &str, sans: &[String]) -> anyhow::Result<Self> {
+    /// Mint a whole set into this invocation's staging directory, verify
+    /// it by loading it, and switch it into place by renaming the
+    /// directory: replacing the set that stands for a rotation, refusing to
+    /// replace anything for an init.
+    fn mint_into(
+        dir: &Path,
+        server_name: &str,
+        sans: &[String],
+        replace: bool,
+    ) -> anyhow::Result<Self> {
         use std::os::unix::fs::DirBuilderExt;
         if let Some(parent) = dir.parent()
             && !parent.as_os_str().is_empty()
@@ -216,10 +288,7 @@ impl Authority {
             std::fs::create_dir_all(parent)
                 .map_err(|e| anyhow::anyhow!("creating {}: {e}", parent.display()))?;
         }
-        let staging = sibling(dir, "staging");
-        if staging.exists() {
-            std::fs::remove_dir_all(&staging)?;
-        }
+        let staging = staging_sibling(dir);
         std::fs::DirBuilder::new()
             .mode(0o700)
             .create(&staging)
@@ -252,11 +321,19 @@ impl Authority {
 
         // The set is verified where it was written, before anything live
         // moves.
-        Self::load(&staging)?;
+        if let Err(e) = Self::load(&staging) {
+            let _ = std::fs::remove_dir_all(&staging);
+            return Err(e);
+        }
+
+        #[cfg(test)]
+        if !replace && CONCURRENT_INIT.with(|f| f.replace(false)) {
+            Self::init(dir, server_name, sans)?;
+        }
 
         let retired = sibling(dir, "retired");
         let mut retired_now = false;
-        if dir.exists() {
+        if replace && dir.exists() {
             if retired.exists() {
                 std::fs::remove_dir_all(&retired)?;
             }
@@ -268,11 +345,30 @@ impl Authority {
         #[cfg(test)]
         let switched = if FAIL_SWITCH.with(|f| f.replace(false)) {
             Err(std::io::Error::other("a test fault made the switch fail"))
-        } else {
+        } else if replace {
             std::fs::rename(&staging, dir)
+        } else {
+            rename_noreplace(&staging, dir)
         };
         #[cfg(not(test))]
-        let switched = std::fs::rename(&staging, dir);
+        let switched = if replace {
+            std::fs::rename(&staging, dir)
+        } else {
+            rename_noreplace(&staging, dir)
+        };
+        // An empty directory the operator made at the path is not an
+        // authority: it is removed (which fails on anything else) and the
+        // switch tried once more, still refusing to replace.
+        let switched = match switched {
+            Err(e) if !replace && e.kind() == std::io::ErrorKind::AlreadyExists => {
+                match std::fs::remove_dir(dir) {
+                    Ok(()) => rename_noreplace(&staging, dir),
+                    Err(rm) if rm.kind() == std::io::ErrorKind::DirectoryNotEmpty => Err(e),
+                    Err(rm) => Err(rm),
+                }
+            }
+            other => other,
+        };
         if let Err(e) = switched {
             // The window between the two renames has no authority at the
             // path: the set retired a moment ago goes back before the
@@ -289,6 +385,12 @@ impl Authority {
                 })?;
                 anyhow::bail!(
                     "switching the new set into place at {} failed: {e}; the previous authority is restored and nothing changed",
+                    dir.display()
+                );
+            }
+            if e.kind() == std::io::ErrorKind::AlreadyExists {
+                anyhow::bail!(
+                    "an authority was created at {} by a concurrent init while this one was minting; this one is discarded and the one that stands is kept",
                     dir.display()
                 );
             }
@@ -503,7 +605,33 @@ mod tests {
         // the staging remains.
         let retired = Authority::load(&sibling(&path, "retired")).unwrap();
         assert_eq!(retired.fingerprint(), made.fingerprint());
-        assert!(!sibling(&path, "staging").exists());
+        assert!(!staging_stands(&path));
+    }
+
+    /// **Two inits racing leave one whole authority.** A second init that
+    /// lands between this one's verification and its switch wins: the
+    /// switch refuses to replace it, this one is discarded with its
+    /// staging removed, and the set that stands loads whole.
+    #[test]
+    fn two_inits_racing_leave_one_whole_authority() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("authority");
+        CONCURRENT_INIT.with(|f| f.set(true));
+        let refused = Authority::init(&path, "weaver-web", &[])
+            .map(|_| ())
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("concurrent init"), "{refused}");
+        let standing = Authority::load(&path).unwrap();
+        assert_eq!(standing.server_name(), "weaver-web");
+        assert!(!staging_stands(&path), "no staging of either init remains");
+        assert!(!sibling(&path, "retired").exists());
+        // A plain init afterwards still refuses to overwrite it.
+        let refused = Authority::init(&path, "weaver-web", &[])
+            .map(|_| ())
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("already stands"), "{refused}");
     }
 
     /// **The authority is one atomic state**: a set whose halves do not
@@ -556,7 +684,7 @@ mod tests {
             Authority::load(&path).unwrap().fingerprint(),
             made.fingerprint()
         );
-        assert!(!sibling(&path, "staging").exists());
+        assert!(!staging_stands(&path));
 
         // A switch left half done by a crash between the renames.
         std::fs::rename(&path, sibling(&path, "retired")).unwrap();

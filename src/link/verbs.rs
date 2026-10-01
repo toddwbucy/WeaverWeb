@@ -236,10 +236,15 @@ fn client_config(
 /// descriptor, so a symlink at any component below `--out` refuses at the
 /// open and nothing swapped in after the open is followed: there is no
 /// check-then-open gap. An ancestor of `--out` above its canonical path is
-/// the operator's filesystem and is out of scope. The directories are
-/// nested rather than joined into one name, since a joined name is not
-/// injective and a collision would overwrite another agent's keys.
-struct ConfigDir {
+/// the operator's filesystem and is out of scope. **The box and the name
+/// directory must be the invoking user's and writable by nobody else**:
+/// a shared `--out` lets another party pre-create the predictable
+/// directory writable, and then swap an entry under it between the staging
+/// and the publish, so each is checked by its descriptor once opened and
+/// refused otherwise, naming what was found. The directories are nested
+/// rather than joined into one name, since a joined name is not injective
+/// and a collision would overwrite another agent's keys.
+pub(super) struct ConfigDir {
     fd: std::os::fd::OwnedFd,
     display: PathBuf,
 }
@@ -335,17 +340,16 @@ mod at {
         Ok(())
     }
 
-    pub fn unlink(dir: &OwnedFd, name: &str) -> io::Result<()> {
-        let name = c(name)?;
-        // SAFETY: a valid descriptor and a NUL-terminated name.
-        if unsafe { libc::unlinkat(dir.as_raw_fd(), name.as_ptr(), 0) } < 0 {
+    fn fstat(fd: libc::c_int) -> io::Result<libc::stat> {
+        // SAFETY: a valid descriptor and a zeroed stat buffer the call fills.
+        let mut st: libc::stat = unsafe { std::mem::zeroed() };
+        if unsafe { libc::fstat(fd, &mut st) } < 0 {
             return Err(io::Error::last_os_error());
         }
-        Ok(())
+        Ok(st)
     }
 
-    /// Whether an entry of any kind stands in the directory.
-    pub fn exists(dir: &OwnedFd, name: &str) -> io::Result<bool> {
+    fn fstatat_nofollow(dir: &OwnedFd, name: &str) -> io::Result<libc::stat> {
         let name = c(name)?;
         // SAFETY: a valid descriptor, a NUL-terminated name, and a zeroed
         // stat buffer the call fills.
@@ -358,14 +362,46 @@ mod at {
                 libc::AT_SYMLINK_NOFOLLOW,
             )
         };
-        if r == 0 {
-            return Ok(true);
+        if r < 0 {
+            return Err(io::Error::last_os_error());
         }
-        let e = io::Error::last_os_error();
-        if e.kind() == io::ErrorKind::NotFound {
-            Ok(false)
-        } else {
-            Err(e)
+        Ok(st)
+    }
+
+    /// The owner and the permission bits of an open descriptor.
+    pub fn owner_and_mode(fd: &OwnedFd) -> io::Result<(libc::uid_t, libc::mode_t)> {
+        let st = fstat(fd.as_raw_fd())?;
+        Ok((st.st_uid, st.st_mode & 0o7777))
+    }
+
+    /// The device and inode behind an open descriptor.
+    pub fn identity(file: &impl AsRawFd) -> io::Result<(u64, u64)> {
+        let st = fstat(file.as_raw_fd())?;
+        Ok((st.st_dev, st.st_ino))
+    }
+
+    /// The device and inode of an entry in the directory, following no
+    /// symlink.
+    pub fn identity_at(dir: &OwnedFd, name: &str) -> io::Result<(u64, u64)> {
+        let st = fstatat_nofollow(dir, name)?;
+        Ok((st.st_dev, st.st_ino))
+    }
+
+    pub fn unlink(dir: &OwnedFd, name: &str) -> io::Result<()> {
+        let name = c(name)?;
+        // SAFETY: a valid descriptor and a NUL-terminated name.
+        if unsafe { libc::unlinkat(dir.as_raw_fd(), name.as_ptr(), 0) } < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    /// Whether an entry of any kind stands in the directory.
+    pub fn exists(dir: &OwnedFd, name: &str) -> io::Result<bool> {
+        match fstatat_nofollow(dir, name) {
+            Ok(_) => Ok(true),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(false),
+            Err(e) => Err(e),
         }
     }
 }
@@ -389,16 +425,41 @@ fn describe(path: &Path, e: std::io::Error) -> anyhow::Error {
     }
 }
 
+/// The directory behind the descriptor is owned by the invoking user and
+/// carries no group or other write bit; otherwise the refusal says what
+/// was found.
+fn private(fd: &std::os::fd::OwnedFd, path: &Path) -> anyhow::Result<()> {
+    let (uid, mode) =
+        at::owner_and_mode(fd).map_err(|e| anyhow::anyhow!("reading {}: {e}", path.display()))?;
+    // SAFETY: geteuid takes nothing and cannot fail.
+    let me = unsafe { libc::geteuid() };
+    if uid != me {
+        anyhow::bail!(
+            "{} is owned by uid {uid}, not the invoking uid {me}; a config is written under no directory another party owns",
+            path.display()
+        );
+    }
+    if mode & 0o022 != 0 {
+        anyhow::bail!(
+            "{} has mode {mode:04o}, writable by group or others; a config is written under no directory another party could write",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
 impl ConfigDir {
-    fn open(out: &Path, r#box: &str, name: &str) -> anyhow::Result<Self> {
+    pub(super) fn open(out: &Path, r#box: &str, name: &str) -> anyhow::Result<Self> {
         let out = std::fs::canonicalize(out)
             .map_err(|e| anyhow::anyhow!("resolving {}: {e}", out.display()))?;
         let out_fd = at::open_dir(None, out.as_os_str()).map_err(|e| describe(&out, e))?;
         let box_display = out.join(r#box);
         let box_fd =
             at::open_or_create_dir(&out_fd, r#box).map_err(|e| describe(&box_display, e))?;
+        private(&box_fd, &box_display)?;
         let display = box_display.join(name);
         let fd = at::open_or_create_dir(&box_fd, name).map_err(|e| describe(&display, e))?;
+        private(&fd, &display)?;
         Ok(Self { fd, display })
     }
 
@@ -412,13 +473,23 @@ impl ConfigDir {
     }
 }
 
+// A test's lever on the staging write: the write after the create fails
+// once, on the thread that set it.
+#[cfg(test)]
+thread_local! {
+    pub(super) static FAIL_STAGE_WRITE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// Write one staged config under the directory's descriptor: **created new,
-/// following no symlink**, mode 0600, fully written and synced. An existing
-/// entry of any kind at the staging name refuses, since a symlink there
-/// would let a privileged register write a minted key where another owner
-/// can read it; a staging file a crashed run left behind is moved aside by
-/// the operator.
-fn stage_file(dir: &ConfigDir, entry: &str, content: &str) -> anyhow::Result<()> {
+/// following no symlink**, mode 0600, fully written and synced, answering
+/// the device and inode of the file written so the publish can check it
+/// renames that file. An existing entry of any kind at the staging name
+/// refuses, since a symlink there would let a privileged register write a
+/// minted key where another owner can read it; a staging file a crashed
+/// run left behind is moved aside by the operator. A write or sync that
+/// fails after the create unlinks the entry, so the partial file does not
+/// refuse every retry as an entry that already exists.
+fn stage_file(dir: &ConfigDir, entry: &str, content: &str) -> anyhow::Result<(u64, u64)> {
     use std::io::Write;
     let mut file = at::create_new(&dir.fd, entry).map_err(|e| {
         if e.kind() == std::io::ErrorKind::AlreadyExists {
@@ -430,39 +501,79 @@ fn stage_file(dir: &ConfigDir, entry: &str, content: &str) -> anyhow::Result<()>
             describe(&dir.path(entry), e)
         }
     })?;
-    file.write_all(content.as_bytes())?;
-    file.sync_all()?;
-    Ok(())
+    let written = (|| -> std::io::Result<(u64, u64)> {
+        #[cfg(test)]
+        if FAIL_STAGE_WRITE.with(|f| f.replace(false)) {
+            return Err(std::io::Error::other("a test fault made the write fail"));
+        }
+        file.write_all(content.as_bytes())?;
+        file.sync_all()?;
+        at::identity(&file)
+    })();
+    written.map_err(|e| {
+        let _ = at::unlink(&dir.fd, entry);
+        anyhow::anyhow!(
+            "writing {}: {e}; the partial file is removed",
+            dir.path(entry).display()
+        )
+    })
 }
 
 /// The two configs staged under the agent's directory and not yet in
 /// place: the authority's staging-then-publish shape reused. The store
 /// commits between the staging and the publish, so a store failure
 /// discards the staged files and a publish failure says exactly which file
-/// stands where. Every step is relative to the directory's descriptor.
-struct Staged {
+/// stands where. Every step is relative to the directory's descriptor, and
+/// **the publish renames the inode it staged**: the entry is read without
+/// following immediately before each rename and refused where its device
+/// and inode are not the staged file's, a tripwire behind the directory
+/// check for an entry swapped in between the staging and the publish.
+pub(super) struct Staged {
     dir: ConfigDir,
     /// The gate config's staging path and final path, for the answers.
     gate: (PathBuf, PathBuf),
     admin: (PathBuf, PathBuf),
+    /// The device and inode of each staged file.
+    gate_identity: (u64, u64),
+    admin_identity: (u64, u64),
 }
 
 impl Staged {
-    fn discard(&self) {
+    pub(super) fn discard(&self) {
         let _ = at::unlink(&self.dir.fd, &format!("{GATE_CONFIG}{STAGING}"));
         let _ = at::unlink(&self.dir.fd, &format!("{ADMIN_CONFIG}{STAGING}"));
     }
 
+    /// The entry at the staging name is still the file staged.
+    fn still_staged(&self, staging: &str, staged: (u64, u64)) -> anyhow::Result<()> {
+        let found = at::identity_at(&self.dir.fd, staging)
+            .map_err(|e| anyhow::anyhow!("reading {}: {e}", self.dir.path(staging).display()))?;
+        if found != staged {
+            anyhow::bail!(
+                "{} is not the file this run staged (device {} inode {} found, device {} inode {} staged); it is not published",
+                self.dir.path(staging).display(),
+                found.0,
+                found.1,
+                staged.0,
+                staged.1
+            );
+        }
+        Ok(())
+    }
+
     /// Rename both into place, replacing an existing config only for a
     /// rotation of the agent's own.
-    fn publish(self, replace: bool) -> anyhow::Result<(String, String)> {
-        at::rename(
-            &self.dir.fd,
-            &format!("{GATE_CONFIG}{STAGING}"),
-            GATE_CONFIG,
-            replace,
-        )
-        .map_err(|e| {
+    pub(super) fn publish(self, replace: bool) -> anyhow::Result<(String, String)> {
+        let gate_staging = format!("{GATE_CONFIG}{STAGING}");
+        let admin_staging = format!("{ADMIN_CONFIG}{STAGING}");
+        self.still_staged(&gate_staging, self.gate_identity)
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "{e}; the admin config stands staged at {}",
+                    self.admin.0.display()
+                )
+            })?;
+        at::rename(&self.dir.fd, &gate_staging, GATE_CONFIG, replace).map_err(|e| {
             anyhow::anyhow!(
                 "the gate config stands staged at {} and could not be renamed to {}: {e}; the admin config stands staged at {}",
                 self.gate.0.display(),
@@ -470,13 +581,11 @@ impl Staged {
                 self.admin.0.display()
             )
         })?;
-        at::rename(
-            &self.dir.fd,
-            &format!("{ADMIN_CONFIG}{STAGING}"),
-            ADMIN_CONFIG,
-            replace,
-        )
-        .map_err(|e| {
+        self.still_staged(&admin_staging, self.admin_identity)
+            .map_err(|e| {
+                anyhow::anyhow!("the gate config stands at {}; {e}", self.gate.1.display())
+            })?;
+        at::rename(&self.dir.fd, &admin_staging, ADMIN_CONFIG, replace).map_err(|e| {
             anyhow::anyhow!(
                 "the gate config stands at {}; the admin config stands staged at {} and could not be renamed to {}: {e}",
                 self.gate.1.display(),
@@ -491,7 +600,7 @@ impl Staged {
     }
 }
 
-fn mint_pair(
+pub(super) fn mint_pair(
     name: &str,
     authority: &Authority,
 ) -> anyhow::Result<(ClientCredential, ClientCredential)> {
@@ -501,7 +610,7 @@ fn mint_pair(
     ))
 }
 
-fn stage_pair(
+pub(super) fn stage_pair(
     cfg: &ServerConfig,
     authority: &Authority,
     dir: ConfigDir,
@@ -511,24 +620,29 @@ fn stage_pair(
 ) -> anyhow::Result<Staged> {
     let gate_staging = format!("{GATE_CONFIG}{STAGING}");
     let admin_staging = format!("{ADMIN_CONFIG}{STAGING}");
-    stage_file(
+    let gate_identity = stage_file(
         &dir,
         &gate_staging,
         &client_config(cfg, authority, name, Plane::Gate, gate),
     )?;
     // A failure staging the second leaves no minted key behind in the
     // first.
-    if let Err(e) = stage_file(
+    let admin_identity = match stage_file(
         &dir,
         &admin_staging,
         &client_config(cfg, authority, name, Plane::Admin, admin),
     ) {
-        let _ = at::unlink(&dir.fd, &gate_staging);
-        return Err(e);
-    }
+        Ok(identity) => identity,
+        Err(e) => {
+            let _ = at::unlink(&dir.fd, &gate_staging);
+            return Err(e);
+        }
+    };
     Ok(Staged {
         gate: (dir.path(&gate_staging), dir.path(GATE_CONFIG)),
         admin: (dir.path(&admin_staging), dir.path(ADMIN_CONFIG)),
+        gate_identity,
+        admin_identity,
         dir,
     })
 }

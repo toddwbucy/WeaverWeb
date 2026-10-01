@@ -2426,3 +2426,195 @@ async fn a_symlink_under_the_output_path_refuses_the_registration() {
         "nothing written at the target"
     );
 }
+
+/// **A staging write that fails leaves no entry behind.** The file created
+/// for the staging is unlinked when its write fails, so the retry is not
+/// refused by the partial file as an entry that already exists.
+#[tokio::test]
+async fn a_staging_write_that_fails_leaves_no_entry_behind() {
+    let Some(lab) = Lab::open().await else { return };
+    let cfg = lab_config(&lab);
+    let out = tempfile::tempdir().unwrap();
+    let r#box = format!("box-{}", uuid::Uuid::new_v4().simple());
+    let dir = out.path().join(&r#box).join("retry");
+
+    super::verbs::FAIL_STAGE_WRITE.with(|f| f.set(true));
+    let answer = super::verbs::register(
+        &lab.store,
+        &cfg,
+        &lab.authority,
+        &r#box,
+        "retry",
+        out.path(),
+        Some("lab"),
+    )
+    .await;
+    assert!(!answer.ok, "{}", answer.value);
+    let error = answer.value["error"].as_str().unwrap();
+    assert!(error.contains("the partial file is removed"), "{error}");
+    assert!(!dir.join("gate-con.toml.staging").exists());
+    assert!(!dir.join("admin-con.toml.staging").exists());
+    assert!(
+        lab.store
+            .resolve_agent(&format!("{box}/retry"))
+            .await
+            .is_err(),
+        "no row landed"
+    );
+
+    let answer = super::verbs::register(
+        &lab.store,
+        &cfg,
+        &lab.authority,
+        &r#box,
+        "retry",
+        out.path(),
+        Some("lab"),
+    )
+    .await;
+    assert!(answer.ok, "the retry lands: {}", answer.value);
+    assert!(dir.join("gate-con.toml").exists());
+    assert!(dir.join("admin-con.toml").exists());
+}
+
+/// **A config directory another party could write is refused.** A box or a
+/// name directory that is group- or other-writable is refused once opened,
+/// naming the mode found, and nothing is staged under it; made private, the
+/// registration lands. (A directory owned by another user is refused by
+/// the same check, which a test without root cannot stage.)
+#[tokio::test]
+async fn a_config_directory_another_party_could_write_is_refused() {
+    use std::os::unix::fs::PermissionsExt;
+    let Some(lab) = Lab::open().await else { return };
+    let cfg = lab_config(&lab);
+    let out = tempfile::tempdir().unwrap();
+    let r#box = format!("box-{}", uuid::Uuid::new_v4().simple());
+    let box_dir = out.path().join(&r#box);
+    let dir = box_dir.join("shared");
+
+    // A group-writable box directory.
+    std::fs::create_dir(&box_dir).unwrap();
+    std::fs::set_permissions(&box_dir, std::fs::Permissions::from_mode(0o770)).unwrap();
+    let answer = super::verbs::register(
+        &lab.store,
+        &cfg,
+        &lab.authority,
+        &r#box,
+        "shared",
+        out.path(),
+        Some("lab"),
+    )
+    .await;
+    assert!(!answer.ok, "{}", answer.value);
+    let error = answer.value["error"].as_str().unwrap();
+    assert!(error.contains("writable by group or others"), "{error}");
+    assert!(error.contains("0770"), "{error}");
+    assert!(!dir.exists(), "nothing is made under it");
+
+    // A private box directory and an other-writable name directory.
+    std::fs::set_permissions(&box_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o707)).unwrap();
+    let answer = super::verbs::register(
+        &lab.store,
+        &cfg,
+        &lab.authority,
+        &r#box,
+        "shared",
+        out.path(),
+        Some("lab"),
+    )
+    .await;
+    assert!(!answer.ok, "{}", answer.value);
+    let error = answer.value["error"].as_str().unwrap();
+    assert!(error.contains("writable by group or others"), "{error}");
+    assert!(error.contains("0707"), "{error}");
+    assert!(
+        std::fs::read_dir(&dir).unwrap().next().is_none(),
+        "nothing is staged under it"
+    );
+    assert!(
+        lab.store
+            .resolve_agent(&format!("{box}/shared"))
+            .await
+            .is_err(),
+        "no row landed"
+    );
+
+    // Both private: the registration lands.
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let answer = super::verbs::register(
+        &lab.store,
+        &cfg,
+        &lab.authority,
+        &r#box,
+        "shared",
+        out.path(),
+        Some("lab"),
+    )
+    .await;
+    assert!(answer.ok, "{}", answer.value);
+    assert!(dir.join("gate-con.toml").exists());
+}
+
+/// **The publish renames the inode it staged.** An entry swapped in at a
+/// staging name between the staging and the publish is not the file this
+/// run wrote, and the publish refuses it rather than renaming it into
+/// place, for the gate config before anything is published and for the
+/// admin config after the gate's is.
+#[test]
+fn a_staging_entry_swapped_before_the_publish_is_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let authority = Authority::init(&tmp.path().join("authority"), "weaver-web", &[]).unwrap();
+    let cfg = crate::config::ServerConfig {
+        listen: "127.0.0.1:0".into(),
+        link_listen: "127.0.0.1:1".into(),
+        database: String::new(),
+        authority_dir: authority.dir().to_owned(),
+        silence_bound_secs: 60,
+        link_address: None,
+        server_name: "weaver-web".into(),
+        admins: Vec::new(),
+        agent_hop_budget: 8,
+        providers: Vec::new(),
+    };
+    let out = tmp.path().join("out");
+    std::fs::create_dir(&out).unwrap();
+    let (gate, admin) = super::verbs::mint_pair("swap", &authority).unwrap();
+
+    // The gate staging entry swapped: nothing is published.
+    let dir = super::verbs::ConfigDir::open(&out, "box", "swap").unwrap();
+    let staged = super::verbs::stage_pair(&cfg, &authority, dir, "swap", &gate, &admin).unwrap();
+    let agent_dir = out.join("box").join("swap");
+    std::fs::remove_file(agent_dir.join("gate-con.toml.staging")).unwrap();
+    std::fs::write(agent_dir.join("gate-con.toml.staging"), "swapped in").unwrap();
+    let refused = staged.publish(false).unwrap_err().to_string();
+    assert!(
+        refused.contains("not the file this run staged"),
+        "{refused}"
+    );
+    assert!(refused.contains("admin config stands staged"), "{refused}");
+    assert!(!agent_dir.join("gate-con.toml").exists());
+    assert!(!agent_dir.join("admin-con.toml").exists());
+
+    // The admin staging entry swapped: the gate config stands, the admin's
+    // is refused.
+    let dir = super::verbs::ConfigDir::open(&out, "box", "swap2").unwrap();
+    let staged = super::verbs::stage_pair(&cfg, &authority, dir, "swap2", &gate, &admin).unwrap();
+    let agent_dir = out.join("box").join("swap2");
+    std::fs::remove_file(agent_dir.join("admin-con.toml.staging")).unwrap();
+    std::fs::write(agent_dir.join("admin-con.toml.staging"), "swapped in").unwrap();
+    let refused = staged.publish(false).unwrap_err().to_string();
+    assert!(refused.contains("the gate config stands at"), "{refused}");
+    assert!(
+        refused.contains("not the file this run staged"),
+        "{refused}"
+    );
+    assert!(agent_dir.join("gate-con.toml").exists());
+    assert!(!agent_dir.join("admin-con.toml").exists());
+    assert_eq!(
+        std::fs::read_to_string(agent_dir.join("admin-con.toml.staging")).unwrap(),
+        "swapped in",
+        "the swapped entry is left where it was found"
+    );
+}

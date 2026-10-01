@@ -1140,7 +1140,11 @@ member of this row at all**: every event admin-con relays from behind the
 file's tail, at a reconnection or a backfill, is marked as replayed on the
 link per section 7.2 and feeds the server's live window and nothing else.
 The tuple and the load state are written only by `show` and `list` answers
-and by events relayed live, which the arrival sequence orders. A rule that
+and by events relayed live, which the arrival sequence orders, and the
+arrival sequence carries the source's own order because admin-con sends
+everything on its connection as one ordered stream, per section 7.2, so a
+`show` answer can never overtake a lifecycle event that followed it. A rule
+that
 only kept replayed events behind what this process observed would still
 let a backfilled load event after a restart overwrite the state a newer
 `show` answer had set before it, which is why the rule is absolute rather
@@ -2169,7 +2173,16 @@ position admin-con reports as its tail at that moment, so that every event
 at or beyond it is live and every event behind it is replayed, and then
 asks `show` for the row, so the answer is admin's word from after the
 boundary and nothing that lands in the file between the two can be
-classified as history, per section 2.12.
+classified as history, per section 2.12. **admin-con emits everything it
+sends over its connection, verb answers and file events alike, as one
+ordered stream**, and a verb answer enters that stream at the moment
+admin-con receives it from the invocation, ahead of every file event
+admin-con reads after that moment and behind every one it read before.
+This holds for every verb answer and not only the admission-time `show`.
+The server's arrival number then carries the source order, so a `show`
+answer still in flight when a load or unload lands after the boundary
+cannot reach the row after the live event and overwrite it, which two
+sources ordered only by server arrival would allow.
 
 ```graph
 node: web-trace-file-is-replayed-from-the-acknowledged-position
@@ -2558,7 +2571,7 @@ missing while it was relaying.
 | an agent is present only when both planes connect from one row | perturbation, **owed**: mark present on either plane alone, an agent whose admin-con is down reads present with a tuple and a load state nobody has confirmed |
 | the server's authority is loaded before the listener starts and never minted at start | perturbation, **owed**: mint the authority at start instead of loading it, restart the server, and every connector's hello is refused against a certificate it does not pin |
 | the client credential is stored as a fingerprint and never the key | perturbation, **owed**, at the schema: store the key, a read of the register is a set of credentials anyone can present |
-| the tuple is admin's word and never gate-con's | perturbation, **owed**: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it; let a replayed load event write the tuple, restart the server after an unload, backfill, and the row reads loaded; ask `show` before fixing the replay boundary, unload between the two, and the row reads loaded until the next `show` |
+| the tuple is admin's word and never gate-con's | perturbation, **owed**: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it; let a replayed load event write the tuple, restart the server after an unload, backfill, and the row reads loaded; ask `show` before fixing the replay boundary, unload between the two, and the row reads loaded until the next `show`; let a `show` answer cross the link out of order with the file events around it, unload during the `show`, and the row reads loaded until the next `show` |
 | nothing crosses the link in the clear | perturbation, **owed**: offer a plaintext hello to the listener, it is refused below any roster; and review, over the listener, that no plaintext accept path exists |
 
 **A watch that cannot fail is not a test.** For each perturbation above, the

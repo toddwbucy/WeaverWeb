@@ -1122,7 +1122,9 @@ last knew each one. **An observation lands only where its source date is
 newer than the one stored for that member**: the replay of section 7.2 can
 deliver an old load event after a newer `show` answer has set the tuple or
 the load state, and a write ordered on arrival would let the older fact
-overwrite the newer one. They are observations rather than the operator's
+overwrite the newer one. Section 8's startup reset is excepted: it is the
+listener's own act on its own state and lands unconditionally. They are
+observations rather than the operator's
 authorship, which is why each carries its date in the row rather than riding
 the row's version.
 
@@ -2066,8 +2068,16 @@ rotation still reads as a new generation and a restarted admin-con derives
 the same generation for the same file. Minted from process state it would
 fail the other way, a restarted admin-con reading the hello's generation as
 a replacement, emitting a false discontinuity and replaying the unchanged
-file from its start. The identifier is admin-con's own, in a form the act
-chooses, and carries no trace field, for the same reason the offset is
+file from its start. **The bound is stated**: on a filesystem reporting no
+birth time the generation rests on device and inode and the last-line
+digest below, and a replacement that reuses the inode and repeats the final
+line at the same offset is accepted as the old generation. This is named
+rather than closed because closing it would need a marker of admin-con's
+own persisted beside the file, and the operator's sinks stand on
+filesystems that report birth time, so the act that meets one that does
+not is the act that adds the marker. The identifier is admin-con's own, in
+a form the act chooses, and carries no trace field, for the same reason
+the offset is
 elected over the event's sequence: resuming then reads none of the event
 schema this document restates none of, and a sequence would make the link
 depend on a trace field. **Beside the generation and the offset the
@@ -2324,7 +2334,12 @@ confirms or resets it in review.
 **At listener start the server sets every plane recorded as connected to
 disconnected, with the start's date, before it accepts a connection.** A
 plane already disconnected keeps its date, so a surface still shows how long
-a connector has been gone.
+a connector has been gone. **The reset is not an observation and is not
+subject to section 2.12's ordering rule**: it is the listener's own act on
+its own state and is unconditional for every plane recorded as connected,
+so a wall clock that moved backward across the restart, leaving the reset's
+date no newer than the stored connected date, cannot leave a row connected
+with no socket behind it.
 The link state of section 2.12 is persisted in the row and presence is
 derived from it, so without the reset a server that died and restarted
 would find both planes recorded connected with no socket behind either,

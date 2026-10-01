@@ -2206,7 +2206,14 @@ it. Every event read after the receipt is behind the answer, and nothing
 is read in between, so the snapshot the verb took somewhere inside that
 span is newer than everything ahead of it and older than everything
 behind. This holds for every verb answer and not only the admission-time
-`show`. The pause is bounded because the invocation is, the seed's
+`show`. **admin-con runs one verb at a time per connection**, each from
+its pre-invocation drain through the emission of its answer, and a second
+ask that arrives while one is in flight waits its turn in arrival order,
+so invocation spans never overlap and the ordering above holds for every
+answer; two verbs run at once would let an older answer be emitted after a
+newer one. The gate contract's rule for the data plane, one turn in flight
+per agent and a second request waits, is the same shape on this plane. The
+pause and the wait are bounded because the invocation is, the seed's
 `lifecycle.rs` capping it, and the drain is bounded by the backlog, which
 is the tailer's lag and not the file. Placed at the receipt
 instead, a file event the tailer read between the verb's snapshot and the
@@ -2603,7 +2610,7 @@ missing while it was relaying.
 | an agent is present only when both planes connect from one row | perturbation, **owed**: mark present on either plane alone, an agent whose admin-con is down reads present with a tuple and a load state nobody has confirmed |
 | the server's authority is loaded before the listener starts and never minted at start | perturbation, **owed**: mint the authority at start instead of loading it, restart the server, and every connector's hello is refused against a certificate it does not pin |
 | the client credential is stored as a fingerprint and never the key | perturbation, **owed**, at the schema: store the key, a read of the register is a set of credentials anyone can present |
-| the tuple is admin's word and never gate-con's | perturbation, **owed**: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it; let a replayed load event write the tuple, restart the server after an unload, backfill, and the row reads loaded; ask `show` before fixing the replay boundary, unload between the two, and the row reads loaded until the next `show`; let a `show` answer cross the link out of order with the file events around it, unload during the `show`, and the row reads loaded until the next `show`; place the answer in the stream at receipt and unload between the snapshot and the receipt, and the row reads loaded; let a `list` answer through one connection write another row, and that row reads a state its own connection never relayed; skip the drain, leave an unread load event behind the tail, invoke `show` after an unload, and the row reads loaded |
+| the tuple is admin's word and never gate-con's | perturbation, **owed**: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it; let a replayed load event write the tuple, restart the server after an unload, backfill, and the row reads loaded; ask `show` before fixing the replay boundary, unload between the two, and the row reads loaded until the next `show`; let a `show` answer cross the link out of order with the file events around it, unload during the `show`, and the row reads loaded until the next `show`; place the answer in the stream at receipt and unload between the snapshot and the receipt, and the row reads loaded; let a `list` answer through one connection write another row, and that row reads a state its own connection never relayed; skip the drain, leave an unread load event behind the tail, invoke `show` after an unload, and the row reads loaded; run two verbs at once on one connection, and an older answer lands after a newer one |
 | nothing crosses the link in the clear | perturbation, **owed**: offer a plaintext hello to the listener, it is refused below any roster; and review, over the listener, that no plaintext accept path exists |
 
 **A watch that cannot fail is not a test.** For each perturbation above, the

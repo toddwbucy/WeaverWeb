@@ -1116,8 +1116,19 @@ registration. **At most one row per box and name holds live credentials**,
 held at the schema by a partial unique index over the rows whose
 credentials are live, so one physical agent cannot be registered twice into
 two rows with independent credentials; re-registering a live pair retires
-the previous row by revoking its credentials in the same act. **What the link observes is not an
-edit.** The observed address, the link states, the tuple and the load state
+the previous row by revoking its credentials in the same act.
+
+```graph
+node: web-one-live-row-per-box-and-name
+kind: assertion
+tag: perturbation
+
+edge: asserts
+from: weaver-web
+to: web-one-live-row-per-box-and-name
+```
+
+**What the link observes is not an edit.** The observed address, the link states, the tuple and the load state
 are facts the listener and admin reported, and the link writes them as it
 learns them, each with its own date, so a reader can tell when the server
 last knew each one. **Observations are ordered on the server's own arrival
@@ -2183,15 +2194,21 @@ boundary and nothing that lands in the file between the two can be
 classified as history, per section 2.12. **admin-con emits everything it
 sends over its connection, verb answers and file events alike, as one
 ordered stream**, and a verb answer takes its place in that stream at the
-invocation rather than at the receipt: admin-con reads no file event
-between invoking a verb and receiving its answer, the tailer pausing for
-the invocation, then emits the answer, then resumes. Every event read
-before the invocation is ahead of the answer and every event read after
-the receipt is behind it, and nothing is read in between, so the snapshot
-the verb took somewhere inside that span is newer than everything ahead of
-it and older than everything behind. This holds for every verb answer and
-not only the admission-time `show`, and the pause is bounded because the
-invocation is, the seed's `lifecycle.rs` capping it. Placed at the receipt
+invocation rather than at the receipt: before invoking a verb admin-con
+records the file's current tail and drains to it, reading and emitting
+every event up to that position, then invokes with the tailer paused,
+receives, emits the answer, and resumes from the recorded tail. The drain
+is what makes "every event read before the invocation is ahead of the
+answer" true of every event written before it and not only of those the
+tailer happened to have read: without it an unread older load event
+behind the tail would be emitted after a newer `show` answer and overwrite
+it. Every event read after the receipt is behind the answer, and nothing
+is read in between, so the snapshot the verb took somewhere inside that
+span is newer than everything ahead of it and older than everything
+behind. This holds for every verb answer and not only the admission-time
+`show`. The pause is bounded because the invocation is, the seed's
+`lifecycle.rs` capping it, and the drain is bounded by the backlog, which
+is the tailer's lag and not the file. Placed at the receipt
 instead, a file event the tailer read between the verb's snapshot and the
 answer's arrival would stand ahead of the answer and the older snapshot
 would overwrite it. The server's arrival number then carries the source
@@ -2586,7 +2603,7 @@ missing while it was relaying.
 | an agent is present only when both planes connect from one row | perturbation, **owed**: mark present on either plane alone, an agent whose admin-con is down reads present with a tuple and a load state nobody has confirmed |
 | the server's authority is loaded before the listener starts and never minted at start | perturbation, **owed**: mint the authority at start instead of loading it, restart the server, and every connector's hello is refused against a certificate it does not pin |
 | the client credential is stored as a fingerprint and never the key | perturbation, **owed**, at the schema: store the key, a read of the register is a set of credentials anyone can present |
-| the tuple is admin's word and never gate-con's | perturbation, **owed**: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it; let a replayed load event write the tuple, restart the server after an unload, backfill, and the row reads loaded; ask `show` before fixing the replay boundary, unload between the two, and the row reads loaded until the next `show`; let a `show` answer cross the link out of order with the file events around it, unload during the `show`, and the row reads loaded until the next `show`; place the answer in the stream at receipt and unload between the snapshot and the receipt, and the row reads loaded; let a `list` answer through one connection write another row, and that row reads a state its own connection never relayed |
+| the tuple is admin's word and never gate-con's | perturbation, **owed**: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it; let a replayed load event write the tuple, restart the server after an unload, backfill, and the row reads loaded; ask `show` before fixing the replay boundary, unload between the two, and the row reads loaded until the next `show`; let a `show` answer cross the link out of order with the file events around it, unload during the `show`, and the row reads loaded until the next `show`; place the answer in the stream at receipt and unload between the snapshot and the receipt, and the row reads loaded; let a `list` answer through one connection write another row, and that row reads a state its own connection never relayed; skip the drain, leave an unread load event behind the tail, invoke `show` after an unload, and the row reads loaded |
 | nothing crosses the link in the clear | perturbation, **owed**: offer a plaintext hello to the listener, it is refused below any roster; and review, over the listener, that no plaintext accept path exists |
 
 **A watch that cannot fail is not a test.** For each perturbation above, the

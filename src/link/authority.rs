@@ -9,6 +9,19 @@
 //! stores a client certificate's fingerprint, SHA-256 over its DER, and
 //! never the key.
 //!
+//! **The authority is one atomic state.** Its five files, the authority's
+//! key and certificate, the server's key and certificate, and the name the
+//! server's certificate is verified under, are written as a set into a
+//! staging directory beside the live one, verified as a set (the server's
+//! certificate verifies under the authority's, and a certificate the key
+//! signs verifies under it), and switched into place by renaming the
+//! directory; a set written in place could be left half old and half new
+//! by a failure between two writes, and `load` would parse the halves
+//! without noticing. `load` verifies the set the same way and refuses one
+//! that does not hold together. Replacing a standing set renames it aside
+//! first and the new set into place second, so the old set stays whole
+//! through the switch.
+//!
 //! **The only accept path is mutual TLS with this authority as the sole
 //! trust root for client certificates**, which `server_tls` builds and
 //! nothing else in the crate can bypass: there is no plaintext listener.
@@ -22,7 +35,8 @@ use rcgen::{
     BasicConstraints, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
     Issuer, KeyPair, KeyUsagePurpose,
 };
-use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use rustls::client::danger::ServerCertVerifier;
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -31,6 +45,9 @@ pub const AUTHORITY_KEY: &str = "authority.key";
 pub const AUTHORITY_CERT: &str = "authority.crt";
 pub const SERVER_KEY: &str = "server.key";
 pub const SERVER_CERT: &str = "server.crt";
+/// The name the server's certificate carries and is verified under, kept
+/// with the set so `load` can verify the set without being told it.
+pub const SERVER_NAME: &str = "server_name";
 
 /// The authority's own name. **Fixed, because the issuer is rebuilt from
 /// it**: rcgen signs a leaf from the issuer's distinguished name and key,
@@ -49,6 +66,7 @@ pub struct Authority {
     certificate: CertificateDer<'static>,
     server_certificate: CertificateDer<'static>,
     server_key_pem: String,
+    server_name: String,
 }
 
 /// A client credential as minted: the certificate and its key for the
@@ -84,8 +102,7 @@ fn write_private(path: &Path, pem: &str) -> anyhow::Result<()> {
     use std::os::unix::fs::OpenOptionsExt;
     let mut file = std::fs::OpenOptions::new()
         .write(true)
-        .create(true)
-        .truncate(true)
+        .create_new(true)
         .mode(0o600)
         .open(path)
         .map_err(|e| anyhow::anyhow!("writing {}: {e}", path.display()))?;
@@ -115,26 +132,37 @@ fn provider() -> Arc<rustls::crypto::CryptoProvider> {
     Arc::new(rustls::crypto::ring::default_provider())
 }
 
+/// A sibling of the authority's directory, named for its role.
+fn sibling(dir: &Path, role: &str) -> PathBuf {
+    let name = dir
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "authority".into());
+    dir.with_file_name(format!("{name}.{role}"))
+}
+
+fn stands(dir: &Path) -> bool {
+    dir.join(AUTHORITY_CERT).exists() || dir.join(AUTHORITY_KEY).exists()
+}
+
 impl Authority {
     /// Create the authority, once. **Refuses to overwrite one that stands**:
     /// every client config pins the certificate, so replacing it is
     /// `rotate`'s and is by definition a re-registration of every agent.
     pub fn init(dir: &Path, server_name: &str, sans: &[String]) -> anyhow::Result<Self> {
-        if dir.join(AUTHORITY_CERT).exists() || dir.join(AUTHORITY_KEY).exists() {
+        if stands(dir) {
             anyhow::bail!(
                 "an authority already stands at {}; `authority rotate` replaces it, and that re-registers every agent",
                 dir.display()
             );
         }
-        std::fs::create_dir_all(dir)
-            .map_err(|e| anyhow::anyhow!("creating {}: {e}", dir.display()))?;
         Self::mint_into(dir, server_name, sans)
     }
 
     /// Replace the authority. The caller revokes every credential in the
     /// same act and says so in its answer.
     pub fn rotate(dir: &Path, server_name: &str, sans: &[String]) -> anyhow::Result<Self> {
-        if !dir.join(AUTHORITY_CERT).exists() {
+        if !stands(dir) {
             anyhow::bail!(
                 "no authority stands at {} to rotate; `authority init` creates one",
                 dir.display()
@@ -143,12 +171,30 @@ impl Authority {
         Self::mint_into(dir, server_name, sans)
     }
 
+    /// Mint a whole set into the staging directory, verify it by loading
+    /// it, and switch it into place by renaming the directory.
     fn mint_into(dir: &Path, server_name: &str, sans: &[String]) -> anyhow::Result<Self> {
+        use std::os::unix::fs::DirBuilderExt;
+        if let Some(parent) = dir.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| anyhow::anyhow!("creating {}: {e}", parent.display()))?;
+        }
+        let staging = sibling(dir, "staging");
+        if staging.exists() {
+            std::fs::remove_dir_all(&staging)?;
+        }
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&staging)
+            .map_err(|e| anyhow::anyhow!("creating {}: {e}", staging.display()))?;
+
         let key = KeyPair::generate()?;
         let params = authority_params();
         let certificate = params.self_signed(&key)?;
-        write_private(&dir.join(AUTHORITY_KEY), &key.serialize_pem())?;
-        std::fs::write(dir.join(AUTHORITY_CERT), certificate.pem())?;
+        write_private(&staging.join(AUTHORITY_KEY), &key.serialize_pem())?;
+        std::fs::write(staging.join(AUTHORITY_CERT), certificate.pem())?;
 
         let issuer = Issuer::from_params(&params, &key);
         let server_key = KeyPair::generate()?;
@@ -165,15 +211,38 @@ impl Authority {
             KeyUsagePurpose::KeyEncipherment,
         ];
         let server_certificate = server_params.signed_by(&server_key, &issuer)?;
-        write_private(&dir.join(SERVER_KEY), &server_key.serialize_pem())?;
-        std::fs::write(dir.join(SERVER_CERT), server_certificate.pem())?;
+        write_private(&staging.join(SERVER_KEY), &server_key.serialize_pem())?;
+        std::fs::write(staging.join(SERVER_CERT), server_certificate.pem())?;
+        std::fs::write(staging.join(SERVER_NAME), server_name)?;
+
+        // The set is verified where it was written, before anything live
+        // moves.
+        Self::load(&staging)?;
+
+        if dir.exists() {
+            let retired = sibling(dir, "retired");
+            if retired.exists() {
+                std::fs::remove_dir_all(&retired)?;
+            }
+            std::fs::rename(dir, &retired).map_err(|e| {
+                anyhow::anyhow!("retiring {} to {}: {e}", dir.display(), retired.display())
+            })?;
+        }
+        std::fs::rename(&staging, dir).map_err(|e| {
+            anyhow::anyhow!(
+                "switching {} into place at {}: {e}; the retired set stands beside it",
+                staging.display(),
+                dir.display()
+            )
+        })?;
         Self::load(dir)
     }
 
     /// Load the authority that stands, or refuse. **The server calls this
     /// before its listener starts and mints nothing when it is absent.**
+    /// The set is verified as a set: a half-replaced one is refused.
     pub fn load(dir: &Path) -> anyhow::Result<Self> {
-        if !dir.join(AUTHORITY_CERT).exists() || !dir.join(AUTHORITY_KEY).exists() {
+        if !stands(dir) {
             anyhow::bail!(
                 "no authority stands at {}: run `weaver-web authority init` first; the server never mints one at start, since every installed connector pins it",
                 dir.display()
@@ -185,18 +254,68 @@ impl Authority {
         let server_certificate = first_certificate(&read(dir, SERVER_CERT)?)?;
         let server_key_pem = read(dir, SERVER_KEY)?;
         private_key(&server_key_pem)?;
-        Ok(Self {
+        let server_name = read(dir, SERVER_NAME)?.trim().to_owned();
+        let authority = Self {
             dir: dir.to_owned(),
             key,
             certificate_pem,
             certificate,
             server_certificate,
             server_key_pem,
-        })
+            server_name,
+        };
+        authority.verify().map_err(|e| {
+            anyhow::anyhow!(
+                "the authority at {} does not hold together: {e:#}",
+                dir.display()
+            )
+        })?;
+        Ok(authority)
+    }
+
+    /// The set holds together: the server's certificate verifies under the
+    /// authority's as the stored name, and a certificate the authority's
+    /// key signs verifies under the authority's certificate, which is what
+    /// ties the key to the certificate without parsing either.
+    fn verify(&self) -> anyhow::Result<()> {
+        let provider = provider();
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add(self.certificate.clone())?;
+        let roots = Arc::new(roots);
+        let name = ServerName::try_from(self.server_name.clone())
+            .map_err(|e| anyhow::anyhow!("the stored server name is not a server name: {e}"))?;
+        let servers = rustls::client::WebPkiServerVerifier::builder_with_provider(
+            roots.clone(),
+            provider.clone(),
+        )
+        .build()?;
+        servers
+            .verify_server_cert(&self.server_certificate, &[], &name, &[], UnixTime::now())
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "the server certificate does not verify under the authority as {}: {e}",
+                    self.server_name
+                )
+            })?;
+        let clients =
+            rustls::server::WebPkiClientVerifier::builder_with_provider(roots, provider).build()?;
+        let probe = self.mint_client("verification", Plane::Gate)?;
+        let probe_der = first_certificate(&probe.certificate_pem)?;
+        clients
+            .verify_client_cert(&probe_der, &[], UnixTime::now())
+            .map_err(|e| {
+                anyhow::anyhow!("the authority's key does not sign under its certificate: {e}")
+            })?;
+        Ok(())
     }
 
     pub fn dir(&self) -> &Path {
         &self.dir
+    }
+
+    /// The name the server's certificate is verified under.
+    pub fn server_name(&self) -> &str {
+        &self.server_name
     }
 
     /// The authority's certificate, which every client config pins.
@@ -204,7 +323,8 @@ impl Authority {
         &self.certificate_pem
     }
 
-    /// The authority certificate's fingerprint, for the verbs' answers.
+    /// The authority certificate's fingerprint, for the verbs' answers and
+    /// for a verb's check that the set on disk is the one it loaded.
     pub fn fingerprint(&self) -> String {
         fingerprint(self.certificate.as_ref())
     }
@@ -289,7 +409,7 @@ mod tests {
     /// Perturbation: have the server mint an authority when none stands.
     /// A restart then mints another, and every connector's hello is
     /// refused against a certificate it does not pin, which the TLS pair
-    /// test below stages across two authorities.
+    /// test in `tests.rs` stages across two authorities.
     ///
     /// conforms: web-servers-authority-is-loaded-and-never-minted-at-start
     #[test]
@@ -309,6 +429,7 @@ mod tests {
         let loaded = Authority::load(&path).unwrap();
         assert_eq!(loaded.fingerprint(), made.fingerprint());
         assert_eq!(loaded.certificate_pem(), made.certificate_pem());
+        assert_eq!(loaded.server_name(), "weaver-web");
 
         let rotated = Authority::rotate(&path, "weaver-web", &[]).unwrap();
         assert_ne!(rotated.fingerprint(), made.fingerprint());
@@ -316,6 +437,37 @@ mod tests {
             Authority::load(&path).unwrap().fingerprint(),
             rotated.fingerprint()
         );
+        // The set replaced stands whole beside the new one, and nothing of
+        // the staging remains.
+        let retired = Authority::load(&sibling(&path, "retired")).unwrap();
+        assert_eq!(retired.fingerprint(), made.fingerprint());
+        assert!(!sibling(&path, "staging").exists());
+    }
+
+    /// **The authority is one atomic state**: a set whose halves do not
+    /// hold together is refused by `load`, which is what the staging
+    /// directory and the renamed switch protect.
+    #[test]
+    fn a_half_replaced_authority_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a");
+        let b = dir.path().join("b");
+        Authority::init(&a, "weaver-web", &[]).unwrap();
+        Authority::init(&b, "weaver-web", &[]).unwrap();
+        // b's server certificate under a's authority: the server half of
+        // one set and the authority half of another.
+        std::fs::copy(b.join(SERVER_CERT), a.join(SERVER_CERT)).unwrap();
+        std::fs::copy(b.join(SERVER_KEY), a.join(SERVER_KEY)).unwrap();
+        let refused = Authority::load(&a).map(|_| ()).unwrap_err().to_string();
+        assert!(refused.contains("does not hold together"), "{refused}");
+        assert!(refused.contains("server certificate"), "{refused}");
+
+        // a's key with b's certificate: the key does not sign under it.
+        let c = dir.path().join("c");
+        Authority::init(&c, "weaver-web", &[]).unwrap();
+        std::fs::copy(b.join(AUTHORITY_CERT), c.join(AUTHORITY_CERT)).unwrap();
+        let refused = Authority::load(&c).map(|_| ()).unwrap_err().to_string();
+        assert!(refused.contains("does not hold together"), "{refused}");
     }
 
     /// A minted client credential's fingerprint is SHA-256 over its DER and
@@ -323,7 +475,7 @@ mod tests {
     #[test]
     fn a_client_credential_is_fingerprinted_over_its_der() {
         let dir = tempfile::tempdir().unwrap();
-        let authority = Authority::init(dir.path(), "weaver-web", &[]).unwrap();
+        let authority = Authority::init(&dir.path().join("authority"), "weaver-web", &[]).unwrap();
         let minted = authority
             .mint_client("ag-0123456789abcdef", Plane::Gate)
             .unwrap();

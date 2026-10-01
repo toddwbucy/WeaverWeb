@@ -1370,6 +1370,17 @@ async fn an_observation_the_register_never_took_is_not_acknowledged() {
     assert!(lab.agent(&karl.id).await.load_state.is_none());
     lab.wait_for(&karl.id, "admin down", |a| !a.admin.connected)
         .await;
+    // The failed lifecycle event never entered the window.
+    let loads = |events: &[TraceEvent]| {
+        events
+            .iter()
+            .filter(|e| e.kind.as_deref() == Some("load"))
+            .count()
+    };
+    assert_eq!(
+        loads(&lab.listener.windows().snapshot(karl.id.as_str()).unwrap()),
+        0
+    );
 
     // The reconnection is answered with the pre-failure position and the
     // admission's show is asked again; the resend is acked and lands.
@@ -1400,6 +1411,11 @@ async fn an_observation_the_register_never_took_is_not_acknowledged() {
         other => panic!("expected the ack on the resend, got {other:?}"),
     }
     assert_eq!(lab.listener.acknowledged(&karl.id), Some(position(120)));
+    // The resend is the one load in the window, not a second one.
+    assert_eq!(
+        loads(&lab.listener.windows().snapshot(karl.id.as_str()).unwrap()),
+        1
+    );
     // Replayed by the new boundary, it feeds the window and writes nothing;
     // the lifecycle fact reaches the row by the show the reconnection asked.
     again
@@ -1482,4 +1498,213 @@ async fn a_second_listener_against_one_store_is_refused() {
         .await
         .expect("admitted once the first released the store");
     second.stop();
+}
+
+fn lab_config(lab: &Lab) -> crate::config::ServerConfig {
+    crate::config::ServerConfig {
+        listen: "127.0.0.1:0".into(),
+        link_listen: lab.listener.address().to_string(),
+        database: String::new(),
+        authority_dir: lab.authority.dir().to_owned(),
+        silence_bound_secs: 60,
+        link_address: None,
+        server_name: "weaver-web".into(),
+        admins: Vec::new(),
+        agent_hop_budget: 8,
+        providers: Vec::new(),
+    }
+}
+
+/// **A minting verb runs under the authority lock and under the authority
+/// on disk**: a registration waits while the lock is held, and refuses
+/// where the authority was rotated since it was loaded, so no fingerprint
+/// is committed under an authority a rotation retired.
+///
+/// Perturbation: drop the on-disk check from `register`. The registration
+/// under the stale authority commits fingerprints that die at the next
+/// restart.
+///
+/// conforms: web-servers-authority-is-loaded-and-never-minted-at-start
+#[tokio::test]
+async fn a_minting_verb_waits_for_the_authority_lock_and_refuses_a_rotated_authority() {
+    let Some(lab) = Lab::open().await else { return };
+    let cfg = lab_config(&lab);
+    let out = tempfile::tempdir().unwrap();
+    let r#box = format!("box-{}", uuid::Uuid::new_v4().simple());
+
+    // Held by this test, as a concurrent rotation would hold it.
+    let held = lab.store.authority_lock().await.unwrap();
+    let store = lab.store.clone();
+    let cfg2 = cfg.clone();
+    let out2 = out.path().to_owned();
+    let box2 = r#box.clone();
+    let authority = Authority::load(lab.authority.dir()).unwrap();
+    let registering = tokio::spawn(async move {
+        super::verbs::register(&store, &cfg2, &authority, &box2, "karl", &out2, Some("lab")).await
+    });
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert!(
+        !registering.is_finished(),
+        "register waits for the authority lock"
+    );
+    drop(held);
+    let answer = registering.await.unwrap();
+    assert!(answer.ok, "{}", answer.value);
+
+    // Rotated on disk after the verb loaded its authority: refused.
+    let stale = Authority::load(lab.authority.dir()).unwrap();
+    Authority::rotate(lab.authority.dir(), "weaver-web", &[]).unwrap();
+    let out3 = tempfile::tempdir().unwrap();
+    let answer = super::verbs::register(
+        &lab.store,
+        &cfg,
+        &stale,
+        &r#box,
+        "m1",
+        out3.path(),
+        Some("lab"),
+    )
+    .await;
+    assert!(!answer.ok);
+    let why = answer.value["error"].as_str().unwrap().to_owned();
+    assert!(why.contains("rotated since this verb loaded it"), "{why}");
+    assert!(
+        lab.store
+            .resolve_agent(&format!("{box}/m1", box = r#box))
+            .await
+            .is_err(),
+        "no row was committed under the retired authority"
+    );
+}
+
+/// **A second registration does not overwrite the first's configs**: the
+/// configs live at `<out>/<box>/<name>/` and `register` refuses to write
+/// over a file that stands, before it touches the store; `rotate` writes
+/// the agent's own over.
+#[tokio::test]
+async fn a_second_registration_does_not_overwrite_the_firsts_configs() {
+    let Some(lab) = Lab::open().await else { return };
+    let cfg = lab_config(&lab);
+    let out = tempfile::tempdir().unwrap();
+    let r#box = format!("box-{}", uuid::Uuid::new_v4().simple());
+    let first = super::verbs::register(
+        &lab.store,
+        &cfg,
+        &lab.authority,
+        &r#box,
+        "karl",
+        out.path(),
+        Some("lab"),
+    )
+    .await;
+    assert!(first.ok, "{}", first.value);
+    let gate_path = out.path().join(&r#box).join("karl").join("gate-con.toml");
+    assert!(gate_path.exists());
+    let written = std::fs::read_to_string(&gate_path).unwrap();
+    let first_id = first.value["agent"].as_str().unwrap().to_owned();
+
+    let second = super::verbs::register(
+        &lab.store,
+        &cfg,
+        &lab.authority,
+        &r#box,
+        "karl",
+        out.path(),
+        Some("lab"),
+    )
+    .await;
+    assert!(!second.ok, "{}", second.value);
+    assert!(
+        second.value["error"]
+            .as_str()
+            .unwrap()
+            .contains("already exists")
+    );
+    assert_eq!(
+        std::fs::read_to_string(&gate_path).unwrap(),
+        written,
+        "untouched"
+    );
+    let live = lab
+        .store
+        .resolve_agent(&format!("{box}/karl", box = r#box))
+        .await
+        .unwrap();
+    assert_eq!(
+        live.agent_id.as_str(),
+        first_id,
+        "the first row still holds the live credentials"
+    );
+
+    // Two agents of colliding joined names do not share a directory.
+    let other = super::verbs::register(
+        &lab.store,
+        &cfg,
+        &lab.authority,
+        &format!("{box}-karl", box = r#box),
+        "x",
+        out.path(),
+        Some("lab"),
+    )
+    .await;
+    assert!(other.ok, "{}", other.value);
+    assert_eq!(std::fs::read_to_string(&gate_path).unwrap(), written);
+
+    let rotated = super::verbs::rotate(
+        &lab.store,
+        &cfg,
+        &lab.authority,
+        &format!("{box}/karl", box = r#box),
+        out.path(),
+        Some("lab"),
+    )
+    .await;
+    assert!(rotated.ok, "{}", rotated.value);
+    assert_ne!(
+        std::fs::read_to_string(&gate_path).unwrap(),
+        written,
+        "rotate writes the agent's own over"
+    );
+    use std::os::unix::fs::PermissionsExt;
+    assert_eq!(
+        std::fs::metadata(&gate_path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    assert_eq!(
+        std::fs::metadata(out.path().join(&r#box))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o700
+    );
+}
+
+/// **A teardown the store refused is reconciled**: the row still records
+/// the incarnation as connected, so the disconnected write is retried
+/// until it lands, and presence is not asserted for a socket that is gone.
+#[tokio::test]
+async fn a_teardown_the_store_refused_is_reconciled() {
+    let Some(lab) = Lab::open().await else { return };
+    let karl = lab.register("karl").await;
+    let gate = lab.admit(&karl, Plane::Gate).await;
+    lab.listener.fail_next_teardown();
+    drop(gate);
+    let until = tokio::time::Instant::now() + SOON;
+    while lab.listener.failed_teardowns() == 0 {
+        assert!(
+            tokio::time::Instant::now() < until,
+            "the teardown was never deferred"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(
+        !lab.listener.connected(&karl.id, Plane::Gate),
+        "out of the live map"
+    );
+    lab.wait_for(&karl.id, "gate disconnected by the reconciliation", |a| {
+        !a.gate.connected
+    })
+    .await;
+    assert_eq!(lab.listener.failed_teardowns(), 0);
 }

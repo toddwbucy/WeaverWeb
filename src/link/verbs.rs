@@ -12,16 +12,23 @@
 //! thing to configure and secure for one message the store already carries.
 //! See the module header of `link`.
 //!
+//! **Every verb that mints or replaces the authority holds the authority
+//! lock across its store transaction and its file switch**, a session-level
+//! advisory lock on the store (`AUTHORITY_LOCK_KEY`), so a registration
+//! cannot mint under an authority a concurrent rotation is retiring. A verb
+//! that mints checks, inside the lock, that the authority it loaded is the
+//! one on disk before it commits a fingerprint.
+//!
 //! **No verb writes into a repository's tree.** The client configs go to
 //! the path the operator names, and the authority to the directory the
 //! server's config names.
 
 use crate::config::ServerConfig;
-use crate::link::authority::Authority;
+use crate::link::authority::{Authority, ClientCredential};
 use crate::link::frames::Plane;
 use crate::store::Store;
 use serde_json::{Value, json};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// A verb's answer: the object, and whether the exit status is success.
 pub struct Answer {
@@ -54,17 +61,28 @@ pub fn authority_init(cfg: &ServerConfig, sans: &[String]) -> Answer {
 
 /// `authority rotate`: every credential revoked, then a new authority,
 /// since every client config pinned the old certificate. **The store first
-/// and the files second**: a failure at either step leaves a state the
-/// operator can read and re-run from, every credential revoked under the
-/// old authority or under the new, where the other order could leave the
-/// files replaced with every old credential still live, the running
-/// server serving them and a restart stranding every connector.
+/// and the files second, under the authority lock**: a failure at either
+/// step leaves a state the operator can read and re-run from, every
+/// credential revoked under the old authority or under the new, where the
+/// other order could leave the files replaced with every old credential
+/// still live, the running server serving them and a restart stranding
+/// every connector. The lock keeps a concurrent registration from minting
+/// under the authority being retired.
 pub async fn authority_rotate(
     store: &Store,
     cfg: &ServerConfig,
     sans: &[String],
     author: Option<&str>,
 ) -> Answer {
+    let _lock = match store.authority_lock().await {
+        Ok(lock) => lock,
+        Err(e) => {
+            return refused(
+                "authority rotate",
+                format!("the authority lock could not be taken: {e:#}"),
+            );
+        }
+    };
     let retired = match store.revoke_every_credential(author).await {
         Ok(retired) => retired,
         Err(e) => {
@@ -104,7 +122,7 @@ fn client_config(
     authority: &Authority,
     agent_name: &str,
     plane: Plane,
-    credential: &crate::link::authority::ClientCredential,
+    credential: &ClientCredential,
 ) -> String {
     let mut table = toml::Table::new();
     table.insert("server".into(), cfg.link_address().into());
@@ -128,16 +146,38 @@ fn client_config(
     )
 }
 
-fn write_client_config(path: &Path, content: &str) -> anyhow::Result<()> {
+/// Where an agent's two client configs go: `<out>/<box>/<name>/`, nested
+/// rather than joined into one file name, since a joined name is not
+/// injective (`foo-bar/baz` and `foo/bar-baz` would collide) and a
+/// collision would overwrite another agent's keys.
+fn config_dir(out: &Path, r#box: &str, name: &str) -> PathBuf {
+    out.join(r#box).join(name)
+}
+
+fn config_paths(dir: &Path) -> (PathBuf, PathBuf) {
+    (dir.join("gate-con.toml"), dir.join("admin-con.toml"))
+}
+
+fn write_client_config(path: &Path, content: &str, may_overwrite: bool) -> anyhow::Result<()> {
     use std::io::Write;
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(path)
-        .map_err(|e| anyhow::anyhow!("writing {}: {e}", path.display()))?;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).mode(0o600);
+    if may_overwrite {
+        options.create(true).truncate(true);
+    } else {
+        options.create_new(true);
+    }
+    let mut file = options.open(path).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::AlreadyExists {
+            anyhow::anyhow!(
+                "{} already exists and this verb does not overwrite a config; move it aside, or rotate the agent",
+                path.display()
+            )
+        } else {
+            anyhow::anyhow!("writing {}: {e}", path.display())
+        }
+    })?;
     // The mode on open applies only where the file is created; a config
     // written over an older one keeps the older mode unless it is set.
     file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
@@ -146,39 +186,45 @@ fn write_client_config(path: &Path, content: &str) -> anyhow::Result<()> {
 }
 
 fn mint_pair(
-    store_agent: &str,
+    name: &str,
     authority: &Authority,
-) -> anyhow::Result<(
-    crate::link::authority::ClientCredential,
-    crate::link::authority::ClientCredential,
-)> {
+) -> anyhow::Result<(ClientCredential, ClientCredential)> {
     Ok((
-        authority.mint_client(store_agent, Plane::Gate)?,
-        authority.mint_client(store_agent, Plane::Admin)?,
+        authority.mint_client(name, Plane::Gate)?,
+        authority.mint_client(name, Plane::Admin)?,
     ))
+}
+
+/// Create the agent's config directory, `0700` at every level created.
+fn create_config_dir(dir: &Path) -> anyhow::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(dir)
+        .map_err(|e| anyhow::anyhow!("creating {}: {e}", dir.display()))
 }
 
 fn write_pair(
     cfg: &ServerConfig,
     authority: &Authority,
-    out: &Path,
-    r#box: &str,
+    dir: &Path,
     name: &str,
-    gate: &crate::link::authority::ClientCredential,
-    admin: &crate::link::authority::ClientCredential,
+    gate: &ClientCredential,
+    admin: &ClientCredential,
+    may_overwrite: bool,
 ) -> anyhow::Result<(String, String)> {
-    std::fs::create_dir_all(out).map_err(|e| anyhow::anyhow!("creating {}: {e}", out.display()))?;
-    // Named by box and name, since two agents of one name on two boxes
-    // written to one directory must not collide.
-    let gate_path = out.join(format!("{box}-{name}-gate-con.toml", box = r#box));
-    let admin_path = out.join(format!("{box}-{name}-admin-con.toml", box = r#box));
+    create_config_dir(dir)?;
+    let (gate_path, admin_path) = config_paths(dir);
     write_client_config(
         &gate_path,
         &client_config(cfg, authority, name, Plane::Gate, gate),
+        may_overwrite,
     )?;
     write_client_config(
         &admin_path,
         &client_config(cfg, authority, name, Plane::Admin, admin),
+        may_overwrite,
     )?;
     Ok((
         gate_path.display().to_string(),
@@ -186,9 +232,26 @@ fn write_pair(
     ))
 }
 
+/// The authority this verb loaded must be the one on disk, checked inside
+/// the authority lock before any fingerprint is committed: a rotation that
+/// committed between the load and the lock retired what this verb would
+/// mint under.
+fn authority_still_stands(cfg: &ServerConfig, authority: &Authority) -> anyhow::Result<()> {
+    let on_disk = Authority::load(&cfg.authority_dir)?;
+    if on_disk.fingerprint() != authority.fingerprint() {
+        anyhow::bail!(
+            "the authority was rotated since this verb loaded it ({} on disk, {} loaded); re-run",
+            &on_disk.fingerprint()[..12],
+            &authority.fingerprint()[..12]
+        );
+    }
+    Ok(())
+}
+
 /// `register <box> <name> --out <path>`: the row, the two credentials, and
 /// the two client configs. A live row for the same box and name is retired
-/// in the same transaction.
+/// in the same transaction. The configs are checked for before the store
+/// is touched, since this verb does not overwrite a config.
 pub async fn register(
     store: &Store,
     cfg: &ServerConfig,
@@ -198,6 +261,31 @@ pub async fn register(
     out: &Path,
     author: Option<&str>,
 ) -> Answer {
+    let dir = config_dir(out, r#box, name);
+    let (gate_path, admin_path) = config_paths(&dir);
+    for path in [&gate_path, &admin_path] {
+        if path.exists() {
+            return refused(
+                "register",
+                format!(
+                    "{} already exists and register does not overwrite a config; move it aside, or rotate the agent",
+                    path.display()
+                ),
+            );
+        }
+    }
+    let _lock = match store.authority_lock().await {
+        Ok(lock) => lock,
+        Err(e) => {
+            return refused(
+                "register",
+                format!("the authority lock could not be taken: {e:#}"),
+            );
+        }
+    };
+    if let Err(e) = authority_still_stands(cfg, authority) {
+        return refused("register", format!("{e:#}"));
+    }
     // The certificates name the agent by its registered name; the identity
     // the row takes is minted by the store on insert.
     let (gate, admin) = match mint_pair(name, authority) {
@@ -211,7 +299,7 @@ pub async fn register(
         Ok(x) => x,
         Err(e) => return refused("register", format!("{e:#}")),
     };
-    match write_pair(cfg, authority, out, r#box, name, &gate, &admin) {
+    match write_pair(cfg, authority, &dir, name, &gate, &admin, false) {
         Ok((gate_path, admin_path)) => Answer {
             value: json!({
                 "verb": "register",
@@ -256,7 +344,7 @@ pub async fn revoke(store: &Store, spec: &str, plane: Plane, author: Option<&str
 }
 
 /// `rotate <agent> --out <path>`: a fresh pair, the old pair revoked, new
-/// client configs written.
+/// client configs written over the agent's own.
 pub async fn rotate(
     store: &Store,
     cfg: &ServerConfig,
@@ -269,6 +357,18 @@ pub async fn rotate(
         Ok(a) => a,
         Err(e) => return refused("rotate", e),
     };
+    let _lock = match store.authority_lock().await {
+        Ok(lock) => lock,
+        Err(e) => {
+            return refused(
+                "rotate",
+                format!("the authority lock could not be taken: {e:#}"),
+            );
+        }
+    };
+    if let Err(e) = authority_still_stands(cfg, authority) {
+        return refused("rotate", format!("{e:#}"));
+    }
     let (gate, admin) = match mint_pair(&agent.name, authority) {
         Ok(pair) => pair,
         Err(e) => return refused("rotate", format!("{e:#}")),
@@ -280,15 +380,8 @@ pub async fn rotate(
         Ok(r) => r,
         Err(e) => return refused("rotate", format!("{e:#}")),
     };
-    match write_pair(
-        cfg,
-        authority,
-        out,
-        &agent.r#box,
-        &agent.name,
-        &gate,
-        &admin,
-    ) {
+    let dir = config_dir(out, &agent.r#box, &agent.name);
+    match write_pair(cfg, authority, &dir, &agent.name, &gate, &admin, true) {
         Ok((gate_path, admin_path)) => Answer {
             value: json!({
                 "verb": "rotate",

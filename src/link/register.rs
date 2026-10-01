@@ -98,6 +98,12 @@ impl Agent {
     }
 }
 
+/// The authority lock held: dropping it ends the session that holds the
+/// advisory lock, which releases it.
+pub struct AuthorityLock {
+    _connection: sqlx::PgConnection,
+}
+
 /// What the link observed and lands on the row: the load state as admin's
 /// word and the tuple as admin reported it, with admin's date.
 #[derive(Debug, Clone)]
@@ -534,6 +540,23 @@ impl Store {
         .await?;
         tx.commit().await?;
         Ok(true)
+    }
+
+    /// **The authority lock** (Spec 8): a session-level advisory lock on
+    /// `AUTHORITY_LOCK_KEY`, taken on a connection of its own and released
+    /// when the guard drops, held by every verb that mints a credential or
+    /// replaces the authority across its store transaction and its file
+    /// switch. Blocks until the lock is free, so such verbs run one at a
+    /// time.
+    pub async fn authority_lock(&self) -> anyhow::Result<AuthorityLock> {
+        let mut connection = self.pool.acquire().await?.detach();
+        sqlx::query("SELECT pg_advisory_lock($1)")
+            .bind(crate::link::listener::AUTHORITY_LOCK_KEY)
+            .execute(&mut connection)
+            .await?;
+        Ok(AuthorityLock {
+            _connection: connection,
+        })
     }
 
     /// **Run a closure under the row's lock and nothing else**: the cleanup

@@ -67,6 +67,17 @@ pub const LEAST_SILENCE_SECS: u64 = 4;
 /// first's connections disconnected.
 pub const LISTENER_LOCK_KEY: i64 = i64::from_be_bytes(*b"weaverwb");
 
+/// **The authority lock** (Spec 8): the key of the session-level advisory
+/// lock every verb that mints a credential or replaces the authority holds
+/// across its store transaction and its file switch, so a registration
+/// cannot mint under an authority a concurrent rotation is retiring and
+/// commit fingerprints that die at the next restart. A constant of this
+/// crate's for the same reason as the listener's: every process against
+/// one store must contend for the same lock whatever its config says. A
+/// second key rather than the listener's, since the listener holds its own
+/// for its life and a verb must not wait on the server.
+pub const AUTHORITY_LOCK_KEY: i64 = i64::from_be_bytes(*b"weaverca");
+
 /// A live connection as the listener holds it: the credential it was
 /// admitted on, the write path, the incarnation that every link-state write
 /// about it names, the asks it has not answered, and the close the revoking
@@ -96,6 +107,13 @@ struct Inner {
     lock: Mutex<Option<sqlx::PgConnection>>,
     /// The accept loop and the notification task, aborted by `stop`.
     tasks: Mutex<Vec<tokio::task::JoinHandle<()>>>,
+    /// Teardowns whose disconnected write the store refused: the row still
+    /// records the incarnation as connected, so each is retried until it
+    /// lands or the incarnation is superseded (a reconciliation, not a
+    /// forgetting). The startup reset covers a restart.
+    failed_teardowns: Mutex<Vec<(AgentId, Plane, i64)>>,
+    #[cfg(test)]
+    fault_next_teardown: std::sync::atomic::AtomicBool,
     /// A test's one lever on the store: the next landing fails once, so
     /// the ack's dependence on the write can be watched.
     #[cfg(test)]
@@ -187,6 +205,9 @@ impl Listener {
                 address,
                 lock: Mutex::new(Some(lock)),
                 tasks: Mutex::new(Vec::new()),
+                failed_teardowns: Mutex::new(Vec::new()),
+                #[cfg(test)]
+                fault_next_teardown: std::sync::atomic::AtomicBool::new(false),
                 #[cfg(test)]
                 fault_next_land: std::sync::atomic::AtomicBool::new(false),
             }),
@@ -227,6 +248,7 @@ impl Listener {
                             "the revocation channel failed, sweeping the live map and resuming: {e}"
                         );
                         inner.sweep_revoked().await;
+                        inner.reconcile_teardowns().await;
                         tokio::time::sleep(Duration::from_secs(1)).await;
                     }
                 }
@@ -284,6 +306,25 @@ impl Listener {
     #[cfg(test)]
     pub fn fail_next_land(&self) {
         self.inner.fault_next_land.store(true, Ordering::Relaxed);
+    }
+
+    /// Make the next teardown's store write fail, once.
+    #[cfg(test)]
+    pub fn fail_next_teardown(&self) {
+        self.inner
+            .fault_next_teardown
+            .store(true, Ordering::Relaxed);
+    }
+
+    /// Retry every teardown the store refused, once each; what the retry
+    /// task does every second while any stands, and what a sweep does.
+    pub async fn reconcile_teardowns(&self) {
+        self.inner.reconcile_teardowns().await
+    }
+
+    /// How many teardowns still wait for the store.
+    pub fn failed_teardowns(&self) -> usize {
+        self.inner.failed_teardowns.lock().unwrap().len()
     }
 
     /// Close every live connection whose credential the register no longer
@@ -380,6 +421,49 @@ impl Inner {
             );
             let _ = close.send(true);
         }
+    }
+
+    /// Retry each failed teardown's disconnected write; one that lands, or
+    /// finds its incarnation superseded, leaves the list.
+    async fn reconcile_teardowns(&self) {
+        let pending: Vec<(AgentId, Plane, i64)> = self.failed_teardowns.lock().unwrap().clone();
+        for (agent, plane, incarnation) in pending {
+            match self.store.teardown(&agent, plane, incarnation, || {}).await {
+                Ok(landed) => {
+                    tracing::info!(
+                        "{agent} ({plane}) incarnation {incarnation}: the deferred teardown {}",
+                        if landed { "landed" } else { "was superseded" }
+                    );
+                    self.failed_teardowns
+                        .lock()
+                        .unwrap()
+                        .retain(|(a, p, i)| !(*a == agent && *p == plane && *i == incarnation));
+                }
+                Err(e) => tracing::warn!(
+                    "{agent} ({plane}) incarnation {incarnation}: the deferred teardown still fails: {e:#}"
+                ),
+            }
+        }
+    }
+
+    /// Record a teardown the store refused and keep retrying it every
+    /// second until it lands or is superseded.
+    fn defer_teardown(self: &Arc<Self>, agent: AgentId, plane: Plane, incarnation: i64) {
+        self.failed_teardowns
+            .lock()
+            .unwrap()
+            .push((agent, plane, incarnation));
+        let weak = Arc::downgrade(self);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                let Some(inner) = weak.upgrade() else { return };
+                inner.reconcile_teardowns().await;
+                if inner.failed_teardowns.lock().unwrap().is_empty() {
+                    return;
+                }
+            }
+        });
     }
 
     /// Close every live connection whose credential is no longer the live
@@ -918,13 +1002,27 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
     // **Teardown bound to the incarnation, under the row's lock** (Spec 8):
     // the uninstall runs under the lock on every outcome, and the
     // disconnected write lands only while this incarnation is the live one.
-    match inner
+    #[cfg(test)]
+    let torn = if inner.fault_next_teardown.swap(false, Ordering::Relaxed) {
+        Err(anyhow::anyhow!(
+            "a test fault made this teardown's store write fail"
+        ))
+    } else {
+        inner
+            .store
+            .teardown(&agent.agent_id, plane, incarnation, || {
+                inner.remove_if_mine(&key, incarnation);
+            })
+            .await
+    };
+    #[cfg(not(test))]
+    let torn = inner
         .store
         .teardown(&agent.agent_id, plane, incarnation, || {
             inner.remove_if_mine(&key, incarnation);
         })
-        .await
-    {
+        .await;
+    match torn {
         Ok(true) => {
             if plane == Plane::Admin {
                 inner
@@ -937,8 +1035,14 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
             // entry came out under the lock and nothing else is owed.
         }
         Err(e) => {
-            tracing::error!("link from {peer}: teardown could not be written: {e:#}");
+            // The row may still record this incarnation as connected: the
+            // entry comes out of the live map, and the disconnected write
+            // is reconciled rather than forgotten.
+            tracing::error!(
+                "link from {peer}: teardown could not be written, deferred until the store answers: {e:#}"
+            );
             inner.remove_after_error(&key, incarnation).await;
+            inner.defer_teardown(agent.agent_id.clone(), plane, incarnation);
         }
     }
     pending.lock().unwrap().clear();
@@ -1065,27 +1169,40 @@ impl Inner {
             tracing::warn!("{agent}: an event carried no wall_ms, dated at receipt");
             Utc::now()
         });
-        self.windows.ingest(agent.as_str(), event);
-        if behind {
-            return true;
-        }
         let observation = match kind.as_deref() {
             // A load event means the agent was admitted and stands idle;
             // its payload is the declared tuple the trace carries, the
             // declaration's digest among it.
-            Some("load") => Observation {
+            Some("load") if !behind => Some(Observation {
                 load_state: Some("idle".into()),
                 tuple: payload,
                 at,
-            },
-            Some("unload") => Observation {
+            }),
+            Some("unload") if !behind => Some(Observation {
                 load_state: Some("unloaded".into()),
                 tuple: None,
                 at,
-            },
-            _ => return true,
+            }),
+            _ => None,
         };
-        self.land(agent, observation).await
+        // **A lifecycle event enters the window only after its landing
+        // succeeds**: landed first and then ingested, a failed write that
+        // closes the connection would leave the event in the window and the
+        // replay would ingest it a second time around the reconnect mark.
+        // Every other event enters as it arrives.
+        match observation {
+            Some(observation) => {
+                if !self.land(agent, observation).await {
+                    return false;
+                }
+                self.windows.ingest(agent.as_str(), event);
+                true
+            }
+            None => {
+                self.windows.ingest(agent.as_str(), event);
+                true
+            }
+        }
     }
 
     /// Whether the store took the observation or ordered it below the one

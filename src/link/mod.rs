@@ -29,5 +29,5 @@ mod tests;
 
 pub use authority::{Authority, ClientCredential, fingerprint};
 pub use frames::{FromClient, Plane, Position, Refusal, ToClient};
-pub use listener::Listener;
+pub use listener::{AUTHORITY_LOCK_KEY, LISTENER_LOCK_KEY, Listener};
 pub use register::{Agent, Credential, CredentialState, Observation};

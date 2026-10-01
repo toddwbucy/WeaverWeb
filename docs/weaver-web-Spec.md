@@ -1140,7 +1140,9 @@ member of this row at all**: every event admin-con relays from behind the
 file's tail, at a reconnection or a backfill, is marked as replayed on the
 link per section 7.2 and feeds the server's live window and nothing else.
 The tuple and the load state are written only by `show` and `list` answers
-and by events relayed live, which the arrival sequence orders, and the
+and by events relayed live, which the arrival sequence orders, of a `list`
+answer only the summary for the connection's own row landing per section
+7.2, and the
 arrival sequence carries the source's own order because admin-con sends
 everything on its connection as one ordered stream, per section 7.2, so a
 `show` answer can never overtake a lifecycle event that followed it. A rule
@@ -2056,7 +2058,12 @@ contract's section 6 says it cannot know.
 a channel. Each verb is an invocation, `sudo weaver-admin <verb> <agent>`,
 answering one JSON object on stdout with the exit status agreeing, per
 `weaver-admin-Spec` section 2. Six parse as of 2026-10-01: `load`, `unload`,
-`validate`, `stop`, `show` and `list`, the last taking no agent. **admin-con
+`validate`, `stop`, `show` and `list`, the last taking no agent. **Of a
+`list` answer only the summary for the connection's own credential-bound
+row lands on the row, and the other summaries write nothing**: a connection
+is bound to one row and its stream orders that row's events alone, so a
+delayed `list` answer through one agent's connection would otherwise
+overwrite another agent's newer state with nothing to order it. **admin-con
 runs them, and it is this crate's binary**, the management plane's one
 reach, so the sudo rule stands on admin-con's box and never on the server's,
 and the server asks admin-con over the link of section 8 rather than running
@@ -2175,14 +2182,22 @@ asks `show` for the row, so the answer is admin's word from after the
 boundary and nothing that lands in the file between the two can be
 classified as history, per section 2.12. **admin-con emits everything it
 sends over its connection, verb answers and file events alike, as one
-ordered stream**, and a verb answer enters that stream at the moment
-admin-con receives it from the invocation, ahead of every file event
-admin-con reads after that moment and behind every one it read before.
-This holds for every verb answer and not only the admission-time `show`.
-The server's arrival number then carries the source order, so a `show`
-answer still in flight when a load or unload lands after the boundary
-cannot reach the row after the live event and overwrite it, which two
-sources ordered only by server arrival would allow.
+ordered stream**, and a verb answer takes its place in that stream at the
+invocation rather than at the receipt: admin-con reads no file event
+between invoking a verb and receiving its answer, the tailer pausing for
+the invocation, then emits the answer, then resumes. Every event read
+before the invocation is ahead of the answer and every event read after
+the receipt is behind it, and nothing is read in between, so the snapshot
+the verb took somewhere inside that span is newer than everything ahead of
+it and older than everything behind. This holds for every verb answer and
+not only the admission-time `show`, and the pause is bounded because the
+invocation is, the seed's `lifecycle.rs` capping it. Placed at the receipt
+instead, a file event the tailer read between the verb's snapshot and the
+answer's arrival would stand ahead of the answer and the older snapshot
+would overwrite it. The server's arrival number then carries the source
+order, so a `show` answer still in flight when a load or unload lands
+after the boundary cannot reach the row after the live event and overwrite
+it, which two sources ordered only by server arrival would allow.
 
 ```graph
 node: web-trace-file-is-replayed-from-the-acknowledged-position
@@ -2571,7 +2586,7 @@ missing while it was relaying.
 | an agent is present only when both planes connect from one row | perturbation, **owed**: mark present on either plane alone, an agent whose admin-con is down reads present with a tuple and a load state nobody has confirmed |
 | the server's authority is loaded before the listener starts and never minted at start | perturbation, **owed**: mint the authority at start instead of loading it, restart the server, and every connector's hello is refused against a certificate it does not pin |
 | the client credential is stored as a fingerprint and never the key | perturbation, **owed**, at the schema: store the key, a read of the register is a set of credentials anyone can present |
-| the tuple is admin's word and never gate-con's | perturbation, **owed**: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it; let a replayed load event write the tuple, restart the server after an unload, backfill, and the row reads loaded; ask `show` before fixing the replay boundary, unload between the two, and the row reads loaded until the next `show`; let a `show` answer cross the link out of order with the file events around it, unload during the `show`, and the row reads loaded until the next `show` |
+| the tuple is admin's word and never gate-con's | perturbation, **owed**: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it; let a replayed load event write the tuple, restart the server after an unload, backfill, and the row reads loaded; ask `show` before fixing the replay boundary, unload between the two, and the row reads loaded until the next `show`; let a `show` answer cross the link out of order with the file events around it, unload during the `show`, and the row reads loaded until the next `show`; place the answer in the stream at receipt and unload between the snapshot and the receipt, and the row reads loaded; let a `list` answer through one connection write another row, and that row reads a state its own connection never relayed |
 | nothing crosses the link in the clear | perturbation, **owed**: offer a plaintext hello to the listener, it is refused below any roster; and review, over the listener, that no plaintext accept path exists |
 
 **A watch that cannot fail is not a test.** For each perturbation above, the

@@ -182,6 +182,17 @@ impl Fake {
         }
     }
 
+    /// Whether the server closed the connection: end of stream or an
+    /// error within the bound, as against a connection merely silent.
+    async fn closed(&mut self) -> bool {
+        let mut line = String::new();
+        match tokio::time::timeout(SOON, self.reader.read_line(&mut line)).await {
+            Ok(Ok(0)) | Ok(Err(_)) => true,
+            Ok(Ok(_)) => false,
+            Err(_) => false,
+        }
+    }
+
     async fn expect_refusal(&mut self, reason: Refusal) {
         match self.recv().await {
             Some(ToClient::Refusal { reason: got }) => assert_eq!(got, reason),
@@ -207,7 +218,7 @@ impl Drop for Lab {
     /// The store's lock is released before the next test's listener
     /// starts, which the serial guard alone would not order.
     fn drop(&mut self) {
-        self.listener.stop();
+        self.listener.stop_now();
     }
 }
 
@@ -236,9 +247,9 @@ impl Lab {
 
     /// A new server process over the same store and authority.
     async fn restart(&mut self) {
-        // The old listener releases the store's lock first, as a dead
-        // process's session would.
-        self.listener.stop();
+        // A dead process: nothing torn down, the lock released with the
+        // session, which is what the startup reset is for.
+        self.listener.stop_now();
         self.listener =
             Listener::start(self.store.clone(), &self.authority, "127.0.0.1:0", SILENCE)
                 .await
@@ -302,9 +313,20 @@ impl Lab {
         .await
     }
 
-    /// Connect, say hello with a tail at 100, and take the hello answer
-    /// and, on the admin plane, the `show` ask that follows it.
+    /// Connect, say hello with a tail at 100, take the hello answer and,
+    /// on the admin plane, the `show` ask that follows it, then say the
+    /// replay is caught up (nothing to replay).
     async fn admit(&self, agent: &Registered, plane: Plane) -> Fake {
+        self.admit_with(agent, plane, true).await
+    }
+
+    /// As `admit`, but the replay is left open for the test to send
+    /// replayed events before it says caught up.
+    async fn admit_replaying(&self, agent: &Registered, plane: Plane) -> Fake {
+        self.admit_with(agent, plane, false).await
+    }
+
+    async fn admit_with(&self, agent: &Registered, plane: Plane, caught_up: bool) -> Fake {
         let mut fake = self.connect(agent.credential(plane)).await;
         fake.send(FromClient::Hello {
             agent: agent.name.clone(),
@@ -322,6 +344,9 @@ impl Lab {
             match fake.recv().await {
                 Some(ToClient::Verb { verb, .. }) if verb == "show" => {}
                 other => panic!("expected the show ask after the hello answer, got {other:?}"),
+            }
+            if caught_up {
+                fake.send(FromClient::CaughtUp).await;
             }
         }
         self.wait_for(&agent.id, "connected", |a| a.credential(plane).connected)
@@ -786,7 +811,7 @@ async fn the_tuple_is_admins_word_and_never_gate_cons() {
     assert!(lab.agent(&karl.id).await.load_state.is_none());
 
     // The admin plane's show answer is admin's word.
-    let mut admin = lab.admit(&karl, Plane::Admin).await;
+    let mut admin = lab.admit_replaying(&karl, Plane::Admin).await;
     admin
         .send(FromClient::Verb {
             id: 1,
@@ -826,7 +851,8 @@ async fn the_tuple_is_admins_word_and_never_gate_cons() {
         Some("unloaded")
     );
 
-    // (3) The boundary is the hello's tail, whatever the client flags.
+    // (3) Before caught_up an event is the replay's whatever the client
+    // flags, and the boundary's offset rule is a check.
     admin
         .send(FromClient::Event {
             position: position(60),
@@ -840,8 +866,9 @@ async fn the_tuple_is_admins_word_and_never_gate_cons() {
         Some("unloaded")
     );
 
-    // A live load event at the boundary writes, and its payload is the
-    // tuple the trace carries.
+    // The replay reaches the boundary; a live load event at the boundary
+    // writes, and its payload is the tuple the trace carries.
+    admin.send(FromClient::CaughtUp).await;
     admin
         .send(FromClient::Event {
             position: position(100),
@@ -878,7 +905,7 @@ async fn the_tuple_is_admins_word_and_never_gate_cons() {
     // still writes nothing, so the row keeps the newer unload.
     drop(admin);
     lab.restart().await;
-    let mut admin = lab.admit(&karl, Plane::Admin).await;
+    let mut admin = lab.admit_replaying(&karl, Plane::Admin).await;
     admin
         .send(FromClient::Event {
             position: position(90),
@@ -1227,7 +1254,7 @@ async fn a_tailless_admin_hello_and_a_line_past_the_bound_are_malformed() {
 async fn events_of_another_generation_classify_by_the_streams_order() {
     let Some(lab) = Lab::open().await else { return };
     let karl = lab.register("karl").await;
-    let mut admin = lab.admit(&karl, Plane::Admin).await;
+    let mut admin = lab.admit_replaying(&karl, Plane::Admin).await;
     admin
         .send(FromClient::Verb {
             id: 1,
@@ -1240,8 +1267,8 @@ async fn events_of_another_generation_classify_by_the_streams_order() {
     })
     .await;
 
-    // The old generation's tail, before anything at the boundary: replayed
-    // whatever the client says.
+    // The old generation's tail, before caught_up: replayed whatever the
+    // client says.
     admin
         .send(FromClient::Event {
             position: position_in("g0", 900),
@@ -1256,17 +1283,9 @@ async fn events_of_another_generation_classify_by_the_streams_order() {
         Some("unloaded")
     );
 
-    // Crossing the boundary in its generation.
-    admin
-        .send(FromClient::Event {
-            position: position(100),
-            replayed: false,
-            event: trace_event(2, "turn", json!({})),
-        })
-        .await;
-    assert!(matches!(admin.recv().await, Some(ToClient::Ack { .. })));
-
-    // A rotation after the hello: live, whatever the client says.
+    // The replay reaches the boundary; a rotation after the hello is live,
+    // whatever the client says.
+    admin.send(FromClient::CaughtUp).await;
     admin
         .send(FromClient::Event {
             position: position_in("g2", 0),
@@ -1281,6 +1300,41 @@ async fn events_of_another_generation_classify_by_the_streams_order() {
         })
         .await;
     assert_eq!(row.tuple, Some(json!({"declaration": "sha-rotated"})));
+    drop(admin);
+    lab.wait_for(&karl.id, "admin down", |a| !a.admin.connected)
+        .await;
+
+    // A file rotated after the hello before any event of the boundary's
+    // generation reached the boundary: caught_up at once, and the new
+    // generation's first event is live.
+    let mut admin = lab.admit(&karl, Plane::Admin).await;
+    admin
+        .send(FromClient::Event {
+            position: position_in("g3", 0),
+            replayed: false,
+            event: trace_event(4, "unload", json!({})),
+        })
+        .await;
+    assert!(matches!(admin.recv().await, Some(ToClient::Ack { .. })));
+    lab.wait_for(&karl.id, "unloaded from the rotated file", |a| {
+        a.load_state.as_deref() == Some("unloaded")
+    })
+    .await;
+    drop(admin);
+    lab.wait_for(&karl.id, "admin down", |a| !a.admin.connected)
+        .await;
+
+    // An event at or beyond the boundary in its generation before
+    // caught_up is a protocol fault.
+    let mut admin = lab.admit_replaying(&karl, Plane::Admin).await;
+    admin
+        .send(FromClient::Event {
+            position: position(100),
+            replayed: false,
+            event: trace_event(5, "turn", json!({})),
+        })
+        .await;
+    admin.expect_refusal(Refusal::Malformed).await;
 }
 
 /// **A load or unload event carries admin's date**, the trace's own
@@ -1501,11 +1555,11 @@ async fn a_second_listener_against_one_store_is_refused() {
         .to_string();
     assert!(refused.contains("another weaver-web listener"), "{refused}");
 
-    lab.listener.stop();
+    lab.listener.stop().await;
     let second = Listener::start(lab.store.clone(), &lab.authority, "127.0.0.1:0", SILENCE)
         .await
         .expect("admitted once the first released the store");
-    second.stop();
+    second.stop().await;
 }
 
 fn lab_config(lab: &Lab) -> crate::config::ServerConfig {
@@ -1728,6 +1782,9 @@ async fn the_listener_halts_when_its_lock_session_is_lost() {
     };
     let karl = lab.register("karl").await;
     let mut gate = lab.admit(&karl, Plane::Gate).await;
+    // Handshaken but yet to say hello: a connection task halt must end
+    // too, before the next listener can be admitted.
+    let mut mid_hello = lab.connect(&karl.admin).await;
     sqlx::query("SELECT pg_terminate_backend($1)")
         .bind(lab.listener.lock_pid())
         .execute(&lab.store.pool)
@@ -1737,13 +1794,17 @@ async fn the_listener_halts_when_its_lock_session_is_lost() {
         .await
         .expect("the listener halts within a few cadences");
     assert!(why.contains("lock was lost"), "{why}");
-    assert!(gate.recv().await.is_none(), "every connection is closed");
+    assert!(gate.closed().await, "every connection is closed");
+    assert!(
+        mid_hello.closed().await,
+        "a connection still handshaking or waiting for its hello is dropped too"
+    );
     lab.wait_for(&karl.id, "gate down", |a| !a.gate.connected)
         .await;
     let next = Listener::start(lab.store.clone(), &lab.authority, "127.0.0.1:0", SILENCE)
         .await
         .expect("the store is free for the next listener");
-    next.stop();
+    next.stop().await;
 }
 
 /// **The config's server name must be the authority's**: a client config

@@ -110,8 +110,19 @@ struct Inner {
     /// Set once, with why, when the listener halted itself; what the
     /// binary awaits so the process exits for its supervisor to restart.
     halted: tokio::sync::watch::Sender<Option<String>>,
-    /// The accept loop and the notification task, aborted by `stop`.
+    /// The accept loop and the notification task, aborted by `stop` and
+    /// by `halt`.
     tasks: Mutex<Vec<tokio::task::JoinHandle<()>>>,
+    /// Every connection task, handshaking or admitted, so `halt` and
+    /// `stop` abort and drain them all before the lock's session ends: a
+    /// replacement listener must not take the lock while an old task can
+    /// still admit the same credential.
+    connections: Mutex<tokio::task::JoinSet<()>>,
+    /// The monitor task, which owns the lock's connection; aborted last.
+    monitor: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// Set when the listener quiesces, so a connection still handshaking
+    /// or waiting for its hello ends on its own rather than by abort.
+    halting: watch::Sender<bool>,
     /// Teardowns whose disconnected write the store refused: the row still
     /// records the incarnation as connected, so each is retried until it
     /// lands or the incarnation is superseded (a reconciliation, not a
@@ -215,6 +226,9 @@ impl Listener {
                 lock_pid,
                 halted,
                 tasks: Mutex::new(Vec::new()),
+                connections: Mutex::new(tokio::task::JoinSet::new()),
+                monitor: Mutex::new(None),
+                halting: watch::channel(false).0,
                 failed_teardowns: Mutex::new(Vec::new()),
                 #[cfg(test)]
                 fault_next_teardown: std::sync::atomic::AtomicBool::new(false),
@@ -236,7 +250,9 @@ impl Listener {
                     }
                 };
                 let Some(inner) = weak.upgrade() else { return };
-                tokio::spawn(serve_connection(inner, stream, peer));
+                let mut set = inner.connections.lock().unwrap();
+                while set.try_join_next().is_some() {}
+                set.spawn(serve_connection(inner.clone(), stream, peer));
             }
         });
 
@@ -287,9 +303,11 @@ impl Listener {
                 };
                 if let Some(why) = lost {
                     let Some(inner) = weak.upgrade() else { return };
-                    inner.halt(format!(
-                        "the session holding the listener's lock was lost ({why}); another listener may already hold the store, so this one stops rather than reacquiring"
-                    ));
+                    inner
+                        .halt(format!(
+                            "the session holding the listener's lock was lost ({why}); another listener may already hold the store, so this one stops rather than reacquiring"
+                        ))
+                        .await;
                     return;
                 }
             }
@@ -299,7 +317,8 @@ impl Listener {
             .tasks
             .lock()
             .unwrap()
-            .extend([accept, notify, monitor]);
+            .extend([accept, notify]);
+        *listener.inner.monitor.lock().unwrap() = Some(monitor);
         Ok(listener)
     }
 
@@ -325,11 +344,26 @@ impl Listener {
     /// may start against the store. Connections already admitted run to
     /// their own close; the process that owned them is, in the real case,
     /// gone.
-    pub fn stop(&self) {
-        // The monitor task owns the lock's connection; aborting it drops
-        // the connection, and the session's end releases the lock.
+    pub async fn stop(&self) {
+        // Nothing more accepted, every connection task aborted and
+        // drained, and only then the monitor, whose dropped connection
+        // ends the session and releases the lock.
+        self.inner.quiesce().await;
+        if let Some(monitor) = self.inner.monitor.lock().unwrap().take() {
+            monitor.abort();
+        }
+    }
+
+    /// `stop` for a place that cannot await: everything aborted, nothing
+    /// drained. The lock's release may then precede a connection task's
+    /// end by the moment it takes to drop.
+    pub fn stop_now(&self) {
         for task in self.inner.tasks.lock().unwrap().drain(..) {
             task.abort();
+        }
+        self.inner.connections.lock().unwrap().abort_all();
+        if let Some(monitor) = self.inner.monitor.lock().unwrap().take() {
+            monitor.abort();
         }
     }
 
@@ -554,11 +588,22 @@ impl Inner {
 
     /// Stop everything: no more accepts, every live connection closed,
     /// and `halted` set with why. Nothing is reacquired.
-    fn halt(&self, why: String) {
+    async fn halt(&self, why: String) {
         tracing::error!("the listener halts: {why}");
+        self.quiesce().await;
+        let _ = self.halted.send(Some(why));
+    }
+
+    /// Stop accepting and notifying, tell every connection task to end
+    /// (the admitted ones tear down and write their disconnected state,
+    /// the handshaking ones return), wait for them, and abort whatever is
+    /// still running after a grace period, so the lock's session ends only
+    /// once no task of this listener can admit anything.
+    async fn quiesce(&self) {
         for task in self.tasks.lock().unwrap().drain(..) {
             task.abort();
         }
+        let _ = self.halting.send(true);
         let closes: Vec<watch::Sender<bool>> = self
             .live
             .lock()
@@ -569,7 +614,16 @@ impl Inner {
         for close in closes {
             let _ = close.send(true);
         }
-        let _ = self.halted.send(Some(why));
+        let mut set = std::mem::take(&mut *self.connections.lock().unwrap());
+        let graceful = tokio::time::timeout(Duration::from_secs(5), async {
+            while set.join_next().await.is_some() {}
+        })
+        .await;
+        if graceful.is_err() {
+            tracing::warn!("connection tasks still running after the grace period are aborted");
+            set.abort_all();
+            while set.join_next().await.is_some() {}
+        }
     }
 
     fn next_arrival(&self) -> i64 {
@@ -669,15 +723,21 @@ async fn refuse(tx: mpsc::Sender<ToClient>, writer: tokio::task::JoinHandle<()>,
 }
 
 async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr) {
+    let mut halting = inner.halting.subscribe();
+    if *halting.borrow() {
+        return;
+    }
     // **The handshake is the only door**: a peer that does not complete
     // mutual TLS with a certificate this authority signed is dropped here,
     // and nothing it wrote was read as a frame.
-    let tls = match tokio::time::timeout(
-        Duration::from_secs(HANDSHAKE_SECS),
-        inner.acceptor.accept(stream),
-    )
-    .await
-    {
+    let handshake = tokio::select! {
+        h = tokio::time::timeout(Duration::from_secs(HANDSHAKE_SECS), inner.acceptor.accept(stream)) => h,
+        _ = halting.changed() => {
+            tracing::info!("link from {peer}: the listener is halting, the handshake is dropped");
+            return;
+        }
+    };
+    let tls = match handshake {
         Ok(Ok(tls)) => tls,
         Ok(Err(e)) => {
             tracing::warn!("link handshake from {peer} failed, refused in the clear: {e}");
@@ -750,11 +810,15 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
 
     // The hello has the handshake's bound, not the silence bound: a peer
     // that authenticated and then says nothing is not a connector yet.
-    let hello = tokio::time::timeout(
-        Duration::from_secs(HANDSHAKE_SECS),
-        read_line(&mut reader, &mut buf),
-    )
-    .await;
+    let hello = tokio::select! {
+        h = tokio::time::timeout(Duration::from_secs(HANDSHAKE_SECS), read_line(&mut reader, &mut buf)) => h,
+        _ = halting.changed() => {
+            tracing::info!("link from {peer}: the listener is halting before the hello, dropped");
+            drop(tx);
+            let _ = writer.await;
+            return;
+        }
+    };
     let (name, said_plane, tail) = match hello {
         Ok(Line::Frame(line)) => match serde_json::from_str::<FromClient>(&line) {
             Ok(FromClient::Hello { agent, plane, tail }) => (agent, plane, tail),
@@ -895,7 +959,9 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
 
     // Whether an event at or beyond the boundary in its generation has
     // arrived yet, which is what classifies events of other generations.
-    let mut crossed = false;
+    // Whether admin-con's replay has reached the boundary (Spec 7.2): the
+    // frame that decides what is replayed and what is live.
+    let mut caught_up = false;
     loop {
         let line = tokio::select! {
             l = tokio::time::timeout(inner.silence, read_line(&mut reader, &mut buf)) => l,
@@ -956,6 +1022,9 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
         };
         match (plane, frame) {
             (_, FromClient::Heartbeat) => {}
+            (Plane::Admin, FromClient::CaughtUp) => {
+                caught_up = true;
+            }
             (_, FromClient::Hello { .. }) => {
                 tracing::warn!(
                     "link from {peer}: {} ({plane}) said hello again mid-stream, refused",
@@ -1021,16 +1090,27 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                 // it. An observation the store refused is not acknowledged;
                 // admin-con resends from its last acknowledged position,
                 // which is the replay doing its job.
-                let landed = inner
+                let landed = match inner
                     .land_event(
                         &agent.agent_id,
                         boundary.as_ref(),
-                        &mut crossed,
+                        caught_up,
                         &position,
                         replayed,
                         event,
                     )
-                    .await;
+                    .await
+                {
+                    Ok(landed) => landed,
+                    Err(refusal) => {
+                        tracing::warn!(
+                            "{}: an event at or beyond the boundary arrived before the replay was caught up, refused",
+                            agent.agent_id
+                        );
+                        send(&tx, ToClient::Refusal { reason: refusal }).await;
+                        break;
+                    }
+                };
                 if landed {
                     inner
                         .acknowledged
@@ -1137,6 +1217,7 @@ fn frame_name(frame: &FromClient) -> &'static str {
     match frame {
         FromClient::Hello { .. } => "hello",
         FromClient::Heartbeat => "heartbeat",
+        FromClient::CaughtUp => "caught_up",
         FromClient::Turn { .. } => "turn",
         FromClient::Verb { .. } => "verb",
         FromClient::Event { .. } => "event",
@@ -1215,22 +1296,36 @@ impl Inner {
         &self,
         agent: &AgentId,
         boundary: Option<&Position>,
-        crossed: &mut bool,
+        caught_up: bool,
         position: &Position,
         replayed: bool,
         event: TraceEvent,
-    ) -> bool {
-        let behind = match boundary {
-            Some(b) if b.generation == position.generation => {
-                let behind = position.offset < b.offset;
-                if !behind {
-                    *crossed = true;
-                }
-                behind
+    ) -> Result<bool, Refusal> {
+        // **The frame decides** (Spec 7.2): before `caught_up` an event is
+        // the replay's, after it live. The boundary's offset rule and the
+        // client's mark are checks: an event at or beyond the boundary in
+        // its generation before the frame is a protocol fault and refused,
+        // and any other disagreement is logged. The stream's order alone
+        // could not decide, since a file rotated after the hello before
+        // any event of the boundary's generation reached the boundary would
+        // leave every live event of the new generation looking like an
+        // older generation's tail.
+        let behind = !caught_up;
+        if let Some(b) = boundary
+            && b.generation == position.generation
+        {
+            let offset_says_behind = position.offset < b.offset;
+            if !caught_up && !offset_says_behind {
+                return Err(Refusal::Malformed);
             }
-            Some(_) => !*crossed,
-            None => false,
-        };
+            if caught_up && offset_says_behind {
+                tracing::warn!(
+                    "{agent}: an event at {}:{} is behind the boundary but arrived after caught_up, taken as live",
+                    position.generation,
+                    position.offset
+                );
+            }
+        }
         if behind != replayed {
             tracing::warn!(
                 "{agent}: admin-con flagged an event at {}:{} as {}, the boundary says {}",
@@ -1272,14 +1367,14 @@ impl Inner {
         match observation {
             Some(observation) => {
                 if !self.land(agent, observation).await {
-                    return false;
+                    return Ok(false);
                 }
                 self.windows.ingest(agent.as_str(), event);
-                true
+                Ok(true)
             }
             None => {
                 self.windows.ingest(agent.as_str(), event);
-                true
+                Ok(true)
             }
         }
     }

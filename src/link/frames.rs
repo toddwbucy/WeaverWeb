@@ -82,6 +82,12 @@ pub enum FromClient {
     },
     /// At the cadence the hello's answer named.
     Heartbeat,
+    /// **The replay has reached the boundary** (Spec 7.2): sent once by
+    /// admin-con when what it relays from behind the file's tail is done,
+    /// immediately after the hello's answer when there is nothing to
+    /// replay. The server classifies every event before it as replayed and
+    /// every event after it as live.
+    CaughtUp,
     /// The gate plane's answer to a turn ask: the close, or the typed
     /// error.
     Turn {
@@ -224,6 +230,7 @@ mod shape {
             "{\"svc\":\"refusal\",\"reason\":\"not_live\"}"
         );
         assert!(serde_json::from_str::<FromClient>("{\"svc\":\"heartbeat\"}").is_ok());
+        assert!(serde_json::from_str::<FromClient>("{\"svc\":\"caught_up\"}").is_ok());
         assert!(serde_json::from_str::<FromClient>("{\"svc\":\"nonsense\"}").is_err());
     }
 }

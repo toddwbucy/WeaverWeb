@@ -2196,7 +2196,15 @@ is smoothed, which is `traceview.rs`'s own rule and the contract's rule in
 section 3 that nothing is shed silently. Section 8's one-connection
 paragraph refers here for what a reconnection carries. **Every event
 relayed from behind the file's tail at a reconnection is marked as replayed
-on the link**, and replayed events reach the server's live window only:
+on the link, and the replay ends with a frame admin-con sends when it
+reaches the boundary**, immediately after the hello's answer where there
+is nothing to replay; the server classifies every event before that frame
+as replayed and every event after it as live, the boundary's offset rule
+and the client's mark standing as checks that log a disagreement. The
+frame decides because the stream's order cannot: a file rotated after the
+hello before any event of the boundary's generation reached the boundary
+would leave every live event of the new generation looking like an older
+generation's tail. Replayed events reach the server's live window only:
 they write no member of section 2.12's row, whose tuple and load state come
 from `show`, `list` and live events alone. On every admission of an
 admin-con connection the server first fixes the replay boundary, the file

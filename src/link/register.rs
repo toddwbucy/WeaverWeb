@@ -16,8 +16,8 @@ use crate::link::frames::{Plane, Refusal};
 use crate::store::{AgentId, Store};
 use chrono::{DateTime, Utc};
 use serde::Serialize;
-use sqlx::Row;
 use sqlx::postgres::PgRow;
+use sqlx::{Connection, Row};
 
 /// The channel a revoking transaction notifies on, with the fingerprint as
 /// its payload, so a running listener closes the live connection in the
@@ -99,9 +99,37 @@ impl Agent {
 }
 
 /// The authority lock held: dropping it ends the session that holds the
-/// advisory lock, which releases it.
+/// advisory lock, which releases it. **A verb that holds it runs its store
+/// work on this connection**, so a session PostgreSQL dropped kills the
+/// verb's transaction rather than letting the verb continue on the pool
+/// while another process holds the lock, and pings it before its file
+/// switch.
 pub struct AuthorityLock {
-    _connection: sqlx::PgConnection,
+    connection: sqlx::PgConnection,
+}
+
+impl AuthorityLock {
+    /// The lock's own connection, for the verb's store work.
+    pub fn connection(&mut self) -> &mut sqlx::PgConnection {
+        &mut self.connection
+    }
+
+    /// The session still holds the lock, or the verb aborts naming it.
+    /// **The window between this ping and the caller's next step is one
+    /// round trip and is accepted**: a session lost inside it cannot be
+    /// told from one lost a moment later, and the next verb's lock finds
+    /// whatever state the switch left.
+    pub async fn ping(&mut self) -> anyhow::Result<()> {
+        sqlx::query("SELECT 1")
+            .execute(&mut self.connection)
+            .await
+            .map(|_| ())
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "the session holding the authority lock was lost ({e}); another verb may hold it now, so this one stops"
+                )
+            })
+    }
 }
 
 /// What the link observed and lands on the row: the load state as admin's
@@ -247,7 +275,30 @@ impl Store {
         gate_fingerprint: &str,
         admin_fingerprint: &str,
     ) -> anyhow::Result<(AgentId, Vec<String>)> {
-        let mut tx = self.pool.begin().await?;
+        let mut conn = self.pool.acquire().await?;
+        Self::register_agent_on(
+            &mut conn,
+            r#box,
+            name,
+            author,
+            gate_fingerprint,
+            admin_fingerprint,
+        )
+        .await
+    }
+
+    /// The same on a given connection: a verb that holds the authority
+    /// lock runs its store work on the lock's own session, so a lost session
+    /// kills the transaction with it.
+    pub async fn register_agent_on(
+        conn: &mut sqlx::PgConnection,
+        r#box: &str,
+        name: &str,
+        author: Option<&str>,
+        gate_fingerprint: &str,
+        admin_fingerprint: &str,
+    ) -> anyhow::Result<(AgentId, Vec<String>)> {
+        let mut tx = conn.begin().await?;
         // **The retire is ordered on the previous row's version** like every
         // register verb (Spec 8): the live row is read under the lock and
         // the update names the version it read.
@@ -358,7 +409,28 @@ impl Store {
         gate_fingerprint: &str,
         admin_fingerprint: &str,
     ) -> anyhow::Result<Vec<String>> {
-        let mut tx = self.pool.begin().await?;
+        let mut conn = self.pool.acquire().await?;
+        Self::rotate_credentials_on(
+            &mut conn,
+            agent,
+            author,
+            gate_fingerprint,
+            admin_fingerprint,
+        )
+        .await
+    }
+
+    /// The same on a given connection: a verb that holds the authority
+    /// lock runs its store work on the lock's own session, so a lost session
+    /// kills the transaction with it.
+    pub async fn rotate_credentials_on(
+        conn: &mut sqlx::PgConnection,
+        agent: &Agent,
+        author: Option<&str>,
+        gate_fingerprint: &str,
+        admin_fingerprint: &str,
+    ) -> anyhow::Result<Vec<String>> {
+        let mut tx = conn.begin().await?;
         lock_row(&mut tx, &agent.agent_id).await?;
         let affected = sqlx::query(
             "UPDATE agent SET \
@@ -401,7 +473,18 @@ impl Store {
     /// certificate, so each agent is re-registered after. Answers how many
     /// rows were retired.
     pub async fn revoke_every_credential(&self, author: Option<&str>) -> anyhow::Result<u64> {
-        let mut tx = self.pool.begin().await?;
+        let mut conn = self.pool.acquire().await?;
+        Self::revoke_every_credential_on(&mut conn, author).await
+    }
+
+    /// The same on a given connection: a verb that holds the authority
+    /// lock runs its store work on the lock's own session, so a lost session
+    /// kills the transaction with it.
+    pub async fn revoke_every_credential_on(
+        conn: &mut sqlx::PgConnection,
+        author: Option<&str>,
+    ) -> anyhow::Result<u64> {
+        let mut tx = conn.begin().await?;
         let rows = sqlx::query(
             "UPDATE agent SET \
                gate_state = 'revoked', gate_state_at = now(), \
@@ -554,9 +637,7 @@ impl Store {
             .bind(crate::link::listener::AUTHORITY_LOCK_KEY)
             .execute(&mut connection)
             .await?;
-        Ok(AuthorityLock {
-            _connection: connection,
-        })
+        Ok(AuthorityLock { connection })
     }
 
     /// **Run a closure under the row's lock and nothing else**: the cleanup

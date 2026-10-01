@@ -74,7 +74,7 @@ pub async fn authority_rotate(
     sans: &[String],
     author: Option<&str>,
 ) -> Answer {
-    let _lock = match store.authority_lock().await {
+    let mut lock = match store.authority_lock().await {
         Ok(lock) => lock,
         Err(e) => {
             return refused(
@@ -83,7 +83,7 @@ pub async fn authority_rotate(
             );
         }
     };
-    let retired = match store.revoke_every_credential(author).await {
+    let retired = match Store::revoke_every_credential_on(lock.connection(), author).await {
         Ok(retired) => retired,
         Err(e) => {
             return refused(
@@ -94,6 +94,16 @@ pub async fn authority_rotate(
             );
         }
     };
+    // The lock's session is checked right before the switch; the window
+    // between this ping and the rename is one round trip and is accepted.
+    if let Err(e) = lock.ping().await {
+        return refused(
+            "authority rotate",
+            format!(
+                "every credential is revoked ({retired} agents retired) but the authority was not replaced: {e:#}; re-run"
+            ),
+        );
+    }
     match Authority::rotate(&cfg.authority_dir, &cfg.server_name, sans) {
         Ok(authority) => Answer {
             value: json!({
@@ -257,10 +267,15 @@ fn stage_pair(
         &gate_new,
         &client_config(cfg, authority, name, Plane::Gate, gate),
     )?;
-    stage_file(
+    // A failure staging the second leaves no minted key behind in the
+    // first.
+    if let Err(e) = stage_file(
         &admin_new,
         &client_config(cfg, authority, name, Plane::Admin, admin),
-    )?;
+    ) {
+        let _ = std::fs::remove_file(&gate_new);
+        return Err(e);
+    }
     Ok(Staged {
         gate: (gate_new, gate_final),
         admin: (admin_new, admin_final),
@@ -338,7 +353,7 @@ pub async fn register(
             );
         }
     }
-    let _lock = match store.authority_lock().await {
+    let mut lock = match store.authority_lock().await {
         Ok(lock) => lock,
         Err(e) => {
             return refused(
@@ -363,9 +378,15 @@ pub async fn register(
         Ok(s) => s,
         Err(e) => return refused("register", format!("{e:#}")),
     };
-    let (id, retired) = match store
-        .register_agent(r#box, name, author, &gate.fingerprint, &admin.fingerprint)
-        .await
+    let (id, retired) = match Store::register_agent_on(
+        lock.connection(),
+        r#box,
+        name,
+        author,
+        &gate.fingerprint,
+        &admin.fingerprint,
+    )
+    .await
     {
         Ok(x) => x,
         Err(e) => {
@@ -373,6 +394,16 @@ pub async fn register(
             return refused("register", format!("{e:#}"));
         }
     };
+    if let Err(e) = lock.ping().await {
+        return refused(
+            "register",
+            format!(
+                "{id} is registered but its configs stand staged at {} and {}: {e:#}; rotate the agent to publish a pair",
+                staged.gate.0.display(),
+                staged.admin.0.display()
+            ),
+        );
+    }
     match staged.publish() {
         Ok((gate_path, admin_path)) => Answer {
             value: json!({
@@ -431,7 +462,7 @@ pub async fn rotate(
         Ok(a) => a,
         Err(e) => return refused("rotate", e),
     };
-    let _lock = match store.authority_lock().await {
+    let mut lock = match store.authority_lock().await {
         Ok(lock) => lock,
         Err(e) => {
             return refused(
@@ -453,9 +484,14 @@ pub async fn rotate(
         Ok(s) => s,
         Err(e) => return refused("rotate", format!("{e:#}")),
     };
-    let retired = match store
-        .rotate_credentials(&agent, author, &gate.fingerprint, &admin.fingerprint)
-        .await
+    let retired = match Store::rotate_credentials_on(
+        lock.connection(),
+        &agent,
+        author,
+        &gate.fingerprint,
+        &admin.fingerprint,
+    )
+    .await
     {
         Ok(r) => r,
         Err(e) => {
@@ -463,6 +499,17 @@ pub async fn rotate(
             return refused("rotate", format!("{e:#}"));
         }
     };
+    if let Err(e) = lock.ping().await {
+        return refused(
+            "rotate",
+            format!(
+                "{} is rotated but its configs stand staged at {} and {}: {e:#}; re-run rotate to publish a pair",
+                agent.agent_id,
+                staged.gate.0.display(),
+                staged.admin.0.display()
+            ),
+        );
+    }
     match staged.publish() {
         Ok((gate_path, admin_path)) => Answer {
             value: json!({

@@ -65,8 +65,8 @@ operator's verb, and a record read where the operator keeps it. **The party
 that does each of those is one of the two connectors of section 8 and never
 the server**, per the design session of 2026-09-30 and the operator's ruling
 of 2026-10-01: the connectors are this crate's, they stand on the agent's
-box, and the server reaches them and nothing past them. That property is
-load-bearing and is not spent by the seam of section 7.3, which is a stream
+box, they reach the server, and the server reaches nothing past them. That
+property is load-bearing and is not spent by the seam of section 7.3, which is a stream
 this crate reads rather than a crate it links.
 
 **The line is the agent's process boundary and not the cargo workspace**, as
@@ -1128,9 +1128,20 @@ either. **The fifth is queueing**, which writes section 2.11's batch and its ent
 touches nothing else: section 5.1 has registering and queueing as two acts, and the
 second of them is the one that records an order, so it is a writer rather than a state
 change on a row another writer owns. **It was four until 2026-09-11**, the batch having
-had no row and queueing having had nothing to write. No writer touches another's tables,
-and **no surface writes through 3.1**, which is what section 6's rule means and all it
-means.
+had no row and queueing having had nothing to write. **The sixth is the link**, as of
+2026-10-01, which writes the observed members of section 2.12's registered agent, the
+address it saw, each connector's link state, the mismatch mark, and the tuple and the
+load state as admin reported them, and touches nothing else. It is a writer rather than
+an author because nobody authored what it writes: a link state is what the listener saw
+and a tuple is what admin said, each with its own date, and section 2.12 keeps them off
+the row's version for that reason. The register verb is not a seventh: it authors the
+row's other members, the name, the box and the credentials, through section 3.2 like
+any author. **So one table has two writers at disjoint members**, and the rule below
+holds at the member for that row rather than at the table, which is stated here rather
+than left for a reader to find: the register verb never writes what the link observed
+and the link never writes what the operator registered. No writer otherwise touches
+another's tables, and **no surface writes through 3.1**, which is what section 6's rule
+means and all it means.
 
 ### 3.1 The ingest
 
@@ -1327,8 +1338,9 @@ reproduces, and one computed in a view is one nobody can.
 declaration. Models writes an artifact row on import. Stage writes a staged experiment,
 and since the plan of section 2.9 it writes that row with its entries and the refs of
 section 2.10, all four being what one surface composes and registers. **The register
-verb of section 8 writes the registered agent of section 2.12 and nothing else**, as of
-2026-10-01, and it is the operator's verb on the server rather than a surface: its
+verb of section 8 writes the authored members of section 2.12's registered agent and
+nothing else**, as of 2026-10-01, the observed members being the link's as section 3's
+opening counts them. It is the operator's verb on the server rather than a surface: its
 author member holds the name the verb was given, or names none, which is the rule below
 with no session behind it. **Each writes only tables of the authored half**, and **none
 of them may write a position or a run**, which is the whole of what keeps a recorded
@@ -2145,6 +2157,26 @@ point: a roster read first is a claim the server has to hold while deciding
 whether to believe it, and the gate's own contract refuses a failed peer
 before any content is read for the same reason.
 
+**Identity is the certificate's binding, and the hello carries no identity
+claim the server acts on.** Registration bound the certificate to one row
+and one plane, so the server knows which agent and which plane is connecting
+before the roster arrives, and the roster's name and plane are a check and
+not a source: a hello naming an agent or a plane other than its credential's
+is refused as a mismatch and logged against the row. The seed's link took a
+names-only hello and let the first one win, which is the failure this
+sentence keeps out: a credential in two hands could otherwise name any
+agent, and the register would hold a fact the certificate never vouched for.
+
+```graph
+node: web-link-identity-is-the-certificates-binding-never-the-roster
+kind: assertion
+tag: perturbation
+
+edge: asserts
+from: weaver-web
+to: web-link-identity-is-the-certificates-binding-never-the-roster
+```
+
 ```graph
 node: web-link-refuses-a-credential-not-live-before-the-roster
 kind: assertion
@@ -2231,6 +2263,19 @@ script to carry. Per the founding handoff's rule that credentials are
 revocable one at a time, and the operator's ruling that both connectors must
 match, which is why rotation is a pair and not one.
 
+**Revoking a credential closes its live connection at once, and this is
+this document's election of 2026-10-01 and not a ruling.** The reason: a
+revocation is the operator saying a credential is no longer trusted, and a
+connection that stays up until the heartbeat's sixty seconds expire, or
+until the connector chooses to reconnect, is sixty seconds or longer of a
+party the operator distrusts still relaying. So the server closes the link
+in the revoking act, the row's link state for that plane reads disconnected
+with the act's date, and the agent is no longer present under the rule
+above. Rotation therefore drops both planes until the install script carries
+the new config, and the row reads disconnected and not mismatched in
+between, since both credentials are the row's own and neither came from
+another row. The operator confirms or resets this in review.
+
 ## 9. What is enforced, and by which instrument
 
 | claim | instrument |
@@ -2270,6 +2315,7 @@ match, which is why rotation is a pair and not one.
 | the task's verdict is landed and never scored here | perturbation: score a run in this crate, the verdict carries no scorer and the row claims a reading it did not receive |
 | a connection whose credential is not live is refused before its roster is read | perturbation, **owed** to the link act: accept the hello and check the register after, a revoked connector's roster lands before the refusal and a surface renders an agent nobody admitted |
 | one live connection per credential | perturbation, **owed**: let a second connection replace the first, a credential in two hands displaces the live connector silently and the row reads connected throughout |
+| a hello's identity is its certificate's binding and never its roster | perturbation, **owed**: act on the roster's name and plane, a hello on a gate credential naming another agent, or naming admin, is believed, and the seed's first-hello-wins returns through the roster |
 | an agent is present only when both planes connect from one row | perturbation, **owed**: mark present on either plane alone, an agent whose admin-con is down reads present with a tuple and a load state nobody has confirmed |
 | the client credential is stored as a fingerprint and never the key | perturbation, **owed**, at the schema: store the key, a read of the register is a set of credentials anyone can present |
 | the tuple is admin's word and never gate-con's | perturbation, **owed**: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it |
@@ -2278,11 +2324,11 @@ match, which is why rotation is a pair and not one.
 **A watch that cannot fail is not a test.** For each perturbation above, the
 act that lands it states what removal makes it fail and confirms it does.
 
-**A row marked owed has no instrument and is not counted as enforced.** Seven
+**A row marked owed has no instrument and is not counted as enforced.** Eight
 stand so marked as of 2026-10-01: the batch's order, whose table section 2.11
-describes and no migration builds, and the six rows of the link, whose section
-8 is written before its code and whose act, the link and the register, lands
-each with the perturbation its row names. The marking is the point: a row
+describes and no migration builds, and the seven rows of the link, whose
+section 8 is written before its code and whose act, the link and the register,
+lands each with the perturbation its row names. The marking is the point: a row
 reading like the enforced ones beside it would tell a reader the claim is held,
 which is the same failure as a watch that passes either way and is why this
 table says which it is.

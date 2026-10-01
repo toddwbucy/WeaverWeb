@@ -6,6 +6,23 @@ was measured on the thinkpad on 2026-10-01 against `main` at `4ce4f41`. The foun
 handoff and the second handoff of 2026-09-30 still govern what this repository is;
 this brief says what the operator ruled since and what the first acts are.
 
+## Superseded in part during PR #3's review, 2026-10-01
+
+The body below is a dated record and is not rewritten. Four of its rulings changed
+while act 1 was under review, and the Spec section named governs each:
+
+- The cross-row mismatch mark of section 3 is dropped; presence alone satisfies the
+  both-must-match ruling, and a row says which plane is missing (Spec section 8).
+- admin-con tails the agent's `File` sink and nothing is teed; the sink listener and
+  the tee of sections 2, 3 and 5 are withdrawn (Spec section 7.2).
+- The server's copy of the trace is a live window and not a record, and the
+  acknowledged replay position is per server process (Spec section 7.2).
+- The registered agent's name is immutable, and at most one row per box and name
+  holds live credentials (Spec section 2.12).
+
+Where this brief and the Spec disagree, the Spec governs, and act 4 is briefed afresh
+from the Spec.
+
 ## 1. The rulings
 
 **2026-09-30, the design session** (recorded in `docs/design/README.md` on the branch

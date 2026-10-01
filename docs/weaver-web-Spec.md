@@ -2080,7 +2080,13 @@ identity alone would resume past the new prefix with no mark; the digest
 catches it, and a mismatch is treated exactly as a different generation,
 the old tail marked as a discontinuity and the file relayed from its
 start. The digest is admin-con's own and reads no event schema, for the
-same reason as the offset. All three cross the link with every event, the
+same reason as the offset. **The guard's bound is stated**: the digest
+guards against truncation, which the contract's append-only open and root
+ownership already make an operator's act rather than the program's; it does
+not guard against an in-place rewrite that preserves the final line at the
+same offset, which only root can perform and which a digest of the whole
+prefix would catch at a cost proportional to the file at every reconnect,
+declined for that reason. All three cross the link with every event, the
 server acknowledges all three, and the hello's answer carries all three.
 
 **The acknowledged position lives for the life of a server process and is

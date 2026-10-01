@@ -2244,3 +2244,100 @@ async fn an_authority_rotation_reads_a_lost_revocation_answer_back() {
         CredentialState::Revoked
     );
 }
+
+/// **The revocation's read-back asks about the set it selected**, so a
+/// credential registered between a lost answer and the read-back does not
+/// make the rotation conclude the revocation did not land.
+#[tokio::test]
+async fn the_revocation_read_back_asks_about_the_set_it_selected() {
+    let Some(lab) = Lab::open().await else { return };
+    let karl = lab.register("karl").await;
+    let selected = Store::live_fingerprints_on(&mut lab.store.pool.acquire().await.unwrap())
+        .await
+        .unwrap();
+    assert!(selected.contains(&karl.gate.fingerprint));
+    let revoked = Store::revoke_every_credential_on(
+        &mut lab.store.pool.acquire().await.unwrap(),
+        Some("lab"),
+    )
+    .await
+    .unwrap();
+    assert!(revoked >= 1);
+    // A registration in between: live, and another fingerprint.
+    let m1 = lab.register("m1").await;
+    assert!(
+        !lab.store.any_live_among(&selected).await.unwrap(),
+        "the selected set is revoked"
+    );
+    assert!(
+        lab.store
+            .any_live_among(std::slice::from_ref(&m1.gate.fingerprint))
+            .await
+            .unwrap(),
+        "the newcomer is live and is not in the set"
+    );
+}
+
+/// **A symlink anywhere under the output path refuses the registration**:
+/// at the staging entry, where the file is created new and follows no
+/// symlink, and at the name directory, with nothing written at the
+/// target either way.
+#[tokio::test]
+async fn a_symlink_under_the_output_path_refuses_the_registration() {
+    let Some(lab) = Lab::open().await else { return };
+    let cfg = lab_config(&lab);
+    let out = tempfile::tempdir().unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    let r#box = format!("box-{}", uuid::Uuid::new_v4().simple());
+
+    // A symlink at the staging path.
+    let dir = out.path().join(&r#box).join("karl");
+    std::fs::create_dir_all(&dir).unwrap();
+    let target = elsewhere.path().join("victim");
+    std::fs::write(&target, "precious").unwrap();
+    std::os::unix::fs::symlink(&target, dir.join("gate-con.toml.staging")).unwrap();
+    let answer = super::verbs::register(
+        &lab.store,
+        &cfg,
+        &lab.authority,
+        &r#box,
+        "karl",
+        out.path(),
+        Some("lab"),
+    )
+    .await;
+    assert!(!answer.ok, "{}", answer.value);
+    assert_eq!(
+        std::fs::read_to_string(&target).unwrap(),
+        "precious",
+        "the target is untouched"
+    );
+    assert!(!dir.join("gate-con.toml").exists());
+    assert!(
+        lab.store
+            .resolve_agent(&format!("{box}/karl", box = r#box))
+            .await
+            .is_err()
+    );
+
+    // A symlinked name directory.
+    let linked_dir = elsewhere.path().join("linked");
+    std::fs::create_dir(&linked_dir).unwrap();
+    std::os::unix::fs::symlink(&linked_dir, out.path().join(&r#box).join("m1")).unwrap();
+    let answer = super::verbs::register(
+        &lab.store,
+        &cfg,
+        &lab.authority,
+        &r#box,
+        "m1",
+        out.path(),
+        Some("lab"),
+    )
+    .await;
+    assert!(!answer.ok, "{}", answer.value);
+    assert!(answer.value["error"].as_str().unwrap().contains("symlink"));
+    assert!(
+        std::fs::read_dir(&linked_dir).unwrap().next().is_none(),
+        "nothing written at the target"
+    );
+}

@@ -83,12 +83,26 @@ pub async fn authority_rotate(
             );
         }
     };
+    // The set the revocation is about to select, captured first, so a lost
+    // answer is read back against it: a credential registered in between
+    // is another fingerprint and does not confuse the answer, and the
+    // reconciliation after the switch catches it anyway.
+    let selected = match Store::live_fingerprints_on(lock.connection()).await {
+        Ok(selected) => selected,
+        Err(e) => {
+            return refused(
+                "authority rotate",
+                format!("the register could not be read: {e:#}"),
+            );
+        }
+    };
     let retired = match Store::revoke_every_credential_on(lock.connection(), author).await {
         Ok(retired) => Some(retired),
         Err(e) => {
-            // A commit's outcome is unknown until it is read back: any
-            // credential left live means the revocation did not land.
-            match store.any_live_credential().await {
+            // A commit's outcome is unknown until it is read back: any of
+            // the selected credentials left live means the revocation did
+            // not land.
+            match store.any_live_among(&selected).await {
                 Ok(false) => None,
                 Ok(true) => {
                     return refused(
@@ -226,21 +240,61 @@ fn config_paths(dir: &Path) -> (PathBuf, PathBuf) {
     (dir.join("gate-con.toml"), dir.join("admin-con.toml"))
 }
 
-/// Write one staged config: created or truncated under a staging name,
-/// mode 0600 set explicitly, fully written and synced to disk.
+/// Write one staged config: **created new, following no symlink**, mode
+/// 0600, fully written and synced to disk. An existing entry of any kind
+/// at the staging path refuses, since a symlink there would let a
+/// privileged register truncate a file outside the output path and write
+/// a minted key where another owner can read it; a staging file a crashed
+/// run left behind is moved aside by the operator.
 fn stage_file(path: &Path, content: &str) -> anyhow::Result<()> {
     use std::io::Write;
-    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    use std::os::unix::fs::OpenOptionsExt;
     let mut file = std::fs::OpenOptions::new()
         .write(true)
-        .create(true)
-        .truncate(true)
+        .create_new(true)
         .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
         .open(path)
-        .map_err(|e| anyhow::anyhow!("staging {}: {e}", path.display()))?;
-    file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::AlreadyExists {
+                anyhow::anyhow!(
+                    "{} already exists and a staging file is never written over an entry; move it aside",
+                    path.display()
+                )
+            } else {
+                anyhow::anyhow!("staging {}: {e}", path.display())
+            }
+        })?;
     file.write_all(content.as_bytes())?;
     file.sync_all()?;
+    Ok(())
+}
+
+/// **No component of `<out>/<box>/<name>` may be a symlink**, checked on
+/// each component that exists before any is created or used: a symlinked
+/// output path, box or name directory would carry the configs, and the
+/// minted keys in them, to wherever another local user pointed it.
+fn no_symlink_components(out: &Path, r#box: &str, name: &str) -> anyhow::Result<()> {
+    let mut path = out.to_path_buf();
+    for component in [None, Some(r#box), Some(name)] {
+        if let Some(component) = component {
+            path.push(component);
+        }
+        match std::fs::symlink_metadata(&path) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                anyhow::bail!(
+                    "{} is a symlink, and a config is written under no symlink",
+                    path.display()
+                );
+            }
+            Ok(meta) if !meta.is_dir() => {
+                anyhow::bail!("{} is not a directory", path.display());
+            }
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => anyhow::bail!("reading {}: {e}", path.display()),
+        }
+    }
     Ok(())
 }
 
@@ -307,12 +361,19 @@ fn create_config_dir(dir: &Path) -> anyhow::Result<()> {
 fn stage_pair(
     cfg: &ServerConfig,
     authority: &Authority,
-    dir: &Path,
+    out: &Path,
+    r#box: &str,
     name: &str,
     gate: &ClientCredential,
     admin: &ClientCredential,
 ) -> anyhow::Result<Staged> {
+    no_symlink_components(out, r#box, name)?;
+    let dir = config_dir(out, r#box, name);
+    let dir = dir.as_path();
     create_config_dir(dir)?;
+    // Created a moment ago or standing already: either way no symlink,
+    // checked again after the creation.
+    no_symlink_components(out, r#box, name)?;
     let (gate_final, admin_final) = config_paths(dir);
     let gate_new = dir.join("gate-con.toml.staging");
     let admin_new = dir.join("admin-con.toml.staging");
@@ -450,7 +511,7 @@ pub async fn register(
     };
     // Staged before the store commits, published after: a store failure
     // leaves no config, and the credentials are never live without one.
-    let staged = match stage_pair(cfg, authority, &dir, name, &gate, &admin) {
+    let staged = match stage_pair(cfg, authority, out, r#box, name, &gate, &admin) {
         Ok(s) => s,
         Err(e) => return refused("register", format!("{e:#}")),
     };
@@ -586,8 +647,15 @@ pub async fn rotate(
         Ok(pair) => pair,
         Err(e) => return refused("rotate", format!("{e:#}")),
     };
-    let dir = config_dir(out, &agent.r#box, &agent.name);
-    let staged = match stage_pair(cfg, authority, &dir, &agent.name, &gate, &admin) {
+    let staged = match stage_pair(
+        cfg,
+        authority,
+        out,
+        &agent.r#box,
+        &agent.name,
+        &gate,
+        &admin,
+    ) {
         Ok(s) => s,
         Err(e) => return refused("rotate", format!("{e:#}")),
     };

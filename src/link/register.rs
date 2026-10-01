@@ -590,13 +590,42 @@ impl Store {
         Ok(count)
     }
 
-    /// Whether any credential is live, which a rotation reads back where
-    /// its revocation's answer was lost: one left live means the commit
-    /// did not land.
-    pub async fn any_live_credential(&self) -> anyhow::Result<bool> {
-        let live: bool = sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM agent WHERE gate_state = 'live' OR admin_state = 'live')",
+    /// The live fingerprints as they stand, on the given connection: what
+    /// a rotation's revocation is about to select, captured so a lost
+    /// answer can be read back against that set and not against whatever
+    /// is live later.
+    pub async fn live_fingerprints_on(
+        conn: &mut sqlx::PgConnection,
+    ) -> anyhow::Result<Vec<String>> {
+        let rows = sqlx::query(
+            "SELECT gate_fingerprint, gate_state, admin_fingerprint, admin_state FROM agent \
+             WHERE gate_state = 'live' OR admin_state = 'live'",
         )
+        .fetch_all(conn)
+        .await?;
+        let mut live = Vec::new();
+        for row in &rows {
+            if row.try_get::<String, _>("gate_state")? == "live" {
+                live.push(row.try_get("gate_fingerprint")?);
+            }
+            if row.try_get::<String, _>("admin_state")? == "live" {
+                live.push(row.try_get("admin_fingerprint")?);
+            }
+        }
+        Ok(live)
+    }
+
+    /// Whether any of the given fingerprints is still live, which a
+    /// rotation reads back where its revocation's answer was lost: one left
+    /// live means the commit did not land, and a credential registered in
+    /// between is another fingerprint and does not confuse the answer.
+    pub async fn any_live_among(&self, fingerprints: &[String]) -> anyhow::Result<bool> {
+        let live: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM agent \
+             WHERE (gate_fingerprint = ANY($1) AND gate_state = 'live') \
+                OR (admin_fingerprint = ANY($1) AND admin_state = 'live'))",
+        )
+        .bind(fingerprints)
         .fetch_one(&self.pool)
         .await?;
         Ok(live)

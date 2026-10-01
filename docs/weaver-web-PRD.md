@@ -22,9 +22,11 @@ decision two of #439.
 **Document ID:** `weaver-web-PRD`
 **Parent:** the WeaverTools suite, per `weaver-agents-PRD` section 0. **The apex is
 in another repository since 2026-09-26**: `weaver-agents-PRD` lives in
-`toddwbucy/WeaverTools`, whose commit `112bc65` is the tree this crate and its
-documents left on the operator's ruling of that date, so the parent edge crosses a
-repository and the graph that holds both ends is that repository's.
+`toddwbucy/WeaverAgents` since the suite split of 2026-09-30, and before that in
+the monorepo, now `toddwbucy/WeaverTools-old2`, whose commit `112bc65` is the tree
+this crate and its documents left on the operator's ruling of 2026-09-26, so the
+parent edge crosses a repository and the graph that holds both ends is that
+repository's.
 **Editorial:** Per the Working Rules. ASCII, absolute dates.
 **Landing PR:** #632
 
@@ -612,6 +614,15 @@ the runner is a queue consumer, so the front end and its store run on one
 machine while the agents run on another, and that crossing appears in the
 trial record.
 
+**What stands on the agents' machine is this crate's own two connectors**,
+gate-con on the data plane and admin-con on the management plane, per the
+design session of 2026-09-30 and the operator's ruling of 2026-10-01. They
+are the one party that reaches an agent, each a client of the server's
+listener, and the server never reaches one. The link between them and the
+server is the Spec's section 8, and the register of agents it rests on is the
+Spec's section 2.12. The crossing is this crate's at both ends, which is what
+lets it be declared whole.
+
 ## 6. Identity and roles
 
 Roles exist and are structural, so the identity act attaches authentication
@@ -645,7 +656,10 @@ fails when someone claims a name that is not theirs, encryption when someone
 reads traffic that is not theirs, and the same placement can meet one
 without the other. Naming a single trigger would leave the second deferral
 standing against nothing, which is the state this section was in until
-2026-09-07.
+2026-09-07. **The connectors' link is not under either deferral.** It
+crosses machines by construction and carries the agent's record, so it is
+mutually authenticated and encrypted from its first act, per the Spec's
+section 8; the deferrals above are the browser's listener's and no other's.
 
 **The act changes the proof and not the gate.** Roles are structural and the
 reach stays gated where it was, so the act makes a session prove who it is
@@ -670,9 +684,12 @@ same crate and its code is where it was, so no boundary is being crossed
 here - what is being decided is what this charter still charters. Each item
 is ruled on its own:
 
-- **The two-process shape and its link** - a connector holding the
-  box-bound reaches, a server holding the presentation stack, colocated by
-  default and separated by changing one address. Carried: the placement
+- **The connector shape and its link** - the box-bound reaches held by a
+  client beside the agent, the presentation stack by a server elsewhere.
+  Carried, and recut on 2026-10-01: two connectors rather than one,
+  gate-con and admin-con, each this crate's binary and each a client of the
+  server, under the Spec's section 8, which replaced the one dialed link
+  between two colocated processes this bullet carried before. The placement
   ruling of section 5 makes it the shape rather than a mode.
 - **The trace tail** - the record follow, the per-agent rings, and loss and
   discontinuity marks rendered as first-class objects. Carried: the

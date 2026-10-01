@@ -36,16 +36,38 @@ src/
   authoring/    section 3.2, the writes a surface makes to its own table
   queue/        staged experiments and their states
   surfaces/     one module per surface of charter section 3
-  seams/        gate client, admin verbs, analysis stream reader
-  link/         the connector and server halves, the dialed link
-                of section 8 and not the seam kind the clause below names
+  seams/        the box-bound reaches of section 7, the gate client, the
+                admin verbs and the sink listener, beside the analysis
+                stream reader of section 7.3
+  link/         the link of section 8, both halves: the listener and the
+                register verbs the server runs, and the client each
+                connector runs. The link of this entry is a connection and
+                not the seam kind the clause below names
+  bin/          weaver-web, the server, and gate-con and admin-con, the two
+                connectors of section 8
 ```
+
+**Two entries changed on 2026-10-01 and one was added, and the reason is the
+same for all three.** `seams/` had named the gate client and the admin verbs
+without saying which binary runs them, and `link/` had described one dialed
+link between two processes, which section 8 no longer says. The two
+connectors are named as binaries under `bin/` because the split between them
+is a split of posture and not of module: admin-con holds the sudo rule and
+the sink listener, gate-con holds a uid the agent admits and nothing more,
+and a module tree cannot say which process carries which. **The box-bound
+reaches are linked by the two connector binaries and never by the server**,
+which is how the server's never reaching an agent is a build fact rather
+than a sentence.
 
 **This crate links no crate of the agent** and reaches it exactly as an
 outside consumer does: a socket dialed by path, a binary run by the
-operator's verb, and a record read where the operator keeps it. That
-property is load-bearing and is not spent by the seam of section 7.3, which
-is a stream this crate reads rather than a crate it links.
+operator's verb, and a record read where the operator keeps it. **The party
+that does each of those is one of the two connectors of section 8 and never
+the server**, per the design session of 2026-09-30 and the operator's ruling
+of 2026-10-01: the connectors are this crate's, they stand on the agent's
+box, and the server reaches them and nothing past them. That property is
+load-bearing and is not spent by the seam of section 7.3, which is a stream
+this crate reads rather than a crate it links.
 
 **The line is the agent's process boundary and not the cargo workspace**, as
 of 2026-09-07. `axiom-floor-is-vocabulary-behavior-is-socket` forbids "a
@@ -95,9 +117,12 @@ instrument or the work. It is admitted on the same ground section 2.6 was: a rul
 elsewhere needs somewhere to land. **Sections 2.9, 2.10 and 2.11 are authored rows
 sitting outside their half**, the plan, the refs and the batch, appended after the
 session rather than placed among 2.3 through 2.5 because renumbering would break every
-citation of sections 2.6 through 2.8 in this document and outside it. **The grouping is
-stated here rather than carried by the numbering**, which is the cost of a document
-whose sections are cited by number.
+citation of sections 2.6 through 2.8 in this document and outside it. **Section 2.12 is
+the registered agent**, appended 2026-10-01 on the same reasoning: an authored row the
+register verb of section 8 writes and the link reads, about an agent rather than about
+the work, sitting outside both halves as the session does. **The grouping is stated
+here rather than carried by the numbering**, which is the cost of a document whose
+sections are cited by number.
 
 **An authored row's identity says what it addresses.** A key this store generates is
 spelled as two letters naming the kind and sixteen hex: `pl-` a plan, `ar-` an arm,
@@ -135,7 +160,7 @@ depends on, which is the same reasoning section 3.2's author member was landed u
 
 **Three authored tables do not carry it yet.** Sections 2.3, 2.4 and 2.5 - the artifact,
 the declaration and the staged experiment - were built before this convention and keep
-their sequences, so the rule above describes three of the six authored rows and not all
+their sequences, so the rule above describes four of the seven authored rows and not all
 of them. **A convention with an undeclared exception is worse than none**, so the
 exception is declared and the act that closes it is owed.
 
@@ -1030,6 +1055,66 @@ already implied it and nothing wrote it down, and because the interface that que
 act 4's and act 5's at issue #434. The act that builds the queueing gesture builds the
 table, and its assertion above gets its instrument there.
 
+### 2.12 The registered agent
+
+**The register of agents, which is not what section 1's tree calls the
+registry.** That entry names the whole store, every table and the reads over
+them, and the word stood there before any agent was registered here. This
+section is the one table that holds agents, and the operator's word for it on
+2026-10-01 was the registry too, so the two readings are told apart here
+rather than left to collide: the store is the registry, this row is the
+register of agents, and section 8's verbs are the register verbs.
+
+**It exists because the server serves many agents at once and must tell them
+apart positively.** Per the operator's ruling of 2026-10-01, a row says which
+agent this is, where it runs and what it declared, and the two credentials of
+section 8 are bound to it, so that a connection is an agent's connection and
+never a bare socket's. Each row carries:
+
+- **the agent's identity, `ag-` and sixteen hex**, generated here under the
+  convention this section opens with, since the row is authored here and the
+  name is not the key, for the reason section 2.9's arm gives
+- **the agent's name**, the name admin knows it by on its box, which is what
+  every verb of section 7.2 takes
+- **the box it reports from**, as registered, **and the address the server
+  observed** its connectors connecting from, with its date. The two are kept
+  apart because one is a claim the operator made at registration and the
+  other is a fact the listener saw
+- **the declared tuple as admin reported it, and when**, from `show` and from
+  the load event the trace carries, per section 7.2. It is admin's word and
+  carries admin's date, and nothing on the data plane may fill it, per
+  section 8
+- **the two credentials**, each as the fingerprint of its client certificate
+  and never the key, each with its plane, gate or admin, its state, live or
+  revoked, and the date the state was set. The posture is section 2.8's
+  digest rule applied to a certificate: a read of this table is not a set of
+  credentials anyone can present
+- **each connector's link state**, connected or not, with the date it last
+  changed, and **the mismatch mark** section 8 sets when the two planes
+  connect from credentials of two rows
+- **the load state as admin's word, with its date**, which is section 7.2's
+  rule restated at the row: the state is what `show` or `list` last answered
+  or the trace last carried, never an inference from a socket's existence,
+  and never fresher than its date says
+
+**It is an authored row and takes section 3.2's members.** Registration is a
+write the operator makes, so the row carries the author member and the
+store's version like sections 2.3, 2.4, 2.5, 2.9 and 2.10, and an edit to
+what registration authored, the name, the box or a credential's state, is
+ordered on the version like any edit. **What the link observes is not an
+edit.** The observed address, the link states, the tuple and the load state
+are facts the listener and admin reported, and the link writes them as it
+learns them, each with its own date, so a reader can tell when the server
+last knew each one. They are observations rather than the operator's
+authorship, which is why each carries its date in the row rather than riding
+the row's version.
+
+**The row holds no key material and no path of the agent's own.** The server
+holds fingerprints and the agent's box holds keys, per section 8, and the box
+is named by the name the operator registered rather than by a host or a path
+the repository would have to carry, which is the publish boundary every
+document here stands under.
+
 ## 3. The write path
 
 **Five writers, and each owns its tables.** Section 3.1's ingest lands what the
@@ -1241,11 +1326,14 @@ reproduces, and one computed in a view is one nobody can.
 **A surface that authors writes the rows it authors and nothing else.** Compose writes a
 declaration. Models writes an artifact row on import. Stage writes a staged experiment,
 and since the plan of section 2.9 it writes that row with its entries and the refs of
-section 2.10, all four being what one surface composes and registers. **Each writes only
-tables of the authored half**, and **none of them may write a position or a run**, which
-is the whole of what keeps a recorded fact a recorded fact and is what the pin below
-holds. The sentence read that each writes one table until 2026-09-09, which was true
-while Stage authored one.
+section 2.10, all four being what one surface composes and registers. **The register
+verb of section 8 writes the registered agent of section 2.12 and nothing else**, as of
+2026-10-01, and it is the operator's verb on the server rather than a surface: its
+author member holds the name the verb was given, or names none, which is the rule below
+with no session behind it. **Each writes only tables of the authored half**, and **none
+of them may write a position or a run**, which is the whole of what keeps a recorded
+fact a recorded fact and is what the pin below holds. The sentence read that each
+writes one table until 2026-09-09, which was true while Stage authored one.
 
 ```graph
 node: web-no-surface-writes-the-recorded-half
@@ -1258,12 +1346,13 @@ to: web-no-surface-writes-the-recorded-half
 ```
 
 - **Every authored row carries a version, and it is the store's own counter rather than
-anything the author supplies.** Sections 2.3, 2.4, 2.5, 2.9 and 2.10 each carry it. It
+anything the author supplies.** Sections 2.3, 2.4, 2.5, 2.9, 2.10 and 2.12 each carry
+it. It
 has nothing to do with the declaration's corpus commit, which pins the floor's field
 shape and answers staleness against `weaver-types-Spec`: **one says whether the shape is
 current, the other says whether this row has moved since you read it.**
 - **Every authored row names its author, and the member is nullable.** Sections 2.3,
-  2.4, 2.5, 2.9 and 2.10 each carry it. **Null means the store could not
+  2.4, 2.5, 2.9, 2.10 and 2.12 each carry it. **Null means the store could not
   name an author when the row was written, and it never means the
   operator**, because a default that guesses writes a fact nobody can
   correct later and an unknown that says so can be filled by anyone who
@@ -1876,13 +1965,63 @@ named local Unix socket, per `weaver-gate-PRD` section 2 and that page's
 section 0, so the client end stands on the box the agent runs on by
 construction rather than by a placement clause.
 
+**gate-con is that client, and it is this crate's binary**, per the design
+session of 2026-09-30 and the operator's ruling of 2026-10-01 that the two
+connectors are this crate's. It is the operator's name for what the
+whiteboard called web-con. It stands on the agent's box, dials the gate's
+socket by path once per turn as the seed's gate adapter does, carries one
+request line in and one close line out, and is admitted by the kernel's peer
+credential under the declaration's allow list, so what gate-con needs on the
+box is a uid that list names and nothing more. Everything it carries crosses
+the link of section 8 to the server, which never dials the gate itself.
+**It learns nothing of the interior and the server learns nothing through
+it**: the tuple and the load state come by admin-con alone, per sections 7.2
+and 8, and a gate-con that reported either would be reporting what the
+contract's section 6 says it cannot know.
+
 ### 7.2 The admin verbs
 
-`validate`, `load`, `unload`, and as of 2026-09-04 the observation exchange:
+**There is no admin socket.** It retired on 2026-08-05, per
+`weaver-admin-operator-contract` section 1, and nothing crosses into admin by
+a channel. Each verb is an invocation, `sudo weaver-admin <verb> <agent>`,
+answering one JSON object on stdout with the exit status agreeing, per
+`weaver-admin-Spec` section 2. Six parse as of 2026-10-01: `load`, `unload`,
+`validate`, `stop`, `show` and `list`, the last taking no agent. **admin-con
+runs them, and it is this crate's binary**, the management plane's one
+reach, so the sudo rule stands on admin-con's box and never on the server's,
+and the server asks admin-con over the link of section 8 rather than running
+anything.
+
 `show` answers one agent's load facts and `list` answers one summary per
-admitted agent in a single ask. Load state is therefore **the harness's own
-word rather than an inference from a socket's existence**, and no surface
-labels it as inferred.
+admitted agent in a single ask, the observation exchange of 2026-09-04. Load
+state is therefore **the harness's own word rather than an inference from a
+socket's existence**, and no surface labels it as inferred. The seed's
+`lifecycle.rs` still infers it from the gate socket's existence, which is
+what the admin-con act replaces.
+
+**admin-con is also the sink's listener, which is the one crossing the
+contract binds.** What crosses out of the agent is the trace, NDJSON, one
+event per line, to a sink admin opens at load under root, per
+`weaver-admin-Spec` section 5. Of its three kinds, `Socket { path }` is the
+one this crate meets: admin connects to a listener the operator's tooling
+already holds, and a load with nothing listening is refused. admin-con is
+that tooling, so **admin-con is up before any agent loads with a socket
+sink**, and a load refused for want of a listener is admin-con's absence and
+renders as that. The stream is one-way and nothing behind the sink reaches
+back; what admin-con decides from reading it comes back by running a verb,
+per the contract's section 6. The load event in that stream carries the
+declaration's digest, which admin computes at the inventory, so the trace and
+`show` are the two sources of section 2.12's tuple and both are admin's word.
+
+**admin-con tees the stream to an append-only file beside the agent before
+relaying it, and this is this document's election of 2026-10-01 and not a
+ruling.** The reason: durability of the record is the operator's and not the
+program's, per the contract's section 3, so what stands behind the sink is
+what decides whether a link drop loses the record. A relay alone loses
+whatever crossed while the link was down, and the trace is the primary
+artifact. The file is the operator's, at a place the client config names and
+never this repository. The planner recommended it on 2026-10-01 and the
+operator confirms or refuses it in review.
 
 **The observation answers from any position, a running turn included**, as
 of 2026-09-05. It is served from inside the turn between tokens, touching no
@@ -1935,15 +2074,162 @@ owed.
 
 ## 8. Placement and the link
 
-Two processes joined by one dialed link: a connector holding the box-bound
-reaches, a server holding the presentation stack. Colocated by default and
-separated by changing one address.
+**Three processes: the server, and two connectors beside each agent.** The
+server holds the presentation stack, the store and the listener. gate-con and
+admin-con hold the box-bound reaches of sections 7.1 and 7.2 and stand on the
+box the agent runs on, by the construction section 7.1 names. The server
+never reaches an agent, so the one party that does is a client of this
+crate's own, and **both connectors are clients of the server**: they connect
+and the server listens, per the operator's ruling of 2026-10-01. Nothing of
+the interior crosses by either plane. The seed's one dialed link between two
+colocated processes, which this section described until 2026-10-01, is
+superseded. **This is the bulk of the backend**, on the operator's word of
+the same date: everything after it is presentation of what comes out of the
+two connectors.
 
 **Nothing in the read or write path is box-bound to the agents.** The reader
 is a store client, the runner is a queue consumer, and the front end with
 its store runs on one machine while the agents run on another. That crossing
 is a declared boundary under the charter's section 5 rule and appears in the
 trial record like any other.
+
+**The link is mutual TLS with the server as its own certificate authority.**
+Registration mints one client certificate per connector, two per agent, each
+bound to the agent's row of section 2.12 and to its plane, so a gate-con
+credential cannot speak as admin-con. The client's config carries its own
+key and the server's certificate; the server stores the fingerprint of each
+client certificate and never the key, per section 2.12. The client holds the
+server's identity and the server holds the client's, which is the operator's
+two-way confirmation, and the traffic is encrypted by the same handshake, so
+**nothing crosses the link in the clear** and no plaintext accept path
+exists. The charter's section 6 defers transport encryption on the browser's
+listener to a named trigger; this listener is a different one, crossing
+machines by construction, and is not under that deferral.
+
+```graph
+node: web-nothing-crosses-the-link-in-the-clear
+kind: assertion
+tag: perturbation
+
+edge: asserts
+from: weaver-web
+to: web-nothing-crosses-the-link-in-the-clear
+```
+
+```graph
+node: web-client-credential-stored-as-fingerprint-never-key
+kind: assertion
+tag: perturbation
+
+edge: asserts
+from: weaver-web
+to: web-client-credential-stored-as-fingerprint-never-key
+```
+
+**Keys are made on the server at registration and handed to the client
+through its config file at setup**, per the operator's ruling of 2026-10-01.
+Registration is a register verb run on the server: it writes the row of
+section 2.12, mints both credentials, and writes a client config to a path
+the operator names. An install script carries that config to the agent's
+box, and nothing of it enters any repository. **A credential is bound to one
+instance of this server**: it names the server whose authority signed it and
+no other, so moving an agent to another instance is a re-registration there
+rather than a copy.
+
+**The hello is refused before its roster is read when the credential is not
+live in the register.** A connection presents its certificate at the
+handshake; the server looks the fingerprint up in section 2.12 and refuses
+one that is absent or revoked at that layer, before any byte of the
+connector's roster, its agent name and plane, is read. The order is the
+point: a roster read first is a claim the server has to hold while deciding
+whether to believe it, and the gate's own contract refuses a failed peer
+before any content is read for the same reason.
+
+```graph
+node: web-link-refuses-a-credential-not-live-before-the-roster
+kind: assertion
+tag: perturbation
+
+edge: asserts
+from: weaver-web
+to: web-link-refuses-a-credential-not-live-before-the-roster
+```
+
+**One connection at a time per connector, ever.** A second connection on a
+credential already connected is refused rather than replacing the first, per
+the operator's ruling of 2026-10-01. Replacement would let a credential in
+two hands displace the live connector silently, with the row reading
+connected throughout; refusal makes the second hand visible as a refusal the
+server logs against the row.
+
+```graph
+node: web-one-live-connection-per-credential
+kind: assertion
+tag: perturbation
+
+edge: asserts
+from: weaver-web
+to: web-one-live-connection-per-credential
+```
+
+**A heartbeat on the link lets the server close a silent connection after a
+bounded interval**, so a dropped connector can reconnect under the rule above
+rather than being refused against its own dead connection. The interval is
+the one tunable, a member of the server's config. **This document elects the
+client to send one every fifteen seconds and the server to close a link
+silent for sixty, as the planner's election of 2026-10-01 and not the
+operator's ruling.** The reason: a turn through the gate takes seconds to
+minutes and never rides the heartbeat's path, so the interval answers only
+how long a dropped connector shows as present on every surface. A minute is
+short enough that a surface is not wrong for long and long enough that a
+link's brief loss does not churn the row. The operator confirms or resets it
+in review.
+
+**An agent is present only when both its connectors are connected from
+credentials on the same row.** An agent must have both connectors on the
+same server and they must match, per the operator's ruling of 2026-10-01:
+positive identification of an agent to a server is both keys. Where the two
+planes connect from credentials of two rows the server marks both rows
+mismatched and every surface says so, rather than rendering either agent as
+present. One plane alone is not presence: an agent with a live gate-con and
+no admin-con has a tuple and a load state nobody has confirmed since the
+link last dropped.
+
+```graph
+node: web-agent-present-only-when-both-planes-match-one-row
+kind: assertion
+tag: perturbation
+
+edge: asserts
+from: weaver-web
+to: web-agent-present-only-when-both-planes-match-one-row
+```
+
+**The tuple and the load state arrive through admin-con only**, by `show`
+and by the load event in the trace, per section 7.2. gate-con is forbidden by
+its contract from learning any of it, so a server that accepted either from
+the data plane would be writing a fact from a party that cannot know it, and
+section 2.12's row would carry a value with no source. The row's tuple and
+load state are admin's word and carry admin's date.
+
+```graph
+node: web-tuple-is-admins-word-and-never-gate-cons
+kind: assertion
+tag: perturbation
+
+edge: asserts
+from: weaver-web
+to: web-tuple-is-admins-word-and-never-gate-cons
+```
+
+**Revocation is per credential and server-side, and rotation mints a fresh
+pair.** Both are register verbs rather than edits to the row: revoking sets
+one credential's state in section 2.12 and the next hello on it is refused
+before its roster is read, and rotating mints two new credentials for the
+row, revokes the old two, and writes a new client config for the install
+script to carry. Per the founding handoff's rule that credentials are
+revocable one at a time, and the operator's ruling that both connectors must
+match, which is why rotation is a pair and not one.
 
 ## 9. What is enforced, and by which instrument
 
@@ -1982,16 +2268,24 @@ trial record like any other.
 | an arm frees at most one member | perturbation, at the schema: drop the partial index, one arm frees two and registers a sweep whose row carries one member and one value set |
 | an entry states the value its disposition names | perturbation, at the schema: drop the check, an entry says held and carries nothing, which is the absent-not-empty failure moved from the view into the store |
 | the task's verdict is landed and never scored here | perturbation: score a run in this crate, the verdict carries no scorer and the row claims a reading it did not receive |
+| a connection whose credential is not live is refused before its roster is read | perturbation, **owed** to the link act: accept the hello and check the register after, a revoked connector's roster lands before the refusal and a surface renders an agent nobody admitted |
+| one live connection per credential | perturbation, **owed**: let a second connection replace the first, a credential in two hands displaces the live connector silently and the row reads connected throughout |
+| an agent is present only when both planes connect from one row | perturbation, **owed**: mark present on either plane alone, an agent whose admin-con is down reads present with a tuple and a load state nobody has confirmed |
+| the client credential is stored as a fingerprint and never the key | perturbation, **owed**, at the schema: store the key, a read of the register is a set of credentials anyone can present |
+| the tuple is admin's word and never gate-con's | perturbation, **owed**: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it |
+| nothing crosses the link in the clear | perturbation, **owed**: offer a plaintext hello to the listener, it is refused below any roster; and review, over the listener, that no plaintext accept path exists |
 
 **A watch that cannot fail is not a test.** For each perturbation above, the
 act that lands it states what removal makes it fail and confirms it does.
 
-**A row marked owed has no instrument and is not counted as enforced.** One
-stands so marked as of 2026-09-11, the batch's order, whose table section 2.11
-describes and no migration builds. The marking is the point: a row reading like
-the thirty-two beside it would tell a reader the claim is held, which is the
-same failure as a watch that passes either way and is why this table says which
-it is.
+**A row marked owed has no instrument and is not counted as enforced.** Seven
+stand so marked as of 2026-10-01: the batch's order, whose table section 2.11
+describes and no migration builds, and the six rows of the link, whose section
+8 is written before its code and whose act, the link and the register, lands
+each with the perturbation its row names. The marking is the point: a row
+reading like the enforced ones beside it would tell a reader the claim is held,
+which is the same failure as a watch that passes either way and is why this
+table says which it is.
 
 **One row left this table on 2026-09-08 rather than becoming an assertion.**
 It read that an undeclared boundary refuses the load, with a perturbation at

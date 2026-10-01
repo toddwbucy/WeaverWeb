@@ -410,10 +410,17 @@ async fn one_live_connection_per_credential() {
     let installed = std::cell::Cell::new(false);
     let admitted = lab
         .store
-        .admit(&karl.id, Plane::Gate, 99, "127.0.0.1:1", || {
-            installed.set(true);
-            Ok(())
-        })
+        .admit(
+            &karl.id,
+            Plane::Gate,
+            &karl.gate.fingerprint,
+            99,
+            "127.0.0.1:1",
+            || {
+                installed.set(true);
+                Ok(())
+            },
+        )
         .await
         .unwrap();
     assert_eq!(admitted, Err(Refusal::NotLive));
@@ -1089,6 +1096,10 @@ async fn rotation_closes_both_live_connections_and_admits_the_new_pair() {
     let mut admin = lab.admit(&karl, Plane::Admin).await;
     assert!(lab.agent(&karl.id).await.present());
 
+    // A connection on the old credential that passed the handshake's
+    // lookup before the rotation and says hello after it.
+    let mut raced = lab.connect(&karl.gate).await;
+
     let row = lab.agent(&karl.id).await;
     let new_gate = lab.authority.mint_client("karl", Plane::Gate).unwrap();
     let new_admin = lab.authority.mint_client("karl", Plane::Admin).unwrap();
@@ -1120,6 +1131,17 @@ async fn rotation_closes_both_live_connections_and_admits_the_new_pair() {
         .await;
     assert_eq!(row.gate.fingerprint, new_gate.fingerprint);
     assert!(row.gate.incarnation.is_none() && row.admin.incarnation.is_none());
+
+    // The locked recheck compares the presented fingerprint, not only the
+    // plane's state, which is live again for the new credential.
+    raced
+        .send(FromClient::Hello {
+            agent: karl.name.clone(),
+            plane: Plane::Gate,
+            tail: None,
+        })
+        .await;
+    raced.expect_refusal(Refusal::NotLive).await;
 
     let mut old = lab.connect(&karl.gate).await;
     old.expect_refusal(Refusal::NotLive).await;
@@ -1296,4 +1318,46 @@ async fn a_lost_revocation_is_found_by_the_sweep() {
         !lab.listener.connected(&karl.id, Plane::Gate)
     })
     .await;
+}
+
+/// **An event is acknowledged only once the register took what it owed**
+/// (Spec 7.2): a store write that fails leaves the position unadvanced and
+/// no ack sent, and the connector's resend from its last acknowledged
+/// position lands it.
+///
+/// Perturbation: send the ack and advance the position whatever
+/// `land_event` answered. The failed observation is acknowledged, the row
+/// never reads it, and a reconnection in this process resumes past it.
+///
+/// conforms: web-tuple-is-admins-word-and-never-gate-cons
+#[tokio::test]
+async fn an_observation_the_register_never_took_is_not_acknowledged() {
+    let Some(lab) = Lab::open().await else { return };
+    let karl = lab.register("karl").await;
+    let mut admin = lab.admit(&karl, Plane::Admin).await;
+
+    lab.listener.fail_next_land();
+    let event = FromClient::Event {
+        position: position(100),
+        replayed: false,
+        event: trace_event(1, "load", json!({"declaration": "sha-1"})),
+    };
+    admin.send(event.clone()).await;
+    assert!(
+        admin.recv().await.is_none(),
+        "no ack for an observation the store refused"
+    );
+    assert_eq!(lab.listener.acknowledged(&karl.id), None);
+    assert!(lab.agent(&karl.id).await.load_state.is_none());
+
+    admin.send(event).await;
+    match admin.recv().await {
+        Some(ToClient::Ack { position: p }) => assert_eq!(p, position(100)),
+        other => panic!("expected the ack on the resend, got {other:?}"),
+    }
+    lab.wait_for(&karl.id, "idle", |a| {
+        a.load_state.as_deref() == Some("idle")
+    })
+    .await;
+    assert_eq!(lab.listener.acknowledged(&karl.id), Some(position(100)));
 }

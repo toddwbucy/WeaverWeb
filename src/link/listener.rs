@@ -72,6 +72,10 @@ struct Inner {
     next_ask: AtomicU64,
     next_incarnation: AtomicI64,
     address: SocketAddr,
+    /// A test's one lever on the store: the next landing fails once, so
+    /// the ack's dependence on the write can be watched.
+    #[cfg(test)]
+    fault_next_land: std::sync::atomic::AtomicBool,
 }
 
 /// The server's handle on the link: the asks it routes and the window it
@@ -135,6 +139,8 @@ impl Listener {
                 next_ask: AtomicU64::new(1),
                 next_incarnation: AtomicI64::new(1),
                 address,
+                #[cfg(test)]
+                fault_next_land: std::sync::atomic::AtomicBool::new(false),
             }),
         };
         tracing::info!("link listening on {address} under epoch {epoch}");
@@ -209,6 +215,12 @@ impl Listener {
             .contains_key(&(agent.clone(), plane))
     }
 
+    /// Make the next store write of an observation fail, once.
+    #[cfg(test)]
+    pub fn fail_next_land(&self) {
+        self.inner.fault_next_land.store(true, Ordering::Relaxed);
+    }
+
     /// Close every live connection whose credential the register no longer
     /// holds live: what the notification task does after an error, and
     /// what an operator's tooling may ask for.
@@ -262,18 +274,22 @@ impl Inner {
     ) -> Option<FromClient> {
         let id = self.next_ask.fetch_add(1, Ordering::Relaxed);
         let (reply_tx, reply_rx) = oneshot::channel();
+        // **The sender is inserted in the same critical section that found
+        // the connection**: a teardown then either sees the entry and drops
+        // its pending map, failing this await, or has already removed it and
+        // this finds no connection. Inserted outside the lock, the sender
+        // could land in a map nothing reads and wait forever.
         let (tx, pending) = {
             let live = self.live.lock().unwrap();
             let conn = live.get(&(agent.clone(), plane))?;
+            conn.pending.lock().unwrap().insert(id, reply_tx);
             (conn.tx.clone(), conn.pending.clone())
         };
-        pending.lock().unwrap().insert(id, reply_tx);
         if tx.send(make(id)).await.is_err() {
             pending.lock().unwrap().remove(&id);
             return None;
         }
-        // A torn-down connection drops its pending map, which fails this
-        // await; a cancelled caller leaves an entry that teardown drops.
+        // A cancelled caller leaves an entry that teardown drops.
         reply_rx.await.ok()
     }
 
@@ -568,6 +584,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
         .admit(
             &agent.agent_id,
             plane,
+            &fp,
             incarnation,
             &peer.to_string(),
             || {
@@ -742,7 +759,13 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                     event,
                 },
             ) => {
-                inner
+                // **Acknowledged only once every write the event owed the
+                // register landed** (Spec 7.2): an ack is the server's word
+                // that it holds the event, and a reconnection resumes past
+                // it. An observation the store refused is not acknowledged;
+                // admin-con resends from its last acknowledged position,
+                // which is the replay doing its job.
+                let landed = inner
                     .land_event(
                         &agent.agent_id,
                         boundary.as_ref(),
@@ -752,7 +775,21 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                         event,
                     )
                     .await;
-                send(&tx, ToClient::Ack { position }).await;
+                if landed {
+                    inner
+                        .acknowledged
+                        .lock()
+                        .unwrap()
+                        .insert(agent.agent_id.clone(), position.clone());
+                    send(&tx, ToClient::Ack { position }).await;
+                } else {
+                    tracing::error!(
+                        "{}: the event at {}:{} was not landed on the row and is not acknowledged",
+                        agent.agent_id,
+                        position.generation,
+                        position.offset
+                    );
+                }
             }
             (_, other) => {
                 // **A frame on the wrong plane is refused and logged
@@ -894,7 +931,7 @@ impl Inner {
         position: &Position,
         replayed: bool,
         event: TraceEvent,
-    ) {
+    ) -> bool {
         let behind = match boundary {
             Some(b) if b.generation == position.generation => {
                 let behind = position.offset < b.offset;
@@ -924,12 +961,8 @@ impl Inner {
             Utc::now()
         });
         self.windows.ingest(agent.as_str(), event);
-        self.acknowledged
-            .lock()
-            .unwrap()
-            .insert(agent.clone(), position.clone());
         if behind {
-            return;
+            return true;
         }
         let observation = match kind.as_deref() {
             // A load event means the agent was admitted and stands idle;
@@ -945,21 +978,34 @@ impl Inner {
                 tuple: None,
                 at,
             },
-            _ => return,
+            _ => return true,
         };
-        self.land(agent, observation).await;
+        self.land(agent, observation).await
     }
 
-    async fn land(&self, agent: &AgentId, observation: Observation) {
+    /// Whether the store took the observation or ordered it below the one
+    /// it holds; false only where the write failed.
+    async fn land(&self, agent: &AgentId, observation: Observation) -> bool {
+        #[cfg(test)]
+        if self.fault_next_land.swap(false, Ordering::Relaxed) {
+            tracing::error!("{agent}: a test fault made this store write fail");
+            return false;
+        }
         let arrival = self.next_arrival();
         match self
             .store
             .land_observation(agent, &observation, self.epoch, arrival)
             .await
         {
-            Ok(true) => {}
-            Ok(false) => tracing::debug!("{agent}: an observation ordered below the stored one"),
-            Err(e) => tracing::error!("{agent}: an observation could not be landed: {e:#}"),
+            Ok(true) => true,
+            Ok(false) => {
+                tracing::debug!("{agent}: an observation ordered below the stored one");
+                true
+            }
+            Err(e) => {
+                tracing::error!("{agent}: an observation could not be landed: {e:#}");
+                false
+            }
         }
     }
 }

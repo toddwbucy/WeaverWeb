@@ -455,19 +455,28 @@ impl Store {
         &self,
         agent_id: &AgentId,
         plane: Plane,
+        fingerprint: &str,
         incarnation: i64,
         address: &str,
         install: impl FnOnce() -> Result<(), Refusal>,
     ) -> anyhow::Result<Result<(), Refusal>> {
         let p = plane_columns(plane);
         let mut tx = self.pool.begin().await?;
-        let state: String = sqlx::query_scalar(audited(format!(
-            "SELECT {p}_state FROM agent WHERE agent_id = $1 FOR UPDATE"
+        // **The recheck is of the credential this connection presented**,
+        // its fingerprint as well as the plane's state: after a rotation the
+        // plane is live again for the new fingerprint, and a connection on
+        // the old one that passed the handshake's lookup before the
+        // rotation committed must still be refused here.
+        let row = sqlx::query(audited(format!(
+            "SELECT {p}_state AS state, {p}_fingerprint AS fingerprint FROM agent \
+             WHERE agent_id = $1 FOR UPDATE"
         )))
         .bind(agent_id.as_str())
         .fetch_one(&mut *tx)
         .await?;
-        if state != "live" {
+        let state: String = row.try_get("state")?;
+        let bound: String = row.try_get("fingerprint")?;
+        if state != "live" || bound != fingerprint {
             tx.rollback().await?;
             return Ok(Err(Refusal::NotLive));
         }

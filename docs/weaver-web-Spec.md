@@ -1101,11 +1101,6 @@ never a bare socket's. Each row carries:
   rule restated at the row: the state is what `show` or `list` last answered
   or the trace last carried, never an inference from a socket's existence,
   and never fresher than its date says
-- **the acknowledged replay position**, the generation and the byte offset
-  of section 7.2, which the server answers admin-con's hello with. It is
-  advanced in the same transaction that lands the event it acknowledges, so
-  an acknowledgement never names an event the store does not hold, and it is
-  persisted here so a server restart can still answer the hello
 
 **It is an authored row and takes section 3.2's members.** Registration is a
 write the operator makes, so the row carries the author member and the
@@ -1145,8 +1140,8 @@ second of them is the one that records an order, so it is a writer rather than a
 change on a row another writer owns. **It was four until 2026-09-11**, the batch having
 had no row and queueing having had nothing to write. **The sixth is the link**, as of
 2026-10-01, which writes the observed members of section 2.12's registered agent, the
-address it saw, each connector's link state, the acknowledged replay position, and the
-tuple and the load state as admin reported them, and touches nothing else. It is a
+address it saw, each connector's link state, and the tuple and the load state as admin
+reported them, and touches nothing else. It is a
 writer rather than an author because nobody authored what it writes: a link state is
 what the listener saw and a tuple is what admin said, each with its own date, and
 section 2.12 keeps them off the row's version for that reason. **Its writes are ordered
@@ -2055,16 +2050,37 @@ the server's copy of the trace permanently short of every outage. So the
 server answers admin-con's hello with the last position it holds for that
 row's trace, admin-con resumes relaying from there, and the server
 acknowledges as it lands, so the position advances. **The position is a
-pair, a generation and the byte offset within the file.** admin-con mints a
-generation identifier whenever it observes a new file identity at the sink
-path, the device and inode `traceview.rs` tracks; the identifier is
-admin-con's own, in a form the act chooses, and carries no trace field, for
-the same reason the offset is elected over the event's sequence: resuming
-then reads none of the event schema this document restates none of, and a
-sequence would make the link depend on a trace field. Both halves cross the
-link with every event, the server acknowledges both, and the hello's answer
-carries both, the server holding the acknowledged pair on the row per
-section 2.12. **An offset alone would not do**: a trace file rotated during
+pair, a generation and the byte offset within the file.** **The generation
+is derived from the file's durable identity and never from process state**:
+the device and inode `traceview.rs` tracks, together with the file's birth
+time where the filesystem reports it, so that a reused inode after a
+rotation still reads as a new generation and a restarted admin-con derives
+the same generation for the same file. Minted from process state it would
+fail the other way, a restarted admin-con reading the hello's generation as
+a replacement, emitting a false discontinuity and replaying the unchanged
+file from its start. The identifier is admin-con's own, in a form the act
+chooses, and carries no trace field, for the same reason the offset is
+elected over the event's sequence: resuming then reads none of the event
+schema this document restates none of, and a sequence would make the link
+depend on a trace field. Both halves cross the link with every event, the
+server acknowledges both, and the hello's answer carries both.
+
+**The acknowledged position lives for the life of a server process and is
+not persisted**, per the operator's ruling of 2026-10-01: the server's copy
+of the live trace is a live window and not a record, and durability stays
+on the agent's box, per the contract's section 3 and the file-sink ruling
+above. A persisted position would outlive the events it names, since the
+server holds relayed events in memory and section 3.1's store holds a
+projection and not the trace, so admin-con would resume past a hole no mark
+covers. So within one server process a reconnection resumes from the
+acknowledged pair as written here; a server that restarts answers the hello
+with no position, and admin-con then relays from a bounded tail of the
+file, the bound a member of admin-con's config, with a discontinuity mark
+at the front saying what was not relayed, as the seed's backfill in
+`traceview.rs` does. This is right because the record is the file on the
+box and the Replay surface renders landed deposits through the analysis
+seam of section 7.3, so the server's window owes completeness only to the
+process that holds it. **An offset alone would not do**: a trace file rotated during
 the outage and grown past the acknowledged offset before admin-con
 reconnects is indistinguishable from the old one by offset, and a resume at
 the old offset would skip the replacement's prefix silently, which is why
@@ -2247,9 +2263,10 @@ the operator's ruling of 2026-10-01. Replacement would let a credential in
 two hands displace the live connector silently, with the row reading
 connected throughout; refusal makes the second hand visible as a refusal the
 server logs against the row. A reconnection on the admin plane carries the
-replay of section 7.2: the hello's answer names the acknowledged position
-and admin-con resumes from it, so a link drop is a delay in the server's
-copy of the trace and never a hole in it.
+replay of section 7.2: within one server process the hello's answer names
+the acknowledged position and admin-con resumes from it, so a link drop is
+a delay in the server's window and never a hole in it, and across a server
+restart the window begins at a marked discontinuity.
 
 ```graph
 node: web-one-live-connection-per-credential
@@ -2407,7 +2424,7 @@ The operator confirms or resets this in review.
 | one live connection per credential | perturbation, **owed**: let a second connection replace the first, a credential in two hands displaces the live connector silently and the row reads connected throughout |
 | a hello's identity is its certificate's binding and never its roster | perturbation, **owed**: act on the roster's name and plane, a hello on a gate credential naming another agent, or naming admin, is believed, and the seed's first-hello-wins returns through the roster |
 | the link state is reset when the listener starts | perturbation, **owed**: skip the reset, restart the server with no connector up, and a surface reads an agent present whose sockets are gone |
-| the trace file is replayed from the acknowledged position | perturbation, **owed**: drop the replay, break the link during a run and reconnect, and the server's trace has a hole with no mark; and drop the generation from the position, rotate the trace file during the outage, let the replacement grow past the offset, reconnect, and the server's trace carries the replacement's prefix nowhere and marks nothing |
+| the trace file is replayed from the acknowledged position | perturbation, **owed**: drop the replay, break the link during a run and reconnect, and the server's window has a hole with no mark; drop the generation from the position, rotate the trace file during the outage, let the replacement grow past the offset, reconnect, and the window carries the replacement's prefix nowhere and marks nothing; mint the generation from process state, restart admin-con against the unchanged file, and the server receives a false discontinuity and the file again from its start; restart the server and resume from a remembered position, and the window has a hole with no mark |
 | an agent is present only when both planes connect from one row | perturbation, **owed**: mark present on either plane alone, an agent whose admin-con is down reads present with a tuple and a load state nobody has confirmed |
 | the client credential is stored as a fingerprint and never the key | perturbation, **owed**, at the schema: store the key, a read of the register is a set of credentials anyone can present |
 | the tuple is admin's word and never gate-con's | perturbation, **owed**: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it |

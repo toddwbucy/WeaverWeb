@@ -1124,14 +1124,21 @@ observation it lands in the order it arrived over the link, monotonic for
 the life of the server process, and a member takes the observation with the
 higher sequence. The source date stays on the row for display and decides
 nothing, because the server's own counter cannot step backward or collide
-and a date from the box can do both. **A replayed event never overrides a
-member a live observation set during this server process**: an event
-admin-con relays from behind the file's tail at a reconnection, the replay
-of section 7.2, is marked as replayed on the link, and where a live `show`
-answer has set the tuple or the load state the replayed load event is
-history and the live answer is admin's current word. Section 8's startup
-reset is excepted from both: it is the listener's own act on its own state
-and lands unconditionally. They are observations rather than the operator's
+and a date from the box can do both. **A replayed event never writes a
+member of this row at all**: every event admin-con relays from behind the
+file's tail, at a reconnection or a backfill, is marked as replayed on the
+link per section 7.2 and feeds the server's live window and nothing else.
+The tuple and the load state are written only by `show` and `list` answers
+and by events relayed live, which the arrival sequence orders. A rule that
+only kept replayed events behind what this process observed would still
+let a backfilled load event after a restart overwrite the state a newer
+`show` answer had set before it, which is why the rule is absolute rather
+than ordered. **And on every admission of an admin-con connection the
+server asks `show` for that row before it accepts the connection's first
+replayed event**, so the row's tuple and load state are admin's current
+word at the moment the window reopens rather than whatever the last
+process left. Section 8's startup reset is excepted from the ordering: it
+is the listener's own act on its own state and lands unconditionally. They are observations rather than the operator's
 authorship, which is why each carries its date in the row rather than riding
 the row's version.
 
@@ -1163,8 +1170,8 @@ writer rather than an author because nobody authored what it writes: a link stat
 what the listener saw and a tuple is what admin said, each with its own date, and
 section 2.12 keeps them off the row's version for that reason. **Its writes are ordered
 on the listener's own arrival sequence rather than on the row's version or the
-observation's date**, a replayed event never overriding what a live observation set in
-this server process, per section 2.12. The register verb is not a seventh: it authors the
+observation's date**, and a replayed event writes no member of the row at all, per
+section 2.12. The register verb is not a seventh: it authors the
 row's other members, the name, the box and the credentials, through section 3.2 like
 any author. **So one table has two writers at disjoint members**, and the rule below
 holds at the member for that row rather than at the table, which is stated here rather
@@ -2137,8 +2144,11 @@ is smoothed, which is `traceview.rs`'s own rule and the contract's rule in
 section 3 that nothing is shed silently. Section 8's one-connection
 paragraph refers here for what a reconnection carries. **Every event
 relayed from behind the file's tail at a reconnection is marked as replayed
-on the link**, so the server can tell history from admin's current word
-when it lands an observation, per section 2.12.
+on the link**, and replayed events reach the server's live window only:
+they write no member of section 2.12's row, whose tuple and load state come
+from `show`, `list` and live events alone, and the server asks `show` for
+the row on every admission of an admin-con connection before it accepts
+the first replayed event, per section 2.12.
 
 ```graph
 node: web-trace-file-is-replayed-from-the-acknowledged-position
@@ -2490,7 +2500,7 @@ a revoked credential relaying.
 | the trace file is replayed from the acknowledged position | perturbation, **owed**: drop the replay, break the link during a run and reconnect, and the server's window has a hole with no mark; truncate the file in place during the outage, let it regrow past the offset, reconnect, and the window carries the new prefix nowhere and marks nothing; drop the generation from the position, rotate the trace file during the outage, let the replacement grow past the offset, reconnect, and the window carries the replacement's prefix nowhere and marks nothing; mint the generation from process state, restart admin-con against the unchanged file, and the server receives a false discontinuity and the file again from its start; restart the server and resume from a remembered position, and the window has a hole with no mark |
 | an agent is present only when both planes connect from one row | perturbation, **owed**: mark present on either plane alone, an agent whose admin-con is down reads present with a tuple and a load state nobody has confirmed |
 | the client credential is stored as a fingerprint and never the key | perturbation, **owed**, at the schema: store the key, a read of the register is a set of credentials anyone can present |
-| the tuple is admin's word and never gate-con's | perturbation, **owed**: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it |
+| the tuple is admin's word and never gate-con's | perturbation, **owed**: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it; let a replayed load event write the tuple, restart the server after an unload, backfill, and the row reads loaded |
 | nothing crosses the link in the clear | perturbation, **owed**: offer a plaintext hello to the listener, it is refused below any roster; and review, over the listener, that no plaintext accept path exists |
 
 **A watch that cannot fail is not a test.** For each perturbation above, the

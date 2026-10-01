@@ -1122,7 +1122,8 @@ document here stands under.
 
 ## 3. The write path
 
-**Five writers, and each owns its tables.** Section 3.1's ingest lands what the
+**Six writers, and each owns its tables, one table being owned at the member by two
+of them as the paragraph below explains.** Section 3.1's ingest lands what the
 instrument recorded. Section 3.2's authoring path lands what the engineer authored.
 **The read path writes too**, one row and only one: section 4 admits an open query on
 the condition that the query is recorded, so the read that serves it writes section
@@ -2040,6 +2041,33 @@ artifact. The file is the operator's, at a place the client config names and
 never this repository. The planner recommended it on 2026-10-01 and the
 operator confirms or refuses it in review.
 
+**What the tee kept is replayed from an acknowledged position, and this too
+is this document's election of 2026-10-01 and not a ruling.** A tee that
+saves what crossed while the link was down and sends none of it afterward
+leaves the server's copy of the trace permanently short of every outage,
+which is the loss the tee exists to prevent. So the server answers
+admin-con's hello with the last position it holds for that row's trace,
+admin-con resumes relaying from there, and the server acknowledges as it
+lands, so the position advances. **The position is the tee file's byte
+offset**, elected over the event's sequence because the file is admin-con's
+own, written by it, so resuming needs no reading of the event schema this
+document restates none of, and a sequence would make the link depend on a
+trace field. A gap admin-con cannot fill, because the file rotated or was
+truncated below the acknowledged position, is sent as a marked discontinuity
+and never smoothed, which is the seed's own rule in `traceview.rs` and the
+contract's rule in section 3 that nothing is shed silently. Section 8's
+one-connection paragraph refers here for what a reconnection carries.
+
+```graph
+node: web-tee-is-replayed-from-the-acknowledged-position
+kind: assertion
+tag: perturbation
+
+edge: asserts
+from: weaver-web
+to: web-tee-is-replayed-from-the-acknowledged-position
+```
+
 **The observation answers from any position, a running turn included**, as
 of 2026-09-05. It is served from inside the turn between tokens, touching no
 bracket and cancelling nothing, and the one bound is the single token whose
@@ -2197,7 +2225,10 @@ credential already connected is refused rather than replacing the first, per
 the operator's ruling of 2026-10-01. Replacement would let a credential in
 two hands displace the live connector silently, with the row reading
 connected throughout; refusal makes the second hand visible as a refusal the
-server logs against the row.
+server logs against the row. A reconnection on the admin plane carries the
+replay of section 7.2: the hello's answer names the acknowledged position
+and admin-con resumes from it, so a link drop is a delay in the server's
+copy of the trace and never a hole in it.
 
 ```graph
 node: web-one-live-connection-per-credential
@@ -2211,16 +2242,19 @@ to: web-one-live-connection-per-credential
 
 **A heartbeat on the link lets the server close a silent connection after a
 bounded interval**, so a dropped connector can reconnect under the rule above
-rather than being refused against its own dead connection. The interval is
-the one tunable, a member of the server's config. **This document elects the
-client to send one every fifteen seconds and the server to close a link
-silent for sixty, as the planner's election of 2026-10-01 and not the
-operator's ruling.** The reason: a turn through the gate takes seconds to
-minutes and never rides the heartbeat's path, so the interval answers only
-how long a dropped connector shows as present on every surface. A minute is
-short enough that a surface is not wrong for long and long enough that a
-link's brief loss does not churn the row. The operator confirms or resets it
-in review.
+rather than being refused against its own dead connection. **The silence
+bound is the one tunable, a member of the server's config and set nowhere
+else**: the server tells each connector its send cadence in the answer to
+its hello, and the cadence is the bound divided by four, so an operator who
+changes the bound changes both and a client can never be configured to send
+slower than the server tolerates. **This document elects the bound at sixty
+seconds, as the planner's election of 2026-10-01 and not the operator's
+ruling**, which puts the cadence at fifteen. The reason: a turn through the
+gate takes seconds to minutes and never rides the heartbeat's path, so the
+bound answers only how long a dropped connector shows as present on every
+surface. A minute is short enough that a surface is not wrong for long and
+long enough that a link's brief loss does not churn the row. The operator
+confirms or resets it in review.
 
 **At listener start the server sets every row's link state for both planes
 to disconnected, with the start's date, before it accepts a connection.**
@@ -2350,6 +2384,7 @@ The operator confirms or resets this in review.
 | one live connection per credential | perturbation, **owed**: let a second connection replace the first, a credential in two hands displaces the live connector silently and the row reads connected throughout |
 | a hello's identity is its certificate's binding and never its roster | perturbation, **owed**: act on the roster's name and plane, a hello on a gate credential naming another agent, or naming admin, is believed, and the seed's first-hello-wins returns through the roster |
 | the link state is reset when the listener starts | perturbation, **owed**: skip the reset, restart the server with no connector up, and a surface reads an agent present whose sockets are gone |
+| the tee is replayed from the acknowledged position | perturbation, **owed**: drop the replay, break the link during a run and reconnect, and the server's trace has a hole with no mark |
 | an agent is present only when both planes connect from one row | perturbation, **owed**: mark present on either plane alone, an agent whose admin-con is down reads present with a tuple and a load state nobody has confirmed |
 | the client credential is stored as a fingerprint and never the key | perturbation, **owed**, at the schema: store the key, a read of the register is a set of credentials anyone can present |
 | the tuple is admin's word and never gate-con's | perturbation, **owed**: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it |
@@ -2358,9 +2393,9 @@ The operator confirms or resets this in review.
 **A watch that cannot fail is not a test.** For each perturbation above, the
 act that lands it states what removal makes it fail and confirms it does.
 
-**A row marked owed has no instrument and is not counted as enforced.** Nine
+**A row marked owed has no instrument and is not counted as enforced.** Ten
 stand so marked as of 2026-10-01: the batch's order, whose table section 2.11
-describes and no migration builds, and the eight rows of the link, whose
+describes and no migration builds, and the nine rows of the link, whose
 section 8 is written before its code and whose act, the link and the register,
 lands each with the perturbation its row names. The marking is the point: a row
 reading like the enforced ones beside it would tell a reader the claim is held,

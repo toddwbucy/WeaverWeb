@@ -1091,7 +1091,12 @@ never a bare socket's. Each row carries:
   credentials anyone can present
 - **each connector's link state**, connected or not, with the date it last
   changed, which is what a surface renders where the agent is not present:
-  the plane that is missing, per section 8
+  the plane that is missing, per section 8. **It is the listener's word
+  about its own connections and is therefore reset when the listener
+  starts**: a persisted flag outlives the process that set it, so a server
+  that died with both planes connected would otherwise restart reading both
+  connected with no socket behind either, and the heartbeat cannot clear
+  what no connection holds. Section 8 states the reset
 - **the load state as admin's word, with its date**, which is section 7.2's
   rule restated at the row: the state is what `show` or `list` last answered
   or the trace last carried, never an inference from a socket's existence,
@@ -2217,6 +2222,27 @@ short enough that a surface is not wrong for long and long enough that a
 link's brief loss does not churn the row. The operator confirms or resets it
 in review.
 
+**At listener start the server sets every row's link state for both planes
+to disconnected, with the start's date, before it accepts a connection.**
+The link state of section 2.12 is persisted in the row and presence is
+derived from it, so without the reset a server that died and restarted
+would find both planes recorded connected with no socket behind either,
+and the heartbeat cannot clear a connection that does not exist to go
+silent. With it, **presence is only ever asserted by a connection this
+server process admitted**, and a connector that was up through the restart
+reconnects under the heartbeat's rule and is recorded again by the process
+that is actually holding it.
+
+```graph
+node: web-link-state-is-reset-when-the-listener-starts
+kind: assertion
+tag: perturbation
+
+edge: asserts
+from: weaver-web
+to: web-link-state-is-reset-when-the-listener-starts
+```
+
 **An agent is present only when both its connectors are connected from
 credentials on its row.** An agent must have both connectors on the same
 server and they must match, per the operator's ruling of 2026-10-01:
@@ -2260,11 +2286,14 @@ to: web-tuple-is-admins-word-and-never-gate-cons
 ```
 
 **Revocation is per credential and server-side, and rotation mints a fresh
-pair.** Both are register verbs rather than edits to the row: revoking sets
-one credential's state in section 2.12 and the next hello on it is refused
-before its roster is read, and rotating mints two new credentials for the
-row, revokes the old two, and writes a new client config for the install
-script to carry. Per the founding handoff's rule that credentials are
+pair.** Both are register verbs run on the server rather than surface
+edits, and each is an authored edit under section 3.2, ordered on the
+row's version, so a concurrent revoke, rotate or re-registration refuses on
+a stale version rather than overwriting a fingerprint or a state. Revoking
+sets one credential's state in section 2.12 and the next hello on it is
+refused before its roster is read, and rotating mints two new credentials
+for the row, revokes the old two, and writes a new client config for the
+install script to carry. Per the founding handoff's rule that credentials are
 revocable one at a time, and the operator's ruling that both connectors must
 match, which is why rotation is a pair and not one.
 
@@ -2320,6 +2349,7 @@ The operator confirms or resets this in review.
 | a connection whose credential is not live is refused before its roster is read | perturbation, **owed** to the link act: accept the hello and check the register after, a revoked connector's roster lands before the refusal and a surface renders an agent nobody admitted |
 | one live connection per credential | perturbation, **owed**: let a second connection replace the first, a credential in two hands displaces the live connector silently and the row reads connected throughout |
 | a hello's identity is its certificate's binding and never its roster | perturbation, **owed**: act on the roster's name and plane, a hello on a gate credential naming another agent, or naming admin, is believed, and the seed's first-hello-wins returns through the roster |
+| the link state is reset when the listener starts | perturbation, **owed**: skip the reset, restart the server with no connector up, and a surface reads an agent present whose sockets are gone |
 | an agent is present only when both planes connect from one row | perturbation, **owed**: mark present on either plane alone, an agent whose admin-con is down reads present with a tuple and a load state nobody has confirmed |
 | the client credential is stored as a fingerprint and never the key | perturbation, **owed**, at the schema: store the key, a read of the register is a set of credentials anyone can present |
 | the tuple is admin's word and never gate-con's | perturbation, **owed**: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it |
@@ -2328,9 +2358,9 @@ The operator confirms or resets this in review.
 **A watch that cannot fail is not a test.** For each perturbation above, the
 act that lands it states what removal makes it fail and confirms it does.
 
-**A row marked owed has no instrument and is not counted as enforced.** Eight
+**A row marked owed has no instrument and is not counted as enforced.** Nine
 stand so marked as of 2026-10-01: the batch's order, whose table section 2.11
-describes and no migration builds, and the seven rows of the link, whose
+describes and no migration builds, and the eight rows of the link, whose
 section 8 is written before its code and whose act, the link and the register,
 lands each with the perturbation its row names. The marking is the point: a row
 reading like the enforced ones beside it would tell a reader the claim is held,

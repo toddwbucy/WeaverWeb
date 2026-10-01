@@ -12,10 +12,10 @@ rather than amended, per the operator's ruling of 2026-09-04, because the
 purpose clause is what changed and every section below it was that clause's
 consequence.
 
-**Placement is held.** The deployment topology is ruled: this crate and its
-store run on one machine, the agents on another, and the crossings are
-store traffic, a queue, and since 2026-10-01 the connectors' link of the
-Spec's section 8. Whether these papers eventually move to a
+**Placement is held.** The deployment topology is ruled: this crate's server
+and its store run on one machine, the agents and this crate's two connectors
+on another, and the crossings are store traffic, a queue, and since
+2026-10-01 the connectors' link of the Spec's section 8. Whether these papers eventually move to a
 separate corpus follows from that but is not identical to it, and stays
 decision two of #439.
 

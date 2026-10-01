@@ -1096,7 +1096,9 @@ never a bare socket's. Each row carries:
   starts**: a persisted flag outlives the process that set it, so a server
   that died with both planes connected would otherwise restart reading both
   connected with no socket behind either, and the heartbeat cannot clear
-  what no connection holds. Section 8 states the reset
+  what no connection holds. Section 8 states the reset, and it binds every
+  link-state write to the connection it describes, so a stale teardown
+  cannot mark a plane missing after its replacement was admitted
 - **the load state as admin's word, with its date**, which is section 7.2's
   rule restated at the row: the state is what `show` or `list` last answered
   or the trace last carried, never an inference from a socket's existence,
@@ -2466,6 +2468,18 @@ installed would find nothing to close, and the admission would complete on
 a revoked credential and relay until the next hello. No interleaving leaves
 a revoked credential relaying.
 
+**A link-state write is bound to the connection it describes, under the
+same exclusion.** Every connection the listener admits carries an
+incarnation of the listener's own, a link-state write names the incarnation
+it describes, and a disconnect lands only while that incarnation is still
+the credential's live connection; admission, the connected write, teardown
+and the disconnected write all run under the per-credential exclusion the
+paragraph above takes. Without the binding, a dropped connection removed
+from the live set and replaced before its socket's teardown finished would
+have the replacement record connected and the old teardown then land
+disconnected with a higher arrival number, so the row would read the plane
+missing while it was relaying.
+
 ## 9. What is enforced, and by which instrument
 
 | claim | instrument |
@@ -2504,7 +2518,7 @@ a revoked credential relaying.
 | an entry states the value its disposition names | perturbation, at the schema: drop the check, an entry says held and carries nothing, which is the absent-not-empty failure moved from the view into the store |
 | the task's verdict is landed and never scored here | perturbation: score a run in this crate, the verdict carries no scorer and the row claims a reading it did not receive |
 | a connection whose credential is not live is refused before its roster is read | perturbation, **owed** to the link act: accept the hello and check the register after, a revoked connector's roster lands before the refusal and a surface renders an agent nobody admitted |
-| one live connection per credential | perturbation, **owed**: let a second connection replace the first, a credential in two hands displaces the live connector silently and the row reads connected throughout; drop the serialization of admission and revocation, revoke while a hello is between its lookup and its installation, and the revoked credential relays until the next hello |
+| one live connection per credential | perturbation, **owed**: let a second connection replace the first, a credential in two hands displaces the live connector silently and the row reads connected throughout; drop the serialization of admission and revocation, revoke while a hello is between its lookup and its installation, and the revoked credential relays until the next hello; let a stale teardown write disconnected after its replacement was admitted, and the row reads the plane missing while it relays |
 | a hello's identity is its certificate's binding and never its roster | perturbation, **owed**: act on the roster's name and plane, a hello on a gate credential naming another agent, or naming admin, is believed, and the seed's first-hello-wins returns through the roster |
 | at most one row per box and name holds live credentials | perturbation, **owed**, at the schema: drop the partial index, register one agent twice, and two rows each hold live credentials for one agent, so the server attributes one agent's observations and verbs to two rows |
 | the link state is reset when the listener starts | perturbation, **owed**: skip the reset, restart the server with no connector up, and a surface reads an agent present whose sockets are gone |

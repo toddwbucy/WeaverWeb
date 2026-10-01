@@ -1119,12 +1119,21 @@ edit.** The observed address, the link states, the tuple and the load state
 are facts the listener and admin reported, and the link writes them as it
 learns them, each with its own date, so a reader can tell when the server
 last knew each one. **Observations are ordered on the server's own arrival
-sequence and never on their source date**: the listener numbers every
-observation it lands in the order it arrived over the link, monotonic for
-the life of the server process, and a member takes the observation with the
-higher sequence. The source date stays on the row for display and decides
-nothing, because the server's own counter cannot step backward or collide
-and a date from the box can do both. **A replayed event never writes a
+sequence and never on their source date.** The sequence has two members
+ordered lexicographically: the listener's epoch, a counter the server
+persists and increments once at every listener start, and the arrival
+number within that epoch, which the listener assigns to every observation
+in the order it arrived over the link. A member takes the observation with
+the higher sequence, and an observation from a later epoch always orders
+above one from an earlier, so a restarted server's first `show` answer
+supersedes whatever the last process left and nothing persisted is reset.
+A process-local counter alone would begin below the sequences already on
+the row after a restart and reject every new observation until it caught
+up. The epoch is the server's own and is written once per start, in the
+same act as the startup reset of section 8. The source date stays on the
+row for display and decides nothing, because the server's own epoch and
+counter cannot step backward or collide and a date from the box can do
+both. **A replayed event never writes a
 member of this row at all**: every event admin-con relays from behind the
 file's tail, at a reconnection or a backfill, is marked as replayed on the
 link per section 7.2 and feeds the server's live window and nothing else.
@@ -1169,9 +1178,9 @@ reported them, and touches nothing else. It is a
 writer rather than an author because nobody authored what it writes: a link state is
 what the listener saw and a tuple is what admin said, each with its own date, and
 section 2.12 keeps them off the row's version for that reason. **Its writes are ordered
-on the listener's own arrival sequence rather than on the row's version or the
-observation's date**, and a replayed event writes no member of the row at all, per
-section 2.12. The register verb is not a seventh: it authors the
+on the listener's own arrival sequence, its epoch and its number within it, rather than
+on the row's version or the observation's date**, and a replayed event writes no member
+of the row at all, per section 2.12. The register verb is not a seventh: it authors the
 row's other members, the name, the box and the credentials, through section 3.2 like
 any author. **So one table has two writers at disjoint members**, and the rule below
 holds at the member for that row rather than at the table, which is stated here rather
@@ -2074,8 +2083,9 @@ what it reads and sends none of what it read while the link was down leaves
 the server's copy of the trace permanently short of every outage. So the
 server answers admin-con's hello with the last position it holds for that
 row's trace, admin-con resumes relaying from there, and the server
-acknowledges as it lands, so the position advances. **The position is a
-pair, a generation and the byte offset within the file.** **The generation
+acknowledges as it lands, so the position advances. **The acknowledged
+position has three members: a generation, the byte offset within the file,
+and a digest of the last acknowledged line.** **The generation
 is derived from the file's durable identity and never from process state**:
 the device and inode `traceview.rs` tracks, together with the file's birth
 time where the filesystem reports it, so that a reused inode after a
@@ -2095,9 +2105,8 @@ a form the act chooses, and carries no trace field, for the same reason
 the offset is
 elected over the event's sequence: resuming then reads none of the event
 schema this document restates none of, and a sequence would make the link
-depend on a trace field. **Beside the generation and the offset the
-position carries a digest of the last acknowledged line**, the bytes
-immediately before the offset, and admin-con reads those bytes and compares
+depend on a trace field. **The digest is of the bytes
+immediately before the offset**, and admin-con reads those bytes and compares
 before resuming at the offset. A file truncated in place while admin-con
 was stopped and regrown past the offset before it reconnected keeps its
 device, inode and birth time, and its length hides the truncation, so the
@@ -2111,8 +2120,8 @@ ownership already make an operator's act rather than the program's; it does
 not guard against an in-place rewrite that preserves the final line at the
 same offset, which only root can perform and which a digest of the whole
 prefix would catch at a cost proportional to the file at every reconnect,
-declined for that reason. All three cross the link with every event, the
-server acknowledges all three, and the hello's answer carries all three.
+declined for that reason. The position crosses the link with every event, the
+server acknowledges it, and the hello's answer carries it.
 
 **The acknowledged position lives for the life of a server process and is
 not persisted**, per the operator's ruling of 2026-10-01: the server's copy
@@ -2122,7 +2131,7 @@ above. A persisted position would outlive the events it names, since the
 server holds relayed events in memory and section 3.1's store holds a
 projection and not the trace, so admin-con would resume past a hole no mark
 covers. So within one server process a reconnection resumes from the
-acknowledged pair as written here; a server that restarts answers the hello
+acknowledged position as written here; a server that restarts answers the hello
 with no position, and admin-con then relays from a bounded tail of the
 file, the bound a member of admin-con's config, with a discontinuity mark
 at the front saying what was not relayed, as the seed's backfill in
@@ -2355,7 +2364,9 @@ confirms or resets it in review.
 **At listener start the server sets every plane recorded as connected to
 disconnected, with the start's date, before it accepts a connection.** A
 plane already disconnected keeps its date, so a surface still shows how long
-a connector has been gone. **The reset is not an observation and is not
+a connector has been gone. The listener's epoch of section 2.12 is
+incremented in the same act, so every observation this process lands orders
+above every one the last process left. **The reset is not an observation and is not
 subject to section 2.12's ordering rule**: it is the listener's own act on
 its own state and is unconditional for every plane recorded as connected,
 so a wall clock that moved backward across the restart, leaving the reset's

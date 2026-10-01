@@ -116,7 +116,7 @@ fn client_config(
 
 fn write_client_config(path: &Path, content: &str) -> anyhow::Result<()> {
     use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
     let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create(true)
@@ -124,6 +124,9 @@ fn write_client_config(path: &Path, content: &str) -> anyhow::Result<()> {
         .mode(0o600)
         .open(path)
         .map_err(|e| anyhow::anyhow!("writing {}: {e}", path.display()))?;
+    // The mode on open applies only where the file is created; a config
+    // written over an older one keeps the older mode unless it is set.
+    file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
     file.write_all(content.as_bytes())?;
     Ok(())
 }
@@ -145,13 +148,16 @@ fn write_pair(
     cfg: &ServerConfig,
     authority: &Authority,
     out: &Path,
+    r#box: &str,
     name: &str,
     gate: &crate::link::authority::ClientCredential,
     admin: &crate::link::authority::ClientCredential,
 ) -> anyhow::Result<(String, String)> {
     std::fs::create_dir_all(out).map_err(|e| anyhow::anyhow!("creating {}: {e}", out.display()))?;
-    let gate_path = out.join(format!("{name}-gate-con.toml"));
-    let admin_path = out.join(format!("{name}-admin-con.toml"));
+    // Named by box and name, since two agents of one name on two boxes
+    // written to one directory must not collide.
+    let gate_path = out.join(format!("{box}-{name}-gate-con.toml", box = r#box));
+    let admin_path = out.join(format!("{box}-{name}-admin-con.toml", box = r#box));
     write_client_config(
         &gate_path,
         &client_config(cfg, authority, name, Plane::Gate, gate),
@@ -191,7 +197,7 @@ pub async fn register(
         Ok(x) => x,
         Err(e) => return refused("register", format!("{e:#}")),
     };
-    match write_pair(cfg, authority, out, name, &gate, &admin) {
+    match write_pair(cfg, authority, out, r#box, name, &gate, &admin) {
         Ok((gate_path, admin_path)) => Answer {
             value: json!({
                 "verb": "register",
@@ -260,7 +266,15 @@ pub async fn rotate(
         Ok(r) => r,
         Err(e) => return refused("rotate", format!("{e:#}")),
     };
-    match write_pair(cfg, authority, out, &agent.name, &gate, &admin) {
+    match write_pair(
+        cfg,
+        authority,
+        out,
+        &agent.r#box,
+        &agent.name,
+        &gate,
+        &admin,
+    ) {
         Ok((gate_path, admin_path)) => Answer {
             value: json!({
                 "verb": "rotate",

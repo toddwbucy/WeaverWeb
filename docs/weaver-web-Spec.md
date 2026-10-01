@@ -1146,7 +1146,11 @@ up. The epoch is the server's own and is written once per start, in the
 same act as the startup reset of section 8. The source date stays on the
 row for display and decides nothing, because the server's own epoch and
 counter cannot step backward or collide and a date from the box can do
-both. **A replayed event never writes a
+both. **A gap named 2026-10-01 by the act that built the listener**: a
+trace event carries its own time and the row takes it as admin's date,
+but admin's `show` and `list` answers carry none, so for those the date
+stored is the server's receipt and not admin's until the answer carries
+one; the ask goes to WeaverAgents as an interface issue. **A replayed event never writes a
 member of this row at all**: every event admin-con relays from behind the
 file's tail, at a reconnection or a backfill, is marked as replayed on the
 link per section 7.2 and feeds the server's live window and nothing else.

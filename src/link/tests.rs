@@ -81,6 +81,9 @@ fn list_answer(rows: &[(&str, &str)]) -> VerbOutcome {
     }
 }
 
+/// A trace event with its own time, `wall_ms`, as the envelope carries it.
+const WALL_MS: i64 = 1_790_000_000_000;
+
 fn trace_event(seq: u64, kind: &str, payload: serde_json::Value) -> TraceEvent {
     TraceEvent {
         seq,
@@ -88,7 +91,15 @@ fn trace_event(seq: u64, kind: &str, payload: serde_json::Value) -> TraceEvent {
         run: Some("run-1".into()),
         turn: None,
         kind: Some(kind.into()),
-        raw: json!({ "kind": kind, "run": "run-1", "payload": payload }),
+        raw: json!({ "kind": kind, "run": "run-1", "wall_ms": WALL_MS + seq as i64, "payload": payload }),
+    }
+}
+
+fn position_in(generation: &str, offset: u64) -> Position {
+    Position {
+        generation: generation.into(),
+        offset,
+        digest: format!("{generation}-{offset}"),
     }
 }
 
@@ -347,7 +358,8 @@ async fn a_credential_not_live_is_refused_before_its_roster_is_read() {
 /// `Store::admit`, drop the state recheck under the lock, and an admission
 /// on a revoked credential installs; (3) in `Store::teardown`, drop the
 /// incarnation comparison, and the stale teardown marks the plane missing
-/// while its replacement relays.
+/// while its replacement relays. The uninstall closure itself runs under
+/// the lock on every outcome and decides by incarnation in the listener.
 ///
 /// conforms: web-one-live-connection-per-credential
 #[tokio::test]
@@ -419,7 +431,11 @@ async fn one_live_connection_per_credential() {
         .teardown(&karl.id, Plane::Admin, live - 1, || uninstalled.set(true))
         .await
         .unwrap();
-    assert!(!landed && !uninstalled.get());
+    assert!(!landed, "a stale teardown writes nothing");
+    assert!(
+        uninstalled.get(),
+        "the uninstall runs under the lock on every outcome; the listener's own check keeps the live one"
+    );
     let row = lab.agent(&karl.id).await;
     assert!(row.admin.connected, "the live plane stays connected");
     assert_eq!(row.admin.incarnation, Some(live));
@@ -1051,4 +1067,233 @@ async fn asks_are_routed_to_the_plane_that_holds_them() {
     }
     let close = asked.await.unwrap().unwrap();
     assert_eq!(close.text.as_deref(), Some("noon"));
+}
+
+/// **Rotation closes both live connections in the rotating act** (Spec 8:
+/// both planes drop until the install script carries the new config, and
+/// no interleaving leaves a revoked credential relaying), and the new pair
+/// is admitted while the old one is refused.
+///
+/// Perturbation: in `close_fingerprint`, resolve the notified fingerprint
+/// through the register instead of the live map. The rotation has already
+/// replaced the row's fingerprints, nothing is found to close, both old
+/// connections stay installed and relaying, and the new credential is
+/// refused as already connected.
+///
+/// conforms: web-one-live-connection-per-credential
+#[tokio::test]
+async fn rotation_closes_both_live_connections_and_admits_the_new_pair() {
+    let Some(lab) = Lab::open().await else { return };
+    let karl = lab.register("karl").await;
+    let mut gate = lab.admit(&karl, Plane::Gate).await;
+    let mut admin = lab.admit(&karl, Plane::Admin).await;
+    assert!(lab.agent(&karl.id).await.present());
+
+    let row = lab.agent(&karl.id).await;
+    let new_gate = lab.authority.mint_client("karl", Plane::Gate).unwrap();
+    let new_admin = lab.authority.mint_client("karl", Plane::Admin).unwrap();
+    lab.store
+        .rotate_credentials(
+            &row,
+            Some("lab"),
+            &new_gate.fingerprint,
+            &new_admin.fingerprint,
+        )
+        .await
+        .unwrap();
+
+    assert!(
+        gate.recv().await.is_none(),
+        "the old gate connection is closed"
+    );
+    assert!(
+        admin.recv().await.is_none(),
+        "the old admin connection is closed"
+    );
+    let row = lab
+        .wait_for(&karl.id, "both planes down and uninstalled", |a| {
+            !a.gate.connected
+                && !a.admin.connected
+                && !lab.listener.connected(&karl.id, Plane::Gate)
+                && !lab.listener.connected(&karl.id, Plane::Admin)
+        })
+        .await;
+    assert_eq!(row.gate.fingerprint, new_gate.fingerprint);
+    assert!(row.gate.incarnation.is_none() && row.admin.incarnation.is_none());
+
+    let mut old = lab.connect(&karl.gate).await;
+    old.expect_refusal(Refusal::NotLive).await;
+
+    let rotated = Registered {
+        id: karl.id.clone(),
+        name: karl.name.clone(),
+        r#box: karl.r#box.clone(),
+        gate: new_gate,
+        admin: new_admin,
+    };
+    let _gate = lab.admit(&rotated, Plane::Gate).await;
+    let _admin = lab.admit(&rotated, Plane::Admin).await;
+    assert!(lab.agent(&karl.id).await.present());
+}
+
+/// An admin hello with no tail fixes no boundary and is refused; a line
+/// past the bound is refused as malformed rather than read whole; a second
+/// hello mid-stream is refused.
+#[tokio::test]
+async fn a_tailless_admin_hello_and_a_line_past_the_bound_are_malformed() {
+    let Some(lab) = Lab::open().await else { return };
+    let karl = lab.register("karl").await;
+
+    let mut tailless = lab.connect(&karl.admin).await;
+    tailless
+        .send(FromClient::Hello {
+            agent: karl.name.clone(),
+            plane: Plane::Admin,
+            tail: None,
+        })
+        .await;
+    tailless.expect_refusal(Refusal::Malformed).await;
+    assert!(!lab.agent(&karl.id).await.admin.connected);
+
+    let mut long = lab.admit(&karl, Plane::Gate).await;
+    let line = vec![b'a'; super::frames::LINE_BOUND + 64];
+    let _ = long.writer.write_all(&line).await;
+    long.expect_refusal(Refusal::Malformed).await;
+    lab.wait_for(&karl.id, "gate down", |a| !a.gate.connected)
+        .await;
+
+    let mut twice = lab.admit(&karl, Plane::Gate).await;
+    twice
+        .send(FromClient::Hello {
+            agent: karl.name.clone(),
+            plane: Plane::Gate,
+            tail: None,
+        })
+        .await;
+    twice.expect_refusal(Refusal::Malformed).await;
+}
+
+/// **Events of another generation classify by the stream's order and not by
+/// the client's flag** (Spec 7.2): before the first event at or beyond the
+/// boundary they are the old file's tail, replayed; after it they are a
+/// rotation after the hello, live.
+///
+/// Perturbation: in `land_event`, take the client's flag for another
+/// generation. The old generation's load, flagged live, writes the row.
+///
+/// conforms: web-tuple-is-admins-word-and-never-gate-cons
+#[tokio::test]
+async fn events_of_another_generation_classify_by_the_streams_order() {
+    let Some(lab) = Lab::open().await else { return };
+    let karl = lab.register("karl").await;
+    let mut admin = lab.admit(&karl, Plane::Admin).await;
+    admin
+        .send(FromClient::Verb {
+            id: 1,
+            outcome: Some(show_answer("karl", "unloaded", None)),
+            error: None,
+        })
+        .await;
+    lab.wait_for(&karl.id, "unloaded", |a| {
+        a.load_state.as_deref() == Some("unloaded")
+    })
+    .await;
+
+    // The old generation's tail, before anything at the boundary: replayed
+    // whatever the client says.
+    admin
+        .send(FromClient::Event {
+            position: position_in("g0", 900),
+            replayed: false,
+            event: trace_event(1, "load", json!({"declaration": "sha-old"})),
+        })
+        .await;
+    assert!(matches!(admin.recv().await, Some(ToClient::Ack { .. })));
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(
+        lab.agent(&karl.id).await.load_state.as_deref(),
+        Some("unloaded")
+    );
+
+    // Crossing the boundary in its generation.
+    admin
+        .send(FromClient::Event {
+            position: position(100),
+            replayed: false,
+            event: trace_event(2, "turn", json!({})),
+        })
+        .await;
+    assert!(matches!(admin.recv().await, Some(ToClient::Ack { .. })));
+
+    // A rotation after the hello: live, whatever the client says.
+    admin
+        .send(FromClient::Event {
+            position: position_in("g2", 0),
+            replayed: true,
+            event: trace_event(3, "load", json!({"declaration": "sha-rotated"})),
+        })
+        .await;
+    assert!(matches!(admin.recv().await, Some(ToClient::Ack { .. })));
+    let row = lab
+        .wait_for(&karl.id, "idle from the rotated file", |a| {
+            a.load_state.as_deref() == Some("idle")
+        })
+        .await;
+    assert_eq!(row.tuple, Some(json!({"declaration": "sha-rotated"})));
+}
+
+/// **A load or unload event carries admin's date**, the trace's own
+/// `wall_ms`, and not the receipt's (Spec 2.12).
+#[tokio::test]
+async fn a_load_events_date_is_the_traces_own() {
+    let Some(lab) = Lab::open().await else { return };
+    let karl = lab.register("karl").await;
+    let mut admin = lab.admit(&karl, Plane::Admin).await;
+    admin
+        .send(FromClient::Event {
+            position: position(100),
+            replayed: false,
+            event: trace_event(7, "load", json!({"declaration": "sha-1"})),
+        })
+        .await;
+    assert!(matches!(admin.recv().await, Some(ToClient::Ack { .. })));
+    let row = lab
+        .wait_for(&karl.id, "idle", |a| {
+            a.load_state.as_deref() == Some("idle")
+        })
+        .await;
+    assert_eq!(
+        row.load_state_at.unwrap().timestamp_millis(),
+        WALL_MS + 7,
+        "the date is the event's and not the receipt's"
+    );
+    assert_eq!(row.tuple_at, row.load_state_at);
+}
+
+/// **A revocation whose notification was lost is found by the sweep**: the
+/// register is the word, the channel only the prompt.
+#[tokio::test]
+async fn a_lost_revocation_is_found_by_the_sweep() {
+    let Some(lab) = Lab::open().await else { return };
+    let karl = lab.register("karl").await;
+    let mut gate = lab.admit(&karl, Plane::Gate).await;
+    // Revoked behind the listener's back, with no notification raised.
+    sqlx::query(
+        "UPDATE agent SET gate_state = 'revoked', gate_state_at = now(), \
+         gate_connected = false, gate_incarnation = NULL WHERE agent_id = $1",
+    )
+    .bind(karl.id.as_str())
+    .execute(&lab.store.pool)
+    .await
+    .unwrap();
+    assert!(
+        lab.listener.connected(&karl.id, Plane::Gate),
+        "still installed"
+    );
+    lab.listener.sweep_revoked().await;
+    assert!(gate.recv().await.is_none(), "the sweep closed it");
+    lab.wait_for(&karl.id, "uninstalled", |_| {
+        !lab.listener.connected(&karl.id, Plane::Gate)
+    })
+    .await;
 }

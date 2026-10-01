@@ -12,14 +12,22 @@
 //! connector, and the landing of what the admin plane reports (Spec 2.12
 //! and the clauses of 7.2 the server enacts). The live window is the seed's
 //! server half of `traceview.rs`, one ring per agent.
+//!
+//! **The live map is mutated under the row's lock on every path**, the
+//! admission's install, the teardown's uninstall, and the cleanup after a
+//! store error, through `Store::with_row_lock`. The one exception is a
+//! store that cannot be reached at all, where the lock cannot be taken and
+//! the entry is removed without it and the exception logged, so a
+//! credential is not stranded as connected in memory by a database outage.
 
 use crate::adapters::gate::GateClose;
 use crate::lifecycle::VerbOutcome;
 use crate::link::authority::{Authority, fingerprint};
 use crate::link::frames::{FromClient, LINE_BOUND, Plane, Position, Refusal, ToClient, TurnFault};
-use crate::link::register::{Observation, REVOCATION_CHANNEL};
+use crate::link::register::{CredentialState, Observation, REVOCATION_CHANNEL};
 use crate::store::{AgentId, Store};
 use crate::traceview::{TraceEvent, TraceViews};
+use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
@@ -30,15 +38,22 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio_rustls::TlsAcceptor;
 
-/// How long a peer has to complete the handshake and to say hello. A peer
-/// that speaks plaintext never completes the handshake and is dropped
+/// How long a peer has to complete the handshake, and then to say hello. A
+/// peer that speaks plaintext never completes the handshake and is dropped
 /// here; nothing it sent was read as a frame.
 const HANDSHAKE_SECS: u64 = 10;
 
-/// A live connection as the listener holds it: the write path, the
-/// incarnation that every link-state write about it names, the asks it has
-/// not answered, and the close the revoking act pulls.
+/// The least silence bound the cadence rule admits: the cadence is the
+/// bound divided by four, so a bound under four seconds would have a
+/// cadence of zero.
+pub const LEAST_SILENCE_SECS: u64 = 4;
+
+/// A live connection as the listener holds it: the credential it was
+/// admitted on, the write path, the incarnation that every link-state write
+/// about it names, the asks it has not answered, and the close the revoking
+/// act pulls.
 struct LiveConnection {
+    fingerprint: String,
     incarnation: i64,
     tx: mpsc::Sender<ToClient>,
     pending: Arc<Mutex<HashMap<u64, oneshot::Sender<FromClient>>>>,
@@ -96,6 +111,11 @@ impl Listener {
         listen: &str,
         silence: Duration,
     ) -> anyhow::Result<Self> {
+        if silence.as_secs() < LEAST_SILENCE_SECS {
+            anyhow::bail!(
+                "the silence bound is {silence:?}, under the {LEAST_SILENCE_SECS} s the cadence rule admits"
+            );
+        }
         let acceptor = TlsAcceptor::from(authority.server_tls()?);
         let tcp = TcpListener::bind(listen).await?;
         let address = tcp.local_addr()?;
@@ -135,18 +155,27 @@ impl Listener {
             }
         });
 
+        // **The revocation channel outlives its errors.** A notification
+        // raised while the connection to the store is being remade is
+        // lost, so after any error the live map is swept against the
+        // register and anything revoked is closed, and listening resumes.
         let weak = Arc::downgrade(&listener.inner);
         tokio::spawn(async move {
             loop {
-                let notification = match notifications.recv().await {
-                    Ok(n) => n,
-                    Err(e) => {
-                        tracing::error!("the revocation channel failed: {e}");
-                        return;
+                match notifications.recv().await {
+                    Ok(notification) => {
+                        let Some(inner) = weak.upgrade() else { return };
+                        inner.close_fingerprint(notification.payload());
                     }
-                };
-                let Some(inner) = weak.upgrade() else { return };
-                inner.close_fingerprint(notification.payload()).await;
+                    Err(e) => {
+                        let Some(inner) = weak.upgrade() else { return };
+                        tracing::error!(
+                            "the revocation channel failed, sweeping the live map and resuming: {e}"
+                        );
+                        inner.sweep_revoked().await;
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                    }
+                }
             }
         });
         Ok(listener)
@@ -180,7 +209,17 @@ impl Listener {
             .contains_key(&(agent.clone(), plane))
     }
 
+    /// Close every live connection whose credential the register no longer
+    /// holds live: what the notification task does after an error, and
+    /// what an operator's tooling may ask for.
+    pub async fn sweep_revoked(&self) {
+        self.inner.sweep_revoked().await
+    }
+
     /// One turn across the link (Spec 7.1): routed to the agent's gate-con.
+    /// **No deadline**: the gate serializes turns and a queued turn
+    /// legitimately waits, the seed's own reasoning; a dropped connector
+    /// fails the ask.
     pub async fn turn(&self, agent: &AgentId, text: &str) -> Result<GateClose, TurnError> {
         let text = text.to_owned();
         match self
@@ -196,7 +235,8 @@ impl Listener {
 
     /// One verb across the link (Spec 7.2): routed to the agent's
     /// admin-con, whose answer lands on the row where it is `show` or
-    /// `list` before it is answered here.
+    /// `list` before it is answered here. The invocation's ceiling is
+    /// admin-con's, as the seed's was the connector's.
     pub async fn verb(&self, agent: &AgentId, verb: &str) -> anyhow::Result<VerbOutcome> {
         let v = verb.to_owned();
         match self
@@ -238,62 +278,150 @@ impl Inner {
     }
 
     /// The revoking act's close (Spec 8): a notification names a
-    /// fingerprint, and the connection installed for it, if any, is closed
-    /// now rather than at the next hello.
-    async fn close_fingerprint(&self, fingerprint: &str) {
-        let Ok(Some((agent, plane))) = self.store.agent_by_fingerprint(fingerprint).await else {
-            return;
-        };
-        let close = {
+    /// fingerprint, and the connection installed on it, if any, is closed
+    /// now rather than at the next hello. **Resolved in the live map and
+    /// not in the register**: a rotation has already replaced the row's
+    /// fingerprints by the time its notification arrives, so a lookup in
+    /// the register would find nothing to close and leave the old
+    /// connections relaying.
+    fn close_fingerprint(&self, fingerprint: &str) {
+        let closes: Vec<(AgentId, Plane, watch::Sender<bool>)> = {
             let live = self.live.lock().unwrap();
-            live.get(&(agent.agent_id.clone(), plane))
-                .map(|c| c.close.clone())
+            live.iter()
+                .filter(|(_, c)| c.fingerprint == fingerprint)
+                .map(|((agent, plane), c)| (agent.clone(), *plane, c.close.clone()))
+                .collect()
         };
-        if let Some(close) = close {
+        for (agent, plane, close) in closes {
             tracing::info!(
-                "credential {} of {} ({plane}) revoked: closing its live connection",
-                &fingerprint[..12],
-                agent.agent_id
+                "credential {} of {agent} ({plane}) revoked: closing its live connection",
+                &fingerprint[..12]
             );
             let _ = close.send(true);
+        }
+    }
+
+    /// Close every live connection whose credential is no longer the live
+    /// one on its row, whether revoked or replaced by a rotation.
+    async fn sweep_revoked(&self) {
+        let held: Vec<(AgentId, Plane, String)> = {
+            let live = self.live.lock().unwrap();
+            live.iter()
+                .map(|((agent, plane), c)| (agent.clone(), *plane, c.fingerprint.clone()))
+                .collect()
+        };
+        for (agent, plane, fp) in held {
+            let standing = match self.store.agent(&agent).await {
+                Ok(Some(row)) => {
+                    let credential = row.credential(plane);
+                    credential.fingerprint == fp && credential.state == CredentialState::Live
+                }
+                Ok(None) => false,
+                Err(e) => {
+                    tracing::error!("sweep could not read {agent}: {e:#}");
+                    continue;
+                }
+            };
+            if !standing {
+                self.close_fingerprint(&fp);
+            }
         }
     }
 
     fn next_arrival(&self) -> i64 {
         self.arrival.fetch_add(1, Ordering::Relaxed) + 1
     }
+
+    fn acknowledged(&self, agent: &AgentId) -> Option<Position> {
+        self.acknowledged.lock().unwrap().get(agent).cloned()
+    }
+
+    /// Remove the connection from the live map if it is still the one
+    /// installed for its plane. Answers whether it was.
+    fn remove_if_mine(&self, key: &(AgentId, Plane), incarnation: i64) -> bool {
+        let mut live = self.live.lock().unwrap();
+        if live.get(key).map(|c| c.incarnation) == Some(incarnation) {
+            live.remove(key);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// The cleanup after a store error on a path that already installed:
+    /// under the row's lock where the store can be reached, and without it,
+    /// logged, where it cannot (the module header's one exception).
+    async fn remove_after_error(&self, key: &(AgentId, Plane), incarnation: i64) {
+        let locked = self
+            .store
+            .with_row_lock(&key.0, || {
+                self.remove_if_mine(key, incarnation);
+            })
+            .await;
+        if let Err(e) = locked {
+            tracing::error!(
+                "{} ({}): the row's lock could not be taken for the cleanup, removing the connection without it: {e:#}",
+                key.0,
+                key.1
+            );
+            self.remove_if_mine(key, incarnation);
+        }
+    }
 }
 
-/// Read one frame line under the bound. `None` is the end of the
-/// connection or a line that left the framing.
-async fn read_line<R: tokio::io::AsyncBufRead + Unpin>(
-    reader: &mut R,
-    buf: &mut Vec<u8>,
-) -> Option<String> {
+/// A frame line, or why it is not one.
+enum Line {
+    Frame(String),
+    /// The peer closed, or the stream failed.
+    Closed,
+    /// Over the bound with no delimiter found, or not UTF-8.
+    Malformed(&'static str),
+}
+
+/// Read one frame line under the bound, **holding the bound per read**:
+/// the reader's own buffer is consumed chunk by chunk and the line refused
+/// as soon as it passes the bound, so an authenticated peer cannot grow a
+/// buffer by withholding the delimiter.
+async fn read_line<R: tokio::io::AsyncBufRead + Unpin>(reader: &mut R, buf: &mut Vec<u8>) -> Line {
     buf.clear();
-    let mut taken = 0usize;
     loop {
-        let n = reader.read_until(b'\n', buf).await.ok()?;
-        if n == 0 {
-            return None;
+        let chunk = match reader.fill_buf().await {
+            Ok(chunk) => chunk,
+            Err(_) => return Line::Closed,
+        };
+        if chunk.is_empty() {
+            return Line::Closed;
         }
-        taken += n;
-        if buf.last() == Some(&b'\n') {
+        if let Some(i) = chunk.iter().position(|&b| b == b'\n') {
+            buf.extend_from_slice(&chunk[..i]);
+            reader.consume(i + 1);
             break;
         }
-        if taken > LINE_BOUND {
-            return None;
+        let n = chunk.len();
+        buf.extend_from_slice(chunk);
+        reader.consume(n);
+        if buf.len() > LINE_BOUND {
+            return Line::Malformed("a line passed the bound with no delimiter");
         }
     }
-    if buf.len() > LINE_BOUND + 1 {
-        return None;
+    if buf.len() > LINE_BOUND {
+        return Line::Malformed("a line passed the bound");
     }
-    let s = std::str::from_utf8(buf).ok()?;
-    Some(s.trim_end().to_owned())
+    match std::str::from_utf8(buf) {
+        Ok(s) => Line::Frame(s.trim_end().to_owned()),
+        Err(_) => Line::Malformed("a line is not UTF-8"),
+    }
 }
 
 async fn send(tx: &mpsc::Sender<ToClient>, frame: ToClient) {
     let _ = tx.send(frame).await;
+}
+
+/// Refuse, close the write path, and wait for it to drain.
+async fn refuse(tx: mpsc::Sender<ToClient>, writer: tokio::task::JoinHandle<()>, reason: Refusal) {
+    send(&tx, ToClient::Refusal { reason }).await;
+    drop(tx);
+    let _ = writer.await;
 }
 
 async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr) {
@@ -348,9 +476,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
     // looked up in the register and a credential that is absent or
     // revoked is refused here, before any byte of the hello is read.
     let (agent, plane) = match inner.store.agent_by_fingerprint(&fp).await {
-        Ok(Some((agent, plane)))
-            if agent.credential(plane).state == crate::link::register::CredentialState::Live =>
-        {
+        Ok(Some((agent, plane))) if agent.credential(plane).state == CredentialState::Live => {
             (agent, plane)
         }
         Ok(Some((agent, plane))) => {
@@ -359,15 +485,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                 &fp[..12],
                 agent.agent_id
             );
-            send(
-                &tx,
-                ToClient::Refusal {
-                    reason: Refusal::NotLive,
-                },
-            )
-            .await;
-            drop(tx);
-            let _ = writer.await;
+            refuse(tx, writer, Refusal::NotLive).await;
             return;
         }
         Ok(None) => {
@@ -375,15 +493,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                 "link from {peer}: credential {} is not in the register, refused before its roster",
                 &fp[..12]
             );
-            send(
-                &tx,
-                ToClient::Refusal {
-                    reason: Refusal::NotLive,
-                },
-            )
-            .await;
-            drop(tx);
-            let _ = writer.await;
+            refuse(tx, writer, Refusal::NotLive).await;
             return;
         }
         Err(e) => {
@@ -394,23 +504,27 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
         }
     };
 
-    let hello = tokio::time::timeout(inner.silence, read_line(&mut reader, &mut buf)).await;
+    // The hello has the handshake's bound, not the silence bound: a peer
+    // that authenticated and then says nothing is not a connector yet.
+    let hello = tokio::time::timeout(
+        Duration::from_secs(HANDSHAKE_SECS),
+        read_line(&mut reader, &mut buf),
+    )
+    .await;
     let (name, said_plane, tail) = match hello {
-        Ok(Some(line)) => match serde_json::from_str::<FromClient>(&line) {
+        Ok(Line::Frame(line)) => match serde_json::from_str::<FromClient>(&line) {
             Ok(FromClient::Hello { agent, plane, tail }) => (agent, plane, tail),
             _ => {
-                send(
-                    &tx,
-                    ToClient::Refusal {
-                        reason: Refusal::Malformed,
-                    },
-                )
-                .await;
-                drop(tx);
-                let _ = writer.await;
+                tracing::warn!("link from {peer}: the first frame was not a hello, refused");
+                refuse(tx, writer, Refusal::Malformed).await;
                 return;
             }
         },
+        Ok(Line::Malformed(why)) => {
+            tracing::warn!("link from {peer}: {why} before the hello, refused");
+            refuse(tx, writer, Refusal::Malformed).await;
+            return;
+        }
         _ => {
             drop(tx);
             let _ = writer.await;
@@ -427,17 +541,23 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
             agent.name,
             agent.agent_id
         );
-        send(
-            &tx,
-            ToClient::Refusal {
-                reason: Refusal::RosterMismatch,
-            },
-        )
-        .await;
-        drop(tx);
-        let _ = writer.await;
+        refuse(tx, writer, Refusal::RosterMismatch).await;
         return;
     }
+    // **The replay boundary is fixed from the hello** (Spec 7.2): an admin
+    // hello that carries no tail cannot fix one and is refused.
+    let boundary = match (plane, tail) {
+        (Plane::Admin, Some(tail)) => Some(tail),
+        (Plane::Admin, None) => {
+            tracing::warn!(
+                "link from {peer}: admin-con of {} said hello with no tail, refused: no boundary",
+                agent.agent_id
+            );
+            refuse(tx, writer, Refusal::Malformed).await;
+            return;
+        }
+        (Plane::Gate, _) => None,
+    };
 
     let incarnation = (inner.epoch << 32) | inner.next_incarnation.fetch_add(1, Ordering::Relaxed);
     let pending = Arc::new(Mutex::new(HashMap::new()));
@@ -461,6 +581,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                 live.insert(
                     key.clone(),
                     LiveConnection {
+                        fingerprint: fp.clone(),
                         incarnation,
                         tx: tx.clone(),
                         pending: pending.clone(),
@@ -478,13 +599,15 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                 "link from {peer}: {} ({plane}) refused at admission: {refusal}",
                 agent.agent_id
             );
-            send(&tx, ToClient::Refusal { reason: refusal }).await;
-            drop(tx);
-            let _ = writer.await;
+            refuse(tx, writer, refusal).await;
             return;
         }
         Err(e) => {
+            // The install closure may have run before the write failed:
+            // the entry comes out under the lock, so the map agrees with
+            // the row that rolled back.
             tracing::error!("link from {peer}: admission could not be written: {e:#}");
+            inner.remove_after_error(&key, incarnation).await;
             drop(tx);
             let _ = writer.await;
             return;
@@ -495,15 +618,13 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
         agent.agent_id
     );
 
-    // **The replay boundary is fixed from the hello before anything else
-    // is read** (Spec 7.2, 2.12), then the hello is answered, then `show`
-    // is asked, before the connection's first event is accepted.
-    let boundary = tail.clone();
+    // The hello is answered, then on the admin plane `show` is asked
+    // before the connection's first event is read (Spec 7.2, 2.12).
     let acknowledged = inner.acknowledged(&agent.agent_id);
     send(
         &tx,
         ToClient::HelloAnswer {
-            cadence_secs: (inner.silence.as_secs() / 4).max(1),
+            cadence_secs: inner.silence.as_secs() / 4,
             acknowledged,
         },
     )
@@ -527,6 +648,9 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
         .await;
     }
 
+    // Whether an event at or beyond the boundary in its generation has
+    // arrived yet, which is what classifies events of other generations.
+    let mut crossed = false;
     loop {
         let line = tokio::select! {
             l = tokio::time::timeout(inner.silence, read_line(&mut reader, &mut buf)) => l,
@@ -539,8 +663,22 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
             }
         };
         let line = match line {
-            Ok(Some(line)) => line,
-            Ok(None) => break,
+            Ok(Line::Frame(line)) => line,
+            Ok(Line::Closed) => break,
+            Ok(Line::Malformed(why)) => {
+                tracing::warn!(
+                    "link from {peer}: {} ({plane}) sent {why}, refused",
+                    agent.agent_id
+                );
+                send(
+                    &tx,
+                    ToClient::Refusal {
+                        reason: Refusal::Malformed,
+                    },
+                )
+                .await;
+                break;
+            }
             Err(_) => {
                 tracing::info!(
                     "link from {peer}: {} ({plane}) silent for {:?}, closed",
@@ -573,6 +711,20 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
         };
         match (plane, frame) {
             (_, FromClient::Heartbeat) => {}
+            (_, FromClient::Hello { .. }) => {
+                tracing::warn!(
+                    "link from {peer}: {} ({plane}) said hello again mid-stream, refused",
+                    agent.agent_id
+                );
+                send(
+                    &tx,
+                    ToClient::Refusal {
+                        reason: Refusal::Malformed,
+                    },
+                )
+                .await;
+                break;
+            }
             (Plane::Gate, FromClient::Turn { id, close, error }) => {
                 resolve(&pending, id, FromClient::Turn { id, close, error });
             }
@@ -594,6 +746,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                     .land_event(
                         &agent.agent_id,
                         boundary.as_ref(),
+                        &mut crossed,
                         &position,
                         replayed,
                         event,
@@ -622,17 +775,16 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
         }
     }
 
-    // **Teardown bound to the incarnation, under the row's lock** (Spec 8).
-    let torn = inner
+    // **Teardown bound to the incarnation, under the row's lock** (Spec 8):
+    // the uninstall runs under the lock on every outcome, and the
+    // disconnected write lands only while this incarnation is the live one.
+    match inner
         .store
         .teardown(&agent.agent_id, plane, incarnation, || {
-            let mut live = inner.live.lock().unwrap();
-            if live.get(&key).map(|c| c.incarnation) == Some(incarnation) {
-                live.remove(&key);
-            }
+            inner.remove_if_mine(&key, incarnation);
         })
-        .await;
-    match torn {
+        .await
+    {
         Ok(true) => {
             if plane == Plane::Admin {
                 inner
@@ -641,15 +793,13 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
             }
         }
         Ok(false) => {
-            // Not the live incarnation any more: a revocation or a
-            // replacement already wrote this plane, and this write would
-            // have marked it missing while it relays.
-            let mut live = inner.live.lock().unwrap();
-            if live.get(&key).map(|c| c.incarnation) == Some(incarnation) {
-                live.remove(&key);
-            }
+            // A revocation or a replacement already wrote this plane; the
+            // entry came out under the lock and nothing else is owed.
         }
-        Err(e) => tracing::error!("link from {peer}: teardown could not be written: {e:#}"),
+        Err(e) => {
+            tracing::error!("link from {peer}: teardown could not be written: {e:#}");
+            inner.remove_after_error(&key, incarnation).await;
+        }
     }
     pending.lock().unwrap().clear();
     drop(tx);
@@ -680,15 +830,22 @@ fn resolve(
     }
 }
 
-impl Inner {
-    fn acknowledged(&self, agent: &AgentId) -> Option<Position> {
-        self.acknowledged.lock().unwrap().get(agent).cloned()
-    }
+/// A trace event's own time, from the envelope's `wall_ms`.
+fn event_time(event: &TraceEvent) -> Option<DateTime<Utc>> {
+    event
+        .raw
+        .get("wall_ms")
+        .and_then(|v| v.as_i64())
+        .and_then(DateTime::<Utc>::from_timestamp_millis)
+}
 
+impl Inner {
     /// **A `show` or `list` answer is admin's word** (Spec 7.2, 2.12) and
     /// lands on the row under the arrival sequence. Of a `list` answer only
     /// the summary for this connection's own row lands; the others write
-    /// nothing. Any other verb's answer lands nothing.
+    /// nothing. Any other verb's answer lands nothing. **The date is the
+    /// receipt's**, a gap section 2.12 names: admin's answer carries no
+    /// time of its own.
     async fn land_verb(&self, agent: &AgentId, name: &str, outcome: &VerbOutcome) {
         let Some(answer) = &outcome.answer else {
             return;
@@ -714,30 +871,40 @@ impl Inner {
                 .and_then(|s| s.as_str())
                 .map(str::to_owned),
             tuple: summary.get("load").cloned().filter(|l| !l.is_null()),
-            at: chrono::Utc::now(),
+            at: Utc::now(),
         };
         self.land(agent, observation).await;
     }
 
     /// **An event feeds the window, and only a live load or unload writes
-    /// the row** (Spec 7.2, 2.12). The server classifies by its own
-    /// boundary, the hello's tail: behind it is replayed whatever the
-    /// client's flag says, and a replayed event writes no member of the
-    /// row. An event of another generation than the boundary's is live
-    /// unless the client marked it replayed, a rotation after the hello
-    /// being live and a backfill from an older file being history.
+    /// the row** (Spec 7.2, 2.12). **The server classifies by its own
+    /// boundary and needs no flag from the client.** In the boundary's
+    /// generation an event is replayed where its offset is behind the
+    /// boundary's. In another generation the stream's own order decides,
+    /// which the source guarantees (Spec 7.2, one ordered stream): every
+    /// event of another generation that arrives before the first event at
+    /// or beyond the boundary is the old file's tail, replayed; every one
+    /// arriving after is a rotation after the hello, live. The client's
+    /// flag is a check and a disagreement is logged.
     async fn land_event(
         &self,
         agent: &AgentId,
         boundary: Option<&Position>,
+        crossed: &mut bool,
         position: &Position,
         replayed: bool,
         event: TraceEvent,
     ) {
         let behind = match boundary {
-            Some(b) if b.generation == position.generation => position.offset < b.offset,
-            Some(_) => replayed,
-            None => replayed,
+            Some(b) if b.generation == position.generation => {
+                let behind = position.offset < b.offset;
+                if !behind {
+                    *crossed = true;
+                }
+                behind
+            }
+            Some(_) => !*crossed,
+            None => false,
         };
         if behind != replayed {
             tracing::warn!(
@@ -750,6 +917,12 @@ impl Inner {
         }
         let kind = event.kind.clone();
         let payload = event.raw.get("payload").cloned();
+        // **Admin's date** (Spec 2.12): the event's own time, and the
+        // receipt's only where the record carries none.
+        let at = event_time(&event).unwrap_or_else(|| {
+            tracing::warn!("{agent}: an event carried no wall_ms, dated at receipt");
+            Utc::now()
+        });
         self.windows.ingest(agent.as_str(), event);
         self.acknowledged
             .lock()
@@ -765,12 +938,12 @@ impl Inner {
             Some("load") => Observation {
                 load_state: Some("idle".into()),
                 tuple: payload,
-                at: chrono::Utc::now(),
+                at,
             },
             Some("unload") => Observation {
                 load_state: Some("unloaded".into()),
                 tuple: None,
-                at: chrono::Utc::now(),
+                at,
             },
             _ => return,
         };

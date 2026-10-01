@@ -242,23 +242,41 @@ impl Store {
         admin_fingerprint: &str,
     ) -> anyhow::Result<(AgentId, Vec<String>)> {
         let mut tx = self.pool.begin().await?;
-        let retired = sqlx::query(
-            "UPDATE agent SET \
-               gate_state = 'revoked', gate_state_at = now(), \
-               admin_state = 'revoked', admin_state_at = now(), \
-               gate_link_at = CASE WHEN gate_connected THEN now() ELSE gate_link_at END, \
-               admin_link_at = CASE WHEN admin_connected THEN now() ELSE admin_link_at END, \
-               gate_connected = false, admin_connected = false, \
-               version = version + 1 \
+        // **The retire is ordered on the previous row's version** like every
+        // register verb (Spec 8): the live row is read under the lock and
+        // the update names the version it read.
+        let previous = sqlx::query(
+            "SELECT agent_id, version, gate_fingerprint, admin_fingerprint FROM agent \
              WHERE box = $1 AND name = $2 AND (gate_state = 'live' OR admin_state = 'live') \
-             RETURNING gate_fingerprint, admin_fingerprint",
+             FOR UPDATE",
         )
         .bind(r#box)
         .bind(name)
-        .fetch_all(&mut *tx)
+        .fetch_optional(&mut *tx)
         .await?;
         let mut retired_fingerprints = Vec::new();
-        for row in &retired {
+        if let Some(row) = previous {
+            let id: String = row.try_get("agent_id")?;
+            let version: i64 = row.try_get("version")?;
+            let affected = sqlx::query(
+                "UPDATE agent SET \
+                   gate_state = 'revoked', gate_state_at = now(), \
+                   admin_state = 'revoked', admin_state_at = now(), \
+                   gate_link_at = CASE WHEN gate_connected THEN now() ELSE gate_link_at END, \
+                   admin_link_at = CASE WHEN admin_connected THEN now() ELSE admin_link_at END, \
+                   gate_connected = false, admin_connected = false, \
+                   gate_incarnation = NULL, admin_incarnation = NULL, \
+                   version = version + 1 \
+                 WHERE agent_id = $1 AND version = $2",
+            )
+            .bind(&id)
+            .bind(version)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+            if affected != 1 {
+                anyhow::bail!("the row {id} moved since it was read at version {version}");
+            }
             for col in ["gate_fingerprint", "admin_fingerprint"] {
                 let fp: String = row.try_get(col)?;
                 notify(&mut tx, &fp).await?;
@@ -300,7 +318,7 @@ impl Store {
             "UPDATE agent SET \
                {p}_state = 'revoked', {p}_state_at = now(), \
                {p}_link_at = CASE WHEN {p}_connected THEN now() ELSE {p}_link_at END, \
-               {p}_connected = false, \
+               {p}_connected = false, {p}_incarnation = NULL, \
                author = $3, version = version + 1 \
              WHERE agent_id = $1 AND version = $2"
         )))
@@ -342,6 +360,7 @@ impl Store {
                gate_link_at = CASE WHEN gate_connected THEN now() ELSE gate_link_at END, \
                admin_link_at = CASE WHEN admin_connected THEN now() ELSE admin_link_at END, \
                gate_connected = false, admin_connected = false, \
+               gate_incarnation = NULL, admin_incarnation = NULL, \
                author = $5, version = version + 1 \
              WHERE agent_id = $1 AND version = $2",
         )
@@ -383,6 +402,7 @@ impl Store {
                gate_link_at = CASE WHEN gate_connected THEN now() ELSE gate_link_at END, \
                admin_link_at = CASE WHEN admin_connected THEN now() ELSE admin_link_at END, \
                gate_connected = false, admin_connected = false, \
+               gate_incarnation = NULL, admin_incarnation = NULL, \
                author = $1, version = version + 1 \
              WHERE gate_state = 'live' OR admin_state = 'live' \
              RETURNING gate_fingerprint, admin_fingerprint",
@@ -488,11 +508,13 @@ impl Store {
         .bind(agent_id.as_str())
         .fetch_one(&mut *tx)
         .await?;
+        // The uninstall runs under the lock whatever the row says, so the
+        // live map never holds an entry the row no longer names.
+        uninstall();
         if live != Some(incarnation) {
             tx.rollback().await?;
             return Ok(false);
         }
-        uninstall();
         sqlx::query(audited(format!(
             "UPDATE agent SET {p}_connected = false, {p}_link_at = now(), {p}_incarnation = NULL \
              WHERE agent_id = $1"
@@ -502,6 +524,18 @@ impl Store {
         .await?;
         tx.commit().await?;
         Ok(true)
+    }
+
+    /// **Run a closure under the row's lock and nothing else**: the cleanup
+    /// the listener owes after a store error on a path that already
+    /// installed, so the live map is mutated under the same exclusion as
+    /// every other path.
+    pub async fn with_row_lock(&self, agent_id: &AgentId, f: impl FnOnce()) -> anyhow::Result<()> {
+        let mut tx = self.pool.begin().await?;
+        lock_row(&mut tx, agent_id).await?;
+        f();
+        tx.commit().await?;
+        Ok(())
     }
 
     /// **Land an observation** (Spec 2.12): the tuple and the load state as
@@ -521,7 +555,8 @@ impl Store {
                load_state = $2, load_state_at = $3, load_epoch = $4, load_arrival = $5, \
                tuple = $6, tuple_at = $3, tuple_epoch = $4, tuple_arrival = $5 \
              WHERE agent_id = $1 \
-               AND (load_epoch IS NULL OR (load_epoch, load_arrival) < ($4, $5))",
+               AND (load_epoch IS NULL OR (load_epoch, load_arrival) < ($4, $5)) \
+               AND (tuple_epoch IS NULL OR (tuple_epoch, tuple_arrival) < ($4, $5))",
         )
         .bind(agent_id.as_str())
         .bind(&observation.load_state)

@@ -146,7 +146,17 @@ fn load_toml<T: serde::de::DeserializeOwned>(path: &Path) -> anyhow::Result<T> {
 
 impl ServerConfig {
     pub fn load(path: &Path) -> anyhow::Result<Self> {
-        load_toml(path)
+        let cfg: Self = load_toml(path)?;
+        // The cadence is the bound divided by four (Spec 8), so a bound under
+        // four seconds has no cadence and is refused here rather than at the
+        // first hello.
+        if cfg.silence_bound_secs < 4 {
+            anyhow::bail!(
+                "silence_bound_secs is {}, under the 4 the cadence rule admits",
+                cfg.silence_bound_secs
+            );
+        }
+        Ok(cfg)
     }
 }
 

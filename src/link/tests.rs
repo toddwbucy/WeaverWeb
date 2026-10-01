@@ -1,0 +1,1054 @@
+//! The link's instruments: fake connectors holding minted credentials drive
+//! a listener over mutual TLS against a live PostgreSQL named by
+//! `DATABASE_URL`. Without it the DB-backed tests print `skipped:` and pass
+//! asserting nothing, as the store's own do. Each test registers its own
+//! agent under a box named by a fresh identifier, and the tests run one at
+//! a time because a listener's start resets every row's link state, which
+//! is the claim and not an accident.
+//!
+//! Every perturbation below names its guard, and the act that landed it
+//! showed the test failing with the guard removed, per Spec section 9.
+
+use super::authority::{Authority, ClientCredential, client_tls, fingerprint};
+use super::frames::{FromClient, Plane, Position, Refusal, ToClient};
+use super::listener::Listener;
+use super::register::{Agent, CredentialState};
+use crate::lifecycle::VerbOutcome;
+use crate::store::{AgentId, Store};
+use crate::traceview::TraceEvent;
+use serde_json::json;
+use std::net::SocketAddr;
+use std::sync::OnceLock;
+use std::time::Duration;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, ReadHalf, WriteHalf};
+use tokio::net::TcpStream;
+use tokio_rustls::TlsConnector;
+use tokio_rustls::client::TlsStream;
+
+const SILENCE: Duration = Duration::from_secs(60);
+const SOON: Duration = Duration::from_secs(5);
+
+fn serial() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+async fn store() -> Option<Store> {
+    let Ok(url) = std::env::var("DATABASE_URL") else {
+        eprintln!("skipped: DATABASE_URL is not set, and the register is tested against a schema");
+        return None;
+    };
+    Some(Store::connect(&url).await.expect("connect and migrate"))
+}
+
+fn position(offset: u64) -> Position {
+    Position {
+        generation: "g1".into(),
+        offset,
+        digest: format!("d{offset}"),
+    }
+}
+
+fn show_answer(agent: &str, state: &str, load: Option<serde_json::Value>) -> VerbOutcome {
+    let mut answer = json!({ "kind": "state", "state": state });
+    if let Some(load) = load {
+        answer["load"] = load;
+    }
+    VerbOutcome {
+        verb: "show".into(),
+        agent: agent.into(),
+        exit_code: Some(0),
+        answer: Some(answer),
+        raw_stdout: None,
+        stderr: None,
+        timed_out: false,
+    }
+}
+
+fn list_answer(rows: &[(&str, &str)]) -> VerbOutcome {
+    let agents: Vec<serde_json::Value> = rows
+        .iter()
+        .map(|(name, state)| json!({ "name": name, "state": state }))
+        .collect();
+    VerbOutcome {
+        verb: "list".into(),
+        agent: String::new(),
+        exit_code: Some(0),
+        answer: Some(json!({ "kind": "agents", "agents": agents })),
+        raw_stdout: None,
+        stderr: None,
+        timed_out: false,
+    }
+}
+
+fn trace_event(seq: u64, kind: &str, payload: serde_json::Value) -> TraceEvent {
+    TraceEvent {
+        seq,
+        mark: None,
+        run: Some("run-1".into()),
+        turn: None,
+        kind: Some(kind.into()),
+        raw: json!({ "kind": kind, "run": "run-1", "payload": payload }),
+    }
+}
+
+/// A registered agent with its two minted credentials.
+struct Registered {
+    id: AgentId,
+    name: String,
+    r#box: String,
+    gate: ClientCredential,
+    admin: ClientCredential,
+}
+
+impl Registered {
+    fn credential(&self, plane: Plane) -> &ClientCredential {
+        match plane {
+            Plane::Gate => &self.gate,
+            Plane::Admin => &self.admin,
+        }
+    }
+}
+
+/// A fake connector: one TLS connection speaking the link's lines.
+struct Fake {
+    reader: BufReader<ReadHalf<TlsStream<TcpStream>>>,
+    writer: WriteHalf<TlsStream<TcpStream>>,
+}
+
+impl Fake {
+    async fn try_connect(
+        address: SocketAddr,
+        authority_pem: &str,
+        credential: &ClientCredential,
+    ) -> anyhow::Result<Self> {
+        let tls = client_tls(
+            authority_pem,
+            &credential.certificate_pem,
+            &credential.key_pem,
+        )?;
+        let tcp = TcpStream::connect(address).await?;
+        let name = rustls::pki_types::ServerName::try_from("weaver-web".to_string())?;
+        let stream = TlsConnector::from(tls).connect(name, tcp).await?;
+        let (read, writer) = tokio::io::split(stream);
+        Ok(Self {
+            reader: BufReader::new(read),
+            writer,
+        })
+    }
+
+    async fn connect(
+        address: SocketAddr,
+        authority_pem: &str,
+        credential: &ClientCredential,
+    ) -> Self {
+        Self::try_connect(address, authority_pem, credential)
+            .await
+            .expect("the handshake completes against the authority that minted the credential")
+    }
+
+    async fn send(&mut self, frame: FromClient) {
+        let mut line = serde_json::to_string(&frame).unwrap();
+        line.push('\n');
+        self.writer.write_all(line.as_bytes()).await.unwrap();
+    }
+
+    /// A send that may meet a connection the server already closed.
+    async fn try_send(&mut self, frame: FromClient) {
+        let mut line = serde_json::to_string(&frame).unwrap();
+        line.push('\n');
+        let _ = self.writer.write_all(line.as_bytes()).await;
+    }
+
+    /// The next frame, or `None` where the server closed the connection or
+    /// sent nothing within the bound.
+    async fn recv(&mut self) -> Option<ToClient> {
+        let mut line = String::new();
+        match tokio::time::timeout(SOON, self.reader.read_line(&mut line)).await {
+            Ok(Ok(0)) | Err(_) => None,
+            Ok(Ok(_)) => Some(serde_json::from_str(line.trim_end()).expect("a frame")),
+            Ok(Err(_)) => None,
+        }
+    }
+
+    async fn expect_refusal(&mut self, reason: Refusal) {
+        match self.recv().await {
+            Some(ToClient::Refusal { reason: got }) => assert_eq!(got, reason),
+            other => panic!("expected the refusal {reason}, got {other:?}"),
+        }
+        assert!(
+            self.recv().await.is_none(),
+            "the connection closes after a refusal"
+        );
+    }
+}
+
+struct Lab {
+    _dir: tempfile::TempDir,
+    authority: Authority,
+    store: Store,
+    listener: Listener,
+    _serial: tokio::sync::MutexGuard<'static, ()>,
+}
+
+impl Lab {
+    async fn open() -> Option<Self> {
+        let serial = serial().lock().await;
+        let store = store().await?;
+        let dir = tempfile::tempdir().unwrap();
+        let authority = Authority::init(&dir.path().join("authority"), "weaver-web", &[]).unwrap();
+        let listener = Listener::start(store.clone(), &authority, "127.0.0.1:0", SILENCE)
+            .await
+            .unwrap();
+        Some(Self {
+            _dir: dir,
+            authority,
+            store,
+            listener,
+            _serial: serial,
+        })
+    }
+
+    /// A new server process over the same store and authority.
+    async fn restart(&mut self) {
+        self.listener =
+            Listener::start(self.store.clone(), &self.authority, "127.0.0.1:0", SILENCE)
+                .await
+                .unwrap();
+    }
+
+    async fn register(&self, name: &str) -> Registered {
+        let r#box = format!("box-{}", uuid::Uuid::new_v4().simple());
+        self.register_at(&r#box, name).await
+    }
+
+    async fn register_at(&self, r#box: &str, name: &str) -> Registered {
+        let gate = self.authority.mint_client(name, Plane::Gate).unwrap();
+        let admin = self.authority.mint_client(name, Plane::Admin).unwrap();
+        let (id, _) = self
+            .store
+            .register_agent(
+                r#box,
+                name,
+                Some("lab"),
+                &gate.fingerprint,
+                &admin.fingerprint,
+            )
+            .await
+            .unwrap();
+        Registered {
+            id,
+            name: name.into(),
+            r#box: r#box.into(),
+            gate,
+            admin,
+        }
+    }
+
+    async fn agent(&self, id: &AgentId) -> Agent {
+        self.store.agent(id).await.unwrap().expect("the row stands")
+    }
+
+    /// Poll the row until a condition holds, or fail with the row.
+    async fn wait_for(&self, id: &AgentId, what: &str, cond: impl Fn(&Agent) -> bool) -> Agent {
+        let until = tokio::time::Instant::now() + SOON;
+        loop {
+            let agent = self.agent(id).await;
+            if cond(&agent) {
+                return agent;
+            }
+            assert!(
+                tokio::time::Instant::now() < until,
+                "the row never read {what}: {agent:?}"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    async fn connect(&self, credential: &ClientCredential) -> Fake {
+        Fake::connect(
+            self.listener.address(),
+            self.authority.certificate_pem(),
+            credential,
+        )
+        .await
+    }
+
+    /// Connect, say hello with a tail at 100, and take the hello answer
+    /// and, on the admin plane, the `show` ask that follows it.
+    async fn admit(&self, agent: &Registered, plane: Plane) -> Fake {
+        let mut fake = self.connect(agent.credential(plane)).await;
+        fake.send(FromClient::Hello {
+            agent: agent.name.clone(),
+            plane,
+            tail: Some(position(100)),
+        })
+        .await;
+        match fake.recv().await {
+            Some(ToClient::HelloAnswer { cadence_secs, .. }) => assert_eq!(cadence_secs, 15),
+            other => panic!("expected the hello answer, got {other:?}"),
+        }
+        if plane == Plane::Admin {
+            match fake.recv().await {
+                Some(ToClient::Verb { verb, .. }) if verb == "show" => {}
+                other => panic!("expected the show ask after the hello answer, got {other:?}"),
+            }
+        }
+        self.wait_for(&agent.id, "connected", |a| a.credential(plane).connected)
+            .await;
+        fake
+    }
+}
+
+/// **A connection whose credential is not live is refused before its
+/// roster is read.** The fake sends no hello at all and is still refused,
+/// which is what "before" means; a credential the authority minted but the
+/// register never held is refused the same way.
+///
+/// Perturbation: in `serve_connection`, read the hello before the lookup
+/// (move the `agent_by_fingerprint` match below the hello's parse). The
+/// fake that sends no hello then hangs to the silence bound instead of
+/// being refused, and the revoked fake's roster is read first.
+///
+/// conforms: web-link-refuses-a-credential-not-live-before-the-roster
+#[tokio::test]
+async fn a_credential_not_live_is_refused_before_its_roster_is_read() {
+    let Some(lab) = Lab::open().await else { return };
+    let karl = lab.register("karl").await;
+    let row = lab.agent(&karl.id).await;
+    lab.store
+        .revoke_credential(&row, Plane::Gate, Some("lab"))
+        .await
+        .unwrap();
+
+    let mut revoked = lab.connect(&karl.gate).await;
+    revoked.expect_refusal(Refusal::NotLive).await;
+
+    let stranger = lab.authority.mint_client("nobody", Plane::Admin).unwrap();
+    let mut unknown = lab.connect(&stranger).await;
+    unknown.expect_refusal(Refusal::NotLive).await;
+
+    let row = lab.agent(&karl.id).await;
+    assert_eq!(row.gate.state, CredentialState::Revoked);
+    assert!(!row.gate.connected && !row.admin.connected);
+}
+
+/// **One live connection per credential, and the revoking act closes the
+/// live one.** A second connection on a connected credential is refused
+/// rather than replacing the first, which stays installed under its
+/// incarnation; a revocation while connected closes the connection at
+/// once and the row reads disconnected; an admission against a revoked
+/// credential refuses under the lock without installing; and a stale
+/// teardown writes nothing.
+///
+/// Perturbations, one per clause of the Spec's row: (1) in the install
+/// closure, replace an existing entry instead of refusing, and the second
+/// fake is admitted while the row reads connected throughout; (2) in
+/// `Store::admit`, drop the state recheck under the lock, and an admission
+/// on a revoked credential installs; (3) in `Store::teardown`, drop the
+/// incarnation comparison, and the stale teardown marks the plane missing
+/// while its replacement relays.
+///
+/// conforms: web-one-live-connection-per-credential
+#[tokio::test]
+async fn one_live_connection_per_credential() {
+    let Some(lab) = Lab::open().await else { return };
+    let karl = lab.register("karl").await;
+
+    let mut first = lab.admit(&karl, Plane::Gate).await;
+    let before = lab.agent(&karl.id).await;
+    let incarnation = before.gate.incarnation.expect("the install named itself");
+
+    let mut second = lab.connect(&karl.gate).await;
+    second
+        .send(FromClient::Hello {
+            agent: karl.name.clone(),
+            plane: Plane::Gate,
+            tail: None,
+        })
+        .await;
+    second.expect_refusal(Refusal::AlreadyConnected).await;
+    let after = lab.agent(&karl.id).await;
+    assert!(after.gate.connected);
+    assert_eq!(
+        after.gate.incarnation,
+        Some(incarnation),
+        "the first stays installed"
+    );
+    assert!(lab.listener.connected(&karl.id, Plane::Gate));
+
+    // The revoking act closes the live connection at once.
+    lab.store
+        .revoke_credential(&after, Plane::Gate, Some("lab"))
+        .await
+        .unwrap();
+    assert!(
+        first.recv().await.is_none(),
+        "the revoked connection is closed"
+    );
+    let row = lab
+        .wait_for(&karl.id, "gate disconnected after revocation", |a| {
+            !a.gate.connected && !lab.listener.connected(&karl.id, Plane::Gate)
+        })
+        .await;
+    assert_eq!(row.gate.state, CredentialState::Revoked);
+
+    // An admission racing the revocation rechecks under the lock and
+    // refuses without installing.
+    let installed = std::cell::Cell::new(false);
+    let admitted = lab
+        .store
+        .admit(&karl.id, Plane::Gate, 99, "127.0.0.1:1", || {
+            installed.set(true);
+            Ok(())
+        })
+        .await
+        .unwrap();
+    assert_eq!(admitted, Err(Refusal::NotLive));
+    assert!(
+        !installed.get(),
+        "nothing is installed on a revoked credential"
+    );
+
+    // A stale teardown is bound to its incarnation and writes nothing.
+    let _admin = lab.admit(&karl, Plane::Admin).await;
+    let live = lab.agent(&karl.id).await.admin.incarnation.unwrap();
+    let uninstalled = std::cell::Cell::new(false);
+    let landed = lab
+        .store
+        .teardown(&karl.id, Plane::Admin, live - 1, || uninstalled.set(true))
+        .await
+        .unwrap();
+    assert!(!landed && !uninstalled.get());
+    let row = lab.agent(&karl.id).await;
+    assert!(row.admin.connected, "the live plane stays connected");
+    assert_eq!(row.admin.incarnation, Some(live));
+}
+
+/// **Identity is the certificate's binding and never the roster.** A hello
+/// naming another agent, or the other plane, on a bound credential is
+/// refused as a mismatch, and nothing is installed.
+///
+/// Perturbation: in `serve_connection`, act on the hello's name and plane
+/// instead of comparing them to the binding (take `name` and `said_plane`
+/// as the agent and plane). The hello on karl's gate credential naming m1
+/// is believed and m1's row reads connected from a credential that is not
+/// its own.
+///
+/// conforms: web-link-identity-is-the-certificates-binding-never-the-roster
+#[tokio::test]
+async fn identity_is_the_certificates_binding_never_the_roster() {
+    let Some(lab) = Lab::open().await else { return };
+    let karl = lab.register("karl").await;
+    let m1 = lab.register("m1").await;
+
+    let mut other_name = lab.connect(&karl.gate).await;
+    other_name
+        .send(FromClient::Hello {
+            agent: m1.name.clone(),
+            plane: Plane::Gate,
+            tail: None,
+        })
+        .await;
+    other_name.expect_refusal(Refusal::RosterMismatch).await;
+
+    let mut other_plane = lab.connect(&karl.gate).await;
+    other_plane
+        .send(FromClient::Hello {
+            agent: karl.name.clone(),
+            plane: Plane::Admin,
+            tail: None,
+        })
+        .await;
+    other_plane.expect_refusal(Refusal::RosterMismatch).await;
+
+    for id in [&karl.id, &m1.id] {
+        let row = lab.agent(id).await;
+        assert!(!row.gate.connected && !row.admin.connected, "{row:?}");
+    }
+}
+
+/// **At most one row per box and name holds live credentials**, at the
+/// schema, and re-registering a live pair retires the previous row. The
+/// name is immutable at the schema too.
+///
+/// Perturbation: drop the partial unique index from migration 0010. The
+/// direct insert of a second live row for one box and name lands, and two
+/// rows hold live credentials for one agent.
+///
+/// conforms: web-one-live-row-per-box-and-name
+#[tokio::test]
+async fn at_most_one_live_row_per_box_and_name() {
+    let Some(lab) = Lab::open().await else { return };
+    let first = lab.register("karl").await;
+    let second = lab.register_at(&first.r#box, "karl").await;
+    assert_ne!(first.id, second.id);
+    let retired = lab.agent(&first.id).await;
+    assert_eq!(retired.gate.state, CredentialState::Revoked);
+    assert_eq!(retired.admin.state, CredentialState::Revoked);
+    let live = lab.agent(&second.id).await;
+    assert_eq!(live.gate.state, CredentialState::Live);
+
+    let smuggled = sqlx::query(
+        "INSERT INTO agent (name, box, author, gate_fingerprint, admin_fingerprint) \
+         VALUES ($1, $2, NULL, $3, $4)",
+    )
+    .bind("karl")
+    .bind(&first.r#box)
+    .bind(fingerprint(b"one"))
+    .bind(fingerprint(b"two"))
+    .execute(&lab.store.pool)
+    .await;
+    let refusal = smuggled.unwrap_err().to_string();
+    assert!(
+        refusal.contains("agent_one_live_row_per_box_and_name"),
+        "the index refuses a second live row: {refusal}"
+    );
+
+    let renamed = sqlx::query("UPDATE agent SET name = 'karl2' WHERE agent_id = $1")
+        .bind(second.id.as_str())
+        .execute(&lab.store.pool)
+        .await;
+    assert!(
+        renamed.unwrap_err().to_string().contains("immutable"),
+        "the name does not move"
+    );
+    sqlx::query("UPDATE agent SET box = $2 WHERE agent_id = $1")
+        .bind(second.id.as_str())
+        .bind(format!("{}-moved", first.r#box))
+        .execute(&lab.store.pool)
+        .await
+        .expect("the box is the operator's to edit");
+}
+
+/// **The link state is reset when the listener starts**, and only for
+/// planes recorded as connected: a plane already disconnected keeps its
+/// date. The epoch advances by one in the same act.
+///
+/// Perturbation: in `Store::listener_start`, skip the two resets (keep the
+/// epoch update). After the restart the row still reads the gate connected
+/// though the socket belongs to a process that no longer listens, and a
+/// surface would render the agent's gate present.
+///
+/// conforms: web-link-state-is-reset-when-the-listener-starts
+#[tokio::test]
+async fn the_link_state_is_reset_when_the_listener_starts() {
+    let Some(mut lab) = Lab::open().await else {
+        return;
+    };
+    let karl = lab.register("karl").await;
+
+    // The admin plane connects and drops, so its disconnected date is a
+    // real one the reset must leave alone.
+    let admin = lab.admit(&karl, Plane::Admin).await;
+    drop(admin);
+    let dropped = lab
+        .wait_for(&karl.id, "admin disconnected", |a| !a.admin.connected)
+        .await;
+    let admin_dropped_at = dropped.admin.link_at.expect("the drop is dated");
+
+    let _gate = lab.admit(&karl, Plane::Gate).await;
+    let before = lab.agent(&karl.id).await;
+    assert!(before.gate.connected);
+    let epoch_before = lab.listener.epoch();
+
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    lab.restart().await;
+    assert_eq!(lab.listener.epoch(), epoch_before + 1);
+
+    let after = lab.agent(&karl.id).await;
+    assert!(!after.gate.connected, "reset: {after:?}");
+    assert!(after.gate.incarnation.is_none());
+    assert!(after.gate.link_at.unwrap() > before.gate.link_at.unwrap());
+    assert_eq!(
+        after.admin.link_at,
+        Some(admin_dropped_at),
+        "an already-disconnected plane keeps its date"
+    );
+    assert!(!after.present());
+}
+
+/// **An agent is present only when both planes connect from its row.**
+///
+/// Perturbation: in `Agent::present`, answer on either plane alone
+/// (`||`). An agent whose admin-con is down reads present, with a tuple
+/// and a load state nobody has confirmed.
+///
+/// conforms: web-agent-present-only-when-both-planes-match-one-row
+#[tokio::test]
+async fn an_agent_is_present_only_when_both_planes_connect_from_its_row() {
+    let Some(lab) = Lab::open().await else { return };
+    let karl = lab.register("karl").await;
+    assert!(!lab.agent(&karl.id).await.present());
+
+    let _gate = lab.admit(&karl, Plane::Gate).await;
+    assert!(
+        !lab.agent(&karl.id).await.present(),
+        "one plane is not presence"
+    );
+
+    let admin = lab.admit(&karl, Plane::Admin).await;
+    assert!(lab.agent(&karl.id).await.present());
+
+    drop(admin);
+    let row = lab
+        .wait_for(&karl.id, "admin gone", |a| !a.admin.connected)
+        .await;
+    assert!(!row.present());
+    assert!(row.gate.connected, "the row says which plane is missing");
+}
+
+/// **The authority is loaded before the listener starts and never minted
+/// at start**: a credential signed by another authority, which is what a
+/// re-minted one would be to every installed connector, fails the
+/// handshake, so nothing of its hello is read.
+///
+/// Perturbation: have `serve` mint an authority when none stands. Every
+/// restart then mints another and every installed connector meets this
+/// refusal.
+///
+/// conforms: web-servers-authority-is-loaded-and-never-minted-at-start
+#[tokio::test]
+async fn a_credential_of_another_authority_fails_the_handshake() {
+    let Some(lab) = Lab::open().await else { return };
+    let karl = lab.register("karl").await;
+    let other_dir = tempfile::tempdir().unwrap();
+    let other = Authority::init(other_dir.path(), "weaver-web", &[]).unwrap();
+    let foreign = other.mint_client(&karl.name, Plane::Gate).unwrap();
+
+    // Under TLS 1.3 the client's handshake completes before the server
+    // has verified its certificate, so the refusal arrives as the alert
+    // that closes the connection on its first exchange: no frame answers.
+    match Fake::try_connect(
+        lab.listener.address(),
+        lab.authority.certificate_pem(),
+        &foreign,
+    )
+    .await
+    {
+        Err(_) => {}
+        Ok(mut fake) => {
+            fake.try_send(FromClient::Hello {
+                agent: karl.name.clone(),
+                plane: Plane::Gate,
+                tail: None,
+            })
+            .await;
+            assert!(
+                fake.recv().await.is_none(),
+                "a certificate the authority did not sign is refused below any frame"
+            );
+        }
+    }
+    assert!(
+        Fake::try_connect(lab.listener.address(), other.certificate_pem(), &karl.gate)
+            .await
+            .is_err(),
+        "a connector pinning another authority refuses this server at the handshake"
+    );
+    assert!(!lab.agent(&karl.id).await.gate.connected);
+}
+
+/// **The client credential is stored as a fingerprint and never the key**,
+/// at the schema: the register holds SHA-256 over the certificate's DER,
+/// and a key cannot be written in its place.
+///
+/// Perturbation: drop the two fingerprint checks from migration 0010. The
+/// insert of a key lands, and a read of the register is a set of
+/// credentials anyone can present.
+///
+/// conforms: web-client-credential-stored-as-fingerprint-never-key
+#[tokio::test]
+async fn the_client_credential_is_stored_as_a_fingerprint_and_never_the_key() {
+    let Some(lab) = Lab::open().await else { return };
+    let karl = lab.register("karl").await;
+    let row = lab.agent(&karl.id).await;
+    let der = rustls_pemfile::certs(&mut karl.gate.certificate_pem.as_bytes())
+        .next()
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.gate.fingerprint, fingerprint(der.as_ref()));
+
+    let smuggled = sqlx::query(
+        "INSERT INTO agent (name, box, author, gate_fingerprint, admin_fingerprint) \
+         VALUES ('karl', $1, NULL, $2, $3)",
+    )
+    .bind(format!("{}-keyed", karl.r#box))
+    .bind(&karl.gate.key_pem)
+    .bind(fingerprint(b"two"))
+    .execute(&lab.store.pool)
+    .await;
+    let refusal = smuggled.unwrap_err().to_string();
+    assert!(
+        refusal.contains("agent_gate_fingerprint_is_sha256_hex"),
+        "the schema refuses a key: {refusal}"
+    );
+
+    let text: String =
+        sqlx::query_scalar("SELECT to_jsonb(agent)::text FROM agent WHERE agent_id = $1")
+            .bind(karl.id.as_str())
+            .fetch_one(&lab.store.pool)
+            .await
+            .unwrap();
+    assert!(
+        !text.contains("PRIVATE KEY"),
+        "no member of the row is a key"
+    );
+}
+
+/// **The tuple is admin's word and never gate-con's.** The data plane's
+/// attempt to write it is refused on the wrong plane; a `show` answer
+/// lands; a replayed event never writes the row, whether the client flags
+/// it or the server's boundary, the hello's tail, says so; a live load
+/// event writes; of a `list` answer only the connection's own row lands;
+/// and after a restart a backfilled load event still writes nothing.
+///
+/// Perturbations, each a clause of the Spec's row: (1) in
+/// `serve_connection`, accept `Verb` and `Event` frames on the gate plane,
+/// and the gate's answer sets the load state; (2) in `land_event`, write
+/// the observation whatever `behind` says, and the replayed load event
+/// after an unload reads loaded, including after the restart; (3) classify
+/// by the client's flag instead of the boundary, and the event at 50
+/// flagged live writes though it is behind the hello's tail; (4) in
+/// `land_verb`, land the first summary of a `list` instead of the own
+/// row's, and karl reads the other agent's state. The out-of-order answer,
+/// the skipped drain and the overlapping verbs are admin-con's ordering
+/// (Spec 7.2) and wait for act 4's real admin-con.
+///
+/// conforms: web-tuple-is-admins-word-and-never-gate-cons
+#[tokio::test]
+async fn the_tuple_is_admins_word_and_never_gate_cons() {
+    let Some(mut lab) = Lab::open().await else {
+        return;
+    };
+    let karl = lab.register("karl").await;
+    let other = lab.register("other").await;
+
+    // (1) The data plane cannot carry it.
+    let mut gate = lab.admit(&karl, Plane::Gate).await;
+    gate.send(FromClient::Verb {
+        id: 7,
+        outcome: Some(show_answer("karl", "idle", None)),
+        error: None,
+    })
+    .await;
+    gate.expect_refusal(Refusal::WrongPlane).await;
+    let mut gate = lab.admit(&karl, Plane::Gate).await;
+    gate.send(FromClient::Event {
+        position: position(100),
+        replayed: false,
+        event: trace_event(1, "load", json!({"declaration": "sha-1"})),
+    })
+    .await;
+    gate.expect_refusal(Refusal::WrongPlane).await;
+    assert!(lab.agent(&karl.id).await.load_state.is_none());
+
+    // The admin plane's show answer is admin's word.
+    let mut admin = lab.admit(&karl, Plane::Admin).await;
+    admin
+        .send(FromClient::Verb {
+            id: 1,
+            outcome: Some(show_answer("karl", "unloaded", None)),
+            error: None,
+        })
+        .await;
+    let row = lab
+        .wait_for(&karl.id, "unloaded", |a| {
+            a.load_state.as_deref() == Some("unloaded")
+        })
+        .await;
+    assert!(row.tuple.is_none());
+
+    // (2) A replayed event feeds the window and writes nothing.
+    admin
+        .send(FromClient::Event {
+            position: position(50),
+            replayed: true,
+            event: trace_event(2, "load", json!({"declaration": "sha-old"})),
+        })
+        .await;
+    match admin.recv().await {
+        Some(ToClient::Ack { position: p }) => assert_eq!(p, position(50)),
+        other => panic!("expected an ack, got {other:?}"),
+    }
+    assert_eq!(
+        lab.listener
+            .windows()
+            .snapshot(karl.id.as_str())
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        lab.agent(&karl.id).await.load_state.as_deref(),
+        Some("unloaded")
+    );
+
+    // (3) The boundary is the hello's tail, whatever the client flags.
+    admin
+        .send(FromClient::Event {
+            position: position(60),
+            replayed: false,
+            event: trace_event(3, "load", json!({"declaration": "sha-lied"})),
+        })
+        .await;
+    assert!(matches!(admin.recv().await, Some(ToClient::Ack { .. })));
+    assert_eq!(
+        lab.agent(&karl.id).await.load_state.as_deref(),
+        Some("unloaded")
+    );
+
+    // A live load event at the boundary writes, and its payload is the
+    // tuple the trace carries.
+    admin
+        .send(FromClient::Event {
+            position: position(100),
+            replayed: false,
+            event: trace_event(4, "load", json!({"declaration": "sha-new"})),
+        })
+        .await;
+    assert!(matches!(admin.recv().await, Some(ToClient::Ack { .. })));
+    let row = lab
+        .wait_for(&karl.id, "idle", |a| {
+            a.load_state.as_deref() == Some("idle")
+        })
+        .await;
+    assert_eq!(row.tuple, Some(json!({"declaration": "sha-new"})));
+
+    // (4) Of a list answer only the own row lands.
+    admin
+        .send(FromClient::Verb {
+            id: 2,
+            outcome: Some(list_answer(&[("other", "active"), ("karl", "unloaded")])),
+            error: None,
+        })
+        .await;
+    lab.wait_for(&karl.id, "unloaded by list", |a| {
+        a.load_state.as_deref() == Some("unloaded")
+    })
+    .await;
+    assert!(
+        lab.agent(&other.id).await.load_state.is_none(),
+        "other's row is untouched"
+    );
+
+    // After a restart, a backfilled load event behind the new boundary
+    // still writes nothing, so the row keeps the newer unload.
+    drop(admin);
+    lab.restart().await;
+    let mut admin = lab.admit(&karl, Plane::Admin).await;
+    admin
+        .send(FromClient::Event {
+            position: position(90),
+            replayed: true,
+            event: trace_event(5, "load", json!({"declaration": "sha-backfill"})),
+        })
+        .await;
+    assert!(matches!(admin.recv().await, Some(ToClient::Ack { .. })));
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(
+        lab.agent(&karl.id).await.load_state.as_deref(),
+        Some("unloaded")
+    );
+}
+
+/// **Nothing crosses the link in the clear.** A plaintext hello meets no
+/// frame reader: the handshake fails, the connection closes, and the row
+/// is untouched. The review half of the row is the listener's one accept
+/// path, `TlsAcceptor::accept` in `serve_connection`.
+///
+/// Perturbation: accept the TCP stream as a frame stream when the
+/// handshake fails. The plaintext hello is then read as a roster.
+///
+/// conforms: web-nothing-crosses-the-link-in-the-clear
+#[tokio::test]
+async fn nothing_crosses_the_link_in_the_clear() {
+    let Some(lab) = Lab::open().await else { return };
+    let karl = lab.register("karl").await;
+    let mut plain = TcpStream::connect(lab.listener.address()).await.unwrap();
+    let hello = serde_json::to_string(&FromClient::Hello {
+        agent: karl.name.clone(),
+        plane: Plane::Gate,
+        tail: None,
+    })
+    .unwrap();
+    plain
+        .write_all(format!("{hello}\n").as_bytes())
+        .await
+        .unwrap();
+    let mut answer = Vec::new();
+    let read = tokio::time::timeout(
+        SOON,
+        tokio::io::AsyncReadExt::read_to_end(&mut plain, &mut answer),
+    )
+    .await;
+    assert!(
+        read.is_ok(),
+        "the plaintext connection is closed rather than held"
+    );
+    // What comes back, if anything, is the handshake's alert and never a
+    // frame: a TLS record (content type 21, an alert) that no line parser
+    // reads as JSON.
+    let as_frame = std::str::from_utf8(&answer)
+        .ok()
+        .and_then(|s| serde_json::from_str::<ToClient>(s.trim()).ok());
+    assert!(
+        as_frame.is_none(),
+        "no frame answers a plaintext hello: {answer:?}"
+    );
+    assert!(
+        answer.is_empty() || answer[0] == 21,
+        "only a TLS alert may answer: {answer:?}"
+    );
+    let row = lab.agent(&karl.id).await;
+    assert!(!row.gate.connected && !row.admin.connected);
+}
+
+/// The acknowledged position lives for the life of the server process:
+/// a reconnection within it is answered with the last landed position,
+/// and a restarted server answers none (Spec 7.2). Owed to act 4 as the
+/// replay row's instrument; what stands here is the server's half.
+#[tokio::test]
+async fn the_acknowledged_position_is_per_process() {
+    let Some(mut lab) = Lab::open().await else {
+        return;
+    };
+    let karl = lab.register("karl").await;
+    let mut admin = lab.admit(&karl, Plane::Admin).await;
+    admin
+        .send(FromClient::Event {
+            position: position(140),
+            replayed: false,
+            event: trace_event(1, "turn", json!({})),
+        })
+        .await;
+    assert!(matches!(admin.recv().await, Some(ToClient::Ack { .. })));
+    assert_eq!(lab.listener.acknowledged(&karl.id), Some(position(140)));
+    drop(admin);
+    lab.wait_for(&karl.id, "admin gone", |a| !a.admin.connected)
+        .await;
+
+    let mut again = lab.connect(&karl.admin).await;
+    again
+        .send(FromClient::Hello {
+            agent: karl.name.clone(),
+            plane: Plane::Admin,
+            tail: Some(position(200)),
+        })
+        .await;
+    match again.recv().await {
+        Some(ToClient::HelloAnswer { acknowledged, .. }) => {
+            assert_eq!(acknowledged, Some(position(140)))
+        }
+        other => panic!("expected the hello answer, got {other:?}"),
+    }
+    drop(again);
+    lab.wait_for(&karl.id, "admin gone", |a| !a.admin.connected)
+        .await;
+
+    lab.restart().await;
+    let mut fresh = lab.connect(&karl.admin).await;
+    fresh
+        .send(FromClient::Hello {
+            agent: karl.name.clone(),
+            plane: Plane::Admin,
+            tail: Some(position(200)),
+        })
+        .await;
+    match fresh.recv().await {
+        Some(ToClient::HelloAnswer { acknowledged, .. }) => assert_eq!(acknowledged, None),
+        other => panic!("expected the hello answer, got {other:?}"),
+    }
+}
+
+/// Observations order on the listener's arrival sequence and a later
+/// epoch orders above an earlier one (Spec 2.12): a `show` answer after a
+/// live event supersedes it, and a restarted server's first answer
+/// supersedes whatever the last process left.
+#[tokio::test]
+async fn observations_order_on_the_arrival_sequence_and_the_epoch() {
+    let Some(mut lab) = Lab::open().await else {
+        return;
+    };
+    let karl = lab.register("karl").await;
+    let mut admin = lab.admit(&karl, Plane::Admin).await;
+    admin
+        .send(FromClient::Event {
+            position: position(100),
+            replayed: false,
+            event: trace_event(1, "load", json!({"declaration": "sha-1"})),
+        })
+        .await;
+    assert!(matches!(admin.recv().await, Some(ToClient::Ack { .. })));
+    lab.wait_for(&karl.id, "idle", |a| {
+        a.load_state.as_deref() == Some("idle")
+    })
+    .await;
+    admin
+        .send(FromClient::Verb {
+            id: 1,
+            outcome: Some(show_answer("karl", "unloaded", None)),
+            error: None,
+        })
+        .await;
+    lab.wait_for(&karl.id, "unloaded", |a| {
+        a.load_state.as_deref() == Some("unloaded")
+    })
+    .await;
+
+    drop(admin);
+    lab.restart().await;
+    let mut admin = lab.admit(&karl, Plane::Admin).await;
+    admin
+        .send(FromClient::Verb {
+            id: 1,
+            outcome: Some(show_answer(
+                "karl",
+                "active",
+                Some(json!({"declaration": "sha-2"})),
+            )),
+            error: None,
+        })
+        .await;
+    let row = lab
+        .wait_for(&karl.id, "active", |a| {
+            a.load_state.as_deref() == Some("active")
+        })
+        .await;
+    assert_eq!(row.tuple, Some(json!({"declaration": "sha-2"})));
+}
+
+/// The server's asks reach the connector that holds the plane: a turn to
+/// gate-con, a verb to admin-con, and an agent with neither connected is
+/// answered as not connected.
+#[tokio::test]
+async fn asks_are_routed_to_the_plane_that_holds_them() {
+    let Some(lab) = Lab::open().await else { return };
+    let karl = lab.register("karl").await;
+    assert!(lab.listener.turn(&karl.id, "hello").await.is_err());
+
+    let mut gate = lab.admit(&karl, Plane::Gate).await;
+    let listener = lab.listener.clone();
+    let id = karl.id.clone();
+    let asked = tokio::spawn(async move { listener.turn(&id, "what is the time").await });
+    match gate.recv().await {
+        Some(ToClient::Turn { id, text }) => {
+            assert_eq!(text, "what is the time");
+            gate.send(FromClient::Turn {
+                id,
+                close: Some(crate::adapters::gate::GateClose {
+                    kind: "answered".into(),
+                    run: Some("run-1".into()),
+                    turn: Some("t-1".into()),
+                    text: Some("noon".into()),
+                    raw: json!({"kind": "answered"}),
+                }),
+                error: None,
+            })
+            .await;
+        }
+        other => panic!("expected the turn ask, got {other:?}"),
+    }
+    let close = asked.await.unwrap().unwrap();
+    assert_eq!(close.text.as_deref(), Some("noon"));
+}

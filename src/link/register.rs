@@ -1,0 +1,560 @@
+//! conforms: web-one-live-row-per-box-and-name
+//! conforms: web-client-credential-stored-as-fingerprint-never-key
+//! conforms: web-link-state-is-reset-when-the-listener-starts
+//! conforms: web-agent-present-only-when-both-planes-match-one-row
+//! conforms: web-one-live-connection-per-credential
+//! conforms: web-tuple-is-admins-word-and-never-gate-cons
+//!
+//! The register of agents (Spec section 2.12) at the store: the reads, the
+//! register verbs' writes under section 3.2's version, and the link's
+//! writes of what it observed under section 2.12's arrival sequence. The
+//! two writers meet at disjoint members of one row, per section 3, and
+//! every path that installs or uninstalls a live connection runs under the
+//! row's lock, per the module header.
+
+use crate::link::frames::{Plane, Refusal};
+use crate::store::{AgentId, Store};
+use chrono::{DateTime, Utc};
+use serde::Serialize;
+use sqlx::Row;
+use sqlx::postgres::PgRow;
+
+/// The channel a revoking transaction notifies on, with the fingerprint as
+/// its payload, so a running listener closes the live connection in the
+/// revoking act (Spec 8) rather than at the next hello.
+pub const REVOCATION_CHANNEL: &str = "weaver_web_credential";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CredentialState {
+    Live,
+    Revoked,
+}
+
+impl CredentialState {
+    fn parse(s: &str) -> anyhow::Result<Self> {
+        match s {
+            "live" => Ok(Self::Live),
+            "revoked" => Ok(Self::Revoked),
+            other => anyhow::bail!("not a credential state: {other}"),
+        }
+    }
+}
+
+/// One plane's credential and link state as the row carries them.
+#[derive(Debug, Clone, Serialize)]
+pub struct Credential {
+    pub fingerprint: String,
+    pub state: CredentialState,
+    pub state_at: DateTime<Utc>,
+    pub connected: bool,
+    pub link_at: Option<DateTime<Utc>>,
+    pub incarnation: Option<i64>,
+    pub address: Option<String>,
+    pub address_at: Option<DateTime<Utc>>,
+}
+
+/// The registered agent of Spec 2.12.
+#[derive(Debug, Clone, Serialize)]
+pub struct Agent {
+    pub agent_id: AgentId,
+    pub name: String,
+    #[serde(rename = "box")]
+    pub r#box: String,
+    pub author: Option<String>,
+    pub version: i64,
+    pub registered_at: DateTime<Utc>,
+    pub gate: Credential,
+    pub admin: Credential,
+    pub tuple: Option<serde_json::Value>,
+    pub tuple_at: Option<DateTime<Utc>>,
+    pub load_state: Option<String>,
+    pub load_state_at: Option<DateTime<Utc>>,
+}
+
+impl Agent {
+    /// **Presence is derived and never stored** (Spec 8): both planes
+    /// connected, from credentials on this row.
+    pub fn present(&self) -> bool {
+        self.gate.connected && self.admin.connected
+    }
+
+    pub fn credential(&self, plane: Plane) -> &Credential {
+        match plane {
+            Plane::Gate => &self.gate,
+            Plane::Admin => &self.admin,
+        }
+    }
+
+    /// Which plane a fingerprint is bound to on this row, if either.
+    pub fn plane_of(&self, fingerprint: &str) -> Option<Plane> {
+        if self.gate.fingerprint == fingerprint {
+            Some(Plane::Gate)
+        } else if self.admin.fingerprint == fingerprint {
+            Some(Plane::Admin)
+        } else {
+            None
+        }
+    }
+}
+
+/// What the link observed and lands on the row: the load state as admin's
+/// word and the tuple as admin reported it, with admin's date.
+#[derive(Debug, Clone)]
+pub struct Observation {
+    pub load_state: Option<String>,
+    pub tuple: Option<serde_json::Value>,
+    pub at: DateTime<Utc>,
+}
+
+const COLUMNS: &str = "agent_id, name, box, author, version, registered_at, \
+    gate_fingerprint, gate_state, gate_state_at, gate_connected, gate_link_at, \
+    gate_incarnation, gate_address, gate_address_at, \
+    admin_fingerprint, admin_state, admin_state_at, admin_connected, admin_link_at, \
+    admin_incarnation, admin_address, admin_address_at, \
+    tuple, tuple_at, load_state, load_state_at";
+
+fn credential_from_row(row: &PgRow, plane: &str) -> anyhow::Result<Credential> {
+    let col = |s: &str| format!("{plane}_{s}");
+    Ok(Credential {
+        fingerprint: row.try_get(col("fingerprint").as_str())?,
+        state: CredentialState::parse(row.try_get::<String, _>(col("state").as_str())?.as_str())?,
+        state_at: row.try_get(col("state_at").as_str())?,
+        connected: row.try_get(col("connected").as_str())?,
+        link_at: row.try_get(col("link_at").as_str())?,
+        incarnation: row.try_get(col("incarnation").as_str())?,
+        address: row.try_get(col("address").as_str())?,
+        address_at: row.try_get(col("address_at").as_str())?,
+    })
+}
+
+fn agent_from_row(row: &PgRow) -> anyhow::Result<Agent> {
+    let id: String = row.try_get("agent_id")?;
+    Ok(Agent {
+        agent_id: id.parse().map_err(|e: String| anyhow::anyhow!(e))?,
+        name: row.try_get("name")?,
+        r#box: row.try_get("box")?,
+        author: row.try_get("author")?,
+        version: row.try_get("version")?,
+        registered_at: row.try_get("registered_at")?,
+        gate: credential_from_row(row, "gate")?,
+        admin: credential_from_row(row, "admin")?,
+        tuple: row.try_get("tuple")?,
+        tuple_at: row.try_get("tuple_at")?,
+        load_state: row.try_get("load_state")?,
+        load_state_at: row.try_get("load_state_at")?,
+    })
+}
+
+fn plane_columns(plane: Plane) -> &'static str {
+    plane.as_str()
+}
+
+/// **The one audit this file owes sqlx.** Every dynamic SQL string below
+/// interpolates exactly two things: a plane's name, which is one of the two
+/// static strings `Plane::as_str` answers and never operator input, and the
+/// constant column list above. Every value crosses as a bind parameter.
+fn audited(sql: String) -> sqlx::AssertSqlSafe<String> {
+    sqlx::AssertSqlSafe(sql)
+}
+
+impl Store {
+    /// One registered agent by identity.
+    pub async fn agent(&self, id: &AgentId) -> anyhow::Result<Option<Agent>> {
+        let row = sqlx::query(audited(format!(
+            "SELECT {COLUMNS} FROM agent WHERE agent_id = $1"
+        )))
+        .bind(id.as_str())
+        .fetch_optional(&self.pool)
+        .await?;
+        row.as_ref().map(agent_from_row).transpose()
+    }
+
+    /// Every registered agent, live or retired, by box and name then by
+    /// registration. The Agents surface renders the whole row; presence is
+    /// derived on each.
+    pub async fn agents(&self) -> anyhow::Result<Vec<Agent>> {
+        let rows = sqlx::query(audited(format!(
+            "SELECT {COLUMNS} FROM agent ORDER BY box, name, registered_at"
+        )))
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter().map(agent_from_row).collect()
+    }
+
+    /// The row a fingerprint is bound to, with its plane, live or not. The
+    /// hello's lookup (Spec 8), made before any byte of the roster is read.
+    pub async fn agent_by_fingerprint(
+        &self,
+        fingerprint: &str,
+    ) -> anyhow::Result<Option<(Agent, Plane)>> {
+        let row = sqlx::query(audited(format!(
+            "SELECT {COLUMNS} FROM agent WHERE gate_fingerprint = $1 OR admin_fingerprint = $1"
+        )))
+        .bind(fingerprint)
+        .fetch_optional(&self.pool)
+        .await?;
+        let Some(row) = row else { return Ok(None) };
+        let agent = agent_from_row(&row)?;
+        let plane = agent
+            .plane_of(fingerprint)
+            .ok_or_else(|| anyhow::anyhow!("a row matched a fingerprint it does not carry"))?;
+        Ok(Some((agent, plane)))
+    }
+
+    /// Resolve an operator's spelling of an agent: its identity, or
+    /// `box/name` for the row holding live credentials under that pair.
+    pub async fn resolve_agent(&self, spec: &str) -> anyhow::Result<Agent> {
+        if let Ok(id) = spec.parse::<AgentId>() {
+            return self
+                .agent(&id)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("no registered agent {id}"));
+        }
+        let Some((r#box, name)) = spec.split_once('/') else {
+            anyhow::bail!("name the agent as ag-<sixteen hex> or as box/name: {spec}");
+        };
+        let row = sqlx::query(audited(format!(
+            "SELECT {COLUMNS} FROM agent WHERE box = $1 AND name = $2 \
+             AND (gate_state = 'live' OR admin_state = 'live')"
+        )))
+        .bind(r#box)
+        .bind(name)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.as_ref()
+            .map(agent_from_row)
+            .transpose()?
+            .ok_or_else(|| anyhow::anyhow!("no registered agent with live credentials at {spec}"))
+    }
+
+    /// **Register an agent** (Spec 8, 2.12): write the row with both
+    /// fingerprints. A live row for the same box and name is retired in the
+    /// same transaction, its credentials revoked and the running listener
+    /// told, which is what the partial unique index forces. Answers the new
+    /// identity and the fingerprints retired.
+    pub async fn register_agent(
+        &self,
+        r#box: &str,
+        name: &str,
+        author: Option<&str>,
+        gate_fingerprint: &str,
+        admin_fingerprint: &str,
+    ) -> anyhow::Result<(AgentId, Vec<String>)> {
+        let mut tx = self.pool.begin().await?;
+        let retired = sqlx::query(
+            "UPDATE agent SET \
+               gate_state = 'revoked', gate_state_at = now(), \
+               admin_state = 'revoked', admin_state_at = now(), \
+               gate_link_at = CASE WHEN gate_connected THEN now() ELSE gate_link_at END, \
+               admin_link_at = CASE WHEN admin_connected THEN now() ELSE admin_link_at END, \
+               gate_connected = false, admin_connected = false, \
+               version = version + 1 \
+             WHERE box = $1 AND name = $2 AND (gate_state = 'live' OR admin_state = 'live') \
+             RETURNING gate_fingerprint, admin_fingerprint",
+        )
+        .bind(r#box)
+        .bind(name)
+        .fetch_all(&mut *tx)
+        .await?;
+        let mut retired_fingerprints = Vec::new();
+        for row in &retired {
+            for col in ["gate_fingerprint", "admin_fingerprint"] {
+                let fp: String = row.try_get(col)?;
+                notify(&mut tx, &fp).await?;
+                retired_fingerprints.push(fp);
+            }
+        }
+        let id: String = sqlx::query_scalar(
+            "INSERT INTO agent (name, box, author, gate_fingerprint, admin_fingerprint) \
+             VALUES ($1, $2, $3, $4, $5) RETURNING agent_id",
+        )
+        .bind(name)
+        .bind(r#box)
+        .bind(author)
+        .bind(gate_fingerprint)
+        .bind(admin_fingerprint)
+        .fetch_one(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok((
+            id.parse().map_err(|e: String| anyhow::anyhow!(e))?,
+            retired_fingerprints,
+        ))
+    }
+
+    /// **Revoke one credential** (Spec 8): an authored edit under section
+    /// 3.2, refusing on a stale version, and the running listener told so
+    /// the live connection closes in this act. The plane's link state reads
+    /// disconnected with this act's date.
+    pub async fn revoke_credential(
+        &self,
+        agent: &Agent,
+        plane: Plane,
+        author: Option<&str>,
+    ) -> anyhow::Result<String> {
+        let p = plane_columns(plane);
+        let mut tx = self.pool.begin().await?;
+        lock_row(&mut tx, &agent.agent_id).await?;
+        let affected = sqlx::query(audited(format!(
+            "UPDATE agent SET \
+               {p}_state = 'revoked', {p}_state_at = now(), \
+               {p}_link_at = CASE WHEN {p}_connected THEN now() ELSE {p}_link_at END, \
+               {p}_connected = false, \
+               author = $3, version = version + 1 \
+             WHERE agent_id = $1 AND version = $2"
+        )))
+        .bind(agent.agent_id.as_str())
+        .bind(agent.version)
+        .bind(author)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+        if affected != 1 {
+            anyhow::bail!(
+                "the row moved since it was read at version {}: read it again",
+                agent.version
+            );
+        }
+        let fingerprint = agent.credential(plane).fingerprint.clone();
+        notify(&mut tx, &fingerprint).await?;
+        tx.commit().await?;
+        Ok(fingerprint)
+    }
+
+    /// **Rotate both credentials** (Spec 8): new fingerprints, both live,
+    /// both planes dropped until the install script carries the new config,
+    /// the old two revoked and the listener told. Answers the fingerprints
+    /// retired.
+    pub async fn rotate_credentials(
+        &self,
+        agent: &Agent,
+        author: Option<&str>,
+        gate_fingerprint: &str,
+        admin_fingerprint: &str,
+    ) -> anyhow::Result<Vec<String>> {
+        let mut tx = self.pool.begin().await?;
+        lock_row(&mut tx, &agent.agent_id).await?;
+        let affected = sqlx::query(
+            "UPDATE agent SET \
+               gate_fingerprint = $3, gate_state = 'live', gate_state_at = now(), \
+               admin_fingerprint = $4, admin_state = 'live', admin_state_at = now(), \
+               gate_link_at = CASE WHEN gate_connected THEN now() ELSE gate_link_at END, \
+               admin_link_at = CASE WHEN admin_connected THEN now() ELSE admin_link_at END, \
+               gate_connected = false, admin_connected = false, \
+               author = $5, version = version + 1 \
+             WHERE agent_id = $1 AND version = $2",
+        )
+        .bind(agent.agent_id.as_str())
+        .bind(agent.version)
+        .bind(gate_fingerprint)
+        .bind(admin_fingerprint)
+        .bind(author)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+        if affected != 1 {
+            anyhow::bail!(
+                "the row moved since it was read at version {}: read it again",
+                agent.version
+            );
+        }
+        let retired = vec![
+            agent.gate.fingerprint.clone(),
+            agent.admin.fingerprint.clone(),
+        ];
+        for fp in &retired {
+            notify(&mut tx, fp).await?;
+        }
+        tx.commit().await?;
+        Ok(retired)
+    }
+
+    /// **Every live credential revoked**, which is what rotating the
+    /// authority means (Spec 8): each client config pinned the old
+    /// certificate, so each agent is re-registered after. Answers how many
+    /// rows were retired.
+    pub async fn revoke_every_credential(&self, author: Option<&str>) -> anyhow::Result<u64> {
+        let mut tx = self.pool.begin().await?;
+        let rows = sqlx::query(
+            "UPDATE agent SET \
+               gate_state = 'revoked', gate_state_at = now(), \
+               admin_state = 'revoked', admin_state_at = now(), \
+               gate_link_at = CASE WHEN gate_connected THEN now() ELSE gate_link_at END, \
+               admin_link_at = CASE WHEN admin_connected THEN now() ELSE admin_link_at END, \
+               gate_connected = false, admin_connected = false, \
+               author = $1, version = version + 1 \
+             WHERE gate_state = 'live' OR admin_state = 'live' \
+             RETURNING gate_fingerprint, admin_fingerprint",
+        )
+        .bind(author)
+        .fetch_all(&mut *tx)
+        .await?;
+        for row in &rows {
+            for col in ["gate_fingerprint", "admin_fingerprint"] {
+                let fp: String = row.try_get(col)?;
+                notify(&mut tx, &fp).await?;
+            }
+        }
+        tx.commit().await?;
+        Ok(rows.len() as u64)
+    }
+
+    /// **The listener's start** (Spec 8, 2.12), in one transaction:
+    /// increment the epoch, and set every plane recorded as connected to
+    /// disconnected with the start's date, leaving an already-disconnected
+    /// plane's date alone. Unconditional and not an observation. Answers
+    /// the epoch this process lands under.
+    pub async fn listener_start(&self) -> anyhow::Result<i64> {
+        let mut tx = self.pool.begin().await?;
+        let epoch: i64 = sqlx::query_scalar(
+            "UPDATE listener SET epoch = epoch + 1, started_at = now() RETURNING epoch",
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+        for plane in ["gate", "admin"] {
+            sqlx::query(audited(format!(
+                "UPDATE agent SET {plane}_connected = false, {plane}_link_at = now(), \
+                 {plane}_incarnation = NULL WHERE {plane}_connected"
+            )))
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(epoch)
+    }
+
+    /// **Admission under the row's lock** (Spec 8): recheck that the
+    /// credential is live, let the listener install the connection as the
+    /// credential's live one (which refuses when one is already installed),
+    /// and write the plane's link state connected with the incarnation and
+    /// the observed address. The install runs while the lock is held, so a
+    /// revocation either waits for this to commit and then closes what it
+    /// finds installed, or committed first and the recheck refuses.
+    pub async fn admit(
+        &self,
+        agent_id: &AgentId,
+        plane: Plane,
+        incarnation: i64,
+        address: &str,
+        install: impl FnOnce() -> Result<(), Refusal>,
+    ) -> anyhow::Result<Result<(), Refusal>> {
+        let p = plane_columns(plane);
+        let mut tx = self.pool.begin().await?;
+        let state: String = sqlx::query_scalar(audited(format!(
+            "SELECT {p}_state FROM agent WHERE agent_id = $1 FOR UPDATE"
+        )))
+        .bind(agent_id.as_str())
+        .fetch_one(&mut *tx)
+        .await?;
+        if state != "live" {
+            tx.rollback().await?;
+            return Ok(Err(Refusal::NotLive));
+        }
+        if let Err(refusal) = install() {
+            tx.rollback().await?;
+            return Ok(Err(refusal));
+        }
+        sqlx::query(audited(format!(
+            "UPDATE agent SET {p}_connected = true, {p}_link_at = now(), {p}_incarnation = $2, \
+             {p}_address = $3, {p}_address_at = now() WHERE agent_id = $1"
+        )))
+        .bind(agent_id.as_str())
+        .bind(incarnation)
+        .bind(address)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(Ok(()))
+    }
+
+    /// **Teardown under the row's lock, bound to the incarnation** (Spec
+    /// 8): the disconnected write lands only while this incarnation is
+    /// still the credential's live connection, and the listener's
+    /// uninstall runs under the same lock. Answers whether the write
+    /// landed; a stale teardown answers false and changes nothing.
+    pub async fn teardown(
+        &self,
+        agent_id: &AgentId,
+        plane: Plane,
+        incarnation: i64,
+        uninstall: impl FnOnce(),
+    ) -> anyhow::Result<bool> {
+        let p = plane_columns(plane);
+        let mut tx = self.pool.begin().await?;
+        let live: Option<i64> = sqlx::query_scalar(audited(format!(
+            "SELECT {p}_incarnation FROM agent WHERE agent_id = $1 FOR UPDATE"
+        )))
+        .bind(agent_id.as_str())
+        .fetch_one(&mut *tx)
+        .await?;
+        if live != Some(incarnation) {
+            tx.rollback().await?;
+            return Ok(false);
+        }
+        uninstall();
+        sqlx::query(audited(format!(
+            "UPDATE agent SET {p}_connected = false, {p}_link_at = now(), {p}_incarnation = NULL \
+             WHERE agent_id = $1"
+        )))
+        .bind(agent_id.as_str())
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(true)
+    }
+
+    /// **Land an observation** (Spec 2.12): the tuple and the load state as
+    /// admin reported them, each taking this observation only where its
+    /// arrival sequence (epoch, arrival) is higher than the stored one. The
+    /// source date is kept for display and decides nothing. Answers whether
+    /// the row took it.
+    pub async fn land_observation(
+        &self,
+        agent_id: &AgentId,
+        observation: &Observation,
+        epoch: i64,
+        arrival: i64,
+    ) -> anyhow::Result<bool> {
+        let affected = sqlx::query(
+            "UPDATE agent SET \
+               load_state = $2, load_state_at = $3, load_epoch = $4, load_arrival = $5, \
+               tuple = $6, tuple_at = $3, tuple_epoch = $4, tuple_arrival = $5 \
+             WHERE agent_id = $1 \
+               AND (load_epoch IS NULL OR (load_epoch, load_arrival) < ($4, $5))",
+        )
+        .bind(agent_id.as_str())
+        .bind(&observation.load_state)
+        .bind(observation.at)
+        .bind(epoch)
+        .bind(arrival)
+        .bind(&observation.tuple)
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
+        Ok(affected == 1)
+    }
+}
+
+async fn lock_row(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    agent_id: &AgentId,
+) -> anyhow::Result<()> {
+    sqlx::query("SELECT 1 FROM agent WHERE agent_id = $1 FOR UPDATE")
+        .bind(agent_id.as_str())
+        .fetch_one(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+async fn notify(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    fingerprint: &str,
+) -> anyhow::Result<()> {
+    sqlx::query("SELECT pg_notify($1, $2)")
+        .bind(REVOCATION_CHANNEL)
+        .bind(fingerprint)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}

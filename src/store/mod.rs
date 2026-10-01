@@ -18,7 +18,7 @@ pub mod plan;
 pub mod read;
 
 pub use experiment::{Arm, Experiment, ExperimentState, Registered, StagedExperiment, Sweep};
-pub use key::{ArmId, PlanId, PositionKey, RunId, TurnId};
+pub use key::{AgentId, ArmId, PlanId, PositionKey, RunId, TurnId};
 // **`plan::Arm` is not re-exported and `experiment::Arm` is**, and the path
 // is the point rather than a collision worked around. They are one thing at
 // two resolutions: the arm as the plan composes it, and the arm as the

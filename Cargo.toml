@@ -57,7 +57,9 @@ askama = "0.14"
 # The lock file still lists `sqlx-sqlite`, as it lists any optional
 # dependency that resolves, and reading the lock for what is enabled is the
 # error this comment first made.
-sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "postgres", "chrono", "migrate", "macros"] }
+# `json` joins 2026-10-01 for the register of agents (Spec 2.12): the tuple
+# admin reported is a JSONB member, bound and read as `serde_json::Value`.
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "postgres", "chrono", "migrate", "macros", "json"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # The bearer is hashed before it is stored or looked up, per Spec 2.8.
@@ -72,8 +74,27 @@ futures = "0.3"
 anyhow = "1"
 uuid = { version = "1", features = ["v4"] }
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+# **The link of Spec section 8 is mutual TLS with the server as its own
+# authority**, added 2026-10-01 by the act that built the listener. `rustls`
+# is the TLS implementation, `tokio-rustls` its async adapter, `rcgen` mints
+# the authority and every client certificate, `rustls-pki-types` is the DER
+# vocabulary the three share, and `rustls-pemfile` reads the PEM the authority
+# stores and the client configs carry. **`ring` rather than the default
+# `aws-lc-rs` provider**, for `rustls`, `tokio-rustls` and `rcgen` alike: one
+# provider across the three, and `ring` builds with a C compiler alone where
+# `aws-lc-rs` wants cmake on the build host, which the thinkpad seat does not
+# carry. The default features are off so the unelected provider is absent
+# from the graph rather than present and unused.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+rcgen = { version = "0.14", default-features = false, features = ["ring", "pem"] }
+rustls-pki-types = { version = "1", features = ["std"] }
+rustls-pemfile = "2"
 
 [dev-dependencies]
+# The link's tests mint an authority and client credentials under a directory
+# that is removed when the test ends, so no key is left behind (Spec 8).
+tempfile = "3"
 # `oneshot` drives the router in a test without binding a port, which is
 # what lets the Record surface's watch ask the real route for real HTML
 # rather than calling the handler and trusting the wiring.

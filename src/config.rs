@@ -1,7 +1,9 @@
 //! TOML configuration, one file per process (Spec section 8). Box
-//! facts live in the box's config: the agent roster with its socket
-//! and sink paths is the connector's declaration, announced to the
-//! server in the link's hello, never entered twice.
+//! facts live in the box's config, and a connector's config is written
+//! by the server's register verb at registration and carried to the box
+//! by the operator's install script; nothing of it enters a repository.
+//! The server's config names where its authority stands and the one
+//! tunable of the link, the silence bound.
 
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
@@ -16,6 +18,28 @@ pub struct ServerConfig {
     #[serde(default = "default_link_listen")]
     pub link_listen: String,
     pub database: String,
+    /// The directory holding the server's authority and its own
+    /// certificate (Spec section 8): created once by `authority init`,
+    /// loaded before the listener starts, and never minted at start. The
+    /// path is the operator's and never enters a repository.
+    pub authority_dir: PathBuf,
+    /// **The silence bound is the link's one tunable** (Spec section 8):
+    /// a connection silent this long is closed, and each connector is
+    /// told its send cadence, the bound divided by four, in the answer to
+    /// its hello. Sixty seconds is the Spec's election.
+    #[serde(default = "default_silence_bound_secs")]
+    pub silence_bound_secs: u64,
+    /// The address the client configs carry as the server's, where it
+    /// differs from `link_listen` (a bind on every interface, say, or a
+    /// forwarded port). Defaults to `link_listen`.
+    #[serde(default)]
+    pub link_address: Option<String>,
+    /// The name the server's certificate carries and a connector verifies
+    /// it under, independent of the address it dials, so a server that
+    /// moves keeps its identity. Pinned in each client config at
+    /// registration.
+    #[serde(default = "default_server_name")]
+    pub server_name: String,
     /// Participant names holding the admin role. v1 role assignment is
     /// the operator's declaration; IAM later changes how a session
     /// proves it is a participant, not where roles live.
@@ -89,6 +113,21 @@ fn default_link_listen() -> String {
 
 fn default_server() -> String {
     "127.0.0.1:8081".into()
+}
+
+fn default_silence_bound_secs() -> u64 {
+    60
+}
+
+fn default_server_name() -> String {
+    "weaver-web".into()
+}
+
+impl ServerConfig {
+    /// The address a client config carries for the server.
+    pub fn link_address(&self) -> &str {
+        self.link_address.as_deref().unwrap_or(&self.link_listen)
+    }
 }
 
 fn default_agent_declarations() -> PathBuf {

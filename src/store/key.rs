@@ -105,6 +105,7 @@ macro_rules! identity {
 
 identity!(PlanId, "pl-", "a plan's identity");
 identity!(ArmId, "ar-", "an arm's identity");
+identity!(AgentId, "ag-", "an agent's identity");
 
 impl std::fmt::Display for PlanId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -117,6 +118,36 @@ impl std::fmt::Display for PlanId {
 pub struct ArmId(String);
 
 impl std::fmt::Display for ArmId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// A registered agent's identity, spelled `ag-` and sixteen hex per section
+/// 2.12, the register of agents.
+///
+/// A plan's identity does not resolve to an agent's, and the compiler says so
+/// rather than the database:
+///
+/// ```compile_fail
+/// use weaver_web::store::{PlanId, Store};
+/// # async fn f(store: Store, plan: PlanId) {
+/// store.agent(&plan).await.unwrap();
+/// # }
+/// ```
+///
+/// The same call with an `AgentId` compiles:
+///
+/// ```no_run
+/// use weaver_web::store::{AgentId, Store};
+/// # async fn f(store: Store, agent: AgentId) {
+/// store.agent(&agent).await.unwrap();
+/// # }
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+pub struct AgentId(String);
+
+impl std::fmt::Display for AgentId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.0)
     }
@@ -172,6 +203,11 @@ mod tests {
         let plan: PlanId = "pl-0123456789abcdef".parse().unwrap();
         assert_eq!(plan.as_str(), "pl-0123456789abcdef");
         assert!("ar-0123456789abcdef".parse::<ArmId>().is_ok());
+        assert!("ag-0123456789abcdef".parse::<AgentId>().is_ok());
+        assert!(
+            "pl-0123456789abcdef".parse::<AgentId>().is_err(),
+            "a plan's identity is not an agent's"
+        );
 
         for wrong in [
             "ar-0123456789abcdef",  // another kind's, which is the whole point

@@ -120,10 +120,17 @@ cargo build --locked
 cargo test --locked                      # DB-backed tests pass by skipping without DATABASE_URL
 cargo clippy --all-targets --locked
 cargo fmt
+cargo run -- --config <config.toml>                                 # serve
+cargo run -- --config <config.toml> authority init                  # once, before any agent; refuses to overwrite
+cargo run -- --config <config.toml> register <box> <name> --out <dir>   # two client configs, written to <dir>
+cargo run -- --config <config.toml> revoke <ag-id|box/name> <gate|admin>
+cargo run -- --config <config.toml> rotate <ag-id|box/name> --out <dir>
+cargo run -- --config <config.toml> agents                          # the register, presence derived
 ```
 
-- **DB-backed unit tests** (`store::read`, `store::plan`, `surfaces::record`) connect to the
-  database in `DATABASE_URL` and run the migrations. Without that variable they print
+- **DB-backed unit tests** (`store::read`, `store::plan`, `surfaces::record`, `link::tests`)
+  connect to the database in `DATABASE_URL` and run the migrations. The link's tests run one at
+  a time, since a listener's start resets every row's link state, which is the claim. Without that variable they print
   `skipped:` and **pass without testing anything**. To really exercise them, set
   `DATABASE_URL=postgres:///<db>?host=/run/postgresql`.
 - **Single test:** `cargo test --lib store::read::tests::<name>`. Add `-- --nocapture` to see
@@ -134,8 +141,14 @@ cargo fmt
   needs `curl` plus a **never-migrated** disposable database:
   `DATABASE_URL=... cargo test --test startup -- --ignored`.
 - **Run the server:** `cargo run -- --config <config.toml>`, where the config sets `listen`,
-  `link_listen`, and `database` (see `ServerConfig` in `src/config.rs`). Keep configs out of
-  the repository. Logging uses `RUST_LOG`, which defaults to `weaver_web=info,sqlx=warn`.
+  `link_listen`, `database` and `authority_dir`, with `silence_bound_secs` (60), `link_address`
+  and `server_name` (`weaver-web`) optional (see `ServerConfig` in `src/config.rs`). The server
+  refuses to start without an authority at `authority_dir`; `authority init` makes one. Keep
+  configs, authorities and client configs out of the repository. Logging uses `RUST_LOG`,
+  which defaults to `weaver_web=info,sqlx=warn`.
+- **Register verbs** answer one JSON object on stdout with the exit status agreeing, the shape
+  `weaver-admin` uses. `revoke` closes a live connection in a running server through the
+  store's notification channel; nothing else links the verb's process to the server's.
 
 ## The seed tree: what carries forward and what leaves
 
@@ -161,16 +174,19 @@ weaver-analysis's arrow lands.
   SPA, and the browser is a display engine. This is inherited. The handoff leaves the stack to
   this repository, so treat it as the current choice, not a ruling.
 
-**Becomes the connectors (reruled 2026-09-30 and 2026-10-01): the half that reaches the
-agent.** `adapters/gate.rs` (dials the gate socket per turn, the section 5 refusals typed) is
-the seed of gate-con. `lifecycle.rs` (`sudo weaver-admin`, three verbs, load state still
-inferred from the socket's existence) is the seed of admin-con, which gains the other three
-verbs and the trace tailer. `traceview.rs`, which tails the trace file tracking its identity,
-is the seed of that tailer and carries forward (operator's ruling of 2026-10-01: the agent's
-sink is a file, not a socket). `wire.rs` and `src/bin/weaver-web-connector.rs` are the seed's
-one dialed link and are replaced by the mutual-TLS link of Spec section 8, two client
-binaries and one listener. Build the connectors as their own binaries; do not extend the
-seed's shape.
+**The link's server half landed on 2026-10-01** under `src/link/`: the durable authority
+and the register verbs (`authority.rs`, `verbs.rs`), the register of agents at the store
+(`register.rs`, migration `0010`), the mutual-TLS listener with its admission, heartbeat,
+startup reset, epoch and observation landing (`listener.rs`), and the frame vocabulary the
+connectors build against (`frames.rs`). The seed's one dialed link, `wire.rs` and
+`src/bin/weaver-web-connector.rs`, left with it. **Becomes the connectors, later acts:**
+`adapters/gate.rs` (dials the gate socket per turn, the section 5 refusals typed) is the seed
+of gate-con. `lifecycle.rs` (`sudo weaver-admin`, three verbs, load state still inferred from
+the socket's existence) is the seed of admin-con, which gains the other three verbs and the
+trace tailer. `traceview.rs`'s tailer half, which tails the trace file tracking its identity,
+is the seed of that tailer (operator's ruling of 2026-10-01: the agent's sink is a file, not a
+socket); its server half, the rings, is the listener's live window. Build the connectors as
+their own binaries against `link::frames`.
 
 **Still leaves: `web/`**, the legacy `/admin` routes, already answering 503, and
 `src/registry.rs`, the legacy participant model (not the register of agents). `deploy/` was

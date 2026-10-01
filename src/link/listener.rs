@@ -57,6 +57,16 @@ const HANDSHAKE_SECS: u64 = 10;
 /// cadence of zero.
 pub const LEAST_SILENCE_SECS: u64 = 4;
 
+/// **One listener per store, held at the store** (Spec 8): the key of the
+/// session-level advisory lock a listener takes before its epoch and
+/// reset, and holds for its life on a connection of its own. **A constant
+/// of this crate's and never a value from config**, because the point is
+/// that every weaver-web process against one store contends for the same
+/// lock whatever its config says; two listeners on one store would each
+/// admit the same credential, and the second's reset would mark the
+/// first's connections disconnected.
+pub const LISTENER_LOCK_KEY: i64 = i64::from_be_bytes(*b"weaverwb");
+
 /// A live connection as the listener holds it: the credential it was
 /// admitted on, the write path, the incarnation that every link-state write
 /// about it names, the asks it has not answered, and the close the revoking
@@ -81,6 +91,11 @@ struct Inner {
     next_ask: AtomicU64,
     next_incarnation: AtomicI64,
     address: SocketAddr,
+    /// The connection holding the listener's advisory lock, dropped by
+    /// `stop` or with the listener; its session ending releases the lock.
+    lock: Mutex<Option<sqlx::PgConnection>>,
+    /// The accept loop and the notification task, aborted by `stop`.
+    tasks: Mutex<Vec<tokio::task::JoinHandle<()>>>,
     /// A test's one lever on the store: the next landing fails once, so
     /// the ack's dependence on the write can be watched.
     #[cfg(test)]
@@ -132,6 +147,28 @@ impl Listener {
         let acceptor = TlsAcceptor::from(authority.server_tls()?);
         let tcp = TcpListener::bind(listen).await?;
         let address = tcp.local_addr()?;
+        // **The store's lock first** (Spec 8): a session-level advisory
+        // lock on a connection detached from the pool, so it lives with
+        // this listener and with nothing the pool hands out later. A
+        // predecessor's session may still be closing, so the try is
+        // repeated briefly before the refusal.
+        let mut lock = store.pool.acquire().await?.detach();
+        let mut held = false;
+        for _ in 0..20 {
+            held = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
+                .bind(LISTENER_LOCK_KEY)
+                .fetch_one(&mut lock)
+                .await?;
+            if held {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        if !held {
+            anyhow::bail!(
+                "another weaver-web listener holds this store (advisory lock {LISTENER_LOCK_KEY}): one listener per store, and this one refuses to start beside it"
+            );
+        }
         let epoch = store.listener_start().await?;
         let mut notifications = sqlx::postgres::PgListener::connect_with(&store.pool).await?;
         notifications.listen(REVOCATION_CHANNEL).await?;
@@ -148,6 +185,8 @@ impl Listener {
                 next_ask: AtomicU64::new(1),
                 next_incarnation: AtomicI64::new(1),
                 address,
+                lock: Mutex::new(Some(lock)),
+                tasks: Mutex::new(Vec::new()),
                 #[cfg(test)]
                 fault_next_land: std::sync::atomic::AtomicBool::new(false),
             }),
@@ -155,7 +194,7 @@ impl Listener {
         tracing::info!("link listening on {address} under epoch {epoch}");
 
         let weak = Arc::downgrade(&listener.inner);
-        tokio::spawn(async move {
+        let accept = tokio::spawn(async move {
             loop {
                 let (stream, peer) = match tcp.accept().await {
                     Ok(x) => x,
@@ -175,7 +214,7 @@ impl Listener {
         // lost, so after any error the live map is swept against the
         // register and anything revoked is closed, and listening resumes.
         let weak = Arc::downgrade(&listener.inner);
-        tokio::spawn(async move {
+        let notify = tokio::spawn(async move {
             loop {
                 match notifications.recv().await {
                     Ok(notification) => {
@@ -193,7 +232,24 @@ impl Listener {
                 }
             }
         });
+        listener
+            .inner
+            .tasks
+            .lock()
+            .unwrap()
+            .extend([accept, notify]);
         Ok(listener)
+    }
+
+    /// Stop accepting and release the store's lock, so another listener
+    /// may start against the store. Connections already admitted run to
+    /// their own close; the process that owned them is, in the real case,
+    /// gone.
+    pub fn stop(&self) {
+        for task in self.inner.tasks.lock().unwrap().drain(..) {
+            task.abort();
+        }
+        drop(self.inner.lock.lock().unwrap().take());
     }
 
     pub fn address(&self) -> SocketAddr {

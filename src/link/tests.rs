@@ -202,6 +202,14 @@ struct Lab {
     _serial: tokio::sync::MutexGuard<'static, ()>,
 }
 
+impl Drop for Lab {
+    /// The store's lock is released before the next test's listener
+    /// starts, which the serial guard alone would not order.
+    fn drop(&mut self) {
+        self.listener.stop();
+    }
+}
+
 impl Lab {
     async fn open() -> Option<Self> {
         let serial = serial().lock().await;
@@ -222,6 +230,9 @@ impl Lab {
 
     /// A new server process over the same store and authority.
     async fn restart(&mut self) {
+        // The old listener releases the store's lock first, as a dead
+        // process's session would.
+        self.listener.stop();
         self.listener =
             Listener::start(self.store.clone(), &self.authority, "127.0.0.1:0", SILENCE)
                 .await
@@ -1445,4 +1456,30 @@ async fn a_show_answer_the_register_never_took_closes_the_connection_and_fails_t
         .await;
 
     let _again = lab.admit(&karl, Plane::Admin).await;
+}
+
+/// **One listener per store, held at the store** (Spec 8): a second
+/// listener against the same database is refused while the first holds
+/// the lock, and admitted once it has stopped.
+///
+/// Perturbation: skip the advisory lock in `Listener::start`. The second
+/// listener starts, and its reset marks the first's connections
+/// disconnected while they relay.
+///
+/// conforms: web-one-live-connection-per-credential
+#[tokio::test]
+async fn a_second_listener_against_one_store_is_refused() {
+    let Some(lab) = Lab::open().await else { return };
+    let refused = Listener::start(lab.store.clone(), &lab.authority, "127.0.0.1:0", SILENCE)
+        .await
+        .map(|_| ())
+        .unwrap_err()
+        .to_string();
+    assert!(refused.contains("another weaver-web listener"), "{refused}");
+
+    lab.listener.stop();
+    let second = Listener::start(lab.store.clone(), &lab.authority, "127.0.0.1:0", SILENCE)
+        .await
+        .expect("admitted once the first released the store");
+    second.stop();
 }

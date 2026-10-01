@@ -2490,7 +2490,14 @@ and the heartbeat cannot clear a connection that does not exist to go
 silent. With it, **presence is only ever asserted by a connection this
 server process admitted**, and a connector that was up through the restart
 reconnects under the heartbeat's rule and is recorded again by the process
-that is actually holding it.
+that is actually holding it. **One listener per store, held at the store**:
+before the epoch and the reset the listener takes a session-level advisory
+lock on a constant key of this crate's, holds it for its life, and refuses
+to start when it is held, naming the other listener. The one-connection
+rule lives in a process's live set, so two listeners on one store would each
+admit the same credential, and the second's reset would mark the first's
+connections disconnected; the lock is what makes the rule a store's and not
+a process's.
 
 ```graph
 node: web-link-state-is-reset-when-the-listener-starts

@@ -52,20 +52,32 @@ pub fn authority_init(cfg: &ServerConfig, sans: &[String]) -> Answer {
     }
 }
 
-/// `authority rotate`: a new authority, and every credential revoked, since
-/// every client config pinned the old certificate. The answer says so.
+/// `authority rotate`: every credential revoked, then a new authority,
+/// since every client config pinned the old certificate. **The store first
+/// and the files second**: a failure at either step leaves a state the
+/// operator can read and re-run from, every credential revoked under the
+/// old authority or under the new, where the other order could leave the
+/// files replaced with every old credential still live, the running
+/// server serving them and a restart stranding every connector.
 pub async fn authority_rotate(
     store: &Store,
     cfg: &ServerConfig,
     sans: &[String],
     author: Option<&str>,
 ) -> Answer {
-    let authority = match Authority::rotate(&cfg.authority_dir, &cfg.server_name, sans) {
-        Ok(a) => a,
-        Err(e) => return refused("authority rotate", format!("{e:#}")),
+    let retired = match store.revoke_every_credential(author).await {
+        Ok(retired) => retired,
+        Err(e) => {
+            return refused(
+                "authority rotate",
+                format!(
+                    "the credentials could not be revoked, so the authority was not replaced; nothing changed, re-run when the store answers: {e:#}"
+                ),
+            );
+        }
     };
-    match store.revoke_every_credential(author).await {
-        Ok(retired) => Answer {
+    match Authority::rotate(&cfg.authority_dir, &cfg.server_name, sans) {
+        Ok(authority) => Answer {
             value: json!({
                 "verb": "authority rotate",
                 "ok": true,
@@ -77,7 +89,9 @@ pub async fn authority_rotate(
         },
         Err(e) => refused(
             "authority rotate",
-            format!("the authority was replaced but the credentials could not be revoked: {e:#}"),
+            format!(
+                "every credential is revoked ({retired} agents retired) but the authority could not be replaced and the old one stands; re-run to replace it: {e:#}"
+            ),
         ),
     }
 }

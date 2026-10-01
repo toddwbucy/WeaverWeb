@@ -2408,7 +2408,16 @@ in the revoking act, the row's link state for that plane reads disconnected
 with the act's date, and the agent is no longer present under the rule
 above. Rotation therefore drops both planes until the install script carries
 the new config, and the row reads disconnected on both planes in between.
-The operator confirms or resets this in review.
+The operator confirms or resets this in review. **Admission and revocation
+are serialized per credential**: a connection is installed as the
+credential's live connection under the same exclusion the revoking act
+takes, so the revoking act either finds the connection installed and
+closes it, or runs first and the admission rechecks liveness after
+installing and closes itself. Without that, a revocation racing a
+connection that had passed the live-fingerprint lookup but was not yet
+installed would find nothing to close, and the admission would complete on
+a revoked credential and relay until the next hello. No interleaving leaves
+a revoked credential relaying.
 
 ## 9. What is enforced, and by which instrument
 
@@ -2448,7 +2457,7 @@ The operator confirms or resets this in review.
 | an entry states the value its disposition names | perturbation, at the schema: drop the check, an entry says held and carries nothing, which is the absent-not-empty failure moved from the view into the store |
 | the task's verdict is landed and never scored here | perturbation: score a run in this crate, the verdict carries no scorer and the row claims a reading it did not receive |
 | a connection whose credential is not live is refused before its roster is read | perturbation, **owed** to the link act: accept the hello and check the register after, a revoked connector's roster lands before the refusal and a surface renders an agent nobody admitted |
-| one live connection per credential | perturbation, **owed**: let a second connection replace the first, a credential in two hands displaces the live connector silently and the row reads connected throughout |
+| one live connection per credential | perturbation, **owed**: let a second connection replace the first, a credential in two hands displaces the live connector silently and the row reads connected throughout; drop the serialization of admission and revocation, revoke while a hello is between its lookup and its installation, and the revoked credential relays until the next hello |
 | a hello's identity is its certificate's binding and never its roster | perturbation, **owed**: act on the roster's name and plane, a hello on a gate credential naming another agent, or naming admin, is believed, and the seed's first-hello-wins returns through the roster |
 | at most one row per box and name holds live credentials | perturbation, **owed**, at the schema: drop the partial index, register one agent twice, and two rows each hold live credentials for one agent, so the server attributes one agent's observations and verbs to two rows |
 | the link state is reset when the listener starts | perturbation, **owed**: skip the reset, restart the server with no connector up, and a surface reads an agent present whose sockets are gone |

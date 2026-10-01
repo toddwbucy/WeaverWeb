@@ -104,7 +104,12 @@ struct Inner {
     address: SocketAddr,
     /// The connection holding the listener's advisory lock, dropped by
     /// `stop` or with the listener; its session ending releases the lock.
-    lock: Mutex<Option<sqlx::PgConnection>>,
+    /// The backend holding the listener's advisory lock: what the monitor
+    /// pings, and what a test ends to see the listener halt.
+    lock_pid: i32,
+    /// Set once, with why, when the listener halted itself; what the
+    /// binary awaits so the process exits for its supervisor to restart.
+    halted: tokio::sync::watch::Sender<Option<String>>,
     /// The accept loop and the notification task, aborted by `stop`.
     tasks: Mutex<Vec<tokio::task::JoinHandle<()>>>,
     /// Teardowns whose disconnected write the store refused: the row still
@@ -187,6 +192,10 @@ impl Listener {
                 "another weaver-web listener holds this store (advisory lock {LISTENER_LOCK_KEY}): one listener per store, and this one refuses to start beside it"
             );
         }
+        let lock_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut lock)
+            .await?;
+        let (halted, _) = tokio::sync::watch::channel(None);
         let epoch = store.listener_start().await?;
         let mut notifications = sqlx::postgres::PgListener::connect_with(&store.pool).await?;
         notifications.listen(REVOCATION_CHANNEL).await?;
@@ -203,7 +212,8 @@ impl Listener {
                 next_ask: AtomicU64::new(1),
                 next_incarnation: AtomicI64::new(1),
                 address,
-                lock: Mutex::new(Some(lock)),
+                lock_pid,
+                halted,
                 tasks: Mutex::new(Vec::new()),
                 failed_teardowns: Mutex::new(Vec::new()),
                 #[cfg(test)]
@@ -254,13 +264,61 @@ impl Listener {
                 }
             }
         });
+        // **The lock's session is monitored, and its loss halts the
+        // listener.** The session holding the advisory lock is pinged at
+        // the heartbeat's cadence; when the ping fails the lock is gone
+        // with the session, another listener may already hold the store,
+        // and reacquiring after a gap would be that listener's chance
+        // already taken. So this one stops: every connection closed,
+        // nothing accepted, and `halted` set for the binary to exit on, so
+        // the operator's supervisor restarts it into a clean start.
+        let weak = Arc::downgrade(&listener.inner);
+        let cadence = silence / 4;
+        let monitor = tokio::spawn(async move {
+            let mut lock = lock;
+            loop {
+                tokio::time::sleep(cadence).await;
+                let ping =
+                    tokio::time::timeout(cadence, sqlx::query("SELECT 1").execute(&mut lock)).await;
+                let lost = match ping {
+                    Ok(Ok(_)) => None,
+                    Ok(Err(e)) => Some(e.to_string()),
+                    Err(_) => Some("the ping did not answer within the cadence".to_owned()),
+                };
+                if let Some(why) = lost {
+                    let Some(inner) = weak.upgrade() else { return };
+                    inner.halt(format!(
+                        "the session holding the listener's lock was lost ({why}); another listener may already hold the store, so this one stops rather than reacquiring"
+                    ));
+                    return;
+                }
+            }
+        });
         listener
             .inner
             .tasks
             .lock()
             .unwrap()
-            .extend([accept, notify]);
+            .extend([accept, notify, monitor]);
         Ok(listener)
+    }
+
+    /// The backend holding the listener's advisory lock.
+    pub fn lock_pid(&self) -> i32 {
+        self.inner.lock_pid
+    }
+
+    /// Resolves with why, once the listener has halted itself.
+    pub async fn halted(&self) -> String {
+        let mut rx = self.inner.halted.subscribe();
+        loop {
+            if let Some(why) = rx.borrow().clone() {
+                return why;
+            }
+            if rx.changed().await.is_err() {
+                return "the listener is gone".into();
+            }
+        }
     }
 
     /// Stop accepting and release the store's lock, so another listener
@@ -268,10 +326,11 @@ impl Listener {
     /// their own close; the process that owned them is, in the real case,
     /// gone.
     pub fn stop(&self) {
+        // The monitor task owns the lock's connection; aborting it drops
+        // the connection, and the session's end releases the lock.
         for task in self.inner.tasks.lock().unwrap().drain(..) {
             task.abort();
         }
-        drop(self.inner.lock.lock().unwrap().take());
     }
 
     pub fn address(&self) -> SocketAddr {
@@ -491,6 +550,26 @@ impl Inner {
                 self.close_fingerprint(&fp);
             }
         }
+    }
+
+    /// Stop everything: no more accepts, every live connection closed,
+    /// and `halted` set with why. Nothing is reacquired.
+    fn halt(&self, why: String) {
+        tracing::error!("the listener halts: {why}");
+        for task in self.tasks.lock().unwrap().drain(..) {
+            task.abort();
+        }
+        let closes: Vec<watch::Sender<bool>> = self
+            .live
+            .lock()
+            .unwrap()
+            .values()
+            .map(|c| c.close.clone())
+            .collect();
+        for close in closes {
+            let _ = close.send(true);
+        }
+        let _ = self.halted.send(Some(why));
     }
 
     fn next_arrival(&self) -> i64 {

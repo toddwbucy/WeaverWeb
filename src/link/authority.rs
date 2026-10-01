@@ -145,11 +145,36 @@ fn stands(dir: &Path) -> bool {
     dir.join(AUTHORITY_CERT).exists() || dir.join(AUTHORITY_KEY).exists()
 }
 
+/// A switch that failed between its two renames: the retired set stands
+/// beside an absent live directory. `rotate` restores it and rotates;
+/// `load` and `init` name the state rather than acting on half of it.
+fn switch_failed(dir: &Path) -> bool {
+    !dir.exists() && stands(&sibling(dir, "retired"))
+}
+
+fn switch_failed_message(dir: &Path) -> String {
+    format!(
+        "a previous switch of the authority failed: the retired set stands at {} beside an absent {}; run `weaver-web authority rotate`, which restores it and rotates",
+        sibling(dir, "retired").display(),
+        dir.display()
+    )
+}
+
+// A test's lever on the switch: the second rename fails once, on the
+// thread that set it, so parallel tests do not trip each other's switch.
+#[cfg(test)]
+thread_local! {
+    pub(crate) static FAIL_SWITCH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 impl Authority {
     /// Create the authority, once. **Refuses to overwrite one that stands**:
     /// every client config pins the certificate, so replacing it is
     /// `rotate`'s and is by definition a re-registration of every agent.
     pub fn init(dir: &Path, server_name: &str, sans: &[String]) -> anyhow::Result<Self> {
+        if switch_failed(dir) {
+            anyhow::bail!("{}", switch_failed_message(dir));
+        }
         if stands(dir) {
             anyhow::bail!(
                 "an authority already stands at {}; `authority rotate` replaces it, and that re-registers every agent",
@@ -162,6 +187,16 @@ impl Authority {
     /// Replace the authority. The caller revokes every credential in the
     /// same act and says so in its answer.
     pub fn rotate(dir: &Path, server_name: &str, sans: &[String]) -> anyhow::Result<Self> {
+        if switch_failed(dir) {
+            let retired = sibling(dir, "retired");
+            std::fs::rename(&retired, dir).map_err(|e| {
+                anyhow::anyhow!("restoring {} to {}: {e}", retired.display(), dir.display())
+            })?;
+            tracing::warn!(
+                "a previous switch had failed: the retired set at {} is restored before this rotation",
+                dir.display()
+            );
+        }
         if !stands(dir) {
             anyhow::bail!(
                 "no authority stands at {} to rotate; `authority init` creates one",
@@ -219,22 +254,46 @@ impl Authority {
         // moves.
         Self::load(&staging)?;
 
+        let retired = sibling(dir, "retired");
+        let mut retired_now = false;
         if dir.exists() {
-            let retired = sibling(dir, "retired");
             if retired.exists() {
                 std::fs::remove_dir_all(&retired)?;
             }
             std::fs::rename(dir, &retired).map_err(|e| {
                 anyhow::anyhow!("retiring {} to {}: {e}", dir.display(), retired.display())
             })?;
+            retired_now = true;
         }
-        std::fs::rename(&staging, dir).map_err(|e| {
-            anyhow::anyhow!(
-                "switching {} into place at {}: {e}; the retired set stands beside it",
-                staging.display(),
-                dir.display()
-            )
-        })?;
+        #[cfg(test)]
+        let switched = if FAIL_SWITCH.with(|f| f.replace(false)) {
+            Err(std::io::Error::other("a test fault made the switch fail"))
+        } else {
+            std::fs::rename(&staging, dir)
+        };
+        #[cfg(not(test))]
+        let switched = std::fs::rename(&staging, dir);
+        if let Err(e) = switched {
+            // The window between the two renames has no authority at the
+            // path: the set retired a moment ago goes back before the
+            // error is answered, so the server can start and `rotate` can
+            // run again.
+            let _ = std::fs::remove_dir_all(&staging);
+            if retired_now {
+                std::fs::rename(&retired, dir).map_err(|restore| {
+                    anyhow::anyhow!(
+                        "switching the new set into place at {} failed ({e}) and restoring the retired set failed too ({restore}): {}",
+                        dir.display(),
+                        switch_failed_message(dir)
+                    )
+                })?;
+                anyhow::bail!(
+                    "switching the new set into place at {} failed: {e}; the previous authority is restored and nothing changed",
+                    dir.display()
+                );
+            }
+            anyhow::bail!("switching the new set into place at {}: {e}", dir.display());
+        }
         Self::load(dir)
     }
 
@@ -242,6 +301,9 @@ impl Authority {
     /// before its listener starts and mints nothing when it is absent.**
     /// The set is verified as a set: a half-replaced one is refused.
     pub fn load(dir: &Path) -> anyhow::Result<Self> {
+        if switch_failed(dir) {
+            anyhow::bail!("{}", switch_failed_message(dir));
+        }
         if !stands(dir) {
             anyhow::bail!(
                 "no authority stands at {}: run `weaver-web authority init` first; the server never mints one at start, since every installed connector pins it",
@@ -468,6 +530,58 @@ mod tests {
         std::fs::copy(b.join(AUTHORITY_CERT), c.join(AUTHORITY_CERT)).unwrap();
         let refused = Authority::load(&c).map(|_| ()).unwrap_err().to_string();
         assert!(refused.contains("does not hold together"), "{refused}");
+    }
+
+    /// **A failed switch restores the old authority**: where the second
+    /// rename fails the retired set goes back before the error is
+    /// answered, and a switch that was left half done (the retired set
+    /// beside an absent live directory) is named by `load` and `init` and
+    /// repaired by `rotate`.
+    #[test]
+    fn a_failed_switch_restores_the_old_authority() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("authority");
+        let made = Authority::init(&path, "weaver-web", &[]).unwrap();
+
+        FAIL_SWITCH.with(|f| f.set(true));
+        let refused = Authority::rotate(&path, "weaver-web", &[])
+            .map(|_| ())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            refused.contains("the previous authority is restored"),
+            "{refused}"
+        );
+        assert_eq!(
+            Authority::load(&path).unwrap().fingerprint(),
+            made.fingerprint()
+        );
+        assert!(!sibling(&path, "staging").exists());
+
+        // A switch left half done by a crash between the renames.
+        std::fs::rename(&path, sibling(&path, "retired")).unwrap();
+        let named = Authority::load(&path).map(|_| ()).unwrap_err().to_string();
+        assert!(
+            named.contains("previous switch of the authority failed"),
+            "{named}"
+        );
+        let named = Authority::init(&path, "weaver-web", &[])
+            .map(|_| ())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            named.contains("previous switch of the authority failed"),
+            "{named}"
+        );
+        let rotated = Authority::rotate(&path, "weaver-web", &[]).unwrap();
+        assert_ne!(rotated.fingerprint(), made.fingerprint());
+        assert_eq!(
+            Authority::load(&sibling(&path, "retired"))
+                .unwrap()
+                .fingerprint(),
+            made.fingerprint(),
+            "the restored set is what this rotation retired"
+        );
     }
 
     /// A minted client credential's fingerprint is SHA-256 over its DER and

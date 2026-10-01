@@ -81,8 +81,10 @@ CREATE TABLE agent (
 
   CONSTRAINT agent_name_is_well_formed
     CHECK (name ~ '^[A-Za-z0-9_-]+$'),
+  -- `.` and `..` are excluded by name: a box names a directory under the
+  -- operator's output path, and those two would name its parent.
   CONSTRAINT agent_box_is_well_formed
-    CHECK (box ~ '^[A-Za-z0-9_.-]+$'),
+    CHECK (box ~ '^[A-Za-z0-9_.-]+$' AND box NOT IN ('.', '..')),
   CONSTRAINT agent_gate_fingerprint_is_sha256_hex
     CHECK (gate_fingerprint ~ '^[0-9a-f]{64}$'),
   CONSTRAINT agent_admin_fingerprint_is_sha256_hex

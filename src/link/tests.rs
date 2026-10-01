@@ -199,6 +199,7 @@ struct Lab {
     authority: Authority,
     store: Store,
     listener: Listener,
+    silence: Duration,
     _serial: tokio::sync::MutexGuard<'static, ()>,
 }
 
@@ -212,11 +213,15 @@ impl Drop for Lab {
 
 impl Lab {
     async fn open() -> Option<Self> {
+        Self::open_with(SILENCE).await
+    }
+
+    async fn open_with(silence: Duration) -> Option<Self> {
         let serial = serial().lock().await;
         let store = store().await?;
         let dir = tempfile::tempdir().unwrap();
         let authority = Authority::init(&dir.path().join("authority"), "weaver-web", &[]).unwrap();
-        let listener = Listener::start(store.clone(), &authority, "127.0.0.1:0", SILENCE)
+        let listener = Listener::start(store.clone(), &authority, "127.0.0.1:0", silence)
             .await
             .unwrap();
         Some(Self {
@@ -224,6 +229,7 @@ impl Lab {
             authority,
             store,
             listener,
+            silence,
             _serial: serial,
         })
     }
@@ -307,7 +313,9 @@ impl Lab {
         })
         .await;
         match fake.recv().await {
-            Some(ToClient::HelloAnswer { cadence_secs, .. }) => assert_eq!(cadence_secs, 15),
+            Some(ToClient::HelloAnswer { cadence_secs, .. }) => {
+                assert_eq!(cadence_secs, self.silence.as_secs() / 4)
+            }
             other => panic!("expected the hello answer, got {other:?}"),
         }
         if plane == Plane::Admin {
@@ -1707,4 +1715,181 @@ async fn a_teardown_the_store_refused_is_reconciled() {
     })
     .await;
     assert_eq!(lab.listener.failed_teardowns(), 0);
+}
+
+/// **The lock's session is monitored, and its loss halts the listener**:
+/// the backend holding the advisory lock is ended from outside, the
+/// listener stops accepting, closes every connection and reports why, and
+/// another listener can then take the store.
+#[tokio::test]
+async fn the_listener_halts_when_its_lock_session_is_lost() {
+    let Some(lab) = Lab::open_with(Duration::from_secs(4)).await else {
+        return;
+    };
+    let karl = lab.register("karl").await;
+    let mut gate = lab.admit(&karl, Plane::Gate).await;
+    sqlx::query("SELECT pg_terminate_backend($1)")
+        .bind(lab.listener.lock_pid())
+        .execute(&lab.store.pool)
+        .await
+        .unwrap();
+    let why = tokio::time::timeout(Duration::from_secs(10), lab.listener.halted())
+        .await
+        .expect("the listener halts within a few cadences");
+    assert!(why.contains("lock was lost"), "{why}");
+    assert!(gate.recv().await.is_none(), "every connection is closed");
+    lab.wait_for(&karl.id, "gate down", |a| !a.gate.connected)
+        .await;
+    let next = Listener::start(lab.store.clone(), &lab.authority, "127.0.0.1:0", SILENCE)
+        .await
+        .expect("the store is free for the next listener");
+    next.stop();
+}
+
+/// **The config's server name must be the authority's**: a client config
+/// carries the authority's persisted name, and a verb refuses a config
+/// whose name differs, naming both.
+#[tokio::test]
+async fn register_refuses_a_config_whose_server_name_differs_from_the_authoritys() {
+    let Some(lab) = Lab::open().await else { return };
+    let mut cfg = lab_config(&lab);
+    cfg.server_name = "moved".into();
+    let out = tempfile::tempdir().unwrap();
+    let r#box = format!("box-{}", uuid::Uuid::new_v4().simple());
+    let answer = super::verbs::register(
+        &lab.store,
+        &cfg,
+        &lab.authority,
+        &r#box,
+        "karl",
+        out.path(),
+        Some("lab"),
+    )
+    .await;
+    assert!(!answer.ok);
+    let why = answer.value["error"].as_str().unwrap();
+    assert!(why.contains("moved") && why.contains("weaver-web"), "{why}");
+    assert!(
+        lab.store
+            .resolve_agent(&format!("{box}/karl", box = r#box))
+            .await
+            .is_err()
+    );
+
+    let cfg = lab_config(&lab);
+    let answer = super::verbs::register(
+        &lab.store,
+        &cfg,
+        &lab.authority,
+        &r#box,
+        "karl",
+        out.path(),
+        Some("lab"),
+    )
+    .await;
+    assert!(answer.ok, "{}", answer.value);
+    let written =
+        std::fs::read_to_string(out.path().join(&r#box).join("karl").join("gate-con.toml"))
+            .unwrap();
+    assert!(
+        written.contains("server_name = \"weaver-web\""),
+        "the authority's name: {written}"
+    );
+    assert!(
+        !out.path()
+            .join(&r#box)
+            .join("karl")
+            .join("gate-con.toml.staging")
+            .exists(),
+        "nothing staged remains"
+    );
+}
+
+/// **A box of `.` or `..` is refused by the verb and by the schema**, since
+/// a box names a directory under the operator's output path.
+#[tokio::test]
+async fn a_box_that_names_a_parent_directory_is_refused() {
+    let Some(lab) = Lab::open().await else { return };
+    let cfg = lab_config(&lab);
+    let out = tempfile::tempdir().unwrap();
+    for bad in [".", ".."] {
+        let answer = super::verbs::register(
+            &lab.store,
+            &cfg,
+            &lab.authority,
+            bad,
+            "karl",
+            out.path(),
+            Some("lab"),
+        )
+        .await;
+        assert!(!answer.ok, "{bad}: {}", answer.value);
+        assert!(
+            answer.value["error"]
+                .as_str()
+                .unwrap()
+                .contains("not a box")
+        );
+        let smuggled = sqlx::query(
+            "INSERT INTO agent (name, box, author, gate_fingerprint, admin_fingerprint) VALUES ('karl', $1, NULL, $2, $3)",
+        )
+        .bind(bad)
+        .bind(fingerprint(bad.as_bytes()))
+        .bind(fingerprint(b"other"))
+        .execute(&lab.store.pool)
+        .await;
+        assert!(
+            smuggled
+                .unwrap_err()
+                .to_string()
+                .contains("agent_box_is_well_formed"),
+            "{bad}"
+        );
+    }
+    assert!(
+        std::fs::read_dir(out.path()).unwrap().next().is_none(),
+        "nothing written under the output path"
+    );
+}
+
+/// **A store failure after staging leaves no config behind**: the files
+/// are staged before the store commits and discarded where it refuses.
+#[tokio::test]
+async fn a_store_refusal_discards_the_staged_configs() {
+    let Some(lab) = Lab::open().await else { return };
+    let cfg = lab_config(&lab);
+    let out = tempfile::tempdir().unwrap();
+    // The schema refuses a box with a slash; the verb lets it through to
+    // the store, which is the failure staged here.
+    let answer = super::verbs::register(
+        &lab.store,
+        &cfg,
+        &lab.authority,
+        "box/with/slash",
+        "karl",
+        out.path(),
+        Some("lab"),
+    )
+    .await;
+    assert!(!answer.ok, "{}", answer.value);
+    let leftovers: Vec<_> = walkdir(out.path())
+        .into_iter()
+        .filter(|p| p.extension().is_some())
+        .collect();
+    assert!(leftovers.is_empty(), "staged configs remain: {leftovers:?}");
+}
+
+fn walkdir(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                out.extend(walkdir(&path));
+            } else {
+                out.push(path);
+            }
+        }
+    }
+    out
 }

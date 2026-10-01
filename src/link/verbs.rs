@@ -126,7 +126,12 @@ fn client_config(
 ) -> String {
     let mut table = toml::Table::new();
     table.insert("server".into(), cfg.link_address().into());
-    table.insert("server_name".into(), cfg.server_name.clone().into());
+    // The name the server's certificate was minted for, which is what the
+    // connector verifies, and not the config's, which could have moved.
+    table.insert(
+        "server_name".into(),
+        authority.server_name().to_owned().into(),
+    );
     table.insert("agent".into(), agent_name.into());
     table.insert("plane".into(), plane.as_str().into());
     table.insert(
@@ -158,31 +163,62 @@ fn config_paths(dir: &Path) -> (PathBuf, PathBuf) {
     (dir.join("gate-con.toml"), dir.join("admin-con.toml"))
 }
 
-fn write_client_config(path: &Path, content: &str, may_overwrite: bool) -> anyhow::Result<()> {
+/// Write one staged config: created or truncated under a staging name,
+/// mode 0600 set explicitly, fully written and synced to disk.
+fn stage_file(path: &Path, content: &str) -> anyhow::Result<()> {
     use std::io::Write;
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).mode(0o600);
-    if may_overwrite {
-        options.create(true).truncate(true);
-    } else {
-        options.create_new(true);
-    }
-    let mut file = options.open(path).map_err(|e| {
-        if e.kind() == std::io::ErrorKind::AlreadyExists {
-            anyhow::anyhow!(
-                "{} already exists and this verb does not overwrite a config; move it aside, or rotate the agent",
-                path.display()
-            )
-        } else {
-            anyhow::anyhow!("writing {}: {e}", path.display())
-        }
-    })?;
-    // The mode on open applies only where the file is created; a config
-    // written over an older one keeps the older mode unless it is set.
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)
+        .map_err(|e| anyhow::anyhow!("staging {}: {e}", path.display()))?;
     file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
     file.write_all(content.as_bytes())?;
+    file.sync_all()?;
     Ok(())
+}
+
+/// The two configs staged under the agent's directory and not yet in
+/// place: the authority's staging-then-publish shape reused. The store
+/// commits between the staging and the publish, so a store failure
+/// discards the staged files and a publish failure says exactly which file
+/// stands where.
+struct Staged {
+    gate: (PathBuf, PathBuf),
+    admin: (PathBuf, PathBuf),
+}
+
+impl Staged {
+    fn discard(&self) {
+        let _ = std::fs::remove_file(&self.gate.0);
+        let _ = std::fs::remove_file(&self.admin.0);
+    }
+
+    fn publish(self) -> anyhow::Result<(String, String)> {
+        std::fs::rename(&self.gate.0, &self.gate.1).map_err(|e| {
+            anyhow::anyhow!(
+                "the gate config stands staged at {} and could not be renamed to {}: {e}; the admin config stands staged at {}",
+                self.gate.0.display(),
+                self.gate.1.display(),
+                self.admin.0.display()
+            )
+        })?;
+        std::fs::rename(&self.admin.0, &self.admin.1).map_err(|e| {
+            anyhow::anyhow!(
+                "the gate config stands at {}; the admin config stands staged at {} and could not be renamed to {}: {e}",
+                self.gate.1.display(),
+                self.admin.0.display(),
+                self.admin.1.display()
+            )
+        })?;
+        Ok((
+            self.gate.1.display().to_string(),
+            self.admin.1.display().to_string(),
+        ))
+    }
 }
 
 fn mint_pair(
@@ -205,31 +241,56 @@ fn create_config_dir(dir: &Path) -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("creating {}: {e}", dir.display()))
 }
 
-fn write_pair(
+fn stage_pair(
     cfg: &ServerConfig,
     authority: &Authority,
     dir: &Path,
     name: &str,
     gate: &ClientCredential,
     admin: &ClientCredential,
-    may_overwrite: bool,
-) -> anyhow::Result<(String, String)> {
+) -> anyhow::Result<Staged> {
     create_config_dir(dir)?;
-    let (gate_path, admin_path) = config_paths(dir);
-    write_client_config(
-        &gate_path,
+    let (gate_final, admin_final) = config_paths(dir);
+    let gate_new = dir.join("gate-con.toml.staging");
+    let admin_new = dir.join("admin-con.toml.staging");
+    stage_file(
+        &gate_new,
         &client_config(cfg, authority, name, Plane::Gate, gate),
-        may_overwrite,
     )?;
-    write_client_config(
-        &admin_path,
+    stage_file(
+        &admin_new,
         &client_config(cfg, authority, name, Plane::Admin, admin),
-        may_overwrite,
     )?;
-    Ok((
-        gate_path.display().to_string(),
-        admin_path.display().to_string(),
-    ))
+    Ok(Staged {
+        gate: (gate_new, gate_final),
+        admin: (admin_new, admin_final),
+    })
+}
+
+/// **The config's server name must be the authority's.** The server
+/// presents the certificate minted for the authority's persisted name and
+/// the connectors verify it under that name, so a config that moved would
+/// strand every registration made after it; serving, registering and
+/// rotating refuse until the config is changed back or the authority is
+/// rotated for the new name.
+pub fn name_agrees(cfg: &ServerConfig, authority: &Authority) -> anyhow::Result<()> {
+    if cfg.server_name != authority.server_name() {
+        anyhow::bail!(
+            "the config's server_name is {} but the authority was minted for {}; change the config back, or rotate the authority for the new name",
+            cfg.server_name,
+            authority.server_name()
+        );
+    }
+    Ok(())
+}
+
+/// A box or a name is a directory under the operator's output path, so the
+/// two that would name its parent are refused before the store is touched.
+fn names_a_directory(value: &str) -> anyhow::Result<()> {
+    if value == "." || value == ".." || value.is_empty() {
+        anyhow::bail!("{value:?} is not a box or a name");
+    }
+    Ok(())
 }
 
 /// The authority this verb loaded must be the one on disk, checked inside
@@ -261,6 +322,9 @@ pub async fn register(
     out: &Path,
     author: Option<&str>,
 ) -> Answer {
+    if let Err(e) = names_a_directory(r#box).and_then(|_| names_a_directory(name)) {
+        return refused("register", e);
+    }
     let dir = config_dir(out, r#box, name);
     let (gate_path, admin_path) = config_paths(&dir);
     for path in [&gate_path, &admin_path] {
@@ -283,7 +347,8 @@ pub async fn register(
             );
         }
     };
-    if let Err(e) = authority_still_stands(cfg, authority) {
+    if let Err(e) = name_agrees(cfg, authority).and_then(|_| authority_still_stands(cfg, authority))
+    {
         return refused("register", format!("{e:#}"));
     }
     // The certificates name the agent by its registered name; the identity
@@ -292,14 +357,23 @@ pub async fn register(
         Ok(pair) => pair,
         Err(e) => return refused("register", format!("{e:#}")),
     };
+    // Staged before the store commits, published after: a store failure
+    // leaves no config, and the credentials are never live without one.
+    let staged = match stage_pair(cfg, authority, &dir, name, &gate, &admin) {
+        Ok(s) => s,
+        Err(e) => return refused("register", format!("{e:#}")),
+    };
     let (id, retired) = match store
         .register_agent(r#box, name, author, &gate.fingerprint, &admin.fingerprint)
         .await
     {
         Ok(x) => x,
-        Err(e) => return refused("register", format!("{e:#}")),
+        Err(e) => {
+            staged.discard();
+            return refused("register", format!("{e:#}"));
+        }
     };
-    match write_pair(cfg, authority, &dir, name, &gate, &admin, false) {
+    match staged.publish() {
         Ok((gate_path, admin_path)) => Answer {
             value: json!({
                 "verb": "register",
@@ -366,11 +440,17 @@ pub async fn rotate(
             );
         }
     };
-    if let Err(e) = authority_still_stands(cfg, authority) {
+    if let Err(e) = name_agrees(cfg, authority).and_then(|_| authority_still_stands(cfg, authority))
+    {
         return refused("rotate", format!("{e:#}"));
     }
     let (gate, admin) = match mint_pair(&agent.name, authority) {
         Ok(pair) => pair,
+        Err(e) => return refused("rotate", format!("{e:#}")),
+    };
+    let dir = config_dir(out, &agent.r#box, &agent.name);
+    let staged = match stage_pair(cfg, authority, &dir, &agent.name, &gate, &admin) {
+        Ok(s) => s,
         Err(e) => return refused("rotate", format!("{e:#}")),
     };
     let retired = match store
@@ -378,10 +458,12 @@ pub async fn rotate(
         .await
     {
         Ok(r) => r,
-        Err(e) => return refused("rotate", format!("{e:#}")),
+        Err(e) => {
+            staged.discard();
+            return refused("rotate", format!("{e:#}"));
+        }
     };
-    let dir = config_dir(out, &agent.r#box, &agent.name);
-    match write_pair(cfg, authority, &dir, &agent.name, &gate, &admin, true) {
+    match staged.publish() {
         Ok((gate_path, admin_path)) => Answer {
             value: json!({
                 "verb": "rotate",

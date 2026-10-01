@@ -184,6 +184,12 @@ where
             };
         }
     };
+    if let Err(e) = verbs::name_agrees(cfg, &authority) {
+        return verbs::Answer {
+            value: serde_json::json!({ "verb": verb, "ok": false, "error": format!("{e:#}") }),
+            ok: false,
+        };
+    }
     match store::Store::connect(&cfg.database).await {
         Ok(store) => f(store, authority).await,
         Err(e) => verbs::Answer {
@@ -205,6 +211,13 @@ async fn serve(cfg: Arc<ServerConfig>) -> anyhow::Result<()> {
     // **The authority is loaded before anything listens, and never
     // minted here** (Spec section 8): absent, the server refuses to start.
     let authority = Authority::load(&cfg.authority_dir)?;
+    if authority.server_name() != cfg.server_name {
+        anyhow::bail!(
+            "the config's server_name is {} but the authority was minted for {}; the connectors verify the latter, so the config is changed back or the authority rotated",
+            cfg.server_name,
+            authority.server_name()
+        );
+    }
     tracing::info!(
         "authority loaded, fingerprint {}",
         &authority.fingerprint()[..12]
@@ -237,9 +250,14 @@ async fn serve(cfg: Arc<ServerConfig>) -> anyhow::Result<()> {
 
     let listener = tokio::net::TcpListener::bind(&cfg.listen).await?;
     tracing::info!("listening on {}", cfg.listen);
-    axum::serve(listener, web::router(state).merge(instrument))
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    // The listener halting itself (its lock session lost) ends the process,
+    // so the operator's supervisor restarts it into a clean start.
+    let halting = link.clone();
+    tokio::select! {
+        served = axum::serve(listener, web::router(state).merge(instrument))
+            .with_graceful_shutdown(shutdown_signal()) => served?,
+        why = halting.halted() => anyhow::bail!("the listener halted: {why}"),
+    }
     drop(link);
     Ok(())
 }

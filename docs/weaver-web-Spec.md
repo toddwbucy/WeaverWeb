@@ -1105,8 +1105,16 @@ never a bare socket's. Each row carries:
 **It is an authored row and takes section 3.2's members.** Registration is a
 write the operator makes, so the row carries the author member and the
 store's version like sections 2.3, 2.4, 2.5, 2.9 and 2.10, and an edit to
-what registration authored, the name, the box or a credential's state, is
-ordered on the version like any edit. **What the link observes is not an
+what registration authored is ordered on the version like any edit. **The
+edits registration permits are the box and a credential's state, and never
+the name**: admin knows the agent by that name on its box and both
+connectors' configs carry it, so a renamed row would refuse its own
+connectors at the hello of section 8, and a different name is a different
+registration. **At most one row per box and name holds live credentials**,
+held at the schema by a partial unique index over the rows whose
+credentials are live, so one physical agent cannot be registered twice into
+two rows with independent credentials; re-registering a live pair retires
+the previous row by revoking its credentials in the same act. **What the link observes is not an
 edit.** The observed address, the link states, the tuple and the load state
 are facts the listener and admin reported, and the link writes them as it
 learns them, each with its own date, so a reader can tell when the server
@@ -2062,8 +2070,18 @@ file from its start. The identifier is admin-con's own, in a form the act
 chooses, and carries no trace field, for the same reason the offset is
 elected over the event's sequence: resuming then reads none of the event
 schema this document restates none of, and a sequence would make the link
-depend on a trace field. Both halves cross the link with every event, the
-server acknowledges both, and the hello's answer carries both.
+depend on a trace field. **Beside the generation and the offset the
+position carries a digest of the last acknowledged line**, the bytes
+immediately before the offset, and admin-con reads those bytes and compares
+before resuming at the offset. A file truncated in place while admin-con
+was stopped and regrown past the offset before it reconnected keeps its
+device, inode and birth time, and its length hides the truncation, so the
+identity alone would resume past the new prefix with no mark; the digest
+catches it, and a mismatch is treated exactly as a different generation,
+the old tail marked as a discontinuity and the file relayed from its
+start. The digest is admin-con's own and reads no event schema, for the
+same reason as the offset. All three cross the link with every event, the
+server acknowledges all three, and the hello's answer carries all three.
 
 **The acknowledged position lives for the life of a server process and is
 not persisted**, per the operator's ruling of 2026-10-01: the server's copy
@@ -2089,8 +2107,8 @@ acknowledged generation with the file it holds: the same generation resumes
 at the offset; a different generation means the old file was replaced, so
 any unreplayed tail of the old generation that admin-con no longer has is
 sent as a marked discontinuity and the new generation is relayed from its
-start. A gap admin-con cannot fill within one generation, because the file
-was truncated below the acknowledged offset, is sent the same way. Nothing
+start. A file truncated below the acknowledged offset fails the digest
+read and is sent the same way. Nothing
 is smoothed, which is `traceview.rs`'s own rule and the contract's rule in
 section 3 that nothing is shed silently. Section 8's one-connection
 paragraph refers here for what a reconnection carries.
@@ -2213,10 +2231,13 @@ through its config file at setup**, per the operator's ruling of 2026-10-01.
 Registration is a register verb run on the server: it writes the row of
 section 2.12, mints both credentials, and writes a client config to a path
 the operator names. An install script carries that config to the agent's
-box, and nothing of it enters any repository. **A credential is bound to one
-instance of this server**: it names the server whose authority signed it and
-no other, so moving an agent to another instance is a re-registration there
-rather than a copy.
+box, and nothing of it enters any repository. **A rename is a new
+registration**, the name being immutable per section 2.12, and the old row's
+credentials are revoked by it, as they are by any re-registration of a live
+box and name, so one agent never holds live credentials on two rows. **A
+credential is bound to one instance of this server**: it names the server
+whose authority signed it and no other, so moving an agent to another
+instance is a re-registration there rather than a copy.
 
 **The hello is refused before its roster is read when the credential is not
 live in the register.** A connection presents its certificate at the
@@ -2423,8 +2444,9 @@ The operator confirms or resets this in review.
 | a connection whose credential is not live is refused before its roster is read | perturbation, **owed** to the link act: accept the hello and check the register after, a revoked connector's roster lands before the refusal and a surface renders an agent nobody admitted |
 | one live connection per credential | perturbation, **owed**: let a second connection replace the first, a credential in two hands displaces the live connector silently and the row reads connected throughout |
 | a hello's identity is its certificate's binding and never its roster | perturbation, **owed**: act on the roster's name and plane, a hello on a gate credential naming another agent, or naming admin, is believed, and the seed's first-hello-wins returns through the roster |
+| at most one row per box and name holds live credentials | perturbation, **owed**, at the schema: drop the partial index, register one agent twice, and two rows each hold live credentials for one agent, so the server attributes one agent's observations and verbs to two rows |
 | the link state is reset when the listener starts | perturbation, **owed**: skip the reset, restart the server with no connector up, and a surface reads an agent present whose sockets are gone |
-| the trace file is replayed from the acknowledged position | perturbation, **owed**: drop the replay, break the link during a run and reconnect, and the server's window has a hole with no mark; drop the generation from the position, rotate the trace file during the outage, let the replacement grow past the offset, reconnect, and the window carries the replacement's prefix nowhere and marks nothing; mint the generation from process state, restart admin-con against the unchanged file, and the server receives a false discontinuity and the file again from its start; restart the server and resume from a remembered position, and the window has a hole with no mark |
+| the trace file is replayed from the acknowledged position | perturbation, **owed**: drop the replay, break the link during a run and reconnect, and the server's window has a hole with no mark; truncate the file in place during the outage, let it regrow past the offset, reconnect, and the window carries the new prefix nowhere and marks nothing; drop the generation from the position, rotate the trace file during the outage, let the replacement grow past the offset, reconnect, and the window carries the replacement's prefix nowhere and marks nothing; mint the generation from process state, restart admin-con against the unchanged file, and the server receives a false discontinuity and the file again from its start; restart the server and resume from a remembered position, and the window has a hole with no mark |
 | an agent is present only when both planes connect from one row | perturbation, **owed**: mark present on either plane alone, an agent whose admin-con is down reads present with a tuple and a load state nobody has confirmed |
 | the client credential is stored as a fingerprint and never the key | perturbation, **owed**, at the schema: store the key, a read of the register is a set of credentials anyone can present |
 | the tuple is admin's word and never gate-con's | perturbation, **owed**: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it |
@@ -2433,9 +2455,9 @@ The operator confirms or resets this in review.
 **A watch that cannot fail is not a test.** For each perturbation above, the
 act that lands it states what removal makes it fail and confirms it does.
 
-**A row marked owed has no instrument and is not counted as enforced.** Ten
+**A row marked owed has no instrument and is not counted as enforced.** Eleven
 stand so marked as of 2026-10-01: the batch's order, whose table section 2.11
-describes and no migration builds, and the nine rows of the link, whose
+describes and no migration builds, and the ten rows of the link, whose
 section 8 is written before its code and whose act, the link and the register,
 lands each with the perturbation its row names. The marking is the point: a row
 reading like the enforced ones beside it would tell a reader the claim is held,

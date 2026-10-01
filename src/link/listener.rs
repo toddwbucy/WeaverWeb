@@ -488,7 +488,17 @@ impl Inner {
             pending.lock().unwrap().remove(&id);
             return None;
         }
-        // A cancelled caller leaves an entry that teardown drops.
+        // **A cancelled ask removes its own entry**: the guard runs when
+        // this future is dropped at the await, under the pending map's own
+        // lock, so a hung connector that still heartbeats does not collect
+        // one entry per cancelled ask. An answered ask finds it gone.
+        struct Unask(Arc<Mutex<HashMap<u64, oneshot::Sender<FromClient>>>>, u64);
+        impl Drop for Unask {
+            fn drop(&mut self) {
+                self.0.lock().unwrap().remove(&self.1);
+            }
+        }
+        let _unask = Unask(pending.clone(), id);
         reply_rx.await.ok()
     }
 
@@ -919,6 +929,12 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
             // the row that rolled back.
             tracing::error!("link from {peer}: admission could not be written: {e:#}");
             inner.remove_after_error(&key, incarnation).await;
+            // The commit may have landed before its answer was lost, leaving
+            // the row connected under this incarnation with no socket: an
+            // incarnation-bound teardown is deferred to the reconciliation,
+            // which writes disconnected where the row names this incarnation
+            // and drops the entry where it does not.
+            inner.defer_teardown(agent.agent_id.clone(), plane, incarnation);
             drop(tx);
             let _ = writer.await;
             return;

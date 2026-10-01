@@ -1992,3 +1992,94 @@ fn walkdir(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     }
     out
 }
+
+/// **A commit's outcome is unknown until it is read back**: a store error
+/// after the commit was applied does not discard the staged pair; the row
+/// is read back, the pair published and the answer notes the lost answer.
+#[tokio::test]
+async fn a_commit_whose_answer_was_lost_is_read_back_and_published() {
+    let Some(lab) = Lab::open().await else { return };
+    let cfg = lab_config(&lab);
+    let out = tempfile::tempdir().unwrap();
+    let r#box = format!("box-{}", uuid::Uuid::new_v4().simple());
+
+    super::register::FAIL_AFTER_COMMIT.with(|f| f.set(Some("register")));
+    let answer = super::verbs::register(
+        &lab.store,
+        &cfg,
+        &lab.authority,
+        &r#box,
+        "karl",
+        out.path(),
+        Some("lab"),
+    )
+    .await;
+    assert!(answer.ok, "{}", answer.value);
+    assert!(
+        answer.value["note"].as_str().unwrap().contains("read back"),
+        "{}",
+        answer.value
+    );
+    let dir = out.path().join(&r#box).join("karl");
+    assert!(dir.join("gate-con.toml").exists() && dir.join("admin-con.toml").exists());
+    assert!(!dir.join("gate-con.toml.staging").exists());
+    let live = lab
+        .store
+        .resolve_agent(&format!("{box}/karl", box = r#box))
+        .await
+        .unwrap();
+    assert_eq!(
+        live.agent_id.as_str(),
+        answer.value["agent"].as_str().unwrap()
+    );
+
+    super::register::FAIL_AFTER_COMMIT.with(|f| f.set(Some("rotate")));
+    let before = std::fs::read_to_string(dir.join("gate-con.toml")).unwrap();
+    let answer = super::verbs::rotate(
+        &lab.store,
+        &cfg,
+        &lab.authority,
+        &format!("{box}/karl", box = r#box),
+        out.path(),
+        Some("lab"),
+    )
+    .await;
+    assert!(answer.ok, "{}", answer.value);
+    assert!(answer.value["note"].as_str().unwrap().contains("read back"));
+    assert_ne!(
+        std::fs::read_to_string(dir.join("gate-con.toml")).unwrap(),
+        before
+    );
+    let rotated = lab.agent(&live.agent_id).await;
+    assert_eq!(
+        rotated.gate.fingerprint,
+        answer.value["gate_fingerprint"].as_str().unwrap()
+    );
+}
+
+/// **An admission whose commit's answer was lost is reconciled**: the row
+/// was left connected under an incarnation with no socket, and the deferred
+/// teardown writes it disconnected once the store answers.
+#[tokio::test]
+async fn an_admission_whose_answer_was_lost_is_reconciled() {
+    let Some(lab) = Lab::open().await else { return };
+    let karl = lab.register("karl").await;
+    super::register::FAIL_AFTER_COMMIT.with(|f| f.set(Some("admit")));
+    let mut fake = lab.connect(&karl.gate).await;
+    fake.send(FromClient::Hello {
+        agent: karl.name.clone(),
+        plane: Plane::Gate,
+        tail: None,
+    })
+    .await;
+    assert!(
+        fake.closed().await,
+        "the admission that lost its answer closes"
+    );
+    assert!(!lab.listener.connected(&karl.id, Plane::Gate));
+    lab.wait_for(&karl.id, "gate reconciled to disconnected", |a| {
+        !a.gate.connected
+    })
+    .await;
+    let _again = lab.admit(&karl, Plane::Gate).await;
+}

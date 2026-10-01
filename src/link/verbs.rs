@@ -401,7 +401,7 @@ pub async fn register(
         Ok(s) => s,
         Err(e) => return refused("register", format!("{e:#}")),
     };
-    let (id, retired) = match Store::register_agent_on(
+    let (id, retired, note) = match Store::register_agent_on(
         lock.connection(),
         r#box,
         name,
@@ -411,10 +411,36 @@ pub async fn register(
     )
     .await
     {
-        Ok(x) => x,
+        Ok((id, retired)) => (id, retired, None),
         Err(e) => {
-            staged.discard();
-            return refused("register", format!("{e:#}"));
+            // **A commit's outcome is unknown until it is read back.** The
+            // error may have come after PostgreSQL applied the commit and
+            // before its answer arrived, in which case the register holds
+            // live fingerprints and the staged pair must be published, not
+            // discarded. The row is read on a pool connection.
+            match store.agent_by_fingerprint(&gate.fingerprint).await {
+                Ok(Some((row, _))) => (
+                    row.agent_id,
+                    Vec::new(),
+                    Some(format!(
+                        "the store's answer was lost after the commit ({e:#}); the row was read back and stands"
+                    )),
+                ),
+                Ok(None) => {
+                    staged.discard();
+                    return refused("register", format!("{e:#}"));
+                }
+                Err(read) => {
+                    return refused(
+                        "register",
+                        format!(
+                            "{e:#}; and whether the commit landed could not be read back ({read:#}), so the configs stand staged at {} and {} until the store answers; re-run then",
+                            staged.gate.0.display(),
+                            staged.admin.0.display()
+                        ),
+                    );
+                }
+            }
         }
     };
     if let Err(e) = lock.ping().await {
@@ -439,6 +465,7 @@ pub async fn register(
                 "admin_fingerprint": admin.fingerprint,
                 "configs": [gate_path, admin_path],
                 "retired": retired,
+                "note": note,
             }),
             ok: true,
         },
@@ -510,7 +537,7 @@ pub async fn rotate(
         Ok(s) => s,
         Err(e) => return refused("rotate", format!("{e:#}")),
     };
-    let retired = match Store::rotate_credentials_on(
+    let (retired, note) = match Store::rotate_credentials_on(
         lock.connection(),
         &agent,
         author,
@@ -519,10 +546,36 @@ pub async fn rotate(
     )
     .await
     {
-        Ok(r) => r,
+        Ok(r) => (r, None),
         Err(e) => {
-            staged.discard();
-            return refused("rotate", format!("{e:#}"));
+            // A commit's outcome is unknown until it is read back, as in
+            // `register`: the row carrying the new fingerprint means the
+            // rotation landed.
+            match store.agent_by_fingerprint(&gate.fingerprint).await {
+                Ok(Some(_)) => (
+                    vec![
+                        agent.gate.fingerprint.clone(),
+                        agent.admin.fingerprint.clone(),
+                    ],
+                    Some(format!(
+                        "the store's answer was lost after the commit ({e:#}); the row was read back and stands"
+                    )),
+                ),
+                Ok(None) => {
+                    staged.discard();
+                    return refused("rotate", format!("{e:#}"));
+                }
+                Err(read) => {
+                    return refused(
+                        "rotate",
+                        format!(
+                            "{e:#}; and whether the commit landed could not be read back ({read:#}), so the configs stand staged at {} and {} until the store answers; re-run then",
+                            staged.gate.0.display(),
+                            staged.admin.0.display()
+                        ),
+                    );
+                }
+            }
         }
     };
     if let Err(e) = lock.ping().await {
@@ -546,6 +599,7 @@ pub async fn rotate(
                 "admin_fingerprint": admin.fingerprint,
                 "configs": [gate_path, admin_path],
                 "retired": retired,
+                "note": note,
             }),
             ok: true,
         },

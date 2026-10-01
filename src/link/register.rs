@@ -98,6 +98,31 @@ impl Agent {
     }
 }
 
+// A test's lever on the one outcome a verb cannot see: the next commit of
+// the named kind is applied and then reported as an error, as a connection
+// lost between the commit and its answer would.
+#[cfg(test)]
+thread_local! {
+    pub(crate) static FAIL_AFTER_COMMIT: std::cell::Cell<Option<&'static str>> =
+        const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+fn fail_after_commit(kind: &'static str) -> anyhow::Result<()> {
+    let armed = FAIL_AFTER_COMMIT.with(|f| {
+        if f.get() == Some(kind) {
+            f.set(None);
+            true
+        } else {
+            false
+        }
+    });
+    if armed {
+        anyhow::bail!("a test fault lost the commit's answer ({kind})");
+    }
+    Ok(())
+}
+
 /// The authority lock held: dropping it ends the session that holds the
 /// advisory lock, which releases it. **A verb that holds it runs its store
 /// work on this connection**, so a session PostgreSQL dropped kills the
@@ -353,6 +378,8 @@ impl Store {
         .fetch_one(&mut *tx)
         .await?;
         tx.commit().await?;
+        #[cfg(test)]
+        fail_after_commit("register")?;
         Ok((
             id.parse().map_err(|e: String| anyhow::anyhow!(e))?,
             retired_fingerprints,
@@ -465,6 +492,8 @@ impl Store {
             notify(&mut tx, fp).await?;
         }
         tx.commit().await?;
+        #[cfg(test)]
+        fail_after_commit("rotate")?;
         Ok(retired)
     }
 
@@ -584,6 +613,8 @@ impl Store {
         .execute(&mut *tx)
         .await?;
         tx.commit().await?;
+        #[cfg(test)]
+        fail_after_commit("admit")?;
         Ok(Ok(()))
     }
 

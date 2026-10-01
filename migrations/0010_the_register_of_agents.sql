@@ -47,6 +47,12 @@ CREATE TABLE agent (
   admin_fingerprint  TEXT NOT NULL,
   admin_state        TEXT NOT NULL DEFAULT 'live',
   admin_state_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- **Each credential records the authority that signed it**, as that
+  -- authority certificate's fingerprint, so a rotation of the authority
+  -- can revoke whatever was signed by another: the reconciliation that
+  -- makes a lost lock session harmless rather than merely unlikely.
+  gate_authority     TEXT NOT NULL,
+  admin_authority    TEXT NOT NULL,
 
   -- **Each plane's link state is the listener's word about its own
   -- connections** (Spec 2.12, 8): connected or not, the date it last
@@ -91,6 +97,10 @@ CREATE TABLE agent (
     CHECK (admin_fingerprint ~ '^[0-9a-f]{64}$'),
   CONSTRAINT agent_fingerprints_differ
     CHECK (gate_fingerprint <> admin_fingerprint),
+  CONSTRAINT agent_gate_authority_is_sha256_hex
+    CHECK (gate_authority ~ '^[0-9a-f]{64}$'),
+  CONSTRAINT agent_admin_authority_is_sha256_hex
+    CHECK (admin_authority ~ '^[0-9a-f]{64}$'),
   CONSTRAINT agent_gate_state_is_one_of
     CHECK (gate_state IN ('live', 'revoked')),
   CONSTRAINT agent_admin_state_is_one_of

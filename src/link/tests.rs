@@ -272,6 +272,7 @@ impl Lab {
                 Some("lab"),
                 &gate.fingerprint,
                 &admin.fingerprint,
+                &self.authority.fingerprint(),
             )
             .await
             .unwrap();
@@ -557,8 +558,7 @@ async fn at_most_one_live_row_per_box_and_name() {
     assert_eq!(live.gate.state, CredentialState::Live);
 
     let smuggled = sqlx::query(
-        "INSERT INTO agent (name, box, author, gate_fingerprint, admin_fingerprint) \
-         VALUES ($1, $2, NULL, $3, $4)",
+        "INSERT INTO agent (name, box, author, gate_fingerprint, admin_fingerprint, gate_authority, admin_authority) VALUES ($1, $2, NULL, $3, $4, $4, $4)",
     )
     .bind("karl")
     .bind(&first.r#box)
@@ -737,8 +737,7 @@ async fn the_client_credential_is_stored_as_a_fingerprint_and_never_the_key() {
     assert_eq!(row.gate.fingerprint, fingerprint(der.as_ref()));
 
     let smuggled = sqlx::query(
-        "INSERT INTO agent (name, box, author, gate_fingerprint, admin_fingerprint) \
-         VALUES ('karl', $1, NULL, $2, $3)",
+        "INSERT INTO agent (name, box, author, gate_fingerprint, admin_fingerprint, gate_authority, admin_authority) VALUES ('karl', $1, NULL, $2, $3, $3, $3)",
     )
     .bind(format!("{}-keyed", karl.r#box))
     .bind(&karl.gate.key_pem)
@@ -1155,6 +1154,7 @@ async fn rotation_closes_both_live_connections_and_admits_the_new_pair() {
             Some("lab"),
             &new_gate.fingerprint,
             &new_admin.fingerprint,
+            &lab.authority.fingerprint(),
         )
         .await
         .unwrap();
@@ -1909,7 +1909,7 @@ async fn a_box_that_names_a_parent_directory_is_refused() {
                 .contains("not a box")
         );
         let smuggled = sqlx::query(
-            "INSERT INTO agent (name, box, author, gate_fingerprint, admin_fingerprint) VALUES ('karl', $1, NULL, $2, $3)",
+            "INSERT INTO agent (name, box, author, gate_fingerprint, admin_fingerprint, gate_authority, admin_authority) VALUES ('karl', $1, NULL, $2, $3, $3, $3)",
         )
         .bind(bad)
         .bind(fingerprint(bad.as_bytes()))
@@ -2082,4 +2082,165 @@ async fn an_admission_whose_answer_was_lost_is_reconciled() {
     })
     .await;
     let _again = lab.admit(&karl, Plane::Gate).await;
+}
+
+/// **A credential signed by another authority is revoked by the rotation's
+/// reconciliation**: a registration that raced the switch (staged here by
+/// recording a stale signer) is found and revoked after the switch, and
+/// the answer counts it.
+#[tokio::test]
+async fn a_credential_signed_by_another_authority_is_revoked_by_the_rotation() {
+    let Some(lab) = Lab::open().await else { return };
+    let cfg = lab_config(&lab);
+    let karl = lab.register("karl").await;
+    let stale = lab.authority.mint_client("m1", Plane::Gate).unwrap();
+    let stale_admin = lab.authority.mint_client("m1", Plane::Admin).unwrap();
+    let (raced, _) = lab
+        .store
+        .register_agent(
+            &karl.r#box,
+            "m1",
+            Some("lab"),
+            &stale.fingerprint,
+            &stale_admin.fingerprint,
+            &fingerprint(b"an authority the switch retired"),
+        )
+        .await
+        .unwrap();
+
+    let answer = super::verbs::authority_rotate(&lab.store, &cfg, &[], Some("lab")).await;
+    assert!(answer.ok, "{}", answer.value);
+    // The scratch database is shared with the other tests' rows, so the
+    // count is at least this test's two; the rows themselves are checked.
+    assert!(
+        answer.value["agents_retired"].as_u64().unwrap() >= 2,
+        "{}",
+        answer.value
+    );
+    assert_eq!(
+        answer.value["stranded_credentials_revoked"], 0,
+        "{}",
+        answer.value
+    );
+    assert_eq!(
+        lab.agent(&karl.id).await.gate.state,
+        CredentialState::Revoked
+    );
+    assert_eq!(
+        lab.agent(&raced).await.admin.state,
+        CredentialState::Revoked
+    );
+
+    // The race proper: a credential committed under the old signer after
+    // the rotation's revocation but before its reconciliation.
+    let new_authority = Authority::load(lab.authority.dir()).unwrap();
+    let late = lab.authority.mint_client("m2", Plane::Gate).unwrap();
+    let late_admin = lab.authority.mint_client("m2", Plane::Admin).unwrap();
+    let (late_id, _) = lab
+        .store
+        .register_agent(
+            &karl.r#box,
+            "m2",
+            Some("lab"),
+            &late.fingerprint,
+            &late_admin.fingerprint,
+            &lab.authority.fingerprint(),
+        )
+        .await
+        .unwrap();
+    let stranded = Store::revoke_credentials_not_signed_by_on(
+        &mut lab.store.pool.acquire().await.unwrap(),
+        &new_authority.fingerprint(),
+        Some("lab"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(stranded, 2, "both planes of the late registration");
+    let row = lab.agent(&late_id).await;
+    assert_eq!(row.gate.state, CredentialState::Revoked);
+    assert_eq!(row.admin.state, CredentialState::Revoked);
+    assert_eq!(lab.agent(&raced).await.gate.state, CredentialState::Revoked);
+}
+
+/// **A peer that stops reading is torn down as silent**: a send that cannot
+/// complete within the bound is the peer gone silent, refused and torn
+/// down, rather than a connection task suspended forever.
+#[tokio::test]
+async fn a_peer_that_stops_reading_is_torn_down_as_silent() {
+    let Some(lab) = Lab::open_with(Duration::from_secs(4)).await else {
+        return;
+    };
+    let karl = lab.register("karl").await;
+    let gate = lab.admit(&karl, Plane::Gate).await;
+    // The fake keeps heartbeating, so the read-side silence bound never
+    // fires, and never reads again, so the server's writes back up.
+    let Fake { reader, mut writer } = gate;
+    let heartbeats = tokio::spawn(async move {
+        let _reader = reader;
+        loop {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            let mut line = serde_json::to_string(&FromClient::Heartbeat).unwrap();
+            line.push('\n');
+            if writer.write_all(line.as_bytes()).await.is_err() {
+                return;
+            }
+        }
+    });
+    // Enough asks to fill the socket and the write channel behind it.
+    let text = "x".repeat(1 << 20);
+    let asks: Vec<_> = (0..80)
+        .map(|_| {
+            let listener = lab.listener.clone();
+            let id = karl.id.clone();
+            let text = text.clone();
+            tokio::spawn(async move { listener.turn(&id, &text).await })
+        })
+        .collect();
+    let until = tokio::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        if !lab.agent(&karl.id).await.gate.connected
+            && !lab.listener.connected(&karl.id, Plane::Gate)
+        {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < until,
+            "the unread peer was never torn down"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    for ask in asks {
+        assert!(
+            ask.await.unwrap().is_err(),
+            "every ask on the torn-down link fails"
+        );
+    }
+    heartbeats.abort();
+}
+
+/// **The authority rotation reads its revocation's commit back**: an
+/// error after the revocation was applied leaves no credential live, so
+/// the rotation continues rather than stopping with the files untouched.
+#[tokio::test]
+async fn an_authority_rotation_reads_a_lost_revocation_answer_back() {
+    let Some(lab) = Lab::open().await else { return };
+    let cfg = lab_config(&lab);
+    let karl = lab.register("karl").await;
+    let before = lab.authority.fingerprint();
+    super::register::FAIL_AFTER_COMMIT.with(|f| f.set(Some("revoke_every")));
+    let answer = super::verbs::authority_rotate(&lab.store, &cfg, &[], Some("lab")).await;
+    assert!(answer.ok, "{}", answer.value);
+    assert!(
+        answer.value["agents_retired"].is_null(),
+        "the count is unknown: {}",
+        answer.value
+    );
+    assert_ne!(
+        Authority::load(lab.authority.dir()).unwrap().fingerprint(),
+        before
+    );
+    assert_eq!(
+        lab.agent(&karl.id).await.gate.state,
+        CredentialState::Revoked
+    );
 }

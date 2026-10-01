@@ -45,6 +45,8 @@ impl CredentialState {
 #[derive(Debug, Clone, Serialize)]
 pub struct Credential {
     pub fingerprint: String,
+    /// The fingerprint of the authority that signed it (Spec 8).
+    pub authority: String,
     pub state: CredentialState,
     pub state_at: DateTime<Utc>,
     pub connected: bool,
@@ -167,9 +169,9 @@ pub struct Observation {
 }
 
 const COLUMNS: &str = "agent_id, name, box, author, version, registered_at, \
-    gate_fingerprint, gate_state, gate_state_at, gate_connected, gate_link_at, \
+    gate_fingerprint, gate_authority, gate_state, gate_state_at, gate_connected, gate_link_at, \
     gate_incarnation, gate_address, gate_address_at, \
-    admin_fingerprint, admin_state, admin_state_at, admin_connected, admin_link_at, \
+    admin_fingerprint, admin_authority, admin_state, admin_state_at, admin_connected, admin_link_at, \
     admin_incarnation, admin_address, admin_address_at, \
     tuple, tuple_at, load_state, load_state_at";
 
@@ -177,6 +179,7 @@ fn credential_from_row(row: &PgRow, plane: &str) -> anyhow::Result<Credential> {
     let col = |s: &str| format!("{plane}_{s}");
     Ok(Credential {
         fingerprint: row.try_get(col("fingerprint").as_str())?,
+        authority: row.try_get(col("authority").as_str())?,
         state: CredentialState::parse(row.try_get::<String, _>(col("state").as_str())?.as_str())?,
         state_at: row.try_get(col("state_at").as_str())?,
         connected: row.try_get(col("connected").as_str())?,
@@ -299,6 +302,7 @@ impl Store {
         author: Option<&str>,
         gate_fingerprint: &str,
         admin_fingerprint: &str,
+        authority: &str,
     ) -> anyhow::Result<(AgentId, Vec<String>)> {
         let mut conn = self.pool.acquire().await?;
         Self::register_agent_on(
@@ -308,6 +312,7 @@ impl Store {
             author,
             gate_fingerprint,
             admin_fingerprint,
+            authority,
         )
         .await
     }
@@ -322,6 +327,7 @@ impl Store {
         author: Option<&str>,
         gate_fingerprint: &str,
         admin_fingerprint: &str,
+        authority: &str,
     ) -> anyhow::Result<(AgentId, Vec<String>)> {
         let mut tx = conn.begin().await?;
         // **The retire is ordered on the previous row's version** like every
@@ -367,14 +373,16 @@ impl Store {
             }
         }
         let id: String = sqlx::query_scalar(
-            "INSERT INTO agent (name, box, author, gate_fingerprint, admin_fingerprint) \
-             VALUES ($1, $2, $3, $4, $5) RETURNING agent_id",
+            "INSERT INTO agent (name, box, author, gate_fingerprint, admin_fingerprint, \
+             gate_authority, admin_authority) \
+             VALUES ($1, $2, $3, $4, $5, $6, $6) RETURNING agent_id",
         )
         .bind(name)
         .bind(r#box)
         .bind(author)
         .bind(gate_fingerprint)
         .bind(admin_fingerprint)
+        .bind(authority)
         .fetch_one(&mut *tx)
         .await?;
         tx.commit().await?;
@@ -435,6 +443,7 @@ impl Store {
         author: Option<&str>,
         gate_fingerprint: &str,
         admin_fingerprint: &str,
+        authority: &str,
     ) -> anyhow::Result<Vec<String>> {
         let mut conn = self.pool.acquire().await?;
         Self::rotate_credentials_on(
@@ -443,6 +452,7 @@ impl Store {
             author,
             gate_fingerprint,
             admin_fingerprint,
+            authority,
         )
         .await
     }
@@ -456,6 +466,7 @@ impl Store {
         author: Option<&str>,
         gate_fingerprint: &str,
         admin_fingerprint: &str,
+        authority: &str,
     ) -> anyhow::Result<Vec<String>> {
         let mut tx = conn.begin().await?;
         lock_row(&mut tx, &agent.agent_id).await?;
@@ -463,6 +474,7 @@ impl Store {
             "UPDATE agent SET \
                gate_fingerprint = $3, gate_state = 'live', gate_state_at = now(), \
                admin_fingerprint = $4, admin_state = 'live', admin_state_at = now(), \
+               gate_authority = $6, admin_authority = $6, \
                gate_link_at = CASE WHEN gate_connected THEN now() ELSE gate_link_at END, \
                admin_link_at = CASE WHEN admin_connected THEN now() ELSE admin_link_at END, \
                gate_connected = false, admin_connected = false, \
@@ -475,6 +487,7 @@ impl Store {
         .bind(gate_fingerprint)
         .bind(admin_fingerprint)
         .bind(author)
+        .bind(authority)
         .execute(&mut *tx)
         .await?
         .rows_affected();
@@ -536,7 +549,57 @@ impl Store {
             }
         }
         tx.commit().await?;
+        #[cfg(test)]
+        fail_after_commit("revoke_every")?;
         Ok(rows.len() as u64)
+    }
+
+    /// **The reconciliation that makes a lost lock session harmless rather
+    /// than merely unlikely** (Spec 8): after the authority is switched, every
+    /// live credential whose recorded authority is not the new one is
+    /// revoked, with the listener told, and the count answered, which is
+    /// zero unless a registration raced the rotation.
+    pub async fn revoke_credentials_not_signed_by_on(
+        conn: &mut sqlx::PgConnection,
+        authority: &str,
+        author: Option<&str>,
+    ) -> anyhow::Result<u64> {
+        let mut tx = conn.begin().await?;
+        let mut count = 0u64;
+        for plane in ["gate", "admin"] {
+            let rows = sqlx::query(audited(format!(
+                "UPDATE agent SET \
+                   {plane}_state = 'revoked', {plane}_state_at = now(), \
+                   {plane}_link_at = CASE WHEN {plane}_connected THEN now() ELSE {plane}_link_at END, \
+                   {plane}_connected = false, {plane}_incarnation = NULL, \
+                   author = $2, version = version + 1 \
+                 WHERE {plane}_state = 'live' AND {plane}_authority <> $1 \
+                 RETURNING {plane}_fingerprint AS fingerprint"
+            )))
+            .bind(authority)
+            .bind(author)
+            .fetch_all(&mut *tx)
+            .await?;
+            for row in &rows {
+                let fp: String = row.try_get("fingerprint")?;
+                notify(&mut tx, &fp).await?;
+                count += 1;
+            }
+        }
+        tx.commit().await?;
+        Ok(count)
+    }
+
+    /// Whether any credential is live, which a rotation reads back where
+    /// its revocation's answer was lost: one left live means the commit
+    /// did not land.
+    pub async fn any_live_credential(&self) -> anyhow::Result<bool> {
+        let live: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM agent WHERE gate_state = 'live' OR admin_state = 'live')",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(live)
     }
 
     /// **The listener's start** (Spec 8, 2.12), in one transaction:

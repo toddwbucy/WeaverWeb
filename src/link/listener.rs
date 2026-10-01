@@ -88,6 +88,9 @@ struct LiveConnection {
     tx: mpsc::Sender<ToClient>,
     pending: Arc<Mutex<HashMap<u64, oneshot::Sender<FromClient>>>>,
     close: watch::Sender<bool>,
+    /// Set by an ask whose enqueue could not complete within the bound,
+    /// so the close that follows is named as the peer gone silent.
+    silent: Arc<std::sync::atomic::AtomicBool>,
 }
 
 struct Inner {
@@ -128,6 +131,10 @@ struct Inner {
     /// lands or the incarnation is superseded (a reconciliation, not a
     /// forgetting). The startup reset covers a restart.
     failed_teardowns: Mutex<Vec<(AgentId, Plane, i64)>>,
+    /// Whether the one reconciliation worker runs; set and cleared under
+    /// the list's lock, so the worker exits exactly when the list empties
+    /// and a new entry starts exactly one.
+    reconciling: std::sync::atomic::AtomicBool,
     #[cfg(test)]
     fault_next_teardown: std::sync::atomic::AtomicBool,
     /// A test's one lever on the store: the next landing fails once, so
@@ -230,6 +237,7 @@ impl Listener {
                 monitor: Mutex::new(None),
                 halting: watch::channel(false).0,
                 failed_teardowns: Mutex::new(Vec::new()),
+                reconciling: std::sync::atomic::AtomicBool::new(false),
                 #[cfg(test)]
                 fault_next_teardown: std::sync::atomic::AtomicBool::new(false),
                 #[cfg(test)]
@@ -478,15 +486,37 @@ impl Inner {
         // its pending map, failing this await, or has already removed it and
         // this finds no connection. Inserted outside the lock, the sender
         // could land in a map nothing reads and wait forever.
-        let (tx, pending) = {
+        let (tx, pending, close, silent) = {
             let live = self.live.lock().unwrap();
             let conn = live.get(&(agent.clone(), plane))?;
             conn.pending.lock().unwrap().insert(id, reply_tx);
-            (conn.tx.clone(), conn.pending.clone())
+            (
+                conn.tx.clone(),
+                conn.pending.clone(),
+                conn.close.clone(),
+                conn.silent.clone(),
+            )
         };
-        if tx.send(make(id)).await.is_err() {
-            pending.lock().unwrap().remove(&id);
-            return None;
+        // **Bounded like every enqueue, and a bound that passes is the
+        // peer gone silent**: a connector that stopped reading fills the
+        // write channel, and the connection task, which on the gate plane
+        // sends nothing of its own, would otherwise live on while every
+        // ask failed. The ask fails and the connection is closed as silent.
+        match tokio::time::timeout(self.silence, tx.send(make(id))).await {
+            Ok(Ok(())) => {}
+            Ok(Err(_)) => {
+                pending.lock().unwrap().remove(&id);
+                return None;
+            }
+            Err(_) => {
+                tracing::warn!(
+                    "{agent} ({plane}): an ask could not be enqueued within the bound, the peer stopped reading"
+                );
+                silent.store(true, Ordering::Relaxed);
+                let _ = close.send(true);
+                pending.lock().unwrap().remove(&id);
+                return None;
+            }
         }
         // **A cancelled ask removes its own entry**: the guard runs when
         // this future is dropped at the await, under the pending map's own
@@ -549,20 +579,28 @@ impl Inner {
         }
     }
 
-    /// Record a teardown the store refused and keep retrying it every
-    /// second until it lands or is superseded.
+    /// Record a teardown the store refused. **One worker** retries the list
+    /// every second while any entry stands and exits when it empties: it is
+    /// started when the list goes from empty to non-empty, under the list's
+    /// lock, so N dropped links during an outage give one worker and not N.
     fn defer_teardown(self: &Arc<Self>, agent: AgentId, plane: Plane, incarnation: i64) {
-        self.failed_teardowns
-            .lock()
-            .unwrap()
-            .push((agent, plane, incarnation));
+        let start = {
+            let mut list = self.failed_teardowns.lock().unwrap();
+            list.push((agent, plane, incarnation));
+            !self.reconciling.swap(true, Ordering::AcqRel)
+        };
+        if !start {
+            return;
+        }
         let weak = Arc::downgrade(self);
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 let Some(inner) = weak.upgrade() else { return };
                 inner.reconcile_teardowns().await;
-                if inner.failed_teardowns.lock().unwrap().is_empty() {
+                let list = inner.failed_teardowns.lock().unwrap();
+                if list.is_empty() {
+                    inner.reconciling.store(false, Ordering::Release);
                     return;
                 }
             }
@@ -723,15 +761,51 @@ async fn read_line<R: tokio::io::AsyncBufRead + Unpin>(reader: &mut R, buf: &mut
     }
 }
 
+/// A best-effort send for a refusal or an answer on a connection that is
+/// about to close: bounded, so a peer that stopped reading cannot hold the
+/// task on it.
 async fn send(tx: &mpsc::Sender<ToClient>, frame: ToClient) {
-    let _ = tx.send(frame).await;
+    let _ = tokio::time::timeout(Duration::from_secs(5), tx.send(frame)).await;
+}
+
+/// **A send to a peer that stopped reading is the peer gone silent.** The
+/// write channel behind the socket is bounded, so a peer that stops reading
+/// fills it and a plain send would suspend the connection task where the
+/// silence timeout, which wraps only the read, never fires. Every enqueue
+/// is held to the silence bound and watches the close signal, and one that
+/// cannot complete answers the reason the connection ends for.
+async fn enqueue(
+    tx: &mpsc::Sender<ToClient>,
+    frame: ToClient,
+    bound: Duration,
+    close: &mut watch::Receiver<bool>,
+) -> Result<(), &'static str> {
+    tokio::select! {
+        sent = tokio::time::timeout(bound, tx.send(frame)) => match sent {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(_)) => Err("the write path is gone"),
+            Err(_) => Err("silent for the bound: the peer stopped reading"),
+        },
+        _ = close.changed() => Err("closed by revocation, rotation or halt"),
+    }
+}
+
+/// Wait for the writer to drain what it holds, bounded: a peer that stopped
+/// reading would otherwise hold the task on the socket's send buffer.
+async fn drain_writer(mut writer: tokio::task::JoinHandle<()>) {
+    if tokio::time::timeout(Duration::from_secs(5), &mut writer)
+        .await
+        .is_err()
+    {
+        writer.abort();
+    }
 }
 
 /// Refuse, close the write path, and wait for it to drain.
 async fn refuse(tx: mpsc::Sender<ToClient>, writer: tokio::task::JoinHandle<()>, reason: Refusal) {
     send(&tx, ToClient::Refusal { reason }).await;
     drop(tx);
-    let _ = writer.await;
+    drain_writer(writer).await;
 }
 
 async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr) {
@@ -815,7 +889,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
         Err(e) => {
             tracing::error!("link from {peer}: the register could not be read: {e:#}");
             drop(tx);
-            let _ = writer.await;
+            drain_writer(writer).await;
             return;
         }
     };
@@ -827,7 +901,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
         _ = halting.changed() => {
             tracing::info!("link from {peer}: the listener is halting before the hello, dropped");
             drop(tx);
-            let _ = writer.await;
+            drain_writer(writer).await;
             return;
         }
     };
@@ -847,7 +921,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
         }
         _ => {
             drop(tx);
-            let _ = writer.await;
+            drain_writer(writer).await;
             return;
         }
     };
@@ -882,6 +956,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
     let incarnation = (inner.epoch << 32) | inner.next_incarnation.fetch_add(1, Ordering::Relaxed);
     let pending = Arc::new(Mutex::new(HashMap::new()));
     let (close_tx, mut close_rx) = watch::channel(false);
+    let silent = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let key = (agent.agent_id.clone(), plane);
     let admitted = inner
         .store
@@ -907,6 +982,8 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                         tx: tx.clone(),
                         pending: pending.clone(),
                         close: close_tx.clone(),
+
+                        silent: silent.clone(),
                     },
                 );
                 Ok(())
@@ -936,7 +1013,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
             // and drops the entry where it does not.
             inner.defer_teardown(agent.agent_id.clone(), plane, incarnation);
             drop(tx);
-            let _ = writer.await;
+            drain_writer(writer).await;
             return;
         }
     }
@@ -948,141 +1025,162 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
     // The hello is answered, then on the admin plane `show` is asked
     // before the connection's first event is read (Spec 7.2, 2.12).
     let acknowledged = inner.acknowledged(&agent.agent_id);
-    send(
-        &tx,
-        ToClient::HelloAnswer {
-            cadence_secs: inner.silence.as_secs() / 4,
-            acknowledged,
-        },
-    )
-    .await;
-    if plane == Plane::Admin {
-        inner.windows.ensure(agent.agent_id.as_str());
-        if inner.windows.has_events(agent.agent_id.as_str()) {
-            inner.windows.mark(
-                agent.agent_id.as_str(),
-                "admin-con reconnected: a replay follows",
-            );
-        }
-        let id = inner.next_ask.fetch_add(1, Ordering::Relaxed);
-        send(
-            &tx,
-            ToClient::Verb {
-                id,
-                verb: "show".into(),
-            },
-        )
-        .await;
-    }
-
-    // Whether an event at or beyond the boundary in its generation has
-    // arrived yet, which is what classifies events of other generations.
-    // Whether admin-con's replay has reached the boundary (Spec 7.2): the
-    // frame that decides what is replayed and what is live.
-    let mut caught_up = false;
     // Why the connection ended, for the window's mark.
     let mut reason = "dropped by admin-con";
-    loop {
-        let line = tokio::select! {
-            l = tokio::time::timeout(inner.silence, read_line(&mut reader, &mut buf)) => l,
-            _ = close_rx.changed() => {
-                if *close_rx.borrow() {
-                    tracing::info!(
-                        "link from {peer}: {} ({plane}) closed by revocation, rotation or halt",
+    'serve: {
+        if let Err(why) = enqueue(
+            &tx,
+            ToClient::HelloAnswer {
+                cadence_secs: inner.silence.as_secs() / 4,
+                acknowledged,
+            },
+            inner.silence,
+            &mut close_rx,
+        )
+        .await
+        {
+            reason = why;
+            break 'serve;
+        }
+        if plane == Plane::Admin {
+            inner.windows.ensure(agent.agent_id.as_str());
+            if inner.windows.has_events(agent.agent_id.as_str()) {
+                inner.windows.mark(
+                    agent.agent_id.as_str(),
+                    "admin-con reconnected: a replay follows",
+                );
+            }
+            let id = inner.next_ask.fetch_add(1, Ordering::Relaxed);
+            if let Err(why) = enqueue(
+                &tx,
+                ToClient::Verb {
+                    id,
+                    verb: "show".into(),
+                },
+                inner.silence,
+                &mut close_rx,
+            )
+            .await
+            {
+                reason = why;
+                break 'serve;
+            }
+        }
+
+        // Whether an event at or beyond the boundary in its generation has
+        // arrived yet, which is what classifies events of other generations.
+        // Whether admin-con's replay has reached the boundary (Spec 7.2): the
+        // frame that decides what is replayed and what is live.
+        let mut caught_up = false;
+        loop {
+            let line = tokio::select! {
+                l = tokio::time::timeout(inner.silence, read_line(&mut reader, &mut buf)) => l,
+                _ = close_rx.changed() => {
+                    if *close_rx.borrow() {
+                        tracing::info!(
+                            "link from {peer}: {} ({plane}) closed by revocation, rotation or halt",
+                            agent.agent_id
+                        );
+                        reason = if silent.load(Ordering::Relaxed) {
+
+                            "silent for the bound: the peer stopped reading"
+
+                        } else {
+
+                            "closed by revocation, rotation or halt"
+
+                        };
+                        break;
+                    }
+                    continue;
+                }
+            };
+            let line = match line {
+                Ok(Line::Frame(line)) => line,
+                Ok(Line::Closed) => break,
+                Ok(Line::Malformed(why)) => {
+                    tracing::warn!(
+                        "link from {peer}: {} ({plane}) sent {why}, refused",
                         agent.agent_id
                     );
-                    reason = "closed by revocation, rotation or halt";
+                    send(
+                        &tx,
+                        ToClient::Refusal {
+                            reason: Refusal::Malformed,
+                        },
+                    )
+                    .await;
+                    reason = "refused as malformed";
                     break;
                 }
-                continue;
-            }
-        };
-        let line = match line {
-            Ok(Line::Frame(line)) => line,
-            Ok(Line::Closed) => break,
-            Ok(Line::Malformed(why)) => {
-                tracing::warn!(
-                    "link from {peer}: {} ({plane}) sent {why}, refused",
-                    agent.agent_id
-                );
-                send(
-                    &tx,
-                    ToClient::Refusal {
-                        reason: Refusal::Malformed,
-                    },
-                )
-                .await;
-                reason = "refused as malformed";
-                break;
-            }
-            Err(_) => {
-                tracing::info!(
-                    "link from {peer}: {} ({plane}) silent for {:?}, closed",
-                    agent.agent_id,
-                    inner.silence
-                );
-                send(
-                    &tx,
-                    ToClient::Refusal {
-                        reason: Refusal::Silence,
-                    },
-                )
-                .await;
-                reason = "silent for the bound";
-                break;
-            }
-        };
-        let frame: FromClient = match serde_json::from_str(&line) {
-            Ok(f) => f,
-            Err(e) => {
-                tracing::warn!("link from {peer}: a frame did not parse, closed: {e}");
-                send(
-                    &tx,
-                    ToClient::Refusal {
-                        reason: Refusal::Malformed,
-                    },
-                )
-                .await;
-                reason = "refused as malformed";
-                break;
-            }
-        };
-        match (plane, frame) {
-            (_, FromClient::Heartbeat) => {}
-            (Plane::Admin, FromClient::CaughtUp) => {
-                caught_up = true;
-            }
-            (_, FromClient::Hello { .. }) => {
-                tracing::warn!(
-                    "link from {peer}: {} ({plane}) said hello again mid-stream, refused",
-                    agent.agent_id
-                );
-                send(
-                    &tx,
-                    ToClient::Refusal {
-                        reason: Refusal::Malformed,
-                    },
-                )
-                .await;
-                reason = "refused as malformed";
-                break;
-            }
-            (Plane::Gate, FromClient::Turn { id, close, error }) => {
-                resolve(&pending, id, FromClient::Turn { id, close, error });
-            }
-            (Plane::Admin, FromClient::Verb { id, outcome, error }) => {
-                if let Some(outcome) = &outcome
-                    && !inner.land_verb(&agent.agent_id, &agent.name, outcome).await
-                {
-                    // The answer could not be landed: the ask answers the
-                    // failure and never the outcome, and the connection
-                    // closes so the admission's `show` is asked again.
-                    tracing::error!(
-                        "{}: admin's {} answer could not be landed, closing the connection",
+                Err(_) => {
+                    tracing::info!(
+                        "link from {peer}: {} ({plane}) silent for {:?}, closed",
                         agent.agent_id,
-                        outcome.verb
+                        inner.silence
                     );
-                    resolve(
+                    send(
+                        &tx,
+                        ToClient::Refusal {
+                            reason: Refusal::Silence,
+                        },
+                    )
+                    .await;
+                    reason = "silent for the bound";
+                    break;
+                }
+            };
+            let frame: FromClient = match serde_json::from_str(&line) {
+                Ok(f) => f,
+                Err(e) => {
+                    tracing::warn!("link from {peer}: a frame did not parse, closed: {e}");
+                    send(
+                        &tx,
+                        ToClient::Refusal {
+                            reason: Refusal::Malformed,
+                        },
+                    )
+                    .await;
+                    reason = "refused as malformed";
+                    break;
+                }
+            };
+            match (plane, frame) {
+                (_, FromClient::Heartbeat) => {}
+                (Plane::Admin, FromClient::CaughtUp) => {
+                    caught_up = true;
+                }
+                (_, FromClient::Hello { .. }) => {
+                    tracing::warn!(
+                        "link from {peer}: {} ({plane}) said hello again mid-stream, refused",
+                        agent.agent_id
+                    );
+                    send(
+                        &tx,
+                        ToClient::Refusal {
+                            reason: Refusal::Malformed,
+                        },
+                    )
+                    .await;
+                    reason = "refused as malformed";
+                    break;
+                }
+                (Plane::Gate, FromClient::Turn { id, close, error }) => {
+                    resolve(&pending, id, FromClient::Turn { id, close, error });
+                }
+                (Plane::Admin, FromClient::Verb { id, outcome, error }) => {
+                    if let Some(outcome) = &outcome
+                        && !inner.land_verb(&agent.agent_id, &agent.name, outcome).await
+                    {
+                        // The answer could not be landed: the ask answers the
+                        // failure and never the outcome, and the connection
+                        // closes so the admission's `show` is asked again.
+                        tracing::error!(
+                            "{}: admin's {} answer could not be landed, closing the connection",
+                            agent.agent_id,
+                            outcome.verb
+                        );
+                        resolve(
                         &pending,
                         id,
                         FromClient::Verb {
@@ -1093,100 +1191,120 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                             ),
                         },
                     );
-                    send(
-                        &tx,
-                        ToClient::Refusal {
-                            reason: Refusal::StoreUnavailable,
-                        },
-                    )
-                    .await;
-                    reason = "the store was unavailable";
-                    break;
-                }
-                resolve(&pending, id, FromClient::Verb { id, outcome, error });
-            }
-            (
-                Plane::Admin,
-                FromClient::Event {
-                    position,
-                    replayed,
-                    event,
-                },
-            ) => {
-                // **Acknowledged only once every write the event owed the
-                // register landed** (Spec 7.2): an ack is the server's word
-                // that it holds the event, and a reconnection resumes past
-                // it. An observation the store refused is not acknowledged;
-                // admin-con resends from its last acknowledged position,
-                // which is the replay doing its job.
-                let landed = match inner
-                    .land_event(
-                        &agent.agent_id,
-                        boundary.as_ref(),
-                        caught_up,
-                        &position,
-                        replayed,
-                        event,
-                    )
-                    .await
-                {
-                    Ok(landed) => landed,
-                    Err(refusal) => {
-                        tracing::warn!(
-                            "{}: an event at or beyond the boundary arrived before the replay was caught up, refused",
-                            agent.agent_id
-                        );
-                        send(&tx, ToClient::Refusal { reason: refusal }).await;
+                        send(
+                            &tx,
+                            ToClient::Refusal {
+                                reason: Refusal::StoreUnavailable,
+                            },
+                        )
+                        .await;
+                        reason = "the store was unavailable";
                         break;
                     }
-                };
-                if landed {
-                    inner
-                        .acknowledged
-                        .lock()
-                        .unwrap()
-                        .insert(agent.agent_id.clone(), position.clone());
-                    send(&tx, ToClient::Ack { position }).await;
-                } else {
-                    // Closed rather than skipped: a later ack would name a
-                    // position past the event the store does not hold.
-                    tracing::error!(
-                        "{}: the event at {}:{} was not landed on the row, closing the connection at the last acknowledged position",
+                    resolve(&pending, id, FromClient::Verb { id, outcome, error });
+                }
+                (
+                    Plane::Admin,
+                    FromClient::Event {
+                        position,
+                        replayed,
+                        event,
+                    },
+                ) => {
+                    // **Acknowledged only once every write the event owed the
+                    // register landed** (Spec 7.2): an ack is the server's word
+                    // that it holds the event, and a reconnection resumes past
+                    // it. An observation the store refused is not acknowledged;
+                    // admin-con resends from its last acknowledged position,
+                    // which is the replay doing its job.
+                    let landed = match inner
+                        .land_event(
+                            &agent.agent_id,
+                            boundary.as_ref(),
+                            caught_up,
+                            &position,
+                            replayed,
+                            event,
+                        )
+                        .await
+                    {
+                        Ok(landed) => landed,
+                        Err(refusal) => {
+                            tracing::warn!(
+                                "{}: an event at or beyond the boundary arrived before the replay was caught up, refused",
+                                agent.agent_id
+                            );
+                            send(&tx, ToClient::Refusal { reason: refusal }).await;
+                            break;
+                        }
+                    };
+                    if landed {
+                        inner
+                            .acknowledged
+                            .lock()
+                            .unwrap()
+                            .insert(agent.agent_id.clone(), position.clone());
+                        if let Err(why) = enqueue(
+                            &tx,
+                            ToClient::Ack { position },
+                            inner.silence,
+                            &mut close_rx,
+                        )
+                        .await
+                        {
+                            reason = why;
+                            break;
+                        }
+                    } else {
+                        // Closed rather than skipped: a later ack would name a
+                        // position past the event the store does not hold.
+                        tracing::error!(
+                            "{}: the event at {}:{} was not landed on the row, closing the connection at the last acknowledged position",
+                            agent.agent_id,
+                            position.generation,
+                            position.offset
+                        );
+                        send(
+                            &tx,
+                            ToClient::Refusal {
+                                reason: Refusal::StoreUnavailable,
+                            },
+                        )
+                        .await;
+                        reason = "the store was unavailable";
+                        break;
+                    }
+                }
+                (_, other) => {
+                    // **A frame on the wrong plane is refused and logged
+                    // against the row** (Spec 8): a tuple or load state can
+                    // only arrive by admin-con, and a turn only by gate-con.
+                    tracing::warn!(
+                        "link from {peer}: {} ({plane}) sent a {} frame that belongs to the other plane, refused",
                         agent.agent_id,
-                        position.generation,
-                        position.offset
+                        frame_name(&other)
                     );
                     send(
                         &tx,
                         ToClient::Refusal {
-                            reason: Refusal::StoreUnavailable,
+                            reason: Refusal::WrongPlane,
                         },
                     )
                     .await;
-                    reason = "the store was unavailable";
+                    reason = "refused on the wrong plane";
                     break;
                 }
             }
-            (_, other) => {
-                // **A frame on the wrong plane is refused and logged
-                // against the row** (Spec 8): a tuple or load state can
-                // only arrive by admin-con, and a turn only by gate-con.
-                tracing::warn!(
-                    "link from {peer}: {} ({plane}) sent a {} frame that belongs to the other plane, refused",
-                    agent.agent_id,
-                    frame_name(&other)
-                );
-                send(
-                    &tx,
-                    ToClient::Refusal {
-                        reason: Refusal::WrongPlane,
-                    },
-                )
-                .await;
-                reason = "refused on the wrong plane";
-                break;
-            }
         }
+    }
+    if reason.starts_with("silent") {
+        send(
+            &tx,
+            ToClient::Refusal {
+                reason: Refusal::Silence,
+            },
+        )
+        .await;
     }
 
     // **Teardown bound to the incarnation, under the row's lock** (Spec 8):
@@ -1245,7 +1363,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
     }
     pending.lock().unwrap().clear();
     drop(tx);
-    let _ = writer.await;
+    drain_writer(writer).await;
     tracing::info!(
         "link from {peer}: {} ({plane}) incarnation {incarnation} closed",
         agent.agent_id

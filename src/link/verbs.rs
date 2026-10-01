@@ -84,14 +84,29 @@ pub async fn authority_rotate(
         }
     };
     let retired = match Store::revoke_every_credential_on(lock.connection(), author).await {
-        Ok(retired) => retired,
+        Ok(retired) => Some(retired),
         Err(e) => {
-            return refused(
-                "authority rotate",
-                format!(
-                    "the credentials could not be revoked, so the authority was not replaced; nothing changed, re-run when the store answers: {e:#}"
-                ),
-            );
+            // A commit's outcome is unknown until it is read back: any
+            // credential left live means the revocation did not land.
+            match store.any_live_credential().await {
+                Ok(false) => None,
+                Ok(true) => {
+                    return refused(
+                        "authority rotate",
+                        format!(
+                            "the credentials could not be revoked, so the authority was not replaced; nothing changed, re-run when the store answers: {e:#}"
+                        ),
+                    );
+                }
+                Err(read) => {
+                    return refused(
+                        "authority rotate",
+                        format!(
+                            "{e:#}; and whether the revocation landed could not be read back ({read:#}); nothing of the authority changed, re-run when the store answers"
+                        ),
+                    );
+                }
+            }
         }
     };
     // The lock's session is checked right before the switch; the window
@@ -100,27 +115,65 @@ pub async fn authority_rotate(
         return refused(
             "authority rotate",
             format!(
-                "every credential is revoked ({retired} agents retired) but the authority was not replaced: {e:#}; re-run"
+                "every credential is revoked but the authority was not replaced: {e:#}; re-run"
             ),
         );
     }
-    match Authority::rotate(&cfg.authority_dir, &cfg.server_name, sans) {
-        Ok(authority) => Answer {
-            value: json!({
-                "verb": "authority rotate",
-                "ok": true,
-                "fingerprint": authority.fingerprint(),
-                "agents_retired": retired,
-                "note": "every credential is revoked: re-register each agent, and restart the server so it loads the new authority",
-            }),
-            ok: true,
-        },
-        Err(e) => refused(
+    let authority = match Authority::rotate(&cfg.authority_dir, &cfg.server_name, sans) {
+        Ok(authority) => authority,
+        Err(e) => {
+            return refused(
+                "authority rotate",
+                format!(
+                    "every credential is revoked but the authority could not be replaced and the old one stands; re-run to replace it: {e:#}"
+                ),
+            );
+        }
+    };
+    // **The reconciliation that makes the lock's loss harmless rather than
+    // merely unlikely**: the switch ran after the last ping, so a session
+    // lost during it could have let a racing registration verify the old
+    // authority and commit a credential it signed. Every credential records
+    // its signer, so after the switch, still under the lock, whatever was
+    // not signed by the new authority is revoked; the count is zero unless
+    // the race happened.
+    if let Err(e) = lock.ping().await {
+        return refused(
             "authority rotate",
             format!(
-                "every credential is revoked ({retired} agents retired) but the authority could not be replaced and the old one stands; re-run to replace it: {e:#}"
+                "the authority is replaced ({}) but the lock's session was lost before the reconciliation: {e:#}; re-run, which revokes anything signed by another authority",
+                authority.fingerprint()
             ),
-        ),
+        );
+    }
+    let stranded = match Store::revoke_credentials_not_signed_by_on(
+        lock.connection(),
+        &authority.fingerprint(),
+        author,
+    )
+    .await
+    {
+        Ok(n) => n,
+        Err(e) => {
+            return refused(
+                "authority rotate",
+                format!(
+                    "the authority is replaced ({}) but the reconciliation did not land: {e:#}; re-run, which revokes anything signed by another authority",
+                    authority.fingerprint()
+                ),
+            );
+        }
+    };
+    Answer {
+        value: json!({
+            "verb": "authority rotate",
+            "ok": true,
+            "fingerprint": authority.fingerprint(),
+            "agents_retired": retired,
+            "stranded_credentials_revoked": stranded,
+            "note": "every credential is revoked: re-register each agent, and restart the server so it loads the new authority",
+        }),
+        ok: true,
     }
 }
 
@@ -408,6 +461,7 @@ pub async fn register(
         author,
         &gate.fingerprint,
         &admin.fingerprint,
+        &authority.fingerprint(),
     )
     .await
     {
@@ -543,6 +597,7 @@ pub async fn rotate(
         author,
         &gate.fingerprint,
         &admin.fingerprint,
+        &authority.fingerprint(),
     )
     .await
     {

@@ -2115,7 +2115,9 @@ server answers admin-con's hello with the last position it holds for that
 row's trace, admin-con resumes relaying from there, and the server
 acknowledges as it lands, so the position advances. **The acknowledged
 position has three members: a generation, the byte offset within the file,
-and a digest of the last acknowledged line.** **The generation
+always a record boundary per the rule stated below so that no offset in
+this document names the inside of a record, and a digest of the last
+acknowledged line.** **The generation
 is derived from the file's durable identity and never from process state**:
 the device and inode `traceview.rs` tracks, together with the file's birth
 time where the filesystem reports it, so that a reused inode after a
@@ -2215,7 +2217,19 @@ newer one. The gate contract's rule for the data plane, one turn in flight
 per agent and a second request waits, is the same shape on this plane. The
 pause and the wait are bounded because the invocation is, the seed's
 `lifecycle.rs` capping it, and the drain is bounded by the backlog, which
-is the tailer's lag and not the file. Placed at the receipt
+is the tailer's lag and not the file. **Every position admin-con records
+or acknowledges is a record boundary, the byte after a delimiter**, so the
+tail it records before a verb is the end of the last complete record at
+that moment, the drain emits through it, and a record still unterminated
+at that moment is read after the answer and ordered behind it. That order
+is right rather than a concession: an event is in the file only once its
+delimiter is, so a record unterminated at the invocation was not yet
+written when the verb ran and is concurrent with the snapshot rather than
+before it, which is what the gate contract's own framing rule says of a
+line without its delimiter, and what the seed's `traceview.rs` already
+says of an unterminated tail. A byte tail recorded inside an unfinished
+record would make neither draining through it nor resuming from it well
+defined. Placed at the receipt
 instead, a file event the tailer read between the verb's snapshot and the
 answer's arrival would stand ahead of the answer and the older snapshot
 would overwrite it. The server's arrival number then carries the source
@@ -2606,7 +2620,7 @@ missing while it was relaying.
 | a hello's identity is its certificate's binding and never its roster | perturbation, **owed**: act on the roster's name and plane, a hello on a gate credential naming another agent, or naming admin, is believed, and the seed's first-hello-wins returns through the roster |
 | at most one row per box and name holds live credentials | perturbation, **owed**, at the schema: drop the partial index, register one agent twice, and two rows each hold live credentials for one agent, so the server attributes one agent's observations and verbs to two rows |
 | the link state is reset when the listener starts | perturbation, **owed**: skip the reset, restart the server with no connector up, and a surface reads an agent present whose sockets are gone |
-| the trace file is replayed from the acknowledged position | perturbation, **owed**: drop the replay, break the link during a run and reconnect, and the server's window has a hole with no mark; truncate the file in place during the outage, let it regrow past the offset, reconnect, and the window carries the new prefix nowhere and marks nothing; drop the generation from the position, rotate the trace file during the outage, let the replacement grow past the offset, reconnect, and the window carries the replacement's prefix nowhere and marks nothing; mint the generation from process state, restart admin-con against the unchanged file, and the server receives a false discontinuity and the file again from its start; restart the server and resume from a remembered position, and the window has a hole with no mark |
+| the trace file is replayed from the acknowledged position | perturbation, **owed**: drop the replay, break the link during a run and reconnect, and the server's window has a hole with no mark; truncate the file in place during the outage, let it regrow past the offset, reconnect, and the window carries the new prefix nowhere and marks nothing; drop the generation from the position, rotate the trace file during the outage, let the replacement grow past the offset, reconnect, and the window carries the replacement's prefix nowhere and marks nothing; mint the generation from process state, restart admin-con against the unchanged file, and the server receives a false discontinuity and the file again from its start; restart the server and resume from a remembered position, and the window has a hole with no mark; record a tail inside an unterminated record and resume from it, and the window carries half a record and a parse failure where an event was |
 | an agent is present only when both planes connect from one row | perturbation, **owed**: mark present on either plane alone, an agent whose admin-con is down reads present with a tuple and a load state nobody has confirmed |
 | the server's authority is loaded before the listener starts and never minted at start | perturbation, **owed**: mint the authority at start instead of loading it, restart the server, and every connector's hello is refused against a certificate it does not pin |
 | the client credential is stored as a fingerprint and never the key | perturbation, **owed**, at the schema: store the key, a read of the register is a set of credentials anyone can present |

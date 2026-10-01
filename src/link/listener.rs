@@ -649,11 +649,12 @@ impl Inner {
     /// The cleanup after a store error on a path that already installed:
     /// under the row's lock where the store can be reached, and without it,
     /// logged, where it cannot (the module header's one exception).
-    async fn remove_after_error(&self, key: &(AgentId, Plane), incarnation: i64) {
+    async fn remove_after_error(&self, key: &(AgentId, Plane), incarnation: i64) -> bool {
+        let removed = std::sync::atomic::AtomicBool::new(false);
         let locked = self
             .store
             .with_row_lock(&key.0, || {
-                self.remove_if_mine(key, incarnation);
+                removed.store(self.remove_if_mine(key, incarnation), Ordering::Relaxed);
             })
             .await;
         if let Err(e) = locked {
@@ -662,8 +663,9 @@ impl Inner {
                 key.0,
                 key.1
             );
-            self.remove_if_mine(key, incarnation);
+            removed.store(self.remove_if_mine(key, incarnation), Ordering::Relaxed);
         }
+        removed.load(Ordering::Relaxed)
     }
 }
 
@@ -962,12 +964,18 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
     // Whether admin-con's replay has reached the boundary (Spec 7.2): the
     // frame that decides what is replayed and what is live.
     let mut caught_up = false;
+    // Why the connection ended, for the window's mark.
+    let mut reason = "dropped by admin-con";
     loop {
         let line = tokio::select! {
             l = tokio::time::timeout(inner.silence, read_line(&mut reader, &mut buf)) => l,
             _ = close_rx.changed() => {
                 if *close_rx.borrow() {
-                    tracing::info!("link from {peer}: {} ({plane}) closed by revocation", agent.agent_id);
+                    tracing::info!(
+                        "link from {peer}: {} ({plane}) closed by revocation, rotation or halt",
+                        agent.agent_id
+                    );
+                    reason = "closed by revocation, rotation or halt";
                     break;
                 }
                 continue;
@@ -988,6 +996,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                     },
                 )
                 .await;
+                reason = "refused as malformed";
                 break;
             }
             Err(_) => {
@@ -1003,6 +1012,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                     },
                 )
                 .await;
+                reason = "silent for the bound";
                 break;
             }
         };
@@ -1017,6 +1027,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                     },
                 )
                 .await;
+                reason = "refused as malformed";
                 break;
             }
         };
@@ -1037,6 +1048,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                     },
                 )
                 .await;
+                reason = "refused as malformed";
                 break;
             }
             (Plane::Gate, FromClient::Turn { id, close, error }) => {
@@ -1072,6 +1084,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                         },
                     )
                     .await;
+                    reason = "the store was unavailable";
                     break;
                 }
                 resolve(&pending, id, FromClient::Verb { id, outcome, error });
@@ -1134,6 +1147,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                         },
                     )
                     .await;
+                    reason = "the store was unavailable";
                     break;
                 }
             }
@@ -1153,6 +1167,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                     },
                 )
                 .await;
+                reason = "refused on the wrong plane";
                 break;
             }
         }
@@ -1161,6 +1176,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
     // **Teardown bound to the incarnation, under the row's lock** (Spec 8):
     // the uninstall runs under the lock on every outcome, and the
     // disconnected write lands only while this incarnation is the live one.
+    let removed = std::sync::atomic::AtomicBool::new(false);
     #[cfg(test)]
     let torn = if inner.fault_next_teardown.swap(false, Ordering::Relaxed) {
         Err(anyhow::anyhow!(
@@ -1170,7 +1186,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
         inner
             .store
             .teardown(&agent.agent_id, plane, incarnation, || {
-                inner.remove_if_mine(&key, incarnation);
+                removed.store(inner.remove_if_mine(&key, incarnation), Ordering::Relaxed);
             })
             .await
     };
@@ -1178,17 +1194,11 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
     let torn = inner
         .store
         .teardown(&agent.agent_id, plane, incarnation, || {
-            inner.remove_if_mine(&key, incarnation);
+            removed.store(inner.remove_if_mine(&key, incarnation), Ordering::Relaxed);
         })
         .await;
     match torn {
-        Ok(true) => {
-            if plane == Plane::Admin {
-                inner
-                    .windows
-                    .mark(agent.agent_id.as_str(), "link to admin-con lost");
-            }
-        }
+        Ok(true) => {}
         Ok(false) => {
             // A revocation or a replacement already wrote this plane; the
             // entry came out under the lock and nothing else is owed.
@@ -1200,9 +1210,22 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
             tracing::error!(
                 "link from {peer}: teardown could not be written, deferred until the store answers: {e:#}"
             );
-            inner.remove_after_error(&key, incarnation).await;
+            if inner.remove_after_error(&key, incarnation).await {
+                removed.store(true, Ordering::Relaxed);
+            }
             inner.defer_teardown(agent.agent_id.clone(), plane, incarnation);
         }
+    }
+    // **The window is marked whenever this connection actually left the
+    // live map**, whatever the row's write answered: a revoked or rotated
+    // credential has its incarnation cleared before the close, and a store
+    // error removes the entry without a write, and in both the link is
+    // gone and the window owes its reader the discontinuity.
+    if plane == Plane::Admin && removed.load(Ordering::Relaxed) {
+        inner.windows.mark(
+            agent.agent_id.as_str(),
+            &format!("link to admin-con lost: {reason}"),
+        );
     }
     pending.lock().unwrap().clear();
     drop(tx);

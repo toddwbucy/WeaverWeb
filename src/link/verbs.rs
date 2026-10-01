@@ -299,11 +299,31 @@ pub fn name_agrees(cfg: &ServerConfig, authority: &Authority) -> anyhow::Result<
     Ok(())
 }
 
-/// A box or a name is a directory under the operator's output path, so the
-/// two that would name its parent are refused before the store is touched.
-fn names_a_directory(value: &str) -> anyhow::Result<()> {
-    if value == "." || value == ".." || value.is_empty() {
-        anyhow::bail!("{value:?} is not a box or a name");
+/// **A box and a name are well formed by the schema's rule, checked here
+/// before any filesystem access.** The patterns are migration 0010's,
+/// stated once beside them as the same rule: a name is `^[A-Za-z0-9_-]+$`,
+/// a box is `^[A-Za-z0-9_.-]+$` and not `.` or `..`. Both name a directory
+/// under the operator's output path, so anything with a separator, a
+/// traversal or an absolute form must never reach a staging write.
+pub fn well_formed(r#box: &str, name: &str) -> anyhow::Result<()> {
+    let name_ok = !name.is_empty()
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
+    if !name_ok {
+        anyhow::bail!("{name:?} is not a box or a name: a name is letters, digits, _ and -");
+    }
+    let box_ok = !r#box.is_empty()
+        && r#box != "."
+        && r#box != ".."
+        && r#box
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'.' || b == b'-');
+    if !box_ok {
+        anyhow::bail!(
+            "{box:?} is not a box or a name: a box is letters, digits, _, . and -, and not . or ..",
+            box = r#box
+        );
     }
     Ok(())
 }
@@ -337,21 +357,8 @@ pub async fn register(
     out: &Path,
     author: Option<&str>,
 ) -> Answer {
-    if let Err(e) = names_a_directory(r#box).and_then(|_| names_a_directory(name)) {
+    if let Err(e) = well_formed(r#box, name) {
         return refused("register", e);
-    }
-    let dir = config_dir(out, r#box, name);
-    let (gate_path, admin_path) = config_paths(&dir);
-    for path in [&gate_path, &admin_path] {
-        if path.exists() {
-            return refused(
-                "register",
-                format!(
-                    "{} already exists and register does not overwrite a config; move it aside, or rotate the agent",
-                    path.display()
-                ),
-            );
-        }
     }
     let mut lock = match store.authority_lock().await {
         Ok(lock) => lock,
@@ -365,6 +372,22 @@ pub async fn register(
     if let Err(e) = name_agrees(cfg, authority).and_then(|_| authority_still_stands(cfg, authority))
     {
         return refused("register", format!("{e:#}"));
+    }
+    // Checked inside the lock: two registrations of one box and name run
+    // one at a time here, so the second sees the first's published configs
+    // rather than racing it to the same directory.
+    let dir = config_dir(out, r#box, name);
+    let (gate_path, admin_path) = config_paths(&dir);
+    for path in [&gate_path, &admin_path] {
+        if path.exists() {
+            return refused(
+                "register",
+                format!(
+                    "{} already exists and register does not overwrite a config; move it aside, or rotate the agent",
+                    path.display()
+                ),
+            );
+        }
     }
     // The certificates name the agent by its registered name; the identity
     // the row takes is minted by the store on insert.
@@ -462,6 +485,9 @@ pub async fn rotate(
         Ok(a) => a,
         Err(e) => return refused("rotate", e),
     };
+    if let Err(e) = well_formed(&agent.r#box, &agent.name) {
+        return refused("rotate", e);
+    }
     let mut lock = match store.authority_lock().await {
         Ok(lock) => lock,
         Err(e) => {

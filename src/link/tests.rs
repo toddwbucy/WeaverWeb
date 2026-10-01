@@ -1177,6 +1177,23 @@ async fn rotation_closes_both_live_connections_and_admits_the_new_pair() {
         .await;
     assert_eq!(row.gate.fingerprint, new_gate.fingerprint);
     assert!(row.gate.incarnation.is_none() && row.admin.incarnation.is_none());
+    // The window is marked for the admin link lost to the rotation, though
+    // the row's write answered nothing, the incarnation having been cleared
+    // by the rotating act before the close.
+    let marks: Vec<String> = lab
+        .listener
+        .windows()
+        .snapshot(karl.id.as_str())
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|e| e.mark)
+        .collect();
+    assert!(
+        marks
+            .iter()
+            .any(|m| m.starts_with("link to admin-con lost")),
+        "the window names the lost link: {marks:?}"
+    );
 
     // The locked recheck compares the presented fingerprint, not only the
     // plane's state, which is live again for the new credential.
@@ -1873,7 +1890,7 @@ async fn a_box_that_names_a_parent_directory_is_refused() {
     let Some(lab) = Lab::open().await else { return };
     let cfg = lab_config(&lab);
     let out = tempfile::tempdir().unwrap();
-    for bad in [".", ".."] {
+    for bad in [".", "..", "foo/../../victim", "/absolute", "with space"] {
         let answer = super::verbs::register(
             &lab.store,
             &cfg,
@@ -1907,9 +1924,30 @@ async fn a_box_that_names_a_parent_directory_is_refused() {
             "{bad}"
         );
     }
+    let answer = super::verbs::register(
+        &lab.store,
+        &cfg,
+        &lab.authority,
+        "box",
+        "../name",
+        out.path(),
+        Some("lab"),
+    )
+    .await;
+    assert!(
+        !answer.ok
+            && answer.value["error"]
+                .as_str()
+                .unwrap()
+                .contains("not a box")
+    );
     assert!(
         std::fs::read_dir(out.path()).unwrap().next().is_none(),
         "nothing written under the output path"
+    );
+    assert!(
+        !out.path().parent().unwrap().join("victim").exists(),
+        "nothing written beside it"
     );
 }
 

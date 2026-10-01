@@ -1145,10 +1145,16 @@ only kept replayed events behind what this process observed would still
 let a backfilled load event after a restart overwrite the state a newer
 `show` answer had set before it, which is why the rule is absolute rather
 than ordered. **And on every admission of an admin-con connection the
-server asks `show` for that row before it accepts the connection's first
-replayed event**, so the row's tuple and load state are admin's current
-word at the moment the window reopens rather than whatever the last
-process left. Section 8's startup reset is excepted from the ordering: it
+server first fixes the replay boundary and then asks `show` for that row**:
+the boundary is the file position admin-con reports as its tail at that
+moment, every event at or beyond it is live and every event behind it is
+replayed, and `show`'s answer, taken after the boundary, is admin's word
+from after it, so a change before the boundary is in the answer and a
+change after it arrives as a live event. Asked before the boundary, a load
+or unload landing between the answer and the boundary would be classified
+replayed and could never reach the row. So the row's tuple and load state
+are admin's current word at the moment the window reopens rather than
+whatever the last process left. Section 8's startup reset is excepted from the ordering: it
 is the listener's own act on its own state and lands unconditionally. They are observations rather than the operator's
 authorship, which is why each carries its date in the row rather than riding
 the row's version.
@@ -2157,9 +2163,13 @@ paragraph refers here for what a reconnection carries. **Every event
 relayed from behind the file's tail at a reconnection is marked as replayed
 on the link**, and replayed events reach the server's live window only:
 they write no member of section 2.12's row, whose tuple and load state come
-from `show`, `list` and live events alone, and the server asks `show` for
-the row on every admission of an admin-con connection before it accepts
-the first replayed event, per section 2.12.
+from `show`, `list` and live events alone. On every admission of an
+admin-con connection the server first fixes the replay boundary, the file
+position admin-con reports as its tail at that moment, so that every event
+at or beyond it is live and every event behind it is replayed, and then
+asks `show` for the row, so the answer is admin's word from after the
+boundary and nothing that lands in the file between the two can be
+classified as history, per section 2.12.
 
 ```graph
 node: web-trace-file-is-replayed-from-the-acknowledged-position
@@ -2253,6 +2263,28 @@ two-way confirmation, and the traffic is encrypted by the same handshake, so
 exists. The charter's section 6 defers transport encryption on the browser's
 listener to a named trigger; this listener is a different one, crossing
 machines by construction, and is not under that deferral.
+
+**The server's authority is durable state and is never minted at start.**
+Its key and certificate are created once by an explicit register verb, the
+first of them, run before any agent is registered; they are stored at a
+path the server's config names and never in a repository, loaded before
+the listener starts, and **the server refuses to start rather than mint a
+new one when they are absent**. An authority minted at start would strand
+every installed connector after the first restart, since each client
+config pins the server's certificate and each credential is signed by that
+authority. Rotation of the authority is its own register verb and, because
+every client config pins the old certificate, it is by definition a
+re-registration of every agent, said plainly rather than hidden.
+
+```graph
+node: web-servers-authority-is-loaded-and-never-minted-at-start
+kind: assertion
+tag: perturbation
+
+edge: asserts
+from: weaver-web
+to: web-servers-authority-is-loaded-and-never-minted-at-start
+```
 
 ```graph
 node: web-nothing-crosses-the-link-in-the-clear
@@ -2524,16 +2556,17 @@ missing while it was relaying.
 | the link state is reset when the listener starts | perturbation, **owed**: skip the reset, restart the server with no connector up, and a surface reads an agent present whose sockets are gone |
 | the trace file is replayed from the acknowledged position | perturbation, **owed**: drop the replay, break the link during a run and reconnect, and the server's window has a hole with no mark; truncate the file in place during the outage, let it regrow past the offset, reconnect, and the window carries the new prefix nowhere and marks nothing; drop the generation from the position, rotate the trace file during the outage, let the replacement grow past the offset, reconnect, and the window carries the replacement's prefix nowhere and marks nothing; mint the generation from process state, restart admin-con against the unchanged file, and the server receives a false discontinuity and the file again from its start; restart the server and resume from a remembered position, and the window has a hole with no mark |
 | an agent is present only when both planes connect from one row | perturbation, **owed**: mark present on either plane alone, an agent whose admin-con is down reads present with a tuple and a load state nobody has confirmed |
+| the server's authority is loaded before the listener starts and never minted at start | perturbation, **owed**: mint the authority at start instead of loading it, restart the server, and every connector's hello is refused against a certificate it does not pin |
 | the client credential is stored as a fingerprint and never the key | perturbation, **owed**, at the schema: store the key, a read of the register is a set of credentials anyone can present |
-| the tuple is admin's word and never gate-con's | perturbation, **owed**: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it; let a replayed load event write the tuple, restart the server after an unload, backfill, and the row reads loaded |
+| the tuple is admin's word and never gate-con's | perturbation, **owed**: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it; let a replayed load event write the tuple, restart the server after an unload, backfill, and the row reads loaded; ask `show` before fixing the replay boundary, unload between the two, and the row reads loaded until the next `show` |
 | nothing crosses the link in the clear | perturbation, **owed**: offer a plaintext hello to the listener, it is refused below any roster; and review, over the listener, that no plaintext accept path exists |
 
 **A watch that cannot fail is not a test.** For each perturbation above, the
 act that lands it states what removal makes it fail and confirms it does.
 
-**A row marked owed has no instrument and is not counted as enforced.** Eleven
+**A row marked owed has no instrument and is not counted as enforced.** Twelve
 stand so marked as of 2026-10-01: the batch's order, whose table section 2.11
-describes and no migration builds, and the ten rows of the link, whose
+describes and no migration builds, and the eleven rows of the link, whose
 section 8 is written before its code and whose act, the link and the register,
 lands each with the perturbation its row names. The marking is the point: a row
 reading like the enforced ones beside it would tell a reader the claim is held,

@@ -1118,13 +1118,20 @@ the previous row by revoking its credentials in the same act. **What the link ob
 edit.** The observed address, the link states, the tuple and the load state
 are facts the listener and admin reported, and the link writes them as it
 learns them, each with its own date, so a reader can tell when the server
-last knew each one. **An observation lands only where its source date is
-newer than the one stored for that member**: the replay of section 7.2 can
-deliver an old load event after a newer `show` answer has set the tuple or
-the load state, and a write ordered on arrival would let the older fact
-overwrite the newer one. Section 8's startup reset is excepted: it is the
-listener's own act on its own state and lands unconditionally. They are
-observations rather than the operator's
+last knew each one. **Observations are ordered on the server's own arrival
+sequence and never on their source date**: the listener numbers every
+observation it lands in the order it arrived over the link, monotonic for
+the life of the server process, and a member takes the observation with the
+higher sequence. The source date stays on the row for display and decides
+nothing, because the server's own counter cannot step backward or collide
+and a date from the box can do both. **A replayed event never overrides a
+member a live observation set during this server process**: an event
+admin-con relays from behind the file's tail at a reconnection, the replay
+of section 7.2, is marked as replayed on the link, and where a live `show`
+answer has set the tuple or the load state the replayed load event is
+history and the live answer is admin's current word. Section 8's startup
+reset is excepted from both: it is the listener's own act on its own state
+and lands unconditionally. They are observations rather than the operator's
 authorship, which is why each carries its date in the row rather than riding
 the row's version.
 
@@ -1155,8 +1162,9 @@ reported them, and touches nothing else. It is a
 writer rather than an author because nobody authored what it writes: a link state is
 what the listener saw and a tuple is what admin said, each with its own date, and
 section 2.12 keeps them off the row's version for that reason. **Its writes are ordered
-on the observation's own date rather than on the row's version**, an older observation
-arriving late being kept out rather than refused, per section 2.12. The register verb is not a seventh: it authors the
+on the listener's own arrival sequence rather than on the row's version or the
+observation's date**, a replayed event never overriding what a live observation set in
+this server process, per section 2.12. The register verb is not a seventh: it authors the
 row's other members, the name, the box and the credentials, through section 3.2 like
 any author. **So one table has two writers at disjoint members**, and the rule below
 holds at the member for that row rather than at the table, which is stated here rather
@@ -2127,7 +2135,10 @@ start. A file truncated below the acknowledged offset fails the digest
 read and is sent the same way. Nothing
 is smoothed, which is `traceview.rs`'s own rule and the contract's rule in
 section 3 that nothing is shed silently. Section 8's one-connection
-paragraph refers here for what a reconnection carries.
+paragraph refers here for what a reconnection carries. **Every event
+relayed from behind the file's tail at a reconnection is marked as replayed
+on the link**, so the server can tell history from admin's current word
+when it lands an observation, per section 2.12.
 
 ```graph
 node: web-trace-file-is-replayed-from-the-acknowledged-position

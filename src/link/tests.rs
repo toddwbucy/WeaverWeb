@@ -1818,6 +1818,21 @@ async fn the_listener_halts_when_its_lock_session_is_lost() {
     );
     lab.wait_for(&karl.id, "gate down", |a| !a.gate.connected)
         .await;
+    // A connection arriving after the halt meets no accept, or a closed
+    // set: refused or dropped, never admitted.
+    match Fake::try_connect(
+        lab.listener.address(),
+        lab.authority.certificate_pem(),
+        &karl.gate,
+    )
+    .await
+    {
+        Err(_) => {}
+        Ok(mut late) => assert!(
+            late.closed().await,
+            "a connection after the halt is dropped"
+        ),
+    }
     let next = Listener::start(lab.store.clone(), &lab.authority, "127.0.0.1:0", SILENCE)
         .await
         .expect("the store is free for the next listener");
@@ -2335,9 +2350,79 @@ async fn a_symlink_under_the_output_path_refuses_the_registration() {
     )
     .await;
     assert!(!answer.ok, "{}", answer.value);
-    assert!(answer.value["error"].as_str().unwrap().contains("symlink"));
+    assert!(
+        answer.value["error"].as_str().unwrap().contains("symlink"),
+        "{}",
+        answer.value
+    );
     assert!(
         std::fs::read_dir(&linked_dir).unwrap().next().is_none(),
+        "nothing written at the target"
+    );
+
+    // A symlinked box directory.
+    let other_out = tempfile::tempdir().unwrap();
+    let linked_box = elsewhere.path().join("linked-box");
+    std::fs::create_dir(&linked_box).unwrap();
+    std::os::unix::fs::symlink(&linked_box, other_out.path().join(&r#box)).unwrap();
+    let answer = super::verbs::register(
+        &lab.store,
+        &cfg,
+        &lab.authority,
+        &r#box,
+        "m2",
+        other_out.path(),
+        Some("lab"),
+    )
+    .await;
+    assert!(!answer.ok, "{}", answer.value);
+    assert!(
+        answer.value["error"].as_str().unwrap().contains("symlink"),
+        "{}",
+        answer.value
+    );
+    assert!(
+        std::fs::read_dir(&linked_box).unwrap().next().is_none(),
+        "nothing written at the target"
+    );
+
+    // A real directory a registration created, swapped for a symlink before
+    // the next registration: refused at the open, following nothing.
+    let third_out = tempfile::tempdir().unwrap();
+    let first = super::verbs::register(
+        &lab.store,
+        &cfg,
+        &lab.authority,
+        &r#box,
+        "m3",
+        third_out.path(),
+        Some("lab"),
+    )
+    .await;
+    assert!(first.ok, "{}", first.value);
+    let box_dir = third_out.path().join(&r#box);
+    std::fs::remove_dir_all(&box_dir).unwrap();
+    let swapped = elsewhere.path().join("swapped");
+    std::fs::create_dir(&swapped).unwrap();
+    std::os::unix::fs::symlink(&swapped, &box_dir).unwrap();
+    let answer = super::verbs::register(
+        &lab.store,
+        &cfg,
+        &lab.authority,
+        &r#box,
+        "m4",
+        third_out.path(),
+        Some("lab"),
+    )
+    .await;
+    assert!(!answer.ok, "{}", answer.value);
+    assert!(
+        answer.value["error"].as_str().unwrap().contains("symlink"),
+        "{}",
+        answer.value
+    );
+    assert!(
+        std::fs::read_dir(&swapped).unwrap().next().is_none(),
         "nothing written at the target"
     );
 }

@@ -228,73 +228,210 @@ fn client_config(
     )
 }
 
-/// Where an agent's two client configs go: `<out>/<box>/<name>/`, nested
-/// rather than joined into one file name, since a joined name is not
-/// injective (`foo-bar/baz` and `foo/bar-baz` would collide) and a
-/// collision would overwrite another agent's keys.
-fn config_dir(out: &Path, r#box: &str, name: &str) -> PathBuf {
-    out.join(r#box).join(name)
+/// **An agent's config directory, `<out>/<box>/<name>/`, held by
+/// descriptor.** `--out` is canonicalized and opened, then each of the box
+/// and the name directory is opened relative to its parent with
+/// `O_NOFOLLOW` (created with `mkdirat` at 0700 where absent), and every
+/// later create, rename and unlink is relative to the final directory's
+/// descriptor, so a symlink at any component below `--out` refuses at the
+/// open and nothing swapped in after the open is followed: there is no
+/// check-then-open gap. An ancestor of `--out` above its canonical path is
+/// the operator's filesystem and is out of scope. The directories are
+/// nested rather than joined into one name, since a joined name is not
+/// injective and a collision would overwrite another agent's keys.
+struct ConfigDir {
+    fd: std::os::fd::OwnedFd,
+    display: PathBuf,
 }
 
-fn config_paths(dir: &Path) -> (PathBuf, PathBuf) {
-    (dir.join("gate-con.toml"), dir.join("admin-con.toml"))
-}
+const GATE_CONFIG: &str = "gate-con.toml";
+const ADMIN_CONFIG: &str = "admin-con.toml";
+const STAGING: &str = ".staging";
 
-/// Write one staged config: **created new, following no symlink**, mode
-/// 0600, fully written and synced to disk. An existing entry of any kind
-/// at the staging path refuses, since a symlink there would let a
-/// privileged register truncate a file outside the output path and write
-/// a minted key where another owner can read it; a staging file a crashed
-/// run left behind is moved aside by the operator.
-fn stage_file(path: &Path, content: &str) -> anyhow::Result<()> {
-    use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(path)
-        .map_err(|e| {
-            if e.kind() == std::io::ErrorKind::AlreadyExists {
-                anyhow::anyhow!(
-                    "{} already exists and a staging file is never written over an entry; move it aside",
-                    path.display()
-                )
-            } else {
-                anyhow::anyhow!("staging {}: {e}", path.display())
-            }
-        })?;
-    file.write_all(content.as_bytes())?;
-    file.sync_all()?;
-    Ok(())
-}
+/// The `*at` calls the config directory is used through.
+mod at {
+    use std::ffi::{CString, OsStr};
+    use std::io;
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    use std::os::unix::ffi::OsStrExt;
 
-/// **No component of `<out>/<box>/<name>` may be a symlink**, checked on
-/// each component that exists before any is created or used: a symlinked
-/// output path, box or name directory would carry the configs, and the
-/// minted keys in them, to wherever another local user pointed it.
-fn no_symlink_components(out: &Path, r#box: &str, name: &str) -> anyhow::Result<()> {
-    let mut path = out.to_path_buf();
-    for component in [None, Some(r#box), Some(name)] {
-        if let Some(component) = component {
-            path.push(component);
+    fn c(name: impl AsRef<OsStr>) -> io::Result<CString> {
+        CString::new(name.as_ref().as_bytes()).map_err(|_| io::Error::other("a path with a NUL"))
+    }
+
+    fn parent_fd(parent: Option<&OwnedFd>) -> libc::c_int {
+        parent.map_or(libc::AT_FDCWD, |p| p.as_raw_fd())
+    }
+
+    /// Open a directory, following no symlink.
+    pub fn open_dir(parent: Option<&OwnedFd>, name: impl AsRef<OsStr>) -> io::Result<OwnedFd> {
+        let name = c(name)?;
+        let flags = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+        // SAFETY: a valid descriptor or AT_FDCWD, a NUL-terminated path, and
+        // the result owned below.
+        let fd = unsafe { libc::openat(parent_fd(parent), name.as_ptr(), flags) };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
         }
-        match std::fs::symlink_metadata(&path) {
-            Ok(meta) if meta.file_type().is_symlink() => {
-                anyhow::bail!(
-                    "{} is a symlink, and a config is written under no symlink",
-                    path.display()
-                );
+        // SAFETY: a descriptor this call just opened and nothing else owns.
+        Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+    }
+
+    /// Open a directory under its parent, creating it at 0700 where absent.
+    pub fn open_or_create_dir(parent: &OwnedFd, name: &str) -> io::Result<OwnedFd> {
+        match open_dir(Some(parent), name) {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                let c_name = c(name)?;
+                // SAFETY: a valid descriptor and a NUL-terminated name.
+                if unsafe { libc::mkdirat(parent.as_raw_fd(), c_name.as_ptr(), 0o700) } < 0 {
+                    let e = io::Error::last_os_error();
+                    if e.kind() != io::ErrorKind::AlreadyExists {
+                        return Err(e);
+                    }
+                }
+                open_dir(Some(parent), name)
             }
-            Ok(meta) if !meta.is_dir() => {
-                anyhow::bail!("{} is not a directory", path.display());
-            }
-            Ok(_) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => anyhow::bail!("reading {}: {e}", path.display()),
+            other => other,
         }
     }
+
+    /// Create a file new, following no symlink, at 0600.
+    pub fn create_new(dir: &OwnedFd, name: &str) -> io::Result<std::fs::File> {
+        let name = c(name)?;
+        let flags =
+            libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+        // SAFETY: a valid descriptor, a NUL-terminated name, and the mode
+        // O_CREAT takes.
+        let fd =
+            unsafe { libc::openat(dir.as_raw_fd(), name.as_ptr(), flags, 0o600 as libc::c_uint) };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: a descriptor this call just opened and nothing else owns.
+        Ok(std::fs::File::from(unsafe { OwnedFd::from_raw_fd(fd) }))
+    }
+
+    /// Rename within the directory, replacing an existing entry only where
+    /// asked.
+    pub fn rename(dir: &OwnedFd, from: &str, to: &str, replace: bool) -> io::Result<()> {
+        let (from, to) = (c(from)?, c(to)?);
+        // SAFETY: a valid descriptor and two NUL-terminated names.
+        let r = if replace {
+            unsafe { libc::renameat(dir.as_raw_fd(), from.as_ptr(), dir.as_raw_fd(), to.as_ptr()) }
+        } else {
+            unsafe {
+                libc::renameat2(
+                    dir.as_raw_fd(),
+                    from.as_ptr(),
+                    dir.as_raw_fd(),
+                    to.as_ptr(),
+                    libc::RENAME_NOREPLACE,
+                )
+            }
+        };
+        if r < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    pub fn unlink(dir: &OwnedFd, name: &str) -> io::Result<()> {
+        let name = c(name)?;
+        // SAFETY: a valid descriptor and a NUL-terminated name.
+        if unsafe { libc::unlinkat(dir.as_raw_fd(), name.as_ptr(), 0) } < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    /// Whether an entry of any kind stands in the directory.
+    pub fn exists(dir: &OwnedFd, name: &str) -> io::Result<bool> {
+        let name = c(name)?;
+        // SAFETY: a valid descriptor, a NUL-terminated name, and a zeroed
+        // stat buffer the call fills.
+        let mut st: libc::stat = unsafe { std::mem::zeroed() };
+        let r = unsafe {
+            libc::fstatat(
+                dir.as_raw_fd(),
+                name.as_ptr(),
+                &mut st,
+                libc::AT_SYMLINK_NOFOLLOW,
+            )
+        };
+        if r == 0 {
+            return Ok(true);
+        }
+        let e = io::Error::last_os_error();
+        if e.kind() == io::ErrorKind::NotFound {
+            Ok(false)
+        } else {
+            Err(e)
+        }
+    }
+}
+
+// A symlink opened with O_NOFOLLOW answers ELOOP, and one opened with O_DIRECTORY
+// besides answers ENOTDIR on Linux; both are refused the same way, and the entry is
+// asked (without following) which it was so the answer names the symlink.
+fn describe(path: &Path, e: std::io::Error) -> anyhow::Error {
+    let is_symlink = || std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink());
+    match e.raw_os_error() {
+        Some(libc::ELOOP) => anyhow::anyhow!(
+            "{} is a symlink, and a config is written under no symlink",
+            path.display()
+        ),
+        Some(libc::ENOTDIR) if is_symlink() => anyhow::anyhow!(
+            "{} is a symlink, and a config is written under no symlink",
+            path.display()
+        ),
+        Some(libc::ENOTDIR) => anyhow::anyhow!("{} is not a directory", path.display()),
+        _ => anyhow::anyhow!("opening {}: {e}", path.display()),
+    }
+}
+
+impl ConfigDir {
+    fn open(out: &Path, r#box: &str, name: &str) -> anyhow::Result<Self> {
+        let out = std::fs::canonicalize(out)
+            .map_err(|e| anyhow::anyhow!("resolving {}: {e}", out.display()))?;
+        let out_fd = at::open_dir(None, out.as_os_str()).map_err(|e| describe(&out, e))?;
+        let box_display = out.join(r#box);
+        let box_fd =
+            at::open_or_create_dir(&out_fd, r#box).map_err(|e| describe(&box_display, e))?;
+        let display = box_display.join(name);
+        let fd = at::open_or_create_dir(&box_fd, name).map_err(|e| describe(&display, e))?;
+        Ok(Self { fd, display })
+    }
+
+    fn has(&self, entry: &str) -> anyhow::Result<bool> {
+        at::exists(&self.fd, entry)
+            .map_err(|e| anyhow::anyhow!("reading {}: {e}", self.display.join(entry).display()))
+    }
+
+    fn path(&self, entry: &str) -> PathBuf {
+        self.display.join(entry)
+    }
+}
+
+/// Write one staged config under the directory's descriptor: **created new,
+/// following no symlink**, mode 0600, fully written and synced. An existing
+/// entry of any kind at the staging name refuses, since a symlink there
+/// would let a privileged register write a minted key where another owner
+/// can read it; a staging file a crashed run left behind is moved aside by
+/// the operator.
+fn stage_file(dir: &ConfigDir, entry: &str, content: &str) -> anyhow::Result<()> {
+    use std::io::Write;
+    let mut file = at::create_new(&dir.fd, entry).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::AlreadyExists {
+            anyhow::anyhow!(
+                "{} already exists and a staging file is never written over an entry; move it aside",
+                dir.path(entry).display()
+            )
+        } else {
+            describe(&dir.path(entry), e)
+        }
+    })?;
+    file.write_all(content.as_bytes())?;
+    file.sync_all()?;
     Ok(())
 }
 
@@ -302,20 +439,30 @@ fn no_symlink_components(out: &Path, r#box: &str, name: &str) -> anyhow::Result<
 /// place: the authority's staging-then-publish shape reused. The store
 /// commits between the staging and the publish, so a store failure
 /// discards the staged files and a publish failure says exactly which file
-/// stands where.
+/// stands where. Every step is relative to the directory's descriptor.
 struct Staged {
+    dir: ConfigDir,
+    /// The gate config's staging path and final path, for the answers.
     gate: (PathBuf, PathBuf),
     admin: (PathBuf, PathBuf),
 }
 
 impl Staged {
     fn discard(&self) {
-        let _ = std::fs::remove_file(&self.gate.0);
-        let _ = std::fs::remove_file(&self.admin.0);
+        let _ = at::unlink(&self.dir.fd, &format!("{GATE_CONFIG}{STAGING}"));
+        let _ = at::unlink(&self.dir.fd, &format!("{ADMIN_CONFIG}{STAGING}"));
     }
 
-    fn publish(self) -> anyhow::Result<(String, String)> {
-        std::fs::rename(&self.gate.0, &self.gate.1).map_err(|e| {
+    /// Rename both into place, replacing an existing config only for a
+    /// rotation of the agent's own.
+    fn publish(self, replace: bool) -> anyhow::Result<(String, String)> {
+        at::rename(
+            &self.dir.fd,
+            &format!("{GATE_CONFIG}{STAGING}"),
+            GATE_CONFIG,
+            replace,
+        )
+        .map_err(|e| {
             anyhow::anyhow!(
                 "the gate config stands staged at {} and could not be renamed to {}: {e}; the admin config stands staged at {}",
                 self.gate.0.display(),
@@ -323,7 +470,13 @@ impl Staged {
                 self.admin.0.display()
             )
         })?;
-        std::fs::rename(&self.admin.0, &self.admin.1).map_err(|e| {
+        at::rename(
+            &self.dir.fd,
+            &format!("{ADMIN_CONFIG}{STAGING}"),
+            ADMIN_CONFIG,
+            replace,
+        )
+        .map_err(|e| {
             anyhow::anyhow!(
                 "the gate config stands at {}; the admin config stands staged at {} and could not be renamed to {}: {e}",
                 self.gate.1.display(),
@@ -348,51 +501,35 @@ fn mint_pair(
     ))
 }
 
-/// Create the agent's config directory, `0700` at every level created.
-fn create_config_dir(dir: &Path) -> anyhow::Result<()> {
-    use std::os::unix::fs::DirBuilderExt;
-    std::fs::DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
-        .create(dir)
-        .map_err(|e| anyhow::anyhow!("creating {}: {e}", dir.display()))
-}
-
 fn stage_pair(
     cfg: &ServerConfig,
     authority: &Authority,
-    out: &Path,
-    r#box: &str,
+    dir: ConfigDir,
     name: &str,
     gate: &ClientCredential,
     admin: &ClientCredential,
 ) -> anyhow::Result<Staged> {
-    no_symlink_components(out, r#box, name)?;
-    let dir = config_dir(out, r#box, name);
-    let dir = dir.as_path();
-    create_config_dir(dir)?;
-    // Created a moment ago or standing already: either way no symlink,
-    // checked again after the creation.
-    no_symlink_components(out, r#box, name)?;
-    let (gate_final, admin_final) = config_paths(dir);
-    let gate_new = dir.join("gate-con.toml.staging");
-    let admin_new = dir.join("admin-con.toml.staging");
+    let gate_staging = format!("{GATE_CONFIG}{STAGING}");
+    let admin_staging = format!("{ADMIN_CONFIG}{STAGING}");
     stage_file(
-        &gate_new,
+        &dir,
+        &gate_staging,
         &client_config(cfg, authority, name, Plane::Gate, gate),
     )?;
     // A failure staging the second leaves no minted key behind in the
     // first.
     if let Err(e) = stage_file(
-        &admin_new,
+        &dir,
+        &admin_staging,
         &client_config(cfg, authority, name, Plane::Admin, admin),
     ) {
-        let _ = std::fs::remove_file(&gate_new);
+        let _ = at::unlink(&dir.fd, &gate_staging);
         return Err(e);
     }
     Ok(Staged {
-        gate: (gate_new, gate_final),
-        admin: (admin_new, admin_final),
+        gate: (dir.path(&gate_staging), dir.path(GATE_CONFIG)),
+        admin: (dir.path(&admin_staging), dir.path(ADMIN_CONFIG)),
+        dir,
     })
 }
 
@@ -490,17 +627,23 @@ pub async fn register(
     // Checked inside the lock: two registrations of one box and name run
     // one at a time here, so the second sees the first's published configs
     // rather than racing it to the same directory.
-    let dir = config_dir(out, r#box, name);
-    let (gate_path, admin_path) = config_paths(&dir);
-    for path in [&gate_path, &admin_path] {
-        if path.exists() {
-            return refused(
-                "register",
-                format!(
-                    "{} already exists and register does not overwrite a config; move it aside, or rotate the agent",
-                    path.display()
-                ),
-            );
+    let dir = match ConfigDir::open(out, r#box, name) {
+        Ok(dir) => dir,
+        Err(e) => return refused("register", format!("{e:#}")),
+    };
+    for entry in [GATE_CONFIG, ADMIN_CONFIG] {
+        match dir.has(entry) {
+            Ok(false) => {}
+            Ok(true) => {
+                return refused(
+                    "register",
+                    format!(
+                        "{} already exists and register does not overwrite a config; move it aside, or rotate the agent",
+                        dir.path(entry).display()
+                    ),
+                );
+            }
+            Err(e) => return refused("register", format!("{e:#}")),
         }
     }
     // The certificates name the agent by its registered name; the identity
@@ -511,7 +654,7 @@ pub async fn register(
     };
     // Staged before the store commits, published after: a store failure
     // leaves no config, and the credentials are never live without one.
-    let staged = match stage_pair(cfg, authority, out, r#box, name, &gate, &admin) {
+    let staged = match stage_pair(cfg, authority, dir, name, &gate, &admin) {
         Ok(s) => s,
         Err(e) => return refused("register", format!("{e:#}")),
     };
@@ -568,7 +711,7 @@ pub async fn register(
             ),
         );
     }
-    match staged.publish() {
+    match staged.publish(false) {
         Ok((gate_path, admin_path)) => Answer {
             value: json!({
                 "verb": "register",
@@ -647,15 +790,11 @@ pub async fn rotate(
         Ok(pair) => pair,
         Err(e) => return refused("rotate", format!("{e:#}")),
     };
-    let staged = match stage_pair(
-        cfg,
-        authority,
-        out,
-        &agent.r#box,
-        &agent.name,
-        &gate,
-        &admin,
-    ) {
+    let dir = match ConfigDir::open(out, &agent.r#box, &agent.name) {
+        Ok(dir) => dir,
+        Err(e) => return refused("rotate", format!("{e:#}")),
+    };
+    let staged = match stage_pair(cfg, authority, dir, &agent.name, &gate, &admin) {
         Ok(s) => s,
         Err(e) => return refused("rotate", format!("{e:#}")),
     };
@@ -712,7 +851,7 @@ pub async fn rotate(
             ),
         );
     }
-    match staged.publish() {
+    match staged.publish(true) {
         Ok((gate_path, admin_path)) => Answer {
             value: json!({
                 "verb": "rotate",

@@ -91,6 +91,11 @@ struct LiveConnection {
     /// Set by an ask whose enqueue could not complete within the bound,
     /// so the close that follows is named as the peer gone silent.
     silent: Arc<std::sync::atomic::AtomicBool>,
+    /// False from the install until the admission committed and the hello
+    /// answer was enqueued; an ask treats a not-ready connection as absent,
+    /// so no frame of its own enters the ordered channel ahead of the
+    /// answer.
+    ready: bool,
 }
 
 struct Inner {
@@ -121,6 +126,10 @@ struct Inner {
     /// replacement listener must not take the lock while an old task can
     /// still admit the same credential.
     connections: Mutex<tokio::task::JoinSet<()>>,
+    /// Set under the set's lock when the listener quiesces, so an accept
+    /// that completed a moment before refuses to spawn into a set that
+    /// has been drained and would go untracked.
+    closed: std::sync::atomic::AtomicBool,
     /// The monitor task, which owns the lock's connection; aborted last.
     monitor: Mutex<Option<tokio::task::JoinHandle<()>>>,
     /// Set when the listener quiesces, so a connection still handshaking
@@ -234,6 +243,7 @@ impl Listener {
                 halted,
                 tasks: Mutex::new(Vec::new()),
                 connections: Mutex::new(tokio::task::JoinSet::new()),
+                closed: std::sync::atomic::AtomicBool::new(false),
                 monitor: Mutex::new(None),
                 halting: watch::channel(false).0,
                 failed_teardowns: Mutex::new(Vec::new()),
@@ -259,6 +269,11 @@ impl Listener {
                 };
                 let Some(inner) = weak.upgrade() else { return };
                 let mut set = inner.connections.lock().unwrap();
+                if inner.closed.load(Ordering::Acquire) {
+                    tracing::info!("link from {peer}: the listener is closing, refused");
+                    drop(stream);
+                    continue;
+                }
                 while set.try_join_next().is_some() {}
                 set.spawn(serve_connection(inner.clone(), stream, peer));
             }
@@ -488,7 +503,7 @@ impl Inner {
         // could land in a map nothing reads and wait forever.
         let (tx, pending, close, silent) = {
             let live = self.live.lock().unwrap();
-            let conn = live.get(&(agent.clone(), plane))?;
+            let conn = live.get(&(agent.clone(), plane)).filter(|c| c.ready)?;
             conn.pending.lock().unwrap().insert(id, reply_tx);
             (
                 conn.tx.clone(),
@@ -648,8 +663,14 @@ impl Inner {
     /// still running after a grace period, so the lock's session ends only
     /// once no task of this listener can admit anything.
     async fn quiesce(&self) {
-        for task in self.tasks.lock().unwrap().drain(..) {
+        // The accept and notification tasks are aborted and **joined**
+        // before the set is taken: an accept that had just completed
+        // could otherwise spawn into the replacement set after this one
+        // was drained, and the lock would be released with it untracked.
+        let tasks: Vec<_> = self.tasks.lock().unwrap().drain(..).collect();
+        for task in tasks {
             task.abort();
+            let _ = task.await;
         }
         let _ = self.halting.send(true);
         let closes: Vec<watch::Sender<bool>> = self
@@ -662,7 +683,11 @@ impl Inner {
         for close in closes {
             let _ = close.send(true);
         }
-        let mut set = std::mem::take(&mut *self.connections.lock().unwrap());
+        let mut set = {
+            let mut guard = self.connections.lock().unwrap();
+            self.closed.store(true, Ordering::Release);
+            std::mem::take(&mut *guard)
+        };
         let graceful = tokio::time::timeout(Duration::from_secs(5), async {
             while set.join_next().await.is_some() {}
         })
@@ -984,6 +1009,8 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                         close: close_tx.clone(),
 
                         silent: silent.clone(),
+
+                        ready: false,
                     },
                 );
                 Ok(())
@@ -1041,6 +1068,13 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
         {
             reason = why;
             break 'serve;
+        }
+        // The answer is in the channel ahead of anything an ask could add:
+        // the connection is ready for asks from here.
+        if let Some(conn) = inner.live.lock().unwrap().get_mut(&key)
+            && conn.incarnation == incarnation
+        {
+            conn.ready = true;
         }
         if plane == Plane::Admin {
             inner.windows.ensure(agent.agent_id.as_str());

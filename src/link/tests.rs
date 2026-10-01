@@ -1336,28 +1336,113 @@ async fn an_observation_the_register_never_took_is_not_acknowledged() {
     let karl = lab.register("karl").await;
     let mut admin = lab.admit(&karl, Plane::Admin).await;
 
-    lab.listener.fail_next_land();
-    let event = FromClient::Event {
-        position: position(100),
-        replayed: false,
-        event: trace_event(1, "load", json!({"declaration": "sha-1"})),
-    };
-    admin.send(event.clone()).await;
-    assert!(
-        admin.recv().await.is_none(),
-        "no ack for an observation the store refused"
-    );
-    assert_eq!(lab.listener.acknowledged(&karl.id), None);
-    assert!(lab.agent(&karl.id).await.load_state.is_none());
+    // A success first, so the last acknowledged position is a real one.
+    admin
+        .send(FromClient::Event {
+            position: position(100),
+            replayed: false,
+            event: trace_event(1, "turn", json!({})),
+        })
+        .await;
+    assert!(matches!(admin.recv().await, Some(ToClient::Ack { .. })));
 
-    admin.send(event).await;
-    match admin.recv().await {
-        Some(ToClient::Ack { position: p }) => assert_eq!(p, position(100)),
+    lab.listener.fail_next_land();
+    admin
+        .send(FromClient::Event {
+            position: position(120),
+            replayed: false,
+            event: trace_event(2, "load", json!({"declaration": "sha-1"})),
+        })
+        .await;
+    admin.expect_refusal(Refusal::StoreUnavailable).await;
+    assert_eq!(lab.listener.acknowledged(&karl.id), Some(position(100)));
+    assert!(lab.agent(&karl.id).await.load_state.is_none());
+    lab.wait_for(&karl.id, "admin down", |a| !a.admin.connected)
+        .await;
+
+    // The reconnection is answered with the pre-failure position and the
+    // admission's show is asked again; the resend is acked and lands.
+    let mut again = lab.connect(&karl.admin).await;
+    again
+        .send(FromClient::Hello {
+            agent: karl.name.clone(),
+            plane: Plane::Admin,
+            tail: Some(position(200)),
+        })
+        .await;
+    match again.recv().await {
+        Some(ToClient::HelloAnswer { acknowledged, .. }) => {
+            assert_eq!(acknowledged, Some(position(100)))
+        }
+        other => panic!("expected the hello answer, got {other:?}"),
+    }
+    assert!(matches!(again.recv().await, Some(ToClient::Verb { .. })));
+    again
+        .send(FromClient::Event {
+            position: position(120),
+            replayed: true,
+            event: trace_event(2, "load", json!({"declaration": "sha-1"})),
+        })
+        .await;
+    match again.recv().await {
+        Some(ToClient::Ack { position: p }) => assert_eq!(p, position(120)),
         other => panic!("expected the ack on the resend, got {other:?}"),
     }
+    assert_eq!(lab.listener.acknowledged(&karl.id), Some(position(120)));
+    // Replayed by the new boundary, it feeds the window and writes nothing;
+    // the lifecycle fact reaches the row by the show the reconnection asked.
+    again
+        .send(FromClient::Verb {
+            id: 0,
+            outcome: Some(show_answer(
+                "karl",
+                "idle",
+                Some(json!({"declaration": "sha-1"})),
+            )),
+            error: None,
+        })
+        .await;
     lab.wait_for(&karl.id, "idle", |a| {
         a.load_state.as_deref() == Some("idle")
     })
     .await;
-    assert_eq!(lab.listener.acknowledged(&karl.id), Some(position(100)));
+}
+
+/// **A verb answer the register could not land closes the connection and
+/// fails the ask**: the pending ask answers the store failure and never
+/// the outcome, and the admission's `show` is asked again on reconnection.
+///
+/// Perturbation: resolve the ask with the outcome whatever `land_verb`
+/// answered. The caller reads a state the row never took.
+///
+/// conforms: web-tuple-is-admins-word-and-never-gate-cons
+#[tokio::test]
+async fn a_show_answer_the_register_never_took_closes_the_connection_and_fails_the_ask() {
+    let Some(lab) = Lab::open().await else { return };
+    let karl = lab.register("karl").await;
+    let mut admin = lab.admit(&karl, Plane::Admin).await;
+
+    let listener = lab.listener.clone();
+    let id = karl.id.clone();
+    let asked = tokio::spawn(async move { listener.verb(&id, "show").await });
+    let ask = match admin.recv().await {
+        Some(ToClient::Verb { id, verb }) if verb == "show" => id,
+        other => panic!("expected the show ask, got {other:?}"),
+    };
+    lab.listener.fail_next_land();
+    admin
+        .send(FromClient::Verb {
+            id: ask,
+            outcome: Some(show_answer("karl", "active", None)),
+            error: None,
+        })
+        .await;
+    let refused = asked.await.unwrap().unwrap_err().to_string();
+    assert!(refused.contains("the store could not land"), "{refused}");
+    admin.expect_refusal(Refusal::StoreUnavailable).await;
+    assert!(lab.agent(&karl.id).await.load_state.is_none());
+    lab.wait_for(&karl.id, "admin down", |a| !a.admin.connected)
+        .await;
+
+    let _again = lab.admit(&karl, Plane::Admin).await;
 }

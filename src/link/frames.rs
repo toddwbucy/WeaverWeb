@@ -154,6 +154,10 @@ pub enum Refusal {
     WrongPlane,
     /// A line that is not a frame, or a frame out of order.
     Malformed,
+    /// The store could not land what this connection carried; the
+    /// connection closes at the last acknowledged position and the
+    /// connector reconnects and resends (Spec 7.2).
+    StoreUnavailable,
 }
 
 impl Refusal {
@@ -165,6 +169,7 @@ impl Refusal {
             Refusal::Silence => "silence",
             Refusal::WrongPlane => "wrong_plane",
             Refusal::Malformed => "malformed",
+            Refusal::StoreUnavailable => "store_unavailable",
         }
     }
 }

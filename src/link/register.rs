@@ -266,11 +266,12 @@ impl Store {
                    admin_link_at = CASE WHEN admin_connected THEN now() ELSE admin_link_at END, \
                    gate_connected = false, admin_connected = false, \
                    gate_incarnation = NULL, admin_incarnation = NULL, \
-                   version = version + 1 \
+                   author = $3, version = version + 1 \
                  WHERE agent_id = $1 AND version = $2",
             )
             .bind(&id)
             .bind(version)
+            .bind(author)
             .execute(&mut *tx)
             .await?
             .rows_affected();

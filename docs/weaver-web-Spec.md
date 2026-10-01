@@ -2157,7 +2157,14 @@ not guard against an in-place rewrite that preserves the final line at the
 same offset, which only root can perform and which a digest of the whole
 prefix would catch at a cost proportional to the file at every reconnect,
 declined for that reason. The position crosses the link with every event, the
-server acknowledges it, and the hello's answer carries it.
+server acknowledges it, and the hello's answer carries it. **An
+acknowledgement never names an event the store does not hold**, which the
+act that built the listener reads as a rule on the connection: a store
+failure while landing anything on a connection closes it with a typed
+refusal, the acknowledged position standing at the last success, so the
+reconnection's replay resends the failed event and everything after and
+the admission's `show` is asked again, and a pending ask whose answer
+could not be landed answers an error and never the outcome.
 
 **The acknowledged position lives for the life of a server process and is
 not persisted**, per the operator's ruling of 2026-10-01: the server's copy

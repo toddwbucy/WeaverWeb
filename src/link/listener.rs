@@ -19,6 +19,15 @@
 //! store that cannot be reached at all, where the lock cannot be taken and
 //! the entry is removed without it and the exception logged, so a
 //! credential is not stranded as connected in memory by a database outage.
+//!
+//! **A store failure while landing anything on a connection closes it**
+//! with a typed refusal, through the normal teardown, the acknowledged
+//! position standing at the last success (Spec 7.2). The connector
+//! reconnects under the heartbeat's rule, the hello's answer names that
+//! position so the replay resends the failed event and everything after,
+//! and the admission's `show` is asked again; a pending ask whose answer
+//! could not be landed answers an error and never the outcome. So nothing
+//! is acknowledged that did not land and no lifecycle update is lost.
 
 use crate::adapters::gate::GateClose;
 use crate::lifecycle::VerbOutcome;
@@ -746,8 +755,36 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                 resolve(&pending, id, FromClient::Turn { id, close, error });
             }
             (Plane::Admin, FromClient::Verb { id, outcome, error }) => {
-                if let Some(outcome) = &outcome {
-                    inner.land_verb(&agent.agent_id, &agent.name, outcome).await;
+                if let Some(outcome) = &outcome
+                    && !inner.land_verb(&agent.agent_id, &agent.name, outcome).await
+                {
+                    // The answer could not be landed: the ask answers the
+                    // failure and never the outcome, and the connection
+                    // closes so the admission's `show` is asked again.
+                    tracing::error!(
+                        "{}: admin's {} answer could not be landed, closing the connection",
+                        agent.agent_id,
+                        outcome.verb
+                    );
+                    resolve(
+                        &pending,
+                        id,
+                        FromClient::Verb {
+                            id,
+                            outcome: None,
+                            error: Some(
+                                "the store could not land admin's answer; the connection is closed and the ask is owed again".into(),
+                            ),
+                        },
+                    );
+                    send(
+                        &tx,
+                        ToClient::Refusal {
+                            reason: Refusal::StoreUnavailable,
+                        },
+                    )
+                    .await;
+                    break;
                 }
                 resolve(&pending, id, FromClient::Verb { id, outcome, error });
             }
@@ -783,12 +820,22 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                         .insert(agent.agent_id.clone(), position.clone());
                     send(&tx, ToClient::Ack { position }).await;
                 } else {
+                    // Closed rather than skipped: a later ack would name a
+                    // position past the event the store does not hold.
                     tracing::error!(
-                        "{}: the event at {}:{} was not landed on the row and is not acknowledged",
+                        "{}: the event at {}:{} was not landed on the row, closing the connection at the last acknowledged position",
                         agent.agent_id,
                         position.generation,
                         position.offset
                     );
+                    send(
+                        &tx,
+                        ToClient::Refusal {
+                            reason: Refusal::StoreUnavailable,
+                        },
+                    )
+                    .await;
+                    break;
                 }
             }
             (_, other) => {
@@ -883,9 +930,9 @@ impl Inner {
     /// nothing. Any other verb's answer lands nothing. **The date is the
     /// receipt's**, a gap section 2.12 names: admin's answer carries no
     /// time of its own.
-    async fn land_verb(&self, agent: &AgentId, name: &str, outcome: &VerbOutcome) {
+    async fn land_verb(&self, agent: &AgentId, name: &str, outcome: &VerbOutcome) -> bool {
         let Some(answer) = &outcome.answer else {
-            return;
+            return true;
         };
         let summary = match outcome.verb.as_str() {
             "show" if answer.get("kind").and_then(|k| k.as_str()) == Some("state") => {
@@ -901,7 +948,9 @@ impl Inner {
                 .cloned(),
             _ => None,
         };
-        let Some(summary) = summary else { return };
+        let Some(summary) = summary else {
+            return true;
+        };
         let observation = Observation {
             load_state: summary
                 .get("state")
@@ -910,7 +959,7 @@ impl Inner {
             tuple: summary.get("load").cloned().filter(|l| !l.is_null()),
             at: Utc::now(),
         };
-        self.land(agent, observation).await;
+        self.land(agent, observation).await
     }
 
     /// **An event feeds the window, and only a live load or unload writes

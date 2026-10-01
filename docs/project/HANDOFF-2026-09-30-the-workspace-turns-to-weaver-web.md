@@ -108,11 +108,11 @@ WeaverAgents' `deploy/REDEPLOY.md` and `deploy/HowToDeployANewAgent.md`.
   "length"` only when the generation was cut.
 - **The operator's shell needs a fresh login after an agent is created** to carry the
   agent's group; the box was rebooted today, so it does now.
-- **PostgreSQL 18 is active and the operator has no role.** `psql` as the operator fails
-  for want of one. The store's DB-backed tests and the server itself need a database
-  this repository owns; `CLAUDE.md`'s commands assume
-  `DATABASE_URL=postgres:///<db>?host=/run/postgresql`. Making the role and database is
-  the first environment act, and how the store's tests stop asserting nothing.
+- **A database and a role for the store must be created on the box before the
+  DB-backed tests assert anything.** The store's tests and the server itself need a
+  database this repository owns; `CLAUDE.md`'s commands assume
+  `DATABASE_URL=postgres:///<db>?host=/run/postgresql`. Making them is the first
+  environment act, and how the store's tests stop asserting nothing.
 - **Deposits to render** are on the bulk store, in the testing directory the founding
   handoff names: the HeroBench sessions of 2026-09-29 and 2026-09-30
   (`herobench-sessions-2026-09-30`, `herobench-agents-2026-09-29`,
@@ -177,5 +177,5 @@ the interface moves with a contract's care.
     Measured    cargo build, clippy, test at 4ce4f41 on 2026-09-30: pass, 0 warnings, 24/0/1
     Produced    this document, uncommitted, for the next session to land by the repository's loop
     Around it   WeaverAgents a9d9827, WeaverAnalysis 12a7243, WeaverTools 44bb1ca, all pushed 2026-09-30
-    On the box  stack installed, karl and m1 declared and verified, nothing loaded, no postgres role for the operator
+    On the box  stack installed, karl and m1 declared and verified, nothing loaded, a database and role for the store still to be made
     Asked       section 6's rulings, then section 5 in order

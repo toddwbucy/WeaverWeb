@@ -176,9 +176,9 @@ Each is its own branch and draft PR, briefed when the one before it is cleared.
   htmx and sse.js.
 - **Then the surfaces**, Agents first since it renders the registry, then Live.
 
-**Environment, before act 2's tests can assert anything:** PostgreSQL 18 is active on
-the thinkpad and the operator has no role. Making the role and a database is the
-first environment act, per the second handoff's section 5.
+**Environment, before act 2's tests can assert anything:** a database and a role for
+the store must be created on the box, which is the first environment act, per the
+second handoff's section 5.
 
 ## 6. What this brief does not do
 

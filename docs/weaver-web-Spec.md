@@ -1146,8 +1146,8 @@ from: weaver-web
 to: web-one-live-row-per-box-and-name
 ```
 
-**What the link observes is not an edit.** The observed address, the link states, the ceiling, the tuple and the load state
-are facts the listener and admin reported, and the link writes them as it
+**What the link observes is not an edit.** The observed address, the link states, the ceiling, the tuple, the load state
+and the source those two stand on are facts the listener and admin reported, and the link writes them as it
 learns them, each with its own date, so a reader can tell when the server
 last knew each one. **Observations are ordered on the server's own arrival
 sequence and never on their source date.** The sequence has two members
@@ -1432,8 +1432,9 @@ second of them is the one that records an order, so it is a writer rather than a
 change on a row another writer owns. **It was four until 2026-09-11**, the batch having
 had no row and queueing having had nothing to write. **The sixth is the link**, as of
 2026-10-01, which writes the observed members of section 2.12's registered agent, the
-address it saw, each connector's link state, and the tuple and the load state as admin
-reported them, and touches nothing else. It is a
+address it saw, each connector's link state, the ceiling admin-con declared in its
+hello, the tuple and the load state as admin reported them, and the source those two
+stand on, and touches nothing else. It is a
 writer rather than an author because nobody authored what it writes: a link state is
 what the listener saw and a tuple is what admin said, each with its own date, and
 section 2.12 keeps them off the row's version for that reason. **Its writes are ordered

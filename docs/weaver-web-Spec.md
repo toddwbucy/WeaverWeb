@@ -1277,14 +1277,20 @@ section waits on the two.
   own admin grant; the exact rule is the act's to choose. **Nor does a person
   write a role they hold a grant of on any agent**, because widening a role
   widens every grant of it, theirs included, without a grant row being
-  written. **The server never loses its last admin to a race**: every write
-  that removes or narrows a server-wide admin grant takes one store-wide
-  exclusion for admin grants, a lock on a single row or an advisory lock as
-  the act chooses, and under it counts the admin grants that would remain
-  and refuses if none would. Two admins removing each other at once each
-  pass the self-change rule on different versioned rows, so without the
-  exclusion both writes land and no admin remains; with it they serialize
-  and the second finds itself the last. **And the host principal can always
+  written. **Every write to a person row, a role or a grant takes one
+  store-wide exclusion for identity and access**, a lock on a single row or
+  an advisory lock as the act chooses, held for the write's whole check and
+  commit. Such writes are rare, so serializing them all costs nothing, and it
+  closes the class of race that serializing only some of them leaves open.
+  Two rules are checked under it. **At least one enabled person holding a
+  live server-wide admin grant remains**: every write that disables a
+  person, removes or narrows an admin grant, or edits a role that carries it
+  counts what would remain and refuses if none would, so two admins
+  disabling or removing each other at once serialize and the second finds
+  itself the last, and the last admin grant is never stranded on a disabled
+  person. **And the self-change rules above are checked under the same
+  exclusion**, so a grant of a role to its editor cannot land between the
+  check that the editor holds no grant of it and the edit. **And the host principal can always
   write a new bootstrap admin grant**, so even a store edited outside this
   crate is recoverable from the server's host and never needs a surface.
 - **Server-side authorization**: a verb is asked of an agent only if its
@@ -1295,12 +1301,19 @@ section waits on the two.
   it is refused on the server before any frame leaves it, and the refusal is
   audited. **The check is the server's and never a surface's**: a surface may
   hide what a person cannot do, and hiding is presentation and not the gate.
-- **The audit record, append-only**: every verb asked names its principal,
-  the person, the server or the host, and the agent, the verb and when. The server writes that record before the ask
-  leaves, so no ask exists without one. **The outcome is a second record
-  naming the first**, written when the answer lands or the ask fails, so
-  nothing is ever rewritten and an ask whose outcome never came is visible as
-  a first record with no second. A refusal at the first gate is one record
+- **The audit record, append-only**: every record names its principal, the
+  person, the server or the host, its target and its action, and when. For
+  a verb asked of an agent the target is the agent and the action the verb;
+  for a write to a person row, a role or a grant the target is the row's
+  kind and identity and the action the mutation: enroll, disable, rename,
+  set authentication material, write a role, grant, or revoke. **A record
+  holds no secret**: a write of authentication material records that it
+  happened, never the material. This crate writes the first record before
+  the ask leaves or the write lands, so no ask or write exists without one.
+  **The outcome is a second record naming the first**, written when the
+  answer lands, the write commits, or either fails, so nothing is ever
+  rewritten and an act whose outcome never came is visible as a first
+  record with no second. A refusal at the first gate is one record
   carrying the refusal as its outcome, since no ask left. The principal also
   crosses to the box as section 8's claim, so these records and the box's
   operations log can be matched. **Audit records are written by this crate's
@@ -2966,8 +2979,8 @@ missing while it was relaying.
 | nothing crosses the link in the clear | perturbation: offer a plaintext hello to the listener, it is refused below any roster; and review, over the listener, that no plaintext accept path exists |
 | the server never asks a verb outside the agent's ceiling | perturbation, **owed**: drop the ceiling check, ask a verb admin-con's hello did not declare, and it leaves the server; and admin-con's half, drop its typed error answer, and it reaches the invoker. **No instrument stands**: the hello carries no ceiling until the admin-con act, and the server's check lands with the IAM act |
 | a verb its principal may not ask is refused before an ask | perturbation, **owed**: drop the grant check, a person whose role permits `show` asks `stop`, and the ask leaves the server; let the server principal ask a lifecycle verb, and it leaves without a grant. Lands with the IAM act |
-| a person, role or grant written by a principal not permitted to write it is refused | perturbation, **owed**: drop the check, and a person granted only `show` writes themselves the operator role and passes the first gate; let a person write a grant on themselves, and an admin widens their own grants or the last admin removes the only admin grant; let an admin holding the observer role on an agent add `stop` to that role, and their own grant widens without a grant written; let a surface write as the host principal, and a grant lands with no admin behind it; drop the exclusion, have two admins remove each other at once, and no admin remains; let a person write another person's authentication material, and they can sign in as them. Lands with the IAM act |
-| every verb asked and every person, role or grant written has an audit record naming its principal, and its outcome is a second record naming the first | perturbation, **owed**: write the first record after the ask instead of before, fail the store between the two, and an ask leaves with no record; update the first record with the outcome instead of appending a second, and an ask whose answer is lost reads as never answered with no trace of the rewrite; drop the refusal's record, and a refused verb leaves no trace; write a grant with the audit write dropped, and the grant lands with no record; enroll a person or rotate their authentication material with the audit write dropped, and the write lands with no record. Lands with the IAM act |
+| a person, role or grant written by a principal not permitted to write it is refused | perturbation, **owed**: drop the check, and a person granted only `show` writes themselves the operator role and passes the first gate; let a person write a grant on themselves, and an admin widens their own grants or the last admin removes the only admin grant; let an admin holding the observer role on an agent add `stop` to that role, and their own grant widens without a grant written; let a surface write as the host principal, and a grant lands with no admin behind it; drop the exclusion, have two admins remove each other at once, and no admin remains; disable the sole admin, or have two admins disable each other at once, and no enabled admin remains; grant a role to its editor while the edit is in flight, and the editor widens a role they hold; let a person write another person's authentication material, and they can sign in as them. Lands with the IAM act |
+| every verb asked and every person, role or grant written has an audit record naming its principal, and its outcome is a second record naming the first | perturbation, **owed**: write the first record after the ask instead of before, fail the store between the two, and an ask leaves with no record; update the first record with the outcome instead of appending a second, and an ask whose answer is lost reads as never answered with no trace of the rewrite; drop the refusal's record, and a refused verb leaves no trace; write a grant with the audit write dropped, and the grant lands with no record; enroll a person or rotate their authentication material with the audit write dropped, and the write lands with no record; record the material in an authentication write's record, and a read of the audit table is a set of credentials. Lands with the IAM act |
 | the admission's `show` is required only where the ceiling grants it | perturbation, **owed**: ask `show` at every admission, and an agent whose ceiling grants no `show` is closed `admission_incomplete` at every reconnection and never stays admitted; skip it where it is granted, and the row reads the last process's state as current. The listener asks `show` at every admission until the admin-con act, which is the drift this row names |
 | no privileged invocation exists in the crate | review, and a test, **owed**: a test that reads the source tree for an invocation of `sudo`, a root wrapper or a setuid call, shown to fail when one is planted. It would fail today on the seed's `lifecycle.rs`, which invokes `sudo weaver-admin` and is not carried forward, so the row is owed until that file leaves |
 

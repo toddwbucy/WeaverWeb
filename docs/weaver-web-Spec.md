@@ -1241,16 +1241,19 @@ rather than this document's.
   Every one of those writes is audited as a verb is. **A person's first
   credential comes by a one-time enrollment token**, neutral to the
   mechanism: an admin, or the host principal for the bootstrap, issues a
-  single-use, expiring token bound to one person row. It is stored only as a
-  digest, under section 2.8's rule, and it is consumed by that person's first
+  single-use, expiring token bound to one person row. It is held on that
+  person row, only as a digest beside its expiry, under section 2.8's rule, and it is consumed by that person's first
   write of authentication material, which is the one write a person makes
   before they have authenticated. Issuing a token is an identity write like
   any other, audited and taken under the exclusion below. **A disabled person
   acts on nothing**: every authenticated operation checks that its person is
-  enabled, and disabling a person ends their open sessions and revokes their
-  outstanding enrollment tokens in the same write, under the same exclusion.
-  Redeeming a token checks that its person is enabled too, so a token issued
-  before a disable can never land a credential on a disabled row.
+  enabled, so a disabled person's open sessions authorize nothing, and the
+  disable writes no session: the surface closes such a session at its next
+  use, as the session's own writer under section 3. Disabling a person does
+  revoke their outstanding enrollment tokens in the same write, under the
+  same exclusion, the tokens being part of the person row. Redeeming a token
+  checks that its person is enabled too, so a token issued before a disable
+  can never land a credential on a disabled row.
 - **The server, one of the two principals that are not a person**, for the
   asks the server makes itself, of which the admission's `show` of section 7.2 is the
   one today. It may ask the observation verbs, `show` and `list`, and never
@@ -1279,9 +1282,15 @@ rather than this document's.
   person to a role on one agent of section 2.12, or server-wide for
   registering agents with the verbs of section 8. A grant names verbs only
   through its role, so there is no per-person verb list to drift from the
-  vocabulary. **Roles and grants are authored rows** under section 3.2,
-  carrying the author member and the version, so two concurrent edits of one
-  grant refuse on the stale version rather than one silently winning.
+  vocabulary. **Per-agent roles and every grant are authored rows** under
+  section 3.2, carrying the author member and the version, so two concurrent
+  edits of one grant refuse on the stale version rather than one silently
+  winning. **The server-wide admin role is fixed by the store and is the one
+  role that is not an authored row**: the act's migration seeds it, nobody
+  writes, edits or deletes it, and the bootstrap grant names it, which is
+  how the first grant can be formed before any admin exists to author a
+  role. The rule below against editing a role one holds therefore has
+  nothing to guard for the admin role, since nobody can edit it.
   **Writing a role or a grant requires the server-wide admin grant**, the
   same grant the register verbs need, and each write is audited as a verb
   is: a first record before the write and the outcome as the second. Without
@@ -1301,8 +1310,7 @@ rather than this document's.
   closes the class of race that serializing only some of them leaves open.
   Two rules are checked under it. **At least one enabled person holding a
   live server-wide admin grant remains**: every write that disables a
-  person, removes or narrows an admin grant, or edits a role that carries it
-  counts what would remain and refuses if none would, so two admins
+  person or removes or narrows an admin grant counts what would remain and refuses if none would, so two admins
   disabling or removing each other at once serialize and the second finds
   itself the last, and the last admin grant is never stranded on a disabled
   person. **And the self-change rules above are checked under the same
@@ -1403,8 +1411,10 @@ and what it records is not an agent's state but what the server was asked to do 
 what came of it, written before and after the fact, which is why section 2.13 keeps
 the records off any version and never edits them. The register verb is not an eighth:
 it authors the row's other members, the name, the box and the credentials, through
-section 3.2 like any author, and so do the writes of section 2.13's person rows, roles
-and grants, which is why they add no eighth writer either. **So one table has two writers at disjoint members**, and the rule below
+section 3.2 like any author, and so do the writes of section 2.13's person rows,
+per-agent roles and grants, which is why they add no eighth writer either; the
+server-wide admin role is seeded by the migration that builds section 2.13 and written
+by no writer after. **So one table has two writers at disjoint members**, and the rule below
 holds at the member for that row rather than at the table, which is stated here rather
 than left for a reader to find: the register verb never writes what the link observed
 and the link never writes what the operator registered. No writer otherwise touches
@@ -1610,8 +1620,9 @@ verb of section 8 writes the authored members of section 2.12's registered agent
 nothing else**, as of 2026-10-01, the observed members being the link's as section 3's
 opening counts them. It is the operator's verb on the server rather than a surface: its
 author member holds the name the verb was given, or names none, which is the rule below
-with no session behind it. **Section 2.13's person rows, roles and grants are written through this path
-too**, as of 2026-10-02: roles, grants, and enrolling, disabling or renaming a person by
+with no session behind it. **Section 2.13's person rows, per-agent roles and grants are written through this path
+too**, as of 2026-10-02, the server-wide admin role excepted, which the store fixes and
+nobody writes: roles, grants, and enrolling, disabling or renaming a person by
 a holder of the server-wide admin grant; the bootstrap admin by the host principal; and
 a person's own authentication material by that person alone, as section 2.13 states.
 Each write is audited by the audit writer. **Each writes only tables of the authored half**, and **none
@@ -1631,12 +1642,12 @@ to: web-no-surface-writes-the-recorded-half
 
 - **Every authored row carries a version, and it is the store's own counter rather than
 anything the author supplies.** Sections 2.3, 2.4, 2.5, 2.9, 2.10 and 2.12, and section
-2.13's person rows, roles and grants, each carry it. It
+2.13's person rows, per-agent roles and grants, each carry it. It
 has nothing to do with the declaration's corpus commit, which pins the floor's field
 shape and answers staleness against `weaver-types-Spec`: **one says whether the shape is
 current, the other says whether this row has moved since you read it.**
 - **Every authored row names its author, and the member is nullable.** Sections 2.3,
-  2.4, 2.5, 2.9, 2.10 and 2.12, and section 2.13's person rows, roles and grants, each
+  2.4, 2.5, 2.9, 2.10 and 2.12, and section 2.13's person rows, per-agent roles and grants, each
   carry it. **Null means the store could not
   name an author when the row was written, and it never means the
   operator**, because a default that guesses writes a fact nobody can
@@ -2998,7 +3009,7 @@ missing while it was relaying.
 | the tuple is admin's word and never gate-con's | perturbation: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it; let a replayed load event write the tuple, restart the server after an unload, backfill, and the row reads loaded; ask `show` before fixing the replay boundary, unload between the two, and the row reads loaded until the next `show`; let a `list` answer through one connection write another row, and that row reads a state its own connection never relayed. **Four clauses are admin-con's ordering and are owed to its act**: let a `show` answer cross the link out of order with the file events around it, unload during the `show`, and the row reads loaded until the next `show`; place the answer in the stream at receipt and unload between the snapshot and the receipt, and the row reads loaded; skip the drain, leave an unread load event behind the tail, invoke `show` after an unload, and the row reads loaded; run two verbs at once on one connection, and an older answer lands after a newer one |
 | nothing crosses the link in the clear | perturbation: offer a plaintext hello to the listener, it is refused below any roster; and review, over the listener, that no plaintext accept path exists |
 | the server never asks a verb outside the agent's ceiling | perturbation, **owed**: drop the ceiling check, ask a verb admin-con's hello did not declare, and it leaves the server; and admin-con's half, drop its typed error answer, and it reaches the invoker. **No instrument stands**: the hello carries no ceiling until the admin-con act, and the server's check lands with the IAM act |
-| a verb its principal may not ask is refused before an ask | perturbation, **owed**: drop the grant check, a person whose role permits `show` asks `stop`, and the ask leaves the server; let the server principal ask a lifecycle verb, and it leaves without a grant; disable a person with a live session, and their next verb still leaves. Lands with the IAM act |
+| a verb its principal may not ask is refused before an ask | perturbation, **owed**: drop the grant check, a person whose role permits `show` asks `stop`, and the ask leaves the server; let the server principal ask a lifecycle verb, and it leaves without a grant; drop the enabled check, and a disabled person's live session still asks a verb. Lands with the IAM act |
 | a person, role or grant written by a principal not permitted to write it is refused | perturbation, **owed**: drop the check, and a person granted only `show` writes themselves the operator role and passes the first gate; let a person write a grant on themselves, and an admin widens their own grants or the last admin removes the only admin grant; let an admin holding the observer role on an agent add `stop` to that role, and their own grant widens without a grant written; let a surface write as the host principal, and a grant lands with no admin behind it; drop the exclusion, have two admins remove each other at once, and no admin remains; disable the sole admin, or have two admins disable each other at once, and no enabled admin remains; grant a role to its editor while the edit is in flight, and the editor widens a role they hold; let a person write another person's authentication material, and they can sign in as them; reuse a consumed enrollment token, or use one past its expiry, and a second credential lands on someone else's row; disable a person holding an unredeemed token, redeem it, and a credential lands on a disabled row. Lands with the IAM act |
 | every verb asked and every person, role or grant written has an audit record naming its principal, and its outcome is a second record naming the first | perturbation, **owed**: write the first record after the ask instead of before, fail the store between the two, and an ask leaves with no record; update the first record with the outcome instead of appending a second, and an ask whose answer is lost reads as never answered with no trace of the rewrite; drop the refusal's record, and a refused verb leaves no trace; write a grant with the audit write dropped, and the grant lands with no record; enroll a person or rotate their authentication material with the audit write dropped, and the write lands with no record; record the material in an authentication write's record, and a read of the audit table is a set of credentials. Lands with the IAM act |
 | the admission's `show` is required only where the ceiling grants it | perturbation, **owed**: ask `show` at every admission, and an agent whose ceiling grants no `show` is closed `admission_incomplete` at every reconnection and never stays admitted; skip it where it is granted, and the row reads the last process's state as current. The listener asks `show` at every admission until the admin-con act, which is the drift this row names |

@@ -631,9 +631,19 @@ to standing roles rather than a rearchitecture. **Co-locating a reading with
 an exchange is a presentation ruling and spends neither the role separation
 nor the gate**: the reach stays gated where it was.
 
-Identity, authentication, and transport encryption are deferred with named
-triggers, and roles are not among the deferrals and are not access control
-either.
+**For anything that can act on an agent the deferral is over**, per the
+operator's ruling of 2026-10-02. A verb is a hand on a running agent rather
+than a reading, and so is a turn, which prompts an agent that may act on its
+box with its tools, so **no surface that asks a verb or places a turn ships
+before the IAM act**,
+and transport encryption on the browser's listener lands with that act,
+since credentials will cross it. The Spec's section 2.13 charters what the
+act builds: the authenticated person, roles and per-agent grants,
+server-side authorization of every verb and turn, and an audit record of
+each, the
+first of the three gates its section 8 names. **Reading surfaces may stand
+before the act as they do today**, and for them identity, authentication and
+transport encryption stay deferred with the named triggers below.
 
 **The act is the IAM act, and this section names it because the rewrite
 dropped the name.** The prior Spec's section 14 named it plainly and stated
@@ -642,7 +652,7 @@ server-minted cookie whose only job is continuity, so a name from the
 config's admin list is an admin session with no proof. Issue #336 is the
 register and carries the interim path for the case where the act is far off.
 
-**Two triggers, and either is enough.** Identity and authentication are due
+**For reading surfaces, two triggers, and either is enough.** Identity and authentication are due
 when the listener becomes reachable by anyone the operator has not already
 admitted, which is when a claimed name stops being continuity and becomes an
 assertion. **Admission is by placement**: the operator admits a network when
@@ -662,10 +672,13 @@ crosses machines by construction and carries the agent's record, so it is
 mutually authenticated and encrypted from its first act, per the Spec's
 section 8; the deferrals above are the browser's listener's and no other's.
 
-**The act changes the proof and not the gate.** Roles are structural and the
-reach stays gated where it was, so the act makes a session prove who it is
-and moves nothing else, which is what attaching
-authentication to standing roles means above. **One member does not wait on
+**The act changes the proof and adds the grant.** A session that proves who
+it is attaches to standing roles, as this section promised, and the roles
+become grants a person holds on each agent rather than a property of the
+session, so a person may operate one agent and only observe another. That
+is new structure, chartered at the Spec's section 2.13, and it is the only
+structure the act adds: the reading surfaces' reach stays gated where it
+was. **One member does not wait on
 the act**: the Spec's section 3.2 gives every authored row a nullable
 author, an author being knowable while a row is written and unknowable
 afterward, so the member is written now and the act decides what fills it.

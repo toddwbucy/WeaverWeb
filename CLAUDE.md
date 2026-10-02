@@ -20,6 +20,9 @@ opened here; it describes the suite and binds nothing in this repository. The fo
 documents are `docs/project/HANDOFF-2026-09-30-weaver-web-session.md` and, beside it, the
 second handoff `docs/project/HANDOFF-2026-09-30-the-workspace-turns-to-weaver-web.md`. The
 connectors' brief is `docs/project/brief-2026-10-01-the-link-the-registry-and-the-two-connectors.md`.
+Issue #6, the role-based identity epic, records the operator's rulings of 2026-10-02 on
+privilege and identity and the ordered work after them (admin-con act 5, IAM act 6); the
+brief that wrote them into the Spec is `docs/project/brief-2026-10-02-act-4-the-role-shape.md`.
 Read them before structural work.
 
 ### The big picture (operator's whiteboard, 2026-09-30)
@@ -72,6 +75,15 @@ deposits first (a trace plus its state store, as a replay), then build live view
   minted on the server at registration and dropped into a client's config file by an install
   script; the server keeps fingerprints and never keys. The connectors authenticate; the gate
   and admin authorize.
+- **No sudo, no root wrapper, no privileged invocation anywhere in this repository**
+  (operator's ruling of 2026-10-02): a root process parsing arguments that arrived over a
+  network is where a CVE comes from. The connectors run as dedicated service users, one per
+  agent and plane, never the operator's uid. Verbs are authorized by role on the box by
+  weaver-admin (`toddwbucy/WeaverAgents#50`), and every verb asked of an agent passes three
+  gates: this server's IAM, the box's ceiling declared in admin-con's hello, and
+  weaver-admin's role check (Spec 2.13 and 8). A turn needs a grant too and then passes the
+  gate's own admission. The register verbs act on the server and take their own path (Spec
+  2.13). Until #50 lands no verb runs from this repository.
 - **Do not edit WeaverAgents.** When a door contract lacks something, file an issue on
   `toddwbucy/WeaverAgents`, one issue per interface question, until the operator rules
   otherwise. Say what was measured, what is asked, and which document would have to move. The
@@ -190,16 +202,19 @@ connectors build against (`frames.rs`). The seed's one dialed link, `wire.rs` an
 `src/bin/weaver-web-connector.rs`, left with it. **gate-con landed on 2026-10-01** (act 3):
 `src/bin/gate-con.rs` over `link::gate_con`, relaying through `adapters/gate.rs`, on the
 shared client half `link::client` (dial, verify, hello, heartbeat, bounded reads and writes,
-the reconnect policy of Spec 8). **Becomes admin-con, act 4:** `lifecycle.rs` (`sudo weaver-admin`, three verbs, load state still inferred from
-the socket's existence) is the seed of admin-con, which gains the other three verbs and the
-trace tailer. `traceview.rs`'s tailer half, which tails the trace file tracking its identity,
-is the seed of that tailer (operator's ruling of 2026-10-01: the agent's sink is a file, not a
-socket); its server half, the rings, is the listener's live window. Build admin-con as its
-own binary on `link::client`, adding only its plane, as gate-con does.
+the reconnect policy of Spec 8). **Becomes admin-con, act 5:** `traceview.rs`'s tailer half,
+which tails the trace file tracking its identity, is the seed of admin-con's trace tailer
+(operator's ruling of 2026-10-01: the agent's sink is a file, not a socket); its server half,
+the rings, is the listener's live window. The verb plane is built against an abstract invoker
+that carries no privilege code, and the real invoker waits on WeaverAgents #50.
+`lifecycle.rs`, which runs the verbs through sudo and infers load state from the socket's
+existence, is **not** carried forward. Build admin-con as its own binary on `link::client`,
+adding only its plane, as gate-con does.
 
 **Still leaves: `web/`**, the legacy `/admin` routes, already answering 503, and
 `src/registry.rs`, the legacy participant model (not the register of agents). `deploy/` was
-left out of the fresh root because it held box paths and a sudoers rule. Two facts for the
+left out of the fresh root because it held box paths and a sudoers rule, both of which the
+hard boundaries forbid. Two facts for the
 removal act: `askama.toml` lists `src/web/templates` beside `src/surfaces/templates`, and
 the legacy router in `src/web/mod.rs` is the only thing serving `htmx.min.js` and `sse.js`,
 so the surfaces need their own asset route before `web/` goes. `src/bin/weaver-web.rs`

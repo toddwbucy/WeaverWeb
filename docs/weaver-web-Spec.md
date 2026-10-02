@@ -2486,6 +2486,29 @@ surface. A minute is short enough that a surface is not wrong for long and
 long enough that a link's brief loss does not churn the row. The operator
 confirms or resets it in review.
 
+**A connector reconnects on its own and never exits on a refusal**, the
+client side of the rules above, elected by the act that built gate-con on
+2026-10-01 and not a ruling. After any end of its connection, a loss or a
+refusal, a connector closes every exchange that connection carried, since
+none of them can answer on it anymore, and dials again after a backoff
+that starts at one second and doubles per failure, with jitter, capped at
+sixty seconds; a connection that stayed admitted for one cadence resets
+the count, so a server restart is met at once and a server that drops
+every connection at admission is backed off. **`not_live` and
+`roster_mismatch` mean the credential is revoked or wrong, and are retried
+only at the cap and never faster**, each logged with what the operator must
+do, which is to re-install the agent's config from a registration or a
+rotation. Every other refusal retries on the normal backoff, `malformed` and
+`wrong_plane` logged as the connector's own defect. **It does not exit**,
+because a supervisor would restart it into the same loop; it ends only on
+its own shutdown, which lets exchanges in flight finish within a short
+grace before closing the link. **A dead server is noticed within a bound and
+not only by its close**: every write the connector makes, its heartbeats
+included, is held to the cadence, and TCP keepalive with a user timeout of
+two cadences ends a connection whose peer stopped acknowledging. A
+connection that is merely quiet is not dead: the server sends nothing
+unasked on the gate plane, and its kernel still answers.
+
 **At listener start the server sets every plane recorded as connected to
 disconnected, with the start's date, before it accepts a connection.** A
 plane already disconnected keeps its date, so a surface still shows how long

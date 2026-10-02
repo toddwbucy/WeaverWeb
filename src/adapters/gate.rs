@@ -1,5 +1,6 @@
 //! The weaver agent adapter: dial the gate socket, send one request
-//! line, read one close line. Dial-per-turn, per Spec section 7.1.
+//! line, read one close line. Dial-per-turn, per Spec section 7.1. gate-con
+//! runs it on the agent's box (`link::gate_con`); the server never does.
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -54,17 +55,51 @@ impl std::fmt::Display for GateError {
 
 impl std::error::Error for GateError {}
 
+impl GateError {
+    /// The error's kind as the link carries it in a turn fault (Spec 7.1):
+    /// one name per variant, so the server and a surface render the kind
+    /// without reading the message.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            GateError::Unloaded => "unloaded",
+            GateError::LineTooLong(_) => "line_too_long",
+            GateError::DeliveryLost(_) => "delivery_lost",
+            GateError::BadClose(_) => "bad_close",
+            GateError::CloseTooLong(_) => "close_too_long",
+        }
+    }
+}
+
+/// The request line for a turn, refused before any dial where it passes
+/// the gate's bound: weaver-web's own defect, never sent.
+pub fn request_line(text: &str) -> Result<String, GateError> {
+    #[derive(Serialize)]
+    struct Request<'a> {
+        text: &'a str,
+    }
+    let line = serde_json::to_string(&Request { text }).expect("string serialization cannot fail");
+    if line.len() > LINE_BOUND {
+        return Err(GateError::LineTooLong(line.len()));
+    }
+    Ok(line)
+}
+
 /// A parsed close. `kind` is the contract's; the labels are opaque and
 /// stored verbatim. `text` is the response body when the close carries
 /// one under that member; `raw` always holds the whole close for
 /// faithful rendering until the close's field list is verified against
-/// a live agent.
+/// a live agent. **`finish` is the contract's section 3 member**, `"length"`
+/// on an answered close whose generation was cut at the turn's token
+/// limit and absent otherwise, so a surface renders a truncated answer as
+/// truncated.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GateClose {
     pub kind: String,
     pub run: Option<String>,
     pub turn: Option<String>,
     pub text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finish: Option<String>,
     pub raw: serde_json::Value,
 }
 
@@ -97,15 +132,7 @@ impl GateAdapter {
 
     /// One turn: dial, write one line, read one line, drop.
     pub async fn turn(&self, text: &str) -> Result<GateClose, GateError> {
-        #[derive(Serialize)]
-        struct Request<'a> {
-            text: &'a str,
-        }
-        let line =
-            serde_json::to_string(&Request { text }).expect("string serialization cannot fail");
-        if line.len() > LINE_BOUND {
-            return Err(GateError::LineTooLong(line.len()));
-        }
+        let line = request_line(text)?;
 
         let stream = UnixStream::connect(&self.socket)
             .await
@@ -156,6 +183,7 @@ impl GateAdapter {
             run: get_str("run"),
             turn: get_str("turn"),
             text: get_str("text"),
+            finish: get_str("finish"),
             raw,
         })
     }

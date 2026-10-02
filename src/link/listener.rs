@@ -32,7 +32,9 @@
 use crate::adapters::gate::GateClose;
 use crate::lifecycle::VerbOutcome;
 use crate::link::authority::{Authority, fingerprint};
-use crate::link::frames::{FromClient, LINE_BOUND, Plane, Position, Refusal, ToClient, TurnFault};
+use crate::link::frames::{
+    FromClient, Line, LineReader, Plane, Position, Refusal, ToClient, TurnFault,
+};
 use crate::link::register::{CredentialState, Observation, REVOCATION_CHANNEL};
 use crate::store::{AgentId, Store};
 use crate::traceview::{TraceEvent, TraceViews};
@@ -43,7 +45,7 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio_rustls::TlsAcceptor;
@@ -835,50 +837,6 @@ impl Inner {
     }
 }
 
-/// A frame line, or why it is not one.
-enum Line {
-    Frame(String),
-    /// The peer closed, or the stream failed.
-    Closed,
-    /// Over the bound with no delimiter found, or not UTF-8.
-    Malformed(&'static str),
-}
-
-/// Read one frame line under the bound, **holding the bound per read**:
-/// the reader's own buffer is consumed chunk by chunk and the line refused
-/// as soon as it passes the bound, so an authenticated peer cannot grow a
-/// buffer by withholding the delimiter.
-async fn read_line<R: tokio::io::AsyncBufRead + Unpin>(reader: &mut R, buf: &mut Vec<u8>) -> Line {
-    buf.clear();
-    loop {
-        let chunk = match reader.fill_buf().await {
-            Ok(chunk) => chunk,
-            Err(_) => return Line::Closed,
-        };
-        if chunk.is_empty() {
-            return Line::Closed;
-        }
-        if let Some(i) = chunk.iter().position(|&b| b == b'\n') {
-            buf.extend_from_slice(&chunk[..i]);
-            reader.consume(i + 1);
-            break;
-        }
-        let n = chunk.len();
-        buf.extend_from_slice(chunk);
-        reader.consume(n);
-        if buf.len() > LINE_BOUND {
-            return Line::Malformed("a line passed the bound with no delimiter");
-        }
-    }
-    if buf.len() > LINE_BOUND {
-        return Line::Malformed("a line passed the bound");
-    }
-    match std::str::from_utf8(buf) {
-        Ok(s) => Line::Frame(s.trim_end().to_owned()),
-        Err(_) => Line::Malformed("a line is not UTF-8"),
-    }
-}
-
 /// A best-effort send for a refusal or an answer on a connection that is
 /// about to close: bounded, so a peer that stopped reading cannot hold the
 /// task on it.
@@ -1007,8 +965,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
         }
         let _ = write_half.shutdown().await;
     });
-    let mut reader = BufReader::new(read_half);
-    let mut buf = Vec::new();
+    let mut reader = LineReader::new(read_half);
 
     // **The lookup comes before the roster** (Spec 8): the fingerprint is
     // looked up in the register and a credential that is absent or
@@ -1045,7 +1002,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
     // The hello has the handshake's bound, not the silence bound: a peer
     // that authenticated and then says nothing is not a connector yet.
     let hello = tokio::select! {
-        h = tokio::time::timeout(Duration::from_secs(HANDSHAKE_SECS), read_line(&mut reader, &mut buf)) => h,
+        h = tokio::time::timeout(Duration::from_secs(HANDSHAKE_SECS), reader.next()) => h,
         _ = halting.changed() => {
             tracing::info!("link from {peer}: the listener is halting before the hello, dropped");
             drop(tx);
@@ -1263,7 +1220,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                 None => inner.silence,
             };
             let line = tokio::select! {
-                l = tokio::time::timeout(wait, read_line(&mut reader, &mut buf)) => l,
+                l = tokio::time::timeout(wait, reader.next()) => l,
                 _ = close_rx.changed() => {
                     if *close_rx.borrow() {
                         tracing::info!(

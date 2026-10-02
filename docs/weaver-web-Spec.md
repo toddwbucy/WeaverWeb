@@ -2212,7 +2212,13 @@ position admin-con reports as its tail at that moment, so that every event
 at or beyond it is live and every event behind it is replayed, and then
 asks `show` for the row, so the answer is admin's word from after the
 boundary and nothing that lands in the file between the two can be
-classified as history, per section 2.12. **admin-con emits everything it
+classified as history, per section 2.12. **The admission's `show` must
+land a usable observation within the silence bound.** Until it does the
+row carries the last process's tuple and load state, and an admitted
+connection standing on them is presence asserted on stale facts; so a
+connection whose `show` errors, answers no state, or has not answered by
+the bound is closed with a typed refusal (`admission_incomplete`) and the
+reconnection asks again. **admin-con emits everything it
 sends over its connection, verb answers and file events alike, as one
 ordered stream**, and a verb answer takes its place in that stream at the
 invocation rather than at the receipt: before invoking a verb admin-con

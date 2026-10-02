@@ -1255,7 +1255,10 @@ section waits on the two.
   access to the store and the authority's directory; no surface can create
   it. **No person writes a grant on themselves**, granting or removing, so an
   admin cannot widen their own grants and the last admin cannot remove their
-  own admin grant; the exact rule is the act's to choose.
+  own admin grant; the exact rule is the act's to choose. **Nor does a person
+  write a role they hold a grant of on any agent**, because widening a role
+  widens every grant of it, theirs included, without a grant row being
+  written.
 - **Server-side authorization**: a verb is asked of an agent only if its
   principal may ask it, the person's grants on that agent permitting it or,
   for the server's own asks, the verb being an observation verb, and the
@@ -2922,7 +2925,7 @@ missing while it was relaying.
 | nothing crosses the link in the clear | perturbation: offer a plaintext hello to the listener, it is refused below any roster; and review, over the listener, that no plaintext accept path exists |
 | the server never asks a verb outside the agent's ceiling | perturbation, **owed**: drop the ceiling check, ask a verb admin-con's hello did not declare, and it leaves the server; and admin-con's half, drop its typed error answer, and it reaches the invoker. **No instrument stands**: the hello carries no ceiling until the admin-con act, and the server's check lands with the IAM act |
 | a verb its principal may not ask is refused before an ask | perturbation, **owed**: drop the grant check, a person whose role permits `show` asks `stop`, and the ask leaves the server; let the server principal ask a lifecycle verb, and it leaves without a grant. Lands with the IAM act |
-| a grant written by a person who does not hold the admin grant is refused | perturbation, **owed**: drop the check, and a person granted only `show` writes themselves the operator role and passes the first gate; let a person write a grant on themselves, and an admin widens their own grants or the last admin removes the only admin grant. Lands with the IAM act |
+| a grant written by a person who does not hold the admin grant is refused | perturbation, **owed**: drop the check, and a person granted only `show` writes themselves the operator role and passes the first gate; let a person write a grant on themselves, and an admin widens their own grants or the last admin removes the only admin grant; let an admin holding the observer role on an agent add `stop` to that role, and their own grant widens without a grant written. Lands with the IAM act |
 | every verb asked has an audit record naming its principal, and its outcome is a second record naming the first | perturbation, **owed**: write the first record after the ask instead of before, fail the store between the two, and an ask leaves with no record; update the first record with the outcome instead of appending a second, and an ask whose answer is lost reads as never answered with no trace of the rewrite; drop the refusal's record, and a refused verb leaves no trace. Lands with the IAM act |
 | the admission's `show` is required only where the ceiling grants it | perturbation, **owed**: ask `show` at every admission, and an agent whose ceiling grants no `show` is closed `admission_incomplete` at every reconnection and never stays admitted; skip it where it is granted, and the row reads the last process's state as current. The listener asks `show` at every admission until the admin-con act, which is the drift this row names |
 | no privileged invocation exists in the crate | review, and a test, **owed**: a test that reads the source tree for an invocation of `sudo`, a root wrapper or a setuid call, shown to fail when one is planted. It would fail today on the seed's `lifecycle.rs`, which invokes `sudo weaver-admin` and is not carried forward, so the row is owed until that file leaves |

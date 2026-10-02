@@ -59,12 +59,8 @@ session cookie and an SSE cursor. All processing is server-side Rust:
 a Postgres-backed channel log with a single writer task, per-agent
 single-flight queues that batch queued mentions into one turn, and a
 mention router that routes agent-to-agent mentions with
-self-invocation suppressed. The connector holds the box-bound half -
-a dial-per-turn gate adapter, the sudo verb invocation, and per-agent
-trace tailers - and speaks to the server over one NDJSON link it
-dials, announcing its agent roster in a hello, streaming trace events,
-and answering turn, verb, status, and declaration asks. Link loss
-fails turns typed and marks every trace view, never smoothed. The
+self-invocation suppressed. The connectors hold the box-bound half,
+as Running below says. The
 user surface (gate boundary) and admin surface (operator boundary)
 are separate modules behind separate route prefixes with a role gate,
 so the coming IAM act attaches authentication to standing roles
@@ -79,8 +75,6 @@ instead of rearchitecting.
 - [`weaver-web-Spec.md`](../../docs/crates/weaver-web/weaver-web-Spec.md)  - 
   how: every representation election, cited from the code that implements
   it.
-- [`deploy/`](deploy/) - the sudoers fragment, example config, and the
-  verified agent-setup runbook for this box.
 
 ## Running
 
@@ -91,11 +85,12 @@ weaver-web-connector --config /etc/weaver-web/connector.toml   # on the agents' 
 ```
 
 The server requires Postgres (local socket, peer auth, database named
-in its config). The connector requires the scoped sudoers fragment
-from `deploy/` for lifecycle verbs, and declares the agents with
-their gate socket and trace paths. Colocated, the link rides
-loopback and both binaries run on one box. See
-`deploy/agent-setup.md` for adding an agent.
+in its config). **The connectors are clients of the server**: gate-con
+and admin-con stand on the agent's box, dial the server over a
+mutually authenticated link, and run as unprivileged service users,
+one per agent and plane. No connector invokes sudo or any privileged
+wrapper; the agent's verbs are authorized by role on the box by
+weaver-admin. The details are in Spec section 8 and issue #6.
 
 ## Status
 

@@ -1211,9 +1211,11 @@ document here stands under.
 
 **Who may act on an agent, chartered 2026-10-02 at the level the store needs
 and without electing the mechanism.** Per the operator's rulings of that
-date every verb passes three gates, section 8 names them, and the first is
-this crate's: a person authenticated to the server, holding a role on the
-agent, may ask a verb that role permits. How people authenticate and what
+date every verb asked of a registered agent passes three gates, section 8
+names them, and the first is this crate's: a person authenticated to the
+server, holding a role on the agent, may ask a verb that role permits. The
+register verbs act on the server and not on an agent, and take the path the
+last item below states. How people authenticate and what
 the roles are called are section 10's open elections, the operator's both;
 what follows stands under any answer to either, and the act that builds this
 section waits on the two.
@@ -1226,6 +1228,17 @@ section waits on the two.
   the person. Once authentication stands, a session carries the
   authenticated person rather than a claimed name, and section 3.2's author
   member takes its value from the person.
+- **The server, the one principal that is not a person**, for the asks the
+  server makes itself, of which the admission's `show` of section 7.2 is the
+  one today. It may ask the observation verbs, `show` and `list`, and never
+  a lifecycle verb. It holds no grant and needs none, and it is still bounded
+  by the agent's ceiling, the second gate, like any ask. Its asks are
+  audited as a person's are, the first record naming the server as the
+  principal, and the claim that crosses to the box per section 8 names the
+  server too. **It is the only principal that is not a person because it
+  acts on nothing**: it re-confirms state the row already holds, so its asks
+  change no agent, and every lifecycle verb, which does change one, has a
+  person behind it.
 - **The role and the grant**: a role is a named set of verbs; a grant binds a
   person to a role on one agent of section 2.12, or server-wide for
   registering agents with the verbs of section 8. A grant names verbs only
@@ -1233,24 +1246,36 @@ section waits on the two.
   vocabulary. **Roles and grants are authored rows** under section 3.2,
   carrying the author member and the version, so two concurrent edits of one
   grant refuse on the stale version rather than one silently winning.
-- **Server-side authorization**: a verb is asked of an agent only if the
-  person's grants on that agent permit it and the agent's ceiling, declared
-  per section 8 and held on the row per section 2.12, contains it. Otherwise
+- **Server-side authorization**: a verb is asked of an agent only if its
+  principal may ask it, the person's grants on that agent permitting it or,
+  for the server's own asks, the verb being an observation verb, and the
+  agent's ceiling, declared per section 8 and held on the row per section
+  2.12, contains it. Otherwise
   it is refused on the server before any frame leaves it, and the refusal is
   audited. **The check is the server's and never a surface's**: a surface may
   hide what a person cannot do, and hiding is presentation and not the gate.
-- **The audit record, append-only**: every verb asked names the person, the
-  agent, the verb and when. The server writes that record before the ask
+- **The audit record, append-only**: every verb asked names its principal,
+  the person or the server, and the agent, the verb and when. The server writes that record before the ask
   leaves, so no ask exists without one. **The outcome is a second record
   naming the first**, written when the answer lands or the ask fails, so
   nothing is ever rewritten and an ask whose outcome never came is visible as
   a first record with no second. A refusal at the first gate is one record
-  carrying the refusal as its outcome, since no ask left. The person also
+  carrying the refusal as its outcome, since no ask left. The principal also
   crosses to the box as section 8's claim, so these records and the box's
   operations log can be matched. **Audit records are written by the server
   alone and never edited**: they are not authored rows and take no version,
   and they are not observations of an agent, so they sit outside both halves
   as the session does.
+- **The register verbs take their own path.** `authority`, `register`,
+  `revoke` and `rotate` act on the server, its authority and its store, and
+  nothing they do crosses to a box, so the three gates do not apply: there
+  is no box ceiling and no weaver-admin check for them, and registering an
+  agent could not pass gates that need a registered agent. **Today they are
+  the operator's commands on the server's host**, authorized by access to the
+  authority's directory and the store, per section 8. **Once this section's
+  identity stands, a register verb asked through the server requires the
+  server-wide admin grant** and is audited the same way, the first record
+  naming the person and, where the verb has one yet, the agent.
 
 ```graph
 node: web-verb-refused-before-an-ask-unless-granted
@@ -2578,11 +2603,14 @@ from: weaver-web
 to: web-link-refuses-a-credential-not-live-before-the-roster
 ```
 
-**Every verb passes three gates**, per the operator's ruling of 2026-10-02,
-and each is held by a different party. **First, this crate's identity and
+**Every verb asked of a registered agent passes three gates**, per the
+operator's ruling of 2026-10-02, and each is held by a different party; the
+register verbs, which act on the server and reach no box, take section
+2.13's own path. **First, this crate's identity and
 access**: a person authenticated to the server, holding a grant on the agent
-whose role permits the verb, per section 2.13, checked on the server before
-any ask leaves it. **Second, the box's ceiling**: the verbs admin-con's role
+whose role permits the verb, or the server itself asking an observation verb
+for its own purposes, per section 2.13, checked on the server before any ask
+leaves it. **Second, the box's ceiling**: the verbs admin-con's role
 on the box grants, which admin-con declares and the server never exceeds.
 **Third, weaver-admin's role check**: the party holding root on the box
 decides whether the caller's role permits the verb, per
@@ -2622,8 +2650,8 @@ from: weaver-web
 to: web-server-never-asks-a-verb-outside-the-ceiling
 ```
 
-**Each verb ask names the requesting person, as a claim.** admin-con passes
-it to admin for the box's operations log, per `toddwbucy/WeaverAgents#51`,
+**Each verb ask names its principal, as a claim**: the requesting person, or
+the server for its own asks, per section 2.13. admin-con passes it to admin for the box's operations log, per `toddwbucy/WeaverAgents#51`,
 labelled as the server's claim. **It is never an authorization input on the
 box**: admin cannot verify it, and it neither widens nor narrows what
 admin-con's role permits. Its use is audit, matching the box's log to
@@ -2883,8 +2911,8 @@ missing while it was relaying.
 | the tuple is admin's word and never gate-con's | perturbation: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it; let a replayed load event write the tuple, restart the server after an unload, backfill, and the row reads loaded; ask `show` before fixing the replay boundary, unload between the two, and the row reads loaded until the next `show`; let a `list` answer through one connection write another row, and that row reads a state its own connection never relayed. **Four clauses are admin-con's ordering and are owed to its act**: let a `show` answer cross the link out of order with the file events around it, unload during the `show`, and the row reads loaded until the next `show`; place the answer in the stream at receipt and unload between the snapshot and the receipt, and the row reads loaded; skip the drain, leave an unread load event behind the tail, invoke `show` after an unload, and the row reads loaded; run two verbs at once on one connection, and an older answer lands after a newer one |
 | nothing crosses the link in the clear | perturbation: offer a plaintext hello to the listener, it is refused below any roster; and review, over the listener, that no plaintext accept path exists |
 | the server never asks a verb outside the agent's ceiling | perturbation, **owed**: drop the ceiling check, ask a verb admin-con's hello did not declare, and it leaves the server; and admin-con's half, drop its typed error answer, and it reaches the invoker. **No instrument stands**: the hello carries no ceiling until the admin-con act, and the server's check lands with the IAM act |
-| a verb the person's grants do not permit is refused before an ask | perturbation, **owed**: drop the grant check, a person whose role permits `show` asks `stop`, and the ask leaves the server. Lands with the IAM act |
-| every verb asked has an audit record naming the person, and its outcome is a second record naming the first | perturbation, **owed**: write the first record after the ask instead of before, fail the store between the two, and an ask leaves with no record; update the first record with the outcome instead of appending a second, and an ask whose answer is lost reads as never answered with no trace of the rewrite; drop the refusal's record, and a refused verb leaves no trace. Lands with the IAM act |
+| a verb its principal may not ask is refused before an ask | perturbation, **owed**: drop the grant check, a person whose role permits `show` asks `stop`, and the ask leaves the server; let the server principal ask a lifecycle verb, and it leaves without a grant. Lands with the IAM act |
+| every verb asked has an audit record naming its principal, and its outcome is a second record naming the first | perturbation, **owed**: write the first record after the ask instead of before, fail the store between the two, and an ask leaves with no record; update the first record with the outcome instead of appending a second, and an ask whose answer is lost reads as never answered with no trace of the rewrite; drop the refusal's record, and a refused verb leaves no trace. Lands with the IAM act |
 | the admission's `show` is required only where the ceiling grants it | perturbation, **owed**: ask `show` at every admission, and an agent whose ceiling grants no `show` is closed `admission_incomplete` at every reconnection and never stays admitted; skip it where it is granted, and the row reads the last process's state as current. The listener asks `show` at every admission until the admin-con act, which is the drift this row names |
 | no privileged invocation exists in the crate | review, and a test, **owed**: a test that reads the source tree for an invocation of `sudo`, a root wrapper or a setuid call, shown to fail when one is planted. It would fail today on the seed's `lifecycle.rs`, which invokes `sudo weaver-admin` and is not carried forward, so the row is owed until that file leaves |
 
@@ -2899,7 +2927,7 @@ half of section 7.2; the server's half, the position held per process and
 answered in the hello, stands in `src/link/tests.rs`. The five rows of the
 role shape ruled on 2026-10-02 are owed to the acts that build them: the
 ceiling and the conditional admission `show` to the admin-con act, with the
-server's check on the ceiling joining the grant check and the audit record in
+server's check on the ceiling joining the principal check and the audit record in
 the IAM act, and the absence of a privileged invocation until the seed's
 `lifecycle.rs` leaves. The other ten rows of the link landed with the act that
 built the listener and the register, each shown to fail with its guard

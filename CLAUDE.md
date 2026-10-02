@@ -79,9 +79,10 @@ deposits first (a trace plus its state store, as a replay), then build live view
   (operator's ruling of 2026-10-02): a root process parsing arguments that arrived over a
   network is where a CVE comes from. The connectors run as dedicated service users, one per
   agent and plane, never the operator's uid. Verbs are authorized by role on the box by
-  weaver-admin (`toddwbucy/WeaverAgents#50`), and every verb passes three gates: this
-  server's IAM, the box's ceiling declared in admin-con's hello, and weaver-admin's role check
-  (Spec 2.13 and 8). Until #50 lands no verb runs from this repository.
+  weaver-admin (`toddwbucy/WeaverAgents#50`), and every verb asked of an agent passes three
+  gates: this server's IAM, the box's ceiling declared in admin-con's hello, and
+  weaver-admin's role check (Spec 2.13 and 8). The register verbs act on the server and take
+  their own path (Spec 2.13). Until #50 lands no verb runs from this repository.
 - **Do not edit WeaverAgents.** When a door contract lacks something, file an issue on
   `toddwbucy/WeaverAgents`, one issue per interface question, until the operator rules
   otherwise. Say what was measured, what is asked, and which document would have to move. The

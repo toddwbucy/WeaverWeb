@@ -41,6 +41,11 @@ pub const HELLO_SECS: u64 = 10;
 /// The frames a connection may hold queued for its writer.
 const WRITE_QUEUE: usize = 16;
 
+/// The longest cadence a hello's answer may name, a day: the server derives
+/// it from a silence bound in seconds, and a cadence past this is a fault
+/// rather than a configuration (a timer that far out would overflow).
+pub const CADENCE_MAX_SECS: u64 = 86_400;
+
 /// Read a config that carries a private key, **refusing one another party
 /// could read or swap**: opened without following a symlink (and without
 /// blocking, so a FIFO planted at the path cannot hang the start), then
@@ -102,7 +107,7 @@ pub fn read_private(path: &Path) -> anyhow::Result<String> {
 
 /// The members `weaver-web register` writes into every connector's config.
 /// A connector's own config flattens this and adds its box facts.
-#[derive(Clone, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Deserialize)]
 pub struct LinkConfig {
     /// The server's link address, dialed.
     pub server: String,
@@ -153,7 +158,34 @@ pub struct Link {
 pub enum Connect {
     Admitted(Connection),
     Refused(Refusal),
+    /// **The server's certificate is not signed by the authority this config
+    /// pins**: the server's authority was rotated (or the config names
+    /// another server). Treated as a credential refusal, since only a
+    /// re-installed config can cure it.
+    Untrusted(String),
     Failed(String),
+}
+
+/// Why an attempt failed before the hello's answer.
+enum Failure {
+    Untrusted(String),
+    Plain(String),
+}
+
+/// Whether a handshake error is the server's certificate failing under the
+/// pinned authority: unknown issuer or a bad signature.
+fn untrusted(e: &std::io::Error) -> bool {
+    e.get_ref()
+        .and_then(|inner| inner.downcast_ref::<rustls::Error>())
+        .is_some_and(|r| {
+            matches!(
+                r,
+                rustls::Error::InvalidCertificate(
+                    rustls::CertificateError::UnknownIssuer
+                        | rustls::CertificateError::BadSignature
+                )
+            )
+        })
 }
 
 impl Link {
@@ -180,41 +212,52 @@ impl Link {
         let attempt = async {
             let tcp = TcpStream::connect(&self.config.server)
                 .await
-                .map_err(|e| format!("dialing {}: {e}", self.config.server))?;
+                .map_err(|e| Failure::Plain(format!("dialing {}: {e}", self.config.server)))?;
             let _ = tcp.set_nodelay(true);
             let fd = tcp.as_raw_fd();
             let stream = self
                 .tls
                 .connect(self.server_name.clone(), tcp)
                 .await
-                .map_err(|e| format!("the handshake with {}: {e}", self.config.server))?;
+                .map_err(|e| {
+                    let why = format!("the handshake with {}: {e}", self.config.server);
+                    if untrusted(&e) {
+                        Failure::Untrusted(why)
+                    } else {
+                        Failure::Plain(why)
+                    }
+                })?;
             let (read, mut write) = tokio::io::split(stream);
             let mut reader = LineReader::new(read);
-            let mut line = serde_json::to_vec(&hello).map_err(|e| e.to_string())?;
+            let mut line = serde_json::to_vec(&hello).map_err(|e| Failure::Plain(e.to_string()))?;
             line.push(b'\n');
             write
                 .write_all(&line)
                 .await
-                .map_err(|e| format!("sending the hello: {e}"))?;
+                .map_err(|e| Failure::Plain(format!("sending the hello: {e}")))?;
             write
                 .flush()
                 .await
-                .map_err(|e| format!("sending the hello: {e}"))?;
+                .map_err(|e| Failure::Plain(format!("sending the hello: {e}")))?;
             let answer = match reader.next().await {
-                Line::Frame(line) => serde_json::from_str::<ToClient>(&line)
-                    .map_err(|e| format!("the hello's answer did not parse: {e}"))?,
+                Line::Frame(line) => serde_json::from_str::<ToClient>(&line).map_err(|e| {
+                    Failure::Plain(format!("the hello's answer did not parse: {e}"))
+                })?,
                 Line::Closed => {
-                    return Err(
+                    return Err(Failure::Plain(
                         "the server closed the connection before answering the hello".to_owned(),
-                    );
+                    ));
                 }
-                Line::Malformed(why) => return Err(format!("the server sent {why}")),
+                Line::Malformed(why) => {
+                    return Err(Failure::Plain(format!("the server sent {why}")));
+                }
             };
-            Ok((fd, reader, write, answer))
+            Ok::<_, Failure>((fd, reader, write, answer))
         };
         let (fd, reader, write, answer) = match tokio::time::timeout(bound, attempt).await {
             Ok(Ok(parts)) => parts,
-            Ok(Err(why)) => return Connect::Failed(why),
+            Ok(Err(Failure::Plain(why))) => return Connect::Failed(why),
+            Ok(Err(Failure::Untrusted(why))) => return Connect::Untrusted(why),
             Err(_) => {
                 return Connect::Failed(format!("no answer to the hello within {HELLO_SECS} s"));
             }
@@ -224,10 +267,10 @@ impl Link {
                 cadence_secs,
                 acknowledged,
             } => {
-                if cadence_secs == 0 {
-                    return Connect::Failed(
-                        "protocol fault: the hello's answer named a cadence of 0".to_owned(),
-                    );
+                if cadence_secs == 0 || cadence_secs > CADENCE_MAX_SECS {
+                    return Connect::Failed(format!(
+                        "protocol fault: the hello's answer named a cadence of {cadence_secs} s, outside 1 to {CADENCE_MAX_SECS}"
+                    ));
                 }
                 let cadence = Duration::from_secs(cadence_secs);
                 if let Err(e) = keepalive(fd, cadence) {
@@ -244,7 +287,8 @@ impl Link {
     }
 }
 
-fn to_client_name(frame: &ToClient) -> &'static str {
+/// A server frame's tag, for a log line.
+pub fn to_client_name(frame: &ToClient) -> &'static str {
     match frame {
         ToClient::HelloAnswer { .. } => "hello_answer",
         ToClient::Turn { .. } => "turn",
@@ -464,6 +508,8 @@ impl Drop for Connection {
 #[derive(Debug, Clone)]
 pub enum Ended {
     Refused(Refusal),
+    /// The server's certificate failed under the pinned authority.
+    Untrusted(String),
     Lost(String),
     Shutdown,
 }
@@ -539,15 +585,19 @@ pub struct LinkStatus {
 
 /// **The client loop: connect, serve, and on any end reconnect under the
 /// policy, never exiting on a refusal** (Spec 8). `not_live` and
-/// `roster_mismatch` mean the credential is revoked or wrong and retry
-/// only at the cap, logged loudly with what the operator must do;
-/// `malformed` and `wrong_plane` are this connector's own defect and say
-/// so; every other end retries on the normal backoff. A connector that
-/// exited on a refusal would be restarted by its supervisor into the same
-/// loop, so the loop is the connector's own. It returns only on shutdown.
+/// `roster_mismatch` mean the credential is revoked or wrong, and a server
+/// certificate the pinned authority did not sign means the server's
+/// authority was rotated: all three retry only at the cap, logged loudly
+/// with what the operator must do, and **before each retry at the cap the
+/// config is re-read through `reload`**, so a config re-installed at its
+/// path is dialed with at the next attempt and no restart is needed, which
+/// is what never exiting requires. `malformed` and `wrong_plane` are this
+/// connector's own defect and say so; every other end retries on the normal
+/// backoff. It returns only on shutdown.
 pub async fn run<S, F>(
-    link: &Link,
-    hello: impl Fn() -> FromClient,
+    mut link: Link,
+    hello: impl Fn(&LinkConfig) -> FromClient,
+    mut reload: impl FnMut() -> Option<LinkConfig>,
     backoff: Backoff,
     mut shutdown: watch::Receiver<bool>,
     status: &watch::Sender<LinkStatus>,
@@ -556,16 +606,36 @@ pub async fn run<S, F>(
     S: FnMut(Connection) -> F,
     F: Future<Output = Ended>,
 {
-    let agent = link.config().agent.clone();
-    let plane = link.config().plane;
+    const REINSTALL: &str = "Re-install this agent's config at the path this connector was started with, from `weaver-web register` or `weaver-web rotate`: it is re-read before each retry at the cap, so no restart is needed";
     let mut failures: u32 = 0;
+    let mut reload_due = false;
     loop {
         if *shutdown.borrow_and_update() {
             return;
         }
+        if std::mem::take(&mut reload_due)
+            && let Some(fresh) = reload()
+            && fresh != *link.config()
+        {
+            match Link::new(fresh) {
+                Ok(fresh) => {
+                    tracing::info!(
+                        "{} ({}): the config at its path changed; dialing with its credential",
+                        fresh.config().agent,
+                        fresh.config().plane
+                    );
+                    link = fresh;
+                }
+                Err(e) => tracing::error!(
+                    "the config at its path changed but its credential does not build ({e:#}); keeping the one in hand"
+                ),
+            }
+        }
+        let agent = link.config().agent.clone();
+        let plane = link.config().plane;
         status.send_modify(|s| s.attempts += 1);
         let attempt = tokio::select! {
-            c = link.connect(hello()) => c,
+            c = link.connect(hello(link.config())) => c,
             _ = shutdown.changed() => return,
         };
         let ended = match attempt {
@@ -591,6 +661,7 @@ pub async fn run<S, F>(
                 ended
             }
             Connect::Refused(reason) => Ended::Refused(reason),
+            Connect::Untrusted(why) => Ended::Untrusted(why),
             Connect::Failed(why) => Ended::Lost(why),
         };
         let delay = match &ended {
@@ -602,8 +673,17 @@ pub async fn run<S, F>(
                     "its hello named an agent or plane other than the credential's (the config was edited)"
                 };
                 let delay = backoff.at_cap();
+                reload_due = true;
                 tracing::error!(
-                    "{agent} ({plane}): refused {reason}: {what}. Re-install this agent's config from `weaver-web register` or `weaver-web rotate`. Retrying at the cap, in {delay:?}"
+                    "{agent} ({plane}): refused {reason}: {what}. {REINSTALL}. Retrying at the cap, in {delay:?}"
+                );
+                delay
+            }
+            Ended::Untrusted(why) => {
+                let delay = backoff.at_cap();
+                reload_due = true;
+                tracing::error!(
+                    "{agent} ({plane}): {why}: the server's certificate is not signed by the authority this config pins, so the server's authority was rotated. {REINSTALL}. Retrying at the cap, in {delay:?}"
                 );
                 delay
             }
@@ -635,6 +715,9 @@ pub async fn run<S, F>(
             };
             s.last_end = Some(match &ended {
                 Ended::Refused(r) => format!("refused {r}"),
+                Ended::Untrusted(why) => {
+                    format!("{why}: the server's authority is not the one this config pins")
+                }
                 Ended::Lost(why) => why.clone(),
                 Ended::Shutdown => "shutdown".to_owned(),
             });

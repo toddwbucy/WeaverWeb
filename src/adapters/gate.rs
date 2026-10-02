@@ -158,12 +158,15 @@ impl GateAdapter {
         // cannot grow the buffer without bound.
         use tokio::io::AsyncReadExt as _;
         let mut reader = BufReader::new(read_half.take(CLOSE_BOUND as u64 + 1));
-        let mut close_line = String::new();
+        // Read as bytes, so a line that is not UTF-8 is a close that did
+        // not parse and not a lost delivery.
+        let mut close_line = Vec::new();
         let n = reader
-            .read_line(&mut close_line)
+            .read_until(b'\n', &mut close_line)
             .await
             .map_err(GateError::DeliveryLost)?;
-        if n > CLOSE_BOUND && !close_line.ends_with('\n') {
+        let delimited = close_line.last() == Some(&b'\n');
+        if n > CLOSE_BOUND && !delimited {
             return Err(GateError::CloseTooLong(n));
         }
         if n == 0 {
@@ -172,6 +175,15 @@ impl GateAdapter {
                 "connection closed before the close line",
             )));
         }
+        // A close cut before its delimiter is not a close: the contract's
+        // framing ends every line with one.
+        if !delimited {
+            return Err(GateError::BadClose(
+                "the close line ended without its delimiter".into(),
+            ));
+        }
+        let close_line = std::str::from_utf8(&close_line)
+            .map_err(|_| GateError::BadClose("the close line is not UTF-8".into()))?;
 
         let raw: serde_json::Value = serde_json::from_str(close_line.trim_end())
             .map_err(|e| GateError::BadClose(format!("{e}")))?;

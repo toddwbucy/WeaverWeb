@@ -309,3 +309,45 @@ mod shape {
         assert!(serde_json::from_str::<FromClient>("{\"svc\":\"nonsense\"}").is_err());
     }
 }
+
+#[cfg(test)]
+mod reader {
+    use super::*;
+    use std::time::Duration;
+    use tokio::io::AsyncWriteExt;
+
+    /// **A read dropped mid-line keeps its bytes.** gate-con's relay drops
+    /// a pending read whenever a turn completes, so half a line read before
+    /// the drop must still be there for the next call: exactly one intact
+    /// frame comes out.
+    #[tokio::test]
+    async fn a_read_dropped_mid_line_keeps_its_bytes() {
+        let (mut peer, ours) = tokio::io::duplex(1024);
+        let mut reader = LineReader::new(ours);
+        peer.write_all(br#"{"svc":"tu"#).await.unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), reader.next())
+                .await
+                .is_err(),
+            "no line yet"
+        );
+        peer.write_all(br#"rn","id":7,"text":"hi"}"#).await.unwrap();
+        peer.write_all(b"\n").await.unwrap();
+        match reader.next().await {
+            Line::Frame(line) => {
+                assert_eq!(line, r#"{"svc":"turn","id":7,"text":"hi"}"#);
+                assert!(matches!(
+                    serde_json::from_str::<ToClient>(&line).unwrap(),
+                    ToClient::Turn { id: 7, .. }
+                ));
+            }
+            other => panic!("expected the whole frame, got {other:?}"),
+        }
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), reader.next())
+                .await
+                .is_err(),
+            "exactly one frame"
+        );
+    }
+}

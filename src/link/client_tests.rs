@@ -100,6 +100,11 @@ impl FakeGate {
                             Some(l)
                         }
                         "malformed" => Some(b"not json\n".to_vec()),
+                        "nonutf8" => Some(b"\xff\xfe{}\n".to_vec()),
+                        "cut" => Some(
+                            br#"{"kind":"answered","run":"run-1","turn":"turn-1","text":"cut"}"#
+                                .to_vec(),
+                        ),
                         "hangup" => None,
                         "toolong" => Some(vec![b'x'; CLOSE_BOUND + 16]),
                         "big" => Some(close_line(&"y".repeat(900 * 1024))),
@@ -144,12 +149,23 @@ struct Running {
 }
 
 impl Running {
-    fn start(cfg: GateConConfig, backoff: Backoff) -> Self {
+    fn start(cfg: GateConConfig, source: Option<PathBuf>, backoff: Backoff) -> Self {
         let (stop, shutdown) = watch::channel(false);
         let (status_tx, status) = watch::channel(LinkStatus::default());
         let task =
-            tokio::spawn(async move { gate_con::run(cfg, backoff, shutdown, &status_tx).await });
+            tokio::spawn(
+                async move { gate_con::run(cfg, source, backoff, shutdown, &status_tx).await },
+            );
         Self { stop, status, task }
+    }
+
+    /// From the installed config at its path, re-read at a capped retry.
+    fn from_file(path: &Path, backoff: Backoff) -> Self {
+        Self::start(
+            GateConConfig::load(path).unwrap(),
+            Some(path.to_owned()),
+            backoff,
+        )
     }
 
     async fn wait(&mut self, what: &str, cond: impl Fn(&LinkStatus) -> bool) -> LinkStatus {
@@ -262,7 +278,7 @@ async fn gate_con_relays_a_turn_and_each_gate_failure_as_its_typed_fault() {
     let gate = FakeGate::start();
     let out = tempfile::tempdir().unwrap();
     let (id, path) = installed(&lab, "karl", &gate.path, out.path(), None).await;
-    let mut con = Running::start(GateConConfig::load(&path).unwrap(), FAST);
+    let mut con = Running::from_file(&path, FAST);
     con.wait("admitted", |s| s.admitted).await;
 
     let close = first_turn(&lab, &id, "hello there").await.unwrap();
@@ -282,6 +298,8 @@ async fn gate_con_relays_a_turn_and_each_gate_failure_as_its_typed_fault() {
 
     for (text, kind) in [
         ("malformed", "bad_close"),
+        ("nonutf8", "bad_close"),
+        ("cut", "bad_close"),
         ("hangup", "delivery_lost"),
         ("toolong", "close_too_long"),
     ] {
@@ -321,7 +339,7 @@ async fn a_revoked_gate_con_retries_at_the_cap() {
     let gate = FakeGate::start();
     let out = tempfile::tempdir().unwrap();
     let (id, path) = installed(&lab, "karl", &gate.path, out.path(), None).await;
-    let mut con = Running::start(GateConConfig::load(&path).unwrap(), FAST);
+    let mut con = Running::from_file(&path, FAST);
     con.wait("admitted", |s| s.admitted).await;
 
     let row = lab.agent(&id).await;
@@ -369,7 +387,7 @@ async fn gate_con_reconnects_after_the_listener_restarts() {
     let gate = FakeGate::start();
     let out = tempfile::tempdir().unwrap();
     let (id, path) = installed(&lab, "karl", &gate.path, out.path(), None).await;
-    let mut con = Running::start(GateConConfig::load(&path).unwrap(), FAST);
+    let mut con = Running::from_file(&path, FAST);
     con.wait("admitted", |s| s.admitted).await;
     first_turn(&lab, &id, "answer").await.unwrap();
 
@@ -438,11 +456,11 @@ async fn a_second_gate_con_on_one_credential_is_refused_and_keeps_retrying() {
     let gate = FakeGate::start();
     let out = tempfile::tempdir().unwrap();
     let (id, path) = installed(&lab, "karl", &gate.path, out.path(), None).await;
-    let mut first = Running::start(GateConConfig::load(&path).unwrap(), FAST);
+    let mut first = Running::from_file(&path, FAST);
     first.wait("admitted", |s| s.admitted).await;
     first_turn(&lab, &id, "answer").await.unwrap();
 
-    let mut second = Running::start(GateConConfig::load(&path).unwrap(), FAST);
+    let mut second = Running::from_file(&path, FAST);
     second
         .wait("refused already_connected", |s| {
             s.last_refusal == Some(Refusal::AlreadyConnected)
@@ -469,7 +487,7 @@ async fn turns_past_the_in_flight_bound_wait_in_arrival_order() {
     let gate = FakeGate::start();
     let out = tempfile::tempdir().unwrap();
     let (id, path) = installed(&lab, "karl", &gate.path, out.path(), Some(2)).await;
-    let mut con = Running::start(GateConConfig::load(&path).unwrap(), FAST);
+    let mut con = Running::from_file(&path, FAST);
     con.wait("admitted", |s| s.admitted).await;
     first_turn(&lab, &id, "warm").await.unwrap();
     gate.seen.started.lock().unwrap().clear();
@@ -503,7 +521,7 @@ async fn shutdown_lets_a_turn_in_flight_finish() {
     let gate = FakeGate::start();
     let out = tempfile::tempdir().unwrap();
     let (id, path) = installed(&lab, "karl", &gate.path, out.path(), None).await;
-    let mut con = Running::start(GateConConfig::load(&path).unwrap(), FAST);
+    let mut con = Running::from_file(&path, FAST);
     con.wait("admitted", |s| s.admitted).await;
     first_turn(&lab, &id, "answer").await.unwrap();
 
@@ -661,12 +679,13 @@ async fn a_write_the_server_does_not_take_within_the_cadence_ends_the_connection
         link: server.link(Plane::Gate),
         gate_socket: gate.path.clone(),
         turns_in_flight: 4,
+        waiting_bound: gate_con::WAITING_BOUND,
     };
     let slow = Backoff {
         base: Duration::from_secs(30),
         cap: Duration::from_secs(60),
     };
-    let mut con = Running::start(cfg, slow);
+    let mut con = Running::start(cfg, None, slow);
     let (_reader, mut write) = server.admit(1).await;
     for id in 0..48u64 {
         let mut ask = serde_json::to_vec(&ToClient::Turn {
@@ -780,6 +799,39 @@ async fn a_config_that_is_not_trusted_is_refused_at_start() {
     );
     assert!(refused(&missing).contains("gate_socket"));
 
+    let many = dir.path().join("many-in-flight.toml");
+    write_mode(
+        &many,
+        &config_text(
+            &server,
+            Plane::Gate,
+            Some("/gate"),
+            "turns_in_flight = 65\n",
+        ),
+        0o600,
+    );
+    assert!(refused(&many).contains("outside 1 to 64"));
+
+    // A corrupted line names its number and never its bytes: the file
+    // carries a key.
+    let corrupt = dir.path().join("corrupt.toml");
+    write_mode(
+        &corrupt,
+        &config_text(
+            &server,
+            Plane::Gate,
+            Some("/gate"),
+            "SECRETMARKERnotakey = = \"MIIEvQIBADANBgkqhkiG9w0BAQEFAASC\n",
+        ),
+        0o600,
+    );
+    let why = refused(&corrupt);
+    assert!(why.contains("line "), "{why}");
+    assert!(
+        !why.contains("SECRETMARKER") && !why.contains("MIIEvQ"),
+        "{why}"
+    );
+
     let none = dir.path().join("none-in-flight.toml");
     write_mode(
         &none,
@@ -800,7 +852,7 @@ async fn heartbeats_keep_an_idle_link_up() {
     let gate = FakeGate::start();
     let out = tempfile::tempdir().unwrap();
     let (id, path) = installed(&lab, "karl", &gate.path, out.path(), None).await;
-    let mut con = Running::start(GateConConfig::load(&path).unwrap(), FAST);
+    let mut con = Running::from_file(&path, FAST);
     con.wait("admitted", |s| s.admitted).await;
     tokio::time::sleep(Duration::from_secs(6)).await;
     let status = con.status();
@@ -808,5 +860,171 @@ async fn heartbeats_keep_an_idle_link_up() {
     assert_eq!(status.admissions, 1, "one admission throughout: {status:?}");
     let close = turn(&lab.listener, &id, "still up").await.unwrap();
     assert_eq!(close.text.as_deref(), Some("still up"));
+    con.stop().await;
+}
+
+/// **A config re-installed at its path is picked up at the next retry at
+/// the cap, with no restart.** The credential is revoked and gate-con
+/// retries at the cap; the agent is rotated and its new config, with the
+/// gate socket added as an install would, is written over the file; the
+/// next capped attempt reads it and is admitted.
+#[tokio::test]
+async fn a_reinstalled_config_is_picked_up_at_the_next_capped_retry() {
+    let Some(lab) = Lab::open().await else { return };
+    let gate = FakeGate::start();
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, "karl", &gate.path, out.path(), None).await;
+    let mut con = Running::from_file(&path, FAST);
+    con.wait("admitted", |s| s.admitted).await;
+
+    let row = lab.agent(&id).await;
+    lab.store
+        .revoke_credential(&row, Plane::Gate, Some("lab"))
+        .await
+        .unwrap();
+    con.wait("refused not_live", |s| {
+        s.last_refusal == Some(Refusal::NotLive)
+    })
+    .await;
+
+    let rotated = tempfile::tempdir().unwrap();
+    let answer = super::verbs::rotate(
+        &lab.store,
+        &lab_config(&lab),
+        &lab.authority,
+        id.as_str(),
+        rotated.path(),
+        Some("lab"),
+    )
+    .await;
+    assert!(answer.ok, "{}", answer.value);
+    let fresh = PathBuf::from(answer.value["configs"][0].as_str().unwrap());
+    let content = format!(
+        "{}gate_socket = {}\n",
+        std::fs::read_to_string(&fresh).unwrap(),
+        toml::Value::String(gate.path.display().to_string())
+    );
+    let staged = path.with_extension("installing");
+    write_mode(&staged, &content, 0o600);
+    std::fs::rename(&staged, &path).unwrap();
+
+    con.wait("admitted on the re-installed credential", |s| {
+        s.admitted && s.admissions >= 2
+    })
+    .await;
+    let close = first_turn(&lab, &id, "on the new credential")
+        .await
+        .unwrap();
+    assert_eq!(close.text.as_deref(), Some("on the new credential"));
+    con.stop().await;
+}
+
+/// **An ask past the waiting bound is answered `busy` at once**, gate-con's
+/// own back-pressure: one turn in flight and two waiting, so of five held
+/// asks three answer and two are refused `busy` without reaching the gate.
+#[tokio::test]
+async fn asks_past_the_waiting_bound_are_answered_busy() {
+    let Some(lab) = Lab::open().await else { return };
+    let gate = FakeGate::start();
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, "karl", &gate.path, out.path(), Some(1)).await;
+    let mut cfg = GateConConfig::load(&path).unwrap();
+    cfg.waiting_bound = 2;
+    let mut con = Running::start(cfg, Some(path.clone()), FAST);
+    con.wait("admitted", |s| s.admitted).await;
+    first_turn(&lab, &id, "warm").await.unwrap();
+    gate.seen.started.lock().unwrap().clear();
+
+    let mut asks = Vec::new();
+    for i in 0..5 {
+        let text = format!("hold:400:{i}");
+        let listener = lab.listener.clone();
+        let asked = id.clone();
+        asks.push(tokio::spawn(
+            async move { turn(&listener, &asked, &text).await },
+        ));
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    }
+    let mut kinds = Vec::new();
+    for ask in asks {
+        kinds.push(match ask.await.unwrap() {
+            Ok(_) => "answered".to_owned(),
+            Err(TurnError::Gate(f)) => f.kind,
+            Err(e) => panic!("{e}"),
+        });
+    }
+    assert_eq!(
+        kinds,
+        ["answered", "answered", "answered", "busy", "busy"],
+        "one in flight, two waiting, the rest busy"
+    );
+    assert_eq!(gate.seen.started.lock().unwrap().len(), 3);
+    con.stop().await;
+}
+
+/// **A hello's answer naming a cadence past a day is a protocol fault**,
+/// not a timer that overflows the heartbeat.
+#[tokio::test]
+async fn a_hello_answer_naming_an_absurd_cadence_is_a_protocol_fault() {
+    let server = FakeServer::start().await;
+    let link = Link::new(server.link(Plane::Gate)).unwrap();
+    let (_, attempt) = tokio::join!(
+        server.admit(super::client::CADENCE_MAX_SECS + 1),
+        link.connect(FromClient::Hello {
+            agent: "karl".into(),
+            plane: Plane::Gate,
+            tail: None,
+        })
+    );
+    match attempt {
+        Connect::Failed(why) => assert!(why.contains("cadence"), "{why}"),
+        Connect::Admitted(_) => panic!("admitted on an absurd cadence"),
+        _ => panic!("expected a protocol fault"),
+    }
+}
+
+/// **A server whose certificate the pinned authority did not sign is
+/// retried at the cap**, as a credential refusal is: the server's authority
+/// was rotated, and only a re-installed config can cure it.
+#[tokio::test]
+async fn a_server_of_another_authority_is_retried_at_the_cap() {
+    let server = FakeServer::start().await;
+    let other = FakeServer::start().await;
+    let gate = FakeGate::start();
+    // Pinned to the other authority, dialing this server.
+    let mut link = other.link(Plane::Gate);
+    link.server = server.listener.local_addr().unwrap().to_string();
+    let acceptor = tokio_rustls::TlsAcceptor::from(server.authority.server_tls().unwrap());
+    let FakeServer { listener, .. } = &server;
+    let accept = async {
+        loop {
+            let Ok((tcp, _)) = listener.accept().await else {
+                return;
+            };
+            let _ = acceptor.accept(tcp).await;
+        }
+    };
+    let cfg = GateConConfig {
+        link,
+        gate_socket: gate.path.clone(),
+        turns_in_flight: 4,
+        waiting_bound: gate_con::WAITING_BOUND,
+    };
+    let mut con = Running::start(cfg, None, FAST);
+    let watched = async {
+        let status = con.wait("a capped retry", |s| s.next_delay.is_some()).await;
+        let why = status.last_end.unwrap();
+        assert!(why.contains("authority"), "{why}");
+        assert!(
+            status.next_delay.unwrap() >= FAST.cap,
+            "{:?}",
+            status.next_delay
+        );
+        assert_eq!(status.admissions, 0);
+    };
+    tokio::select! {
+        _ = accept => panic!("the accept loop ended"),
+        _ = watched => {}
+    }
     con.stop().await;
 }

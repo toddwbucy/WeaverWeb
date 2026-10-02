@@ -32,11 +32,15 @@ use tokio::task::JoinSet;
 /// Turns in flight at once when the config names no number.
 pub const DEFAULT_TURNS_IN_FLIGHT: usize = 4;
 
+/// The most turns in flight a config may name, so the in-flight set is
+/// bounded whatever the config says.
+pub const MAX_TURNS_IN_FLIGHT: usize = 64;
+
 /// **Asks waiting behind the in-flight bound are bounded too.** Each holds a
 /// request no longer than the gate's line bound (an ask past it is answered
-/// at once), so the queue costs at most this many lines. An ask arriving to
-/// a full queue is answered at once with the fault `busy`, gate-con's own
-/// kind rather than the gate's.
+/// at once), so the queue costs at most this many lines. **An ask arriving
+/// to a full queue is answered at once with the fault `busy`**, gate-con's
+/// own back-pressure and not one of the gate's kinds, as Spec 8 names it.
 pub const WAITING_BOUND: usize = 64;
 
 /// How long shutdown lets turns in flight finish before aborting them.
@@ -53,27 +57,48 @@ pub struct GateConConfig {
     /// Turns relayed at once; further asks wait in arrival order.
     #[serde(default = "default_turns_in_flight")]
     pub turns_in_flight: usize,
+    /// Asks that may wait behind the in-flight bound. Not a config member:
+    /// `WAITING_BOUND`, settable in code so a test can reach it.
+    #[serde(skip, default = "default_waiting_bound")]
+    pub waiting_bound: usize,
 }
 
 fn default_turns_in_flight() -> usize {
     DEFAULT_TURNS_IN_FLIGHT
 }
 
+fn default_waiting_bound() -> usize {
+    WAITING_BOUND
+}
+
 impl GateConConfig {
     /// Read the config under the trust rule of `client::read_private`, and
     /// refuse one minted for the admin plane, one missing a member, or one
-    /// naming no turn in flight.
+    /// naming no turn in flight or more than `MAX_TURNS_IN_FLIGHT`. **A
+    /// parse error names its line and never prints it**: the file carries a
+    /// key, and a corrupted PEM line is the key's own bytes.
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let content = client::read_private(path)?;
-        let cfg: Self =
-            toml::from_str(&content).map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
+        let cfg: Self = toml::from_str(&content).map_err(|e| {
+            let line = e.span().map(|span| {
+                content[..span.start.min(content.len())]
+                    .matches('\n')
+                    .count()
+                    + 1
+            });
+            match line {
+                Some(line) => anyhow::anyhow!("{}: line {line}: {}", path.display(), e.message()),
+                None => anyhow::anyhow!("{}: {}", path.display(), e.message()),
+            }
+        })?;
         cfg.link
             .expect_plane(Plane::Gate)
             .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
-        if cfg.turns_in_flight == 0 {
+        if cfg.turns_in_flight == 0 || cfg.turns_in_flight > MAX_TURNS_IN_FLIGHT {
             anyhow::bail!(
-                "{}: turns_in_flight is 0, and at least one turn must be relayed",
-                path.display()
+                "{}: turns_in_flight is {}, outside 1 to {MAX_TURNS_IN_FLIGHT}",
+                path.display(),
+                cfg.turns_in_flight
             );
         }
         Ok(cfg)
@@ -104,29 +129,52 @@ fn answer(id: u64, relayed: Result<gate::GateClose, GateError>) -> FromClient {
 }
 
 /// Run gate-con until `shutdown` is set: the client loop of
-/// `client::run` with this plane's serve.
+/// `client::run` with this plane's serve. **`source` is the config's path**,
+/// re-read before each retry at the cap so a re-installed credential is
+/// picked up without a restart; its link members are what change at a
+/// re-install, and `gate_socket` and the bounds stay as started.
 pub async fn run(
     cfg: GateConConfig,
+    source: Option<PathBuf>,
     backoff: Backoff,
     shutdown: watch::Receiver<bool>,
     status: &watch::Sender<LinkStatus>,
 ) -> anyhow::Result<()> {
     let link = Link::new(cfg.link.clone())?;
     let adapter = GateAdapter::new(&cfg.gate_socket);
-    let agent = cfg.link.agent.clone();
     let bound = cfg.turns_in_flight;
+    let waiting_bound = cfg.waiting_bound;
     let serve_shutdown = shutdown.clone();
+    let reload = || {
+        let path = source.as_ref()?;
+        match GateConConfig::load(path) {
+            Ok(fresh) => Some(fresh.link),
+            Err(e) => {
+                tracing::warn!("re-reading the config: {e:#}; keeping the credential in hand");
+                None
+            }
+        }
+    };
     client::run(
-        &link,
-        || FromClient::Hello {
-            agent: agent.clone(),
+        link,
+        |link| FromClient::Hello {
+            agent: link.agent.clone(),
             plane: Plane::Gate,
             tail: None,
         },
+        reload,
         backoff,
         shutdown,
         status,
-        |conn| serve(conn, adapter.clone(), bound, serve_shutdown.clone()),
+        |conn| {
+            serve(
+                conn,
+                adapter.clone(),
+                bound,
+                waiting_bound,
+                serve_shutdown.clone(),
+            )
+        },
     )
     .await;
     Ok(())
@@ -138,6 +186,7 @@ async fn serve(
     mut conn: Connection,
     adapter: GateAdapter,
     bound: usize,
+    waiting_bound: usize,
     mut shutdown: watch::Receiver<bool>,
 ) -> Ended {
     let mut in_flight: JoinSet<FromClient> = JoinSet::new();
@@ -146,6 +195,7 @@ async fn serve(
         &mut conn,
         &adapter,
         bound,
+        waiting_bound,
         &mut shutdown,
         &mut in_flight,
         &mut waiting,
@@ -184,6 +234,7 @@ async fn relay(
     conn: &mut Connection,
     adapter: &GateAdapter,
     bound: usize,
+    waiting_bound: usize,
     shutdown: &mut watch::Receiver<bool>,
     in_flight: &mut JoinSet<FromClient>,
     waiting: &mut VecDeque<(u64, String)>,
@@ -223,7 +274,7 @@ async fn relay(
                         if let Err(why) = conn.send(answer(id, Err(e))).await {
                             return Ended::Lost(why);
                         }
-                    } else if waiting.len() >= WAITING_BOUND {
+                    } else if waiting.len() >= waiting_bound {
                         let busy = FromClient::Turn {
                             id,
                             close: None,
@@ -244,12 +295,7 @@ async fn relay(
                     }
                 }
                 Incoming::Frame(other) => {
-                    let what = match other {
-                        ToClient::HelloAnswer { .. } => "hello_answer",
-                        ToClient::Verb { .. } => "verb",
-                        ToClient::Ack { .. } => "ack",
-                        ToClient::Turn { .. } | ToClient::Refusal { .. } => "turn",
-                    };
+                    let what = client::to_client_name(&other);
                     tracing::error!("protocol fault: the server sent a {what} frame on the gate plane");
                     return Ended::Lost(format!(
                         "protocol fault: a {what} frame on the gate plane"

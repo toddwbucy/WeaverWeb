@@ -46,7 +46,13 @@ async fn main() -> anyhow::Result<()> {
         let mut term =
             tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).ok();
         tokio::select! {
-            _ = tokio::signal::ctrl_c() => {}
+            // A ctrl-c handler that cannot be installed never fires, rather
+            // than stopping gate-con at start into a supervisor's loop.
+            _ = async {
+                if tokio::signal::ctrl_c().await.is_err() {
+                    std::future::pending::<()>().await;
+                }
+            } => {}
             _ = async {
                 match term.as_mut() {
                     Some(t) => { t.recv().await; }
@@ -58,5 +64,12 @@ async fn main() -> anyhow::Result<()> {
         let _ = stop.send(true);
     });
     let (status, _) = watch::channel(LinkStatus::default());
-    gate_con::run(cfg, Backoff::default(), shutdown, &status).await
+    gate_con::run(
+        cfg,
+        Some(args.config),
+        Backoff::default(),
+        shutdown,
+        &status,
+    )
+    .await
 }

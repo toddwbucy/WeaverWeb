@@ -21,7 +21,7 @@ documents are `docs/project/HANDOFF-2026-09-30-weaver-web-session.md` and, besid
 second handoff `docs/project/HANDOFF-2026-09-30-the-workspace-turns-to-weaver-web.md`. The
 connectors' brief is `docs/project/brief-2026-10-01-the-link-the-registry-and-the-two-connectors.md`.
 Issue #6, the role-based identity epic, records the operator's rulings of 2026-10-02 on
-privilege and identity and the ordered work after them (admin-con act 5, IAM act 6); the
+privilege and identity and the ordered work after them (admin-con act 6, IAM act 7); the
 brief that wrote them into the Spec is `docs/project/brief-2026-10-02-act-4-the-role-shape.md`.
 Read them before structural work.
 
@@ -43,7 +43,7 @@ Weaver-Web has three inputs and no others:
 - **gate (the data plane)** carries the work entering an agent and the answers leaving it.
   Contract: `weaver-gate-world-contract`. Reached only through **gate-con**.
 - **admin (the management plane)** carries the lifecycle verbs (`load`, `unload`, `validate`,
-  `stop`, `show`, `list`, and later quiesce / resume) and the agent's trace, which leaves the
+  `stop`, `show`, and later quiesce / resume) and the agent's trace, which leaves the
   agent through the sink admin opens at load. Contract: `weaver-admin-operator-contract`.
   Reached only through **admin-con**. There is no admin socket; the verbs are invocations
   and the sink is the one crossing.
@@ -58,7 +58,7 @@ file. gate-con is the operator's name for what the whiteboard called web-con. Bo
 **clients** of this server's listener over a mutually authenticated link, and the server
 keeps a register of agents with two credentials per agent. The design is Spec section 8 and
 the brief named above. The seed holds the start of each (`src/adapters/gate.rs`,
-`src/lifecycle.rs`); neither binary exists yet. The three contracts live in WeaverAgents
+`src/lifecycle.rs`); neither binary exists yet. The three contracts live in WeaverAgent
 under `docs/crates/contracts/`, not here, and are the pages the connectors build against.
 
 The first concrete consumer is the **HeroBench view**, where a researcher watches and
@@ -79,13 +79,13 @@ deposits first (a trace plus its state store, as a replay), then build live view
   (operator's ruling of 2026-10-02): a root process parsing arguments that arrived over a
   network is where a CVE comes from. The connectors run as dedicated service users, one per
   agent and plane, never the operator's uid. Verbs are authorized by role on the box by
-  weaver-admin (`toddwbucy/WeaverAgents#50`), and every verb asked of an agent passes three
+  weaver-admin (`toddwbucy/WeaverAgent#50`), and every verb asked of an agent passes three
   gates: this server's IAM, the box's ceiling declared in admin-con's hello, and
   weaver-admin's role check (Spec 2.13 and 8). A turn needs a grant too and then passes the
   gate's own admission. The register verbs act on the server and take their own path (Spec
   2.13). Until #50 lands no verb runs from this repository.
-- **Do not edit WeaverAgents.** When a door contract lacks something, file an issue on
-  `toddwbucy/WeaverAgents`, one issue per interface question, until the operator rules
+- **Do not edit WeaverAgent.** When a door contract lacks something, file an issue on
+  `toddwbucy/WeaverAgent`, one issue per interface question, until the operator rules
   otherwise. Say what was measured, what is asked, and which document would have to move. The
   olympus Planning seat answers there.
 - Do not link the agent's interior crates (`weaver-harness`, `weaver-spu`, `weaver-admin`,
@@ -202,11 +202,11 @@ connectors build against (`frames.rs`). The seed's one dialed link, `wire.rs` an
 `src/bin/weaver-web-connector.rs`, left with it. **gate-con landed on 2026-10-01** (act 3):
 `src/bin/gate-con.rs` over `link::gate_con`, relaying through `adapters/gate.rs`, on the
 shared client half `link::client` (dial, verify, hello, heartbeat, bounded reads and writes,
-the reconnect policy of Spec 8). **Becomes admin-con, act 5:** `traceview.rs`'s tailer half,
+the reconnect policy of Spec 8). **Becomes admin-con, act 6:** `traceview.rs`'s tailer half,
 which tails the trace file tracking its identity, is the seed of admin-con's trace tailer
 (operator's ruling of 2026-10-01: the agent's sink is a file, not a socket); its server half,
 the rings, is the listener's live window. The verb plane is built against an abstract invoker
-that carries no privilege code, and the real invoker waits on WeaverAgents #50.
+that carries no privilege code, and the real invoker waits on WeaverAgent #50.
 `lifecycle.rs`, which runs the verbs through sudo and infers load state from the socket's
 existence, is **not** carried forward. Build admin-con as its own binary on `link::client`,
 adding only its plane, as gate-con does.

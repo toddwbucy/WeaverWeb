@@ -21,9 +21,9 @@ decision two of #439.
 
 **Date filed:** 2026-09-04
 **Document ID:** `weaver-web-PRD`
-**Parent:** the WeaverTools suite, per `weaver-agents-PRD` section 0. **The apex is
-in another repository since 2026-09-26**: `weaver-agents-PRD` lives in
-`toddwbucy/WeaverAgents` since the suite split of 2026-09-30, and before that in
+**Parent:** the WeaverTools suite, per `weaver-agent-PRD` section 0. **The apex is
+in another repository since 2026-09-26**: `weaver-agent-PRD` lives in
+`toddwbucy/WeaverAgent` since the suite split of 2026-09-30, and before that in
 the monorepo, now `toddwbucy/WeaverTools-old2`, whose commit `112bc65` is the tree
 this crate and its documents left on the operator's ruling of 2026-09-26, so the
 parent edge crosses a repository and the graph that holds both ends is that

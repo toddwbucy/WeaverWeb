@@ -126,6 +126,7 @@ cargo run -- --config <config.toml> register <box> <name> --out <dir>   # two cl
 cargo run -- --config <config.toml> revoke <ag-id|box/name> <gate|admin>
 cargo run -- --config <config.toml> rotate <ag-id|box/name> --out <dir>
 cargo run -- --config <config.toml> agents                          # the register, presence derived
+cargo run --bin gate-con -- --config <gate-con.toml>                # the data plane's connector, on the agent's box
 ```
 
 - **DB-backed unit tests** (`store::read`, `store::plan`, `surfaces::record`, `link::tests`)
@@ -146,6 +147,13 @@ cargo run -- --config <config.toml> agents                          # the regist
   refuses to start without an authority at `authority_dir`; `authority init` makes one. Keep
   configs, authorities and client configs out of the repository. Logging uses `RUST_LOG`,
   which defaults to `weaver_web=info,sqlx=warn`.
+- **gate-con** reads the file `register` wrote (`server`, `server_name`, `agent`, `plane`,
+  `server_certificate`, `certificate`, `key`) plus `gate_socket`, the agent's gate socket, a
+  required box fact with no default, and optional `turns_in_flight` (4). `--config` has no
+  default either. It refuses to start on a config that is not a regular file of its own uid at
+  0600 or tighter, opened without following a symlink, or one minted for the admin plane. Its
+  tests (`link::client_tests`) run it in-process against a fake gate and the real listener;
+  no test reaches an agent.
 - **Register verbs** answer one JSON object on stdout with the exit status agreeing, the shape
   `weaver-admin` uses. `revoke` closes a live connection in a running server through the
   store's notification channel; nothing else links the verb's process to the server's.
@@ -179,14 +187,15 @@ and the register verbs (`authority.rs`, `verbs.rs`), the register of agents at t
 (`register.rs`, migration `0010`), the mutual-TLS listener with its admission, heartbeat,
 startup reset, epoch and observation landing (`listener.rs`), and the frame vocabulary the
 connectors build against (`frames.rs`). The seed's one dialed link, `wire.rs` and
-`src/bin/weaver-web-connector.rs`, left with it. **Becomes the connectors, later acts:**
-`adapters/gate.rs` (dials the gate socket per turn, the section 5 refusals typed) is the seed
-of gate-con. `lifecycle.rs` (`sudo weaver-admin`, three verbs, load state still inferred from
+`src/bin/weaver-web-connector.rs`, left with it. **gate-con landed on 2026-10-01** (act 3):
+`src/bin/gate-con.rs` over `link::gate_con`, relaying through `adapters/gate.rs`, on the
+shared client half `link::client` (dial, verify, hello, heartbeat, bounded reads and writes,
+the reconnect policy of Spec 8). **Becomes admin-con, act 4:** `lifecycle.rs` (`sudo weaver-admin`, three verbs, load state still inferred from
 the socket's existence) is the seed of admin-con, which gains the other three verbs and the
 trace tailer. `traceview.rs`'s tailer half, which tails the trace file tracking its identity,
 is the seed of that tailer (operator's ruling of 2026-10-01: the agent's sink is a file, not a
-socket); its server half, the rings, is the listener's live window. Build the connectors as
-their own binaries against `link::frames`.
+socket); its server half, the rings, is the listener's live window. Build admin-con as its
+own binary on `link::client`, adding only its plane, as gate-con does.
 
 **Still leaves: `web/`**, the legacy `/admin` routes, already answering 503, and
 `src/registry.rs`, the legacy participant model (not the register of agents). `deploy/` was

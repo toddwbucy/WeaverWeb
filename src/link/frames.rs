@@ -12,6 +12,82 @@ use serde::{Deserialize, Serialize};
 /// below any frame, the gate contract's own rule for its lines.
 pub const LINE_BOUND: usize = 4 * 1024 * 1024;
 
+/// **The longest send cadence the link carries, a day**, held by both ends
+/// from this one constant: the server refuses a silence bound above four
+/// times it (the cadence being the bound divided by four, Spec 8), and a
+/// connector refuses a hello's answer naming more, a fault rather than a
+/// configuration (a timer that far out would overflow).
+pub const CADENCE_MAX_SECS: u64 = 86_400;
+
+/// One read of a frame line.
+#[derive(Debug)]
+pub enum Line {
+    Frame(String),
+    /// The peer closed, or the stream failed.
+    Closed,
+    /// Over the bound with no delimiter found, or not UTF-8.
+    Malformed(&'static str),
+}
+
+/// **The link's one line reader, for both halves**, so the framing rule
+/// has one copy: the server's listener and the connectors' client read
+/// through it.
+///
+/// **The bound is held per read, not after buffering**: what the
+/// underlying buffer holds is appended and checked chunk by chunk, so a
+/// peer streaming bytes with no delimiter costs at most the bound and one
+/// buffer before the line is refused. **And it is cancel-safe**: the only
+/// await is the buffer's fill, and a chunk is appended and consumed with
+/// no await between, so a read dropped inside a `select!` leaves the
+/// partial line in place for the next call rather than losing its bytes.
+pub struct LineReader<R> {
+    reader: tokio::io::BufReader<R>,
+    buf: Vec<u8>,
+}
+
+impl<R: tokio::io::AsyncRead + Unpin> LineReader<R> {
+    pub fn new(read: R) -> Self {
+        Self {
+            reader: tokio::io::BufReader::new(read),
+            buf: Vec::new(),
+        }
+    }
+
+    /// The next line, under the bound.
+    pub async fn next(&mut self) -> Line {
+        use tokio::io::AsyncBufReadExt;
+        loop {
+            let chunk = match self.reader.fill_buf().await {
+                Ok(chunk) => chunk,
+                Err(_) => return Line::Closed,
+            };
+            if chunk.is_empty() {
+                return Line::Closed;
+            }
+            if let Some(i) = chunk.iter().position(|&b| b == b'\n') {
+                self.buf.extend_from_slice(&chunk[..i]);
+                self.reader.consume(i + 1);
+                break;
+            }
+            let n = chunk.len();
+            self.buf.extend_from_slice(chunk);
+            self.reader.consume(n);
+            if self.buf.len() > LINE_BOUND {
+                self.buf.clear();
+                return Line::Malformed("a line passed the bound with no delimiter");
+            }
+        }
+        let line = std::mem::take(&mut self.buf);
+        if line.len() > LINE_BOUND {
+            return Line::Malformed("a line passed the bound");
+        }
+        match String::from_utf8(line) {
+            Ok(s) => Line::Frame(s.trim_end().to_owned()),
+            Err(_) => Line::Malformed("a line is not UTF-8"),
+        }
+    }
+}
+
 /// The plane a credential is bound to (Spec 8): a gate-con credential
 /// cannot speak as admin-con.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -238,5 +314,47 @@ mod shape {
         assert!(serde_json::from_str::<FromClient>("{\"svc\":\"heartbeat\"}").is_ok());
         assert!(serde_json::from_str::<FromClient>("{\"svc\":\"caught_up\"}").is_ok());
         assert!(serde_json::from_str::<FromClient>("{\"svc\":\"nonsense\"}").is_err());
+    }
+}
+
+#[cfg(test)]
+mod reader {
+    use super::*;
+    use std::time::Duration;
+    use tokio::io::AsyncWriteExt;
+
+    /// **A read dropped mid-line keeps its bytes.** gate-con's relay drops
+    /// a pending read whenever a turn completes, so half a line read before
+    /// the drop must still be there for the next call: exactly one intact
+    /// frame comes out.
+    #[tokio::test]
+    async fn a_read_dropped_mid_line_keeps_its_bytes() {
+        let (mut peer, ours) = tokio::io::duplex(1024);
+        let mut reader = LineReader::new(ours);
+        peer.write_all(br#"{"svc":"tu"#).await.unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), reader.next())
+                .await
+                .is_err(),
+            "no line yet"
+        );
+        peer.write_all(br#"rn","id":7,"text":"hi"}"#).await.unwrap();
+        peer.write_all(b"\n").await.unwrap();
+        match reader.next().await {
+            Line::Frame(line) => {
+                assert_eq!(line, r#"{"svc":"turn","id":7,"text":"hi"}"#);
+                assert!(matches!(
+                    serde_json::from_str::<ToClient>(&line).unwrap(),
+                    ToClient::Turn { id: 7, .. }
+                ));
+            }
+            other => panic!("expected the whole frame, got {other:?}"),
+        }
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), reader.next())
+                .await
+                .is_err(),
+            "exactly one frame"
+        );
     }
 }

@@ -2477,7 +2477,9 @@ bound is the one tunable, a member of the server's config and set nowhere
 else**: the server tells each connector its send cadence in the answer to
 its hello, and the cadence is the bound divided by four, so an operator who
 changes the bound changes both and a client can never be configured to send
-slower than the server tolerates. **This document elects the bound at sixty
+slower than the server tolerates. The server refuses a bound under four
+seconds or over four days, so the cadence lies between one second and the
+one day a connector accepts, both ends holding the ceiling as one constant. **This document elects the bound at sixty
 seconds, as the planner's election of 2026-10-01 and not the operator's
 ruling**, which puts the cadence at fifteen. The reason: a turn through the
 gate takes seconds to minutes and never rides the heartbeat's path, so the
@@ -2485,6 +2487,38 @@ bound answers only how long a dropped connector shows as present on every
 surface. A minute is short enough that a surface is not wrong for long and
 long enough that a link's brief loss does not churn the row. The operator
 confirms or resets it in review.
+
+**A connector reconnects on its own and never exits on a refusal**, the
+client side of the rules above, elected by the act that built gate-con on
+2026-10-01 and not a ruling. After any end of its connection, a loss or a
+refusal, a connector closes every exchange that connection carried, since
+none of them can answer on it anymore, and dials again after a backoff
+that starts at one second and doubles per failure, with jitter, capped at
+sixty seconds; a connection that stayed admitted for one cadence resets
+the count, so a server restart is met at once and a server that drops
+every connection at admission is backed off. **`not_live` and
+`roster_mismatch` mean the credential is revoked or wrong, and a server
+certificate the pinned authority did not sign means the server's authority
+was rotated; all three are retried only at the cap and never faster**, each
+logged with what the operator must do, which is to re-install the agent's
+config from a registration or a rotation. **The connector re-reads its
+config before each retry at the cap**, under the same trust rule as at
+start, so a config re-installed at its path is dialed with at the next
+attempt and no restart is needed; without the re-read the guidance could
+never take effect. Every other refusal retries on the normal backoff,
+`malformed` and `wrong_plane` logged as the connector's own defect. **It
+does not exit**, because a supervisor would restart it into the same loop;
+it ends only on its own shutdown, which lets exchanges in flight finish
+within a short grace before closing the link. **gate-con's turns in flight
+are bounded, and so are the asks waiting behind them**; an ask arriving to
+a full queue is answered at once with the fault `busy`, gate-con's own
+back-pressure and not one of the gate's kinds of section 7.1, so a surface
+renders it as the connector's load and never as the agent's word. **A dead server is noticed within a bound and
+not only by its close**: every write the connector makes, its heartbeats
+included, is held to the cadence, and TCP keepalive with a user timeout of
+two cadences ends a connection whose peer stopped acknowledging. A
+connection that is merely quiet is not dead: the server sends nothing
+unasked on the gate plane, and its kernel still answers.
 
 **At listener start the server sets every plane recorded as connected to
 disconnected, with the start's date, before it accepts a connection.** A

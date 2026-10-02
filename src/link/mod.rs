@@ -2,8 +2,8 @@
 //! authority, the register verbs, the mutual-TLS listener with its
 //! admission, heartbeat, startup reset and epoch, presence, the landing of
 //! observations on the register of agents (section 2.12), and the live
-//! window. The client half, which gate-con and admin-con run, is the next
-//! acts' and builds against `frames`.
+//! window. The client half is `client`, which gate-con runs (`gate_con`)
+//! and admin-con will, both building against `frames`.
 //!
 //! **The exclusion the Spec names is the store's own row lock.** Section 8
 //! serializes admission, teardown and revocation per credential. The
@@ -19,11 +19,15 @@
 //! that lock, which is what makes it agree with the row.
 
 pub mod authority;
+pub mod client;
 pub mod frames;
+pub mod gate_con;
 pub mod listener;
 pub mod register;
 pub mod verbs;
 
+#[cfg(test)]
+mod client_tests;
 #[cfg(test)]
 mod tests;
 

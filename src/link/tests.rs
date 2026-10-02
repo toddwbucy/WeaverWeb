@@ -25,15 +25,15 @@ use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 use tokio_rustls::client::TlsStream;
 
-const SILENCE: Duration = Duration::from_secs(60);
-const SOON: Duration = Duration::from_secs(5);
+pub(super) const SILENCE: Duration = Duration::from_secs(60);
+pub(super) const SOON: Duration = Duration::from_secs(5);
 
-fn serial() -> &'static tokio::sync::Mutex<()> {
+pub(super) fn serial() -> &'static tokio::sync::Mutex<()> {
     static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
-async fn store() -> Option<Store> {
+pub(super) async fn store() -> Option<Store> {
     let Ok(url) = std::env::var("DATABASE_URL") else {
         eprintln!("skipped: DATABASE_URL is not set, and the register is tested against a schema");
         return None;
@@ -104,12 +104,12 @@ fn position_in(generation: &str, offset: u64) -> Position {
 }
 
 /// A registered agent with its two minted credentials.
-struct Registered {
-    id: AgentId,
-    name: String,
-    r#box: String,
-    gate: ClientCredential,
-    admin: ClientCredential,
+pub(super) struct Registered {
+    pub(super) id: AgentId,
+    pub(super) name: String,
+    pub(super) r#box: String,
+    pub(super) gate: ClientCredential,
+    pub(super) admin: ClientCredential,
 }
 
 impl Registered {
@@ -205,13 +205,13 @@ impl Fake {
     }
 }
 
-struct Lab {
-    _dir: tempfile::TempDir,
-    authority: Authority,
-    store: Store,
-    listener: Listener,
-    silence: Duration,
-    _serial: tokio::sync::MutexGuard<'static, ()>,
+pub(super) struct Lab {
+    pub(super) _dir: tempfile::TempDir,
+    pub(super) authority: Authority,
+    pub(super) store: Store,
+    pub(super) listener: Listener,
+    pub(super) silence: Duration,
+    pub(super) _serial: tokio::sync::MutexGuard<'static, ()>,
 }
 
 impl Drop for Lab {
@@ -223,11 +223,11 @@ impl Drop for Lab {
 }
 
 impl Lab {
-    async fn open() -> Option<Self> {
+    pub(super) async fn open() -> Option<Self> {
         Self::open_with(SILENCE).await
     }
 
-    async fn open_with(silence: Duration) -> Option<Self> {
+    pub(super) async fn open_with(silence: Duration) -> Option<Self> {
         let serial = serial().lock().await;
         let store = store().await?;
         let dir = tempfile::tempdir().unwrap();
@@ -285,12 +285,17 @@ impl Lab {
         }
     }
 
-    async fn agent(&self, id: &AgentId) -> Agent {
+    pub(super) async fn agent(&self, id: &AgentId) -> Agent {
         self.store.agent(id).await.unwrap().expect("the row stands")
     }
 
     /// Poll the row until a condition holds, or fail with the row.
-    async fn wait_for(&self, id: &AgentId, what: &str, cond: impl Fn(&Agent) -> bool) -> Agent {
+    pub(super) async fn wait_for(
+        &self,
+        id: &AgentId,
+        what: &str,
+        cond: impl Fn(&Agent) -> bool,
+    ) -> Agent {
         let until = tokio::time::Instant::now() + SOON;
         loop {
             let agent = self.agent(id).await;
@@ -1110,6 +1115,7 @@ async fn asks_are_routed_to_the_plane_that_holds_them() {
                     run: Some("run-1".into()),
                     turn: Some("t-1".into()),
                     text: Some("noon".into()),
+                    finish: None,
                     raw: json!({"kind": "answered"}),
                 }),
                 error: None,
@@ -1580,7 +1586,7 @@ async fn a_second_listener_against_one_store_is_refused() {
     second.stop().await;
 }
 
-fn lab_config(lab: &Lab) -> crate::config::ServerConfig {
+pub(super) fn lab_config(lab: &Lab) -> crate::config::ServerConfig {
     crate::config::ServerConfig {
         listen: "127.0.0.1:0".into(),
         link_listen: lab.listener.address().to_string(),

@@ -38,6 +38,7 @@ use crate::store::{AgentId, Store};
 use crate::traceview::{TraceEvent, TraceViews};
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
+use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -160,6 +161,8 @@ struct Inner {
     /// the ack's dependence on the write can be watched.
     #[cfg(test)]
     fault_next_land: std::sync::atomic::AtomicBool,
+    #[cfg(test)]
+    stall_next_land: std::sync::atomic::AtomicBool,
 }
 
 /// The server's handle on the link: the asks it routes and the window it
@@ -262,6 +265,8 @@ impl Listener {
                 fault_next_teardown: std::sync::atomic::AtomicBool::new(false),
                 #[cfg(test)]
                 fault_next_land: std::sync::atomic::AtomicBool::new(false),
+                #[cfg(test)]
+                stall_next_land: std::sync::atomic::AtomicBool::new(false),
             }),
         };
         tracing::info!("link listening on {address} under epoch {epoch}");
@@ -459,6 +464,12 @@ impl Listener {
     #[cfg(test)]
     pub fn fail_next_land(&self) {
         self.inner.fault_next_land.store(true, Ordering::Relaxed);
+    }
+
+    /// Make the next store write of an observation never complete, once.
+    #[cfg(test)]
+    pub fn stall_next_land(&self) {
+        self.inner.stall_next_land.store(true, Ordering::Relaxed);
     }
 
     /// Make the next teardown's store write fail, once.
@@ -852,6 +863,36 @@ async fn enqueue(
     }
 }
 
+/// How a bounded store landing ended.
+enum Bounded<T> {
+    Done(T),
+    TimedOut,
+    Closed,
+}
+
+/// **A store landing is awaited against the bound and the close signal,
+/// as reads and enqueues are.** A stalled store would otherwise hold the
+/// task past the silence timer and the close signal, so a revocation could
+/// not finish closing the connection until the store answered. A landing
+/// that does not complete within the bound is treated as not landed: the
+/// connection closes as `store_unavailable` with no ack, and the replay
+/// resends. The landing's future is dropped where it is cut off, so its
+/// write may or may not have reached the row; the resend or the next
+/// admission's show settles it.
+async fn bounded<T>(
+    landing: impl Future<Output = T>,
+    bound: Duration,
+    close: &mut watch::Receiver<bool>,
+) -> Bounded<T> {
+    tokio::select! {
+        done = tokio::time::timeout(bound, landing) => match done {
+            Ok(value) => Bounded::Done(value),
+            Err(_) => Bounded::TimedOut,
+        },
+        _ = close.changed() => Bounded::Closed,
+    }
+}
+
 /// Wait for the writer to drain what it holds, bounded: a peer that stopped
 /// reading would otherwise hold the task on the socket's send buffer.
 async fn drain_writer(mut writer: tokio::task::JoinHandle<()>) {
@@ -1106,13 +1147,6 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
             reason = why;
             break 'serve;
         }
-        // The answer is in the channel ahead of anything an ask could add:
-        // the connection is ready for asks from here.
-        if let Some(conn) = inner.live.lock().unwrap().get_mut(&key)
-            && conn.incarnation == incarnation
-        {
-            conn.ready = true;
-        }
         // **The admission's `show` is the connection's initialisation.**
         // Until it answers with a usable observation the row's tuple and
         // load state are from before the reconnect; an admin-con that
@@ -1146,6 +1180,16 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                 break 'serve;
             }
             admission_show = Some((id, tokio::time::Instant::now() + inner.silence));
+        }
+        // The hello's answer and, on the admin plane, the admission's show
+        // are in the channel ahead of anything an ask could add: the
+        // connection is ready for asks from here and not before, since a
+        // verb ask entering the channel ahead of the show would hold the
+        // show behind a slow verb and close the connection as incomplete.
+        if let Some(conn) = inner.live.lock().unwrap().get_mut(&key)
+            && conn.incarnation == incarnation
+        {
+            conn.ready = true;
         }
 
         // Whether an event at or beyond the boundary in its generation has
@@ -1278,9 +1322,31 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                 }
                 (Plane::Admin, FromClient::Verb { id, outcome, error }) => {
                     let landing = match &outcome {
-                        Some(outcome) => {
-                            inner.land_verb(&agent.agent_id, &agent.name, outcome).await
-                        }
+                        Some(outcome) => match bounded(
+                            inner.land_verb(&agent.agent_id, &agent.name, outcome),
+                            inner.silence,
+                            &mut close_rx,
+                        )
+                        .await
+                        {
+                            Bounded::Done(landing) => landing,
+                            Bounded::TimedOut => {
+                                tracing::error!(
+                                    "{}: admin's {} answer was not landed within the bound",
+                                    agent.agent_id,
+                                    outcome.verb
+                                );
+                                Landing::Failed
+                            }
+                            Bounded::Closed => {
+                                reason = if silent.load(Ordering::Relaxed) {
+                                    "silent for the bound: the peer stopped reading"
+                                } else {
+                                    "closed by revocation, rotation or halt"
+                                };
+                                break;
+                            }
+                        },
                         None => Landing::Nothing,
                     };
                     if landing == Landing::Failed {
@@ -1349,19 +1415,39 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                     // it. An observation the store refused is not acknowledged;
                     // admin-con resends from its last acknowledged position,
                     // which is the replay doing its job.
-                    let landed = match inner
-                        .land_event(
+                    let landed = match bounded(
+                        inner.land_event(
                             &agent.agent_id,
                             boundary.as_ref(),
                             caught_up,
                             &position,
                             replayed,
                             event,
-                        )
-                        .await
+                        ),
+                        inner.silence,
+                        &mut close_rx,
+                    )
+                    .await
                     {
-                        Ok(landed) => landed,
-                        Err(refusal) => {
+                        Bounded::Done(Ok(landed)) => landed,
+                        Bounded::TimedOut => {
+                            tracing::error!(
+                                "{}: the event at {}:{} was not landed within the bound",
+                                agent.agent_id,
+                                position.generation,
+                                position.offset
+                            );
+                            false
+                        }
+                        Bounded::Closed => {
+                            reason = if silent.load(Ordering::Relaxed) {
+                                "silent for the bound: the peer stopped reading"
+                            } else {
+                                "closed by revocation, rotation or halt"
+                            };
+                            break;
+                        }
+                        Bounded::Done(Err(refusal)) => {
                             tracing::warn!(
                                 "{}: an event at or beyond the boundary arrived before the replay was caught up, refused",
                                 agent.agent_id
@@ -1679,6 +1765,11 @@ impl Inner {
         if self.fault_next_land.swap(false, Ordering::Relaxed) {
             tracing::error!("{agent}: a test fault made this store write fail");
             return false;
+        }
+        #[cfg(test)]
+        if self.stall_next_land.swap(false, Ordering::Relaxed) {
+            tracing::error!("{agent}: a test fault made this store write stall");
+            std::future::pending::<()>().await;
         }
         let arrival = self.next_arrival();
         match self

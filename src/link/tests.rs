@@ -2730,3 +2730,115 @@ async fn an_admission_whose_show_is_not_answered_is_closed() {
     );
     assert!(!admin.closed().await);
 }
+
+/// **A store landing is bounded like a read or an enqueue.** A landing
+/// that does not complete within the bound closes the connection as
+/// `store_unavailable` with no ack, the acknowledged position standing, so
+/// the replay resends; and a revocation closes a connection whose landing
+/// is stalled without waiting on the store.
+#[tokio::test]
+async fn a_landing_that_stalls_closes_the_connection_without_an_ack() {
+    let Some(lab) = Lab::open_with(Duration::from_secs(4)).await else {
+        return;
+    };
+    let karl = lab.register("karl").await;
+
+    // An admission whose show is answered, so only the landing is in play.
+    async fn admitted(lab: &Lab, karl: &Registered) -> Fake {
+        let mut admin = lab.connect(&karl.admin).await;
+        admin
+            .send(FromClient::Hello {
+                agent: karl.name.clone(),
+                plane: Plane::Admin,
+                tail: Some(position(100)),
+            })
+            .await;
+        assert!(matches!(
+            admin.recv().await,
+            Some(ToClient::HelloAnswer { .. })
+        ));
+        let id = match admin.recv().await {
+            Some(ToClient::Verb { id, verb }) if verb == "show" => id,
+            other => panic!("expected the show ask, got {other:?}"),
+        };
+        admin.send(FromClient::CaughtUp).await;
+        admin
+            .send(FromClient::Verb {
+                id,
+                outcome: Some(show_answer(&karl.name, "idle", None)),
+                error: None,
+            })
+            .await;
+        lab.wait_for(&karl.id, "idle", |a| {
+            a.admin.connected && a.load_state.as_deref() == Some("idle")
+        })
+        .await;
+        admin
+    }
+
+    // A landing that stalls: refused at the bound, no ack, the position
+    // standing at the last success.
+    let mut admin = admitted(&lab, &karl).await;
+    admin
+        .send(FromClient::Event {
+            position: position(110),
+            replayed: false,
+            event: trace_event(1, "turn", json!({})),
+        })
+        .await;
+    assert!(matches!(admin.recv().await, Some(ToClient::Ack { .. })));
+    lab.listener.stall_next_land();
+    let started = tokio::time::Instant::now();
+    admin
+        .send(FromClient::Event {
+            position: position(120),
+            replayed: false,
+            event: trace_event(2, "load", json!({"declaration": "sha-1"})),
+        })
+        .await;
+    admin.expect_refusal(Refusal::StoreUnavailable).await;
+    assert!(
+        started.elapsed() >= Duration::from_secs(3),
+        "cut off at the bound, not before: {:?}",
+        started.elapsed()
+    );
+    assert_eq!(lab.listener.acknowledged(&karl.id), Some(position(110)));
+    lab.wait_for(&karl.id, "admin down", |a| !a.admin.connected)
+        .await;
+
+    // A revocation closes a connection whose landing is stalled without
+    // waiting on the store.
+    let mut admin = admitted(&lab, &karl).await;
+    lab.listener.stall_next_land();
+    admin
+        .send(FromClient::Event {
+            position: position(140),
+            replayed: false,
+            event: trace_event(3, "load", json!({"declaration": "sha-2"})),
+        })
+        .await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let started = tokio::time::Instant::now();
+    let row = lab.agent(&karl.id).await;
+    lab.store
+        .revoke_credential(&row, Plane::Admin, Some("lab"))
+        .await
+        .unwrap();
+    let eof = tokio::time::timeout(Duration::from_secs(3), async {
+        let mut line = String::new();
+        loop {
+            line.clear();
+            if admin.reader.read_line(&mut line).await.unwrap_or(0) == 0 {
+                break;
+            }
+        }
+    })
+    .await;
+    assert!(
+        eof.is_ok(),
+        "closed by the revocation well within the bound, not after the landing: {:?}",
+        started.elapsed()
+    );
+    lab.wait_for(&karl.id, "admin down", |a| !a.admin.connected)
+        .await;
+}

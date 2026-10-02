@@ -52,9 +52,11 @@ same for all three.** `seams/` had named the gate client and the admin verbs
 without saying which binary runs them, and `link/` had described one dialed
 link between two processes, which section 8 no longer says. The two
 connectors are named as binaries under `bin/` because the split between them
-is a split of posture and not of module: admin-con holds the sudo rule and
-the trace tailer, gate-con holds a uid the agent admits and nothing more,
-and a module tree cannot say which process carries which. **The box-bound
+is a split of posture and not of module: admin-con runs as a service user
+holding the agent's admin role and read access to its trace file, gate-con
+as one holding the agent's gate role and nothing more, neither holding any
+privilege of its own per section 8, and a module tree cannot say which
+process carries which. **The box-bound
 reaches are linked by the two connector binaries and never by the server**,
 which is how the server's never reaching an agent is a build fact rather
 than a sentence.
@@ -120,7 +122,10 @@ session rather than placed among 2.3 through 2.5 because renumbering would break
 citation of sections 2.6 through 2.8 in this document and outside it. **Section 2.12 is
 the registered agent**, appended 2026-10-01 on the same reasoning: an authored row the
 register verb of section 8 writes and the link reads, about an agent rather than about
-the work, sitting outside both halves as the session does. **The grouping is stated
+the work, sitting outside both halves as the session does. **Section 2.13 is identity and
+access**, appended 2026-10-02 on the same reasoning: the person, the role and the grant,
+and the audit record of every verb asked, about who may act on an agent rather than about
+the work. **The grouping is stated
 here rather than carried by the numbering**, which is the cost of a document whose
 sections are cited by number.
 
@@ -851,6 +856,12 @@ attaches to the proved identity and this row references it.** The column
 moves and the gate does not, which is section 6's own promise made checkable
 rather than left as a sentence.
 
+**Once section 2.13's authentication stands, the session carries the
+authenticated person and not a claim**, and the role this row holds today
+gives way to that person's grants on each agent. Until the act that builds
+section 2.13, this section's assertion that a session carries a claim and
+never a proof stands as written, and that act replaces it.
+
 **A session is not an authored row and takes no version.** Section 3.2's
 ordering rule answers two engineers editing one declaration, and nobody edits
 a session: it is opened once, closed once, and read in between. **Nor is it a
@@ -1103,6 +1114,13 @@ never a bare socket's. Each row carries:
   rule restated at the row: the state is what `show` or `list` last answered
   or the trace last carried, never an inference from a socket's existence,
   and never fresher than its date says
+- **which source the tuple and the load state stand on**, a `show` answer, a
+  `list` answer or a live trace event, with its date, so a surface can say a
+  state is unconfirmed since the last admission where the agent's ceiling
+  grants no `show`, per section 7.2
+- **the ceiling admin-con declared**, the verbs its role on the box grants as
+  its hello named them, with the date, per section 8. It is the box's word
+  about itself and an upper bound, never a grant
 
 **It is an authored row and takes section 3.2's members.** Registration is a
 write the operator makes, so the row carries the author member and the
@@ -1128,7 +1146,7 @@ from: weaver-web
 to: web-one-live-row-per-box-and-name
 ```
 
-**What the link observes is not an edit.** The observed address, the link states, the tuple and the load state
+**What the link observes is not an edit.** The observed address, the link states, the ceiling, the tuple and the load state
 are facts the listener and admin reported, and the link writes them as it
 learns them, each with its own date, so a reader can tell when the server
 last knew each one. **Observations are ordered on the server's own arrival
@@ -1166,16 +1184,19 @@ only kept replayed events behind what this process observed would still
 let a backfilled load event after a restart overwrite the state a newer
 `show` answer had set before it, which is why the rule is absolute rather
 than ordered. **And on every admission of an admin-con connection the
-server first fixes the replay boundary and then asks `show` for that row**:
+server first fixes the replay boundary and then, where the agent's ceiling
+grants `show`, asks `show` for that row**:
 the boundary is the file position admin-con reports as its tail at that
 moment, every event at or beyond it is live and every event behind it is
 replayed, and `show`'s answer, taken after the boundary, is admin's word
 from after it, so a change before the boundary is in the answer and a
 change after it arrives as a live event. Asked before the boundary, a load
 or unload landing between the answer and the boundary would be classified
-replayed and could never reach the row. So the row's tuple and load state
-are admin's current word at the moment the window reopens rather than
-whatever the last process left. Section 8's startup reset is excepted from the ordering: it
+replayed and could never reach the row. So where `show` is granted the
+row's tuple and load state are admin's current word at the moment the
+window reopens rather than whatever the last process left; where it is not,
+they stand on the last live event, and the row names that source and its
+date until the next one arrives. Section 8's startup reset is excepted from the ordering: it
 is the listener's own act on its own state and lands unconditionally. They are observations rather than the operator's
 authorship, which is why each carries its date in the row rather than riding
 the row's version.
@@ -1185,6 +1206,68 @@ holds fingerprints and the agent's box holds keys, per section 8, and the box
 is named by the name the operator registered rather than by a host or a path
 the repository would have to carry, which is the publish boundary every
 document here stands under.
+
+### 2.13 Identity and access
+
+**Who may act on an agent, chartered 2026-10-02 at the level the store needs
+and without electing the mechanism.** Per the operator's rulings of that
+date every verb passes three gates, section 8 names them, and the first is
+this crate's: a person authenticated to the server, holding a role on the
+agent, may ask a verb that role permits. How people authenticate and what
+the roles are called are section 10's open elections, the operator's both;
+what follows stands under any answer to either, and the act that builds this
+section waits on the two.
+
+- **The person**: an identity authenticated to the server, distinct from
+  section 2.8's session, which carries a claim and no proof. A person row
+  carries its own identity under the convention section 2 opens with, the
+  name it is known by, and whatever the authentication mechanism keeps,
+  never a secret in the clear, which is section 2.8's digest rule carried to
+  the person. Once authentication stands, a session carries the
+  authenticated person rather than a claimed name, and section 3.2's author
+  member takes its value from the person.
+- **The role and the grant**: a role is a named set of verbs; a grant binds a
+  person to a role on one agent of section 2.12, or server-wide for
+  registering agents with the verbs of section 8. A grant names verbs only
+  through its role, so there is no per-person verb list to drift from the
+  vocabulary. **Roles and grants are authored rows** under section 3.2,
+  carrying the author member and the version, so two concurrent edits of one
+  grant refuse on the stale version rather than one silently winning.
+- **Server-side authorization**: a verb is asked of an agent only if the
+  person's grants on that agent permit it and the agent's ceiling, declared
+  per section 8 and held on the row per section 2.12, contains it. Otherwise
+  it is refused on the server before any frame leaves it, and the refusal is
+  audited. **The check is the server's and never a surface's**: a surface may
+  hide what a person cannot do, and hiding is presentation and not the gate.
+- **The audit record**: every verb asked names the person, the agent, the
+  verb, the outcome and when. The server writes it before the ask leaves,
+  so no ask exists without one, and completes it when the answer lands or
+  the ask fails; a refusal at the first gate is recorded the same way. The
+  person also crosses to the box as section 8's claim, so this record and the
+  box's operations log can be matched. **An audit record is written by the
+  server alone and never edited**: it is not an authored row and takes no
+  version, and it is not an observation of an agent, so it sits outside both
+  halves as the session does.
+
+```graph
+node: web-verb-refused-before-an-ask-unless-granted
+kind: assertion
+tag: perturbation
+
+edge: asserts
+from: weaver-web
+to: web-verb-refused-before-an-ask-unless-granted
+```
+
+```graph
+node: web-every-verb-asked-is-audited
+kind: assertion
+tag: perturbation
+
+edge: asserts
+from: weaver-web
+to: web-every-verb-asked-is-audited
+```
 
 ## 3. The write path
 
@@ -2068,21 +2151,36 @@ contract's section 6 says it cannot know.
 
 ### 7.2 The admin verbs
 
-**There is no admin socket.** It retired on 2026-08-05, per
+**There is no admin socket as of 2026-10-02.** It retired on 2026-08-05, per
 `weaver-admin-operator-contract` section 1, and nothing crosses into admin by
-a channel. Each verb is an invocation, `sudo weaver-admin <verb> <agent>`,
-answering one JSON object on stdout with the exit status agreeing, per
-`weaver-admin-Spec` section 2. Six parse as of 2026-10-01: `load`, `unload`,
-`validate`, `stop`, `show` and `list`, the last taking no agent. **Of a
+a channel. Each verb answers one JSON object, a `lifecycle-answer` or a
+`lifecycle-refusal`, per `weaver-admin-Spec` section 2. Six parse as of
+2026-10-01: `load`, `unload`, `validate`, `stop`, `show` and `list`, the last
+taking no agent. **Of a
 `list` answer only the summary for the connection's own credential-bound
 row lands on the row, and the other summaries write nothing**: a connection
 is bound to one row and its stream orders that row's events alone, so a
 delayed `list` answer through one agent's connection would otherwise
 overwrite another agent's newer state with nothing to order it. **admin-con
 runs them, and it is this crate's binary**, the management plane's one
-reach, so the sudo rule stands on admin-con's box and never on the server's,
-and the server asks admin-con over the link of section 8 rather than running
-anything.
+reach, and the server asks admin-con over the link of section 8 rather than
+running anything.
+
+**Access to the verbs is a role on the box, and admin-con holds no privilege
+of its own**, per the operator's rulings of 2026-10-02. admin-con reaches the
+verbs through the interface `toddwbucy/WeaverAgents#50` settles, as a
+dedicated service user whose role the box grants, and weaver-admin decides
+whether that role permits each verb before anything is touched. **There is
+no sudo and no root wrapper anywhere in this crate**: a root process parsing
+arguments that arrived over a network is where a CVE comes from, which is the
+operator's reason, and the server that chooses a verb's arguments is reached
+by the network by construction. Today every verb requires root, per
+`weaver-admin-Spec` section 2, so **until #50 lands no verb runs from this
+crate**. The trace's tail and replay below need no privilege: admin-con's
+user reads the trace file through group read access. The seed's
+`lifecycle.rs`, which invokes the verbs through sudo, is not carried into
+admin-con; the admin-con act builds the verb plane against an abstract
+invoker that carries no privilege code.
 
 `show` answers one agent's load facts and `list` answers one summary per
 admitted agent in a single ask, the observation exchange of 2026-09-04. Load
@@ -2163,7 +2261,7 @@ act that built the listener reads as a rule on the connection: a store
 failure while landing anything on a connection closes it with a typed
 refusal, the acknowledged position standing at the last success, so the
 reconnection's replay resends the failed event and everything after and
-the admission's `show` is asked again, and a pending ask whose answer
+the admission's `show`, where the ceiling grants it, is asked again, and a pending ask whose answer
 could not be landed answers an error and never the outcome.
 
 **The acknowledged position lives for the life of a server process and is
@@ -2209,16 +2307,24 @@ they write no member of section 2.12's row, whose tuple and load state come
 from `show`, `list` and live events alone. On every admission of an
 admin-con connection the server first fixes the replay boundary, the file
 position admin-con reports as its tail at that moment, so that every event
-at or beyond it is live and every event behind it is replayed, and then
-asks `show` for the row, so the answer is admin's word from after the
-boundary and nothing that lands in the file between the two can be
-classified as history, per section 2.12. **The admission's `show` must
-land a usable observation within the silence bound.** Until it does the
-row carries the last process's tuple and load state, and an admitted
-connection standing on them is presence asserted on stale facts; so a
-connection whose `show` errors, answers no state, or has not answered by
-the bound is closed with a typed refusal (`admission_incomplete`) and the
-reconnection asks again. **admin-con emits everything it
+at or beyond it is live and every event behind it is replayed, and then,
+where the agent's ceiling grants `show`, asks `show` for the row, so the
+answer is admin's word from after the boundary and nothing that lands in
+the file between the two can be classified as history, per section 2.12.
+**The admission's `show` is required only where the ceiling grants
+`show`**, per the operator's rulings of 2026-10-02 and section 8. Where it
+does, it must land a usable observation within the silence bound: until it
+does the row carries the last process's tuple and load state, and an
+admitted connection standing on them is presence asserted on stale facts,
+so a connection whose `show` errors, answers no state, or has not answered
+by the bound is closed with a typed refusal (`admission_incomplete`) and
+the reconnection asks again. Where the ceiling does not grant `show`, the
+server asks nothing, admission completes at `caught_up`, and the row's
+tuple and load state stand on live trace events alone, the row naming that
+source and its date per section 2.12, so a surface says the state is
+unconfirmed since the reconnection rather than presenting it as current.
+Asking a verb outside the ceiling to complete an admission would be the
+defect section 8 refuses. **admin-con emits everything it
 sends over its connection, verb answers and file events alike, as one
 ordered stream**, and a verb answer takes its place in that stream at the
 invocation rather than at the receipt: before invoking a verb admin-con
@@ -2336,6 +2442,26 @@ superseded. **This is the bulk of the backend**, on the operator's word of
 the same date: everything after it is presentation of what comes out of the
 two connectors.
 
+**Each connector runs as a dedicated service user**, one per agent and plane
+and never the operator's own uid, per the operator's ruling of 2026-10-02,
+and holds only what its plane needs: gate-con's user holds the agent's gate
+role, the allow list of its declaration, and nothing else; admin-con's user
+holds read access to the agent's trace file and the agent's admin role on
+the box, and nothing else. **Neither holds any privilege**: no sudo rule, no
+root wrapper and no setuid binary stands anywhere in this crate, per section
+7.2. Creating those users and placing each connector's config at 0600 under
+its own user is the install's, and carries no box path into the repository.
+
+```graph
+node: web-no-privileged-invocation
+kind: assertion
+tag: review
+
+edge: asserts
+from: weaver-web
+to: web-no-privileged-invocation
+```
+
 **Nothing in the read or write path is box-bound to the agents.** The reader
 is a store client, the runner is a queue consumer, and the front end with
 its store runs on one machine while the agents run on another. That crossing
@@ -2448,6 +2574,55 @@ edge: asserts
 from: weaver-web
 to: web-link-refuses-a-credential-not-live-before-the-roster
 ```
+
+**Every verb passes three gates**, per the operator's ruling of 2026-10-02,
+and each is held by a different party. **First, this crate's identity and
+access**: a person authenticated to the server, holding a grant on the agent
+whose role permits the verb, per section 2.13, checked on the server before
+any ask leaves it. **Second, the box's ceiling**: the verbs admin-con's role
+on the box grants, which admin-con declares and the server never exceeds.
+**Third, weaver-admin's role check**: the party holding root on the box
+decides whether the caller's role permits the verb, per
+`toddwbucy/WeaverAgents#50`. Each gate bounds what the one before it can
+reach, so a fault in one is caught by the next rather than becoming the
+box's. The link between them is already cryptographic per agent and per
+plane by the rules above: the server knows which agent and plane each
+connection is, and each connector knows it is talking to its own server.
+
+**The box's ceiling is declared in admin-con's hello.** admin-con's hello
+names the verbs its role on the box grants, read from its own config, which
+the box owns and the install writes. The server stores it on the row as an
+observation with its date, per section 2.12, **treats it as an upper bound
+and never a grant**, and never asks a verb outside it: a person's grant
+cannot widen the ceiling, and the ceiling grants no person anything. An ask
+outside it reaching admin-con is the server's own defect, and admin-con
+refuses it with a typed refusal before running anything and logs it against
+the row; whether that is `wrong_plane` or a refusal of its own is the
+admin-con act's to name. **The reason is the server's position**: the
+connectors trust their server by design, so a compromised server reaches
+whatever a connector can do, and the ceiling, which the box sets and the
+server only reads, bounds that to the verbs the box chose. The declaration
+is the box's statement about itself and not its authorization, which stays
+weaver-admin's: a ceiling that over-declares is still refused at the third
+gate. The hello's member is added by the admin-con act.
+
+```graph
+node: web-server-never-asks-a-verb-outside-the-ceiling
+kind: assertion
+tag: perturbation
+
+edge: asserts
+from: weaver-web
+to: web-server-never-asks-a-verb-outside-the-ceiling
+```
+
+**Each verb ask names the requesting person, as a claim.** admin-con passes
+it to admin for the box's operations log, per `toddwbucy/WeaverAgents#51`,
+labelled as the server's claim. **It is never an authorization input on the
+box**: admin cannot verify it, and it neither widens nor narrows what
+admin-con's role permits. Its use is audit, matching the box's log to
+section 2.13's audit record of who asked. The frame's member is added by the
+admin-con act.
 
 **One connection at a time per connector, ever.** A second connection on a
 credential already connected is refused rather than replacing the first, per
@@ -2701,15 +2876,23 @@ missing while it was relaying.
 | the client credential is stored as a fingerprint and never the key | perturbation, at the schema: store the key, a read of the register is a set of credentials anyone can present |
 | the tuple is admin's word and never gate-con's | perturbation: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it; let a replayed load event write the tuple, restart the server after an unload, backfill, and the row reads loaded; ask `show` before fixing the replay boundary, unload between the two, and the row reads loaded until the next `show`; let a `list` answer through one connection write another row, and that row reads a state its own connection never relayed. **Four clauses are admin-con's ordering and are owed to its act**: let a `show` answer cross the link out of order with the file events around it, unload during the `show`, and the row reads loaded until the next `show`; place the answer in the stream at receipt and unload between the snapshot and the receipt, and the row reads loaded; skip the drain, leave an unread load event behind the tail, invoke `show` after an unload, and the row reads loaded; run two verbs at once on one connection, and an older answer lands after a newer one |
 | nothing crosses the link in the clear | perturbation: offer a plaintext hello to the listener, it is refused below any roster; and review, over the listener, that no plaintext accept path exists |
+| the server never asks a verb outside the agent's ceiling | perturbation, **owed**: drop the ceiling check, ask a verb admin-con's hello did not declare, and it leaves the server; and admin-con's half, drop its refusal, and it reaches the invoker. **No instrument stands**: the hello carries no ceiling until the admin-con act, and the server's check lands with the IAM act |
+| a verb the person's grants do not permit is refused before an ask | perturbation, **owed**: drop the grant check, a person whose role permits `show` asks `stop`, and the ask leaves the server. Lands with the IAM act |
+| every verb asked has an audit record naming the person | perturbation, **owed**: write the record after the ask instead of before, fail the store between the two, and an ask leaves with no record; drop the refusal's record, and a refused verb leaves no trace. Lands with the IAM act |
+| the admission's `show` is required only where the ceiling grants it | perturbation, **owed**: ask `show` at every admission, and an agent whose ceiling grants no `show` is closed `admission_incomplete` at every reconnection and never stays admitted; skip it where it is granted, and the row reads the last process's state as current. The listener asks `show` at every admission until the admin-con act, which is the drift this row names |
+| no privileged invocation exists in the crate | review, and a test, **owed**: a test that reads the source tree for an invocation of `sudo`, a root wrapper or a setuid call, shown to fail when one is planted. It would fail today on the seed's `lifecycle.rs`, which invokes `sudo weaver-admin` and is not carried forward, so the row is owed until that file leaves |
 
 **A watch that cannot fail is not a test.** For each perturbation above, the
 act that lands it states what removal makes it fail and confirms it does.
 
-**A row marked owed has no instrument and is not counted as enforced.** Two
-stand so marked as of 2026-10-01: the batch's order, whose table section 2.11
-describes and no migration builds, and the trace file's replay from the
+**A row marked owed has no instrument and is not counted as enforced.** Seven
+stand so marked as of 2026-10-02: the batch's order, whose table section 2.11
+describes and no migration builds; the trace file's replay from the
 acknowledged position, which is admin-con's half of section 7.2 and lands with
-its act; the server's half, the position held per process and answered in the
+its act; and the five rows of the role shape ruled on 2026-10-02, the ceiling,
+the grant check, the audit record and the conditional admission `show`
+landing with the admin-con and IAM acts and the absence of a privileged
+invocation with the seed's `lifecycle.rs` leaving; the server's half, the position held per process and answered in the
 hello, stands in `src/link/tests.rs`. The other ten rows of the link landed with
 the act that built the listener and the register, each shown to fail with its
 guard removed, and the four clauses of the tuple row that are admin-con's
@@ -2840,6 +3023,19 @@ a `web-` assertion beside `weaver-admin`'s.
   from the run's first generation and the contract's section 2.2 now
   carries it once per run, section 2.2 above holding it on the row. Per
   issue #527, found by the review of PR #526.
+- **How people authenticate to this server**, opened 2026-10-02 and the
+  operator's: passkeys (WebAuthn), local passwords with a second factor
+  (TOTP), or an external identity provider (OIDC). Section 2.13 charters the
+  person without electing the mechanism, and the act that builds it waits on
+  this answer. It is a different question from what an author names, above:
+  that one asks what the member means once a person stands, this one how a
+  person comes to stand.
+- **The role vocabulary**, opened 2026-10-02 and the operator's. Proposed:
+  per agent, an observer whose role permits `show` and `list` and an operator
+  adding `validate`, `load`, `unload` and `stop`; server-wide, an admin who
+  registers agents. The box's roles of `toddwbucy/WeaverAgents#50` were
+  proposed with the same two per-agent names, so whether a grant here and a
+  role there share one vocabulary is part of the election.
 - **What section 7 is called, now that one of its three is not a seam**,
   opened 2026-09-16 by the act that deleted this crate's seam record to
   `weaver-admin`. The heading reads "The seams", and 7.2's admin verbs are

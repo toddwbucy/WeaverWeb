@@ -2532,12 +2532,14 @@ it. Every event read after the receipt is behind the
 answer, and nothing is read in between, so the snapshot the verb took somewhere inside that
 span is newer than everything ahead of it and older than everything
 behind. This holds for every verb answer and not only the admission-time
-`show`. **An ask that arrives during the replay is served at once, between
-replay steps, with no drain**: the drain orders an answer against live
+`show`. **An ask that arrives during the replay is served at once, between the
+replay's frames, so it waits behind at most one, with no drain**: the drain orders an answer against live
 events, and before `caught_up` nothing live has been read, so every event
 sent then is replayed and writes no member of the row whichever side of
 the answer it falls, and a `show` held behind a long backfill would miss
-the admission's deadline. **admin-con runs one verb at a time per connection**, each from
+the admission's deadline. The connector's socket holds a bounded number of
+bytes unsent, so on a slow link the answer waits behind no send buffer
+grown to megabytes either. **admin-con runs one verb at a time per connection**, each from
 its pre-invocation drain through the emission of its answer, and a second
 ask that arrives while one is in flight waits its turn in arrival order,
 so invocation spans never overlap and the ordering above holds for every

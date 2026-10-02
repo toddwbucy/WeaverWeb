@@ -55,7 +55,7 @@ pub const RECORD_BOUND: usize = LINE_BOUND / 2;
 pub const DIGEST_WINDOW: usize = 64 * 1024;
 /// Bytes of records read per step, so a long backlog interleaves with the
 /// connection's reads and the server's acknowledgements.
-const READ_BUDGET: usize = 1024 * 1024;
+pub const READ_BUDGET: usize = 1024 * 1024;
 /// Verb asks waiting behind the one in flight.
 pub const VERB_QUEUE: usize = 16;
 /// The bound on one invocation: the invoker's, which caps the pause and
@@ -1186,9 +1186,12 @@ async fn relay<I: Invoker>(
     };
     let mut seq = shared.seq;
     let mut replaying = true;
-    if let Err(end) = send_all(conn, frames_of(front, true, &mut seq)).await {
-        return end;
-    }
+    // **The replay's frames wait here and go out one at a time**, the
+    // connection read and any ask served between each (Spec 7.2), so an ask
+    // waits behind at most one frame and never behind a whole step, which
+    // on a slow link could outlast the admission `show`'s deadline. The
+    // frame that ends the replay is the last one queued.
+    let mut outbox: VecDeque<FromClient> = frames_of(front, true, &mut seq).into();
     let mut queue: VecDeque<Ask> = VecDeque::new();
     let mut in_flight = futures::stream::FuturesUnordered::new();
     let mut tick = tokio::time::interval(opts.poll);
@@ -1207,7 +1210,7 @@ async fn relay<I: Invoker>(
             && let Some(ask) = queue.pop_front()
         {
             // **An ask during the replay is served at once, with no
-            // drain**, interleaved between replay steps: the drain orders an
+            // drain**, interleaved between the replay's frames: the drain orders an
             // answer against live events, and before `caught_up` nothing
             // live has been read, so every event sent then is replayed and
             // writes no member of the row, whichever side of the answer it
@@ -1264,31 +1267,38 @@ async fn relay<I: Invoker>(
         // **The replay first**, from the resume point through the boundary,
         // each event marked replayed; then the frame that ends it.
         if replaying {
+            if let Some(frame) = outbox.pop_front() {
+                let ends_the_replay = matches!(frame, FromClient::CaughtUp);
+                if let Err(why) = conn.send(frame).await {
+                    return Ended::Lost(why);
+                }
+                if ends_the_replay {
+                    replaying = false;
+                }
+                // Between frames the connection is read, so an ask is
+                // served before the next frame and the server's
+                // acknowledgements never back up behind the replay.
+                if let Some(end) = take_incoming(conn, &mut queue, &ceiling, &opts.agent).await {
+                    return end;
+                }
+                continue;
+            }
             let until =
                 (shared.tailer.generation() == boundary.generation).then_some(boundary.offset);
             let (items, moved) = match shared.tailer.read(until, READ_BUDGET) {
                 Ok(read) => read,
                 Err(e) => return lost(e),
             };
-            if let Err(end) = send_all(conn, frames_of(items, true, &mut seq)).await {
-                return end;
-            }
+            outbox.extend(frames_of(items, true, &mut seq));
             let (items, done) = match replay_state(&mut shared.tailer, &boundary, moved) {
                 Ok(Replay::Going(items)) => (items, false),
                 Ok(Replay::Done(items)) => (items, true),
                 Err(e) => return lost(e),
             };
-            if let Err(end) = send_all(conn, frames_of(items, true, &mut seq)).await {
-                return end;
-            }
+            outbox.extend(frames_of(items, true, &mut seq));
             if done {
-                if let Err(why) = conn.send(FromClient::CaughtUp).await {
-                    return Ended::Lost(why);
-                }
-                replaying = false;
+                outbox.push_back(FromClient::CaughtUp);
             }
-            // Between replay steps the connection is read, so the server's
-            // acknowledgements never back up behind the replay.
             if let Some(end) = take_incoming(conn, &mut queue, &ceiling, &opts.agent).await {
                 return end;
             }

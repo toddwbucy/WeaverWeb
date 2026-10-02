@@ -1557,3 +1557,108 @@ async fn a_backfill_starting_inside_a_record_past_the_bound_keeps_what_follows()
     );
     con.stop().await;
 }
+
+/// **An ask during the replay waits behind at most one frame, never a
+/// step, and behind no more than the link's unsent bound**: a fake server
+/// with a small receive buffer reads the replay slowly, a millisecond every
+/// four lines, so one step's frames take longer to cross than the shortest
+/// admission deadline, and asks `show` once the step is under way. The
+/// answer comes back within a tenth of a step and inside that deadline.
+#[tokio::test]
+async fn an_ask_during_the_replay_waits_behind_one_frame_not_a_step() {
+    let server = FakeServer::start().await;
+    let trace = Trace::new();
+    let mut body = String::new();
+    let mut n = 0u64;
+    while body.len() < 12 * 1024 * 1024 {
+        n += 1;
+        body.push_str(&format!("{{\"wall_ms\":1,\"payload\":{{\"n\":{n}}}}}\n"));
+    }
+    trace.append_raw(body.as_bytes());
+    let per_step =
+        admin_con::READ_BUDGET / format!("{{\"wall_ms\":1,\"payload\":{{\"n\":{n}}}}}\n").len();
+    // A millisecond every four lines: slow enough that a step outlasts the
+    // deadline, fast enough that admin-con's own write bound, a cadence,
+    // never takes the reader for a server that is gone.
+    let throttle = Duration::from_millis(1);
+    let throttle_every = 4usize;
+    let deadline = Duration::from_secs(4);
+    assert!(
+        throttle * (per_step / throttle_every) as u32 > deadline,
+        "one step must outlast the shortest deadline for this test to say anything"
+    );
+    let invoker = FakeInvoker::new(&["show"], "idle");
+    let cfg = AdminConConfig {
+        link: server.link(Plane::Admin),
+        trace_file: trace.path.clone(),
+        backfill_bytes: 16 * 1024 * 1024,
+        poll: POLL,
+        verb_bound: admin_con::VERB_BOUND,
+        grants_bound: Duration::from_secs(super::client::HELLO_SECS),
+    };
+    let con = Running::start(cfg, invoker.clone());
+    let status = con.status.clone();
+    let (mut reader, mut write) = server.admit_with(15, Some(64 * 1024)).await;
+    let lines = std::cell::Cell::new(0usize);
+    let next = async |reader: &mut super::frames::LineReader<_>| {
+        let line = match tokio::time::timeout(SOON * 4, reader.next())
+            .await
+            .expect("a frame")
+        {
+            Line::Frame(line) => line,
+            other => {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                panic!(
+                    "the connection ended: {other:?} {:?}",
+                    status.borrow().clone()
+                )
+            }
+        };
+        lines.set(lines.get() + 1);
+        if lines.get().is_multiple_of(throttle_every) {
+            tokio::time::sleep(throttle).await;
+        }
+        serde_json::from_str::<FromClient>(&line).unwrap()
+    };
+    // The step is under way: its first frames have crossed.
+    let mut read = 0usize;
+    while read < 200 {
+        if let FromClient::Event { .. } = next(&mut reader).await {
+            read += 1;
+        }
+    }
+    let mut ask = serde_json::to_vec(&ToClient::Verb {
+        id: 1,
+        verb: "show".into(),
+        principal: Principal::Server,
+    })
+    .unwrap();
+    ask.push(b'\n');
+    write.write_all(&ask).await.unwrap();
+    let asked = tokio::time::Instant::now();
+    let mut behind = 0usize;
+    loop {
+        match next(&mut reader).await {
+            FromClient::Event { .. } => behind += 1,
+            FromClient::Verb { id: 1, outcome, .. } => {
+                assert!(outcome.is_some());
+                break;
+            }
+            _ => {}
+        }
+        assert!(
+            behind < per_step,
+            "the answer waits behind the step: {behind} events since the ask"
+        );
+    }
+    let answered = asked.elapsed();
+    assert!(
+        behind < per_step / 10,
+        "{behind} events crossed ahead of the answer, of a step of {per_step}"
+    );
+    assert!(answered < deadline, "answered after {answered:?}");
+    assert_eq!(invoker.ran(), ["show"]);
+    drop(reader);
+    drop(write);
+    con.stop().await;
+}

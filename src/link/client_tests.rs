@@ -589,8 +589,37 @@ impl FakeServer {
         LineReader<tokio::io::ReadHalf<ServerStream>>,
         tokio::io::WriteHalf<ServerStream>,
     ) {
+        self.admit_with(cadence_secs, None).await
+    }
+
+    /// As `admit`, with the accepted socket's receive buffer set, so a
+    /// slow reader stands for a slow link and the bytes the path holds are
+    /// few.
+    pub(super) async fn admit_with(
+        &self,
+        cadence_secs: u64,
+        receive_buffer: Option<usize>,
+    ) -> (
+        LineReader<tokio::io::ReadHalf<ServerStream>>,
+        tokio::io::WriteHalf<ServerStream>,
+    ) {
         let acceptor = tokio_rustls::TlsAcceptor::from(self.authority.server_tls().unwrap());
         let (tcp, _) = self.listener.accept().await.unwrap();
+        if let Some(bytes) = receive_buffer {
+            use std::os::fd::AsRawFd;
+            let value = bytes as libc::c_int;
+            // SAFETY: a valid descriptor and a c_int option of its size.
+            let set = unsafe {
+                libc::setsockopt(
+                    tcp.as_raw_fd(),
+                    libc::SOL_SOCKET,
+                    libc::SO_RCVBUF,
+                    &value as *const libc::c_int as *const libc::c_void,
+                    std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+                )
+            };
+            assert_eq!(set, 0, "SO_RCVBUF");
+        }
         let stream = acceptor.accept(tcp).await.unwrap();
         let (read, mut write) = tokio::io::split(stream);
         let mut reader = LineReader::new(read);

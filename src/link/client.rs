@@ -324,6 +324,9 @@ impl Link {
                 if let Err(e) = keepalive(fd, cadence) {
                     tracing::warn!("TCP keepalive could not be set on the link: {e}");
                 }
+                if let Err(e) = bound_unsent(fd) {
+                    tracing::warn!("the link's unsent bound could not be set: {e}");
+                }
                 Connect::Admitted(Connection::start(reader, write, cadence, acknowledged))
             }
             ToClient::Refusal { reason } => Connect::Refused(reason),
@@ -379,6 +382,36 @@ fn keepalive(fd: RawFd, cadence: Duration) -> std::io::Result<()> {
     set(libc::IPPROTO_TCP, libc::TCP_KEEPCNT, 2)?;
     set(libc::IPPROTO_TCP, libc::TCP_USER_TIMEOUT, secs * 2000)?;
     Ok(())
+}
+
+/// The most bytes the socket holds unsent: see `bound_unsent`.
+pub const UNSENT_BOUND: usize = 64 * 1024;
+
+/// **What the kernel holds unsent ahead of the next frame is bounded**, so
+/// a frame the connector sends next, a verb's answer among them, waits
+/// behind at most `UNSENT_BOUND` bytes plus what the link carries in
+/// flight, and not behind a send buffer autotuned to megabytes on a slow
+/// link, which would hold an admission `show` past its deadline whatever
+/// order the connector chose. A write blocks while the unsent bytes stand
+/// above the bound, and the link's throughput is not otherwise affected.
+fn bound_unsent(fd: RawFd) -> std::io::Result<()> {
+    let value = UNSENT_BOUND as libc::c_int;
+    // SAFETY: a descriptor the caller's stream holds open, and an int option
+    // of the size the call is told.
+    let r = unsafe {
+        libc::setsockopt(
+            fd,
+            libc::IPPROTO_TCP,
+            libc::TCP_NOTSENT_LOWAT,
+            &value as *const libc::c_int as *const libc::c_void,
+            std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+        )
+    };
+    if r < 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
 }
 
 type Reader = LineReader<ReadHalf<TlsStream<TcpStream>>>;

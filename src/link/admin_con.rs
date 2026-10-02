@@ -142,6 +142,11 @@ pub struct AdminConConfig {
     /// test can reach it.
     #[serde(skip, default = "default_grants_bound")]
     pub grants_bound: Duration,
+    /// A pause before each chunk of a scan that may cross a record of any
+    /// length. Not a config member: zero, settable in code so a test can
+    /// make a scan take time without a file of gigabytes.
+    #[serde(skip)]
+    pub scan_delay: Duration,
 }
 
 fn default_backfill() -> u64 {
@@ -280,15 +285,66 @@ fn open_trace(path: &Path) -> std::io::Result<Option<Held>> {
     Ok(Some(Held { file, generation }))
 }
 
+/// The bytes a scan reads at a time.
+const SCAN_CHUNK: usize = 64 * 1024;
+
+/// **A scan that may cross a record of any length runs off the
+/// connection's task and stops when it is no longer wanted**: the work is
+/// file reads, synchronous and unbounded by the record bound, so it runs
+/// under `spawn_blocking`, and the future awaiting it can be dropped by a
+/// stop or the shutdown that ends a hello, which tells the scan to stop at
+/// its next chunk. The task stays responsive and a stop is honoured within
+/// its grace. `delay` is a test's throttle on each chunk, zero in service.
+async fn off_task<T: Send + 'static>(
+    delay: Duration,
+    scan: impl FnOnce(&Scan) -> std::io::Result<T> + Send + 'static,
+) -> std::io::Result<T> {
+    struct StopOnDrop(Arc<std::sync::atomic::AtomicBool>);
+    impl Drop for StopOnDrop {
+        fn drop(&mut self) {
+            self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let _stop_on_drop = StopOnDrop(stop.clone());
+    let scan_state = Scan { stop, delay };
+    tokio::task::spawn_blocking(move || scan(&scan_state))
+        .await
+        .map_err(std::io::Error::other)?
+}
+
+/// What a scan checks between chunks.
+struct Scan {
+    stop: Arc<std::sync::atomic::AtomicBool>,
+    delay: Duration,
+}
+
+impl Scan {
+    fn next_chunk(&self) -> std::io::Result<()> {
+        if self.stop.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "the scan was stopped",
+            ));
+        }
+        if !self.delay.is_zero() {
+            std::thread::sleep(self.delay);
+        }
+        Ok(())
+    }
+}
+
 /// The end of the last complete record in the file, its tail (the byte
 /// after the last delimiter, 0 where there is none), and the file's length.
 /// **Found at any distance**, scanned back in bounded chunks, so a long
-/// unterminated fragment at the end never stops a hello.
-fn tail_of(file: &std::fs::File) -> std::io::Result<(u64, u64)> {
+/// unterminated fragment at the end never stops a hello; run through
+/// `off_task`.
+fn tail_of(file: &std::fs::File, scan: &Scan) -> std::io::Result<(u64, u64)> {
     let len = file.metadata()?.len();
     let mut end = len;
-    let mut buf = vec![0u8; 64 * 1024];
+    let mut buf = vec![0u8; SCAN_CHUNK];
     while end > 0 {
+        scan.next_chunk()?;
         let start = end.saturating_sub(buf.len() as u64);
         let n = (end - start) as usize;
         file.read_exact_at(&mut buf[..n], start)?;
@@ -298,6 +354,35 @@ fn tail_of(file: &std::fs::File) -> std::io::Result<(u64, u64)> {
         end = start;
     }
     Ok((0, len))
+}
+
+/// `tail_of` off the connection's task.
+async fn tail_of_off_task(file: &std::fs::File, delay: Duration) -> std::io::Result<(u64, u64)> {
+    let file = file.try_clone()?;
+    off_task(delay, move |scan| tail_of(&file, scan)).await
+}
+
+/// The first record boundary at or after `start` and before `end`, found
+/// at any distance scanning forward in bounded chunks, or `end` where there
+/// is none; run through `off_task`.
+fn first_boundary(file: &std::fs::File, start: u64, end: u64, scan: &Scan) -> std::io::Result<u64> {
+    if start == 0 {
+        return Ok(0);
+    }
+    let mut at = start - 1;
+    let mut buf = vec![0u8; SCAN_CHUNK];
+    loop {
+        if at >= end {
+            return Ok(end);
+        }
+        scan.next_chunk()?;
+        let n = ((end - at) as usize).min(buf.len());
+        file.read_exact_at(&mut buf[..n], at)?;
+        if let Some(i) = buf[..n].iter().position(|&b| b == b'\n') {
+            return Ok(at + i as u64 + 1);
+        }
+        at += n as u64;
+    }
 }
 
 /// The digest of the record ending at `offset`, or `None` where `offset` is
@@ -368,11 +453,14 @@ struct Tailer {
     seen: Option<(u64, Option<std::time::SystemTime>)>,
     /// Marks found at the hello, sent at the front of the replay.
     notes: Vec<String>,
+    /// A test's throttle on each chunk of a long scan, zero in service.
+    scan_delay: Duration,
 }
 
 impl Tailer {
-    fn new(path: PathBuf) -> Self {
+    fn new(path: PathBuf, scan_delay: Duration) -> Self {
         Self {
+            scan_delay,
             path,
             held: None,
             offset: 0,
@@ -431,7 +519,7 @@ impl Tailer {
     /// a reconnection most likely acknowledged) and the current file held,
     /// so the boundary is always the current file's. Notes what it refused
     /// and an unterminated fragment past any record's bound.
-    fn current_tail(&mut self) -> anyhow::Result<Position> {
+    async fn current_tail(&mut self) -> anyhow::Result<Position> {
         self.pending = None;
         self.notes.clear();
         match at_path(&self.path)? {
@@ -467,7 +555,7 @@ impl Tailer {
                 digest: String::new(),
             });
         };
-        let (tail, len) = tail_of(&held.file)?;
+        let (tail, len) = tail_of_off_task(&held.file, self.scan_delay).await?;
         if len - tail > RECORD_BOUND as u64 {
             self.notes.push(format!(
                 "an unterminated fragment of {} bytes follows the tail at {tail}; it passes the {RECORD_BOUND} byte bound and will be marked, not relayed, once it ends",
@@ -804,7 +892,7 @@ pub async fn run<I: Invoker>(
 ) -> anyhow::Result<()> {
     let link = Link::new(cfg.link.clone())?;
     let shared = Arc::new(tokio::sync::Mutex::new(Shared {
-        tailer: Tailer::new(cfg.trace_file.clone()),
+        tailer: Tailer::new(cfg.trace_file.clone(), cfg.scan_delay),
         prepared: None,
         seq: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -865,6 +953,7 @@ pub async fn run<I: Invoker>(
                 let boundary = shared
                     .tailer
                     .current_tail()
+                    .await
                     .map_err(|e| format!("reading the trace file's tail: {e:#}"))?;
                 shared.prepared = Some(Prepared {
                     boundary: boundary.clone(),
@@ -1011,7 +1100,7 @@ async fn send_all(conn: &Connection, frames: Vec<FromClient>) -> Result<(), Ende
 /// answer (Spec 7.2). **The one place `previous` is cleared**: a hello
 /// attempt that fails before its answer leaves the replaced generation
 /// held for the next.
-fn resume(
+async fn resume(
     tailer: &mut Tailer,
     acknowledged: Option<&Position>,
     boundary: &Position,
@@ -1034,23 +1123,16 @@ fn resume(
             // any distance** in bounded chunks: a start inside a record
             // longer than the bound is carried through that record to its
             // delimiter, never to the boundary, so the complete records
-            // after it are relayed and the record itself is marked.
-            let aligned = if start == 0 {
-                0
-            } else {
-                let mut at = start - 1;
-                let mut buf = vec![0u8; DIGEST_WINDOW];
-                loop {
-                    if at >= boundary.offset {
-                        break boundary.offset;
-                    }
-                    let n = ((boundary.offset - at) as usize).min(buf.len());
-                    held.file.read_exact_at(&mut buf[..n], at)?;
-                    if let Some(i) = buf[..n].iter().position(|&b| b == b'\n') {
-                        break at + i as u64 + 1;
-                    }
-                    at += n as u64;
-                }
+            // after it are relayed and the record itself is marked. Off
+            // the connection's task, since it may cross a record of any
+            // length.
+            let aligned = {
+                let file = held.file.try_clone()?;
+                let end = boundary.offset;
+                off_task(tailer.scan_delay, move |scan| {
+                    first_boundary(&file, start, end, scan)
+                })
+                .await?
             };
             tailer.offset = aligned;
             tailer.digest = digest_before(&held.file, aligned)?.unwrap_or_default();
@@ -1254,7 +1336,9 @@ async fn relay<I: Invoker>(
         acknowledged.as_ref(),
         &boundary,
         opts.backfill,
-    ) {
+    )
+    .await
+    {
         Ok(marks) => marks,
         Err(e) => return lost(e),
     };
@@ -1468,19 +1552,22 @@ async fn drain(conn: &Connection, tailer: &mut Tailer, seq: &mut u64) -> Result<
     // before the invocation as surely as the old file's tail was, so they
     // go out ahead of the answer. Each switch needs a replacement the
     // agent made, so the drain stays bounded by what was written before.
-    let tail = |tailer: &Tailer| match &tailer.held {
-        Some(held) => tail_of(&held.file)
-            .map(|(tail, _)| tail)
-            .map_err(|e| Ended::Lost(format!("reading the trace file: {e:#}"))),
-        None => Ok(0),
-    };
+    async fn tail(tailer: &Tailer) -> Result<u64, Ended> {
+        match &tailer.held {
+            Some(held) => tail_of_off_task(&held.file, tailer.scan_delay)
+                .await
+                .map(|(tail, _)| tail)
+                .map_err(|e| Ended::Lost(format!("reading the trace file: {e:#}"))),
+            None => Ok(0),
+        }
+    }
     let mut generation = tailer.generation().to_owned();
-    let mut target = tail(tailer)?;
+    let mut target = tail(tailer).await?;
     loop {
         let moved = live_step(conn, tailer, seq).await?;
         if tailer.generation() != generation {
             generation = tailer.generation().to_owned();
-            target = tail(tailer)?;
+            target = tail(tailer).await?;
             continue;
         }
         if !moved || tailer.offset >= target {

@@ -453,6 +453,7 @@ async fn admin_con_answers_an_ask_outside_its_ceiling_and_keeps_the_connection()
         poll: POLL,
         verb_bound: admin_con::VERB_BOUND,
         grants_bound: Duration::from_secs(super::client::HELLO_SECS),
+        scan_delay: Duration::ZERO,
     };
     let con = Running::start(cfg, invoker.clone());
     let (mut reader, mut write) = server.admit(15).await;
@@ -1604,6 +1605,7 @@ async fn an_ask_during_the_replay_waits_behind_one_frame_not_a_step() {
         poll: POLL,
         verb_bound: admin_con::VERB_BOUND,
         grants_bound: Duration::from_secs(super::client::HELLO_SECS),
+        scan_delay: Duration::ZERO,
     };
     let con = Running::start(cfg, invoker.clone());
     let status = con.status.clone();
@@ -1697,6 +1699,7 @@ async fn an_ordinary_verb_asked_during_the_replay_waits_for_caught_up_and_the_dr
         poll: Duration::from_secs(30),
         verb_bound: admin_con::VERB_BOUND,
         grants_bound: Duration::from_secs(super::client::HELLO_SECS),
+        scan_delay: Duration::ZERO,
     };
     let con = Running::start(cfg, invoker.clone());
     let (mut reader, mut write) = server.admit(15).await;
@@ -1825,6 +1828,7 @@ async fn a_stop_against_a_server_that_stopped_reading_returns_within_the_grace()
         poll: POLL,
         verb_bound: admin_con::VERB_BOUND,
         grants_bound: Duration::from_secs(super::client::HELLO_SECS),
+        scan_delay: Duration::ZERO,
     };
     let con = Running::start(cfg, Arc::new(NoVerbs));
     // Admitted on a cadence far past the grace, then never read: the
@@ -1847,4 +1851,54 @@ async fn a_stop_against_a_server_that_stopped_reading_returns_within_the_grace()
     );
     drop(reader);
     drop(write);
+}
+
+/// **A long scan runs off the connection's task, and a stop interrupts
+/// it**: the trace file ends in an unterminated fragment of 8 MiB, its
+/// scan throttled so finding the tail takes over ten seconds, and a stop
+/// asked during the scan returns within the grace, nothing admitted.
+#[tokio::test]
+async fn a_stop_during_a_long_tail_scan_returns_within_the_grace() {
+    let server = FakeServer::start().await;
+    let trace = Trace::new();
+    trace.append(1, "turn");
+    trace.append_raw(&vec![b'x'; 8 * 1024 * 1024]);
+    let cfg = AdminConConfig {
+        link: server.link(Plane::Admin),
+        trace_file: trace.path.clone(),
+        backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
+        poll: POLL,
+        verb_bound: admin_con::VERB_BOUND,
+        grants_bound: Duration::from_secs(super::client::HELLO_SECS),
+        // 128 chunks of 64 KiB at 100 ms each: about thirteen seconds.
+        scan_delay: Duration::from_millis(100),
+    };
+    let begun = std::time::Instant::now();
+    let con = Running::start(cfg, Arc::new(NoVerbs));
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    // The runtime stayed free while the scan ran: a scan on the
+    // connection's own task would hold this timer, on this test's one
+    // thread, until it finished.
+    let asked = begun.elapsed();
+    assert!(
+        asked < Duration::from_secs(2),
+        "the runtime was held for {asked:?} by the scan"
+    );
+    let Running {
+        stop, status, task, ..
+    } = con;
+    let started = tokio::time::Instant::now();
+    let _ = stop.send(true);
+    let finished = tokio::time::timeout(admin_con::SHUTDOWN_GRACE * 3, task).await;
+    let took = started.elapsed();
+    assert!(
+        finished.is_ok(),
+        "the stop was still waiting after {took:?}"
+    );
+    assert!(
+        took < admin_con::SHUTDOWN_GRACE,
+        "the stop took {took:?}, past the {:?} grace",
+        admin_con::SHUTDOWN_GRACE
+    );
+    assert_eq!(status.borrow().admissions, 0, "the scan was still running");
 }

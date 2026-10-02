@@ -17,7 +17,9 @@
 //! connection outlives it.
 
 use crate::link::authority::client_tls;
-use crate::link::frames::{FromClient, Line, LineReader, Plane, Position, Refusal, ToClient};
+use crate::link::frames::{
+    CADENCE_MAX_SECS, FromClient, Line, LineReader, Plane, Position, Refusal, ToClient,
+};
 use serde::Deserialize;
 use std::future::Future;
 use std::os::fd::{AsRawFd, RawFd};
@@ -40,11 +42,6 @@ pub const HELLO_SECS: u64 = 10;
 
 /// The frames a connection may hold queued for its writer.
 const WRITE_QUEUE: usize = 16;
-
-/// The longest cadence a hello's answer may name, a day: the server derives
-/// it from a silence bound in seconds, and a cadence past this is a fault
-/// rather than a configuration (a timer that far out would overflow).
-pub const CADENCE_MAX_SECS: u64 = 86_400;
 
 /// Read a config that carries a private key, **refusing one another party
 /// could read or swap**: opened without following a symlink (and without
@@ -474,16 +471,22 @@ impl Connection {
 
     /// Close: the heartbeat stopped and joined, the writer drained within
     /// the cadence (it shuts the TLS stream down) or aborted, and joined.
-    pub async fn close(mut self) {
+    pub async fn close(self) {
+        let cadence = self.cadence;
+        self.close_within(cadence).await;
+    }
+
+    /// Close with the writer's drain bounded by `bound` rather than the
+    /// cadence: shutdown passes what remains of its grace, so a server that
+    /// stopped taking bytes cannot hold a stop a cadence past the grace.
+    pub async fn close_within(mut self, bound: Duration) {
         if let Some(heartbeat) = self.heartbeat.take() {
             heartbeat.abort();
             let _ = heartbeat.await;
         }
         drop(self.tx.take());
         if let Some(mut writer) = self.writer.take()
-            && tokio::time::timeout(self.cadence, &mut writer)
-                .await
-                .is_err()
+            && tokio::time::timeout(bound, &mut writer).await.is_err()
         {
             writer.abort();
             let _ = writer.await;

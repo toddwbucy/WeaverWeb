@@ -28,7 +28,9 @@ pub struct ServerConfig {
     /// **The silence bound is the link's one tunable** (Spec section 8):
     /// a connection silent this long is closed, and each connector is
     /// told its send cadence, the bound divided by four, in the answer to
-    /// its hello. Sixty seconds is the Spec's election.
+    /// its hello. Sixty seconds is the Spec's election; at least four
+    /// seconds and at most four days (four times `CADENCE_MAX_SECS`), so
+    /// the cadence is one a connector accepts.
     #[serde(default = "default_silence_bound_secs")]
     pub silence_bound_secs: u64,
     /// The address the client configs carry as the server's, where it
@@ -112,6 +114,45 @@ impl ServerConfig {
                 cfg.silence_bound_secs
             );
         }
+        // And a bound whose cadence a connector would refuse is refused
+        // here, from the one constant both ends hold.
+        let max = 4 * crate::link::frames::CADENCE_MAX_SECS;
+        if cfg.silence_bound_secs > max {
+            anyhow::bail!(
+                "silence_bound_secs is {}, over the {max} (four days) whose cadence a connector accepts",
+                cfg.silence_bound_secs
+            );
+        }
         Ok(cfg)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// **The server refuses a silence bound whose cadence a connector would
+    /// refuse**, so the two ends agree from one constant.
+    #[test]
+    fn a_silence_bound_past_four_days_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("server.toml");
+        let write = |bound: u64| {
+            std::fs::write(
+                &path,
+                format!(
+                    "listen = \"127.0.0.1:0\"\ndatabase = \"postgres:///x\"\nauthority_dir = \"/a\"\nsilence_bound_secs = {bound}\n"
+                ),
+            )
+            .unwrap();
+        };
+        let max = 4 * crate::link::frames::CADENCE_MAX_SECS;
+        write(max);
+        assert_eq!(ServerConfig::load(&path).unwrap().silence_bound_secs, max);
+        write(max + 1);
+        let why = ServerConfig::load(&path).unwrap_err().to_string();
+        assert!(why.contains("four days"), "{why}");
+        write(3);
+        assert!(ServerConfig::load(&path).is_err());
     }
 }

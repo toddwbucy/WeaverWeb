@@ -2477,7 +2477,9 @@ bound is the one tunable, a member of the server's config and set nowhere
 else**: the server tells each connector its send cadence in the answer to
 its hello, and the cadence is the bound divided by four, so an operator who
 changes the bound changes both and a client can never be configured to send
-slower than the server tolerates. **This document elects the bound at sixty
+slower than the server tolerates. The server refuses a bound under four
+seconds or over four days, so the cadence lies between one second and the
+one day a connector accepts, both ends holding the ceiling as one constant. **This document elects the bound at sixty
 seconds, as the planner's election of 2026-10-01 and not the operator's
 ruling**, which puts the cadence at fifteen. The reason: a turn through the
 gate takes seconds to minutes and never rides the heartbeat's path, so the

@@ -832,6 +832,27 @@ async fn a_config_that_is_not_trusted_is_refused_at_start() {
         "{why}"
     );
 
+    // A key pasted into an integer member is named by its member and line,
+    // and its value never appears.
+    let pasted = dir.path().join("pasted.toml");
+    write_mode(
+        &pasted,
+        &config_text(
+            &server,
+            Plane::Gate,
+            Some("/gate"),
+            "turns_in_flight = \"MIIEvQIBADANBgkqhkiG9w0BAQEFAASCSECRETMARKER\"\n",
+        ),
+        0o600,
+    );
+    let why = refused(&pasted);
+    assert!(why.contains("turns_in_flight"), "{why}");
+    assert!(why.contains("line "), "{why}");
+    assert!(
+        !why.contains("SECRETMARKER") && !why.contains("MIIEvQ"),
+        "{why}"
+    );
+
     let none = dir.path().join("none-in-flight.toml");
     write_mode(
         &none,
@@ -969,7 +990,7 @@ async fn a_hello_answer_naming_an_absurd_cadence_is_a_protocol_fault() {
     let server = FakeServer::start().await;
     let link = Link::new(server.link(Plane::Gate)).unwrap();
     let (_, attempt) = tokio::join!(
-        server.admit(super::client::CADENCE_MAX_SECS + 1),
+        server.admit(super::frames::CADENCE_MAX_SECS + 1),
         link.connect(FromClient::Hello {
             agent: "karl".into(),
             plane: Plane::Gate,
@@ -1027,4 +1048,53 @@ async fn a_server_of_another_authority_is_retried_at_the_cap() {
         _ = watched => {}
     }
     con.stop().await;
+}
+
+/// **A stop finishes within the grace even when the server stopped taking
+/// bytes.** The fake server answers the hello with a fifteen-second cadence,
+/// asks for turns with large closes and never reads again, so gate-con's
+/// sends and its writer back up. A shutdown then returns within the grace,
+/// not a cadence after it: the relay's sends watch shutdown, and the
+/// writer's drain gets only what remains of the grace.
+#[tokio::test]
+async fn a_stop_finishes_within_the_grace_when_the_server_stopped_reading() {
+    let server = FakeServer::start().await;
+    let gate = FakeGate::start();
+    let cfg = GateConConfig {
+        link: server.link(Plane::Gate),
+        gate_socket: gate.path.clone(),
+        turns_in_flight: 4,
+        waiting_bound: gate_con::WAITING_BOUND,
+    };
+    let slow = Backoff {
+        base: Duration::from_secs(30),
+        cap: Duration::from_secs(60),
+    };
+    let con = Running::start(cfg, None, slow);
+    let (_reader, mut write) = server.admit(15).await;
+    for id in 0..48u64 {
+        let mut ask = serde_json::to_vec(&ToClient::Turn {
+            id,
+            text: "big".into(),
+        })
+        .unwrap();
+        ask.push(b'\n');
+        write.write_all(&ask).await.unwrap();
+    }
+    write.flush().await.unwrap();
+    // Long enough for the socket's buffers to fill and the sends to back up.
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let started = tokio::time::Instant::now();
+    let _ = con.stop.send(true);
+    tokio::time::timeout(Duration::from_secs(30), con.task)
+        .await
+        .expect("gate-con stops")
+        .unwrap()
+        .unwrap();
+    let took = started.elapsed();
+    assert!(
+        took < gate_con::SHUTDOWN_GRACE + Duration::from_secs(2),
+        "the stop took {took:?}, past the {:?} grace",
+        gate_con::SHUTDOWN_GRACE
+    );
 }

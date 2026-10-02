@@ -12,6 +12,13 @@ use serde::{Deserialize, Serialize};
 /// below any frame, the gate contract's own rule for its lines.
 pub const LINE_BOUND: usize = 4 * 1024 * 1024;
 
+/// **The longest send cadence the link carries, a day**, held by both ends
+/// from this one constant: the server refuses a silence bound above four
+/// times it (the cadence being the bound divided by four, Spec 8), and a
+/// connector refuses a hello's answer naming more, a fault rather than a
+/// configuration (a timer that far out would overflow).
+pub const CADENCE_MAX_SECS: u64 = 86_400;
+
 /// One read of a frame line.
 #[derive(Debug)]
 pub enum Line {

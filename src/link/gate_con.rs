@@ -79,18 +79,7 @@ impl GateConConfig {
     /// key, and a corrupted PEM line is the key's own bytes.
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let content = client::read_private(path)?;
-        let cfg: Self = toml::from_str(&content).map_err(|e| {
-            let line = e.span().map(|span| {
-                content[..span.start.min(content.len())]
-                    .matches('\n')
-                    .count()
-                    + 1
-            });
-            match line {
-                Some(line) => anyhow::anyhow!("{}: line {line}: {}", path.display(), e.message()),
-                None => anyhow::anyhow!("{}: {}", path.display(), e.message()),
-            }
-        })?;
+        let cfg: Self = toml::from_str(&content).map_err(|e| unparsed(path, &content, &e))?;
         cfg.link
             .expect_plane(Plane::Gate)
             .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
@@ -102,6 +91,57 @@ impl GateConConfig {
             );
         }
         Ok(cfg)
+    }
+}
+
+/// The members a gate-con config may carry: the only names a parse error
+/// may print.
+const MEMBERS: &[&str] = &[
+    "server",
+    "server_name",
+    "agent",
+    "plane",
+    "server_certificate",
+    "certificate",
+    "key",
+    "gate_socket",
+    "turns_in_flight",
+];
+
+/// **A parse error names the line and the member, never the text**: toml's
+/// message can quote the rejected value (a key pasted into an integer
+/// member, a PEM line that lost its quoting), and the file carries a key.
+/// The member is named only where it is one of `MEMBERS`, since a corrupted
+/// line's own "key" may be base64 of the key itself.
+fn unparsed(path: &Path, content: &str, e: &toml::de::Error) -> anyhow::Error {
+    let member = |name: &str| MEMBERS.iter().find(|m| **m == name).copied();
+    // A member that is absent carries no value to echo; serde names it.
+    if let Some(rest) = e.message().strip_prefix("missing field `")
+        && let Some(name) = rest.split('`').next().and_then(member)
+    {
+        return anyhow::anyhow!(
+            "{}: the config does not parse: the member {name} is missing",
+            path.display()
+        );
+    }
+    let Some(span) = e.span() else {
+        return anyhow::anyhow!("{}: the config does not parse", path.display());
+    };
+    let start = span.start.min(content.len());
+    let line = content[..start].matches('\n').count() + 1;
+    let text = content.lines().nth(line - 1).unwrap_or("");
+    match text
+        .split_once('=')
+        .and_then(|(name, _)| member(name.trim()))
+    {
+        Some(name) => anyhow::anyhow!(
+            "{}: the config does not parse at line {line}, the member {name}",
+            path.display()
+        ),
+        None => anyhow::anyhow!(
+            "{}: the config does not parse at line {line}",
+            path.display()
+        ),
     }
 }
 
@@ -201,12 +241,13 @@ async fn serve(
         &mut waiting,
     )
     .await;
+    let grace_ends = tokio::time::Instant::now() + SHUTDOWN_GRACE;
     if matches!(ended, Ended::Shutdown) {
         // **Shutdown lets turns in flight finish within a grace**, their
         // answers sent while the link still stands; asks still waiting are
         // dropped, and the server answers their callers as not connected
         // when the link closes.
-        let finished = tokio::time::timeout(SHUTDOWN_GRACE, async {
+        let finished = tokio::time::timeout_at(grace_ends, async {
             while let Some(done) = in_flight.join_next().await {
                 if let Ok(frame) = done
                     && conn.send(frame).await.is_err()
@@ -226,8 +267,30 @@ async fn serve(
     in_flight.abort_all();
     while in_flight.join_next().await.is_some() {}
     waiting.clear();
-    conn.close().await;
+    // **The whole stop is bounded by the grace**: the writer's drain gets
+    // what remains of it, not a further cadence, so a server that stopped
+    // taking bytes cannot hold SIGTERM past the grace it was promised.
+    if matches!(ended, Ended::Shutdown) {
+        conn.close_within(grace_ends.saturating_duration_since(tokio::time::Instant::now()))
+            .await;
+    } else {
+        conn.close().await;
+    }
     ended
+}
+
+/// An answer to the server that **watches shutdown while it waits**: a
+/// send to a server that stopped taking bytes waits up to a cadence, and a
+/// stop must not wait behind it.
+async fn send(
+    conn: &Connection,
+    frame: FromClient,
+    shutdown: &mut watch::Receiver<bool>,
+) -> Result<(), Ended> {
+    tokio::select! {
+        sent = conn.send(frame) => sent.map_err(Ended::Lost),
+        _ = shutdown.changed() => Err(Ended::Shutdown),
+    }
 }
 
 async fn relay(
@@ -262,8 +325,8 @@ async fn relay(
                     // it for an answer that cannot come.
                     Err(e) => return Ended::Lost(format!("a gate exchange failed: {e}")),
                 };
-                if let Err(why) = conn.send(frame).await {
-                    return Ended::Lost(why);
+                if let Err(end) = send(conn, frame, shutdown).await {
+                    return end;
                 }
             }
             incoming = conn.recv() => match incoming {
@@ -271,8 +334,8 @@ async fn relay(
                     // An ask past the gate's bound is answered at once and
                     // never queued, so a waiting entry costs one gate line.
                     if let Err(e) = gate::request_line(&text) {
-                        if let Err(why) = conn.send(answer(id, Err(e))).await {
-                            return Ended::Lost(why);
+                        if let Err(end) = send(conn, answer(id, Err(e)), shutdown).await {
+                            return end;
                         }
                     } else if waiting.len() >= waiting_bound {
                         let busy = FromClient::Turn {
@@ -287,8 +350,8 @@ async fn relay(
                                 ),
                             }),
                         };
-                        if let Err(why) = conn.send(busy).await {
-                            return Ended::Lost(why);
+                        if let Err(end) = send(conn, busy, shutdown).await {
+                            return end;
                         }
                     } else {
                         waiting.push_back((id, text));

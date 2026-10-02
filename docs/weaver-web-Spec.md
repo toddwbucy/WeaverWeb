@@ -1218,7 +1218,11 @@ register verbs act on the server and not on an agent, and take the path the
 last item below states. How people authenticate and what
 the roles are called are section 10's open elections, the operator's both;
 what follows stands under any answer to either, and the act that builds this
-section waits on the two.
+section waits on the two. **This section charters identity and access at the
+level the store needs, and no further**: the act that builds it owes its full
+design before any code, including a threat model of the person, the session,
+enrollment and recovery, and every question of mechanism is that act's
+rather than this document's.
 
 - **The person**: an identity authenticated to the server, distinct from
   section 2.8's session, which carries a claim and no proof. A person row
@@ -1234,7 +1238,17 @@ section waits on the two.
   principal below; and a person may write only their own authentication
   material on their own row, enrolling or rotating whatever the election of
   section 10 picks, and never their name, their state or their grants.
-  Every one of those writes is audited as a verb is.
+  Every one of those writes is audited as a verb is. **A person's first
+  credential comes by a one-time enrollment token**, neutral to the
+  mechanism: an admin, or the host principal for the bootstrap, issues a
+  single-use, expiring token bound to one person row. It is stored only as a
+  digest, under section 2.8's rule, and it is consumed by that person's first
+  write of authentication material, which is the one write a person makes
+  before they have authenticated. Issuing a token is an identity write like
+  any other, audited and taken under the exclusion below. **A disabled person
+  acts on nothing**: every authenticated operation checks that its person is
+  enabled, and disabling a person ends their open sessions in the same
+  write, under the same exclusion.
 - **The server, one of the two principals that are not a person**, for the
   asks the server makes itself, of which the admission's `show` of section 7.2 is the
   one today. It may ask the observation verbs, `show` and `list`, and never
@@ -1305,8 +1319,9 @@ section waits on the two.
   person, the server or the host, its target and its action, and when. For
   a verb asked of an agent the target is the agent and the action the verb;
   for a write to a person row, a role or a grant the target is the row's
-  kind and identity and the action the mutation: enroll, disable, rename,
-  set authentication material, write a role, grant, or revoke. **A record
+  kind and identity and the action the mutation: enroll, issue an enrollment
+  token, disable, rename, set authentication material, write a role, grant,
+  or revoke; a register verb's target and action are the last item's. **A record
   holds no secret**: a write of authentication material records that it
   happened, never the material. This crate writes the first record before
   the ask leaves or the write lands, so no ask or write exists without one.
@@ -1329,8 +1344,10 @@ section waits on the two.
   principal above and audited as its writes are, authorized by access to
   the authority's directory and the store, per section 8. **Once this section's
   identity stands, a register verb asked through the server requires the
-  server-wide admin grant** and is audited the same way, the first record
-  naming the person and, where the verb has one yet, the agent.
+  server-wide admin grant** and is audited the same way. **A register verb's
+  audit target is the server's authority for `authority init` and `authority
+  rotate`, and the agent's row for `register`, `revoke` and `rotate`, and its
+  action is the verb**, in the host's records today as in a person's later.
 
 ```graph
 node: web-verb-refused-before-an-ask-unless-granted
@@ -2978,8 +2995,8 @@ missing while it was relaying.
 | the tuple is admin's word and never gate-con's | perturbation: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it; let a replayed load event write the tuple, restart the server after an unload, backfill, and the row reads loaded; ask `show` before fixing the replay boundary, unload between the two, and the row reads loaded until the next `show`; let a `list` answer through one connection write another row, and that row reads a state its own connection never relayed. **Four clauses are admin-con's ordering and are owed to its act**: let a `show` answer cross the link out of order with the file events around it, unload during the `show`, and the row reads loaded until the next `show`; place the answer in the stream at receipt and unload between the snapshot and the receipt, and the row reads loaded; skip the drain, leave an unread load event behind the tail, invoke `show` after an unload, and the row reads loaded; run two verbs at once on one connection, and an older answer lands after a newer one |
 | nothing crosses the link in the clear | perturbation: offer a plaintext hello to the listener, it is refused below any roster; and review, over the listener, that no plaintext accept path exists |
 | the server never asks a verb outside the agent's ceiling | perturbation, **owed**: drop the ceiling check, ask a verb admin-con's hello did not declare, and it leaves the server; and admin-con's half, drop its typed error answer, and it reaches the invoker. **No instrument stands**: the hello carries no ceiling until the admin-con act, and the server's check lands with the IAM act |
-| a verb its principal may not ask is refused before an ask | perturbation, **owed**: drop the grant check, a person whose role permits `show` asks `stop`, and the ask leaves the server; let the server principal ask a lifecycle verb, and it leaves without a grant. Lands with the IAM act |
-| a person, role or grant written by a principal not permitted to write it is refused | perturbation, **owed**: drop the check, and a person granted only `show` writes themselves the operator role and passes the first gate; let a person write a grant on themselves, and an admin widens their own grants or the last admin removes the only admin grant; let an admin holding the observer role on an agent add `stop` to that role, and their own grant widens without a grant written; let a surface write as the host principal, and a grant lands with no admin behind it; drop the exclusion, have two admins remove each other at once, and no admin remains; disable the sole admin, or have two admins disable each other at once, and no enabled admin remains; grant a role to its editor while the edit is in flight, and the editor widens a role they hold; let a person write another person's authentication material, and they can sign in as them. Lands with the IAM act |
+| a verb its principal may not ask is refused before an ask | perturbation, **owed**: drop the grant check, a person whose role permits `show` asks `stop`, and the ask leaves the server; let the server principal ask a lifecycle verb, and it leaves without a grant; disable a person with a live session, and their next verb still leaves. Lands with the IAM act |
+| a person, role or grant written by a principal not permitted to write it is refused | perturbation, **owed**: drop the check, and a person granted only `show` writes themselves the operator role and passes the first gate; let a person write a grant on themselves, and an admin widens their own grants or the last admin removes the only admin grant; let an admin holding the observer role on an agent add `stop` to that role, and their own grant widens without a grant written; let a surface write as the host principal, and a grant lands with no admin behind it; drop the exclusion, have two admins remove each other at once, and no admin remains; disable the sole admin, or have two admins disable each other at once, and no enabled admin remains; grant a role to its editor while the edit is in flight, and the editor widens a role they hold; let a person write another person's authentication material, and they can sign in as them; reuse a consumed enrollment token, or use one past its expiry, and a second credential lands on someone else's row. Lands with the IAM act |
 | every verb asked and every person, role or grant written has an audit record naming its principal, and its outcome is a second record naming the first | perturbation, **owed**: write the first record after the ask instead of before, fail the store between the two, and an ask leaves with no record; update the first record with the outcome instead of appending a second, and an ask whose answer is lost reads as never answered with no trace of the rewrite; drop the refusal's record, and a refused verb leaves no trace; write a grant with the audit write dropped, and the grant lands with no record; enroll a person or rotate their authentication material with the audit write dropped, and the write lands with no record; record the material in an authentication write's record, and a read of the audit table is a set of credentials. Lands with the IAM act |
 | the admission's `show` is required only where the ceiling grants it | perturbation, **owed**: ask `show` at every admission, and an agent whose ceiling grants no `show` is closed `admission_incomplete` at every reconnection and never stays admitted; skip it where it is granted, and the row reads the last process's state as current. The listener asks `show` at every admission until the admin-con act, which is the drift this row names |
 | no privileged invocation exists in the crate | review, and a test, **owed**: a test that reads the source tree for an invocation of `sudo`, a root wrapper or a setuid call, shown to fail when one is planted. It would fail today on the seed's `lifecycle.rs`, which invokes `sudo weaver-admin` and is not carried forward, so the row is owed until that file leaves |

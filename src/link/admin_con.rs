@@ -909,42 +909,50 @@ struct Ask {
     id: u64,
     verb: String,
     principal: Principal,
-    /// The admission's `show`, the one ask served during the replay.
-    admission: bool,
 }
 
-/// The asks waiting their turn, and whether the next to arrive is the
-/// admission's `show`.
+impl Ask {
+    /// **A `show` asked by the server principal is served during the
+    /// replay** (Spec 7.2): the server may ask only observation verbs, and
+    /// a re-confirmation acts on nothing, so the live events before its
+    /// snapshot follow its answer in order and the row converges on it.
+    /// The admission's `show` is one; the frame says so by its principal.
+    fn served_during_the_replay(&self) -> bool {
+        self.verb == "show" && self.principal == Principal::Server
+    }
+}
+
+/// The asks waiting their turn.
 struct Asks {
     waiting: VecDeque<Ask>,
-    /// **The admission's `show` is the first ask on a connection whose
-    /// ceiling grants `show`** (Spec 7.2, 8): the listener enqueues it with
-    /// the hello's answer and lets no other ask onto the connection ahead
-    /// of it, so admin-con knows it by its place and needs no mark on it.
-    admission_next: bool,
 }
 
 impl Asks {
-    fn new(ceiling: &BTreeSet<String>) -> Self {
+    fn new() -> Self {
         Self {
             waiting: VecDeque::new(),
-            admission_next: ceiling.contains("show"),
         }
     }
 
-    /// The next ask to serve: during the replay the admission's `show`
-    /// alone, every other waiting for `caught_up`.
+    /// The next ask to serve: during the replay a `show` the server asked,
+    /// at once, every other waiting for `caught_up`; after it, the oldest.
     fn next(&mut self, replaying: bool) -> Option<Ask> {
-        if replaying && !self.waiting.front().is_some_and(|a| a.admission) {
-            return None;
+        if !replaying {
+            return self.waiting.pop_front();
         }
-        self.waiting.pop_front()
+        let at = self
+            .waiting
+            .iter()
+            .position(Ask::served_during_the_replay)?;
+        self.waiting.remove(at)
     }
 
     fn servable(&self, replaying: bool) -> bool {
-        self.waiting
-            .front()
-            .is_some_and(|a| !replaying || a.admission)
+        if replaying {
+            self.waiting.iter().any(Ask::served_during_the_replay)
+        } else {
+            !self.waiting.is_empty()
+        }
     }
 }
 
@@ -1229,7 +1237,7 @@ async fn relay<I: Invoker>(
     // on a slow link could outlast the admission `show`'s deadline. The
     // frame that ends the replay is the last one queued.
     let mut outbox: VecDeque<FromClient> = frames_of(front, true, &mut seq).into();
-    let mut queue = Asks::new(&ceiling);
+    let mut queue = Asks::new();
     let mut in_flight = futures::stream::FuturesUnordered::new();
     let mut tick = tokio::time::interval(opts.poll);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -1246,12 +1254,13 @@ async fn relay<I: Invoker>(
         while in_flight.len() < VERBS_IN_FLIGHT
             && let Some(ask) = queue.next(replaying)
         {
-            // **During the replay the admission's `show` alone is served,
-            // at once and with no drain** (Spec 7.2): held behind a long
-            // backfill it would miss its deadline. Its snapshot is taken
-            // after the boundary and every live event written before its
-            // invocation is relayed after its answer, in order, so the row
-            // may briefly read older than the snapshot but converges to it.
+            // **During the replay only a `show` the server asked is served,
+            // at once and with no drain** (Spec 7.2): the admission's held
+            // behind a long backfill would miss its deadline. Its snapshot
+            // is taken after the boundary and every live event written
+            // before its invocation is relayed after its answer, in order,
+            // so the row may briefly read older than the snapshot but
+            // converges to it.
             // Every other ask waits for `caught_up` and takes the drain: a
             // record appended after the hello is live and merely unread,
             // and an ordinary verb answered ahead of it would invert around
@@ -1308,7 +1317,7 @@ async fn relay<I: Invoker>(
         // each event marked replayed; then the frame that ends it.
         if replaying {
             // **The connection is read before every frame, the first
-            // included**, so the admission's `show` is served before the
+            // included**, so a `show` the server asked is served before the
             // next frame and waits behind at most the one being sent, and
             // the server's acknowledgements never back up behind the replay.
             if let Some(end) = take_incoming(conn, &mut queue, &ceiling, &opts.agent).await {
@@ -1485,7 +1494,6 @@ async fn handle(
             verb,
             principal,
         }) => {
-            let admission = std::mem::take(&mut queue.admission_next) && verb == "show";
             // **An ask outside the ceiling is the server's own defect**
             // (Spec 8): answered with a typed error naming the ceiling,
             // logged, nothing run, the connection kept.
@@ -1514,7 +1522,6 @@ async fn handle(
                     id,
                     verb,
                     principal,
-                    admission,
                 });
                 None
             };

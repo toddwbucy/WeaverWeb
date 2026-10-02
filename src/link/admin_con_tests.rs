@@ -1673,8 +1673,8 @@ async fn an_ask_during_the_replay_waits_behind_one_frame_not_a_step() {
 }
 
 /// **An ordinary verb asked during the replay waits for `caught_up` and the
-/// drain**: only the admission's `show` is served during the replay. A
-/// fake server asks the admission's `show` and then an ordinary `show`
+/// drain**: only a `show` the server asked is served during the replay. A
+/// fake server asks the admission's `show` and then a `show` for a person
 /// right behind the hello's answer, and a record is appended after the
 /// hello, live and unread: the admission's answer comes before `caught_up`,
 /// and the ordinary answer after `caught_up` and after that record.
@@ -1704,12 +1704,13 @@ async fn an_ordinary_verb_asked_during_the_replay_waits_for_caught_up_and_the_dr
     // too slow to read it on its own.
     trace.append(999_999, "unload");
     let mut asks = Vec::new();
-    for id in [1u64, 2] {
+    let person = Principal::Person { name: "ada".into() };
+    for (id, principal) in [(1u64, Principal::Server), (2, person)] {
         asks.extend(
             serde_json::to_vec(&ToClient::Verb {
                 id,
                 verb: "show".into(),
-                principal: Principal::Server,
+                principal,
             })
             .unwrap(),
         );

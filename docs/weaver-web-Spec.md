@@ -2532,8 +2532,9 @@ it. Every event read after the receipt is behind the
 answer, and nothing is read in between, so the snapshot the verb took somewhere inside that
 span is newer than everything ahead of it and older than everything
 behind. This holds for every verb answer and not only the admission-time
-`show`. **The admission's `show` alone is served during the replay**, at once
-and between the replay's frames, so it waits behind at most one, with no
+`show`. **Only a `show` asked by the server principal is served during the
+replay**, the admission's among them, at once and between the replay's
+frames, so it waits behind at most one, with no
 drain, since held behind a long backfill it would miss the admission's
 deadline. Its snapshot is taken after the boundary, and every live event
 written before its invocation is relayed after its answer, in order: the
@@ -2544,9 +2545,11 @@ and an inversion around a person's load or stop is not, so **every other
 ask waits for `caught_up` and then takes the drain**: before `caught_up`
 nothing live has been read, but a record appended after the hello is live
 and merely unread, and an ordinary verb answered during the replay could
-overtake it. admin-con knows the admission's `show` as the first ask on a
-connection whose ceiling grants `show`, since the listener lets no other
-ask onto the connection ahead of it. The connector's socket holds a bounded number of
+overtake it. admin-con knows the exempt ask by the frame alone, a `show`
+asked by the server principal, which may ask only observation verbs: any
+such re-confirmation acts on nothing and converges the same way, so the
+rule needs no knowledge of where the admission's `show` falls among the
+asks. The connector's socket holds a bounded number of
 bytes unsent, so on a slow link the answer waits behind no send buffer
 grown to megabytes either. **admin-con runs one verb at a time per connection**, each from
 its pre-invocation drain, where it takes one, through the emission of its

@@ -1902,3 +1902,68 @@ async fn a_stop_during_a_long_tail_scan_returns_within_the_grace() {
     );
     assert_eq!(status.borrow().admissions, 0, "the scan was still running");
 }
+
+/// **A drain retargets when the held file restarts in place**: the drain
+/// records its target, the file is rewritten in place longer than that
+/// tail with a load past the old target and more than a read step in, and
+/// the restart's reads must carry the drain through the rewritten file's
+/// tail, so the load precedes the answer and the `show` taken after it is
+/// the row's last word.
+#[tokio::test]
+async fn a_rewrite_during_a_drain_is_drained_to_its_tail_ahead_of_the_answer() {
+    let Some(lab) = Lab::open().await else { return };
+    let trace = Trace::new();
+    for n in 1..=3 {
+        trace.append(n, "turn");
+    }
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, &trace.path, out.path(), None).await;
+    let invoker = FakeInvoker::new(&["show"], "unloaded");
+    let mut cfg = config(&path, Duration::from_secs(60));
+    // Each scan chunk waits, so the drain's target, recorded first, stands
+    // while the file is rewritten under it.
+    cfg.scan_delay = Duration::from_millis(1500);
+    let mut con = Running::start(cfg, invoker.clone());
+    con.wait("admitted", |s| s.admitted).await;
+    let until = tokio::time::Instant::now() + Duration::from_secs(20);
+    while lab.agent(&id).await.state_source.as_deref() != Some("show") {
+        assert!(
+            tokio::time::Instant::now() < until,
+            "the admission's show never landed"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    wait_window(&lab, &id, "the first three", |e| ns(e) == [1, 2, 3]).await;
+
+    let listener = lab.listener.clone();
+    let asked = id.clone();
+    let answer = tokio::spawn(async move { verb(&listener, &asked, "show").await });
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    // Rewritten in place, never shorter, past one read step, the load last.
+    let mut rewritten = String::new();
+    let mut n = 1_000u64;
+    while rewritten.len() < 3 * 1024 * 1024 / 2 {
+        rewritten.push_str(&record(n, "turn"));
+        n += 1;
+    }
+    rewritten.push_str(&record(2_000_000, "load"));
+    {
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&trace.path)
+            .unwrap();
+        f.write_all(rewritten.as_bytes()).unwrap();
+        f.sync_all().unwrap();
+    }
+    answer.await.unwrap().unwrap();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let row = lab.agent(&id).await;
+    assert_eq!(row.load_state.as_deref(), Some("unloaded"), "{row:?}");
+    assert_eq!(row.state_source.as_deref(), Some("show"), "{row:?}");
+    // The poll is a minute away, so only the drain can have relayed it.
+    assert!(
+        ns(&window(&lab, &id)).contains(&2_000_000),
+        "the load did not precede the answer"
+    );
+    con.stop().await;
+}

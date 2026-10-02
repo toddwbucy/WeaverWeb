@@ -455,12 +455,15 @@ struct Tailer {
     notes: Vec<String>,
     /// A test's throttle on each chunk of a long scan, zero in service.
     scan_delay: Duration,
+    /// How many times the position has gone back to 0: see `restart`.
+    restarts: u64,
 }
 
 impl Tailer {
     fn new(path: PathBuf, scan_delay: Duration) -> Self {
         Self {
             scan_delay,
+            restarts: 0,
             path,
             held: None,
             offset: 0,
@@ -491,19 +494,21 @@ impl Tailer {
             self.refused = None;
         }
         self.held = held;
-        self.offset = 0;
-        self.digest = String::new();
-        self.skip = None;
-        self.seen = None;
+        self.restart();
     }
 
-    /// Read the held file again from its start, its next poll checked
-    /// afresh.
+    /// **Read the held file from its start, its next poll checked afresh**:
+    /// the one place a position goes back to 0, whether the file was
+    /// switched (rotation, a file appearing, a refusal) or restarted in
+    /// place (truncation, rewrite). Each counts in `restarts`, which is how
+    /// a drain knows its target named a file that is no longer the one
+    /// being read.
     fn restart(&mut self) {
         self.offset = 0;
         self.digest = String::new();
         self.skip = None;
         self.seen = None;
+        self.restarts += 1;
     }
 
     fn held_len(&self) -> std::io::Result<u64> {
@@ -627,9 +632,7 @@ impl Tailer {
             return Ok(None);
         }
         let at = self.offset;
-        self.offset = 0;
-        self.digest = String::new();
-        self.skip = None;
+        self.restart();
         let reason = if shrunk {
             format!("the file was truncated below offset {at}; relayed from its start")
         } else {
@@ -1166,8 +1169,7 @@ async fn resume(
                 tailer.offset = acked.offset;
                 tailer.digest = acked.digest.clone();
             } else {
-                tailer.offset = 0;
-                tailer.digest = String::new();
+                tailer.restart();
                 marks.push(Item::Mark {
                     position: tailer.position(),
                     reason: format!(
@@ -1191,8 +1193,7 @@ async fn resume(
                 tailer.digest = acked.digest.clone();
                 return Ok(front(tailer, marks));
             }
-            tailer.offset = 0;
-            tailer.digest = String::new();
+            tailer.restart();
             marks.push(Item::Mark {
                 position: tailer.position(),
                 reason: if acked.generation == ABSENT {
@@ -1561,12 +1562,18 @@ async fn drain(conn: &Connection, tailer: &mut Tailer, seq: &mut u64) -> Result<
             None => Ok(0),
         }
     }
-    let mut generation = tailer.generation().to_owned();
+    //
+    // **Whenever the held file restarts during the drain, by rotation,
+    // truncation or rewrite, the drain retargets to that file's current
+    // tail before deciding it is complete**: the target recorded first
+    // named the file as it stood, and a restart reads from 0 a file whose
+    // complete records may run past it.
+    let mut restarts = tailer.restarts;
     let mut target = tail(tailer).await?;
     loop {
         let moved = live_step(conn, tailer, seq).await?;
-        if tailer.generation() != generation {
-            generation = tailer.generation().to_owned();
+        if tailer.restarts != restarts {
+            restarts = tailer.restarts;
             target = tail(tailer).await?;
             continue;
         }

@@ -1246,6 +1246,16 @@ section waits on the two.
   vocabulary. **Roles and grants are authored rows** under section 3.2,
   carrying the author member and the version, so two concurrent edits of one
   grant refuse on the stale version rather than one silently winning.
+  **Writing a role or a grant requires the server-wide admin grant**, the
+  same grant the register verbs need, and each write is audited as a verb
+  is: a first record before the write and the outcome as the second. Without
+  this a person could grant themselves the operator role and pass the first
+  gate. **The first admin is the bootstrap**, created by an operator command
+  on the server's host, authorized as the register verbs are today, by
+  access to the store and the authority's directory; no surface can create
+  it. **No person writes a grant on themselves**, granting or removing, so an
+  admin cannot widen their own grants and the last admin cannot remove their
+  own admin grant; the exact rule is the act's to choose.
 - **Server-side authorization**: a verb is asked of an agent only if its
   principal may ask it, the person's grants on that agent permitting it or,
   for the server's own asks, the verb being an observation verb, and the
@@ -2912,6 +2922,7 @@ missing while it was relaying.
 | nothing crosses the link in the clear | perturbation: offer a plaintext hello to the listener, it is refused below any roster; and review, over the listener, that no plaintext accept path exists |
 | the server never asks a verb outside the agent's ceiling | perturbation, **owed**: drop the ceiling check, ask a verb admin-con's hello did not declare, and it leaves the server; and admin-con's half, drop its typed error answer, and it reaches the invoker. **No instrument stands**: the hello carries no ceiling until the admin-con act, and the server's check lands with the IAM act |
 | a verb its principal may not ask is refused before an ask | perturbation, **owed**: drop the grant check, a person whose role permits `show` asks `stop`, and the ask leaves the server; let the server principal ask a lifecycle verb, and it leaves without a grant. Lands with the IAM act |
+| a grant written by a person who does not hold the admin grant is refused | perturbation, **owed**: drop the check, and a person granted only `show` writes themselves the operator role and passes the first gate; let a person write a grant on themselves, and an admin widens their own grants or the last admin removes the only admin grant. Lands with the IAM act |
 | every verb asked has an audit record naming its principal, and its outcome is a second record naming the first | perturbation, **owed**: write the first record after the ask instead of before, fail the store between the two, and an ask leaves with no record; update the first record with the outcome instead of appending a second, and an ask whose answer is lost reads as never answered with no trace of the rewrite; drop the refusal's record, and a refused verb leaves no trace. Lands with the IAM act |
 | the admission's `show` is required only where the ceiling grants it | perturbation, **owed**: ask `show` at every admission, and an agent whose ceiling grants no `show` is closed `admission_incomplete` at every reconnection and never stays admitted; skip it where it is granted, and the row reads the last process's state as current. The listener asks `show` at every admission until the admin-con act, which is the drift this row names |
 | no privileged invocation exists in the crate | review, and a test, **owed**: a test that reads the source tree for an invocation of `sudo`, a root wrapper or a setuid call, shown to fail when one is planted. It would fail today on the seed's `lifecycle.rs`, which invokes `sudo weaver-admin` and is not carried forward, so the row is owed until that file leaves |
@@ -2919,17 +2930,17 @@ missing while it was relaying.
 **A watch that cannot fail is not a test.** For each perturbation above, the
 act that lands it states what removal makes it fail and confirms it does.
 
-**A row marked owed has no instrument and is not counted as enforced.** Seven
+**A row marked owed has no instrument and is not counted as enforced.** Eight
 stand so marked as of 2026-10-02. The batch's order is owed because section
 2.11 describes its table and no migration builds it. The trace file's replay
 from the acknowledged position is owed to the admin-con act, being admin-con's
 half of section 7.2; the server's half, the position held per process and
-answered in the hello, stands in `src/link/tests.rs`. The five rows of the
+answered in the hello, stands in `src/link/tests.rs`. The six rows of the
 role shape ruled on 2026-10-02 are owed to the acts that build them: the
 ceiling and the conditional admission `show` to the admin-con act, with the
-server's check on the ceiling joining the principal check and the audit record in
-the IAM act, and the absence of a privileged invocation until the seed's
-`lifecycle.rs` leaves. The other ten rows of the link landed with the act that
+server's check on the ceiling joining the principal check, the grant writer's
+check and the audit record in the IAM act, and the absence of a privileged
+invocation until the seed's `lifecycle.rs` leaves. The other ten rows of the link landed with the act that
 built the listener and the register, each shown to fail with its guard
 removed, and the four clauses of the tuple row that are admin-con's ordering
 are marked owed inside the row. The marking is the point: a row

@@ -81,7 +81,7 @@ instead of rearchitecting.
 ```sh
 cargo build
 weaver-web --config /etc/weaver-web/config.toml                # the server
-weaver-web-connector --config /etc/weaver-web/connector.toml   # on the agents' box
+gate-con --config <path>    # on the agent's box; admin-con lands with act 5
 ```
 
 The server requires Postgres (local socket, peer auth, database named

@@ -11,9 +11,9 @@
 
 use super::authority::{Authority, ClientCredential, client_tls, fingerprint};
 use super::frames::{FromClient, Plane, Position, Refusal, ToClient};
+use super::frames::{Principal, VerbFault, VerbOutcome};
 use super::listener::Listener;
 use super::register::{Agent, CredentialState};
-use crate::lifecycle::VerbOutcome;
 use crate::store::{AgentId, Store};
 use crate::traceview::TraceEvent;
 use serde_json::json;
@@ -59,22 +59,6 @@ fn show_answer(agent: &str, state: &str, load: Option<serde_json::Value>) -> Ver
         agent: agent.into(),
         exit_code: Some(0),
         answer: Some(answer),
-        raw_stdout: None,
-        stderr: None,
-        timed_out: false,
-    }
-}
-
-fn list_answer(rows: &[(&str, &str)]) -> VerbOutcome {
-    let agents: Vec<serde_json::Value> = rows
-        .iter()
-        .map(|(name, state)| json!({ "name": name, "state": state }))
-        .collect();
-    VerbOutcome {
-        verb: "list".into(),
-        agent: String::new(),
-        exit_code: Some(0),
-        answer: Some(json!({ "kind": "agents", "agents": agents })),
         raw_stdout: None,
         stderr: None,
         timed_out: false,
@@ -338,6 +322,7 @@ impl Lab {
             agent: agent.name.clone(),
             plane,
             tail: Some(position(100)),
+            ceiling: (plane == Plane::Admin).then(|| vec!["show".to_owned()]),
         })
         .await;
         match fake.recv().await {
@@ -427,6 +412,7 @@ async fn one_live_connection_per_credential() {
             agent: karl.name.clone(),
             plane: Plane::Gate,
             tail: None,
+            ceiling: None,
         })
         .await;
     second.expect_refusal(Refusal::AlreadyConnected).await;
@@ -466,6 +452,7 @@ async fn one_live_connection_per_credential() {
             &karl.gate.fingerprint,
             99,
             "127.0.0.1:1",
+            None,
             async || Ok(()),
             || {
                 installed.set(true);
@@ -522,6 +509,7 @@ async fn identity_is_the_certificates_binding_never_the_roster() {
             agent: m1.name.clone(),
             plane: Plane::Gate,
             tail: None,
+            ceiling: None,
         })
         .await;
     other_name.expect_refusal(Refusal::RosterMismatch).await;
@@ -532,6 +520,7 @@ async fn identity_is_the_certificates_binding_never_the_roster() {
             agent: karl.name.clone(),
             plane: Plane::Admin,
             tail: None,
+            ceiling: Some(vec!["show".to_owned()]),
         })
         .await;
     other_plane.expect_refusal(Refusal::RosterMismatch).await;
@@ -705,6 +694,7 @@ async fn a_credential_of_another_authority_fails_the_handshake() {
                 agent: karl.name.clone(),
                 plane: Plane::Gate,
                 tail: None,
+                ceiling: None,
             })
             .await;
             assert!(
@@ -772,8 +762,8 @@ async fn the_client_credential_is_stored_as_a_fingerprint_and_never_the_key() {
 /// attempt to write it is refused on the wrong plane; a `show` answer
 /// lands; a replayed event never writes the row, whether the client flags
 /// it or the server's boundary, the hello's tail, says so; a live load
-/// event writes; of a `list` answer only the connection's own row lands;
-/// and after a restart a backfilled load event still writes nothing.
+/// event writes; and after a restart a backfilled load event still writes
+/// nothing.
 ///
 /// Perturbations, each a clause of the Spec's row: (1) in
 /// `serve_connection`, accept `Verb` and `Event` frames on the gate plane,
@@ -781,11 +771,10 @@ async fn the_client_credential_is_stored_as_a_fingerprint_and_never_the_key() {
 /// the observation whatever `behind` says, and the replayed load event
 /// after an unload reads loaded, including after the restart; (3) classify
 /// by the client's flag instead of the boundary, and the event at 50
-/// flagged live writes though it is behind the hello's tail; (4) in
-/// `land_verb`, land the first summary of a `list` instead of the own
-/// row's, and karl reads the other agent's state. The out-of-order answer,
-/// the skipped drain and the overlapping verbs are admin-con's ordering
-/// (Spec 7.2) and wait for act 4's real admin-con.
+/// flagged live writes though it is behind the hello's tail. The
+/// out-of-order answer, the skipped drain and the overlapping verbs are
+/// admin-con's ordering (Spec 7.2), tested against the real admin-con in
+/// `link::admin_con_tests`.
 ///
 /// conforms: web-tuple-is-admins-word-and-never-gate-cons
 #[tokio::test]
@@ -794,7 +783,6 @@ async fn the_tuple_is_admins_word_and_never_gate_cons() {
         return;
     };
     let karl = lab.register("karl").await;
-    let other = lab.register("other").await;
 
     // (1) The data plane cannot carry it.
     let mut gate = lab.admit(&karl, Plane::Gate).await;
@@ -889,25 +877,8 @@ async fn the_tuple_is_admins_word_and_never_gate_cons() {
         .await;
     assert_eq!(row.tuple, Some(json!({"declaration": "sha-new"})));
 
-    // (4) Of a list answer only the own row lands.
-    admin
-        .send(FromClient::Verb {
-            id: 2,
-            outcome: Some(list_answer(&[("other", "active"), ("karl", "unloaded")])),
-            error: None,
-        })
-        .await;
-    lab.wait_for(&karl.id, "unloaded by list", |a| {
-        a.load_state.as_deref() == Some("unloaded")
-    })
-    .await;
-    assert!(
-        lab.agent(&other.id).await.load_state.is_none(),
-        "other's row is untouched"
-    );
-
     // After a restart, a backfilled load event behind the new boundary
-    // still writes nothing, so the row keeps the newer unload.
+    // still writes nothing, so the row keeps the live load's tuple.
     drop(admin);
     lab.restart().await;
     let mut admin = lab.admit_replaying(&karl, Plane::Admin).await;
@@ -921,8 +892,8 @@ async fn the_tuple_is_admins_word_and_never_gate_cons() {
     assert!(matches!(admin.recv().await, Some(ToClient::Ack { .. })));
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert_eq!(
-        lab.agent(&karl.id).await.load_state.as_deref(),
-        Some("unloaded")
+        lab.agent(&karl.id).await.tuple,
+        Some(json!({"declaration": "sha-new"}))
     );
 }
 
@@ -944,6 +915,7 @@ async fn nothing_crosses_the_link_in_the_clear() {
         agent: karl.name.clone(),
         plane: Plane::Gate,
         tail: None,
+        ceiling: None,
     })
     .unwrap();
     plain
@@ -1008,6 +980,7 @@ async fn the_acknowledged_position_is_per_process() {
             agent: karl.name.clone(),
             plane: Plane::Admin,
             tail: Some(position(200)),
+            ceiling: Some(vec!["show".to_owned()]),
         })
         .await;
     match again.recv().await {
@@ -1027,6 +1000,7 @@ async fn the_acknowledged_position_is_per_process() {
             agent: karl.name.clone(),
             plane: Plane::Admin,
             tail: Some(position(200)),
+            ceiling: Some(vec!["show".to_owned()]),
         })
         .await;
     match fresh.recv().await {
@@ -1209,6 +1183,7 @@ async fn rotation_closes_both_live_connections_and_admits_the_new_pair() {
             agent: karl.name.clone(),
             plane: Plane::Gate,
             tail: None,
+            ceiling: None,
         })
         .await;
     raced.expect_refusal(Refusal::NotLive).await;
@@ -1242,6 +1217,7 @@ async fn a_tailless_admin_hello_and_a_line_past_the_bound_are_malformed() {
             agent: karl.name.clone(),
             plane: Plane::Admin,
             tail: None,
+            ceiling: Some(vec!["show".to_owned()]),
         })
         .await;
     tailless.expect_refusal(Refusal::Malformed).await;
@@ -1260,6 +1236,7 @@ async fn a_tailless_admin_hello_and_a_line_past_the_bound_are_malformed() {
             agent: karl.name.clone(),
             plane: Plane::Gate,
             tail: None,
+            ceiling: None,
         })
         .await;
     twice.expect_refusal(Refusal::Malformed).await;
@@ -1348,14 +1325,24 @@ async fn events_of_another_generation_classify_by_the_streams_order() {
     lab.wait_for(&karl.id, "admin down", |a| !a.admin.connected)
         .await;
 
-    // An event at or beyond the boundary in its generation before
-    // caught_up is a protocol fault.
+    // An event beyond the boundary in its generation before caught_up is a
+    // protocol fault. A position is the byte after its record, so the event
+    // ending at the boundary (100) is the last one behind it, and the first
+    // past it ends beyond.
     let mut admin = lab.admit_replaying(&karl, Plane::Admin).await;
     admin
         .send(FromClient::Event {
             position: position(100),
-            replayed: false,
+            replayed: true,
             event: trace_event(5, "turn", json!({})),
+        })
+        .await;
+    assert!(matches!(admin.recv().await, Some(ToClient::Ack { .. })));
+    admin
+        .send(FromClient::Event {
+            position: position(101),
+            replayed: false,
+            event: trace_event(6, "turn", json!({})),
         })
         .await;
     admin.expect_refusal(Refusal::Malformed).await;
@@ -1476,6 +1463,7 @@ async fn an_observation_the_register_never_took_is_not_acknowledged() {
             agent: karl.name.clone(),
             plane: Plane::Admin,
             tail: Some(position(200)),
+            ceiling: Some(vec!["show".to_owned()]),
         })
         .await;
     match again.recv().await {
@@ -1537,9 +1525,9 @@ async fn a_show_answer_the_register_never_took_closes_the_connection_and_fails_t
 
     let listener = lab.listener.clone();
     let id = karl.id.clone();
-    let asked = tokio::spawn(async move { listener.verb(&id, "show").await });
+    let asked = tokio::spawn(async move { listener.verb(&id, "show", Principal::Server).await });
     let ask = match admin.recv().await {
-        Some(ToClient::Verb { id, verb }) if verb == "show" => id,
+        Some(ToClient::Verb { id, verb, .. }) if verb == "show" => id,
         other => panic!("expected the show ask, got {other:?}"),
     };
     lab.listener.fail_next_land();
@@ -1827,6 +1815,7 @@ async fn the_listener_halts_when_its_lock_session_is_lost() {
             agent: lena.name.clone(),
             plane: Plane::Gate,
             tail: None,
+            ceiling: None,
         })
         .await;
     lena_gate.expect_refusal(Refusal::StoreUnavailable).await;
@@ -2112,6 +2101,7 @@ async fn an_admission_whose_answer_was_lost_is_reconciled() {
         agent: karl.name.clone(),
         plane: Plane::Gate,
         tail: None,
+        ceiling: None,
     })
     .await;
     assert!(
@@ -2667,6 +2657,7 @@ async fn an_admission_whose_show_is_not_answered_is_closed() {
                 agent: karl.name.clone(),
                 plane: Plane::Admin,
                 tail: Some(position(100)),
+                ceiling: Some(vec!["show".to_owned()]),
             })
             .await;
         assert!(matches!(
@@ -2674,7 +2665,7 @@ async fn an_admission_whose_show_is_not_answered_is_closed() {
             Some(ToClient::HelloAnswer { .. })
         ));
         match admin.recv().await {
-            Some(ToClient::Verb { id, verb }) if verb == "show" => (admin, id),
+            Some(ToClient::Verb { id, verb, .. }) if verb == "show" => (admin, id),
             other => panic!("expected the show ask, got {other:?}"),
         }
     }
@@ -2687,7 +2678,10 @@ async fn an_admission_whose_show_is_not_answered_is_closed() {
         .send(FromClient::Verb {
             id,
             outcome: None,
-            error: Some("show failed".into()),
+            error: Some(VerbFault {
+                kind: VerbFault::NOT_RUN.into(),
+                message: "show failed".into(),
+            }),
         })
         .await;
     admin.expect_refusal(Refusal::AdmissionIncomplete).await;
@@ -2805,6 +2799,7 @@ async fn a_landing_that_stalls_closes_the_connection_without_an_ack() {
                 agent: karl.name.clone(),
                 plane: Plane::Admin,
                 tail: Some(position(100)),
+                ceiling: Some(vec!["show".to_owned()]),
             })
             .await;
         assert!(matches!(
@@ -2812,7 +2807,7 @@ async fn a_landing_that_stalls_closes_the_connection_without_an_ack() {
             Some(ToClient::HelloAnswer { .. })
         ));
         let id = match admin.recv().await {
-            Some(ToClient::Verb { id, verb }) if verb == "show" => id,
+            Some(ToClient::Verb { id, verb, .. }) if verb == "show" => id,
             other => panic!("expected the show ask, got {other:?}"),
         };
         admin.send(FromClient::CaughtUp).await;

@@ -23,7 +23,7 @@ use tokio::task::JoinHandle;
 
 /// A backoff fast enough for a test: the cap is what a credential refusal
 /// waits, so it is short and still distinguishable from the base.
-const FAST: Backoff = Backoff {
+pub(super) const FAST: Backoff = Backoff {
     base: Duration::from_millis(20),
     cap: Duration::from_millis(400),
 };
@@ -547,16 +547,16 @@ async fn shutdown_lets_a_turn_in_flight_finish() {
 
 /// A fake server: the authority's TLS, one connection, the hello read and
 /// answered with the given cadence, and the rest left to the test.
-struct FakeServer {
-    _dir: tempfile::TempDir,
-    authority: Authority,
-    listener: TcpListener,
+pub(super) struct FakeServer {
+    pub(super) _dir: tempfile::TempDir,
+    pub(super) authority: Authority,
+    pub(super) listener: TcpListener,
 }
 
-type ServerStream = tokio_rustls::server::TlsStream<tokio::net::TcpStream>;
+pub(super) type ServerStream = tokio_rustls::server::TlsStream<tokio::net::TcpStream>;
 
 impl FakeServer {
-    async fn start() -> Self {
+    pub(super) async fn start() -> Self {
         let dir = tempfile::tempdir().unwrap();
         let authority = Authority::init(&dir.path().join("authority"), "weaver-web", &[]).unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -567,7 +567,7 @@ impl FakeServer {
         }
     }
 
-    fn link(&self, plane: Plane) -> LinkConfig {
+    pub(super) fn link(&self, plane: Plane) -> LinkConfig {
         let credential = self.authority.mint_client("karl", plane).unwrap();
         LinkConfig {
             server: self.listener.local_addr().unwrap().to_string(),
@@ -581,7 +581,7 @@ impl FakeServer {
     }
 
     /// Accept one connection, read its hello, answer it.
-    async fn admit(
+    pub(super) async fn admit(
         &self,
         cadence_secs: u64,
     ) -> (
@@ -644,6 +644,7 @@ async fn a_server_line_past_the_bound_ends_the_connection() {
                 agent: "karl".into(),
                 plane: Plane::Gate,
                 tail: None,
+                ceiling: None,
             })
             .await
         else {
@@ -995,6 +996,7 @@ async fn a_hello_answer_naming_an_absurd_cadence_is_a_protocol_fault() {
             agent: "karl".into(),
             plane: Plane::Gate,
             tail: None,
+            ceiling: None,
         })
     );
     match attempt {

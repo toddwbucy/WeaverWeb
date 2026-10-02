@@ -102,6 +102,53 @@ pub fn read_private(path: &Path) -> anyhow::Result<String> {
     Ok(content)
 }
 
+/// Parse a connector's config, **naming only its own members in an error**
+/// (see `unparsed`).
+pub fn parse_config<T: serde::de::DeserializeOwned>(
+    path: &Path,
+    content: &str,
+    members: &[&str],
+) -> anyhow::Result<T> {
+    toml::from_str(content).map_err(|e| unparsed(path, content, &e, members))
+}
+
+/// **A parse error names the line and the member, never the text**: toml's
+/// message can quote the rejected value (a key pasted into an integer
+/// member, a PEM line that lost its quoting), and the file carries a key.
+/// The member is named only where it is one of the connector's members, since a corrupted
+/// line's own "key" may be base64 of the key itself.
+fn unparsed(path: &Path, content: &str, e: &toml::de::Error, members: &[&str]) -> anyhow::Error {
+    let member = |name: &str| members.iter().find(|m| **m == name).copied();
+    // A member that is absent carries no value to echo; serde names it.
+    if let Some(rest) = e.message().strip_prefix("missing field `")
+        && let Some(name) = rest.split('`').next().and_then(member)
+    {
+        return anyhow::anyhow!(
+            "{}: the config does not parse: the member {name} is missing",
+            path.display()
+        );
+    }
+    let Some(span) = e.span() else {
+        return anyhow::anyhow!("{}: the config does not parse", path.display());
+    };
+    let start = span.start.min(content.len());
+    let line = content[..start].matches('\n').count() + 1;
+    let text = content.lines().nth(line - 1).unwrap_or("");
+    match text
+        .split_once('=')
+        .and_then(|(name, _)| member(name.trim()))
+    {
+        Some(name) => anyhow::anyhow!(
+            "{}: the config does not parse at line {line}, the member {name}",
+            path.display()
+        ),
+        None => anyhow::anyhow!(
+            "{}: the config does not parse at line {line}",
+            path.display()
+        ),
+    }
+}
+
 /// The members `weaver-web register` writes into every connector's config.
 /// A connector's own config flattens this and adds its box facts.
 #[derive(Clone, PartialEq, Eq, Deserialize)]
@@ -597,9 +644,9 @@ pub struct LinkStatus {
 /// is what never exiting requires. `malformed` and `wrong_plane` are this
 /// connector's own defect and say so; every other end retries on the normal
 /// backoff. It returns only on shutdown.
-pub async fn run<S, F>(
+pub async fn run<S, F, H, HF>(
     mut link: Link,
-    hello: impl Fn(&LinkConfig) -> FromClient,
+    mut hello: H,
     mut reload: impl FnMut() -> Option<LinkConfig>,
     backoff: Backoff,
     mut shutdown: watch::Receiver<bool>,
@@ -608,6 +655,8 @@ pub async fn run<S, F>(
 ) where
     S: FnMut(Connection) -> F,
     F: Future<Output = Ended>,
+    H: FnMut(&LinkConfig) -> HF,
+    HF: Future<Output = Result<FromClient, String>>,
 {
     const REINSTALL: &str = "Re-install this agent's config at the path this connector was started with, from `weaver-web register` or `weaver-web rotate`: it is re-read before each retry at the cap, so no restart is needed";
     let mut failures: u32 = 0;
@@ -637,8 +686,17 @@ pub async fn run<S, F>(
         let agent = link.config().agent.clone();
         let plane = link.config().plane;
         status.send_modify(|s| s.attempts += 1);
+        // The hello is the plane's to make: admin-con's reads its trace
+        // file's tail and asks its invoker for the ceiling, either of which
+        // can fail and is then an attempt that ended.
         let attempt = tokio::select! {
-            c = link.connect(hello(link.config())) => c,
+            made = hello(link.config()) => match made {
+                Ok(frame) => tokio::select! {
+                    c = link.connect(frame) => c,
+                    _ = shutdown.changed() => return,
+                },
+                Err(why) => Connect::Failed(why),
+            },
             _ = shutdown.changed() => return,
         };
         let ended = match attempt {

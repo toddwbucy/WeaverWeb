@@ -57,8 +57,8 @@ that reaches it: gate-con dials the gate socket, admin-con runs the verbs and ta
 file. gate-con is the operator's name for what the whiteboard called web-con. Both are
 **clients** of this server's listener over a mutually authenticated link, and the server
 keeps a register of agents with two credentials per agent. The design is Spec section 8 and
-the brief named above. The seed holds the start of each (`src/adapters/gate.rs`,
-`src/lifecycle.rs`); neither binary exists yet. The three contracts live in WeaverAgent
+the brief named above. Both binaries stand: `gate-con` (act 3) and `admin-con` (act 6),
+on the shared client half `link::client`. The three contracts live in WeaverAgent
 under `docs/crates/contracts/`, not here, and are the pages the connectors build against.
 
 The first concrete consumer is the **HeroBench view**, where a researcher watches and
@@ -139,9 +139,11 @@ cargo run -- --config <config.toml> revoke <ag-id|box/name> <gate|admin>
 cargo run -- --config <config.toml> rotate <ag-id|box/name> --out <dir>
 cargo run -- --config <config.toml> agents                          # the register, presence derived
 cargo run --bin gate-con -- --config <gate-con.toml>                # the data plane's connector, on the agent's box
+cargo run --bin admin-con -- --config <admin-con.toml>              # the management plane's connector, on the agent's box
 ```
 
-- **DB-backed unit tests** (`store::read`, `store::plan`, `surfaces::record`, `link::tests`)
+- **DB-backed unit tests** (`store::read`, `store::plan`, `surfaces::record`, `link::tests`,
+  `link::client_tests`, `link::admin_con_tests`)
   connect to the database in `DATABASE_URL` and run the migrations. The link's tests run one at
   a time, since a listener's start resets every row's link state, which is the claim. Without that variable they print
   `skipped:` and **pass without testing anything**. To really exercise them, set
@@ -166,6 +168,14 @@ cargo run --bin gate-con -- --config <gate-con.toml>                # the data p
   0600 or tighter, opened without following a symlink, or one minted for the admin plane. Its
   tests (`link::client_tests`) run it in-process against a fake gate and the real listener;
   no test reaches an agent.
+- **admin-con** reads the file `register` wrote plus `trace_file`, the agent's trace path, a
+  required box fact with no default, and optional `backfill_bytes` (1 MiB, at most 256 MiB),
+  the tail relayed after a server restart. Same trust rule as gate-con's. It tails the trace
+  file by group read, relays with replay and marked discontinuities, and declares in its hello
+  exactly what its invoker's `grants` answers. The only invoker shipped, `NoVerbs`, answers an
+  empty `grants` and runs nothing, so the server asks it nothing until WeaverAgent #50 lands.
+  Its tests (`link::admin_con_tests`) run it against a temporary trace file, the real listener
+  and a fake invoker; no test reaches an agent.
 - **Register verbs** answer one JSON object on stdout with the exit status agreeing, the shape
   `weaver-admin` uses. `revoke` closes a live connection in a running server through the
   store's notification channel; nothing else links the verb's process to the server's.
@@ -202,14 +212,15 @@ connectors build against (`frames.rs`). The seed's one dialed link, `wire.rs` an
 `src/bin/weaver-web-connector.rs`, left with it. **gate-con landed on 2026-10-01** (act 3):
 `src/bin/gate-con.rs` over `link::gate_con`, relaying through `adapters/gate.rs`, on the
 shared client half `link::client` (dial, verify, hello, heartbeat, bounded reads and writes,
-the reconnect policy of Spec 8). **Becomes admin-con, act 6:** `traceview.rs`'s tailer half,
-which tails the trace file tracking its identity, is the seed of admin-con's trace tailer
-(operator's ruling of 2026-10-01: the agent's sink is a file, not a socket); its server half,
-the rings, is the listener's live window. The verb plane is built against an abstract invoker
-that carries no privilege code, and the real invoker waits on WeaverAgent #50.
-`lifecycle.rs`, which runs the verbs through sudo and infers load state from the socket's
-existence, is **not** carried forward. Build admin-con as its own binary on `link::client`,
-adding only its plane, as gate-con does.
+the reconnect policy of Spec 8). **admin-con landed on 2026-10-02** (act 6):
+`src/bin/admin-con.rs` over `link::admin_con`: the tailer (the generation from the file's
+identity, the digest before each offset, rotation and truncation marked, a bounded backfill),
+the replay and `caught_up`, and the verb plane, one verb at a time with its answer placed at the
+invocation, behind an `Invoker` that carries no privilege code; the real invoker waits on
+WeaverAgent #50. The listener holds each connection's ceiling, asks `show` only where it is
+granted, and records the ceiling and the state's source on the row (migration `0011`;
+`0010` is frozen). `traceview.rs` keeps the rings, the listener's live window; its seed
+tailer and `lifecycle.rs` (which ran the verbs through sudo) left the tree.
 
 **Still leaves: `web/`**, the legacy `/admin` routes, already answering 503, and
 `src/registry.rs`, the legacy participant model (not the register of agents). `deploy/` was

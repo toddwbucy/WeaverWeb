@@ -2354,17 +2354,16 @@ operator's reason, and the server that chooses a verb's arguments is reached
 by the network by construction. Today every verb requires root, per
 `weaver-admin-Spec` section 2, so **until #50 lands no verb runs from this
 crate**. The trace's tail and replay below need no privilege: admin-con's
-user reads the trace file through group read access. The seed's
-`lifecycle.rs`, which invokes the verbs through sudo, is not carried into
-admin-con; the admin-con act builds the verb plane against an abstract
-invoker that carries no privilege code.
+user reads the trace file through group read access. admin-con's verb
+plane runs against an abstract invoker that carries no privilege code, and
+the only one this crate ships answers an empty `grants` and runs nothing;
+the seed's `lifecycle.rs`, which invoked the verbs through sudo, left the
+tree with the act that built admin-con.
 
 `show` answers the agent's load facts, the observation exchange of
 2026-09-04. Load
 state is therefore **the harness's own word rather than an inference from a
-socket's existence**, and no surface labels it as inferred. The seed's
-`lifecycle.rs` still infers it from the gate socket's existence, which is
-what the admin-con act replaces.
+socket's existence**, and no surface labels it as inferred.
 
 **What crosses out of the agent is the trace, and admin-con tails the file
 it lands in.** The trace crosses as NDJSON, one event per line, to a sink
@@ -2523,8 +2522,8 @@ so invocation spans never overlap and the ordering above holds for every
 answer; two verbs run at once would let an older answer be emitted after a
 newer one. The gate contract's rule for the data plane, one turn in flight
 per agent and a second request waits, is the same shape on this plane. The
-pause and the wait are bounded because the invocation is, the seed's
-`lifecycle.rs` capping it, and the drain is bounded by the backlog, which
+pause and the wait are bounded because the invocation is, the invoker's
+bound capping it, and the drain is bounded by the backlog, which
 is the tailer's lag and not the file. **Every position admin-con records
 or acknowledges is a record boundary, the byte after a delimiter**, so the
 tail it records before a verb is the end of the last complete record at
@@ -3069,36 +3068,35 @@ missing while it was relaying.
 | a hello's identity is its certificate's binding and never its roster | perturbation: act on the roster's name and plane, a hello on a gate credential naming another agent, or naming admin, is believed, and the seed's first-hello-wins returns through the roster |
 | at most one row per box and name holds live credentials | perturbation, at the schema: drop the partial index, register one agent twice, and two rows each hold live credentials for one agent, so the server attributes one agent's observations and verbs to two rows |
 | the link state is reset when the listener starts | perturbation: skip the reset, restart the server with no connector up, and a surface reads an agent present whose sockets are gone |
-| the trace file is replayed from the acknowledged position | perturbation, **owed**: drop the replay, break the link during a run and reconnect, and the server's window has a hole with no mark; truncate the file in place during the outage, let it regrow past the offset, reconnect, and the window carries the new prefix nowhere and marks nothing; drop the generation from the position, rotate the trace file during the outage, let the replacement grow past the offset, reconnect, and the window carries the replacement's prefix nowhere and marks nothing; mint the generation from process state, restart admin-con against the unchanged file, and the server receives a false discontinuity and the file again from its start; restart the server and resume from a remembered position, and the window has a hole with no mark; record a tail inside an unterminated record and resume from it, and the window carries half a record and a parse failure where an event was |
+| the trace file is replayed from the acknowledged position | perturbation, each clause against the real listener in `src/link/admin_con_tests.rs`: drop the replay, break the link during a run and reconnect, and the server's window has a hole with no mark; truncate the file in place during the outage, let it regrow past the offset, reconnect, and the window carries the new prefix nowhere and marks nothing; drop the generation from the position, rotate the trace file during the outage, let the replacement grow past the offset, reconnect, and the window carries the replacement's prefix nowhere and marks nothing; mint the generation from process state, restart admin-con against the unchanged file, and the server receives a false discontinuity and the file again from its start; restart the server and resume from a remembered position, and the window has a hole with no mark; record a tail inside an unterminated record and resume from it, and the window carries half a record and a parse failure where an event was |
 | an agent is present only when both planes connect from one row | perturbation: mark present on either plane alone, an agent whose admin-con is down reads present with a tuple and a load state nobody has confirmed |
 | the server's authority is loaded before the listener starts and never minted at start | perturbation: mint the authority at start instead of loading it, restart the server, and every connector's hello is refused against a certificate it does not pin |
 | the client credential is stored as a fingerprint and never the key | perturbation, at the schema: store the key, a read of the register is a set of credentials anyone can present |
-| the tuple is admin's word and never gate-con's | perturbation: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it; let a replayed load event write the tuple, restart the server after an unload, backfill, and the row reads loaded; ask `show` before fixing the replay boundary, unload between the two, and the row reads loaded until the next `show`. **Four clauses are admin-con's ordering and are owed to its act**: let a `show` answer cross the link out of order with the file events around it, unload during the `show`, and the row reads loaded until the next `show`; place the answer in the stream at receipt and unload between the snapshot and the receipt, and the row reads loaded; skip the drain, leave an unread load event behind the tail, invoke `show` after an unload, and the row reads loaded; run two verbs at once on one connection, and an older answer lands after a newer one |
+| the tuple is admin's word and never gate-con's | perturbation: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it; let a replayed load event write the tuple, restart the server after an unload, backfill, and the row reads loaded; ask `show` before fixing the replay boundary, unload between the two, and the row reads loaded until the next `show`. **Four clauses are admin-con's ordering**, against the real listener with a fake invoker in `src/link/admin_con_tests.rs`: let a `show` answer cross the link out of order with the file events around it, unload during the `show`, and the row reads loaded until the next `show`; place the answer in the stream at receipt and unload between the snapshot and the receipt, and the row reads loaded; skip the drain, leave an unread load event behind the tail, invoke `show` after an unload, and the row reads loaded; run two verbs at once on one connection, and an older answer lands after a newer one |
 | nothing crosses the link in the clear | perturbation: offer a plaintext hello to the listener, it is refused below any roster; and review, over the listener, that no plaintext accept path exists |
-| the server never asks a verb outside the agent's ceiling | perturbation, **owed**: drop the ceiling check, ask a verb admin-con's hello did not declare, and it leaves the server; and admin-con's half, drop its typed error answer, and it reaches the invoker; check against the row's copy, narrow the ceiling by reconnecting between the check and the enqueue, and an ask outside the new ceiling leaves. **No instrument stands**: the hello carries no ceiling until the admin-con act, and the server's check lands with the IAM act |
+| the server never asks a verb outside the agent's ceiling | perturbation: drop the ceiling check, ask a verb admin-con's hello did not declare, and it leaves the server; and admin-con's half, drop its typed error answer, and it reaches the invoker. **One clause is owed**: check against the row's copy, narrow the ceiling by reconnecting between the check and the enqueue, and an ask outside the new ceiling leaves. The race has no deterministic staging, and the guard is held by review: the check reads the live connection's ceiling under the live map's lock that finds the connection |
 | a verb or turn its principal may not ask is refused before an ask | perturbation, **owed**: drop the grant check, a person whose role permits `show` asks `stop`, and the ask leaves the server; let the server principal ask a lifecycle verb, and it leaves without a grant; drop the enabled check, and a disabled person's live session still asks a verb; drop the grant check on turns, and a person granted only `show` places a turn; take the check outside the exclusion, revoke between the check and the enqueue, and the ask is authorized on a revoked grant; take a register verb's check outside the exclusion, disable its admin between the check and the commit, and the register verb lands. Lands with the IAM act |
 | a person, role or grant written by a principal not permitted to write it is refused | perturbation, **owed**: drop the check, and a person granted only `show` writes themselves the operator role and passes the first gate; let a person write a grant on themselves, and an admin widens their own grants or the last admin removes the only admin grant; let an admin holding the observer role on an agent add `stop` to that role, and their own grant widens without a grant written; let a surface write as the host principal, and a grant lands with no admin behind it; drop the exclusion, have two admins remove each other at once, and no admin remains; disable the sole admin, or have two admins disable each other at once, and no enabled admin remains; grant a role to its editor while the edit is in flight, and the editor widens a role they hold; let a person write another person's authentication material, and they can sign in as them; reuse a consumed enrollment token, or use one past its expiry, and a second credential lands on someone else's row; disable a person holding an unredeemed token, redeem it, and a credential lands on a disabled row; issue or redeem a token for a person who already has a credential, and an admin replaces that person's credential. Lands with the IAM act |
 | every verb or turn asked and every person, role or grant written has an audit record naming its principal, and its outcome is a second record naming the first | perturbation, **owed**: write the first record after the ask instead of before, fail the store between the two, and an ask leaves with no record; update the first record with the outcome instead of appending a second, and an ask whose answer is lost reads as never answered with no trace of the rewrite; drop the refusal's record, and a refused verb leaves no trace; write a grant with the audit write dropped, and the grant lands with no record; enroll a person or rotate their authentication material with the audit write dropped, and the write lands with no record; record the material in an authentication write's record, and a read of the audit table is a set of credentials. Lands with the IAM act |
-| the admission's `show` is required only where the ceiling grants it | perturbation, **owed**: ask `show` at every admission, and an agent whose ceiling grants no `show` is closed `admission_incomplete` at every reconnection and never stays admitted; skip it where it is granted, and the row reads the last process's state as current. The listener asks `show` at every admission until the admin-con act, which is the drift this row names |
-| no privileged invocation exists in the crate | review, and a test, **owed**: a test that reads the source tree for an invocation of `sudo`, a root wrapper or a setuid call, shown to fail when one is planted. It would fail today on the seed's `lifecycle.rs`, which invokes `sudo weaver-admin` and is not carried forward, so the row is owed until that file leaves |
+| the admission's `show` is required only where the ceiling grants it | perturbation: ask `show` at every admission, and an agent whose ceiling grants no `show` is closed `admission_incomplete` at every reconnection and never stays admitted; skip it where it is granted, and the row reads the last process's state as current |
+| no privileged invocation exists in the crate | review, and a test, `tests/no_privilege.rs`: it reads every Rust file under `src/` for a privilege-escalating program run or named to run and for a setuid family call, comment lines aside, and is shown to fail when one is planted |
 
 **A watch that cannot fail is not a test.** For each perturbation above, the
 act that lands it states what removal makes it fail and confirms it does.
 
-**A row marked owed has no instrument and is not counted as enforced.** Eight
+**A row marked owed has no instrument and is not counted as enforced.** Four
 stand so marked as of 2026-10-02. The batch's order is owed because section
-2.11 describes its table and no migration builds it. The trace file's replay
-from the acknowledged position is owed to the admin-con act, being admin-con's
-half of section 7.2; the server's half, the position held per process and
-answered in the hello, stands in `src/link/tests.rs`. The six rows of the
-role shape ruled on 2026-10-02 are owed to the acts that build them: the
-ceiling and the conditional admission `show` to the admin-con act, with the
-server's check on the ceiling joining the principal check, the writer's check
-for persons, roles and grants, and the audit record in the IAM act, and the absence of a privileged
-invocation until the seed's `lifecycle.rs` leaves. The other ten rows of the link landed with the act that
+2.11 describes its table and no migration builds it. Three rows of the role
+shape ruled on 2026-10-02 are owed to the IAM act: the principal check, the
+writer's check for persons, roles and grants, and the audit record. The act
+that built admin-con stood up the trace file's replay from the acknowledged
+position, the ceiling on both halves, the conditional admission `show`, the
+four clauses of the tuple row that are admin-con's ordering, and the absence
+of a privileged invocation, each shown to fail with its guard removed; one
+clause of the ceiling row, a race with no deterministic staging, is marked
+owed inside the row. The other ten rows of the link landed with the act that
 built the listener and the register, each shown to fail with its guard
-removed, and the four clauses of the tuple row that are admin-con's ordering
-are marked owed inside the row. The marking is the point: a row
+removed. The marking is the point: a row
 reading like the enforced ones beside it would tell a reader the claim is held,
 which is the same failure as a watch that passes either way and is why this
 table says which it is.

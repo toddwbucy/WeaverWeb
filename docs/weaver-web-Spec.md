@@ -1187,8 +1187,9 @@ than ordered. **And on every admission of an admin-con connection the
 server first fixes the replay boundary and then, where the agent's ceiling
 grants `show`, asks `show` for that row**:
 the boundary is the file position admin-con reports as its tail at that
-moment, every event at or beyond it is live and every event behind it is
-replayed, and `show`'s answer, taken after the boundary, is admin's word
+moment, every event beyond it is live and every event behind it is
+replayed, "beyond" and "behind" read as section 7.2's sentence on a
+position fixes them, and `show`'s answer, taken after the boundary, is admin's word
 from after it, so a change before the boundary is in the answer and a
 change after it arrives as a live event. Asked before the boundary, a load
 or unload landing between the answer and the boundary would be classified
@@ -2400,7 +2401,13 @@ is derived from the file's durable identity and never from process state**:
 the device and inode `traceview.rs` tracks, together with the file's birth
 time where the filesystem reports it, so that a reused inode after a
 rotation still reads as a new generation and a restarted admin-con derives
-the same generation for the same file. Minted from process state it would
+the same generation for the same file. **A symlinked sink is not
+supported**, per the ruling of 2026-10-02: admin-con reads the path's own
+identity without following a link and opens it so that a link is never
+followed, and a symlink at the path is refused and marked, since a link
+anyone who can write the sink's directory could plant would otherwise turn
+the tailer on any file admin-con can read, its own credential among them.
+Minted from process state it would
 fail the other way, a restarted admin-con reading the hello's generation as
 a replacement, emitting a false discontinuity and replaying the unchanged
 file from its start. **The bound is stated**: on a filesystem reporting no
@@ -2431,7 +2438,11 @@ not guard against an in-place rewrite that preserves the final line at the
 same offset, which only root can perform and which a digest of the whole
 prefix would catch at a cost proportional to the file at every reconnect,
 declined for that reason. The position crosses the link with every event, the
-server acknowledges it, and the hello's answer carries it. **An
+server acknowledges it, and the hello's answer carries it; **an
+acknowledgement never blocks the server's read**, and one that finds the
+connection's write queue full is dropped, since each names a later
+position than the last and the hello's answer carries the position the
+server recorded rather than the last frame it sent. **An
 acknowledgement never names an event the store does not hold**, which the
 act that built the listener reads as a rule on the connection: a store
 failure while landing anything on a connection closes it with a typed
@@ -2474,7 +2485,12 @@ on the link, and the replay ends with a frame admin-con sends when it
 reaches the boundary**, immediately after the hello's answer where there
 is nothing to replay; the server classifies every event before that frame
 as replayed and every event after it as live, the boundary's offset rule
-and the client's mark standing as checks that log a disagreement. The
+and the client's flag standing as checks that log a disagreement. **A
+position is the byte after its record, so the event whose position equals
+the boundary is the last one behind it, and an event beyond the boundary
+is one whose position is past it**; the offset rule holds marks to this as
+it holds records, since a mark carries the position relaying resumes at.
+The
 frame decides because the stream's order cannot: a file rotated after the
 hello before any event of the boundary's generation reached the boundary
 would leave every live event of the new generation looking like an older
@@ -2483,7 +2499,8 @@ they write no member of section 2.12's row, whose tuple and load state come
 from `show` answers and live events alone. On every admission of an
 admin-con connection the server first fixes the replay boundary, the file
 position admin-con reports as its tail at that moment, so that every event
-at or beyond it is live and every event behind it is replayed, and then,
+beyond it is live and every event behind it is replayed, in the reading of
+a position above, and then,
 where the agent's ceiling grants `show`, asks `show` for the row, so the
 answer is admin's word from after the boundary and nothing that lands in
 the file between the two can be classified as history, per section 2.12.
@@ -3068,7 +3085,7 @@ missing while it was relaying.
 | a hello's identity is its certificate's binding and never its roster | perturbation: act on the roster's name and plane, a hello on a gate credential naming another agent, or naming admin, is believed, and the seed's first-hello-wins returns through the roster |
 | at most one row per box and name holds live credentials | perturbation, at the schema: drop the partial index, register one agent twice, and two rows each hold live credentials for one agent, so the server attributes one agent's observations and verbs to two rows |
 | the link state is reset when the listener starts | perturbation: skip the reset, restart the server with no connector up, and a surface reads an agent present whose sockets are gone |
-| the trace file is replayed from the acknowledged position | perturbation, each clause against the real listener in `src/link/admin_con_tests.rs`: drop the replay, break the link during a run and reconnect, and the server's window has a hole with no mark; truncate the file in place during the outage, let it regrow past the offset, reconnect, and the window carries the new prefix nowhere and marks nothing; drop the generation from the position, rotate the trace file during the outage, let the replacement grow past the offset, reconnect, and the window carries the replacement's prefix nowhere and marks nothing; mint the generation from process state, restart admin-con against the unchanged file, and the server receives a false discontinuity and the file again from its start; restart the server and resume from a remembered position, and the window has a hole with no mark; record a tail inside an unterminated record and resume from it, and the window carries half a record and a parse failure where an event was |
+| the trace file is replayed from the acknowledged position | perturbation, each clause against the real listener in `src/link/admin_con_tests.rs`: drop the replay, break the link during a run and reconnect, and the server's window has a hole with no mark; truncate the file in place during the outage, let it regrow past the offset, reconnect, and the window carries the new prefix nowhere and marks nothing; drop the generation from the position, rotate the trace file during the outage, let the replacement grow past the offset, reconnect, and the window carries the replacement's prefix nowhere and marks nothing; mint the generation from process state, restart admin-con against the unchanged file, and the server receives a false discontinuity and the file again from its start; restart the server and resume from a remembered position, and the window has a hole with no mark; record a tail inside an unterminated record and resume from it, and the window carries half a record and a parse failure where an event was; end the replay on a step that sent nothing, put a record past the bound before the boundary with a load behind it, and the load is taken as live and writes the row; mark a skipped record without its digest, acknowledge at the mark and reconnect, and the window carries a false truncation; send a record's frame unmeasured, relay a 1 MiB record of NUL bytes, and the frame passes the line bound; look for the tail only within the record bound, leave a longer unterminated fragment at the file's end, and the hello never completes; clear the replaced generation at every hello attempt, rotate during an outage and have the reconnections refused, and the old file's tail is lost under a mark; follow the trace path through a symlink, and the refusal goes unmarked; block the read on an ack, backfill many small records, and the link stalls and readmits; exempt marks from the offset rule, send a mark past the boundary before `caught_up`, and it lands rather than being refused. **Two guards are held by review**: the live switch to a replacing file waits for a read of the held one that moves nothing, the replacement sampled before that read, and a replacement landing between a read and the switch has no deterministic staging; and the open refuses to follow a link, against a symlink planted between the path's check and the open, which has none either |
 | an agent is present only when both planes connect from one row | perturbation: mark present on either plane alone, an agent whose admin-con is down reads present with a tuple and a load state nobody has confirmed |
 | the server's authority is loaded before the listener starts and never minted at start | perturbation: mint the authority at start instead of loading it, restart the server, and every connector's hello is refused against a certificate it does not pin |
 | the client credential is stored as a fingerprint and never the key | perturbation, at the schema: store the key, a read of the register is a set of credentials anyone can present |
@@ -3079,7 +3096,7 @@ missing while it was relaying.
 | a person, role or grant written by a principal not permitted to write it is refused | perturbation, **owed**: drop the check, and a person granted only `show` writes themselves the operator role and passes the first gate; let a person write a grant on themselves, and an admin widens their own grants or the last admin removes the only admin grant; let an admin holding the observer role on an agent add `stop` to that role, and their own grant widens without a grant written; let a surface write as the host principal, and a grant lands with no admin behind it; drop the exclusion, have two admins remove each other at once, and no admin remains; disable the sole admin, or have two admins disable each other at once, and no enabled admin remains; grant a role to its editor while the edit is in flight, and the editor widens a role they hold; let a person write another person's authentication material, and they can sign in as them; reuse a consumed enrollment token, or use one past its expiry, and a second credential lands on someone else's row; disable a person holding an unredeemed token, redeem it, and a credential lands on a disabled row; issue or redeem a token for a person who already has a credential, and an admin replaces that person's credential. Lands with the IAM act |
 | every verb or turn asked and every person, role or grant written has an audit record naming its principal, and its outcome is a second record naming the first | perturbation, **owed**: write the first record after the ask instead of before, fail the store between the two, and an ask leaves with no record; update the first record with the outcome instead of appending a second, and an ask whose answer is lost reads as never answered with no trace of the rewrite; drop the refusal's record, and a refused verb leaves no trace; write a grant with the audit write dropped, and the grant lands with no record; enroll a person or rotate their authentication material with the audit write dropped, and the write lands with no record; record the material in an authentication write's record, and a read of the audit table is a set of credentials. Lands with the IAM act |
 | the admission's `show` is required only where the ceiling grants it | perturbation: ask `show` at every admission, and an agent whose ceiling grants no `show` is closed `admission_incomplete` at every reconnection and never stays admitted; skip it where it is granted, and the row reads the last process's state as current |
-| no privileged invocation exists in the crate | review, and a test, `tests/no_privilege.rs`: it reads every Rust file under `src/` for a privilege-escalating program run or named to run and for a setuid family call, comment lines aside, and is shown to fail when one is planted |
+| no privileged invocation exists in the repository | review, and a test, `tests/no_privilege.rs`: it reads every tracked file outside `docs/`, never following a symlink, comment lines aside by each file's syntax and Markdown read in its fences only, for a privilege-escalating program named as a word, a setuid family call, a child's user or group set on a command, and a setuid or setgid mode bit, and is shown to fail when one of each is planted, in Rust and in a README fence |
 
 **A watch that cannot fail is not a test.** For each perturbation above, the
 act that lands it states what removal makes it fail and confirms it does.
@@ -3094,7 +3111,8 @@ position, the ceiling on both halves, the conditional admission `show`, the
 four clauses of the tuple row that are admin-con's ordering, and the absence
 of a privileged invocation, each shown to fail with its guard removed; one
 clause of the ceiling row, a race with no deterministic staging, is marked
-owed inside the row. The other ten rows of the link landed with the act that
+owed inside the row, and two guards of the replay row are held by review for
+the same reason. The other ten rows of the link landed with the act that
 built the listener and the register, each shown to fail with its guard
 removed. The marking is the point: a row
 reading like the enforced ones beside it would tell a reader the claim is held,

@@ -148,8 +148,6 @@ pub struct VerbOutcome {
     /// The raw answer, kept when it did not parse so nothing is swallowed.
     pub raw_stdout: Option<String>,
     pub stderr: Option<String>,
-    /// True when the invocation passed its bound and was ended.
-    pub timed_out: bool,
 }
 
 /// Who a verb is asked for, **a claim and never an authorization input on
@@ -176,8 +174,13 @@ impl VerbFault {
     pub const OUTSIDE_CEILING: &'static str = "outside_ceiling";
     /// admin-con holds as many asks as it waits behind, its bound.
     pub const BUSY: &'static str = "busy";
-    /// The invoker did not run the verb.
-    pub const NOT_RUN: &'static str = "not_run";
+    /// The invocation passed its bound and was ended: whether admin acted
+    /// is not known. A bound passed is this fault, never an outcome, so
+    /// the fact has one shape.
+    pub const UNKNOWN: &'static str = "unknown";
+    /// The server's own: admin answered, and the store could not land the
+    /// answer, so the ask answers the failure and is owed again.
+    pub const NOT_LANDED: &'static str = "not_landed";
 }
 
 /// The gate adapter's typed error as a connector carries it (section 7.1's

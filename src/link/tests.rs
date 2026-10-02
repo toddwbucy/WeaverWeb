@@ -12,7 +12,7 @@
 use super::authority::{Authority, ClientCredential, client_tls, fingerprint};
 use super::frames::{FromClient, Plane, Position, Refusal, ToClient};
 use super::frames::{Principal, VerbFault, VerbOutcome};
-use super::listener::Listener;
+use super::listener::{Listener, VerbError};
 use super::register::{Agent, CredentialState};
 use crate::store::{AgentId, Store};
 use crate::traceview::TraceEvent;
@@ -61,7 +61,6 @@ fn show_answer(agent: &str, state: &str, load: Option<serde_json::Value>) -> Ver
         answer: Some(answer),
         raw_stdout: None,
         stderr: None,
-        timed_out: false,
     }
 }
 
@@ -106,13 +105,13 @@ impl Registered {
 }
 
 /// A fake connector: one TLS connection speaking the link's lines.
-struct Fake {
+pub(super) struct Fake {
     reader: BufReader<ReadHalf<TlsStream<TcpStream>>>,
     writer: WriteHalf<TlsStream<TcpStream>>,
 }
 
 impl Fake {
-    async fn try_connect(
+    pub(super) async fn try_connect(
         address: SocketAddr,
         authority_pem: &str,
         credential: &ClientCredential,
@@ -142,7 +141,7 @@ impl Fake {
             .expect("the handshake completes against the authority that minted the credential")
     }
 
-    async fn send(&mut self, frame: FromClient) {
+    pub(super) async fn send(&mut self, frame: FromClient) {
         let mut line = serde_json::to_string(&frame).unwrap();
         line.push('\n');
         self.writer.write_all(line.as_bytes()).await.unwrap();
@@ -157,7 +156,7 @@ impl Fake {
 
     /// The next frame, or `None` where the server closed the connection or
     /// sent nothing within the bound.
-    async fn recv(&mut self) -> Option<ToClient> {
+    pub(super) async fn recv(&mut self) -> Option<ToClient> {
         let mut line = String::new();
         match tokio::time::timeout(SOON, self.reader.read_line(&mut line)).await {
             Ok(Ok(0)) | Err(_) => None,
@@ -1243,9 +1242,9 @@ async fn a_tailless_admin_hello_and_a_line_past_the_bound_are_malformed() {
 }
 
 /// **Events of another generation classify by the stream's order and not by
-/// the client's flag** (Spec 7.2): before the first event at or beyond the
-/// boundary they are the old file's tail, replayed; after it they are a
-/// rotation after the hello, live.
+/// the client's flag** (Spec 7.2): before the `caught_up` frame they are
+/// the old file's tail, replayed; after it they are a rotation after the
+/// hello, live.
 ///
 /// Perturbation: in `land_event`, take the client's flag for another
 /// generation. The old generation's load, flagged live, writes the row.
@@ -1343,6 +1342,23 @@ async fn events_of_another_generation_classify_by_the_streams_order() {
             position: position(101),
             replayed: false,
             event: trace_event(6, "turn", json!({})),
+        })
+        .await;
+    admin.expect_refusal(Refusal::Malformed).await;
+
+    // A mark is held to the same rule: it carries the position relaying
+    // resumes at, never past the boundary before caught_up.
+    lab.wait_for(&karl.id, "admin down", |a| !a.admin.connected)
+        .await;
+    let mut admin = lab.admit_replaying(&karl, Plane::Admin).await;
+    let mut mark = trace_event(7, "turn", json!({}));
+    mark.mark = Some("a mark past the boundary".into());
+    mark.kind = None;
+    admin
+        .send(FromClient::Event {
+            position: position(101),
+            replayed: true,
+            event: mark,
         })
         .await;
     admin.expect_refusal(Refusal::Malformed).await;
@@ -1538,8 +1554,17 @@ async fn a_show_answer_the_register_never_took_closes_the_connection_and_fails_t
             error: None,
         })
         .await;
-    let refused = asked.await.unwrap().unwrap_err().to_string();
-    assert!(refused.contains("the store could not land"), "{refused}");
+    match asked.await.unwrap() {
+        Err(VerbError::Fault(fault)) => {
+            assert_eq!(fault.kind, VerbFault::NOT_LANDED);
+            assert!(
+                fault.message.contains("the store could not land"),
+                "{}",
+                fault.message
+            );
+        }
+        other => panic!("expected the not-landed fault, got {other:?}"),
+    }
     admin.expect_refusal(Refusal::StoreUnavailable).await;
     assert!(lab.agent(&karl.id).await.load_state.is_none());
     lab.wait_for(&karl.id, "admin down", |a| !a.admin.connected)
@@ -2679,7 +2704,7 @@ async fn an_admission_whose_show_is_not_answered_is_closed() {
             id,
             outcome: None,
             error: Some(VerbFault {
-                kind: VerbFault::NOT_RUN.into(),
+                kind: VerbFault::UNKNOWN.into(),
                 message: "show failed".into(),
             }),
         })

@@ -4,11 +4,13 @@
 //! reached and no verb is invoked for real.
 
 use super::admin_con::{self, AdminConConfig, Invoker, NoVerbs};
-use super::client::LinkStatus;
+use super::client::{Backoff, LinkStatus};
 use super::client_tests::{FAST, FakeServer};
-use super::frames::{FromClient, Line, Plane, Principal, ToClient, VerbFault, VerbOutcome};
+use super::frames::{
+    FromClient, Line, Plane, Position, Principal, ToClient, VerbFault, VerbOutcome,
+};
 use super::listener::{Listener, VerbError};
-use super::tests::{Lab, SILENCE, SOON, lab_config};
+use super::tests::{Fake, Lab, SILENCE, SOON, lab_config};
 use crate::store::AgentId;
 use crate::traceview::TraceEvent;
 use serde_json::json;
@@ -138,7 +140,6 @@ impl Invoker for FakeInvoker {
             answer: Some(json!({"kind": "state", "state": snapshot, "load": load})),
             raw_stdout: None,
             stderr: None,
-            timed_out: false,
         }
     }
 }
@@ -152,10 +153,14 @@ struct Running {
 
 impl Running {
     fn start<I: Invoker>(cfg: AdminConConfig, invoker: Arc<I>) -> Self {
+        Self::start_with(cfg, invoker, FAST)
+    }
+
+    fn start_with<I: Invoker>(cfg: AdminConConfig, invoker: Arc<I>, backoff: Backoff) -> Self {
         let (stop, shutdown) = watch::channel(false);
         let (status_tx, status) = watch::channel(LinkStatus::default());
         let task = tokio::spawn(async move {
-            admin_con::run(cfg, invoker, None, FAST, shutdown, &status_tx).await
+            admin_con::run(cfg, invoker, None, backoff, shutdown, &status_tx).await
         });
         Self { stop, status, task }
     }
@@ -409,6 +414,8 @@ async fn admin_con_answers_an_ask_outside_its_ceiling_and_keeps_the_connection()
         trace_file: trace.path.clone(),
         backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
         poll: POLL,
+        verb_bound: admin_con::VERB_BOUND,
+        grants_bound: Duration::from_secs(super::client::HELLO_SECS),
     };
     let con = Running::start(cfg, invoker.clone());
     let (mut reader, mut write) = server.admit(15).await;
@@ -796,4 +803,388 @@ async fn an_admin_con_config_that_is_not_trusted_is_refused_at_start() {
         ),
     );
     assert!(refused(&big).contains("backfill_bytes"));
+}
+
+/// A record past `RECORD_BOUND`: one JSON line of `bytes` bytes, delimiter
+/// included.
+fn oversized(bytes: usize) -> Vec<u8> {
+    let head = br#"{"kind":"turn","payload":{"pad":""#;
+    let tail = b"\"}}\n";
+    let mut line = head.to_vec();
+    line.resize(bytes - tail.len(), b'x');
+    line.extend_from_slice(tail);
+    line
+}
+
+/// **A record past the bound before the boundary does not end the replay**
+/// (Spec 7.2): it is skipped and marked, and the load event behind it is
+/// still replayed, so it writes nothing to the row. Finished derives from
+/// the file's position against the boundary, never from a step that sent
+/// nothing.
+#[tokio::test]
+async fn a_record_past_the_bound_before_the_boundary_does_not_end_the_replay() {
+    let Some(lab) = Lab::open().await else { return };
+    let trace = Trace::new();
+    trace.append(1, "turn");
+    trace.append_raw(&oversized(admin_con::RECORD_BOUND + 4096));
+    trace.append(2, "load");
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, &trace.path, out.path(), Some(16 * 1024 * 1024)).await;
+    let mut con = Running::start(config(&path, POLL), Arc::new(NoVerbs));
+    con.wait("admitted", |s| s.admitted).await;
+    wait_window(&lab, &id, "the replay", |e| ns(e) == [1, 2]).await;
+    trace.append(3, "turn");
+    wait_window(&lab, &id, "a live event", |e| ns(e) == [1, 2, 3]).await;
+    let row = lab.agent(&id).await;
+    assert_eq!(
+        row.load_state, None,
+        "the replayed load wrote the row: {row:?}"
+    );
+    let marks = marks(&window(&lab, &id));
+    assert!(
+        marks.iter().any(|m| m.contains("passed the")),
+        "the record past the bound is marked: {marks:?}"
+    );
+    con.stop().await;
+}
+
+/// **The mark for a record past the bound carries the digest the file has
+/// there**: acknowledged at the mark, a reconnection verifies the digest
+/// and resumes, raising no false truncation.
+#[tokio::test]
+async fn a_reconnection_at_a_marked_record_resumes_without_a_false_truncation() {
+    let Some(lab) = Lab::open().await else { return };
+    let trace = Trace::new();
+    trace.append(1, "turn");
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, &trace.path, out.path(), None).await;
+    let mut con = Running::start(config(&path, POLL), Arc::new(NoVerbs));
+    con.wait("admitted", |s| s.admitted).await;
+    wait_window(&lab, &id, "the first", |e| ns(e) == [1]).await;
+    trace.append_raw(&oversized(admin_con::RECORD_BOUND + 70 * 1024));
+    wait_acknowledged(&lab, &id, &trace).await;
+    con.stop().await;
+    lab.wait_for(&id, "admin down", |a| !a.admin.connected)
+        .await;
+
+    trace.append(2, "turn");
+    let mut con = Running::start(config(&path, POLL), Arc::new(NoVerbs));
+    con.wait("admitted again", |s| s.admitted).await;
+    wait_window(&lab, &id, "the second", |e| ns(e) == [1, 2]).await;
+    let marks = marks(&window(&lab, &id));
+    assert!(
+        !marks.iter().any(|m| m.contains("truncated or rewritten")),
+        "a false truncation: {marks:?}"
+    );
+    assert_eq!(
+        marks.iter().filter(|m| m.contains("passed the")).count(),
+        1,
+        "{marks:?}"
+    );
+    con.stop().await;
+}
+
+/// **A record is measured as the frame that carries it**: a 1 MiB record
+/// of NUL bytes is under the record bound raw and six times larger encoded,
+/// so it is marked rather than sent past the line bound, and the link
+/// stands.
+#[tokio::test]
+async fn a_record_that_encodes_past_the_line_bound_is_marked() {
+    let Some(lab) = Lab::open().await else { return };
+    let trace = Trace::new();
+    trace.append(1, "turn");
+    let mut nul = vec![0u8; 1024 * 1024];
+    nul.push(b'\n');
+    trace.append_raw(&nul);
+    trace.append(2, "turn");
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, &trace.path, out.path(), Some(16 * 1024 * 1024)).await;
+    let mut con = Running::start(config(&path, POLL), Arc::new(NoVerbs));
+    con.wait("admitted", |s| s.admitted).await;
+    wait_window(&lab, &id, "both records", |e| ns(e) == [1, 2]).await;
+    let marks = marks(&window(&lab, &id));
+    assert!(
+        marks.iter().any(|m| m.contains("encodes to a frame")),
+        "{marks:?}"
+    );
+    let status = con.status();
+    assert_eq!(status.admissions, 1, "the link stood: {status:?}");
+    con.stop().await;
+}
+
+/// **An unterminated fragment past the record bound at the file's end
+/// does not stop the hello**: the tail is found at any distance, the
+/// fragment is noted at the front, and once it ends it is marked and
+/// relaying goes on.
+#[tokio::test]
+async fn a_long_unterminated_fragment_does_not_stop_the_hello() {
+    let Some(lab) = Lab::open().await else { return };
+    let trace = Trace::new();
+    trace.append(1, "turn");
+    let fragment = oversized(admin_con::RECORD_BOUND + 1024 * 1024);
+    trace.append_raw(&fragment[..fragment.len() - 1]);
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, &trace.path, out.path(), Some(16 * 1024 * 1024)).await;
+    let mut con = Running::start(config(&path, POLL), Arc::new(NoVerbs));
+    con.wait("admitted", |s| s.admitted).await;
+    wait_window(&lab, &id, "the first", |e| ns(e) == [1]).await;
+    assert!(
+        marks(&window(&lab, &id))
+            .iter()
+            .any(|m| m.contains("unterminated fragment")),
+        "{:?}",
+        marks(&window(&lab, &id))
+    );
+    trace.append_raw(b"\n");
+    trace.append(2, "turn");
+    wait_window(&lab, &id, "the second", |e| ns(e) == [1, 2]).await;
+    assert!(
+        marks(&window(&lab, &id))
+            .iter()
+            .any(|m| m.contains("passed the")),
+        "{:?}",
+        marks(&window(&lab, &id))
+    );
+    con.stop().await;
+}
+
+/// Hold the admin slot with a fake connection on admin-con's own
+/// credential, so admin-con's attempts are refused as already connected.
+async fn hold_the_slot(lab: &Lab, path: &Path) -> Fake {
+    let link = AdminConConfig::load(path).unwrap().link;
+    let credential = super::authority::ClientCredential {
+        fingerprint: String::new(),
+        certificate_pem: link.certificate.clone(),
+        key_pem: link.key.clone(),
+    };
+    let until = tokio::time::Instant::now() + SOON;
+    loop {
+        let mut fake = Fake::try_connect(
+            lab.listener.address(),
+            lab.authority.certificate_pem(),
+            &credential,
+        )
+        .await
+        .unwrap();
+        fake.send(FromClient::Hello {
+            agent: link.agent.clone(),
+            plane: Plane::Admin,
+            tail: Some(Position {
+                generation: "holder".into(),
+                offset: 0,
+                digest: String::new(),
+            }),
+            ceiling: Some(Vec::new()),
+        })
+        .await;
+        match fake.recv().await {
+            Some(ToClient::HelloAnswer { .. }) => {
+                fake.send(FromClient::CaughtUp).await;
+                return fake;
+            }
+            other => {
+                assert!(
+                    tokio::time::Instant::now() < until,
+                    "the slot was never free: {other:?}"
+                );
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        }
+    }
+}
+
+/// **Only the resume clears the replaced generation**: a file rotated
+/// during an outage, a reconnection refused as already connected and a
+/// second refused, and the old file's tail past the acknowledged position
+/// is still relayed before the new file once admin-con is admitted.
+#[tokio::test]
+async fn a_refused_reconnection_keeps_the_replaced_files_tail() {
+    let Some(lab) = Lab::open().await else { return };
+    let trace = Trace::new();
+    for n in 1..=3 {
+        trace.append(n, "turn");
+    }
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, &trace.path, out.path(), None).await;
+    let slow = Backoff {
+        base: Duration::from_secs(2),
+        cap: Duration::from_secs(2),
+    };
+    let mut con = Running::start_with(config(&path, POLL), Arc::new(NoVerbs), slow);
+    con.wait("admitted", |s| s.admitted).await;
+    wait_window(&lab, &id, "the first three", |e| ns(e) == [1, 2, 3]).await;
+    wait_acknowledged(&lab, &id, &trace).await;
+
+    // The outage: the store refuses the next landing, a live load, and the
+    // server closes the link with that event unacknowledged.
+    lab.listener.fail_next_land();
+    trace.append(4, "load");
+    con.wait("the link down", |s| !s.admitted).await;
+    let holder = hold_the_slot(&lab, &path).await;
+
+    // Rotated while the link is down; the old file is written once more
+    // through the agent's still-open handle.
+    let old = trace.path.with_extension("1");
+    std::fs::rename(&trace.path, &old).unwrap();
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(&old)
+        .unwrap()
+        .write_all(record(5, "turn").as_bytes())
+        .unwrap();
+    std::fs::write(&trace.path, "").unwrap();
+    trace.append(10, "turn");
+    trace.append(11, "turn");
+
+    let attempts = con.status().attempts;
+    let until = tokio::time::Instant::now() + Duration::from_secs(20);
+    while con.status().attempts < attempts + 2 {
+        assert!(tokio::time::Instant::now() < until, "{:?}", con.status());
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(
+        con.status().last_refusal,
+        Some(super::frames::Refusal::AlreadyConnected)
+    );
+    drop(holder);
+    let until = tokio::time::Instant::now() + Duration::from_secs(20);
+    while !con.status().admitted {
+        assert!(tokio::time::Instant::now() < until, "{:?}", con.status());
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    wait_window(&lab, &id, "the old tail, then the new file", |e| {
+        ns(e).ends_with(&[4, 5, 10, 11])
+    })
+    .await;
+    let marks = marks(&window(&lab, &id));
+    assert!(
+        !marks.iter().any(|m| m.contains("no longer holds")),
+        "the old tail was lost: {marks:?}"
+    );
+    assert!(marks.iter().any(|m| m.contains("rotation")), "{marks:?}");
+    con.stop().await;
+}
+
+/// **An ack never blocks the server's read**: a backfill of many small
+/// records, its acks outrunning admin-con's reads between replay steps,
+/// is landed on one admission with no stall to the silence bound.
+#[tokio::test]
+async fn a_backfill_of_small_records_lands_on_one_admission() {
+    let Some(lab) = Lab::open().await else { return };
+    let trace = Trace::new();
+    let mut body = String::new();
+    let mut n = 0u64;
+    while body.len() < 1024 * 1024 {
+        n += 1;
+        body.push_str(&format!("{{\"wall_ms\":1,\"payload\":{{\"n\":{n}}}}}\n"));
+    }
+    trace.append_raw(body.as_bytes());
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, &trace.path, out.path(), Some(2 * 1024 * 1024)).await;
+    let mut con = Running::start(config(&path, POLL), Arc::new(NoVerbs));
+    con.wait("admitted", |s| s.admitted).await;
+    let until = tokio::time::Instant::now() + Duration::from_secs(30);
+    while lab.listener.acknowledged(&id).map(|p| p.offset) != Some(trace.len()) {
+        assert!(
+            tokio::time::Instant::now() < until,
+            "never acknowledged through the end: {:?}",
+            con.status()
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let status = con.status();
+    assert_eq!(status.admissions, 1, "{status:?}");
+    assert_eq!(status.attempts, 1, "{status:?}");
+    assert_eq!(ns(&window(&lab, &id)).last(), Some(&n));
+    con.stop().await;
+}
+
+/// **A verb that passes its bound answers `unknown`**: the invocation was
+/// ended and whether admin acted is not known, one shape for one fact.
+#[tokio::test]
+async fn a_verb_past_its_bound_answers_unknown() {
+    let Some(lab) = Lab::open().await else { return };
+    let trace = Trace::new();
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, &trace.path, out.path(), None).await;
+    let invoker = FakeInvoker::new(&["show"], "idle");
+    let mut cfg = config(&path, POLL);
+    cfg.verb_bound = Duration::from_millis(300);
+    let mut con = Running::start(cfg, invoker.clone());
+    con.wait("admitted", |s| s.admitted).await;
+    lab.wait_for(&id, "the admission's show", |a| {
+        a.state_source.as_deref() == Some("show")
+    })
+    .await;
+    invoker.script(Step {
+        delay: Duration::from_secs(2),
+        ..Step::default()
+    });
+    match verb(&lab.listener, &id, "show").await {
+        Err(VerbError::Fault(fault)) => assert_eq!(fault.kind, VerbFault::UNKNOWN),
+        other => panic!("expected the unknown fault, got {other:?}"),
+    }
+    con.stop().await;
+}
+
+/// **The `grants` ask is bounded**: an invoker that never answers declares
+/// the empty ceiling at the hello's bound, and the link comes up.
+#[tokio::test]
+async fn a_grants_ask_that_never_answers_declares_the_empty_ceiling() {
+    struct Hung;
+    impl Invoker for Hung {
+        async fn grants(&self) -> anyhow::Result<Vec<String>> {
+            std::future::pending().await
+        }
+        async fn run(&self, _: &str, _: &str, _: &Principal) -> VerbOutcome {
+            unreachable!("nothing is inside the empty ceiling")
+        }
+    }
+    let Some(lab) = Lab::open().await else { return };
+    let trace = Trace::new();
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, &trace.path, out.path(), None).await;
+    let mut cfg = config(&path, POLL);
+    cfg.grants_bound = Duration::from_millis(300);
+    let mut con = Running::start(cfg, Arc::new(Hung));
+    con.wait("admitted", |s| s.admitted).await;
+    assert_eq!(lab.agent(&id).await.ceiling, Some(Vec::new()));
+    con.stop().await;
+}
+
+/// **A symlinked sink is not supported**: a symlink at the trace path is
+/// refused and marked, nothing is read through it, and a regular file put
+/// in its place is relayed from its start.
+#[tokio::test]
+async fn a_symlink_at_the_trace_path_is_refused_and_marked() {
+    let Some(lab) = Lab::open().await else { return };
+    let trace = Trace::new();
+    let target = trace.path.with_extension("target");
+    std::fs::write(&target, record(99, "load")).unwrap();
+    std::fs::remove_file(&trace.path).unwrap();
+    std::os::unix::fs::symlink(&target, &trace.path).unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, &trace.path, out.path(), None).await;
+    let mut con = Running::start(config(&path, POLL), Arc::new(NoVerbs));
+    con.wait("admitted", |s| s.admitted).await;
+    wait_window(&lab, &id, "the refusal's mark", |e| {
+        marks(e).iter().any(|m| m.contains("symlink"))
+    })
+    .await;
+    tokio::time::sleep(POLL * 6).await;
+    assert!(ns(&window(&lab, &id)).is_empty(), "read through the link");
+    assert_eq!(
+        marks(&window(&lab, &id))
+            .iter()
+            .filter(|m| m.contains("symlink"))
+            .count(),
+        1,
+        "marked once"
+    );
+
+    std::fs::remove_file(&trace.path).unwrap();
+    std::fs::write(&trace.path, record(1, "turn")).unwrap();
+    wait_window(&lab, &id, "the regular file", |e| ns(e) == [1]).await;
+    assert_eq!(lab.agent(&id).await.load_state, None);
+    con.stop().await;
 }

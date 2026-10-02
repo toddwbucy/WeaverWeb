@@ -1315,8 +1315,6 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
             conn.ready = true;
         }
 
-        // Whether an event at or beyond the boundary in its generation has
-        // arrived yet, which is what classifies events of other generations.
         // Whether admin-con's replay has reached the boundary (Spec 7.2): the
         // frame that decides what is replayed and what is live.
         let mut caught_up = false;
@@ -1515,7 +1513,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                                 id,
                                 outcome: None,
                                 error: Some(VerbFault {
-                                    kind: VerbFault::NOT_RUN.into(),
+                                    kind: VerbFault::NOT_LANDED.into(),
                                     message: "the store could not land admin's answer; the connection is closed and the ask is owed again".into(),
                                 }),
                             },
@@ -1602,7 +1600,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                         }
                         Bounded::Done(Err(refusal)) => {
                             tracing::warn!(
-                                "{}: an event at or beyond the boundary arrived before the replay was caught up, refused",
+                                "{}: an event beyond the boundary arrived before the replay was caught up, refused",
                                 agent.agent_id
                             );
                             send(&tx, ToClient::Refusal { reason: refusal }).await;
@@ -1615,15 +1613,22 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                             .lock()
                             .unwrap()
                             .insert(agent.agent_id.clone(), position.clone());
-                        if let Err(why) = enqueue(
-                            &tx,
-                            ToClient::Ack { position },
-                            inner.silence,
-                            &mut close_rx,
-                        )
-                        .await
+                        // **An ack never blocks the read loop** (Spec 7.2):
+                        // admin-con reads acks only between its replay steps,
+                        // so a backfill of many small records fills the write
+                        // queue with acks while it is still sending, and an
+                        // enqueue that waited would stop this loop reading
+                        // the events that would let it drain: both ends
+                        // blocked until the silence bound. An ack is dropped
+                        // where the queue is full. Nothing is lost by it:
+                        // each ack names a later position than the last, the
+                        // position the hello's answer resumes from is the one
+                        // recorded above and not the frames sent, and
+                        // admin-con keeps no state from acks.
+                        if let Err(mpsc::error::TrySendError::Closed(_)) =
+                            tx.try_send(ToClient::Ack { position })
                         {
-                            reason = why;
+                            reason = "the write path is gone";
                             break;
                         }
                     } else {
@@ -1806,15 +1811,11 @@ impl Inner {
     }
 
     /// **An event feeds the window, and only a live load or unload writes
-    /// the row** (Spec 7.2, 2.12). **The server classifies by its own
-    /// boundary and needs no flag from the client.** In the boundary's
-    /// generation an event is replayed where its offset is behind the
-    /// boundary's. In another generation the stream's own order decides,
-    /// which the source guarantees (Spec 7.2, one ordered stream): every
-    /// event of another generation that arrives before the first event at
-    /// or beyond the boundary is the old file's tail, replayed; every one
-    /// arriving after is a rotation after the hello, live. The client's
-    /// flag is a check and a disagreement is logged.
+    /// the row** (Spec 7.2, 2.12). **The `caught_up` frame classifies, and
+    /// the client's flag is a check**: an event before it is the replay's,
+    /// in whatever generation, and one after it is live. In the boundary's
+    /// generation the offset rule checks the frame, and a disagreement
+    /// with the flag is logged.
     async fn land_event(
         &self,
         agent: &AgentId,
@@ -1826,24 +1827,24 @@ impl Inner {
     ) -> Result<bool, Refusal> {
         // **The frame decides** (Spec 7.2): before `caught_up` an event is
         // the replay's, after it live. The boundary's offset rule and the
-        // client's mark are checks: an event at or beyond the boundary in
-        // its generation before the frame is a protocol fault and refused,
+        // client's flag are checks: an event beyond the boundary in its
+        // generation before the frame is a protocol fault and refused,
         // and any other disagreement is logged. The stream's order alone
         // could not decide, since a file rotated after the hello before
         // any event of the boundary's generation reached the boundary would
         // leave every live event of the new generation looking like an
         // older generation's tail.
         let behind = !caught_up;
-        // A mark is not a record: it carries the position where relaying
-        // resumes, which may be the boundary itself, so the offset rule
-        // checks records only.
-        if event.mark.is_none()
-            && let Some(b) = boundary
+        // **Marks are held to the offset rule as records are**: a mark
+        // carries the position relaying resumes at, never past the
+        // boundary before `caught_up`.
+        if let Some(b) = boundary
             && b.generation == position.generation
         {
             // **A position is the byte after its record** (Spec 7.2), so the
-            // record that ends exactly at the boundary is the last one
-            // written before the hello: behind it, and replayed.
+            // event whose position equals the boundary is the last one
+            // behind it, and one beyond the boundary is one whose position
+            // is past it.
             let offset_says_behind = position.offset <= b.offset;
             if !caught_up && !offset_says_behind {
                 return Err(Refusal::Malformed);

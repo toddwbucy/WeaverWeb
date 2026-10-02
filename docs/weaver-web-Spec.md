@@ -1227,7 +1227,14 @@ section waits on the two.
   never a secret in the clear, which is section 2.8's digest rule carried to
   the person. Once authentication stands, a session carries the
   authenticated person rather than a claimed name, and section 3.2's author
-  member takes its value from the person.
+  member takes its value from the person. **The person row is authored
+  through section 3.2, and its writes split three ways**: enrolling,
+  disabling or renaming a person is written by a holder of the server-wide
+  admin grant; the bootstrap person, the first admin, is written by the host
+  principal below; and a person may write only their own authentication
+  material on their own row, enrolling or rotating whatever the election of
+  section 10 picks, and never their name, their state or their grants.
+  Every one of those writes is audited as a verb is.
 - **The server, one of the two principals that are not a person**, for the
   asks the server makes itself, of which the admission's `show` of section 7.2 is the
   one today. It may ask the observation verbs, `show` and `list`, and never
@@ -1363,7 +1370,8 @@ and what it records is not an agent's state but what the server was asked to do 
 what came of it, written before and after the fact, which is why section 2.13 keeps
 the records off any version and never edits them. The register verb is not an eighth:
 it authors the row's other members, the name, the box and the credentials, through
-section 3.2 like any author, and so do the writes of section 2.13's roles and grants. **So one table has two writers at disjoint members**, and the rule below
+section 3.2 like any author, and so do the writes of section 2.13's person rows, roles
+and grants, which is why they add no eighth writer either. **So one table has two writers at disjoint members**, and the rule below
 holds at the member for that row rather than at the table, which is stated here rather
 than left for a reader to find: the register verb never writes what the link observed
 and the link never writes what the operator registered. No writer otherwise touches
@@ -1567,11 +1575,13 @@ and since the plan of section 2.9 it writes that row with its entries and the re
 section 2.10, all four being what one surface composes and registers. **The register
 verb of section 8 writes the authored members of section 2.12's registered agent and
 nothing else**, as of 2026-10-01, the observed members being the link's as section 3's
-opening counts them. **Section 2.13's roles and grants are written through this path
-too**, as of 2026-10-02, by a person holding the server-wide admin grant, the bootstrap
-admin excepted as section 2.13 states, each write audited by the audit writer. It is the operator's verb on the server rather than a surface: its
+opening counts them. It is the operator's verb on the server rather than a surface: its
 author member holds the name the verb was given, or names none, which is the rule below
-with no session behind it. **Each writes only tables of the authored half**, and **none
+with no session behind it. **Section 2.13's person rows, roles and grants are written through this path
+too**, as of 2026-10-02: roles, grants, and enrolling, disabling or renaming a person by
+a holder of the server-wide admin grant; the bootstrap admin by the host principal; and
+a person's own authentication material by that person alone, as section 2.13 states.
+Each write is audited by the audit writer. **Each writes only tables of the authored half**, and **none
 of them may write a position or a run**, which is the whole of what keeps a recorded
 fact a recorded fact and is what the pin below holds. The sentence read that each
 writes one table until 2026-09-09, which was true while Stage authored one.
@@ -1588,12 +1598,13 @@ to: web-no-surface-writes-the-recorded-half
 
 - **Every authored row carries a version, and it is the store's own counter rather than
 anything the author supplies.** Sections 2.3, 2.4, 2.5, 2.9, 2.10 and 2.12, and section
-2.13's roles and grants, each carry it. It
+2.13's person rows, roles and grants, each carry it. It
 has nothing to do with the declaration's corpus commit, which pins the floor's field
 shape and answers staleness against `weaver-types-Spec`: **one says whether the shape is
 current, the other says whether this row has moved since you read it.**
 - **Every authored row names its author, and the member is nullable.** Sections 2.3,
-  2.4, 2.5, 2.9, 2.10 and 2.12, and section 2.13's roles and grants, each carry it. **Null means the store could not
+  2.4, 2.5, 2.9, 2.10 and 2.12, and section 2.13's person rows, roles and grants, each
+  carry it. **Null means the store could not
   name an author when the row was written, and it never means the
   operator**, because a default that guesses writes a fact nobody can
   correct later and an unknown that says so can be filled by anyone who
@@ -2955,7 +2966,7 @@ missing while it was relaying.
 | nothing crosses the link in the clear | perturbation: offer a plaintext hello to the listener, it is refused below any roster; and review, over the listener, that no plaintext accept path exists |
 | the server never asks a verb outside the agent's ceiling | perturbation, **owed**: drop the ceiling check, ask a verb admin-con's hello did not declare, and it leaves the server; and admin-con's half, drop its typed error answer, and it reaches the invoker. **No instrument stands**: the hello carries no ceiling until the admin-con act, and the server's check lands with the IAM act |
 | a verb its principal may not ask is refused before an ask | perturbation, **owed**: drop the grant check, a person whose role permits `show` asks `stop`, and the ask leaves the server; let the server principal ask a lifecycle verb, and it leaves without a grant. Lands with the IAM act |
-| a grant written by a person who does not hold the admin grant is refused | perturbation, **owed**: drop the check, and a person granted only `show` writes themselves the operator role and passes the first gate; let a person write a grant on themselves, and an admin widens their own grants or the last admin removes the only admin grant; let an admin holding the observer role on an agent add `stop` to that role, and their own grant widens without a grant written; let a surface write as the host principal, and a grant lands with no admin behind it; drop the exclusion, have two admins remove each other at once, and no admin remains. Lands with the IAM act |
+| a grant written by a person who does not hold the admin grant is refused | perturbation, **owed**: drop the check, and a person granted only `show` writes themselves the operator role and passes the first gate; let a person write a grant on themselves, and an admin widens their own grants or the last admin removes the only admin grant; let an admin holding the observer role on an agent add `stop` to that role, and their own grant widens without a grant written; let a surface write as the host principal, and a grant lands with no admin behind it; drop the exclusion, have two admins remove each other at once, and no admin remains; let a person write another person's authentication material, and they can sign in as them. Lands with the IAM act |
 | every verb asked and every role or grant written has an audit record naming its principal, and its outcome is a second record naming the first | perturbation, **owed**: write the first record after the ask instead of before, fail the store between the two, and an ask leaves with no record; update the first record with the outcome instead of appending a second, and an ask whose answer is lost reads as never answered with no trace of the rewrite; drop the refusal's record, and a refused verb leaves no trace; write a grant with the audit write dropped, and the grant lands with no record. Lands with the IAM act |
 | the admission's `show` is required only where the ceiling grants it | perturbation, **owed**: ask `show` at every admission, and an agent whose ceiling grants no `show` is closed `admission_incomplete` at every reconnection and never stays admitted; skip it where it is granted, and the row reads the last process's state as current. The listener asks `show` at every admission until the admin-con act, which is the drift this row names |
 | no privileged invocation exists in the crate | review, and a test, **owed**: a test that reads the source tree for an invocation of `sudo`, a root wrapper or a setuid call, shown to fail when one is planted. It would fail today on the seed's `lifecycle.rs`, which invokes `sudo weaver-admin` and is not carried forward, so the row is owed until that file leaves |

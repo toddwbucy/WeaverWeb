@@ -2623,7 +2623,9 @@ fn a_staging_entry_swapped_before_the_publish_is_refused() {
 /// admin-con that answers it with an error is closed at once, and one that
 /// only heartbeats is closed at the silence bound, each with the typed
 /// refusal and the row disconnected, so the reconnect asks again; one that
-/// answers with a state stays admitted past the bound.
+/// answers with a state stays admitted past the bound. A show answered
+/// late whose landing stalls is closed at the one bound from the hello,
+/// not a fresh bound from the answer.
 #[tokio::test]
 async fn an_admission_whose_show_is_not_answered_is_closed() {
     let Some(lab) = Lab::open_with(Duration::from_secs(4)).await else {
@@ -2729,6 +2731,31 @@ async fn an_admission_whose_show_is_not_answered_is_closed() {
         "a connection whose show answered stays admitted"
     );
     assert!(!admin.closed().await);
+    drop(admin);
+    lab.wait_for(&karl.id, "disconnected", |a| !a.admin.connected)
+        .await;
+
+    // Answered late, the landing stalled: closed at the one bound from the
+    // hello, not a fresh bound from the answer.
+    let (mut admin, id) = hello(&lab, &karl).await;
+    let since_hello = tokio::time::Instant::now();
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    lab.listener.stall_next_land();
+    admin
+        .send(FromClient::Verb {
+            id,
+            outcome: Some(show_answer(&karl.name, "idle", None)),
+            error: None,
+        })
+        .await;
+    admin.expect_refusal(Refusal::AdmissionIncomplete).await;
+    let elapsed = since_hello.elapsed();
+    assert!(
+        elapsed >= Duration::from_secs(3) && elapsed < Duration::from_millis(5500),
+        "closed at the admission's one bound: {elapsed:?}"
+    );
+    lab.wait_for(&karl.id, "disconnected", |a| !a.admin.connected)
+        .await;
 }
 
 /// **A store landing is bounded like a read or an enqueue.** A landing

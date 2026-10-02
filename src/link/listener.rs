@@ -1321,15 +1321,42 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                     resolve(&pending, id, FromClient::Turn { id, close, error });
                 }
                 (Plane::Admin, FromClient::Verb { id, outcome, error }) => {
+                    // The admission's show is bounded by what remains of
+                    // its deadline, not by a fresh bound: a show answered
+                    // just before the deadline whose landing stalls would
+                    // otherwise leave the connection admitted on stale
+                    // facts for almost two bounds.
+                    let is_admission = admission_show.is_some_and(|(ask, _)| ask == id);
+                    let bound = match admission_show {
+                        Some((ask, deadline)) if ask == id => {
+                            deadline.saturating_duration_since(tokio::time::Instant::now())
+                        }
+                        _ => inner.silence,
+                    };
                     let landing = match &outcome {
                         Some(outcome) => match bounded(
                             inner.land_verb(&agent.agent_id, &agent.name, outcome),
-                            inner.silence,
+                            bound,
                             &mut close_rx,
                         )
                         .await
                         {
                             Bounded::Done(landing) => landing,
+                            Bounded::TimedOut if is_admission => {
+                                tracing::warn!(
+                                    "{}: the admission's show answered but its landing did not complete by the deadline, closed so the reconnect asks again",
+                                    agent.agent_id
+                                );
+                                send(
+                                    &tx,
+                                    ToClient::Refusal {
+                                        reason: Refusal::AdmissionIncomplete,
+                                    },
+                                )
+                                .await;
+                                reason = "the admission's show did not answer";
+                                break;
+                            }
                             Bounded::TimedOut => {
                                 tracing::error!(
                                     "{}: admin's {} answer was not landed within the bound",
@@ -1379,7 +1406,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                         reason = "the store was unavailable";
                         break;
                     }
-                    if admission_show.is_some_and(|(ask, _)| ask == id) {
+                    if is_admission {
                         if landing == Landing::Observation {
                             admission_show = None;
                         } else {

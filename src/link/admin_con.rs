@@ -409,6 +409,15 @@ impl Tailer {
         self.seen = None;
     }
 
+    /// Read the held file again from its start, its next poll checked
+    /// afresh.
+    fn restart(&mut self) {
+        self.offset = 0;
+        self.digest = String::new();
+        self.skip = None;
+        self.seen = None;
+    }
+
     fn held_len(&self) -> std::io::Result<u64> {
         match &self.held {
             Some(held) => Ok(held.file.metadata()?.len()),
@@ -947,15 +956,26 @@ fn resume(
                 tailer.previous = None;
                 return Ok(front(tailer, marks));
             };
+            // **The first record boundary at or after the start, found at
+            // any distance** in bounded chunks: a start inside a record
+            // longer than the bound is carried through that record to its
+            // delimiter, never to the boundary, so the complete records
+            // after it are relayed and the record itself is marked.
             let aligned = if start == 0 {
                 0
             } else {
-                // The first record boundary at or after the start.
-                let mut buf = vec![0u8; (RECORD_BOUND + 1).min((boundary.offset - start) as usize)];
-                held.file.read_exact_at(&mut buf, start - 1)?;
-                match buf.iter().position(|&b| b == b'\n') {
-                    Some(i) => start - 1 + i as u64 + 1,
-                    None => boundary.offset,
+                let mut at = start - 1;
+                let mut buf = vec![0u8; DIGEST_WINDOW];
+                loop {
+                    if at >= boundary.offset {
+                        break boundary.offset;
+                    }
+                    let n = ((boundary.offset - at) as usize).min(buf.len());
+                    held.file.read_exact_at(&mut buf[..n], at)?;
+                    if let Some(i) = buf[..n].iter().position(|&b| b == b'\n') {
+                        break at + i as u64 + 1;
+                    }
+                    at += n as u64;
                 }
             };
             tailer.offset = aligned;
@@ -965,6 +985,14 @@ fn resume(
                     position: tailer.position(),
                     reason: format!(
                         "the server holds no acknowledged position (a first connection, or a server restart): backfill starts {aligned} bytes into the file, and the bytes before it were not relayed"
+                    ),
+                });
+            }
+            if aligned - start > RECORD_BOUND as u64 {
+                marks.push(Item::Mark {
+                    position: tailer.position(),
+                    reason: format!(
+                        "the backfill's start at {start} fell inside a record past the {RECORD_BOUND} byte bound, ending at {aligned}; it was not relayed"
                     ),
                 });
             }
@@ -1075,14 +1103,9 @@ fn replay_state(tailer: &mut Tailer, boundary: &Position, moved: bool) -> anyhow
         }
         moved = true;
     }
-    if tailer.offset >= boundary.offset {
-        return Ok(Replay::Done(items));
-    }
     if tailer.held_len()? < boundary.offset {
         let at = tailer.offset;
-        tailer.offset = 0;
-        tailer.digest = String::new();
-        tailer.skip = None;
+        tailer.restart();
         items.push(Item::Mark {
             position: tailer.position(),
             reason: format!(
@@ -1092,9 +1115,38 @@ fn replay_state(tailer: &mut Tailer, boundary: &Position, moved: bool) -> anyhow
         });
         return Ok(Replay::Done(items));
     }
-    if !moved {
-        // The bytes before the boundary are there and end no record: the
-        // file was rewritten in place since the hello.
+    if tailer.offset >= boundary.offset || !moved {
+        // **The boundary is checked by its digest before `caught_up`**: a
+        // copy and truncate regrown past the boundary between the hello and
+        // the replay's end keeps the file's identity and hides in its
+        // length, and what the replay read of it is the new content
+        // labelled replayed, which never lands. A mismatch means the file
+        // was rewritten after the hello, so its content is post-hello: it
+        // is marked and relayed live from its start.
+        let same = match &tailer.held {
+            Some(held) => {
+                digest_before(&held.file, boundary.offset)?.as_deref()
+                    == Some(boundary.digest.as_str())
+            }
+            None => true,
+        };
+        if !same {
+            let at = tailer.offset;
+            tailer.restart();
+            items.push(Item::Mark {
+                position: tailer.position(),
+                reason: format!(
+                    "the record before the replay's boundary at {} no longer matches its digest: the file was truncated or rewritten since the hello, so what was replayed to {at} is not what the hello named; relayed live from its start",
+                    boundary.offset
+                ),
+            });
+            return Ok(Replay::Done(items));
+        }
+        if tailer.offset >= boundary.offset {
+            return Ok(Replay::Done(items));
+        }
+        // The boundary still ends the record the hello named, and the
+        // bytes from here to it end none: rewritten in place before it.
         items.push(Item::Mark {
             position: tailer.position(),
             reason: format!(

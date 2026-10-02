@@ -1458,3 +1458,102 @@ async fn a_truncation_regrown_during_a_skip_is_marked() {
     assert!(marks.iter().any(|m| m.contains("truncated")), "{marks:?}");
     con.stop().await;
 }
+
+/// **The boundary is checked by its digest before `caught_up`**: the file
+/// is rewritten in place, longer than before, between the hello and the
+/// replay's end, so it never shrinks below the boundary and keeps its
+/// identity. The replay's end finds the record before the boundary no
+/// longer the hello's, marks it, and relays the new content live, so the
+/// load in it reaches the row.
+#[tokio::test]
+async fn a_rewrite_between_the_hello_and_the_replays_end_is_relayed_live() {
+    let Some(lab) = Lab::open().await else { return };
+    let trace = Trace::new();
+    let small = |from: u64, bytes: usize| {
+        let mut body = String::new();
+        let mut n = from;
+        while body.len() < bytes {
+            body.push_str(&format!("{{\"wall_ms\":1,\"payload\":{{\"n\":{n}}}}}\n"));
+            n += 1;
+        }
+        body
+    };
+    trace.append_raw(small(1, 6 * 1024 * 1024).as_bytes());
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, &trace.path, out.path(), Some(16 * 1024 * 1024)).await;
+    let mut con = Running::start(config(&path, POLL), Arc::new(NoVerbs));
+    con.wait("admitted", |s| s.admitted).await;
+    assert_ne!(
+        lab.listener.acknowledged(&id).map(|p| p.offset),
+        Some(trace.len()),
+        "the replay must still be running for this test to say anything"
+    );
+
+    // Rewritten in place from its start, never truncated, so the length
+    // never falls below the boundary.
+    let mut rewritten = record(1, "load").into_bytes();
+    rewritten.extend(small(1_000_000, 7 * 1024 * 1024).into_bytes());
+    {
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&trace.path)
+            .unwrap();
+        f.write_all(&rewritten).unwrap();
+        f.sync_all().unwrap();
+    }
+
+    // The replay of the old file's 6 MiB runs past the usual wait first.
+    let until = tokio::time::Instant::now() + Duration::from_secs(90);
+    let row = loop {
+        let row = lab.agent(&id).await;
+        if row.load_state.as_deref() == Some("idle") {
+            break row;
+        }
+        assert!(
+            tokio::time::Instant::now() < until,
+            "the row never took the rewritten file's load: {:?}",
+            marks(&window(&lab, &id))
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    };
+    assert_eq!(row.state_source.as_deref(), Some("event"));
+    let marks = marks(&window(&lab, &id));
+    assert!(
+        marks
+            .iter()
+            .any(|m| m.contains("no longer matches its digest")),
+        "{marks:?}"
+    );
+    con.stop().await;
+}
+
+/// **A backfill whose start falls inside a record past the bound starts at
+/// that record's delimiter**, found at any distance: the record is marked,
+/// and the complete records after it arrive.
+#[tokio::test]
+async fn a_backfill_starting_inside_a_record_past_the_bound_keeps_what_follows() {
+    let Some(lab) = Lab::open().await else { return };
+    let trace = Trace::new();
+    for n in 1..=3 {
+        trace.append(n, "turn");
+    }
+    let head = trace.len();
+    trace.append_raw(&oversized(admin_con::RECORD_BOUND + 64 * 1024));
+    for n in 4..=6 {
+        trace.append(n, "turn");
+    }
+    let out = tempfile::tempdir().unwrap();
+    let backfill = trace.len() - (head + 100);
+    let (id, path) = installed(&lab, &trace.path, out.path(), Some(backfill)).await;
+    let mut con = Running::start(config(&path, POLL), Arc::new(NoVerbs));
+    con.wait("admitted", |s| s.admitted).await;
+    wait_window(&lab, &id, "the records after it", |e| ns(e) == [4, 5, 6]).await;
+    let marks = marks(&window(&lab, &id));
+    assert!(
+        marks
+            .iter()
+            .any(|m| m.contains("fell inside a record past")),
+        "{marks:?}"
+    );
+    con.stop().await;
+}

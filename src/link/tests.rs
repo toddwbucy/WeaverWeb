@@ -2618,3 +2618,115 @@ fn a_staging_entry_swapped_before_the_publish_is_refused() {
         "the swapped entry is left where it was found"
     );
 }
+
+/// **The admission's show is the connection's initialisation.** An
+/// admin-con that answers it with an error is closed at once, and one that
+/// only heartbeats is closed at the silence bound, each with the typed
+/// refusal and the row disconnected, so the reconnect asks again; one that
+/// answers with a state stays admitted past the bound.
+#[tokio::test]
+async fn an_admission_whose_show_is_not_answered_is_closed() {
+    let Some(lab) = Lab::open_with(Duration::from_secs(4)).await else {
+        return;
+    };
+    let karl = lab.register("karl").await;
+
+    async fn hello(lab: &Lab, karl: &Registered) -> (Fake, u64) {
+        let mut admin = lab.connect(&karl.admin).await;
+        admin
+            .send(FromClient::Hello {
+                agent: karl.name.clone(),
+                plane: Plane::Admin,
+                tail: Some(position(100)),
+            })
+            .await;
+        assert!(matches!(
+            admin.recv().await,
+            Some(ToClient::HelloAnswer { .. })
+        ));
+        match admin.recv().await {
+            Some(ToClient::Verb { id, verb }) if verb == "show" => (admin, id),
+            other => panic!("expected the show ask, got {other:?}"),
+        }
+    }
+
+    // Answered with an error: closed at once.
+    let (mut admin, id) = hello(&lab, &karl).await;
+    lab.wait_for(&karl.id, "connected", |a| a.admin.connected)
+        .await;
+    admin
+        .send(FromClient::Verb {
+            id,
+            outcome: None,
+            error: Some("show failed".into()),
+        })
+        .await;
+    admin.expect_refusal(Refusal::AdmissionIncomplete).await;
+    lab.wait_for(&karl.id, "disconnected", |a| !a.admin.connected)
+        .await;
+
+    // Heartbeats only: closed at the bound, not before.
+    let (admin, _) = hello(&lab, &karl).await;
+    let started = tokio::time::Instant::now();
+    let Fake {
+        mut reader,
+        mut writer,
+    } = admin;
+    let heartbeats = tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            let mut line = serde_json::to_string(&FromClient::Heartbeat).unwrap();
+            line.push('\n');
+            if writer.write_all(line.as_bytes()).await.is_err() {
+                return;
+            }
+        }
+    });
+    let mut line = String::new();
+    tokio::time::timeout(Duration::from_secs(10), reader.read_line(&mut line))
+        .await
+        .expect("a frame within the bound")
+        .unwrap();
+    let frame: ToClient = serde_json::from_str(line.trim_end()).unwrap();
+    assert!(
+        matches!(
+            frame,
+            ToClient::Refusal {
+                reason: Refusal::AdmissionIncomplete
+            }
+        ),
+        "{frame:?}"
+    );
+    assert!(
+        started.elapsed() >= Duration::from_secs(3),
+        "closed at the bound, not at once: {:?}",
+        started.elapsed()
+    );
+    line.clear();
+    assert_eq!(reader.read_line(&mut line).await.unwrap(), 0, "then closed");
+    heartbeats.abort();
+    lab.wait_for(&karl.id, "disconnected", |a| !a.admin.connected)
+        .await;
+
+    // Answered with a state: admitted past the bound.
+    let (mut admin, id) = hello(&lab, &karl).await;
+    admin
+        .send(FromClient::Verb {
+            id,
+            outcome: Some(show_answer(&karl.name, "idle", None)),
+            error: None,
+        })
+        .await;
+    lab.wait_for(&karl.id, "idle", |a| {
+        a.load_state.as_deref() == Some("idle")
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    admin.send(FromClient::Heartbeat).await;
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    assert!(
+        lab.agent(&karl.id).await.admin.connected,
+        "a connection whose show answered stays admitted"
+    );
+    assert!(!admin.closed().await);
+}

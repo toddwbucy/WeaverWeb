@@ -98,6 +98,16 @@ struct LiveConnection {
     ready: bool,
 }
 
+/// What landing a verb's answer did: wrote an observation on the row,
+/// had nothing to write (no answer, or not a state), or failed at the
+/// store.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Landing {
+    Observation,
+    Nothing,
+    Failed,
+}
+
 struct Inner {
     store: Store,
     acceptor: TlsAcceptor,
@@ -279,28 +289,55 @@ impl Listener {
             }
         });
 
-        // **The revocation channel outlives its errors.** A notification
-        // raised while the connection to the store is being remade is
-        // lost, so after any error the live map is swept against the
-        // register and anything revoked is closed, and listening resumes.
+        // **The revocation channel outlives its errors, and the sweep
+        // follows the re-subscription.** A notification raised while the
+        // connection to the store is down is lost, so once the subscription
+        // stands again the live map is swept against the register and
+        // anything revoked is closed. The order is the point: a revocation
+        // committed after a sweep but before LISTEN is back is neither
+        // swept nor delivered, while with LISTEN back first every
+        // revocation is one or the other. `try_recv` answers `None` only
+        // after a lost connection was re-established and re-LISTENed
+        // (sqlx's eager reconnect), so a sweep after `None` is after the
+        // re-subscription; where the re-establishment itself fails the
+        // channel is re-listened explicitly until it stands, and then
+        // swept. (sqlx records the channel again on each explicit listen;
+        // a duplicate LISTEN is a no-op, one entry per outage survived.)
         let weak = Arc::downgrade(&listener.inner);
         let notify = tokio::spawn(async move {
             loop {
-                match notifications.recv().await {
-                    Ok(notification) => {
+                match notifications.try_recv().await {
+                    Ok(Some(notification)) => {
                         let Some(inner) = weak.upgrade() else { return };
                         inner.close_fingerprint(notification.payload());
+                        continue;
+                    }
+                    Ok(None) => {
+                        tracing::warn!(
+                            "the revocation channel was lost and stands again; sweeping the live map"
+                        );
                     }
                     Err(e) => {
-                        let Some(inner) = weak.upgrade() else { return };
                         tracing::error!(
-                            "the revocation channel failed, sweeping the live map and resuming: {e}"
+                            "the revocation channel failed: {e}; re-establishing it before the sweep"
                         );
-                        inner.sweep_revoked().await;
-                        inner.reconcile_teardowns().await;
-                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        loop {
+                            tokio::time::sleep(Duration::from_secs(1)).await;
+                            if weak.upgrade().is_none() {
+                                return;
+                            }
+                            match notifications.listen(REVOCATION_CHANNEL).await {
+                                Ok(()) => break,
+                                Err(e) => {
+                                    tracing::error!("re-establishing the revocation channel: {e}");
+                                }
+                            }
+                        }
                     }
                 }
+                let Some(inner) = weak.upgrade() else { return };
+                inner.sweep_revoked().await;
+                inner.reconcile_teardowns().await;
             }
         });
         // **The lock's session is monitored, and its loss halts the
@@ -1076,6 +1113,15 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
         {
             conn.ready = true;
         }
+        // **The admission's `show` is the connection's initialisation.**
+        // Until it answers with a usable observation the row's tuple and
+        // load state are from before the reconnect; an admin-con that
+        // errors, answers without a state, or only heartbeats would leave
+        // the connection admitted on stale word. So the ask's id and a
+        // deadline at the silence bound are held, and a connection whose
+        // show has not landed by then, or answers with anything else, is
+        // closed with a typed refusal so the reconnect asks again.
+        let mut admission_show: Option<(u64, tokio::time::Instant)> = None;
         if plane == Plane::Admin {
             inner.windows.ensure(agent.agent_id.as_str());
             if inner.windows.has_events(agent.agent_id.as_str()) {
@@ -1099,6 +1145,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                 reason = why;
                 break 'serve;
             }
+            admission_show = Some((id, tokio::time::Instant::now() + inner.silence));
         }
 
         // Whether an event at or beyond the boundary in its generation has
@@ -1107,8 +1154,16 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
         // frame that decides what is replayed and what is live.
         let mut caught_up = false;
         loop {
+            // The read waits to the silence bound, or to the admission
+            // show's deadline where that is sooner.
+            let wait = match admission_show {
+                Some((_, deadline)) => deadline
+                    .saturating_duration_since(tokio::time::Instant::now())
+                    .min(inner.silence),
+                None => inner.silence,
+            };
             let line = tokio::select! {
-                l = tokio::time::timeout(inner.silence, read_line(&mut reader, &mut buf)) => l,
+                l = tokio::time::timeout(wait, read_line(&mut reader, &mut buf)) => l,
                 _ = close_rx.changed() => {
                     if *close_rx.borrow() {
                         tracing::info!(
@@ -1145,6 +1200,25 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                     )
                     .await;
                     reason = "refused as malformed";
+                    break;
+                }
+                Err(_)
+                    if admission_show
+                        .is_some_and(|(_, deadline)| tokio::time::Instant::now() >= deadline) =>
+                {
+                    tracing::warn!(
+                        "link from {peer}: {} (admin) did not answer the admission's show within {:?}, closed so the reconnect asks again",
+                        agent.agent_id,
+                        inner.silence
+                    );
+                    send(
+                        &tx,
+                        ToClient::Refusal {
+                            reason: Refusal::AdmissionIncomplete,
+                        },
+                    )
+                    .await;
+                    reason = "the admission's show did not answer";
                     break;
                 }
                 Err(_) => {
@@ -1203,28 +1277,32 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                     resolve(&pending, id, FromClient::Turn { id, close, error });
                 }
                 (Plane::Admin, FromClient::Verb { id, outcome, error }) => {
-                    if let Some(outcome) = &outcome
-                        && !inner.land_verb(&agent.agent_id, &agent.name, outcome).await
-                    {
+                    let landing = match &outcome {
+                        Some(outcome) => {
+                            inner.land_verb(&agent.agent_id, &agent.name, outcome).await
+                        }
+                        None => Landing::Nothing,
+                    };
+                    if landing == Landing::Failed {
                         // The answer could not be landed: the ask answers the
                         // failure and never the outcome, and the connection
                         // closes so the admission's `show` is asked again.
                         tracing::error!(
                             "{}: admin's {} answer could not be landed, closing the connection",
                             agent.agent_id,
-                            outcome.verb
+                            outcome.as_ref().map_or("show", |o| o.verb.as_str())
                         );
                         resolve(
-                        &pending,
-                        id,
-                        FromClient::Verb {
+                            &pending,
                             id,
-                            outcome: None,
-                            error: Some(
-                                "the store could not land admin's answer; the connection is closed and the ask is owed again".into(),
-                            ),
-                        },
-                    );
+                            FromClient::Verb {
+                                id,
+                                outcome: None,
+                                error: Some(
+                                    "the store could not land admin's answer; the connection is closed and the ask is owed again".into(),
+                                ),
+                            },
+                        );
                         send(
                             &tx,
                             ToClient::Refusal {
@@ -1234,6 +1312,26 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                         .await;
                         reason = "the store was unavailable";
                         break;
+                    }
+                    if admission_show.is_some_and(|(ask, _)| ask == id) {
+                        if landing == Landing::Observation {
+                            admission_show = None;
+                        } else {
+                            tracing::warn!(
+                                "{}: the admission's show answered without a usable observation ({}), closed so the reconnect asks again",
+                                agent.agent_id,
+                                error.as_deref().unwrap_or("no state in the answer")
+                            );
+                            send(
+                                &tx,
+                                ToClient::Refusal {
+                                    reason: Refusal::AdmissionIncomplete,
+                                },
+                            )
+                            .await;
+                            reason = "the admission's show did not answer";
+                            break;
+                        }
                     }
                     resolve(&pending, id, FromClient::Verb { id, outcome, error });
                 }
@@ -1441,9 +1539,9 @@ impl Inner {
     /// nothing. Any other verb's answer lands nothing. **The date is the
     /// receipt's**, a gap section 2.12 names: admin's answer carries no
     /// time of its own.
-    async fn land_verb(&self, agent: &AgentId, name: &str, outcome: &VerbOutcome) -> bool {
+    async fn land_verb(&self, agent: &AgentId, name: &str, outcome: &VerbOutcome) -> Landing {
         let Some(answer) = &outcome.answer else {
-            return true;
+            return Landing::Nothing;
         };
         let summary = match outcome.verb.as_str() {
             "show" if answer.get("kind").and_then(|k| k.as_str()) == Some("state") => {
@@ -1460,7 +1558,7 @@ impl Inner {
             _ => None,
         };
         let Some(summary) = summary else {
-            return true;
+            return Landing::Nothing;
         };
         let observation = Observation {
             load_state: summary
@@ -1470,7 +1568,11 @@ impl Inner {
             tuple: summary.get("load").cloned().filter(|l| !l.is_null()),
             at: Utc::now(),
         };
-        self.land(agent, observation).await
+        if self.land(agent, observation).await {
+            Landing::Observation
+        } else {
+            Landing::Failed
+        }
     }
 
     /// **An event feeds the window, and only a live load or unload writes

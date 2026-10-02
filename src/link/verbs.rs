@@ -387,6 +387,16 @@ mod at {
         Ok((st.st_dev, st.st_ino))
     }
 
+    /// Flush the directory's entries to disk, so the names of files
+    /// created or renamed under it survive a power loss.
+    pub fn fsync(dir: &OwnedFd) -> io::Result<()> {
+        // SAFETY: a valid descriptor.
+        if unsafe { libc::fsync(dir.as_raw_fd()) } < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
     pub fn unlink(dir: &OwnedFd, name: &str) -> io::Result<()> {
         let name = c(name)?;
         // SAFETY: a valid descriptor and a NUL-terminated name.
@@ -593,6 +603,13 @@ impl Staged {
                 self.admin.1.display()
             )
         })?;
+        at::fsync(&self.dir.fd).map_err(|e| {
+            anyhow::anyhow!(
+                "the gate config stands at {} and the admin config at {}, but syncing the directory failed: {e}; the names may not survive a power loss until it is synced",
+                self.gate.1.display(),
+                self.admin.1.display()
+            )
+        })?;
         Ok((
             self.gate.1.display().to_string(),
             self.admin.1.display().to_string(),
@@ -638,6 +655,15 @@ pub(super) fn stage_pair(
             return Err(e);
         }
     };
+    // The files are synced; the directory holding their names is synced
+    // too, before the store commits against them, and again after the
+    // publish's renames, since a name is the directory's write and a
+    // power loss after the commit would otherwise lose it.
+    if let Err(e) = at::fsync(&dir.fd) {
+        let _ = at::unlink(&dir.fd, &gate_staging);
+        let _ = at::unlink(&dir.fd, &admin_staging);
+        anyhow::bail!("syncing {}: {e}", dir.display.display());
+    }
     Ok(Staged {
         gate: (dir.path(&gate_staging), dir.path(GATE_CONFIG)),
         admin: (dir.path(&admin_staging), dir.path(ADMIN_CONFIG)),

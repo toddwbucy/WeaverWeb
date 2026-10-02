@@ -105,6 +105,11 @@ fn authority_params() -> CertificateParams {
     params
 }
 
+// **Every file of the set is synced, then the staging directory, then the
+// parent after the switch**: the switch is reported only once the set and
+// its names would survive a power loss, since an authority that is in
+// place by name but empty on disk is a server that cannot start and
+// configs that pin a certificate nothing holds.
 fn write_private(path: &Path, pem: &str) -> anyhow::Result<()> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
@@ -115,7 +120,26 @@ fn write_private(path: &Path, pem: &str) -> anyhow::Result<()> {
         .open(path)
         .map_err(|e| anyhow::anyhow!("writing {}: {e}", path.display()))?;
     file.write_all(pem.as_bytes())?;
+    file.sync_all()
+        .map_err(|e| anyhow::anyhow!("syncing {}: {e}", path.display()))?;
     Ok(())
+}
+
+fn write_synced(path: &Path, content: &str) -> anyhow::Result<()> {
+    use std::io::Write;
+    let mut file = std::fs::File::create(path)
+        .map_err(|e| anyhow::anyhow!("writing {}: {e}", path.display()))?;
+    file.write_all(content.as_bytes())?;
+    file.sync_all()
+        .map_err(|e| anyhow::anyhow!("syncing {}: {e}", path.display()))?;
+    Ok(())
+}
+
+/// Flush a directory's entries to disk.
+fn sync_dir(dir: &Path) -> anyhow::Result<()> {
+    std::fs::File::open(dir)
+        .and_then(|d| d.sync_all())
+        .map_err(|e| anyhow::anyhow!("syncing {}: {e}", dir.display()))
 }
 
 fn read(dir: &Path, name: &str) -> anyhow::Result<String> {
@@ -298,7 +322,7 @@ impl Authority {
         let params = authority_params();
         let certificate = params.self_signed(&key)?;
         write_private(&staging.join(AUTHORITY_KEY), &key.serialize_pem())?;
-        std::fs::write(staging.join(AUTHORITY_CERT), certificate.pem())?;
+        write_synced(&staging.join(AUTHORITY_CERT), &certificate.pem())?;
 
         let issuer = Issuer::from_params(&params, &key);
         let server_key = KeyPair::generate()?;
@@ -316,12 +340,12 @@ impl Authority {
         ];
         let server_certificate = server_params.signed_by(&server_key, &issuer)?;
         write_private(&staging.join(SERVER_KEY), &server_key.serialize_pem())?;
-        std::fs::write(staging.join(SERVER_CERT), server_certificate.pem())?;
-        std::fs::write(staging.join(SERVER_NAME), server_name)?;
+        write_synced(&staging.join(SERVER_CERT), &server_certificate.pem())?;
+        write_synced(&staging.join(SERVER_NAME), server_name)?;
 
         // The set is verified where it was written, before anything live
-        // moves.
-        if let Err(e) = Self::load(&staging) {
+        // moves, and its names are synced before they are renamed.
+        if let Err(e) = Self::load(&staging).and_then(|_| sync_dir(&staging)) {
             let _ = std::fs::remove_dir_all(&staging);
             return Err(e);
         }
@@ -395,6 +419,19 @@ impl Authority {
                 );
             }
             anyhow::bail!("switching the new set into place at {}: {e}", dir.display());
+        }
+        // The staging, the live and the retired paths are siblings, so the
+        // one parent holds both sides of each rename; synced once the
+        // switch is complete, before it is reported.
+        if let Some(parent) = dir.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            sync_dir(parent).map_err(|e| {
+                anyhow::anyhow!(
+                    "the new set stands at {} but its name may not survive a power loss: {e}",
+                    dir.display()
+                )
+            })?;
         }
         Self::load(dir)
     }

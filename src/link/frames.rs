@@ -164,6 +164,11 @@ pub enum Refusal {
     /// connection closes at the last acknowledged position and the
     /// connector reconnects and resends (Spec 7.2).
     StoreUnavailable,
+    /// The admission's `show` did not answer with a usable observation
+    /// within the silence bound, so the row would keep its tuple and load
+    /// state from before the reconnect; the connection closes so the
+    /// reconnect asks it again.
+    AdmissionIncomplete,
 }
 
 impl Refusal {
@@ -176,6 +181,7 @@ impl Refusal {
             Refusal::WrongPlane => "wrong_plane",
             Refusal::Malformed => "malformed",
             Refusal::StoreUnavailable => "store_unavailable",
+            Refusal::AdmissionIncomplete => "admission_incomplete",
         }
     }
 }

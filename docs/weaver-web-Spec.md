@@ -1228,17 +1228,29 @@ section waits on the two.
   the person. Once authentication stands, a session carries the
   authenticated person rather than a claimed name, and section 3.2's author
   member takes its value from the person.
-- **The server, the one principal that is not a person**, for the asks the
-  server makes itself, of which the admission's `show` of section 7.2 is the
+- **The server, one of the two principals that are not a person**, for the
+  asks the server makes itself, of which the admission's `show` of section 7.2 is the
   one today. It may ask the observation verbs, `show` and `list`, and never
   a lifecycle verb. It holds no grant and needs none, and it is still bounded
   by the agent's ceiling, the second gate, like any ask. Its asks are
   audited as a person's are, the first record naming the server as the
   principal, and the claim that crosses to the box per section 8 names the
-  server too. **It is the only principal that is not a person because it
-  acts on nothing**: it re-confirms state the row already holds, so its asks
-  change no agent, and every lifecycle verb, which does change one, has a
-  person behind it.
+  server too. **It needs no person behind it because it acts on nothing**:
+  it re-confirms state the row already holds, so its asks change no agent,
+  and every lifecycle verb, which does change one, has a person behind it.
+- **The host, the other principal that is not a person**, for the writes an
+  operator makes by command on the server's host: the bootstrap admin grant
+  below, and the register verbs while they stay host commands. It is
+  authorized by access to the store and the authority's directory and not by
+  this section's grants, since it is how the first grant comes to exist. Its
+  audit records name the host as the principal and carry the name the
+  command was given with `--author` as an unverified claim, the way section
+  8's claim crosses to the box. **It is the one path that writes a grant
+  without holding the admin grant, which is why no surface can reach it**: a
+  surface writing as the host would land a grant with no admin behind it.
+  **These two are the only principals that are not a person**, and each is
+  bounded by its reach: the server to observation, the host to the server's
+  own host.
 - **The role and the grant**: a role is a named set of verbs; a grant binds a
   person to a role on one agent of section 2.12, or server-wide for
   registering agents with the verbs of section 8. A grant names verbs only
@@ -1250,10 +1262,10 @@ section waits on the two.
   same grant the register verbs need, and each write is audited as a verb
   is: a first record before the write and the outcome as the second. Without
   this a person could grant themselves the operator role and pass the first
-  gate. **The first admin is the bootstrap**, created by an operator command
-  on the server's host, authorized as the register verbs are today, by
-  access to the store and the authority's directory; no surface can create
-  it. **No person writes a grant on themselves**, granting or removing, so an
+  gate. **The first admin is the bootstrap**, written by the host principal
+  above, by an operator command on the server's host, authorized as the
+  register verbs are today, by access to the store and the authority's
+  directory; no surface can create it. **No person writes a grant on themselves**, granting or removing, so an
   admin cannot widen their own grants and the last admin cannot remove their
   own admin grant; the exact rule is the act's to choose. **Nor does a person
   write a role they hold a grant of on any agent**, because widening a role
@@ -1268,15 +1280,15 @@ section waits on the two.
   audited. **The check is the server's and never a surface's**: a surface may
   hide what a person cannot do, and hiding is presentation and not the gate.
 - **The audit record, append-only**: every verb asked names its principal,
-  the person or the server, and the agent, the verb and when. The server writes that record before the ask
+  the person, the server or the host, and the agent, the verb and when. The server writes that record before the ask
   leaves, so no ask exists without one. **The outcome is a second record
   naming the first**, written when the answer lands or the ask fails, so
   nothing is ever rewritten and an ask whose outcome never came is visible as
   a first record with no second. A refusal at the first gate is one record
   carrying the refusal as its outcome, since no ask left. The principal also
   crosses to the box as section 8's claim, so these records and the box's
-  operations log can be matched. **Audit records are written by the server
-  alone and never edited**: they are not authored rows and take no version,
+  operations log can be matched. **Audit records are written by this crate's
+  own processes alone, the server or a host command, and never edited**: they are not authored rows and take no version,
   and they are not observations of an agent, so they sit outside both halves
   as the session does.
 - **The register verbs take their own path.** `authority`, `register`,
@@ -1284,8 +1296,9 @@ section waits on the two.
   nothing they do crosses to a box, so the three gates do not apply: there
   is no box ceiling and no weaver-admin check for them, and registering an
   agent could not pass gates that need a registered agent. **Today they are
-  the operator's commands on the server's host**, authorized by access to the
-  authority's directory and the store, per section 8. **Once this section's
+  the operator's commands on the server's host**, written as the host
+  principal above and audited as its writes are, authorized by access to
+  the authority's directory and the store, per section 8. **Once this section's
   identity stands, a register verb asked through the server requires the
   server-wide admin grant** and is audited the same way, the first record
   naming the person and, where the verb has one yet, the agent.
@@ -1334,8 +1347,9 @@ section 2.12 keeps them off the row's version for that reason. **Its writes are 
 on the listener's own arrival sequence, its epoch and its number within it, rather than
 on the row's version or the observation's date**, and a replayed event writes no member
 of the row at all, per section 2.12. **The seventh is the audit writer**, as of
-2026-10-02: the server alone, writing section 2.13's append-only audit records and
-nothing else. It is neither an author nor an observer: nobody composes an audit record,
+2026-10-02: this crate's own processes alone, the server for what is asked through it
+and a host command for the host principal's writes, writing section 2.13's append-only
+audit records and nothing else. It is neither an author nor an observer: nobody composes an audit record,
 and what it records is not an agent's state but what the server was asked to do and
 what came of it, written before and after the fact, which is why section 2.13 keeps
 the records off any version and never edits them. The register verb is not an eighth:
@@ -2932,7 +2946,7 @@ missing while it was relaying.
 | nothing crosses the link in the clear | perturbation: offer a plaintext hello to the listener, it is refused below any roster; and review, over the listener, that no plaintext accept path exists |
 | the server never asks a verb outside the agent's ceiling | perturbation, **owed**: drop the ceiling check, ask a verb admin-con's hello did not declare, and it leaves the server; and admin-con's half, drop its typed error answer, and it reaches the invoker. **No instrument stands**: the hello carries no ceiling until the admin-con act, and the server's check lands with the IAM act |
 | a verb its principal may not ask is refused before an ask | perturbation, **owed**: drop the grant check, a person whose role permits `show` asks `stop`, and the ask leaves the server; let the server principal ask a lifecycle verb, and it leaves without a grant. Lands with the IAM act |
-| a grant written by a person who does not hold the admin grant is refused | perturbation, **owed**: drop the check, and a person granted only `show` writes themselves the operator role and passes the first gate; let a person write a grant on themselves, and an admin widens their own grants or the last admin removes the only admin grant; let an admin holding the observer role on an agent add `stop` to that role, and their own grant widens without a grant written. Lands with the IAM act |
+| a grant written by a person who does not hold the admin grant is refused | perturbation, **owed**: drop the check, and a person granted only `show` writes themselves the operator role and passes the first gate; let a person write a grant on themselves, and an admin widens their own grants or the last admin removes the only admin grant; let an admin holding the observer role on an agent add `stop` to that role, and their own grant widens without a grant written; let a surface write as the host principal, and a grant lands with no admin behind it. Lands with the IAM act |
 | every verb asked and every role or grant written has an audit record naming its principal, and its outcome is a second record naming the first | perturbation, **owed**: write the first record after the ask instead of before, fail the store between the two, and an ask leaves with no record; update the first record with the outcome instead of appending a second, and an ask whose answer is lost reads as never answered with no trace of the rewrite; drop the refusal's record, and a refused verb leaves no trace; write a grant with the audit write dropped, and the grant lands with no record. Lands with the IAM act |
 | the admission's `show` is required only where the ceiling grants it | perturbation, **owed**: ask `show` at every admission, and an agent whose ceiling grants no `show` is closed `admission_incomplete` at every reconnection and never stays admitted; skip it where it is granted, and the row reads the last process's state as current. The listener asks `show` at every admission until the admin-con act, which is the drift this row names |
 | no privileged invocation exists in the crate | review, and a test, **owed**: a test that reads the source tree for an invocation of `sudo`, a root wrapper or a setuid call, shown to fail when one is planted. It would fail today on the seed's `lifecycle.rs`, which invokes `sudo weaver-admin` and is not carried forward, so the row is owed until that file leaves |

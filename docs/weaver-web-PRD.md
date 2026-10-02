@@ -633,11 +633,14 @@ nor the gate**: the reach stays gated where it was.
 
 **For anything that can act on an agent the deferral is over**, per the
 operator's ruling of 2026-10-02. A verb is a hand on a running agent rather
-than a reading, so **no surface that asks a verb ships before the IAM act**,
+than a reading, and so is a turn, which prompts an agent that may act on its
+box with its tools, so **no surface that asks a verb or places a turn ships
+before the IAM act**,
 and transport encryption on the browser's listener lands with that act,
 since credentials will cross it. The Spec's section 2.13 charters what the
 act builds: the authenticated person, roles and per-agent grants,
-server-side authorization of every verb, and an audit record of each, the
+server-side authorization of every verb and turn, and an audit record of
+each, the
 first of the three gates its section 8 names. **Reading surfaces may stand
 before the act as they do today**, and for them identity, authentication and
 transport encryption stay deferred with the named triggers below.

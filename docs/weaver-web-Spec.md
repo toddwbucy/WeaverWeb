@@ -1213,8 +1213,11 @@ document here stands under.
 and without electing the mechanism.** Per the operator's rulings of that
 date every verb asked of a registered agent passes three gates, section 8
 names them, and the first is this crate's: a person authenticated to the
-server, holding a role on the agent, may ask a verb that role permits. The
-register verbs act on the server and not on an agent, and take the path the
+server, holding a role on the agent, may ask a verb or place a turn that
+role permits. **A turn is an action like a verb**: it prompts the agent, and
+an agent with tools can act on its box, so placing one needs a grant as much
+as `stop` does; it passes this section's gate and then the gate's own
+admission, per section 8. The register verbs act on the server and not on an agent, and take the path the
 last item below states. How people authenticate and what
 the roles are called are section 10's open elections, the operator's both;
 what follows stands under any answer to either, and the act that builds this
@@ -1257,7 +1260,7 @@ rather than this document's.
 - **The server, one of the two principals that are not a person**, for the
   asks the server makes itself, of which the admission's `show` of section 7.2 is the
   one today. It may ask the observation verbs, `show` and `list`, and never
-  a lifecycle verb. It holds no grant and needs none, and it is still bounded
+  a lifecycle verb or a turn. It holds no grant and needs none, and it is still bounded
   by the agent's ceiling, the second gate, like any ask. Its asks are
   audited as a person's are, the first record naming the server as the
   principal, and the claim that crosses to the box per section 8 names the
@@ -1267,7 +1270,8 @@ rather than this document's.
 - **The host, the other principal that is not a person**, for the writes an
   operator makes by command on the server's host: the bootstrap's three
   writes, the bootstrap person row, its admin grant below and its enrollment
-  token, and the register verbs while they stay host commands. It is
+  token, and the register verbs while they stay host commands. It asks no
+  verb of an agent and never places a turn. It is
   authorized by access to the store and the authority's directory and not by
   this section's grants, since it is how the first grant comes to exist. Its
   audit records name the host as the principal and carry the name the
@@ -1278,10 +1282,11 @@ rather than this document's.
   **These two are the only principals that are not a person**, and each is
   bounded by its reach: the server to observation, the host to the server's
   own host.
-- **The role and the grant**: a role is a named set of verbs; a grant binds a
+- **The role and the grant**: a role is a named set of actions, the verbs of
+  section 7.2 and `turn`; a grant binds a
   person to a role on one agent of section 2.12, or server-wide for
-  registering agents with the verbs of section 8. A grant names verbs only
-  through its role, so there is no per-person verb list to drift from the
+  registering agents with the verbs of section 8. A grant names actions only
+  through its role, so there is no per-person action list to drift from the
   vocabulary. **Per-agent roles and every grant are authored rows** under
   section 3.2, carrying the author member and the version, so two concurrent
   edits of one grant refuse on the stale version rather than one silently
@@ -1322,19 +1327,25 @@ rather than this document's.
   principal may ask it, the person's grants on that agent permitting it or,
   for the server's own asks, the verb being an observation verb, and the
   agent's ceiling, declared per section 8 and held on the row per section
-  2.12, contains it. Otherwise
-  it is refused on the server before any frame leaves it, and the refusal is
+  2.12, contains it. **A turn frame leaves the server only if the person's
+  grants on that agent permit `turn`**; no ceiling applies to a turn, the
+  data plane's box gate being the gate's own admission per section 8, and
+  neither principal that is not a person ever places one. Otherwise either
+  is refused on the server before any frame leaves it, and the refusal is
   audited. **The check is the server's and never a surface's**: a surface may
   hide what a person cannot do, and hiding is presentation and not the gate.
 - **The audit record, append-only**: every record names its principal, the
   person, the server or the host, its target and its action, and when. For
-  a verb asked of an agent the target is the agent and the action the verb;
+  a verb asked of an agent, or a turn placed with it, the target is the
+  agent and the action the verb or `turn`;
   for a write to a person row, a role or a grant the target is the row's
   kind and identity and the action the mutation: enroll, issue an enrollment
   token, disable, rename, set authentication material, write a role, grant,
   or revoke; a register verb's target and action are the last item's. **A record
   holds no secret**: a write of authentication material records that it
-  happened, never the material. This crate writes the first record before
+  happened, never the material, and **a turn's text is not in the audit
+  record**: the agent's trace on its box is the record of what was said.
+  This crate writes the first record before
   the ask leaves or the write lands, so no ask or write exists without one.
   **The outcome is a second record naming the first**, written when the
   answer lands, the write commits, or either fails, so nothing is ever
@@ -2270,6 +2281,10 @@ request line in and one close line out, and is admitted by the kernel's peer
 credential under the declaration's allow list, so what gate-con needs on the
 box is a uid that list names and nothing more. Everything it carries crosses
 the link of section 8 to the server, which never dials the gate itself.
+**The server sends a turn to gate-con only for a person whose grants on the
+agent permit `turn`**, per section 2.13, and gate-con relays what it is sent
+and checks nothing of the person, the box's own gate for the data plane
+being the gate's admission of gate-con's user.
 **It learns nothing of the interior and the server learns nothing through
 it**: the tuple and the load state come by admin-con alone, per sections 7.2
 and 8, and a gate-con that reported either would be reporting what the
@@ -2712,7 +2727,11 @@ leaves it. **Second, the box's ceiling**: the verbs admin-con's role
 on the box grants, which admin-con declares and the server never exceeds.
 **Third, weaver-admin's role check**: the party holding root on the box
 decides whether the caller's role permits the verb, per
-`toddwbucy/WeaverAgents#50`. Each gate bounds what the one before it can
+`toddwbucy/WeaverAgents#50`. **A turn on the data plane passes the first
+gate and then the gate's own admission**: the person's grants on the agent
+must permit `turn`, and on the box gate-con's user is admitted because the
+agent's allow-list names it, which is the box's gate for the data plane. No
+verb ceiling applies to a turn, since gate-con declares none. Each gate bounds what the one before it can
 reach, so a fault in one is caught by the next rather than becoming the
 box's. The link between them is already cryptographic per agent and per
 plane by the rules above: the server knows which agent and plane each
@@ -3009,9 +3028,9 @@ missing while it was relaying.
 | the tuple is admin's word and never gate-con's | perturbation: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it; let a replayed load event write the tuple, restart the server after an unload, backfill, and the row reads loaded; ask `show` before fixing the replay boundary, unload between the two, and the row reads loaded until the next `show`; let a `list` answer through one connection write another row, and that row reads a state its own connection never relayed. **Four clauses are admin-con's ordering and are owed to its act**: let a `show` answer cross the link out of order with the file events around it, unload during the `show`, and the row reads loaded until the next `show`; place the answer in the stream at receipt and unload between the snapshot and the receipt, and the row reads loaded; skip the drain, leave an unread load event behind the tail, invoke `show` after an unload, and the row reads loaded; run two verbs at once on one connection, and an older answer lands after a newer one |
 | nothing crosses the link in the clear | perturbation: offer a plaintext hello to the listener, it is refused below any roster; and review, over the listener, that no plaintext accept path exists |
 | the server never asks a verb outside the agent's ceiling | perturbation, **owed**: drop the ceiling check, ask a verb admin-con's hello did not declare, and it leaves the server; and admin-con's half, drop its typed error answer, and it reaches the invoker. **No instrument stands**: the hello carries no ceiling until the admin-con act, and the server's check lands with the IAM act |
-| a verb its principal may not ask is refused before an ask | perturbation, **owed**: drop the grant check, a person whose role permits `show` asks `stop`, and the ask leaves the server; let the server principal ask a lifecycle verb, and it leaves without a grant; drop the enabled check, and a disabled person's live session still asks a verb. Lands with the IAM act |
+| a verb or turn its principal may not ask is refused before an ask | perturbation, **owed**: drop the grant check, a person whose role permits `show` asks `stop`, and the ask leaves the server; let the server principal ask a lifecycle verb, and it leaves without a grant; drop the enabled check, and a disabled person's live session still asks a verb; drop the grant check on turns, and a person granted only `show` places a turn. Lands with the IAM act |
 | a person, role or grant written by a principal not permitted to write it is refused | perturbation, **owed**: drop the check, and a person granted only `show` writes themselves the operator role and passes the first gate; let a person write a grant on themselves, and an admin widens their own grants or the last admin removes the only admin grant; let an admin holding the observer role on an agent add `stop` to that role, and their own grant widens without a grant written; let a surface write as the host principal, and a grant lands with no admin behind it; drop the exclusion, have two admins remove each other at once, and no admin remains; disable the sole admin, or have two admins disable each other at once, and no enabled admin remains; grant a role to its editor while the edit is in flight, and the editor widens a role they hold; let a person write another person's authentication material, and they can sign in as them; reuse a consumed enrollment token, or use one past its expiry, and a second credential lands on someone else's row; disable a person holding an unredeemed token, redeem it, and a credential lands on a disabled row. Lands with the IAM act |
-| every verb asked and every person, role or grant written has an audit record naming its principal, and its outcome is a second record naming the first | perturbation, **owed**: write the first record after the ask instead of before, fail the store between the two, and an ask leaves with no record; update the first record with the outcome instead of appending a second, and an ask whose answer is lost reads as never answered with no trace of the rewrite; drop the refusal's record, and a refused verb leaves no trace; write a grant with the audit write dropped, and the grant lands with no record; enroll a person or rotate their authentication material with the audit write dropped, and the write lands with no record; record the material in an authentication write's record, and a read of the audit table is a set of credentials. Lands with the IAM act |
+| every verb or turn asked and every person, role or grant written has an audit record naming its principal, and its outcome is a second record naming the first | perturbation, **owed**: write the first record after the ask instead of before, fail the store between the two, and an ask leaves with no record; update the first record with the outcome instead of appending a second, and an ask whose answer is lost reads as never answered with no trace of the rewrite; drop the refusal's record, and a refused verb leaves no trace; write a grant with the audit write dropped, and the grant lands with no record; enroll a person or rotate their authentication material with the audit write dropped, and the write lands with no record; record the material in an authentication write's record, and a read of the audit table is a set of credentials. Lands with the IAM act |
 | the admission's `show` is required only where the ceiling grants it | perturbation, **owed**: ask `show` at every admission, and an agent whose ceiling grants no `show` is closed `admission_incomplete` at every reconnection and never stays admitted; skip it where it is granted, and the row reads the last process's state as current. The listener asks `show` at every admission until the admin-con act, which is the drift this row names |
 | no privileged invocation exists in the crate | review, and a test, **owed**: a test that reads the source tree for an invocation of `sudo`, a root wrapper or a setuid call, shown to fail when one is planted. It would fail today on the seed's `lifecycle.rs`, which invokes `sudo weaver-admin` and is not carried forward, so the row is owed until that file leaves |
 
@@ -3165,12 +3184,16 @@ a `web-` assertion beside `weaver-admin`'s.
   this answer. It is a different question from what an author names, above:
   that one asks what the member means once a person stands, this one how a
   person comes to stand.
-- **The role vocabulary**, opened 2026-10-02 and the operator's. Proposed:
-  per agent, an observer whose role permits `show` and `list` and an operator
-  adding `validate`, `load`, `unload` and `stop`; server-wide, an admin who
-  registers agents. The box's roles of `toddwbucy/WeaverAgents#50` were
-  proposed with the same two per-agent names, so whether a grant here and a
-  role there share one vocabulary is part of the election.
+- **The role vocabulary**, opened 2026-10-02 and the operator's. Proposed,
+  per agent: an observer whose role permits `show` and `list`; a converser
+  adding `turn` and no lifecycle verb; and an operator adding `turn`,
+  `validate`, `load`, `unload` and `stop`. Server-wide: an admin who
+  registers agents, the one role the store fixes per section 2.13. The
+  converser is this document's proposal and not the operator's. The box's
+  roles of `toddwbucy/WeaverAgents#50` were proposed with the observer and
+  operator names and carry no `turn`, the gate's allow-list governing the
+  data plane on the box, so whether a grant here and a role there share one
+  vocabulary is part of the election.
 - **What section 7 is called, now that one of its three is not a seam**,
   opened 2026-09-16 by the act that deleted this crate's seam record to
   `weaver-admin`. The heading reads "The seams", and 7.2's admin verbs are

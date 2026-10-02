@@ -1247,7 +1247,12 @@ rather than this document's.
   single-use, expiring token bound to one person row. It is held on that
   person row, only as a digest beside its expiry, under section 2.8's rule, and it is consumed by that person's first
   write of authentication material, which is the one write a person makes
-  before they have authenticated. Issuing a token is an identity write like
+  before they have authenticated otherwise. **A valid token authenticates the
+  person it is bound to, for that one write and nothing else**: the
+  redemption is attributed to that person, who is its principal, and its
+  audit record notes that the authentication was the token. No fourth
+  principal stands behind it; the token is how the person proved who they
+  are, once. Issuing a token is an identity write like
   any other, audited and taken under the exclusion below. **A disabled person
   acts on nothing**: every authenticated operation checks that its person is
   enabled, so a disabled person's open sessions authorize nothing, and the

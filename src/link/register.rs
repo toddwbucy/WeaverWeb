@@ -662,6 +662,10 @@ impl Store {
     /// the observed address. The install runs while the lock is held, so a
     /// revocation either waits for this to commit and then closes what it
     /// finds installed, or committed first and the recheck refuses.
+    // The row's identity, the connection's three facts, and the two hooks
+    // that run under the row's lock: eight arguments, each one the lock
+    // orders against the others.
+    #[allow(clippy::too_many_arguments)]
     pub async fn admit(
         &self,
         agent_id: &AgentId,
@@ -669,6 +673,7 @@ impl Store {
         fingerprint: &str,
         incarnation: i64,
         address: &str,
+        prove: impl AsyncFnOnce() -> Result<(), Refusal>,
         install: impl FnOnce() -> Result<(), Refusal>,
     ) -> anyhow::Result<Result<(), Refusal>> {
         let p = plane_columns(plane);
@@ -690,6 +695,13 @@ impl Store {
         if state != "live" || bound != fingerprint {
             tx.rollback().await?;
             return Ok(Err(Refusal::NotLive));
+        }
+        // **Admission is coupled to ownership of the listener's lock**:
+        // the caller proves it here, under the row's lock and before the
+        // install, so nothing is admitted by a listener whose lock session
+        // is gone. A refusal drops the transaction, which rolls back.
+        if let Err(refusal) = prove().await {
+            return Ok(Err(refusal));
         }
         if let Err(refusal) = install() {
             tx.rollback().await?;

@@ -24,8 +24,9 @@
 //! server's config names.
 
 use crate::config::ServerConfig;
-use crate::link::authority::{Authority, ClientCredential};
+use crate::link::authority::{Authority, ClientCredential, fingerprint};
 use crate::link::frames::Plane;
+use crate::link::register::{Agent, AuthorityLock, CredentialState};
 use crate::store::Store;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -387,6 +388,32 @@ mod at {
         Ok((st.st_dev, st.st_ino))
     }
 
+    /// Whether the entry in the directory is a regular file, following no
+    /// symlink; `None` where there is no entry.
+    pub fn regular(dir: &OwnedFd, name: &str) -> io::Result<Option<bool>> {
+        match fstatat_nofollow(dir, name) {
+            Ok(st) => Ok(Some(st.st_mode & libc::S_IFMT == libc::S_IFREG)),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Read a file in the directory, following no symlink.
+    pub fn read(dir: &OwnedFd, name: &str) -> io::Result<String> {
+        let name = c(name)?;
+        let flags = libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+        // SAFETY: a valid descriptor and a NUL-terminated name.
+        let fd = unsafe { libc::openat(dir.as_raw_fd(), name.as_ptr(), flags) };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: a descriptor this call just opened and nothing else owns.
+        let mut file = std::fs::File::from(unsafe { OwnedFd::from_raw_fd(fd) });
+        let mut content = String::new();
+        std::io::Read::read_to_string(&mut file, &mut content)?;
+        Ok(content)
+    }
+
     /// Flush the directory's entries to disk, so the names of files
     /// created or renamed under it survive a power loss.
     pub fn fsync(dir: &OwnedFd) -> io::Result<()> {
@@ -617,6 +644,163 @@ impl Staged {
     }
 }
 
+/// The fingerprint of the certificate a staged config carries.
+fn staged_fingerprint(content: &str) -> anyhow::Result<String> {
+    let table: toml::Table = content.parse()?;
+    let pem = table
+        .get("certificate")
+        .and_then(|c| c.as_str())
+        .ok_or_else(|| anyhow::anyhow!("no certificate in the staged config"))?;
+    let der = rustls_pemfile::certs(&mut pem.as_bytes())
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("no certificate in the staged config"))??;
+    Ok(fingerprint(der.as_ref()))
+}
+
+/// **A retained staged pair is consumed by the retry.** A run whose commit's
+/// answer was lost and whose read-back failed too leaves its pair staged,
+/// and a retry that minted a fresh pair would be refused by the staged
+/// entries. So before minting, a staged pair found under the agent's
+/// directory is read for the fingerprints its certificates carry and the
+/// register is asked whether the row for this box and name carries both,
+/// live: where it does, the pair is the one that commit made live and is
+/// published; where it does not, the commit never landed and the pair is
+/// discarded for a fresh one. Half a pair is a run that crashed between
+/// its two creates, which reached no store; it is discarded. A staged file
+/// that is not a config refuses, since it is not this server's.
+async fn retained_pair(
+    store: &Store,
+    dir: &ConfigDir,
+    r#box: &str,
+    name: &str,
+) -> anyhow::Result<Option<(Agent, String, String)>> {
+    let gate_staging = format!("{GATE_CONFIG}{STAGING}");
+    let admin_staging = format!("{ADMIN_CONFIG}{STAGING}");
+    let kind = |entry: &str| -> anyhow::Result<bool> {
+        match at::regular(&dir.fd, entry)
+            .map_err(|e| anyhow::anyhow!("reading {}: {e}", dir.path(entry).display()))?
+        {
+            Some(true) => Ok(true),
+            Some(false) => anyhow::bail!(
+                "{} is not a regular file, and a staging entry is never followed; move it aside",
+                dir.path(entry).display()
+            ),
+            None => Ok(false),
+        }
+    };
+    let (gate_there, admin_there) = (kind(&gate_staging)?, kind(&admin_staging)?);
+    if !gate_there && !admin_there {
+        return Ok(None);
+    }
+    let discard = || {
+        let _ = at::unlink(&dir.fd, &gate_staging);
+        let _ = at::unlink(&dir.fd, &admin_staging);
+    };
+    if gate_there != admin_there {
+        tracing::warn!(
+            "half a staged pair under {}, from a run that crashed between its creates; discarded",
+            dir.display.display()
+        );
+        discard();
+        return Ok(None);
+    }
+    let read = |entry: &str| -> anyhow::Result<String> {
+        let content = at::read(&dir.fd, entry)
+            .map_err(|e| anyhow::anyhow!("reading {}: {e}", dir.path(entry).display()))?;
+        staged_fingerprint(&content).map_err(|e| {
+            anyhow::anyhow!(
+                "{} is not a config this server staged ({e}); move it aside",
+                dir.path(entry).display()
+            )
+        })
+    };
+    let (gate_fp, admin_fp) = (read(&gate_staging)?, read(&admin_staging)?);
+    match store.agent_by_fingerprint(&gate_fp).await? {
+        Some((row, _))
+            if row.r#box == r#box
+                && row.name == name
+                && row.gate.fingerprint == gate_fp
+                && row.admin.fingerprint == admin_fp
+                && row.gate.state == CredentialState::Live
+                && row.admin.state == CredentialState::Live =>
+        {
+            Ok(Some((row, gate_fp, admin_fp)))
+        }
+        _ => {
+            tracing::warn!(
+                "a staged pair under {} that the register does not carry, from a commit that never landed; discarded",
+                dir.display.display()
+            );
+            discard();
+            Ok(None)
+        }
+    }
+}
+
+/// The retained pair under the directory, as a `Staged` to publish.
+fn adopt(dir: ConfigDir) -> anyhow::Result<Staged> {
+    let gate_staging = format!("{GATE_CONFIG}{STAGING}");
+    let admin_staging = format!("{ADMIN_CONFIG}{STAGING}");
+    let identity = |entry: &str| {
+        at::identity_at(&dir.fd, entry)
+            .map_err(|e| anyhow::anyhow!("reading {}: {e}", dir.path(entry).display()))
+    };
+    let (gate_identity, admin_identity) = (identity(&gate_staging)?, identity(&admin_staging)?);
+    Ok(Staged {
+        gate: (dir.path(&gate_staging), dir.path(GATE_CONFIG)),
+        admin: (dir.path(&admin_staging), dir.path(ADMIN_CONFIG)),
+        gate_identity,
+        admin_identity,
+        dir,
+    })
+}
+
+/// Publish a retained pair the register carries, answering as the verb
+/// that staged it would have.
+async fn publish_retained(
+    verb: &str,
+    lock: &mut AuthorityLock,
+    dir: ConfigDir,
+    row: &Agent,
+    gate_fp: &str,
+    admin_fp: &str,
+    replace: bool,
+) -> Answer {
+    let staged = match adopt(dir) {
+        Ok(s) => s,
+        Err(e) => return refused(verb, format!("{e:#}")),
+    };
+    if let Err(e) = lock.ping().await {
+        return refused(
+            verb,
+            format!(
+                "{} stands in the register but its configs stand staged at {} and {}: {e:#}; re-run to publish them",
+                row.agent_id,
+                staged.gate.0.display(),
+                staged.admin.0.display()
+            ),
+        );
+    }
+    match staged.publish(replace) {
+        Ok((gate_path, admin_path)) => Answer {
+            value: json!({
+                "verb": verb,
+                "ok": true,
+                "agent": row.agent_id.as_str(),
+                "box": row.r#box,
+                "name": row.name,
+                "gate_fingerprint": gate_fp,
+                "admin_fingerprint": admin_fp,
+                "configs": [gate_path, admin_path],
+                "retired": [],
+                "note": "a pair staged by an earlier run whose answer was lost stands in the register; published now",
+            }),
+            ok: true,
+        },
+        Err(e) => refused(verb, format!("{e:#}")),
+    }
+}
+
 pub(super) fn mint_pair(
     name: &str,
     authority: &Authority,
@@ -786,6 +970,14 @@ pub async fn register(
             Err(e) => return refused("register", format!("{e:#}")),
         }
     }
+    let dir = match retained_pair(store, &dir, r#box, name).await {
+        Ok(None) => dir,
+        Ok(Some((row, gate_fp, admin_fp))) => {
+            return publish_retained("register", &mut lock, dir, &row, &gate_fp, &admin_fp, false)
+                .await;
+        }
+        Err(e) => return refused("register", format!("{e:#}")),
+    };
     // The certificates name the agent by its registered name; the identity
     // the row takes is minted by the store on insert.
     let (gate, admin) = match mint_pair(name, authority) {
@@ -832,7 +1024,7 @@ pub async fn register(
                     return refused(
                         "register",
                         format!(
-                            "{e:#}; and whether the commit landed could not be read back ({read:#}), so the configs stand staged at {} and {} until the store answers; re-run then",
+                            "{e:#}; and whether the commit landed could not be read back ({read:#}), so the configs stand staged at {} and {} until the store answers; re-run then, and the staged pair is published where the register carries it and discarded where it does not",
                             staged.gate.0.display(),
                             staged.admin.0.display()
                         ),
@@ -926,12 +1118,20 @@ pub async fn rotate(
     {
         return refused("rotate", format!("{e:#}"));
     }
-    let (gate, admin) = match mint_pair(&agent.name, authority) {
-        Ok(pair) => pair,
-        Err(e) => return refused("rotate", format!("{e:#}")),
-    };
     let dir = match ConfigDir::open(out, &agent.r#box, &agent.name) {
         Ok(dir) => dir,
+        Err(e) => return refused("rotate", format!("{e:#}")),
+    };
+    let dir = match retained_pair(store, &dir, &agent.r#box, &agent.name).await {
+        Ok(None) => dir,
+        Ok(Some((row, gate_fp, admin_fp))) => {
+            return publish_retained("rotate", &mut lock, dir, &row, &gate_fp, &admin_fp, true)
+                .await;
+        }
+        Err(e) => return refused("rotate", format!("{e:#}")),
+    };
+    let (gate, admin) = match mint_pair(&agent.name, authority) {
+        Ok(pair) => pair,
         Err(e) => return refused("rotate", format!("{e:#}")),
     };
     let staged = match stage_pair(cfg, authority, dir, &agent.name, &gate, &admin) {
@@ -971,7 +1171,7 @@ pub async fn rotate(
                     return refused(
                         "rotate",
                         format!(
-                            "{e:#}; and whether the commit landed could not be read back ({read:#}), so the configs stand staged at {} and {} until the store answers; re-run then",
+                            "{e:#}; and whether the commit landed could not be read back ({read:#}), so the configs stand staged at {} and {} until the store answers; re-run then, and the staged pair is published where the register carries it and discarded where it does not",
                             staged.gate.0.display(),
                             staged.admin.0.display()
                         ),

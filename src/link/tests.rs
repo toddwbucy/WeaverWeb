@@ -461,6 +461,7 @@ async fn one_live_connection_per_credential() {
             &karl.gate.fingerprint,
             99,
             "127.0.0.1:1",
+            async || Ok(()),
             || {
                 installed.set(true);
                 Ok(())
@@ -1794,10 +1795,14 @@ async fn a_teardown_the_store_refused_is_reconciled() {
 /// another listener can then take the store.
 #[tokio::test]
 async fn the_listener_halts_when_its_lock_session_is_lost() {
-    let Some(lab) = Lab::open_with(Duration::from_secs(4)).await else {
+    // A long bound, so the monitor's next tick (a quarter of it) is well
+    // after the admission attempted below: the admission's own proof of
+    // the lock is what refuses it and halts the listener.
+    let Some(lab) = Lab::open_with(Duration::from_secs(40)).await else {
         return;
     };
     let karl = lab.register("karl").await;
+    let lena = lab.register("lena").await;
     let mut gate = lab.admit(&karl, Plane::Gate).await;
     // Handshaken but yet to say hello: a connection task halt must end
     // too, before the next listener can be admitted.
@@ -1807,6 +1812,22 @@ async fn the_listener_halts_when_its_lock_session_is_lost() {
         .execute(&lab.store.pool)
         .await
         .unwrap();
+    // An admission before the monitor's next tick: refused, since every
+    // admission proves the lock, and the failed proof halts the listener.
+    let started = tokio::time::Instant::now();
+    let mut lena_gate = lab.connect(&lena.gate).await;
+    lena_gate
+        .send(FromClient::Hello {
+            agent: lena.name.clone(),
+            plane: Plane::Gate,
+            tail: None,
+        })
+        .await;
+    lena_gate.expect_refusal(Refusal::StoreUnavailable).await;
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "refused by the admission's own proof, not by the monitor's tick"
+    );
     let why = tokio::time::timeout(Duration::from_secs(10), lab.listener.halted())
         .await
         .expect("the listener halts within a few cadences");
@@ -2868,4 +2889,149 @@ async fn a_landing_that_stalls_closes_the_connection_without_an_ack() {
     );
     lab.wait_for(&karl.id, "admin down", |a| !a.admin.connected)
         .await;
+}
+
+/// **A retained staged pair is consumed by the retry.** A pair staged by a
+/// run whose commit landed and whose answer and read-back were both lost
+/// is published by the re-run, with a note; a pair the register does not
+/// carry is discarded and the re-run proceeds with a fresh one; half a
+/// pair is discarded; and a rotation's retained pair is published the same
+/// way, replacing the standing configs.
+#[tokio::test]
+async fn a_retained_staged_pair_is_published_where_the_register_carries_it() {
+    let Some(lab) = Lab::open().await else { return };
+    let cfg = lab_config(&lab);
+    let out = tempfile::tempdir().unwrap();
+    let r#box = format!("box-{}", uuid::Uuid::new_v4().simple());
+    let authority_fp = lab.authority.fingerprint();
+    let stage = |name: &str| {
+        let (gate, admin) = super::verbs::mint_pair(name, &lab.authority).unwrap();
+        let dir = super::verbs::ConfigDir::open(out.path(), &r#box, name).unwrap();
+        // The `Staged` is dropped unpublished: the files stand staged.
+        super::verbs::stage_pair(&cfg, &lab.authority, dir, name, &gate, &admin).unwrap();
+        (gate, admin)
+    };
+    let register = |name: &'static str| {
+        super::verbs::register(
+            &lab.store,
+            &cfg,
+            &lab.authority,
+            &r#box,
+            name,
+            out.path(),
+            Some("lab"),
+        )
+    };
+
+    // Carried by the register: published, with the note.
+    let (gate, admin) = stage("karl");
+    let (id, _) = lab
+        .store
+        .register_agent(
+            &r#box,
+            "karl",
+            Some("lab"),
+            &gate.fingerprint,
+            &admin.fingerprint,
+            &authority_fp,
+        )
+        .await
+        .unwrap();
+    let answer = register("karl").await;
+    assert!(answer.ok, "{}", answer.value);
+    assert_eq!(answer.value["agent"].as_str().unwrap(), id.as_str());
+    assert_eq!(
+        answer.value["gate_fingerprint"].as_str().unwrap(),
+        gate.fingerprint
+    );
+    assert!(
+        answer.value["note"]
+            .as_str()
+            .unwrap()
+            .contains("staged by an earlier run"),
+        "{}",
+        answer.value
+    );
+    let karl_dir = out.path().join(&r#box).join("karl");
+    let published = std::fs::read_to_string(karl_dir.join("gate-con.toml")).unwrap();
+    assert!(
+        published.contains(&gate.certificate_pem),
+        "the staged pair itself"
+    );
+    assert!(!karl_dir.join("gate-con.toml.staging").exists());
+    assert!(!karl_dir.join("admin-con.toml.staging").exists());
+
+    // Not carried: discarded, and the registration proceeds with a fresh
+    // pair the row then carries.
+    let (stale_gate, _) = stage("lena");
+    let answer = register("lena").await;
+    assert!(answer.ok, "{}", answer.value);
+    assert!(answer.value["note"].is_null(), "{}", answer.value);
+    let fresh_fp = answer.value["gate_fingerprint"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_ne!(fresh_fp, stale_gate.fingerprint);
+    let lena_dir = out.path().join(&r#box).join("lena");
+    let published = std::fs::read_to_string(lena_dir.join("gate-con.toml")).unwrap();
+    assert!(!published.contains(&stale_gate.certificate_pem));
+    let row = lab
+        .store
+        .resolve_agent(&format!("{box}/lena", box = r#box))
+        .await
+        .unwrap();
+    assert_eq!(row.gate.fingerprint, fresh_fp);
+    assert!(!lena_dir.join("gate-con.toml.staging").exists());
+
+    // Half a pair: discarded, and the registration proceeds.
+    let mira_dir = out.path().join(&r#box).join("mira");
+    std::fs::create_dir(&mira_dir).unwrap();
+    std::fs::write(mira_dir.join("admin-con.toml.staging"), "half").unwrap();
+    let answer = register("mira").await;
+    assert!(answer.ok, "{}", answer.value);
+    assert!(!mira_dir.join("admin-con.toml.staging").exists());
+    assert!(mira_dir.join("admin-con.toml").exists());
+
+    // A rotation's retained pair: published, replacing the standing configs.
+    let karl_row = lab
+        .store
+        .resolve_agent(&format!("{box}/karl", box = r#box))
+        .await
+        .unwrap();
+    let (rotated_gate, rotated_admin) = stage("karl");
+    lab.store
+        .rotate_credentials(
+            &karl_row,
+            Some("lab"),
+            &rotated_gate.fingerprint,
+            &rotated_admin.fingerprint,
+            &authority_fp,
+        )
+        .await
+        .unwrap();
+    let answer = super::verbs::rotate(
+        &lab.store,
+        &cfg,
+        &lab.authority,
+        &format!("{box}/karl", box = r#box),
+        out.path(),
+        Some("lab"),
+    )
+    .await;
+    assert!(answer.ok, "{}", answer.value);
+    assert_eq!(
+        answer.value["gate_fingerprint"].as_str().unwrap(),
+        rotated_gate.fingerprint
+    );
+    assert!(
+        answer.value["note"]
+            .as_str()
+            .unwrap()
+            .contains("staged by an earlier run"),
+        "{}",
+        answer.value
+    );
+    let published = std::fs::read_to_string(karl_dir.join("gate-con.toml")).unwrap();
+    assert!(published.contains(&rotated_gate.certificate_pem));
+    assert!(!karl_dir.join("gate-con.toml.staging").exists());
 }

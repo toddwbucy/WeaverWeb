@@ -254,6 +254,7 @@ fn switch_failed_message(dir: &Path) -> String {
 thread_local! {
     pub(crate) static FAIL_SWITCH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     pub(crate) static CONCURRENT_INIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    pub(crate) static FAIL_MINT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 impl Authority {
@@ -318,34 +319,47 @@ impl Authority {
             .create(&staging)
             .map_err(|e| anyhow::anyhow!("creating {}: {e}", staging.display()))?;
 
-        let key = KeyPair::generate()?;
-        let params = authority_params();
-        let certificate = params.self_signed(&key)?;
-        write_private(&staging.join(AUTHORITY_KEY), &key.serialize_pem())?;
-        write_synced(&staging.join(AUTHORITY_CERT), &certificate.pem())?;
+        // **Every failure before the switch removes this invocation's
+        // staging directory**: a key generation, a certificate construction
+        // or a write that fails would otherwise leave key material behind
+        // and a directory per retry.
+        let minted = (|| -> anyhow::Result<()> {
+            let key = KeyPair::generate()?;
+            let params = authority_params();
+            let certificate = params.self_signed(&key)?;
+            write_private(&staging.join(AUTHORITY_KEY), &key.serialize_pem())?;
+            #[cfg(test)]
+            if FAIL_MINT.with(|f| f.replace(false)) {
+                anyhow::bail!("a test fault made the mint fail");
+            }
+            write_synced(&staging.join(AUTHORITY_CERT), &certificate.pem())?;
 
-        let issuer = Issuer::from_params(&params, &key);
-        let server_key = KeyPair::generate()?;
-        let mut names = vec![server_name.to_owned()];
-        names.extend(sans.iter().cloned());
-        let mut server_params = CertificateParams::new(names)?;
-        let mut dn = DistinguishedName::new();
-        dn.push(DnType::CommonName, server_name);
-        server_params.distinguished_name = dn;
-        server_params.is_ca = IsCa::ExplicitNoCa;
-        server_params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
-        server_params.key_usages = vec![
-            KeyUsagePurpose::DigitalSignature,
-            KeyUsagePurpose::KeyEncipherment,
-        ];
-        let server_certificate = server_params.signed_by(&server_key, &issuer)?;
-        write_private(&staging.join(SERVER_KEY), &server_key.serialize_pem())?;
-        write_synced(&staging.join(SERVER_CERT), &server_certificate.pem())?;
-        write_synced(&staging.join(SERVER_NAME), server_name)?;
-
+            let issuer = Issuer::from_params(&params, &key);
+            let server_key = KeyPair::generate()?;
+            let mut names = vec![server_name.to_owned()];
+            names.extend(sans.iter().cloned());
+            let mut server_params = CertificateParams::new(names)?;
+            let mut dn = DistinguishedName::new();
+            dn.push(DnType::CommonName, server_name);
+            server_params.distinguished_name = dn;
+            server_params.is_ca = IsCa::ExplicitNoCa;
+            server_params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
+            server_params.key_usages = vec![
+                KeyUsagePurpose::DigitalSignature,
+                KeyUsagePurpose::KeyEncipherment,
+            ];
+            let server_certificate = server_params.signed_by(&server_key, &issuer)?;
+            write_private(&staging.join(SERVER_KEY), &server_key.serialize_pem())?;
+            write_synced(&staging.join(SERVER_CERT), &server_certificate.pem())?;
+            write_synced(&staging.join(SERVER_NAME), server_name)?;
+            Ok(())
+        })();
         // The set is verified where it was written, before anything live
         // moves, and its names are synced before they are renamed.
-        if let Err(e) = Self::load(&staging).and_then(|_| sync_dir(&staging)) {
+        if let Err(e) = minted
+            .and_then(|_| Self::load(&staging).map(|_| ()))
+            .and_then(|_| sync_dir(&staging))
+        {
             let _ = std::fs::remove_dir_all(&staging);
             return Err(e);
         }
@@ -643,6 +657,24 @@ mod tests {
         let retired = Authority::load(&sibling(&path, "retired")).unwrap();
         assert_eq!(retired.fingerprint(), made.fingerprint());
         assert!(!staging_stands(&path));
+    }
+
+    /// **A failed mint leaves no staging behind**: a failure between the
+    /// staging directory's creation and the switch removes the directory
+    /// with whatever key material it held, and the next init starts clean.
+    #[test]
+    fn a_failed_mint_leaves_no_staging_behind() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("authority");
+        FAIL_MINT.with(|f| f.set(true));
+        let refused = Authority::init(&path, "weaver-web", &[])
+            .map(|_| ())
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("test fault"), "{refused}");
+        assert!(!staging_stands(&path), "the staging directory is removed");
+        assert!(!path.exists());
+        Authority::init(&path, "weaver-web", &[]).unwrap();
     }
 
     /// **Two inits racing leave one whole authority.** A second init that

@@ -126,6 +126,10 @@ struct Inner {
     /// The backend holding the listener's advisory lock: what the monitor
     /// pings, and what a test ends to see the listener halt.
     lock_pid: i32,
+    /// Asks to the monitor, which owns the lock's connection, to ping it
+    /// now and answer (see `prove_lock`).
+    prove: mpsc::Sender<oneshot::Sender<Result<(), String>>>,
+    cadence: Duration,
     /// Set once, with why, when the listener halted itself; what the
     /// binary awaits so the process exits for its supervisor to restart.
     halted: tokio::sync::watch::Sender<Option<String>>,
@@ -232,6 +236,7 @@ impl Listener {
                 "another weaver-web listener holds this store (advisory lock {LISTENER_LOCK_KEY}): one listener per store, and this one refuses to start beside it"
             );
         }
+        let (prove_tx, mut prove_rx) = mpsc::channel::<oneshot::Sender<Result<(), String>>>(16);
         let lock_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
             .fetch_one(&mut lock)
             .await?;
@@ -253,6 +258,8 @@ impl Listener {
                 next_incarnation: AtomicI64::new(1),
                 address,
                 lock_pid,
+                prove: prove_tx,
+                cadence: silence / 4,
                 halted,
                 tasks: Mutex::new(Vec::new()),
                 connections: Mutex::new(tokio::task::JoinSet::new()),
@@ -355,10 +362,20 @@ impl Listener {
         // the operator's supervisor restarts it into a clean start.
         let weak = Arc::downgrade(&listener.inner);
         let cadence = silence / 4;
+        // The monitor owns the lock's connection, so the connection ends
+        // with the monitor's task, and pings on its own cadence or on an
+        // admission's ask, whichever comes first.
         let monitor = tokio::spawn(async move {
             let mut lock = lock;
             loop {
-                tokio::time::sleep(cadence).await;
+                let ask = tokio::select! {
+                    _ = tokio::time::sleep(cadence) => None,
+                    ask = prove_rx.recv() => match ask {
+                        Some(ask) => Some(ask),
+                        // Every asker is gone with the listener's state.
+                        None => return,
+                    },
+                };
                 let ping =
                     tokio::time::timeout(cadence, sqlx::query("SELECT 1").execute(&mut lock)).await;
                 let lost = match ping {
@@ -366,6 +383,9 @@ impl Listener {
                     Ok(Err(e)) => Some(e.to_string()),
                     Err(_) => Some("the ping did not answer within the cadence".to_owned()),
                 };
+                if let Some(ask) = ask {
+                    let _ = ask.send(lost.clone().map_or(Ok(()), Err));
+                }
                 if let Some(why) = lost {
                     let Some(inner) = weak.upgrade() else { return };
                     inner
@@ -694,6 +714,31 @@ impl Inner {
             if !standing {
                 self.close_fingerprint(&fp);
             }
+        }
+    }
+
+    /// **Admission is coupled to ownership of the lock.** Between one of
+    /// the monitor's pings and the next, a lock session PostgreSQL
+    /// terminated would let a second listener take the key while this one
+    /// still admits; so every admission pings the lock's connection, under
+    /// the per-credential exclusion and before the install, and a failed
+    /// ping refuses the admission and halts the listener as the monitor
+    /// would. The window that remains, a ping that succeeded and a session
+    /// lost before the install, is one round trip, the same bound the
+    /// verbs accept, and the replacement listener's startup reset is the
+    /// designed recovery for it. Admissions are rare, so the round trip
+    /// costs nothing that matters.
+    async fn prove_lock(&self) -> Result<(), String> {
+        let (reply, answer) = oneshot::channel();
+        if self.prove.send(reply).await.is_err() {
+            return Err("the lock's monitor is gone".to_owned());
+        }
+        // The monitor's ping is bounded by the cadence; one more for the
+        // ask to reach it behind a ping already in flight.
+        match tokio::time::timeout(self.cadence * 2, answer).await {
+            Ok(Ok(result)) => result,
+            Ok(Err(_)) => Err("the lock's monitor is gone".to_owned()),
+            Err(_) => Err("the lock's monitor did not answer within two cadences".to_owned()),
         }
     }
 
@@ -1069,6 +1114,17 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
             &fp,
             incarnation,
             &peer.to_string(),
+            // The monitor halts the listener on the failed ping; this
+            // admission is refused.
+            async || match inner.prove_lock().await {
+                Ok(()) => Ok(()),
+                Err(why) => {
+                    tracing::error!(
+                        "link from {peer}: admission refused, the listener's lock could not be proven ({why})"
+                    );
+                    Err(Refusal::StoreUnavailable)
+                }
+            },
             || {
                 // **One live connection per credential** (Spec 8), decided
                 // under the row's lock: a second connection is refused rather

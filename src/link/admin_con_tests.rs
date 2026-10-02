@@ -1767,3 +1767,84 @@ async fn the_admissions_show_converges_on_its_snapshot() {
     assert_eq!(invoker.ran(), ["show"]);
     con.stop().await;
 }
+
+/// **The drain ends only where no replacement is pending**: an unread
+/// record in the old file, a rotation already visible, and a load in the
+/// new file when a verb is asked. The drain reads the old record, finds
+/// the replacement pending, switches and drains the new file too, so the
+/// load precedes the answer and the `show` taken after it is the row's last
+/// word.
+#[tokio::test]
+async fn a_pending_rotation_with_an_unread_record_is_drained_ahead_of_the_answer() {
+    let Some(lab) = Lab::open().await else { return };
+    let trace = Trace::new();
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, &trace.path, out.path(), None).await;
+    let invoker = FakeInvoker::new(&["show"], "unloaded");
+    // A slow poll, so the tailer sees neither the record nor the rotation
+    // on its own before the ask arrives.
+    let mut con = Running::start(config(&path, Duration::from_secs(3)), invoker.clone());
+    con.wait("admitted", |s| s.admitted).await;
+    lab.wait_for(&id, "the admission's show", |a| {
+        a.state_source.as_deref() == Some("show")
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    trace.append(1, "turn");
+    std::fs::rename(&trace.path, trace.path.with_extension("1")).unwrap();
+    std::fs::write(&trace.path, record(2, "load")).unwrap();
+    verb(&lab.listener, &id, "show").await.unwrap();
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    let row = lab.agent(&id).await;
+    assert_eq!(row.load_state.as_deref(), Some("unloaded"), "{row:?}");
+    assert_eq!(row.state_source.as_deref(), Some("show"));
+    assert_eq!(ns(&window(&lab, &id)), [1, 2]);
+    con.stop().await;
+}
+
+/// **A stop is bounded by its grace even against a server that stopped
+/// reading**: a fake server admits admin-con and never reads, the replay's
+/// sends back up, and the stop returns within the grace rather than after
+/// a send's cadence and a close's cadence more.
+#[tokio::test]
+async fn a_stop_against_a_server_that_stopped_reading_returns_within_the_grace() {
+    let server = FakeServer::start().await;
+    let trace = Trace::new();
+    let mut body = String::new();
+    let mut n = 0u64;
+    while body.len() < 16 * 1024 * 1024 {
+        n += 1;
+        body.push_str(&format!("{{\"wall_ms\":1,\"payload\":{{\"n\":{n}}}}}\n"));
+    }
+    trace.append_raw(body.as_bytes());
+    let cfg = AdminConConfig {
+        link: server.link(Plane::Admin),
+        trace_file: trace.path.clone(),
+        backfill_bytes: 32 * 1024 * 1024,
+        poll: POLL,
+        verb_bound: admin_con::VERB_BOUND,
+        grants_bound: Duration::from_secs(super::client::HELLO_SECS),
+    };
+    let con = Running::start(cfg, Arc::new(NoVerbs));
+    // Admitted on a cadence far past the grace, then never read: the
+    // replay fills the path and its sends wait.
+    let (reader, write) = server.admit(60).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let Running { stop, task, .. } = con;
+    let started = tokio::time::Instant::now();
+    let _ = stop.send(true);
+    let finished = tokio::time::timeout(admin_con::SHUTDOWN_GRACE * 2, task).await;
+    let took = started.elapsed();
+    assert!(
+        finished.is_ok(),
+        "the stop was still waiting after {took:?}"
+    );
+    assert!(
+        took <= admin_con::SHUTDOWN_GRACE + Duration::from_millis(500),
+        "the stop took {took:?}, past the {:?} grace",
+        admin_con::SHUTDOWN_GRACE
+    );
+    drop(reader);
+    drop(write);
+}

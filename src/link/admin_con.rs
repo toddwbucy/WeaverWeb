@@ -964,9 +964,38 @@ async fn serve<I: Invoker>(
     mut shutdown: watch::Receiver<bool>,
 ) -> Ended {
     let mut shared = shared.lock().await;
-    let ended = relay(&mut conn, &mut shared, &*invoker, &opts, &mut shutdown).await;
+    // **The whole stop is bounded by one grace**, from the moment shutdown
+    // is seen: the relay gets the grace to finish (a verb in flight its
+    // answer, a send to a server that stopped taking bytes no more than
+    // what remains), and the close only what is left of it, never a
+    // further cadence. A send inside the relay is bounded by a cadence of
+    // its own, so without this a server that stopped reading would hold
+    // SIGTERM past the grace it was promised.
+    let mut signal = shutdown.clone();
+    let mut grace_ends = None;
+    let ended = {
+        let relay = relay(&mut conn, &mut shared, &*invoker, &opts, &mut shutdown);
+        tokio::pin!(relay);
+        tokio::select! {
+            ended = &mut relay => ended,
+            () = async { let _ = signal.wait_for(|stop| *stop).await; } => {
+                let ends = tokio::time::Instant::now() + SHUTDOWN_GRACE;
+                grace_ends = Some(ends);
+                tokio::time::timeout_at(ends, &mut relay)
+                    .await
+                    .unwrap_or(Ended::Shutdown)
+            }
+        }
+    };
     drop(shared);
-    conn.close().await;
+    match grace_ends {
+        Some(ends) => {
+            conn.close_within(ends.saturating_duration_since(tokio::time::Instant::now()))
+                .await
+        }
+        None if matches!(ended, Ended::Shutdown) => conn.close_within(SHUTDOWN_GRACE).await,
+        None => conn.close().await,
+    }
     ended
 }
 
@@ -1455,6 +1484,19 @@ async fn drain(conn: &Connection, tailer: &mut Tailer, seq: &mut u64) -> Result<
             continue;
         }
         if !moved || tailer.offset >= target {
+            // **The drain ends only where no replacement is pending**: a
+            // switch waits for a read that moves nothing, so a held file
+            // whose last read moved reaches its target with the new file
+            // still unread. The next step reads it out and switches, and
+            // the new file's tail becomes the target.
+            if moved
+                && tailer
+                    .replacement()
+                    .map_err(|e| Ended::Lost(format!("reading the trace file: {e:#}")))?
+                    .is_some()
+            {
+                continue;
+            }
             return Ok(());
         }
     }

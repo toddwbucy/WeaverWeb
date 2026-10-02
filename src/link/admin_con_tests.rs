@@ -801,6 +801,7 @@ async fn an_admin_con_config_that_is_not_trusted_is_refused_at_start() {
         table.insert("server".into(), link.server.into());
         table.insert("server_name".into(), link.server_name.into());
         table.insert("agent".into(), link.agent.into());
+        table.insert("agent_id".into(), link.agent_id.into());
         table.insert("plane".into(), plane.as_str().into());
         table.insert("server_certificate".into(), link.server_certificate.into());
         table.insert("certificate".into(), link.certificate.into());
@@ -821,6 +822,15 @@ async fn an_admin_con_config_that_is_not_trusted_is_refused_at_start() {
     assert!(refused(&gate).contains("gate plane"));
     let missing = write("missing.toml", text(Plane::Admin, ""));
     assert!(refused(&missing).contains("trace_file"));
+    let unnamed = write(
+        "unnamed.toml",
+        text(Plane::Admin, "trace_file = \"/trace\"\n")
+            .lines()
+            .filter(|l| !l.starts_with("agent_id"))
+            .map(|l| format!("{l}\n"))
+            .collect(),
+    );
+    assert!(refused(&unnamed).contains("agent_id"));
     let big = write(
         "big.toml",
         text(
@@ -1219,10 +1229,11 @@ async fn a_symlink_at_the_trace_path_is_refused_and_marked() {
 }
 
 /// **A config for another agent re-installed at the path is refused**, as
-/// gate-con refuses it: admin-con's tailer and invoker stay bound to the
-/// agent it started for, so dialing as another would file this trace under
-/// that agent's row. The capped retries refuse it and keep the credential
-/// in hand, and the other agent's window stays empty.
+/// gate-con refuses it, the agent told by its row's identity: admin-con's
+/// tailer and invoker stay bound to the agent it started for, so dialing as
+/// another would file this trace under that agent's row. Another box's
+/// agent of the same name, then another name: the capped retries refuse
+/// each and keep the credential in hand, and neither window gets an event.
 #[tokio::test]
 async fn a_reinstalled_config_for_another_agent_is_refused() {
     let Some(lab) = Lab::open().await else { return };
@@ -1230,6 +1241,10 @@ async fn a_reinstalled_config_for_another_agent_is_refused() {
     trace.append(1, "turn");
     let out = tempfile::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.path, out.path(), None).await;
+    let twin_trace = Trace::new();
+    let twin_out = tempfile::tempdir().unwrap();
+    let (twin, twin_path) =
+        installed_as(&lab, "karl", &twin_trace.path, twin_out.path(), None).await;
     let other_trace = Trace::new();
     let other_out = tempfile::tempdir().unwrap();
     let (other, other_path) =
@@ -1247,27 +1262,28 @@ async fn a_reinstalled_config_for_another_agent_is_refused() {
         s.last_refusal == Some(super::frames::Refusal::NotLive)
     })
     .await;
-    let staged = path.with_extension("installing");
-    std::fs::write(&staged, std::fs::read_to_string(&other_path).unwrap()).unwrap();
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o600)).unwrap();
-    }
-    std::fs::rename(&staged, &path).unwrap();
     trace.append(2, "load");
-
-    let attempts = con.status().attempts;
-    con.wait("three capped retries", |s| s.attempts >= attempts + 3)
-        .await;
-    let status = con.status();
-    assert!(!status.admitted, "{status:?}");
-    assert_eq!(status.admissions, 1, "{status:?}");
-    assert!(!lab.agent(&other).await.admin.connected);
-    assert!(
-        window(&lab, &other).is_empty(),
-        "this trace filed under another row"
-    );
-    assert_eq!(lab.agent(&other).await.load_state, None);
+    for (foreign, foreign_path) in [(&twin, &twin_path), (&other, &other_path)] {
+        let staged = path.with_extension("installing");
+        std::fs::write(&staged, std::fs::read_to_string(foreign_path).unwrap()).unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        std::fs::rename(&staged, &path).unwrap();
+        let attempts = con.status().attempts;
+        con.wait("three capped retries", |s| s.attempts >= attempts + 3)
+            .await;
+        let status = con.status();
+        assert!(!status.admitted, "{status:?}");
+        assert_eq!(status.admissions, 1, "{status:?}");
+        assert!(!lab.agent(foreign).await.admin.connected);
+        assert!(
+            window(&lab, foreign).is_empty(),
+            "this trace filed under another row"
+        );
+        assert_eq!(lab.agent(foreign).await.load_state, None);
+    }
     con.stop().await;
 }
 
@@ -1338,5 +1354,107 @@ async fn a_rotation_just_before_a_verb_is_drained_ahead_of_its_answer() {
     let row = lab.agent(&id).await;
     assert_eq!(row.load_state.as_deref(), Some("unloaded"), "{row:?}");
     assert_eq!(row.state_source.as_deref(), Some("show"));
+    con.stop().await;
+}
+
+/// **An ask that arrives during the replay is served at once**, between
+/// replay steps and with no drain: with `show` granted and a backfill that
+/// outlasts the silence bound, the admission's `show` is answered within
+/// its deadline, the admission completes once, and the replay goes on to
+/// the file's end.
+#[tokio::test]
+async fn the_admissions_show_is_answered_during_a_long_replay() {
+    let silence = Duration::from_secs(4);
+    let Some(lab) = Lab::open_with(silence).await else {
+        return;
+    };
+    let trace = Trace::new();
+    let mut body = String::new();
+    let mut n = 0u64;
+    while body.len() < 6 * 1024 * 1024 {
+        n += 1;
+        body.push_str(&format!("{{\"wall_ms\":1,\"payload\":{{\"n\":{n}}}}}\n"));
+    }
+    trace.append_raw(body.as_bytes());
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, &trace.path, out.path(), Some(8 * 1024 * 1024)).await;
+    let invoker = FakeInvoker::new(&["show"], "idle");
+    let started = tokio::time::Instant::now();
+    let mut con = Running::start(config(&path, POLL), invoker.clone());
+    con.wait("admitted", |s| s.admitted).await;
+    let until = started + Duration::from_secs(120);
+    while lab.listener.acknowledged(&id).map(|p| p.offset) != Some(trace.len()) {
+        assert!(
+            tokio::time::Instant::now() < until,
+            "never acknowledged through the end: {:?}",
+            con.status()
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(
+        started.elapsed() > silence,
+        "the replay must outlast the silence bound for this test to say anything: {:?}",
+        started.elapsed()
+    );
+    let status = con.status();
+    assert_eq!(status.admissions, 1, "{status:?}");
+    assert_eq!(status.last_refusal, None, "{status:?}");
+    let row = lab.agent(&id).await;
+    assert_eq!(row.state_source.as_deref(), Some("show"), "{row:?}");
+    assert_eq!(row.load_state.as_deref(), Some("idle"));
+    assert_eq!(invoker.ran(), ["show"]);
+    con.stop().await;
+}
+
+/// **A copy and truncate regrown past the position while a record past
+/// the bound is being skipped is caught**: the bytes the skip kept are
+/// compared with the file's before the position, found different, and the
+/// file is marked and relayed from its start rather than skipped on from
+/// inside another record.
+#[tokio::test]
+async fn a_truncation_regrown_during_a_skip_is_marked() {
+    let Some(lab) = Lab::open().await else { return };
+    let trace = Trace::new();
+    trace.append(1, "turn");
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, &trace.path, out.path(), None).await;
+    let poll = Duration::from_secs(1);
+    let mut con = Running::start(config(&path, poll), Arc::new(NoVerbs));
+    con.wait("admitted", |s| s.admitted).await;
+    wait_window(&lab, &id, "the first", |e| ns(e) == [1]).await;
+
+    // A record, then an unterminated fragment of 3 MiB: the poll that reads
+    // the record leaves the fragment; the next opens the skip; the one after
+    // carries it to the file's end.
+    let mut fragment = record(2, "turn").into_bytes();
+    fragment.extend(std::iter::repeat_n(b'x', 3 * 1024 * 1024));
+    trace.append_raw(&fragment);
+    wait_window(&lab, &id, "the second", |e| ns(e) == [1, 2]).await;
+    tokio::time::sleep(poll * 2 + poll / 2).await;
+
+    // Truncated and regrown past the position between two polls, the
+    // regrown bytes where the skip stands differing from what it kept.
+    std::fs::OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(&trace.path)
+        .unwrap();
+    let mut regrown = Vec::new();
+    for n in 20..=23 {
+        regrown.extend(record(n, "turn").into_bytes());
+    }
+    let mut pad = br#"{"kind":"turn","payload":{"pad":""#.to_vec();
+    pad.extend(std::iter::repeat_n(b'y', 4 * 1024 * 1024));
+    pad.extend(b"\"}}\n");
+    regrown.extend(pad);
+    regrown.extend(record(24, "turn").into_bytes());
+    trace.append_raw(&regrown);
+
+    wait_window(&lab, &id, "the regrown file whole", |e| {
+        ns(e).ends_with(&[20, 21, 22, 23, 24])
+    })
+    .await;
+    let marks = marks(&window(&lab, &id));
+    assert!(marks.iter().any(|m| m.contains("truncated")), "{marks:?}");
     con.stop().await;
 }

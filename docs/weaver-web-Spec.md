@@ -2528,11 +2528,16 @@ is what makes "every event read before the invocation is ahead of the
 answer" true of every event written before it and not only of those the
 tailer happened to have read: without it an unread older load event
 behind the tail would be emitted after a newer `show` answer and overwrite
-it. Every event read after the receipt is behind the answer, and nothing
-is read in between, so the snapshot the verb took somewhere inside that
+it. Every event read after the receipt is behind the
+answer, and nothing is read in between, so the snapshot the verb took somewhere inside that
 span is newer than everything ahead of it and older than everything
 behind. This holds for every verb answer and not only the admission-time
-`show`. **admin-con runs one verb at a time per connection**, each from
+`show`. **An ask that arrives during the replay is served at once, between
+replay steps, with no drain**: the drain orders an answer against live
+events, and before `caught_up` nothing live has been read, so every event
+sent then is replayed and writes no member of the row whichever side of
+the answer it falls, and a `show` held behind a long backfill would miss
+the admission's deadline. **admin-con runs one verb at a time per connection**, each from
 its pre-invocation drain through the emission of its answer, and a second
 ask that arrives while one is in flight waits its turn in arrival order,
 so invocation spans never overlap and the ordering above holds for every
@@ -2900,9 +2905,11 @@ re-read config naming another agent or plane than the one the connector
 runs for is refused and logged, and the credential in hand kept, since the
 rest of the connector (gate-con's socket, admin-con's trace file and
 invoker) stays bound to the agent it started for, and dialing as another
-would file one agent's traffic under another's row. The config names its
-agent by name, as the certificate does, so a same-named agent's config from
-another box is not told apart by this check. Every other refusal retries on the normal backoff,
+would file one agent's traffic under another's row. **A client config
+names its row by identity**: `register` and `rotate` write the row's
+identity beside the agent's name, rotation keeps it since it keeps the row,
+and the re-install check compares that identity and never the name, which
+another box may share. Every other refusal retries on the normal backoff,
 `malformed` and `wrong_plane` logged as the connector's own defect. **It
 does not exit**, because a supervisor would restart it into the same loop;
 it ends only on its own shutdown, which lets exchanges in flight finish

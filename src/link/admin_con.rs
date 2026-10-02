@@ -166,6 +166,7 @@ const MEMBERS: &[&str] = &[
     "server",
     "server_name",
     "agent",
+    "agent_id",
     "plane",
     "server_certificate",
     "certificate",
@@ -498,7 +499,9 @@ impl Tailer {
     /// checked by its digest, as a reconnection checks it**, so a copy and
     /// truncate that regrows past the position between two polls is caught
     /// though its length hides it. While a record past the bound is being
-    /// skipped the position is inside it and the length alone is checked.
+    /// skipped the position is inside it, so the bytes the skip kept, the
+    /// record's last up to `DIGEST_WINDOW` read so far, are compared with
+    /// the file's bytes before the position instead.
     fn truncated(&mut self) -> std::io::Result<Option<Item>> {
         let Some(held) = &self.held else {
             return Ok(None);
@@ -511,8 +514,18 @@ impl Tailer {
         self.seen = Some(seen);
         let shrunk = meta.len() < self.offset;
         let rewritten = !shrunk
-            && self.skip.is_none()
-            && digest_before(&held.file, self.offset)?.as_deref() != Some(self.digest.as_str());
+            && match &self.skip {
+                None => {
+                    digest_before(&held.file, self.offset)?.as_deref() != Some(self.digest.as_str())
+                }
+                Some(skip) => {
+                    let kept = skip.tail.len() as u64;
+                    let mut there = vec![0u8; skip.tail.len()];
+                    held.file
+                        .read_exact_at(&mut there, self.offset.saturating_sub(kept))?;
+                    there != skip.tail
+                }
+            };
         if !shrunk && !rewritten {
             return Ok(None);
         }
@@ -1133,48 +1146,22 @@ async fn relay<I: Invoker>(
         if *shutdown.borrow_and_update() {
             return Ended::Shutdown;
         }
-        // **The replay first**, from the resume point through the boundary,
-        // each event marked replayed; then the frame that ends it.
-        if replaying {
-            let until =
-                (shared.tailer.generation() == boundary.generation).then_some(boundary.offset);
-            let (items, moved) = match shared.tailer.read(until, READ_BUDGET) {
-                Ok(read) => read,
-                Err(e) => return lost(e),
-            };
-            if let Err(end) = send_all(conn, frames_of(items, true, &mut seq)).await {
-                return end;
-            }
-            let (items, done) = match replay_state(&mut shared.tailer, &boundary, moved) {
-                Ok(Replay::Going(items)) => (items, false),
-                Ok(Replay::Done(items)) => (items, true),
-                Err(e) => return lost(e),
-            };
-            if let Err(end) = send_all(conn, frames_of(items, true, &mut seq)).await {
-                return end;
-            }
-            if done {
-                if let Err(why) = conn.send(FromClient::CaughtUp).await {
-                    return Ended::Lost(why);
-                }
-                replaying = false;
-            }
-            // Between replay steps the connection is read, so the server's
-            // acknowledgements never back up behind the replay.
-            if let Some(end) = take_incoming(conn, &mut queue, &ceiling, &opts.agent).await {
-                return end;
-            }
-            continue;
-        }
         // **A verb, one at a time, its answer placed at the invocation**
         // (Spec 7.2): drain the file to its tail, invoke with the tailer
-        // paused, emit the answer, then resume reading. A second ask waits
+        // paused, emit the answer, then resume reading or replaying. A second ask waits
         // its turn in arrival order; `VERBS_IN_FLIGHT` is the rule's one
         // number.
         while in_flight.len() < VERBS_IN_FLIGHT
             && let Some(ask) = queue.pop_front()
         {
-            if let Err(end) = drain(conn, &mut shared.tailer, &mut seq).await {
+            // **An ask during the replay is served at once, with no
+            // drain**, interleaved between replay steps: the drain orders an
+            // answer against live events, and before `caught_up` nothing
+            // live has been read, so every event sent then is replayed and
+            // writes no member of the row, whichever side of the answer it
+            // falls (Spec 7.2). Held until the replay ends, the admission's
+            // `show` would wait behind a long backfill past its deadline.
+            if !replaying && let Err(end) = drain(conn, &mut shared.tailer, &mut seq).await {
                 return end;
             }
             shared.seq = seq;
@@ -1219,6 +1206,39 @@ async fn relay<I: Invoker>(
                     }
                     return Ended::Shutdown;
                 }
+            }
+            continue;
+        }
+        // **The replay first**, from the resume point through the boundary,
+        // each event marked replayed; then the frame that ends it.
+        if replaying {
+            let until =
+                (shared.tailer.generation() == boundary.generation).then_some(boundary.offset);
+            let (items, moved) = match shared.tailer.read(until, READ_BUDGET) {
+                Ok(read) => read,
+                Err(e) => return lost(e),
+            };
+            if let Err(end) = send_all(conn, frames_of(items, true, &mut seq)).await {
+                return end;
+            }
+            let (items, done) = match replay_state(&mut shared.tailer, &boundary, moved) {
+                Ok(Replay::Going(items)) => (items, false),
+                Ok(Replay::Done(items)) => (items, true),
+                Err(e) => return lost(e),
+            };
+            if let Err(end) = send_all(conn, frames_of(items, true, &mut seq)).await {
+                return end;
+            }
+            if done {
+                if let Err(why) = conn.send(FromClient::CaughtUp).await {
+                    return Ended::Lost(why);
+                }
+                replaying = false;
+            }
+            // Between replay steps the connection is read, so the server's
+            // acknowledgements never back up behind the replay.
+            if let Some(end) = take_incoming(conn, &mut queue, &ceiling, &opts.agent).await {
+                return end;
             }
             continue;
         }

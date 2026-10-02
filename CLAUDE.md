@@ -161,7 +161,7 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
   refuses to start without an authority at `authority_dir`; `authority init` makes one. Keep
   configs, authorities and client configs out of the repository. Logging uses `RUST_LOG`,
   which defaults to `weaver_web=info,sqlx=warn`.
-- **gate-con** reads the file `register` wrote (`server`, `server_name`, `agent`, `plane`,
+- **gate-con** reads the file `register` wrote (`server`, `server_name`, `agent`, `agent_id`, `plane`,
   `server_certificate`, `certificate`, `key`) plus `gate_socket`, the agent's gate socket, a
   required box fact with no default, and optional `turns_in_flight` (4). `--config` has no
   default either. It refuses to start on a config that is not a regular file of its own uid at

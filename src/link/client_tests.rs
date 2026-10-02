@@ -573,6 +573,7 @@ impl FakeServer {
             server: self.listener.local_addr().unwrap().to_string(),
             server_name: "weaver-web".into(),
             agent: "karl".into(),
+            agent_id: "ag-0000000000000001".into(),
             plane,
             server_certificate: self.authority.certificate_pem().to_owned(),
             certificate: credential.certificate_pem,
@@ -726,6 +727,7 @@ fn config_text(server: &FakeServer, plane: Plane, gate: Option<&str>, extra: &st
     table.insert("server".into(), link.server.into());
     table.insert("server_name".into(), link.server_name.into());
     table.insert("agent".into(), link.agent.into());
+    table.insert("agent_id".into(), link.agent_id.into());
     table.insert("plane".into(), plane.as_str().into());
     table.insert("server_certificate".into(), link.server_certificate.into());
     table.insert("certificate".into(), link.certificate.into());
@@ -942,17 +944,21 @@ async fn a_reinstalled_config_is_picked_up_at_the_next_capped_retry() {
 }
 
 /// **A config for another agent re-installed at the path is refused**:
-/// only the link's members change at a re-install. gate-con's credential
-/// is revoked and it retries at the cap; another agent's gate config is
-/// written over its file; the capped retries read it, refuse it, and keep
-/// dialing with the credential in hand, so the other agent's row is never
-/// connected through a gate-con bound to this one's socket.
+/// only the link's members change at a re-install, and the agent is told
+/// by its row's identity. gate-con's credential is revoked and it retries
+/// at the cap; another box's agent of the same name, then another name,
+/// has its gate config written over the file; the capped retries read
+/// each, refuse it, and keep dialing with the credential in hand, so
+/// neither other row is ever connected through a gate-con bound to this
+/// one's socket.
 #[tokio::test]
 async fn a_reinstalled_config_for_another_agent_is_refused() {
     let Some(lab) = Lab::open().await else { return };
     let gate = FakeGate::start();
     let out = tempfile::tempdir().unwrap();
     let (id, path) = installed(&lab, "karl", &gate.path, out.path(), None).await;
+    let twin_out = tempfile::tempdir().unwrap();
+    let (twin, twin_path) = installed(&lab, "karl", &gate.path, twin_out.path(), None).await;
     let other_out = tempfile::tempdir().unwrap();
     let (other, other_path) = installed(&lab, "kevin", &gate.path, other_out.path(), None).await;
     let mut con = Running::from_file(&path, FAST);
@@ -967,22 +973,23 @@ async fn a_reinstalled_config_for_another_agent_is_refused() {
         s.last_refusal == Some(Refusal::NotLive)
     })
     .await;
-    let staged = path.with_extension("installing");
-    write_mode(
-        &staged,
-        &std::fs::read_to_string(&other_path).unwrap(),
-        0o600,
-    );
-    std::fs::rename(&staged, &path).unwrap();
-
-    let attempts = con.status().attempts;
-    con.wait("three capped retries", |s| s.attempts >= attempts + 3)
-        .await;
-    let status = con.status();
-    assert!(!status.admitted, "{status:?}");
-    assert_eq!(status.last_refusal, Some(Refusal::NotLive), "{status:?}");
-    assert_eq!(status.admissions, 1, "{status:?}");
-    assert!(!lab.agent(&other).await.gate.connected);
+    for (foreign, foreign_path) in [(&twin, &twin_path), (&other, &other_path)] {
+        let staged = path.with_extension("installing");
+        write_mode(
+            &staged,
+            &std::fs::read_to_string(foreign_path).unwrap(),
+            0o600,
+        );
+        std::fs::rename(&staged, &path).unwrap();
+        let attempts = con.status().attempts;
+        con.wait("three capped retries", |s| s.attempts >= attempts + 3)
+            .await;
+        let status = con.status();
+        assert!(!status.admitted, "{status:?}");
+        assert_eq!(status.last_refusal, Some(Refusal::NotLive), "{status:?}");
+        assert_eq!(status.admissions, 1, "{status:?}");
+        assert!(!lab.agent(foreign).await.gate.connected);
+    }
     con.stop().await;
 }
 

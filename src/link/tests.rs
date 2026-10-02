@@ -28,6 +28,10 @@ use tokio_rustls::client::TlsStream;
 pub(super) const SILENCE: Duration = Duration::from_secs(60);
 pub(super) const SOON: Duration = Duration::from_secs(5);
 
+/// The identity a directly staged config names where the test is about the
+/// staging and not the row the config belongs to.
+const PLACEHOLDER_ID: &str = "ag-0000000000000000";
+
 pub(super) fn serial() -> &'static tokio::sync::Mutex<()> {
     static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
@@ -1701,6 +1705,15 @@ async fn a_second_registration_does_not_overwrite_the_firsts_configs() {
     assert!(gate_path.exists());
     let written = std::fs::read_to_string(&gate_path).unwrap();
     let first_id = first.value["agent"].as_str().unwrap().to_owned();
+    // **Each config names its row by identity**, which a re-install is held
+    // to, and rotation keeps.
+    let agent_id_of = |path: &std::path::Path| {
+        let table: toml::Table = std::fs::read_to_string(path).unwrap().parse().unwrap();
+        table["agent_id"].as_str().unwrap().to_owned()
+    };
+    let admin_path = out.path().join(&r#box).join("karl").join("admin-con.toml");
+    assert_eq!(agent_id_of(&gate_path), first_id);
+    assert_eq!(agent_id_of(&admin_path), first_id);
 
     let second = super::verbs::register(
         &lab.store,
@@ -1764,6 +1777,8 @@ async fn a_second_registration_does_not_overwrite_the_firsts_configs() {
         written,
         "rotate writes the agent's own over"
     );
+    assert_eq!(agent_id_of(&gate_path), first_id, "rotation keeps the row");
+    assert_eq!(agent_id_of(&admin_path), first_id, "rotation keeps the row");
     use std::os::unix::fs::PermissionsExt;
     assert_eq!(
         std::fs::metadata(&gate_path).unwrap().permissions().mode() & 0o777,
@@ -2626,7 +2641,9 @@ fn a_staging_entry_swapped_before_the_publish_is_refused() {
 
     // The gate staging entry swapped: nothing is published.
     let dir = super::verbs::ConfigDir::open(&out, "box", "swap").unwrap();
-    let staged = super::verbs::stage_pair(&cfg, &authority, dir, "swap", &gate, &admin).unwrap();
+    let staged =
+        super::verbs::stage_pair(&cfg, &authority, dir, PLACEHOLDER_ID, "swap", &gate, &admin)
+            .unwrap();
     let agent_dir = out.join("box").join("swap");
     std::fs::remove_file(agent_dir.join("gate-con.toml.staging")).unwrap();
     std::fs::write(agent_dir.join("gate-con.toml.staging"), "swapped in").unwrap();
@@ -2642,7 +2659,16 @@ fn a_staging_entry_swapped_before_the_publish_is_refused() {
     // The admin staging entry swapped: the gate config stands, the admin's
     // is refused.
     let dir = super::verbs::ConfigDir::open(&out, "box", "swap2").unwrap();
-    let staged = super::verbs::stage_pair(&cfg, &authority, dir, "swap2", &gate, &admin).unwrap();
+    let staged = super::verbs::stage_pair(
+        &cfg,
+        &authority,
+        dir,
+        PLACEHOLDER_ID,
+        "swap2",
+        &gate,
+        &admin,
+    )
+    .unwrap();
     let agent_dir = out.join("box").join("swap2");
     std::fs::remove_file(agent_dir.join("admin-con.toml.staging")).unwrap();
     std::fs::write(agent_dir.join("admin-con.toml.staging"), "swapped in").unwrap();
@@ -2934,7 +2960,16 @@ async fn a_retained_staged_pair_is_published_where_the_register_carries_it() {
         let (gate, admin) = super::verbs::mint_pair(name, &lab.authority).unwrap();
         let dir = super::verbs::ConfigDir::open(out.path(), &r#box, name).unwrap();
         // The `Staged` is dropped unpublished: the files stand staged.
-        super::verbs::stage_pair(&cfg, &lab.authority, dir, name, &gate, &admin).unwrap();
+        super::verbs::stage_pair(
+            &cfg,
+            &lab.authority,
+            dir,
+            PLACEHOLDER_ID,
+            name,
+            &gate,
+            &admin,
+        )
+        .unwrap();
         (gate, admin)
     };
     let register = |name: &'static str| {

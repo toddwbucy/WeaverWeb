@@ -317,8 +317,10 @@ impl Store {
         authority: &str,
     ) -> anyhow::Result<(AgentId, Vec<String>)> {
         let mut conn = self.pool.acquire().await?;
+        let id = Self::mint_agent_id_on(&mut conn).await?;
         Self::register_agent_on(
             &mut conn,
+            &id,
             r#box,
             name,
             author,
@@ -329,11 +331,26 @@ impl Store {
         .await
     }
 
-    /// The same on a given connection: a verb that holds the authority
-    /// lock runs its store work on the lock's own session, so a lost session
-    /// kills the transaction with it.
+    /// **A new row's identity, minted by the store** through the function
+    /// every kind's identity comes from, before the row is written: the
+    /// register verbs stage each client config with the identity it will
+    /// name before the store commits (Spec 8).
+    pub async fn mint_agent_id_on(conn: &mut sqlx::PgConnection) -> anyhow::Result<AgentId> {
+        let id: String = sqlx::query_scalar("SELECT weaver_key('ag')")
+            .fetch_one(&mut *conn)
+            .await?;
+        id.parse().map_err(|e: String| anyhow::anyhow!(e))
+    }
+
+    /// The same on a given connection, under an identity minted first: a
+    /// verb that holds the authority lock runs its store work on the lock's
+    /// own session, so a lost session kills the transaction with it.
+    // The row's members arrive as the verb holds them: eight arguments,
+    // each one a column of the one insert the lock orders.
+    #[allow(clippy::too_many_arguments)]
     pub async fn register_agent_on(
         conn: &mut sqlx::PgConnection,
+        id: &AgentId,
         r#box: &str,
         name: &str,
         author: Option<&str>,
@@ -385,9 +402,9 @@ impl Store {
             }
         }
         let id: String = sqlx::query_scalar(
-            "INSERT INTO agent (name, box, author, gate_fingerprint, admin_fingerprint, \
+            "INSERT INTO agent (agent_id, name, box, author, gate_fingerprint, admin_fingerprint, \
              gate_authority, admin_authority) \
-             VALUES ($1, $2, $3, $4, $5, $6, $6) RETURNING agent_id",
+             VALUES ($7, $1, $2, $3, $4, $5, $6, $6) RETURNING agent_id",
         )
         .bind(name)
         .bind(r#box)
@@ -395,6 +412,7 @@ impl Store {
         .bind(gate_fingerprint)
         .bind(admin_fingerprint)
         .bind(authority)
+        .bind(id.as_str())
         .fetch_one(&mut *tx)
         .await?;
         tx.commit().await?;

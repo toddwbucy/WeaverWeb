@@ -100,6 +100,7 @@ const MEMBERS: &[&str] = &[
     "server",
     "server_name",
     "agent",
+    "agent_id",
     "plane",
     "server_certificate",
     "certificate",

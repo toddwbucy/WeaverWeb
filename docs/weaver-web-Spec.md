@@ -1120,7 +1120,9 @@ never a bare socket's. Each row carries:
   grants no `show`, per section 7.2
 - **the ceiling admin-con declared**, the verbs its role on the box grants as
   its hello named them, with the date, per section 8. It is the box's word
-  about itself and an upper bound, never a grant
+  about itself and an upper bound, never a grant, and this copy is what
+  surfaces read: the server authorizes against the live connection's own,
+  per section 8
 
 **It is an authored row and takes section 3.2's members.** Registration is a
 write the operator makes, so the row carries the author member and the
@@ -1338,8 +1340,11 @@ rather than this document's.
 - **Server-side authorization**: a verb is asked of an agent only if its
   principal may ask it, the person's grants on that agent permitting it or,
   for the server's own asks, the verb being an observation verb, and the
-  agent's ceiling, declared per section 8 and held on the row per section
-  2.12, contains it. **A turn frame leaves the server only if the person's
+  ceiling declared at the hello of the connection the frame will be
+  enqueued on, held with that live connection per section 8, contains it.
+  **A connection's ceiling is fixed for its life**, so a reconnection that
+  narrows it cannot race an ask; the row's copy of section 2.12 is the
+  observation surfaces read and never the authorization input. **A turn frame leaves the server only if the person's
   grants on that agent permit `turn`**; no ceiling applies to a turn, the
   data plane's box gate being the gate's own admission per section 8, and
   neither principal that is not a person ever places one. Otherwise either
@@ -2773,9 +2778,13 @@ connection is, and each connector knows it is talking to its own server.
 
 **The box's ceiling is declared in admin-con's hello.** admin-con's hello
 names the verbs its role on the box grants, read from its own config, which
-the box owns and the install writes. The server stores it on the row as an
-observation with its date, per section 2.12, **treats it as an upper bound
-and never a grant**, and never asks a verb outside it: a person's grant
+the box owns and the install writes. **The server holds it with that live
+connection, fixed for the connection's life, and checks every ask against
+the ceiling of the connection the frame will be enqueued on**, so a
+reconnecting admin-con that narrows its ceiling cannot race an ask. It also
+stores a copy on the row as an observation with its date, per section 2.12,
+which is what surfaces read and never the authorization input. It **treats
+the ceiling as an upper bound and never a grant**, and never asks a verb outside it: a person's grant
 cannot widen the ceiling, and the ceiling grants no person anything. **An
 ask outside it reaching admin-con is the server's own defect, and admin-con
 answers it**: a typed error on its verb answer naming the ceiling, the ask
@@ -3061,7 +3070,7 @@ missing while it was relaying.
 | the client credential is stored as a fingerprint and never the key | perturbation, at the schema: store the key, a read of the register is a set of credentials anyone can present |
 | the tuple is admin's word and never gate-con's | perturbation: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it; let a replayed load event write the tuple, restart the server after an unload, backfill, and the row reads loaded; ask `show` before fixing the replay boundary, unload between the two, and the row reads loaded until the next `show`; let a `list` answer through one connection write another row, and that row reads a state its own connection never relayed. **Four clauses are admin-con's ordering and are owed to its act**: let a `show` answer cross the link out of order with the file events around it, unload during the `show`, and the row reads loaded until the next `show`; place the answer in the stream at receipt and unload between the snapshot and the receipt, and the row reads loaded; skip the drain, leave an unread load event behind the tail, invoke `show` after an unload, and the row reads loaded; run two verbs at once on one connection, and an older answer lands after a newer one |
 | nothing crosses the link in the clear | perturbation: offer a plaintext hello to the listener, it is refused below any roster; and review, over the listener, that no plaintext accept path exists |
-| the server never asks a verb outside the agent's ceiling | perturbation, **owed**: drop the ceiling check, ask a verb admin-con's hello did not declare, and it leaves the server; and admin-con's half, drop its typed error answer, and it reaches the invoker. **No instrument stands**: the hello carries no ceiling until the admin-con act, and the server's check lands with the IAM act |
+| the server never asks a verb outside the agent's ceiling | perturbation, **owed**: drop the ceiling check, ask a verb admin-con's hello did not declare, and it leaves the server; and admin-con's half, drop its typed error answer, and it reaches the invoker; check against the row's copy, narrow the ceiling by reconnecting between the check and the enqueue, and an ask outside the new ceiling leaves. **No instrument stands**: the hello carries no ceiling until the admin-con act, and the server's check lands with the IAM act |
 | a verb or turn its principal may not ask is refused before an ask | perturbation, **owed**: drop the grant check, a person whose role permits `show` asks `stop`, and the ask leaves the server; let the server principal ask a lifecycle verb, and it leaves without a grant; drop the enabled check, and a disabled person's live session still asks a verb; drop the grant check on turns, and a person granted only `show` places a turn; take the check outside the exclusion, revoke between the check and the enqueue, and the ask is authorized on a revoked grant; take a register verb's check outside the exclusion, disable its admin between the check and the commit, and the register verb lands. Lands with the IAM act |
 | a person, role or grant written by a principal not permitted to write it is refused | perturbation, **owed**: drop the check, and a person granted only `show` writes themselves the operator role and passes the first gate; let a person write a grant on themselves, and an admin widens their own grants or the last admin removes the only admin grant; let an admin holding the observer role on an agent add `stop` to that role, and their own grant widens without a grant written; let a surface write as the host principal, and a grant lands with no admin behind it; drop the exclusion, have two admins remove each other at once, and no admin remains; disable the sole admin, or have two admins disable each other at once, and no enabled admin remains; grant a role to its editor while the edit is in flight, and the editor widens a role they hold; let a person write another person's authentication material, and they can sign in as them; reuse a consumed enrollment token, or use one past its expiry, and a second credential lands on someone else's row; disable a person holding an unredeemed token, redeem it, and a credential lands on a disabled row; issue or redeem a token for a person who already has a credential, and an admin replaces that person's credential. Lands with the IAM act |
 | every verb or turn asked and every person, role or grant written has an audit record naming its principal, and its outcome is a second record naming the first | perturbation, **owed**: write the first record after the ask instead of before, fail the store between the two, and an ask leaves with no record; update the first record with the outcome instead of appending a second, and an ask whose answer is lost reads as never answered with no trace of the rewrite; drop the refusal's record, and a refused verb leaves no trace; write a grant with the audit write dropped, and the grant lands with no record; enroll a person or rotate their authentication material with the audit write dropped, and the write lands with no record; record the material in an authentication write's record, and a read of the audit table is a set of credentials. Lands with the IAM act |

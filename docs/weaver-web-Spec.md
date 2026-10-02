@@ -1239,15 +1239,18 @@ section waits on the two.
   it is refused on the server before any frame leaves it, and the refusal is
   audited. **The check is the server's and never a surface's**: a surface may
   hide what a person cannot do, and hiding is presentation and not the gate.
-- **The audit record**: every verb asked names the person, the agent, the
-  verb, the outcome and when. The server writes it before the ask leaves,
-  so no ask exists without one, and completes it when the answer lands or
-  the ask fails; a refusal at the first gate is recorded the same way. The
-  person also crosses to the box as section 8's claim, so this record and the
-  box's operations log can be matched. **An audit record is written by the
-  server alone and never edited**: it is not an authored row and takes no
-  version, and it is not an observation of an agent, so it sits outside both
-  halves as the session does.
+- **The audit record, append-only**: every verb asked names the person, the
+  agent, the verb and when. The server writes that record before the ask
+  leaves, so no ask exists without one. **The outcome is a second record
+  naming the first**, written when the answer lands or the ask fails, so
+  nothing is ever rewritten and an ask whose outcome never came is visible as
+  a first record with no second. A refusal at the first gate is one record
+  carrying the refusal as its outcome, since no ask left. The person also
+  crosses to the box as section 8's claim, so these records and the box's
+  operations log can be matched. **Audit records are written by the server
+  alone and never edited**: they are not authored rows and take no version,
+  and they are not observations of an agent, so they sit outside both halves
+  as the session does.
 
 ```graph
 node: web-verb-refused-before-an-ask-unless-granted
@@ -2594,11 +2597,14 @@ names the verbs its role on the box grants, read from its own config, which
 the box owns and the install writes. The server stores it on the row as an
 observation with its date, per section 2.12, **treats it as an upper bound
 and never a grant**, and never asks a verb outside it: a person's grant
-cannot widen the ceiling, and the ceiling grants no person anything. An ask
-outside it reaching admin-con is the server's own defect, and admin-con
-refuses it with a typed refusal before running anything and logs it against
-the row; whether that is `wrong_plane` or a refusal of its own is the
-admin-con act's to name. **The reason is the server's position**: the
+cannot widen the ceiling, and the ceiling grants no person anything. **An
+ask outside it reaching admin-con is the server's own defect, and admin-con
+answers it**: a typed error on its verb answer naming the ceiling, the ask
+logged against the row, nothing run, and the connection kept. It is not a
+refusal frame, which is the server's typed close of a connection and travels
+from the server only, and closing would put a compromised server's connector
+into a reconnect loop and gain nothing, the ask having been refused already.
+The error's kind is the admin-con act's to name. **The reason is the server's position**: the
 connectors trust their server by design, so a compromised server reaches
 whatever a connector can do, and the ceiling, which the box sets and the
 server only reads, bounds that to the verbs the box chose. The declaration
@@ -2876,9 +2882,9 @@ missing while it was relaying.
 | the client credential is stored as a fingerprint and never the key | perturbation, at the schema: store the key, a read of the register is a set of credentials anyone can present |
 | the tuple is admin's word and never gate-con's | perturbation: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it; let a replayed load event write the tuple, restart the server after an unload, backfill, and the row reads loaded; ask `show` before fixing the replay boundary, unload between the two, and the row reads loaded until the next `show`; let a `list` answer through one connection write another row, and that row reads a state its own connection never relayed. **Four clauses are admin-con's ordering and are owed to its act**: let a `show` answer cross the link out of order with the file events around it, unload during the `show`, and the row reads loaded until the next `show`; place the answer in the stream at receipt and unload between the snapshot and the receipt, and the row reads loaded; skip the drain, leave an unread load event behind the tail, invoke `show` after an unload, and the row reads loaded; run two verbs at once on one connection, and an older answer lands after a newer one |
 | nothing crosses the link in the clear | perturbation: offer a plaintext hello to the listener, it is refused below any roster; and review, over the listener, that no plaintext accept path exists |
-| the server never asks a verb outside the agent's ceiling | perturbation, **owed**: drop the ceiling check, ask a verb admin-con's hello did not declare, and it leaves the server; and admin-con's half, drop its refusal, and it reaches the invoker. **No instrument stands**: the hello carries no ceiling until the admin-con act, and the server's check lands with the IAM act |
+| the server never asks a verb outside the agent's ceiling | perturbation, **owed**: drop the ceiling check, ask a verb admin-con's hello did not declare, and it leaves the server; and admin-con's half, drop its typed error answer, and it reaches the invoker. **No instrument stands**: the hello carries no ceiling until the admin-con act, and the server's check lands with the IAM act |
 | a verb the person's grants do not permit is refused before an ask | perturbation, **owed**: drop the grant check, a person whose role permits `show` asks `stop`, and the ask leaves the server. Lands with the IAM act |
-| every verb asked has an audit record naming the person | perturbation, **owed**: write the record after the ask instead of before, fail the store between the two, and an ask leaves with no record; drop the refusal's record, and a refused verb leaves no trace. Lands with the IAM act |
+| every verb asked has an audit record naming the person, and its outcome is a second record naming the first | perturbation, **owed**: write the first record after the ask instead of before, fail the store between the two, and an ask leaves with no record; update the first record with the outcome instead of appending a second, and an ask whose answer is lost reads as never answered with no trace of the rewrite; drop the refusal's record, and a refused verb leaves no trace. Lands with the IAM act |
 | the admission's `show` is required only where the ceiling grants it | perturbation, **owed**: ask `show` at every admission, and an agent whose ceiling grants no `show` is closed `admission_incomplete` at every reconnection and never stays admitted; skip it where it is granted, and the row reads the last process's state as current. The listener asks `show` at every admission until the admin-con act, which is the drift this row names |
 | no privileged invocation exists in the crate | review, and a test, **owed**: a test that reads the source tree for an invocation of `sudo`, a root wrapper or a setuid call, shown to fail when one is planted. It would fail today on the seed's `lifecycle.rs`, which invokes `sudo weaver-admin` and is not carried forward, so the row is owed until that file leaves |
 
@@ -2886,17 +2892,19 @@ missing while it was relaying.
 act that lands it states what removal makes it fail and confirms it does.
 
 **A row marked owed has no instrument and is not counted as enforced.** Seven
-stand so marked as of 2026-10-02: the batch's order, whose table section 2.11
-describes and no migration builds; the trace file's replay from the
-acknowledged position, which is admin-con's half of section 7.2 and lands with
-its act; and the five rows of the role shape ruled on 2026-10-02, the ceiling,
-the grant check, the audit record and the conditional admission `show`
-landing with the admin-con and IAM acts and the absence of a privileged
-invocation with the seed's `lifecycle.rs` leaving; the server's half, the position held per process and answered in the
-hello, stands in `src/link/tests.rs`. The other ten rows of the link landed with
-the act that built the listener and the register, each shown to fail with its
-guard removed, and the four clauses of the tuple row that are admin-con's
-ordering are marked owed inside the row. The marking is the point: a row
+stand so marked as of 2026-10-02. The batch's order is owed because section
+2.11 describes its table and no migration builds it. The trace file's replay
+from the acknowledged position is owed to the admin-con act, being admin-con's
+half of section 7.2; the server's half, the position held per process and
+answered in the hello, stands in `src/link/tests.rs`. The five rows of the
+role shape ruled on 2026-10-02 are owed to the acts that build them: the
+ceiling and the conditional admission `show` to the admin-con act, with the
+server's check on the ceiling joining the grant check and the audit record in
+the IAM act, and the absence of a privileged invocation until the seed's
+`lifecycle.rs` leaves. The other ten rows of the link landed with the act that
+built the listener and the register, each shown to fail with its guard
+removed, and the four clauses of the tuple row that are admin-con's ordering
+are marked owed inside the row. The marking is the point: a row
 reading like the enforced ones beside it would tell a reader the claim is held,
 which is the same failure as a watch that passes either way and is why this
 table says which it is.

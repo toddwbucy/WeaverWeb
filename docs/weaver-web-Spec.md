@@ -1146,7 +1146,11 @@ up. The epoch is the server's own and is written once per start, in the
 same act as the startup reset of section 8. The source date stays on the
 row for display and decides nothing, because the server's own epoch and
 counter cannot step backward or collide and a date from the box can do
-both. **A replayed event never writes a
+both. **A gap named 2026-10-01 by the act that built the listener**: a
+trace event carries its own time and the row takes it as admin's date,
+but admin's `show` and `list` answers carry none, so for those the date
+stored is the server's receipt and not admin's until the answer carries
+one; the ask goes to WeaverAgents as an interface issue. **A replayed event never writes a
 member of this row at all**: every event admin-con relays from behind the
 file's tail, at a reconnection or a backfill, is marked as replayed on the
 link per section 7.2 and feeds the server's live window and nothing else.
@@ -2153,7 +2157,14 @@ not guard against an in-place rewrite that preserves the final line at the
 same offset, which only root can perform and which a digest of the whole
 prefix would catch at a cost proportional to the file at every reconnect,
 declined for that reason. The position crosses the link with every event, the
-server acknowledges it, and the hello's answer carries it.
+server acknowledges it, and the hello's answer carries it. **An
+acknowledgement never names an event the store does not hold**, which the
+act that built the listener reads as a rule on the connection: a store
+failure while landing anything on a connection closes it with a typed
+refusal, the acknowledged position standing at the last success, so the
+reconnection's replay resends the failed event and everything after and
+the admission's `show` is asked again, and a pending ask whose answer
+could not be landed answers an error and never the outcome.
 
 **The acknowledged position lives for the life of a server process and is
 not persisted**, per the operator's ruling of 2026-10-01: the server's copy
@@ -2185,7 +2196,15 @@ is smoothed, which is `traceview.rs`'s own rule and the contract's rule in
 section 3 that nothing is shed silently. Section 8's one-connection
 paragraph refers here for what a reconnection carries. **Every event
 relayed from behind the file's tail at a reconnection is marked as replayed
-on the link**, and replayed events reach the server's live window only:
+on the link, and the replay ends with a frame admin-con sends when it
+reaches the boundary**, immediately after the hello's answer where there
+is nothing to replay; the server classifies every event before that frame
+as replayed and every event after it as live, the boundary's offset rule
+and the client's mark standing as checks that log a disagreement. The
+frame decides because the stream's order cannot: a file rotated after the
+hello before any event of the boundary's generation reached the boundary
+would leave every live event of the new generation looking like an older
+generation's tail. Replayed events reach the server's live window only:
 they write no member of section 2.12's row, whose tuple and load state come
 from `show`, `list` and live events alone. On every admission of an
 admin-con connection the server first fixes the replay boundary, the file
@@ -2193,7 +2212,13 @@ position admin-con reports as its tail at that moment, so that every event
 at or beyond it is live and every event behind it is replayed, and then
 asks `show` for the row, so the answer is admin's word from after the
 boundary and nothing that lands in the file between the two can be
-classified as history, per section 2.12. **admin-con emits everything it
+classified as history, per section 2.12. **The admission's `show` must
+land a usable observation within the silence bound.** Until it does the
+row carries the last process's tuple and load state, and an admitted
+connection standing on them is presence asserted on stale facts; so a
+connection whose `show` errors, answers no state, or has not answered by
+the bound is closed with a typed refusal (`admission_incomplete`) and the
+reconnection asks again. **admin-con emits everything it
 sends over its connection, verb answers and file events alike, as one
 ordered stream**, and a verb answer takes its place in that stream at the
 invocation rather than at the receipt: before invoking a verb admin-con
@@ -2479,7 +2504,14 @@ and the heartbeat cannot clear a connection that does not exist to go
 silent. With it, **presence is only ever asserted by a connection this
 server process admitted**, and a connector that was up through the restart
 reconnects under the heartbeat's rule and is recorded again by the process
-that is actually holding it.
+that is actually holding it. **One listener per store, held at the store**:
+before the epoch and the reset the listener takes a session-level advisory
+lock on a constant key of this crate's, holds it for its life, and refuses
+to start when it is held, naming the other listener. The one-connection
+rule lives in a process's live set, so two listeners on one store would each
+admit the same credential, and the second's reset would mark the first's
+connections disconnected; the lock is what makes the rule a store's and not
+a process's.
 
 ```graph
 node: web-link-state-is-reset-when-the-listener-starts
@@ -2564,7 +2596,16 @@ installing and closes itself. Without that, a revocation racing a
 connection that had passed the live-fingerprint lookup but was not yet
 installed would find nothing to close, and the admission would complete on
 a revoked credential and relay until the next hello. No interleaving leaves
-a revoked credential relaying.
+a revoked credential relaying. **The exclusion is the store's own row lock,
+and the revoking act's close rides the store's notification**, as built on
+2026-10-01: the register verbs run as the operator's process and the
+listener as the server's, and the one exclusion two processes share without
+a second channel is the row they both write, so every admission, teardown
+and revocation takes the agent's row for update and mutates the listener's
+live set while it holds it, and the revoking transaction raises a
+notification the listener hears and closes on. A second channel between the
+two processes would be a second thing to configure and secure for one
+message the store already carries.
 
 **A link-state write is bound to the connection it describes, under the
 same exclusion.** Every connection the listener admits carries an
@@ -2615,26 +2656,30 @@ missing while it was relaying.
 | an arm frees at most one member | perturbation, at the schema: drop the partial index, one arm frees two and registers a sweep whose row carries one member and one value set |
 | an entry states the value its disposition names | perturbation, at the schema: drop the check, an entry says held and carries nothing, which is the absent-not-empty failure moved from the view into the store |
 | the task's verdict is landed and never scored here | perturbation: score a run in this crate, the verdict carries no scorer and the row claims a reading it did not receive |
-| a connection whose credential is not live is refused before its roster is read | perturbation, **owed** to the link act: accept the hello and check the register after, a revoked connector's roster lands before the refusal and a surface renders an agent nobody admitted |
-| one live connection per credential | perturbation, **owed**: let a second connection replace the first, a credential in two hands displaces the live connector silently and the row reads connected throughout; drop the serialization of admission and revocation, revoke while a hello is between its lookup and its installation, and the revoked credential relays until the next hello; let a stale teardown write disconnected after its replacement was admitted, and the row reads the plane missing while it relays |
-| a hello's identity is its certificate's binding and never its roster | perturbation, **owed**: act on the roster's name and plane, a hello on a gate credential naming another agent, or naming admin, is believed, and the seed's first-hello-wins returns through the roster |
-| at most one row per box and name holds live credentials | perturbation, **owed**, at the schema: drop the partial index, register one agent twice, and two rows each hold live credentials for one agent, so the server attributes one agent's observations and verbs to two rows |
-| the link state is reset when the listener starts | perturbation, **owed**: skip the reset, restart the server with no connector up, and a surface reads an agent present whose sockets are gone |
+| a connection whose credential is not live is refused before its roster is read | perturbation: accept the hello and check the register after, a revoked connector's roster lands before the refusal and a surface renders an agent nobody admitted |
+| one live connection per credential | perturbation: let a second connection replace the first, a credential in two hands displaces the live connector silently and the row reads connected throughout; drop the serialization of admission and revocation, revoke while a hello is between its lookup and its installation, and the revoked credential relays until the next hello; let a stale teardown write disconnected after its replacement was admitted, and the row reads the plane missing while it relays |
+| a hello's identity is its certificate's binding and never its roster | perturbation: act on the roster's name and plane, a hello on a gate credential naming another agent, or naming admin, is believed, and the seed's first-hello-wins returns through the roster |
+| at most one row per box and name holds live credentials | perturbation, at the schema: drop the partial index, register one agent twice, and two rows each hold live credentials for one agent, so the server attributes one agent's observations and verbs to two rows |
+| the link state is reset when the listener starts | perturbation: skip the reset, restart the server with no connector up, and a surface reads an agent present whose sockets are gone |
 | the trace file is replayed from the acknowledged position | perturbation, **owed**: drop the replay, break the link during a run and reconnect, and the server's window has a hole with no mark; truncate the file in place during the outage, let it regrow past the offset, reconnect, and the window carries the new prefix nowhere and marks nothing; drop the generation from the position, rotate the trace file during the outage, let the replacement grow past the offset, reconnect, and the window carries the replacement's prefix nowhere and marks nothing; mint the generation from process state, restart admin-con against the unchanged file, and the server receives a false discontinuity and the file again from its start; restart the server and resume from a remembered position, and the window has a hole with no mark; record a tail inside an unterminated record and resume from it, and the window carries half a record and a parse failure where an event was |
-| an agent is present only when both planes connect from one row | perturbation, **owed**: mark present on either plane alone, an agent whose admin-con is down reads present with a tuple and a load state nobody has confirmed |
-| the server's authority is loaded before the listener starts and never minted at start | perturbation, **owed**: mint the authority at start instead of loading it, restart the server, and every connector's hello is refused against a certificate it does not pin |
-| the client credential is stored as a fingerprint and never the key | perturbation, **owed**, at the schema: store the key, a read of the register is a set of credentials anyone can present |
-| the tuple is admin's word and never gate-con's | perturbation, **owed**: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it; let a replayed load event write the tuple, restart the server after an unload, backfill, and the row reads loaded; ask `show` before fixing the replay boundary, unload between the two, and the row reads loaded until the next `show`; let a `show` answer cross the link out of order with the file events around it, unload during the `show`, and the row reads loaded until the next `show`; place the answer in the stream at receipt and unload between the snapshot and the receipt, and the row reads loaded; let a `list` answer through one connection write another row, and that row reads a state its own connection never relayed; skip the drain, leave an unread load event behind the tail, invoke `show` after an unload, and the row reads loaded; run two verbs at once on one connection, and an older answer lands after a newer one |
-| nothing crosses the link in the clear | perturbation, **owed**: offer a plaintext hello to the listener, it is refused below any roster; and review, over the listener, that no plaintext accept path exists |
+| an agent is present only when both planes connect from one row | perturbation: mark present on either plane alone, an agent whose admin-con is down reads present with a tuple and a load state nobody has confirmed |
+| the server's authority is loaded before the listener starts and never minted at start | perturbation: mint the authority at start instead of loading it, restart the server, and every connector's hello is refused against a certificate it does not pin |
+| the client credential is stored as a fingerprint and never the key | perturbation, at the schema: store the key, a read of the register is a set of credentials anyone can present |
+| the tuple is admin's word and never gate-con's | perturbation: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it; let a replayed load event write the tuple, restart the server after an unload, backfill, and the row reads loaded; ask `show` before fixing the replay boundary, unload between the two, and the row reads loaded until the next `show`; let a `list` answer through one connection write another row, and that row reads a state its own connection never relayed. **Four clauses are admin-con's ordering and are owed to its act**: let a `show` answer cross the link out of order with the file events around it, unload during the `show`, and the row reads loaded until the next `show`; place the answer in the stream at receipt and unload between the snapshot and the receipt, and the row reads loaded; skip the drain, leave an unread load event behind the tail, invoke `show` after an unload, and the row reads loaded; run two verbs at once on one connection, and an older answer lands after a newer one |
+| nothing crosses the link in the clear | perturbation: offer a plaintext hello to the listener, it is refused below any roster; and review, over the listener, that no plaintext accept path exists |
 
 **A watch that cannot fail is not a test.** For each perturbation above, the
 act that lands it states what removal makes it fail and confirms it does.
 
-**A row marked owed has no instrument and is not counted as enforced.** Twelve
+**A row marked owed has no instrument and is not counted as enforced.** Two
 stand so marked as of 2026-10-01: the batch's order, whose table section 2.11
-describes and no migration builds, and the eleven rows of the link, whose
-section 8 is written before its code and whose act, the link and the register,
-lands each with the perturbation its row names. The marking is the point: a row
+describes and no migration builds, and the trace file's replay from the
+acknowledged position, which is admin-con's half of section 7.2 and lands with
+its act; the server's half, the position held per process and answered in the
+hello, stands in `src/link/tests.rs`. The other ten rows of the link landed with
+the act that built the listener and the register, each shown to fail with its
+guard removed, and the four clauses of the tuple row that are admin-con's
+ordering are marked owed inside the row. The marking is the point: a row
 reading like the enforced ones beside it would tell a reader the claim is held,
 which is the same failure as a watch that passes either way and is why this
 table says which it is.

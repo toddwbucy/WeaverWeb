@@ -69,9 +69,11 @@ struct LifecyclePage {
 /// (PRD section 3.6). A down or unresponsive link renders as unreachable
 /// rather than unloaded - the absence of the observable is not the
 /// observable's absence.
-async fn agent_rows(state: &AppState) -> Vec<AgentRow> {
-    let roster = state.link.roster().await;
-    let status = state.link.status().await;
+async fn agent_rows(_state: &AppState) -> Vec<AgentRow> {
+    // No roster and no status: the legacy link left on 2026-10-01, per
+    // `web/mod.rs`'s note on `nav_agents`.
+    let roster: Vec<String> = Vec::new();
+    let status: Option<std::collections::HashMap<String, bool>> = None;
     roster
         .into_iter()
         .map(|name| match status.as_ref().and_then(|m| m.get(&name)) {
@@ -120,18 +122,15 @@ async fn run_verb(
         Ok(p) => p,
         Err(refusal) => return Ok(refusal),
     };
-    if !state.link.has_agent(&agent).await {
+    if !legacy_has_agent(&agent) {
         return Ok((StatusCode::NOT_FOUND, "no such agent").into_response());
     }
     if !lifecycle::VERBS.contains(&verb.as_str()) {
         return Ok((StatusCode::NOT_FOUND, "no such verb").into_response());
     }
-    // The verb crosses the link; its outcome renders verbatim either
-    // way, and a link failure is reported as itself, never swallowed.
-    let outcome = match state.link.verb(&agent, &verb).await {
-        Ok(o) => serde_json::to_string_pretty(&o)?,
-        Err(e) => format!("verb not run: {e}"),
-    };
+    // Unreachable while the roster is empty; kept so the outcome's
+    // verbatim rendering stays where act 5 finds it.
+    let outcome = format!("verb not run: the legacy surface reaches no agent ({verb})");
     let page = LifecyclePage {
         nav_agents: nav_agents(&state).await,
         who: me.name,
@@ -164,17 +163,14 @@ async fn agent_config(
         Ok(p) => p,
         Err(refusal) => return Ok(refusal),
     };
-    if !state.link.has_agent(&agent).await {
+    if !legacy_has_agent(&agent) {
         return Ok((StatusCode::NOT_FOUND, "no such agent").into_response());
     }
-    // The declaration lives on the agents' box; the connector reads
-    // it (Spec section 8) and a read failure arrives as its own text.
-    let (path, content) = state.link.declaration(&agent).await.unwrap_or_else(|| {
-        (
-            String::new(),
-            "the link to the agents' box is down or unresponsive".into(),
-        )
-    });
+    // Unreachable while the roster is empty, per `agent_rows`.
+    let (path, content) = (
+        String::new(),
+        "the legacy surface reaches no agent's box".to_string(),
+    );
     let page = AgentConfigPage {
         nav_agents: nav_agents(&state).await,
         who: me.name,
@@ -436,4 +432,9 @@ async fn trace_stream(
     Ok(Sse::new(stream)
         .keep_alive(KeepAlive::default())
         .into_response())
+}
+
+/// The legacy roster is empty since 2026-10-01, per `web/mod.rs`.
+fn legacy_has_agent(_agent: &str) -> bool {
+    false
 }

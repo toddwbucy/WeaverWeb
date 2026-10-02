@@ -13,7 +13,6 @@ pub mod admin;
 
 use crate::config::ServerConfig;
 use crate::traceview::TraceViews;
-use crate::wire::Link;
 use axum::Router;
 use axum::extract::Path;
 use axum::http::{HeaderMap, StatusCode, header};
@@ -26,7 +25,6 @@ use std::sync::Arc;
 pub struct AppState {
     pub cfg: Arc<ServerConfig>,
     pub traces: TraceViews,
-    pub link: Link,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -63,12 +61,14 @@ pub type AppResult<T> = Result<T, AppError>;
 
 // ---------- shared view helpers ----------
 
-/// The agents the surfaces name: the link's latest roster, which
-/// survives a link drop so a known agent stays named rather than
-/// vanishing. Spec section 8 charters the link and names no roster, so
-/// the survival rule is this module's.
-pub async fn nav_agents(state: &AppState) -> Vec<String> {
-    state.link.roster().await
+/// The agents the legacy surfaces name. **Empty since 2026-10-01**: the
+/// seed's dialed link that announced a roster left with the act that built
+/// the register of agents (Spec 2.12), these routes answer 503 until act 5
+/// removes them, and the Agents surface that renders the register is a
+/// later act's. Leaving the roster empty was smaller than wiring a surface
+/// that is leaving to a register it will never read.
+pub async fn nav_agents(_state: &AppState) -> Vec<String> {
+    Vec::new()
 }
 
 pub fn sse_cursor(headers: &HeaderMap, params: &HashMap<String, String>) -> i64 {

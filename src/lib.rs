@@ -1,17 +1,17 @@
-//! weaver-web: the WeaverTools suite's frontend, two binaries in one
-//! crate (Spec section 1). The server (`weaver-web`) presents HTTP
-//! and holds everything that is not box-bound. The connector
-//! (`weaver-web-connector`) runs on the agents' box, holds the
-//! box-bound reaches, and dials the server (Spec section 8, which
-//! names the dial where the charter names only the placement).
+//! weaver-web: the WeaverTools suite's frontend (Spec section 1). The
+//! server (`weaver-web`) presents HTTP, holds the store and the register
+//! of agents, and listens for the two connectors over the link of Spec
+//! section 8. The connectors, gate-con and admin-con, are this crate's
+//! binaries beside the agent and are later acts; `adapters/gate.rs`,
+//! `lifecycle.rs` and the tailer half of `traceview.rs` are their seeds.
 
 pub mod adapters;
 pub mod config;
 pub mod fault;
 pub mod lifecycle;
+pub mod link;
 pub mod registry;
 pub mod store;
 pub mod surfaces;
 pub mod traceview;
 pub mod web;
-pub mod wire;

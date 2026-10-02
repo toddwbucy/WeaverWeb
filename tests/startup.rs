@@ -34,7 +34,25 @@ impl Server {
             link.local_addr().unwrap().to_string().into(),
         );
         values.insert("database".into(), database.into());
+        // The server refuses to start without an authority (Spec 8), so
+        // the acceptance mints one first, under the scratch directory.
+        let authority = directory.join("authority");
+        values.insert(
+            "authority_dir".into(),
+            authority.display().to_string().into(),
+        );
         fs::write(&config, toml::to_string(&values).unwrap()).unwrap();
+        let init = Command::new(env!("CARGO_BIN_EXE_weaver-web"))
+            .arg("--config")
+            .arg(&config)
+            .args(["authority", "init"])
+            .output()
+            .unwrap();
+        assert!(
+            init.status.success(),
+            "authority init failed: {}",
+            String::from_utf8_lossy(&init.stdout)
+        );
         let stdout = File::create(directory.join("stdout")).unwrap();
         let stderr = File::create(directory.join("stderr")).unwrap();
         drop((http, link));

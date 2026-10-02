@@ -157,10 +157,29 @@ impl Running {
     }
 
     fn start_with<I: Invoker>(cfg: AdminConConfig, invoker: Arc<I>, backoff: Backoff) -> Self {
+        Self::launch(cfg, invoker, None, backoff)
+    }
+
+    /// From the installed config at its path, re-read at a capped retry.
+    fn from_file(path: &Path, poll: Duration) -> Self {
+        Self::launch(
+            config(path, poll),
+            Arc::new(NoVerbs),
+            Some(path.to_owned()),
+            FAST,
+        )
+    }
+
+    fn launch<I: Invoker>(
+        cfg: AdminConConfig,
+        invoker: Arc<I>,
+        source: Option<PathBuf>,
+        backoff: Backoff,
+    ) -> Self {
         let (stop, shutdown) = watch::channel(false);
         let (status_tx, status) = watch::channel(LinkStatus::default());
         let task = tokio::spawn(async move {
-            admin_con::run(cfg, invoker, None, backoff, shutdown, &status_tx).await
+            admin_con::run(cfg, invoker, source, backoff, shutdown, &status_tx).await
         });
         Self { stop, status, task }
     }
@@ -198,13 +217,23 @@ async fn installed(
     out: &Path,
     backfill: Option<u64>,
 ) -> (AgentId, PathBuf) {
+    installed_as(lab, "karl", trace, out, backfill).await
+}
+
+async fn installed_as(
+    lab: &Lab,
+    name: &str,
+    trace: &Path,
+    out: &Path,
+    backfill: Option<u64>,
+) -> (AgentId, PathBuf) {
     let r#box = format!("box-{}", uuid::Uuid::new_v4().simple());
     let answer = super::verbs::register(
         &lab.store,
         &lab_config(lab),
         &lab.authority,
         &r#box,
-        "karl",
+        name,
         out,
         Some("lab"),
     )
@@ -1186,5 +1215,128 @@ async fn a_symlink_at_the_trace_path_is_refused_and_marked() {
     std::fs::write(&trace.path, record(1, "turn")).unwrap();
     wait_window(&lab, &id, "the regular file", |e| ns(e) == [1]).await;
     assert_eq!(lab.agent(&id).await.load_state, None);
+    con.stop().await;
+}
+
+/// **A config for another agent re-installed at the path is refused**, as
+/// gate-con refuses it: admin-con's tailer and invoker stay bound to the
+/// agent it started for, so dialing as another would file this trace under
+/// that agent's row. The capped retries refuse it and keep the credential
+/// in hand, and the other agent's window stays empty.
+#[tokio::test]
+async fn a_reinstalled_config_for_another_agent_is_refused() {
+    let Some(lab) = Lab::open().await else { return };
+    let trace = Trace::new();
+    trace.append(1, "turn");
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, &trace.path, out.path(), None).await;
+    let other_trace = Trace::new();
+    let other_out = tempfile::tempdir().unwrap();
+    let (other, other_path) =
+        installed_as(&lab, "kevin", &other_trace.path, other_out.path(), None).await;
+    let mut con = Running::from_file(&path, POLL);
+    con.wait("admitted", |s| s.admitted).await;
+    wait_window(&lab, &id, "the first", |e| ns(e) == [1]).await;
+
+    let row = lab.agent(&id).await;
+    lab.store
+        .revoke_credential(&row, Plane::Admin, Some("lab"))
+        .await
+        .unwrap();
+    con.wait("refused not_live", |s| {
+        s.last_refusal == Some(super::frames::Refusal::NotLive)
+    })
+    .await;
+    let staged = path.with_extension("installing");
+    std::fs::write(&staged, std::fs::read_to_string(&other_path).unwrap()).unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    std::fs::rename(&staged, &path).unwrap();
+    trace.append(2, "load");
+
+    let attempts = con.status().attempts;
+    con.wait("three capped retries", |s| s.attempts >= attempts + 3)
+        .await;
+    let status = con.status();
+    assert!(!status.admitted, "{status:?}");
+    assert_eq!(status.admissions, 1, "{status:?}");
+    assert!(!lab.agent(&other).await.admin.connected);
+    assert!(
+        window(&lab, &other).is_empty(),
+        "this trace filed under another row"
+    );
+    assert_eq!(lab.agent(&other).await.load_state, None);
+    con.stop().await;
+}
+
+/// **A copy and truncate regrown past the position between two polls is
+/// caught by the digest**: the file changed, so the record before the held
+/// offset is checked as a reconnection checks it, found not to match, and
+/// the file is marked and relayed from its start rather than resumed
+/// mid-record.
+#[tokio::test]
+async fn a_truncation_regrown_between_two_polls_is_marked() {
+    let Some(lab) = Lab::open().await else { return };
+    let trace = Trace::new();
+    for n in 1..=3 {
+        trace.append(n, "turn");
+    }
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, &trace.path, out.path(), None).await;
+    let mut con = Running::start(config(&path, Duration::from_secs(2)), Arc::new(NoVerbs));
+    con.wait("admitted", |s| s.admitted).await;
+    wait_window(&lab, &id, "the first three", |e| ns(e) == [1, 2, 3]).await;
+    // A poll has just read this one, so the next is a poll period away.
+    trace.append(4, "turn");
+    wait_window(&lab, &id, "the fourth", |e| ns(e) == [1, 2, 3, 4]).await;
+
+    std::fs::OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(&trace.path)
+        .unwrap();
+    for n in 20..=27 {
+        trace.append(n, "turn");
+    }
+    wait_window(&lab, &id, "the regrown file whole", |e| {
+        ns(e).ends_with(&[20, 21, 22, 23, 24, 25, 26, 27])
+    })
+    .await;
+    let events = window(&lab, &id);
+    let marks = marks(&events);
+    assert!(marks.iter().any(|m| m.contains("truncated")), "{marks:?}");
+    assert_eq!(ns(&events), [1, 2, 3, 4, 20, 21, 22, 23, 24, 25, 26, 27]);
+    con.stop().await;
+}
+
+/// **A rotation just before a verb is drained through the new file too**:
+/// a load written to the replacing file before the ask is emitted ahead of
+/// the answer, so the `show` taken after it is the row's last word.
+#[tokio::test]
+async fn a_rotation_just_before_a_verb_is_drained_ahead_of_its_answer() {
+    let Some(lab) = Lab::open().await else { return };
+    let trace = Trace::new();
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, &trace.path, out.path(), None).await;
+    let invoker = FakeInvoker::new(&["show"], "unloaded");
+    // A slow poll, so the tailer does not see the rotation on its own
+    // before the ask arrives.
+    let mut con = Running::start(config(&path, Duration::from_secs(3)), invoker.clone());
+    con.wait("admitted", |s| s.admitted).await;
+    lab.wait_for(&id, "the admission's show", |a| {
+        a.state_source.as_deref() == Some("show")
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    std::fs::rename(&trace.path, trace.path.with_extension("1")).unwrap();
+    std::fs::write(&trace.path, record(1, "load")).unwrap();
+    verb(&lab.listener, &id, "show").await.unwrap();
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    let row = lab.agent(&id).await;
+    assert_eq!(row.load_state.as_deref(), Some("unloaded"), "{row:?}");
+    assert_eq!(row.state_source.as_deref(), Some("show"));
     con.stop().await;
 }

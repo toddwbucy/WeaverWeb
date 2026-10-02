@@ -362,6 +362,9 @@ struct Tailer {
     /// What was refused at the path and already marked, so a refusal is
     /// marked once and not at every poll.
     refused: Option<&'static str>,
+    /// The held file's length and modification time when it was last
+    /// checked, so the digest is read again only where the file changed.
+    seen: Option<(u64, Option<std::time::SystemTime>)>,
     /// Marks found at the hello, sent at the front of the replay.
     notes: Vec<String>,
 }
@@ -377,6 +380,7 @@ impl Tailer {
             previous: None,
             pending: None,
             refused: None,
+            seen: None,
             notes: Vec::new(),
         }
     }
@@ -401,6 +405,7 @@ impl Tailer {
         self.offset = 0;
         self.digest = String::new();
         self.skip = None;
+        self.seen = None;
     }
 
     fn held_len(&self) -> std::io::Result<u64> {
@@ -487,19 +492,44 @@ impl Tailer {
         })
     }
 
-    /// The held file shrank below the position: marked, and read again
-    /// from its start.
+    /// The held file was truncated below the position: marked, and read
+    /// again from its start. **Wherever the file's length or modification
+    /// time changed since the last look, the record before the position is
+    /// checked by its digest, as a reconnection checks it**, so a copy and
+    /// truncate that regrows past the position between two polls is caught
+    /// though its length hides it. While a record past the bound is being
+    /// skipped the position is inside it and the length alone is checked.
     fn truncated(&mut self) -> std::io::Result<Option<Item>> {
-        if self.held.is_none() || self.held_len()? >= self.offset {
+        let Some(held) = &self.held else {
+            return Ok(None);
+        };
+        let meta = held.file.metadata()?;
+        let seen = (meta.len(), meta.modified().ok());
+        if self.seen == Some(seen) {
+            return Ok(None);
+        }
+        self.seen = Some(seen);
+        let shrunk = meta.len() < self.offset;
+        let rewritten = !shrunk
+            && self.skip.is_none()
+            && digest_before(&held.file, self.offset)?.as_deref() != Some(self.digest.as_str());
+        if !shrunk && !rewritten {
             return Ok(None);
         }
         let at = self.offset;
         self.offset = 0;
         self.digest = String::new();
         self.skip = None;
+        let reason = if shrunk {
+            format!("the file was truncated below offset {at}; relayed from its start")
+        } else {
+            format!(
+                "the file was truncated or rewritten below offset {at}: the record before it no longer matches its digest; relayed from its start"
+            )
+        };
         Ok(Some(Item::Mark {
             position: self.position(),
-            reason: format!("the file was truncated below offset {at}; relayed from its start"),
+            reason,
         }))
     }
 
@@ -1271,18 +1301,28 @@ async fn drain(conn: &Connection, tailer: &mut Tailer, seq: &mut u64) -> Result<
     // after the answer; it was written before the snapshot, so the
     // snapshot already reflects it, and applying it after the answer
     // leaves the row at the same state.
-    let generation = tailer.generation().to_owned();
-    let target = match &tailer.held {
-        Some(held) => {
-            tail_of(&held.file)
-                .map_err(|e| Ended::Lost(format!("reading the trace file: {e:#}")))?
-                .0
-        }
-        None => 0,
+    //
+    // **A switch inside the drain records the new file's tail and drains
+    // to it too**: records already in the replacing file were written
+    // before the invocation as surely as the old file's tail was, so they
+    // go out ahead of the answer. Each switch needs a replacement the
+    // agent made, so the drain stays bounded by what was written before.
+    let tail = |tailer: &Tailer| match &tailer.held {
+        Some(held) => tail_of(&held.file)
+            .map(|(tail, _)| tail)
+            .map_err(|e| Ended::Lost(format!("reading the trace file: {e:#}"))),
+        None => Ok(0),
     };
+    let mut generation = tailer.generation().to_owned();
+    let mut target = tail(tailer)?;
     loop {
         let moved = live_step(conn, tailer, seq).await?;
-        if !moved || tailer.generation() != generation || tailer.offset >= target {
+        if tailer.generation() != generation {
+            generation = tailer.generation().to_owned();
+            target = tail(tailer)?;
+            continue;
+        }
+        if !moved || tailer.offset >= target {
             return Ok(());
         }
     }

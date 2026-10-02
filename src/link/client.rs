@@ -669,18 +669,37 @@ pub async fn run<S, F, H, HF>(
             && let Some(fresh) = reload()
             && fresh != *link.config()
         {
-            match Link::new(fresh) {
-                Ok(fresh) => {
-                    tracing::info!(
-                        "{} ({}): the config at its path changed; dialing with its credential",
-                        fresh.config().agent,
-                        fresh.config().plane
-                    );
-                    link = fresh;
+            // **Only the link's members change at a re-install**: the
+            // agent and the plane are what the rest of the connector is
+            // bound to (gate-con's socket, admin-con's tailer and invoker),
+            // so a config for another agent or plane at the path would
+            // file one agent's traffic under another's row. It is refused
+            // and the credential in hand kept. The bound: the config names
+            // an agent by name, as its certificate does, so a same-named
+            // agent's config from another box is not told apart here.
+            let held = link.config();
+            if fresh.agent != held.agent || fresh.plane != held.plane {
+                tracing::error!(
+                    "{} ({}): the config at its path is for {} ({}), not the agent and plane this connector runs for; refused, keeping the credential in hand. Restart the connector to serve another agent",
+                    held.agent,
+                    held.plane,
+                    fresh.agent,
+                    fresh.plane
+                );
+            } else {
+                match Link::new(fresh) {
+                    Ok(fresh) => {
+                        tracing::info!(
+                            "{} ({}): the config at its path changed; dialing with its credential",
+                            fresh.config().agent,
+                            fresh.config().plane
+                        );
+                        link = fresh;
+                    }
+                    Err(e) => tracing::error!(
+                        "the config at its path changed but its credential does not build ({e:#}); keeping the one in hand"
+                    ),
                 }
-                Err(e) => tracing::error!(
-                    "the config at its path changed but its credential does not build ({e:#}); keeping the one in hand"
-                ),
             }
         }
         let agent = link.config().agent.clone();

@@ -941,6 +941,51 @@ async fn a_reinstalled_config_is_picked_up_at_the_next_capped_retry() {
     con.stop().await;
 }
 
+/// **A config for another agent re-installed at the path is refused**:
+/// only the link's members change at a re-install. gate-con's credential
+/// is revoked and it retries at the cap; another agent's gate config is
+/// written over its file; the capped retries read it, refuse it, and keep
+/// dialing with the credential in hand, so the other agent's row is never
+/// connected through a gate-con bound to this one's socket.
+#[tokio::test]
+async fn a_reinstalled_config_for_another_agent_is_refused() {
+    let Some(lab) = Lab::open().await else { return };
+    let gate = FakeGate::start();
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, "karl", &gate.path, out.path(), None).await;
+    let other_out = tempfile::tempdir().unwrap();
+    let (other, other_path) = installed(&lab, "kevin", &gate.path, other_out.path(), None).await;
+    let mut con = Running::from_file(&path, FAST);
+    con.wait("admitted", |s| s.admitted).await;
+
+    let row = lab.agent(&id).await;
+    lab.store
+        .revoke_credential(&row, Plane::Gate, Some("lab"))
+        .await
+        .unwrap();
+    con.wait("refused not_live", |s| {
+        s.last_refusal == Some(Refusal::NotLive)
+    })
+    .await;
+    let staged = path.with_extension("installing");
+    write_mode(
+        &staged,
+        &std::fs::read_to_string(&other_path).unwrap(),
+        0o600,
+    );
+    std::fs::rename(&staged, &path).unwrap();
+
+    let attempts = con.status().attempts;
+    con.wait("three capped retries", |s| s.attempts >= attempts + 3)
+        .await;
+    let status = con.status();
+    assert!(!status.admitted, "{status:?}");
+    assert_eq!(status.last_refusal, Some(Refusal::NotLive), "{status:?}");
+    assert_eq!(status.admissions, 1, "{status:?}");
+    assert!(!lab.agent(&other).await.gate.connected);
+    con.stop().await;
+}
+
 /// **An ask past the waiting bound is answered `busy` at once**, gate-con's
 /// own back-pressure: one turn in flight and two waiting, so of five held
 /// asks three answer and two are refused `busy` without reaching the gate.

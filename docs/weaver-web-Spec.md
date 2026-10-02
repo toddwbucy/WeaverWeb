@@ -2895,7 +2895,14 @@ config from a registration or a rotation. **The connector re-reads its
 config before each retry at the cap**, under the same trust rule as at
 start, so a config re-installed at its path is dialed with at the next
 attempt and no restart is needed; without the re-read the guidance could
-never take effect. Every other refusal retries on the normal backoff,
+never take effect. **Only the link's members change at a re-install**: a
+re-read config naming another agent or plane than the one the connector
+runs for is refused and logged, and the credential in hand kept, since the
+rest of the connector (gate-con's socket, admin-con's trace file and
+invoker) stays bound to the agent it started for, and dialing as another
+would file one agent's traffic under another's row. The config names its
+agent by name, as the certificate does, so a same-named agent's config from
+another box is not told apart by this check. Every other refusal retries on the normal backoff,
 `malformed` and `wrong_plane` logged as the connector's own defect. **It
 does not exit**, because a supervisor would restart it into the same loop;
 it ends only on its own shutdown, which lets exchanges in flight finish

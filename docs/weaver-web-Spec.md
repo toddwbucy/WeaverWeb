@@ -2532,15 +2532,25 @@ it. Every event read after the receipt is behind the
 answer, and nothing is read in between, so the snapshot the verb took somewhere inside that
 span is newer than everything ahead of it and older than everything
 behind. This holds for every verb answer and not only the admission-time
-`show`. **An ask that arrives during the replay is served at once, between the
-replay's frames, so it waits behind at most one, with no drain**: the drain orders an answer against live
-events, and before `caught_up` nothing live has been read, so every event
-sent then is replayed and writes no member of the row whichever side of
-the answer it falls, and a `show` held behind a long backfill would miss
-the admission's deadline. The connector's socket holds a bounded number of
+`show`. **The admission's `show` alone is served during the replay**, at once
+and between the replay's frames, so it waits behind at most one, with no
+drain, since held behind a long backfill it would miss the admission's
+deadline. Its snapshot is taken after the boundary, and every live event
+written before its invocation is relayed after its answer, in order: the
+row may briefly read a state older than the snapshot, but it converges to
+the snapshot's state, because the last of those events is what the
+snapshot saw. A transient regression in a re-confirmation is acceptable,
+and an inversion around a person's load or stop is not, so **every other
+ask waits for `caught_up` and then takes the drain**: before `caught_up`
+nothing live has been read, but a record appended after the hello is live
+and merely unread, and an ordinary verb answered during the replay could
+overtake it. admin-con knows the admission's `show` as the first ask on a
+connection whose ceiling grants `show`, since the listener lets no other
+ask onto the connection ahead of it. The connector's socket holds a bounded number of
 bytes unsent, so on a slow link the answer waits behind no send buffer
 grown to megabytes either. **admin-con runs one verb at a time per connection**, each from
-its pre-invocation drain through the emission of its answer, and a second
+its pre-invocation drain, where it takes one, through the emission of its
+answer, and a second
 ask that arrives while one is in flight waits its turn in arrival order,
 so invocation spans never overlap and the ordering above holds for every
 answer; two verbs run at once would let an older answer be emitted after a

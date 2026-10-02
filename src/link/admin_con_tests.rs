@@ -72,6 +72,9 @@ impl Trace {
 #[derive(Default)]
 struct Step {
     delay: Duration,
+    /// Written to the trace file before the snapshot, as admin would have
+    /// written it just ahead of the invocation.
+    first_append: Option<(PathBuf, String)>,
     /// Written to the trace file after the snapshot, as admin would while
     /// the verb ran.
     then_append: Option<(PathBuf, String)>,
@@ -118,6 +121,11 @@ impl Invoker for FakeInvoker {
     async fn run(&self, agent: &str, verb: &str, _principal: &Principal) -> VerbOutcome {
         self.ran.lock().unwrap().push(verb.to_owned());
         let step = self.steps.lock().unwrap().pop_front().unwrap_or_default();
+        if let Some((path, line)) = step.first_append {
+            let mut f = std::fs::OpenOptions::new().append(true).open(path).unwrap();
+            f.write_all(line.as_bytes()).unwrap();
+            f.sync_all().unwrap();
+        }
         let snapshot = self.state.lock().unwrap().clone();
         if let Some((path, line)) = step.then_append {
             let mut f = std::fs::OpenOptions::new().append(true).open(path).unwrap();
@@ -715,6 +723,7 @@ async fn an_answer_takes_its_place_at_the_invocation() {
         delay: Duration::from_millis(500),
         then_append: Some((trace.path.clone(), record(1, "unload"))),
         then_state: Some("unloaded".into()),
+        ..Step::default()
     });
     verb(&lab.listener, &id, "show").await.unwrap();
     tokio::time::sleep(Duration::from_millis(600)).await;
@@ -1660,5 +1669,100 @@ async fn an_ask_during_the_replay_waits_behind_one_frame_not_a_step() {
     assert_eq!(invoker.ran(), ["show"]);
     drop(reader);
     drop(write);
+    con.stop().await;
+}
+
+/// **An ordinary verb asked during the replay waits for `caught_up` and the
+/// drain**: only the admission's `show` is served during the replay. A
+/// fake server asks the admission's `show` and then an ordinary `show`
+/// right behind the hello's answer, and a record is appended after the
+/// hello, live and unread: the admission's answer comes before `caught_up`,
+/// and the ordinary answer after `caught_up` and after that record.
+#[tokio::test]
+async fn an_ordinary_verb_asked_during_the_replay_waits_for_caught_up_and_the_drain() {
+    let server = FakeServer::start().await;
+    let trace = Trace::new();
+    let mut body = String::new();
+    let mut n = 0u64;
+    while body.len() < 2 * 1024 * 1024 {
+        n += 1;
+        body.push_str(&format!("{{\"wall_ms\":1,\"payload\":{{\"n\":{n}}}}}\n"));
+    }
+    trace.append_raw(body.as_bytes());
+    let invoker = FakeInvoker::new(&["show"], "idle");
+    let cfg = AdminConConfig {
+        link: server.link(Plane::Admin),
+        trace_file: trace.path.clone(),
+        backfill_bytes: 4 * 1024 * 1024,
+        poll: Duration::from_secs(30),
+        verb_bound: admin_con::VERB_BOUND,
+        grants_bound: Duration::from_secs(super::client::HELLO_SECS),
+    };
+    let con = Running::start(cfg, invoker.clone());
+    let (mut reader, mut write) = server.admit(15).await;
+    // Live and unread: after the hello, beyond the boundary, and the poll
+    // too slow to read it on its own.
+    trace.append(999_999, "unload");
+    let mut asks = Vec::new();
+    for id in [1u64, 2] {
+        asks.extend(
+            serde_json::to_vec(&ToClient::Verb {
+                id,
+                verb: "show".into(),
+                principal: Principal::Server,
+            })
+            .unwrap(),
+        );
+        asks.push(b'\n');
+    }
+    write.write_all(&asks).await.unwrap();
+
+    let mut order = Vec::new();
+    while !order.contains(&"ordinary") {
+        let line = match tokio::time::timeout(SOON * 4, reader.next())
+            .await
+            .expect("a frame")
+        {
+            Line::Frame(line) => line,
+            other => panic!("the connection ended: {other:?}"),
+        };
+        match serde_json::from_str::<FromClient>(&line).unwrap() {
+            FromClient::CaughtUp => order.push("caught_up"),
+            FromClient::Verb { id: 1, .. } => order.push("admission"),
+            FromClient::Verb { id: 2, .. } => order.push("ordinary"),
+            FromClient::Event { event, .. } if event.raw["payload"]["n"] == 999_999 => {
+                order.push("live")
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(order, ["admission", "caught_up", "live", "ordinary"]);
+    drop(reader);
+    drop(write);
+    con.stop().await;
+}
+
+/// **The admission's `show` converges on its snapshot**: a load written
+/// after the hello and before the `show`'s invocation is live, relayed
+/// after the answer, and the row ends on the snapshot's state.
+#[tokio::test]
+async fn the_admissions_show_converges_on_its_snapshot() {
+    let Some(lab) = Lab::open().await else { return };
+    let trace = Trace::new();
+    trace.append(1, "unload");
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, &trace.path, out.path(), None).await;
+    let invoker = FakeInvoker::new(&["show"], "idle");
+    invoker.script(Step {
+        first_append: Some((trace.path.clone(), record(2, "load"))),
+        ..Step::default()
+    });
+    let mut con = Running::start(config(&path, POLL), invoker.clone());
+    con.wait("admitted", |s| s.admitted).await;
+    wait_window(&lab, &id, "the load, live", |e| ns(e) == [1, 2]).await;
+    let row = lab.agent(&id).await;
+    assert_eq!(row.load_state.as_deref(), Some("idle"), "{row:?}");
+    assert_eq!(row.state_source.as_deref(), Some("event"), "{row:?}");
+    assert_eq!(invoker.ran(), ["show"]);
     con.stop().await;
 }

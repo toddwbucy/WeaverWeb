@@ -35,7 +35,7 @@ use crate::link::frames::{
     FromClient, Line, LineReader, Plane, Position, Principal, Refusal, ToClient, TurnFault,
     VerbFault, VerbOutcome,
 };
-use crate::link::register::{CredentialState, Observation, REVOCATION_CHANNEL};
+use crate::link::register::{CredentialState, Observation, REVOCATION_CHANNEL, TupleWrite};
 use crate::store::{AgentId, Store};
 use crate::traceview::{TraceEvent, TraceViews};
 use chrono::{DateTime, Utc};
@@ -109,8 +109,12 @@ struct LiveConnection {
 
 /// Why an ask did not reach a connection.
 enum AskError {
-    /// No ready connection on the plane, or it dropped mid-ask.
+    /// No ready connection on the plane, or the ask could not be enqueued
+    /// on it: nothing left the server.
     NotConnected,
+    /// The ask was enqueued on the connection, and the connection ended
+    /// before an answer came back.
+    Unanswered,
     /// The verb is outside the connection's ceiling: refused on the server
     /// before any frame left it (Spec 8).
     OutsideCeiling(Vec<String>),
@@ -235,8 +239,17 @@ pub struct Listener {
 pub enum TurnError {
     /// The gate's own typed error, relayed.
     Gate(TurnFault),
-    /// No gate-con is connected for this agent, or it dropped mid-ask.
+    /// No gate-con is connected for this agent: the turn never left the
+    /// server.
     NotConnected,
+    /// **The turn was sent and never answered: its outcome is unknown
+    /// here.** The connection ended with the turn in flight, at gate-con's
+    /// shutdown or a link loss. A turn whose request crossed to the agent
+    /// runs to its end whatever becomes of its caller
+    /// (`toddwbucy/WeaverAgent#59`), so it may have been answered, and the
+    /// agent's trace, relayed by admin-con, is where its outcome is read.
+    /// It is never "not connected", which would say the turn did not run.
+    Unanswered,
 }
 
 impl std::fmt::Display for TurnError {
@@ -244,6 +257,10 @@ impl std::fmt::Display for TurnError {
         match self {
             TurnError::Gate(e) => write!(f, "{}", e.message),
             TurnError::NotConnected => write!(f, "no gate-con is connected for this agent"),
+            TurnError::Unanswered => write!(
+                f,
+                "the turn was sent and the connection ended before its close came back: its outcome is unknown here, and the agent's trace holds it"
+            ),
         }
     }
 }
@@ -574,8 +591,8 @@ impl Listener {
 
     /// One turn across the link (Spec 7.1): routed to the agent's gate-con.
     /// **No deadline**: the gate serializes turns and a queued turn
-    /// legitimately waits, the seed's own reasoning; a dropped connector
-    /// fails the ask.
+    /// legitimately waits, the seed's own reasoning; a connector that drops
+    /// with the turn in flight answers it `Unanswered`, its outcome unknown.
     pub async fn turn(&self, agent: &AgentId, text: &str) -> Result<GateClose, TurnError> {
         let text = text.to_owned();
         match self
@@ -585,6 +602,7 @@ impl Listener {
         {
             Ok(FromClient::Turn { close: Some(c), .. }) => Ok(c),
             Ok(FromClient::Turn { error: Some(e), .. }) => Err(TurnError::Gate(e)),
+            Err(AskError::Unanswered) => Err(TurnError::Unanswered),
             _ => Err(TurnError::NotConnected),
         }
     }
@@ -692,7 +710,9 @@ impl Inner {
             }
         }
         let _unask = Unask(pending.clone(), id);
-        reply_rx.await.map_err(|_| AskError::NotConnected)
+        // Enqueued: from here an ended connection leaves the ask's outcome
+        // unknown rather than never sent.
+        reply_rx.await.map_err(|_| AskError::Unanswered)
     }
 
     /// The revoking act's close (Spec 8): a notification names a
@@ -1799,7 +1819,7 @@ impl Inner {
                 .get("state")
                 .and_then(|s| s.as_str())
                 .map(str::to_owned),
-            tuple: summary.get("load").cloned().filter(|l| !l.is_null()),
+            tuple: TupleWrite::Write(summary.get("load").cloned().filter(|l| !l.is_null())),
             at: Utc::now(),
             source: "show",
         };
@@ -1880,13 +1900,31 @@ impl Inner {
             // declaration's digest among it.
             Some("load") if !behind => Some(Observation {
                 load_state: Some("idle".into()),
-                tuple: payload,
+                tuple: TupleWrite::Write(payload),
                 at,
                 source: "event",
             }),
             Some("unload") if !behind => Some(Observation {
                 load_state: Some("unloaded".into()),
-                tuple: None,
+                tuple: TupleWrite::Write(None),
+                at,
+                source: "event",
+            }),
+            // **A turn's start and close refresh the load state** (Spec
+            // 2.12): an unclean stop writes no `unload`, so a state from an
+            // event can outlive its process, and these two keep it no older
+            // than the agent's last turn. Same rules as a load: never from
+            // behind the boundary, the event's own date, source `event`. A
+            // turn says nothing of the tuple, so the row keeps its own.
+            Some("turn.started") if !behind => Some(Observation {
+                load_state: Some("active".into()),
+                tuple: TupleWrite::Keep,
+                at,
+                source: "event",
+            }),
+            Some("turn.closed") if !behind => Some(Observation {
+                load_state: Some("idle".into()),
+                tuple: TupleWrite::Keep,
                 at,
                 source: "event",
             }),

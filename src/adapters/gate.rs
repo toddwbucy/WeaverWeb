@@ -91,7 +91,11 @@ pub fn request_line(text: &str) -> Result<String, GateError> {
 /// a live agent. **`finish` is the contract's section 3 member**, `"length"`
 /// on an answered close whose generation was cut at the turn's token
 /// limit and absent otherwise, so a surface renders a truncated answer as
-/// truncated.
+/// truncated. **`reason` is what a `stopped` or `refused` close carries in
+/// place of `text`** (`toddwbucy/WeaverAgent#59`, item 3), the agent's own
+/// account of why no answer came. A `stopped` close may name no turn: the
+/// agent stops that way when its working structure holds a hole, and it is
+/// the agent's stop, not this crate's defect.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GateClose {
     pub kind: String,
@@ -100,6 +104,8 @@ pub struct GateClose {
     pub text: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub finish: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
     pub raw: serde_json::Value,
 }
 
@@ -113,21 +119,6 @@ impl GateAdapter {
         Self {
             socket: socket.to_owned(),
         }
-    }
-
-    /// The load-state observable: the socket path's existence, read for
-    /// the Agents surface of PRD section 3.6.
-    ///
-    /// **This read is the inference the charter retired.** The charter is
-    /// `weaver-web-PRD`, whose own first line names it so, and its section
-    /// 8 records the observation exchange landed 2026-09-04 at issue #440:
-    /// load state is answered by the harness's own word rather than
-    /// inferred from a socket's existence, and the archived charter's
-    /// sentence naming this an inference is retired by that act. The
-    /// replacement is `observe`. This code has not followed and moves when
-    /// the lifecycle surface is rewritten, per the register.
-    pub fn socket_exists(&self) -> bool {
-        self.socket.exists()
     }
 
     /// One turn: dial, write one line, read one line, drop.
@@ -196,6 +187,7 @@ impl GateAdapter {
             turn: get_str("turn"),
             text: get_str("text"),
             finish: get_str("finish"),
+            reason: get_str("reason"),
             raw,
         })
     }

@@ -99,6 +99,15 @@ impl FakeGate {
                             l.push(b'\n');
                             Some(l)
                         }
+                        "stopped" => {
+                            let mut l = serde_json::to_vec(&json!({
+                                "kind": "stopped",
+                                "reason": "the working structure holds a hole"
+                            }))
+                            .unwrap();
+                            l.push(b'\n');
+                            Some(l)
+                        }
                         "malformed" => Some(b"not json\n".to_vec()),
                         "nonutf8" => Some(b"\xff\xfe{}\n".to_vec()),
                         "cut" => Some(
@@ -268,7 +277,8 @@ fn fault_kind(result: Result<GateClose, TurnError>) -> String {
 /// **A turn crosses the link through gate-con and the close comes back
 /// intact, and each gate failure comes back as its typed fault.** The
 /// answered close keeps its members and the whole line as `raw`; a cut one
-/// carries `finish`; a malformed close, a hang-up, a close past the buffer
+/// carries `finish`; the agent's stop naming no turn carries its `reason`;
+/// a malformed close, a hang-up, a close past the buffer
 /// cap, a request past the gate's bound and an absent socket each answer
 /// their kind. Nothing of the interior is reported: the row's tuple and
 /// load state stay empty.
@@ -295,6 +305,17 @@ async fn gate_con_relays_a_turn_and_each_gate_failure_as_its_typed_fault() {
     let cut = turn(&lab.listener, &id, "length").await.unwrap();
     assert_eq!(cut.finish.as_deref(), Some("length"));
     assert_eq!(cut.turn.as_deref(), Some("turn-2"));
+
+    // The agent's own stop, naming no turn, carries its `reason` across the
+    // link in place of `text` (WeaverAgent#59).
+    let stopped = turn(&lab.listener, &id, "stopped").await.unwrap();
+    assert_eq!(stopped.kind, "stopped");
+    assert_eq!(stopped.turn, None);
+    assert_eq!(stopped.text, None);
+    assert_eq!(
+        stopped.reason.as_deref(),
+        Some("the working structure holds a hole")
+    );
 
     for (text, kind) in [
         ("malformed", "bad_close"),
@@ -405,13 +426,11 @@ async fn gate_con_reconnects_after_the_listener_restarts() {
 
     // The server goes with the turn in flight.
     // Stopped rather than crashed: its connections are torn down, so the
-    // ask in flight fails rather than waiting on a process that is gone.
+    // ask in flight fails rather than waiting on a process that is gone,
+    // and it fails as sent and unanswered, its outcome unknown.
     let address = lab.listener.address();
     lab.listener.stop().await;
-    assert!(matches!(
-        pending.await.unwrap(),
-        Err(TurnError::NotConnected)
-    ));
+    assert!(matches!(pending.await.unwrap(), Err(TurnError::Unanswered)));
     let until = tokio::time::Instant::now() + SOON;
     while gate.seen.abandoned.load(Ordering::SeqCst) == 0 {
         assert!(
@@ -543,6 +562,51 @@ async fn shutdown_lets_a_turn_in_flight_finish() {
         .unwrap();
     assert_eq!(gate.seen.abandoned.load(Ordering::SeqCst), 0);
     lab.wait_for(&id, "gate down", |a| !a.gate.connected).await;
+}
+
+/// **A turn abandoned at gate-con's shutdown has an unknown outcome**: a
+/// turn held past the grace is aborted when gate-con stops, and its caller
+/// is answered `Unanswered`, never `NotConnected`, since its request
+/// crossed to the gate and the agent runs it to its end.
+#[tokio::test]
+async fn a_turn_abandoned_at_shutdown_is_answered_as_unknown() {
+    let Some(lab) = Lab::open().await else { return };
+    let gate = FakeGate::start();
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, "karl", &gate.path, out.path(), None).await;
+    let mut con = Running::from_file(&path, FAST);
+    con.wait("admitted", |s| s.admitted).await;
+    first_turn(&lab, &id, "answer").await.unwrap();
+
+    let listener = lab.listener.clone();
+    let asked = id.clone();
+    let held = format!(
+        "hold:{}",
+        (gate_con::SHUTDOWN_GRACE + Duration::from_secs(5)).as_millis()
+    );
+    let pending = tokio::spawn(async move { turn(&listener, &asked, &held).await });
+    let until = tokio::time::Instant::now() + SOON;
+    while gate.now() == 0 {
+        assert!(
+            tokio::time::Instant::now() < until,
+            "the turn reached the gate"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let _ = con.stop.send(true);
+    let answered = tokio::time::timeout(SOON * 2, pending)
+        .await
+        .expect("the caller is answered after the grace")
+        .unwrap();
+    assert!(
+        matches!(answered, Err(TurnError::Unanswered)),
+        "{answered:?}"
+    );
+    tokio::time::timeout(SOON, con.task)
+        .await
+        .expect("gate-con returns after the grace")
+        .unwrap()
+        .unwrap();
 }
 
 /// A fake server: the authority's TLS, one connection, the hello read and

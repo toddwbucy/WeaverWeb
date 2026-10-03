@@ -78,11 +78,16 @@ pub trait Invoker: Send + Sync + 'static {
     fn grants(&self) -> impl Future<Output = anyhow::Result<Vec<String>>> + Send;
     /// Run one verb on this agent for a principal, answering admin's object.
     ///
-    /// **An implementation must be cancel-safe**: admin-con drops the
-    /// future at `VERB_BOUND` and at the end of the shutdown grace, so
-    /// whatever it starts (a child process, a held socket) must end with
-    /// the drop (a child spawned with `kill_on_drop`, for one) and leave
-    /// nothing running that the next invocation could overlap.
+    /// **A dropped invocation is not safe on today's admin**
+    /// (`toddwbucy/WeaverAgent#60`): an admin ended between starting the
+    /// worker's unit and sending its enter strands the worker, and no verb
+    /// recovers it. So the real implementation must not end a verb it has
+    /// started, by killing a child or closing what it holds, until
+    /// WeaverAgent #50 rules what a dropped invocation means, and it
+    /// follows that ruling. admin-con drops this future at `VERB_BOUND`
+    /// and at the end of the shutdown grace; that dropping is held for
+    /// review against the same ruling, and nothing here assumes a drop
+    /// leaves the box clean. `NoVerbs` runs nothing and is unaffected.
     fn run(
         &self,
         agent: &str,

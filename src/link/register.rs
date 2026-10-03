@@ -166,15 +166,26 @@ impl AuthorityLock {
     }
 }
 
-/// What the link observed and lands on the row: the load state as admin's
-/// word and the tuple as admin reported it, with admin's date.
+/// What the link observed and lands on the row (Spec 2.12): the load state
+/// and the tuple from the agent's side, a `show` answer (admin's word) or a
+/// trace event (the agent's own record), with that source's date.
 #[derive(Debug, Clone)]
 pub struct Observation {
     pub load_state: Option<String>,
-    pub tuple: Option<serde_json::Value>,
+    pub tuple: TupleWrite,
     pub at: DateTime<Utc>,
     /// `show` or `event` (Spec 2.12): which source this observation is.
     pub source: &'static str,
+}
+
+/// What an observation does to the row's tuple. **A turn's start or close
+/// says nothing of the tuple**, so it keeps the one the row holds, with
+/// that one's date; a `load`, an `unload` or a `show` answer writes it,
+/// `None` where the source names none.
+#[derive(Debug, Clone)]
+pub enum TupleWrite {
+    Write(Option<serde_json::Value>),
+    Keep,
 }
 
 const COLUMNS: &str = "agent_id, name, box, author, version, registered_at, \
@@ -846,7 +857,10 @@ impl Store {
         let affected = sqlx::query(
             "UPDATE agent SET \
                load_state = $2, load_state_at = $3, load_epoch = $4, load_arrival = $5, \
-               tuple = $6, tuple_at = $3, tuple_epoch = $4, tuple_arrival = $5, \
+               tuple = CASE WHEN $8 THEN tuple ELSE $6 END, \
+               tuple_at = CASE WHEN $8 THEN tuple_at ELSE $3 END, \
+               tuple_epoch = CASE WHEN $8 THEN tuple_epoch ELSE $4 END, \
+               tuple_arrival = CASE WHEN $8 THEN tuple_arrival ELSE $5 END, \
                state_source = $7 \
              WHERE agent_id = $1 \
                AND (load_epoch IS NULL OR (load_epoch, load_arrival) < ($4, $5)) \
@@ -857,8 +871,12 @@ impl Store {
         .bind(observation.at)
         .bind(epoch)
         .bind(arrival)
-        .bind(&observation.tuple)
+        .bind(match &observation.tuple {
+            TupleWrite::Write(tuple) => tuple.clone(),
+            TupleWrite::Keep => None,
+        })
         .bind(observation.source)
+        .bind(matches!(observation.tuple, TupleWrite::Keep))
         .execute(&self.pool)
         .await?
         .rows_affected();

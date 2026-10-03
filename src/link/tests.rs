@@ -1093,6 +1093,7 @@ async fn asks_are_routed_to_the_plane_that_holds_them() {
                     turn: Some("t-1".into()),
                     text: Some("noon".into()),
                     finish: None,
+                    reason: None,
                     raw: json!({"kind": "answered"}),
                 }),
                 error: None,
@@ -1394,6 +1395,132 @@ async fn a_load_events_date_is_the_traces_own() {
         "the date is the event's and not the receipt's"
     );
     assert_eq!(row.tuple_at, row.load_state_at);
+}
+
+/// **A turn's start and close refresh the load state** (Spec 2.12): an
+/// unclean stop writes no `unload`, so these keep a state from events no
+/// older than the agent's last turn. Under the rules a load lands by: a
+/// replayed `turn.started` writes nothing; a live one lands `active` with
+/// the event's own date and source `event`, and `turn.closed` lands `idle`;
+/// neither touches the tuple, which keeps the load's and its date.
+///
+/// Perturbation: drop the `turn.started` arm in `land_event`. The row never
+/// reads `active` between the two events.
+#[tokio::test]
+async fn a_turns_start_and_close_refresh_the_load_state() {
+    let Some(lab) = Lab::open().await else { return };
+    let karl = lab.register("karl").await;
+    let mut admin = lab.admit_replaying(&karl, Plane::Admin).await;
+    let event = |position: Position, replayed: bool, event: TraceEvent| FromClient::Event {
+        position,
+        replayed,
+        event,
+    };
+    // Behind the boundary: history, never the row.
+    admin
+        .send(event(
+            position(50),
+            true,
+            trace_event(1, "turn.started", json!({})),
+        ))
+        .await;
+    assert!(matches!(admin.recv().await, Some(ToClient::Ack { .. })));
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(lab.agent(&karl.id).await.load_state, None);
+    admin.send(FromClient::CaughtUp).await;
+
+    admin
+        .send(event(
+            position(101),
+            false,
+            trace_event(2, "load", json!({"declaration": "sha-1"})),
+        ))
+        .await;
+    assert!(matches!(admin.recv().await, Some(ToClient::Ack { .. })));
+    let loaded = lab
+        .wait_for(&karl.id, "idle from the load", |a| {
+            a.load_state.as_deref() == Some("idle")
+        })
+        .await;
+
+    admin
+        .send(event(
+            position(102),
+            false,
+            trace_event(3, "turn.started", json!({})),
+        ))
+        .await;
+    assert!(matches!(admin.recv().await, Some(ToClient::Ack { .. })));
+    let active = lab
+        .wait_for(&karl.id, "active from the turn's start", |a| {
+            a.load_state.as_deref() == Some("active")
+        })
+        .await;
+    assert_eq!(
+        active.load_state_at.unwrap().timestamp_millis(),
+        WALL_MS + 3
+    );
+    assert_eq!(active.state_source.as_deref(), Some("event"));
+    assert_eq!(active.tuple, Some(json!({"declaration": "sha-1"})));
+    assert_eq!(
+        active.tuple_at, loaded.tuple_at,
+        "the turn keeps the tuple's date"
+    );
+
+    // A `show` answered between the two lands by arrival, as any answer
+    // does, and the turn's close, arriving after it, is the row's last
+    // word. (The admission's own `show` stays unanswered; its deadline is
+    // past this test's end.)
+    let listener = lab.listener.clone();
+    let asked = karl.id.clone();
+    let shown = tokio::spawn(async move { listener.verb(&asked, "show", Principal::Server).await });
+    let id = loop {
+        match admin.recv().await {
+            Some(ToClient::Verb { id, verb, .. }) if verb == "show" => break id,
+            Some(_) => {}
+            None => panic!("the show was never asked"),
+        }
+    };
+    admin
+        .send(FromClient::Verb {
+            id,
+            outcome: Some(show_answer(
+                "karl",
+                "active",
+                Some(json!({"artifact": "a-1"})),
+            )),
+            error: None,
+        })
+        .await;
+    shown.await.unwrap().unwrap();
+    let mid = lab
+        .wait_for(&karl.id, "the show's word mid-turn", |a| {
+            a.state_source.as_deref() == Some("show")
+        })
+        .await;
+    assert_eq!(mid.load_state.as_deref(), Some("active"));
+
+    admin
+        .send(event(
+            position(103),
+            false,
+            trace_event(4, "turn.closed", json!({})),
+        ))
+        .await;
+    assert!(matches!(admin.recv().await, Some(ToClient::Ack { .. })));
+    let closed = lab
+        .wait_for(&karl.id, "idle from the turn's close", |a| {
+            a.load_state.as_deref() == Some("idle")
+                && a.load_state_at
+                    .is_some_and(|t| t.timestamp_millis() == WALL_MS + 4)
+        })
+        .await;
+    assert_eq!(closed.state_source.as_deref(), Some("event"));
+    assert_eq!(
+        closed.tuple,
+        Some(json!({"artifact": "a-1"})),
+        "the close keeps the tuple the show wrote"
+    );
 }
 
 /// **A revocation whose notification was lost is found by the sweep**: the

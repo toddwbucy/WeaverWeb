@@ -2674,10 +2674,15 @@ or at the end of a shutdown's grace, leaves on the box is ruled in
 it until then: today a drop can strand the agent's worker, a dropped verb
 answers `unknown` and never a guess at what admin did, and admin-con's
 dropping is held for review against that ruling. A verb lost with the link
-answers unknown too, since it may have run. **A verb still waiting behind
-the one in flight at admin-con's shutdown was never invoked**, so admin-con
-answers it `not_started` while the link still stands, before the verb in
-flight gets its grace, and its caller knows it did not run; on a link loss
+answers unknown too, since it may have run. **A verb counts as started
+only once its invocation begins.** So a verb still waiting behind the one in
+flight at admin-con's shutdown, or one taken from the queue and still in
+its pre-invocation drain, was never invoked, and admin-con answers it
+`not_started` while the link still stands, before the verb in flight gets
+its grace, and its caller knows it did not run. The invocation checks the
+stop as its first act, so a verb pushed but not yet begun when the stop
+came is declined rather than run, and only a verb whose run began gets the
+grace and, outlasting it, answers unknown; on a link loss
 nothing can answer it and the server cannot tell it from the verb in
 flight, so it answers unknown. **Every position admin-con records
 or acknowledges is a record boundary, the byte after a delimiter**, so the

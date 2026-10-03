@@ -1385,18 +1385,48 @@ async fn relay<I: Invoker>(
             // record appended after the hello is live and merely unread,
             // and an ordinary verb answered ahead of it would invert around
             // a person's load or stop.
-            if !replaying && let Err(end) = drain(conn, &mut shared.tailer, &mut seq).await {
-                return end;
+            //
+            // **A verb counts as started only once its invocation begins**
+            // (Spec 7.2): one taken from the queue and still draining is
+            // answered `not_started` at a stop, so the drain races the stop.
+            // Dropping the drain is safe: it gives up between whole frames,
+            // since the connection's writer takes a frame whole or not at
+            // all, and a tailer left ahead of what was sent is reset by the
+            // next connection's resume, which starts from the server's
+            // acknowledged position.
+            if !replaying {
+                let stopped = tokio::select! {
+                    biased;
+                    _ = shutdown.changed() => true,
+                    drained = drain(conn, &mut shared.tailer, &mut seq) => match drained {
+                        Ok(()) => false,
+                        Err(end) => return end,
+                    },
+                };
+                if stopped || *shutdown.borrow() {
+                    shared.seq = seq;
+                    decline(conn, &ask).await;
+                    decline_waiting(conn, &mut queue).await;
+                    return Ended::Shutdown;
+                }
             }
             shared.seq = seq;
             let agent = opts.agent.as_str();
             let bound = opts.verb_bound;
+            let stop = shutdown.clone();
             in_flight.push(Box::pin(async move {
+                // **The stop is checked as the invocation's first act**, so
+                // a verb pushed but not yet polled when the stop came, by
+                // the select below or by the grace's loop, never begins:
+                // only a verb whose run began gets the grace.
+                if *stop.borrow() {
+                    return (ask.id, Invocation::NotStarted(ask.verb));
+                }
                 let outcome =
                     tokio::time::timeout(bound, invoker.run(agent, &ask.verb, &ask.principal))
                         .await
                         .ok();
-                (ask.id, outcome)
+                (ask.id, Invocation::Ran(outcome))
             }));
         }
         if !in_flight.is_empty() {
@@ -1495,17 +1525,26 @@ async fn relay<I: Invoker>(
     }
 }
 
+/// How an invocation ended: it ran, answering admin's object or passing
+/// its bound, or it was declined before its run began because a stop came.
+enum Invocation {
+    Ran(Option<VerbOutcome>),
+    NotStarted(String),
+}
+
 /// The answer frame for an invocation, or the typed reason it has none.
 /// **A verb that passed its bound answers `unknown`**: the invocation was
-/// ended, and whether admin acted before it was is not known here.
-fn answer(id: u64, outcome: Option<VerbOutcome>, bound: Duration) -> FromClient {
-    match outcome {
-        Some(outcome) => FromClient::Verb {
+/// ended, and whether admin acted before it was is not known here. **A verb
+/// declined before its run began answers `not_started`.**
+fn answer(id: u64, invocation: Invocation, bound: Duration) -> FromClient {
+    match invocation {
+        Invocation::NotStarted(verb) => not_started(id, &verb),
+        Invocation::Ran(Some(outcome)) => FromClient::Verb {
             id,
             outcome: Some(outcome),
             error: None,
         },
-        None => FromClient::Verb {
+        Invocation::Ran(None) => FromClient::Verb {
             id,
             outcome: None,
             error: Some(VerbFault {
@@ -1525,20 +1564,27 @@ fn answer(id: u64, outcome: Option<VerbOutcome>, bound: Duration) -> FromClient 
 /// cannot be (Spec 7.2). The whole stop stays under `serve`'s one grace.
 async fn decline_waiting(conn: &Connection, queue: &mut Asks) {
     for ask in queue.waiting.drain(..) {
-        let declined = FromClient::Verb {
-            id: ask.id,
-            outcome: None,
-            error: Some(VerbFault {
-                kind: VerbFault::NOT_STARTED.into(),
-                message: format!(
-                    "admin-con stopped before {} was invoked; it did not run",
-                    ask.verb
-                ),
-            }),
-        };
-        if conn.send(declined).await.is_err() {
+        if conn.send(not_started(ask.id, &ask.verb)).await.is_err() {
             return;
         }
+    }
+}
+
+/// One ask taken from the queue and not yet invoked when the stop came,
+/// answered as the waiting ones are.
+async fn decline(conn: &Connection, ask: &Ask) {
+    let _ = conn.send(not_started(ask.id, &ask.verb)).await;
+}
+
+/// The `not_started` frame for an ask never invoked.
+fn not_started(id: u64, verb: &str) -> FromClient {
+    FromClient::Verb {
+        id,
+        outcome: None,
+        error: Some(VerbFault {
+            kind: VerbFault::NOT_STARTED.into(),
+            message: format!("admin-con stopped before {verb} was invoked; it did not run"),
+        }),
     }
 }
 

@@ -2049,3 +2049,52 @@ async fn a_verb_still_waiting_at_shutdown_is_answered_not_started() {
     running.await.unwrap().unwrap();
     assert_eq!(invoker.ran().len(), 2, "the waiting verb was never invoked");
 }
+
+/// **A verb taken from the queue and still draining is answered
+/// `not_started` at a stop**: a verb counts as started only once its
+/// invocation begins. The drain's scan is throttled past the grace, a stop
+/// comes during it, and the caller is told at once that the verb did not
+/// run, and the invoker never runs it.
+#[tokio::test]
+async fn a_verb_still_draining_at_a_stop_is_answered_not_started() {
+    let Some(lab) = Lab::open().await else { return };
+    let trace = Trace::new();
+    trace.append(1, "turn");
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, &trace.path, out.path(), None).await;
+    let invoker = FakeInvoker::new(&["show"], "idle");
+    let mut cfg = config(&path, POLL);
+    // Every scan chunk waits past the grace: the hello's once, and the
+    // drain's when the verb is asked.
+    cfg.scan_delay = admin_con::SHUTDOWN_GRACE + Duration::from_secs(2);
+    let con = Running::start(cfg, invoker.clone());
+    let until = tokio::time::Instant::now() + Duration::from_secs(30);
+    while lab.agent(&id).await.state_source.as_deref() != Some("show") {
+        assert!(
+            tokio::time::Instant::now() < until,
+            "the admission's show never landed"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    let listener = lab.listener.clone();
+    let asked = id.clone();
+    let pending = tokio::spawn(async move { verb(&listener, &asked, "show").await });
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let Running { stop, task, .. } = con;
+    let _ = stop.send(true);
+    match tokio::time::timeout(SOON, pending)
+        .await
+        .expect("the caller is answered within the grace")
+        .unwrap()
+    {
+        Err(VerbError::Fault(fault)) => assert_eq!(fault.kind, VerbFault::NOT_STARTED),
+        other => panic!("expected not_started, got {other:?}"),
+    }
+    assert_eq!(invoker.ran(), ["show"], "only the admission's show ran");
+    tokio::time::timeout(SOON * 2, task)
+        .await
+        .expect("admin-con stops")
+        .unwrap()
+        .unwrap();
+}

@@ -219,8 +219,9 @@ identity, the digest before each offset, rotation and truncation marked, a bound
 the replay and `caught_up`, and the verb plane, one verb at a time with its answer placed at the
 invocation, behind an `Invoker` that carries no privilege code; the real invoker waits on
 WeaverAgent #50. The listener holds each connection's ceiling, asks `show` only where it is
-granted, and records the ceiling and the state's source on the row (migration `0011`;
-`0010` is frozen). `traceview.rs` keeps the rings, the listener's live window; its seed
+granted, and records the ceiling and the load state's source on the row (migration `0011`),
+and the tuple's own source (`0012`, since a turn moves the state and not the tuple; `0010`
+and `0011` are frozen). `traceview.rs` keeps the rings, the listener's live window; its seed
 tailer and `lifecycle.rs` (which ran the verbs through sudo) left the tree.
 
 **Still leaves: `web/`**, the legacy `/admin` routes, already answering 503, and

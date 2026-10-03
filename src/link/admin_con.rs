@@ -1363,6 +1363,7 @@ async fn relay<I: Invoker>(
     loop {
         shared.seq = seq;
         if *shutdown.borrow_and_update() {
+            decline_waiting(conn, &mut queue).await;
             return Ended::Shutdown;
         }
         // **A verb, one at a time, its answer placed at the invocation**
@@ -1414,6 +1415,7 @@ async fn relay<I: Invoker>(
                     }
                 }
                 _ = shutdown.changed() => {
+                    decline_waiting(conn, &mut queue).await;
                     // **Shutdown lets a verb in flight finish within a
                     // grace**, its answer still going out in order.
                     let finished = tokio::time::timeout(SHUTDOWN_GRACE, async {
@@ -1475,7 +1477,10 @@ async fn relay<I: Invoker>(
         }
         // **Live**: wait for the poll, an ask, or shutdown.
         tokio::select! {
-            _ = shutdown.changed() => return Ended::Shutdown,
+            _ = shutdown.changed() => {
+                decline_waiting(conn, &mut queue).await;
+                return Ended::Shutdown;
+            }
             _ = tick.tick() => {
                 if let Err(end) = live_step(conn, &mut shared.tailer, &mut seq).await {
                     return end;
@@ -1510,6 +1515,30 @@ fn answer(id: u64, outcome: Option<VerbOutcome>, bound: Duration) -> FromClient 
                 ),
             }),
         },
+    }
+}
+
+/// **Asks still waiting at shutdown are answered `not_started`**, while
+/// the link still stands and before a verb in flight gets its grace: none
+/// was invoked, so its caller is told it definitely did not run and may be
+/// asked again, which a verb lost with the link, whose outcome is unknown,
+/// cannot be (Spec 7.2). The whole stop stays under `serve`'s one grace.
+async fn decline_waiting(conn: &Connection, queue: &mut Asks) {
+    for ask in queue.waiting.drain(..) {
+        let declined = FromClient::Verb {
+            id: ask.id,
+            outcome: None,
+            error: Some(VerbFault {
+                kind: VerbFault::NOT_STARTED.into(),
+                message: format!(
+                    "admin-con stopped before {} was invoked; it did not run",
+                    ask.verb
+                ),
+            }),
+        };
+        if conn.send(declined).await.is_err() {
+            return;
+        }
     }
 }
 

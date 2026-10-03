@@ -109,6 +109,24 @@ const MEMBERS: &[&str] = &[
     "turns_in_flight",
 ];
 
+/// **The fault for an ask that never reached the gate**, gate-con's own
+/// like `busy` and not one of the gate's kinds: answered at shutdown to
+/// every ask still waiting behind the in-flight bound, so its caller knows
+/// the turn did not run.
+pub const NOT_STARTED: &str = "not_started";
+
+fn not_started(id: u64) -> FromClient {
+    FromClient::Turn {
+        id,
+        close: None,
+        error: Some(TurnFault {
+            kind: NOT_STARTED.to_owned(),
+            message: "gate-con stopped before this turn reached the gate; it did not run"
+                .to_owned(),
+        }),
+    }
+}
+
 /// The adapter's error as the link carries it.
 pub fn fault(e: &GateError) -> TurnFault {
     TurnFault {
@@ -210,10 +228,23 @@ async fn serve(
     .await;
     let grace_ends = tokio::time::Instant::now() + SHUTDOWN_GRACE;
     if matches!(ended, Ended::Shutdown) {
+        // **Asks still waiting are answered `not_started` first**, while the
+        // link still stands: none reached the gate, so its caller is told it
+        // definitely did not run and may be asked again, which a turn lost
+        // with the link, whose outcome is unknown, cannot be (Spec 7.1).
+        let declined = tokio::time::timeout_at(grace_ends, async {
+            for (id, _) in waiting.drain(..) {
+                if conn.send(not_started(id)).await.is_err() {
+                    return;
+                }
+            }
+        })
+        .await;
+        if declined.is_err() {
+            tracing::warn!("the asks still waiting were not all answered within the grace");
+        }
         // **Shutdown lets turns in flight finish within a grace**, their
-        // answers sent while the link still stands; asks still waiting are
-        // dropped, and the server answers their callers as not connected
-        // when the link closes.
+        // answers sent while the link still stands.
         let finished = tokio::time::timeout_at(grace_ends, async {
             while let Some(done) = in_flight.join_next().await {
                 if let Ok(frame) = done

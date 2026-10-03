@@ -2005,3 +2005,47 @@ async fn a_verb_whose_link_ends_in_flight_is_answered_as_unknown() {
         other => panic!("expected the unknown outcome, got {other:?}"),
     }
 }
+
+/// **A verb still waiting at shutdown is answered `not_started`**: a slow
+/// verb runs and one waits behind it; admin-con stops, the waiting caller
+/// is told its verb was never invoked, and the verb running finishes within
+/// the grace with its answer.
+#[tokio::test]
+async fn a_verb_still_waiting_at_shutdown_is_answered_not_started() {
+    let Some(lab) = Lab::open().await else { return };
+    let trace = Trace::new();
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, &trace.path, out.path(), None).await;
+    let invoker = FakeInvoker::new(&["show"], "idle");
+    let mut con = Running::start(config(&path, POLL), invoker.clone());
+    con.wait("admitted", |s| s.admitted).await;
+    lab.wait_for(&id, "the admission's show", |a| {
+        a.state_source.as_deref() == Some("show")
+    })
+    .await;
+
+    invoker.script(Step {
+        delay: Duration::from_millis(1500),
+        ..Step::default()
+    });
+    let listener = lab.listener.clone();
+    let asked = id.clone();
+    let running = tokio::spawn(async move { verb(&listener, &asked, "show").await });
+    let until = tokio::time::Instant::now() + SOON;
+    while invoker.ran().len() < 2 {
+        assert!(tokio::time::Instant::now() < until, "the verb never ran");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let listener = lab.listener.clone();
+    let asked = id.clone();
+    let queued = tokio::spawn(async move { verb(&listener, &asked, "show").await });
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    con.stop().await;
+
+    match queued.await.unwrap() {
+        Err(VerbError::Fault(fault)) => assert_eq!(fault.kind, VerbFault::NOT_STARTED),
+        other => panic!("expected not_started, got {other:?}"),
+    }
+    running.await.unwrap().unwrap();
+    assert_eq!(invoker.ran().len(), 2, "the waiting verb was never invoked");
+}

@@ -72,9 +72,13 @@ pub struct Agent {
     pub tuple_at: Option<DateTime<Utc>>,
     pub load_state: Option<String>,
     pub load_state_at: Option<DateTime<Utc>>,
-    /// Which source the tuple and the load state stand on: `show` or
-    /// `event` (Spec 2.12). Its date is the load state's.
+    /// Which source the load state stands on: `show` or `event` (Spec
+    /// 2.12). Its date is the load state's.
     pub state_source: Option<String>,
+    /// Which source the tuple stands on: `show` or `event` (Spec 2.12),
+    /// and so which shape the opaque tuple has. Its date is the tuple's: a
+    /// turn's start or close moves the load state and leaves both.
+    pub tuple_source: Option<String>,
     /// The ceiling admin-con last declared, with its date (Spec 2.12, 8):
     /// the copy surfaces read, never the authorization input.
     pub ceiling: Option<Vec<String>>,
@@ -180,8 +184,8 @@ pub struct Observation {
 
 /// What an observation does to the row's tuple. **A turn's start or close
 /// says nothing of the tuple**, so it keeps the one the row holds, with
-/// that one's date; a `load`, an `unload` or a `show` answer writes it,
-/// `None` where the source names none.
+/// that one's date and source; a `load`, an `unload` or a `show` answer
+/// writes it, `None` where the source names none, and its source with it.
 #[derive(Debug, Clone)]
 pub enum TupleWrite {
     Write(Option<serde_json::Value>),
@@ -193,7 +197,8 @@ const COLUMNS: &str = "agent_id, name, box, author, version, registered_at, \
     gate_incarnation, gate_address, gate_address_at, \
     admin_fingerprint, admin_authority, admin_state, admin_state_at, admin_connected, admin_link_at, \
     admin_incarnation, admin_address, admin_address_at, \
-    tuple, tuple_at, load_state, load_state_at, state_source, admin_ceiling, admin_ceiling_at";
+    tuple, tuple_at, tuple_source, load_state, load_state_at, state_source, admin_ceiling, \
+    admin_ceiling_at";
 
 fn credential_from_row(row: &PgRow, plane: &str) -> anyhow::Result<Credential> {
     let col = |s: &str| format!("{plane}_{s}");
@@ -226,6 +231,7 @@ fn agent_from_row(row: &PgRow) -> anyhow::Result<Agent> {
         load_state: row.try_get("load_state")?,
         load_state_at: row.try_get("load_state_at")?,
         state_source: row.try_get("state_source")?,
+        tuple_source: row.try_get("tuple_source")?,
         ceiling: row.try_get("admin_ceiling")?,
         ceiling_at: row.try_get("admin_ceiling_at")?,
     })
@@ -861,6 +867,7 @@ impl Store {
                tuple_at = CASE WHEN $8 THEN tuple_at ELSE $3 END, \
                tuple_epoch = CASE WHEN $8 THEN tuple_epoch ELSE $4 END, \
                tuple_arrival = CASE WHEN $8 THEN tuple_arrival ELSE $5 END, \
+               tuple_source = CASE WHEN $8 THEN tuple_source ELSE $7 END, \
                state_source = $7 \
              WHERE agent_id = $1 \
                AND (load_epoch IS NULL OR (load_epoch, load_arrival) < ($4, $5)) \

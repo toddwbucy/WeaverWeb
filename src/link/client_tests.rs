@@ -609,6 +609,59 @@ async fn a_turn_abandoned_at_shutdown_is_answered_as_unknown() {
         .unwrap();
 }
 
+/// **An ask still waiting at shutdown is answered `not_started`**: one
+/// turn in flight fills the bound and one waits behind it; gate-con stops,
+/// the waiting caller is told its turn never reached the gate, and the
+/// turn in flight finishes within the grace with its close.
+#[tokio::test]
+async fn a_turn_still_waiting_at_shutdown_is_answered_not_started() {
+    let Some(lab) = Lab::open().await else { return };
+    let gate = FakeGate::start();
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, "karl", &gate.path, out.path(), Some(1)).await;
+    let mut con = Running::from_file(&path, FAST);
+    con.wait("admitted", |s| s.admitted).await;
+    first_turn(&lab, &id, "answer").await.unwrap();
+
+    let listener = lab.listener.clone();
+    let asked = id.clone();
+    let running = tokio::spawn(async move { turn(&listener, &asked, "hold:800").await });
+    let until = tokio::time::Instant::now() + SOON;
+    while gate.now() == 0 {
+        assert!(
+            tokio::time::Instant::now() < until,
+            "the turn reached the gate"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let listener = lab.listener.clone();
+    let asked = id.clone();
+    let queued = tokio::spawn(async move { turn(&listener, &asked, "never").await });
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let _ = con.stop.send(true);
+
+    match queued.await.unwrap() {
+        Err(TurnError::Gate(fault)) => assert_eq!(fault.kind, gate_con::NOT_STARTED),
+        other => panic!("expected not_started, got {other:?}"),
+    }
+    let close = running.await.unwrap().unwrap();
+    assert_eq!(close.text.as_deref(), Some("hold:800"));
+    assert!(
+        !gate
+            .seen
+            .started
+            .lock()
+            .unwrap()
+            .contains(&"never".to_owned()),
+        "the waiting turn never reached the gate"
+    );
+    tokio::time::timeout(SOON, con.task)
+        .await
+        .expect("gate-con returns after the grace")
+        .unwrap()
+        .unwrap();
+}
+
 /// A fake server: the authority's TLS, one connection, the hello read and
 /// answered with the given cadence, and the rest left to the test.
 pub(super) struct FakeServer {

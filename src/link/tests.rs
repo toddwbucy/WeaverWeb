@@ -1464,6 +1464,7 @@ async fn a_turns_start_and_close_refresh_the_load_state() {
     );
     assert_eq!(active.state_source.as_deref(), Some("event"));
     assert_eq!(active.tuple, Some(json!({"declaration": "sha-1"})));
+    assert_eq!(active.tuple_source.as_deref(), Some("event"));
     assert_eq!(
         active.tuple_at, loaded.tuple_at,
         "the turn keeps the tuple's date"
@@ -1501,6 +1502,7 @@ async fn a_turns_start_and_close_refresh_the_load_state() {
         })
         .await;
     assert_eq!(mid.load_state.as_deref(), Some("active"));
+    assert_eq!(mid.tuple_source.as_deref(), Some("show"));
 
     admin
         .send(event(
@@ -1522,6 +1524,11 @@ async fn a_turns_start_and_close_refresh_the_load_state() {
         closed.tuple,
         Some(json!({"artifact": "a-1"})),
         "the close keeps the tuple the show wrote"
+    );
+    assert_eq!(
+        closed.tuple_source.as_deref(),
+        Some("show"),
+        "the close keeps the tuple's source, so its shape still reads as a show's"
     );
 }
 

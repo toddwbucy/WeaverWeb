@@ -1114,7 +1114,7 @@ never a bare socket's. Each row carries:
   carries, which is the agent's own record, per section 7.2. **It is
   opaque**: the two sources give different shapes and stay so, per
   `toddwbucy/WeaverAgent#59`, so the row's shape differs by source, which
-  the source member below records (migration `0011`), and nothing compares
+  the tuple's source member below records (migration `0012`), and nothing compares
   it. **The run's tuple of section 2.2 is the compared one**, written only
   by ingest, and the two are not the same thing. Nothing on the data plane
   may fill it, per section 8
@@ -1143,10 +1143,14 @@ never a bare socket's. Each row carries:
   outlive the process: a turn's start and close keep it no older than the
   agent's last turn, and the full answer, the reset event of
   `toddwbucy/WeaverAgent#58`, is owed until that lands
-- **which source the tuple and the load state stand on**, a `show` answer or
-  a live trace event, with its date, so a surface can say a
-  state is unconfirmed since the last admission where the agent's ceiling
-  grants no `show`, per section 7.2
+- **which source each of the tuple and the load state stands on**, one
+  source per member, a `show` answer or a live trace event, each dated with
+  its member. The load state's source lets a surface say a state is
+  unconfirmed since the last admission where the agent's ceiling grants no
+  `show`, per section 7.2. **The tuple's source says which shape the opaque
+  tuple has**, so it moves only with the tuple: a turn's start or close
+  moves the load state and its source and leaves the tuple and its source
+  as they were (migration `0012`)
 - **the ceiling admin-con declared**, the verbs its role on the box grants as
   its hello named them, with the date, per section 8. It is the box's word
   about itself and an upper bound, never a grant, and this copy is what
@@ -2392,7 +2396,13 @@ to the agent runs to its end whatever becomes of its caller**, per
 `toddwbucy/WeaverAgent#59`, so a turn gate-con abandons at its shutdown, or
 one in flight when the link ends, has an unknown outcome: the server
 answers it as sent and never answered, never as not connected, and the
-agent's trace, relayed by admin-con, is where its outcome is read. **Every
+agent's trace, relayed by admin-con, is where its outcome is read. **A turn
+still waiting behind gate-con's in-flight bound at its shutdown never
+reached the gate**, so gate-con answers it `not_started`, its own fault like
+`busy`, while the link still stands, and its caller knows it did not run
+and may ask again. On a link loss the connector cannot answer and the
+server cannot tell a turn started from one queued, so every turn the link
+held answers unknown, which is the conservative answer. **Every
 gate connection lands in the agent's one conversation**, per the same
 issue: turns from different callers interleave in its one session working
 structure, which section 2.13 carries to the surfaces.
@@ -2663,7 +2673,13 @@ or at the end of a shutdown's grace, leaves on the box is ruled in
 `toddwbucy/WeaverAgent#50` and `#60`**, and this crate assumes nothing about
 it until then: today a drop can strand the agent's worker, a dropped verb
 answers `unknown` and never a guess at what admin did, and admin-con's
-dropping is held for review against that ruling. **Every position admin-con records
+dropping is held for review against that ruling. A verb lost with the link
+answers unknown too, since it may have run. **A verb still waiting behind
+the one in flight at admin-con's shutdown was never invoked**, so admin-con
+answers it `not_started` while the link still stands, before the verb in
+flight gets its grace, and its caller knows it did not run; on a link loss
+nothing can answer it and the server cannot tell it from the verb in
+flight, so it answers unknown. **Every position admin-con records
 or acknowledges is a record boundary, the byte after a delimiter**, so the
 tail it records before a verb is the end of the last complete record at
 that moment, the drain emits through it, and a record still unterminated
@@ -3040,8 +3056,9 @@ another box may share. Every other refusal retries on the normal backoff,
 `malformed` and `wrong_plane` logged as the connector's own defect. **It
 does not exit**, because a supervisor would restart it into the same loop;
 it ends only on its own shutdown, which lets exchanges in flight finish
-within a short grace before closing the link; a turn still in flight at the
-grace's end is answered to its caller as unknown, per section 7.1. **gate-con's turns in flight
+within a short grace before closing the link; asks still waiting are
+answered `not_started` before the grace begins, and a turn still in flight
+at the grace's end is answered to its caller as unknown, per section 7.1. **gate-con's turns in flight
 are bounded, and so are the asks waiting behind them**; an ask arriving to
 a full queue is answered at once with the fault `busy`, gate-con's own
 back-pressure and not one of the gate's kinds of section 7.1, so a surface
@@ -3235,7 +3252,7 @@ missing while it was relaying.
 | an agent is present only when both planes connect from one row | perturbation: mark present on either plane alone, an agent whose admin-con is down reads present with a tuple and a load state nobody has confirmed |
 | the server's authority is loaded before the listener starts and never minted at start | perturbation: mint the authority at start instead of loading it, restart the server, and every connector's hello is refused against a certificate it does not pin |
 | the client credential is stored as a fingerprint and never the key | perturbation, at the schema: store the key, a read of the register is a set of credentials anyone can present |
-| the tuple and the load state come by admin-con and never by gate-con | perturbation: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it; let a replayed load event write the tuple, restart the server after an unload, backfill, and the row reads loaded; ask `show` before fixing the replay boundary, unload between the two, and the row reads loaded until the next `show`. **Four clauses are admin-con's ordering**, against the real listener with a fake invoker in `src/link/admin_con_tests.rs`: let a `show` answer cross the link out of order with the file events around it, unload during the `show`, and the row reads loaded until the next `show`; place the answer in the stream at receipt and unload between the snapshot and the receipt, and the row reads loaded; skip the drain, leave an unread load event behind the tail, invoke `show` after an unload, and the row reads loaded; run two verbs at once on one connection, and an older answer lands after a newer one. **A turn's start and close refresh the load state**, against the real listener in `src/link/tests.rs`: drop the `turn.started` mapping, and the row never reads `active` between a turn's start and close; let a replayed `turn.started` land, and the row reads `active` from history; let a turn's event write the tuple, and the row loses the tuple it held |
+| the tuple and the load state come by admin-con and never by gate-con | perturbation: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it; let a replayed load event write the tuple, restart the server after an unload, backfill, and the row reads loaded; ask `show` before fixing the replay boundary, unload between the two, and the row reads loaded until the next `show`. **Four clauses are admin-con's ordering**, against the real listener with a fake invoker in `src/link/admin_con_tests.rs`: let a `show` answer cross the link out of order with the file events around it, unload during the `show`, and the row reads loaded until the next `show`; place the answer in the stream at receipt and unload between the snapshot and the receipt, and the row reads loaded; skip the drain, leave an unread load event behind the tail, invoke `show` after an unload, and the row reads loaded; run two verbs at once on one connection, and an older answer lands after a newer one. **A turn's start and close refresh the load state**, against the real listener in `src/link/tests.rs`: drop the `turn.started` mapping, and the row never reads `active` between a turn's start and close; let a replayed `turn.started` land, and the row reads `active` from history; let a turn's event write the tuple, and the row loses the tuple it held; let a turn's event write the tuple's source, and a `show`-shaped tuple reads as an event's |
 | nothing crosses the link in the clear | perturbation: offer a plaintext hello to the listener, it is refused below any roster; and review, over the listener, that no plaintext accept path exists |
 | the server never asks a verb outside the agent's ceiling | perturbation: drop the ceiling check, ask a verb admin-con's hello did not declare, and it leaves the server; and admin-con's half, drop its typed error answer, and it reaches the invoker. **One clause is owed**: check against the row's copy, narrow the ceiling by reconnecting between the check and the enqueue, and an ask outside the new ceiling leaves. The race has no deterministic staging, and the guard is held by review: the check reads the live connection's ceiling under the live map's lock that finds the connection |
 | a verb or turn its principal may not ask is refused before an ask | perturbation, **owed**: drop the grant check, a person whose role permits `show` asks `stop`, and the ask leaves the server; let the server principal ask a lifecycle verb, and it leaves without a grant; drop the enabled check, and a disabled person's live session still asks a verb; drop the grant check on turns, and a person granted only `show` places a turn; take the check outside the exclusion, revoke between the check and the enqueue, and the ask is authorized on a revoked grant; take a register verb's check outside the exclusion, disable its admin between the check and the commit, and the register verb lands. Lands with the IAM act |
@@ -3261,9 +3278,9 @@ four clauses of the tuple row that are admin-con's ordering, and the absence
 of a privileged invocation, each shown to fail with its guard removed; one
 clause of the ceiling row, a race with no deterministic staging, is marked
 owed inside the row, and two guards of the replay row are held by review for
-the same reason. The alignment act of 2026-10-03 added three clauses to the
-tuple row, a turn's start and close on the load state, each shown to fail
-with its guard removed. The other ten rows of the link landed with the act
+the same reason. The alignment act of 2026-10-03 added four clauses to the
+tuple row, a turn's start and close on the load state, and a fourth, the
+tuple's own source, each shown to fail with its guard removed. The other ten rows of the link landed with the act
 that built the listener and the register, each shown to fail with its guard
 removed. The marking is the point: a row
 reading like the enforced ones beside it would tell a reader the claim is held,

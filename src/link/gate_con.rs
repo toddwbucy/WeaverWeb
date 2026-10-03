@@ -300,10 +300,14 @@ async fn relay(
     in_flight: &mut JoinSet<FromClient>,
     waiting: &mut VecDeque<(u64, String)>,
 ) -> Ended {
-    if *shutdown.borrow_and_update() {
-        return Ended::Shutdown;
-    }
     loop {
+        // **A stop is checked before any waiting turn is promoted**: a turn
+        // still waiting when the stop began must stay waiting, to be
+        // answered `not_started` by `serve`, and never reach the gate in
+        // the grace. A stop seen while a send waited lands here.
+        if *shutdown.borrow_and_update() {
+            return Ended::Shutdown;
+        }
         // **At most `bound` turns in flight, the rest waiting in arrival
         // order.** The gate serializes turns for the agent anyway; the
         // bound is this process's protection against an unbounded task set.
@@ -313,7 +317,11 @@ async fn relay(
             let adapter = adapter.clone();
             in_flight.spawn(async move { answer(id, adapter.turn(&text).await) });
         }
+        // **Biased, the stop first**: ready together with a completion or
+        // a frame, the stop wins, so the next pass cannot promote a turn
+        // that was waiting when it began.
         tokio::select! {
+            biased;
             _ = shutdown.changed() => return Ended::Shutdown,
             Some(done) = in_flight.join_next(), if !in_flight.is_empty() => {
                 let frame = match done {

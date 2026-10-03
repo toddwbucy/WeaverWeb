@@ -194,10 +194,12 @@ pub async fn authority_rotate(
 
 /// The client config a connector reads, one per plane: its own key and
 /// certificate, the server's certificate, the server's link address and
-/// the name it is verified under, the agent's name and the plane.
+/// the name it is verified under, the agent's name, its row's identity,
+/// and the plane.
 fn client_config(
     cfg: &ServerConfig,
     authority: &Authority,
+    agent_id: &str,
     agent_name: &str,
     plane: Plane,
     credential: &ClientCredential,
@@ -211,6 +213,10 @@ fn client_config(
         authority.server_name().to_owned().into(),
     );
     table.insert("agent".into(), agent_name.into());
+    // **The config names its row by identity** (Spec 8): the name is not
+    // unique across boxes, and a re-installed config is held to the row
+    // the connector started for by this member, which rotation keeps.
+    table.insert("agent_id".into(), agent_id.into());
     table.insert("plane".into(), plane.as_str().into());
     table.insert(
         "server_certificate".into(),
@@ -815,6 +821,7 @@ pub(super) fn stage_pair(
     cfg: &ServerConfig,
     authority: &Authority,
     dir: ConfigDir,
+    agent_id: &str,
     name: &str,
     gate: &ClientCredential,
     admin: &ClientCredential,
@@ -824,14 +831,14 @@ pub(super) fn stage_pair(
     let gate_identity = stage_file(
         &dir,
         &gate_staging,
-        &client_config(cfg, authority, name, Plane::Gate, gate),
+        &client_config(cfg, authority, agent_id, name, Plane::Gate, gate),
     )?;
     // A failure staging the second leaves no minted key behind in the
     // first.
     let admin_identity = match stage_file(
         &dir,
         &admin_staging,
-        &client_config(cfg, authority, name, Plane::Admin, admin),
+        &client_config(cfg, authority, agent_id, name, Plane::Admin, admin),
     ) {
         Ok(identity) => identity,
         Err(e) => {
@@ -979,19 +986,25 @@ pub async fn register(
         Err(e) => return refused("register", format!("{e:#}")),
     };
     // The certificates name the agent by its registered name; the identity
-    // the row takes is minted by the store on insert.
+    // the row takes is minted by the store first, so the configs staged
+    // before the commit name it.
     let (gate, admin) = match mint_pair(name, authority) {
         Ok(pair) => pair,
         Err(e) => return refused("register", format!("{e:#}")),
     };
+    let minted = match Store::mint_agent_id_on(lock.connection()).await {
+        Ok(id) => id,
+        Err(e) => return refused("register", format!("{e:#}")),
+    };
     // Staged before the store commits, published after: a store failure
     // leaves no config, and the credentials are never live without one.
-    let staged = match stage_pair(cfg, authority, dir, name, &gate, &admin) {
+    let staged = match stage_pair(cfg, authority, dir, minted.as_str(), name, &gate, &admin) {
         Ok(s) => s,
         Err(e) => return refused("register", format!("{e:#}")),
     };
     let (id, retired, note) = match Store::register_agent_on(
         lock.connection(),
+        &minted,
         r#box,
         name,
         author,
@@ -1134,7 +1147,15 @@ pub async fn rotate(
         Ok(pair) => pair,
         Err(e) => return refused("rotate", format!("{e:#}")),
     };
-    let staged = match stage_pair(cfg, authority, dir, &agent.name, &gate, &admin) {
+    let staged = match stage_pair(
+        cfg,
+        authority,
+        dir,
+        agent.agent_id.as_str(),
+        &agent.name,
+        &gate,
+        &admin,
+    ) {
         Ok(s) => s,
         Err(e) => return refused("rotate", format!("{e:#}")),
     };

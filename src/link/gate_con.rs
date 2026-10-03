@@ -79,7 +79,7 @@ impl GateConConfig {
     /// key, and a corrupted PEM line is the key's own bytes.
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let content = client::read_private(path)?;
-        let cfg: Self = toml::from_str(&content).map_err(|e| unparsed(path, &content, &e))?;
+        let cfg: Self = client::parse_config(path, &content, MEMBERS)?;
         cfg.link
             .expect_plane(Plane::Gate)
             .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
@@ -100,6 +100,7 @@ const MEMBERS: &[&str] = &[
     "server",
     "server_name",
     "agent",
+    "agent_id",
     "plane",
     "server_certificate",
     "certificate",
@@ -107,43 +108,6 @@ const MEMBERS: &[&str] = &[
     "gate_socket",
     "turns_in_flight",
 ];
-
-/// **A parse error names the line and the member, never the text**: toml's
-/// message can quote the rejected value (a key pasted into an integer
-/// member, a PEM line that lost its quoting), and the file carries a key.
-/// The member is named only where it is one of `MEMBERS`, since a corrupted
-/// line's own "key" may be base64 of the key itself.
-fn unparsed(path: &Path, content: &str, e: &toml::de::Error) -> anyhow::Error {
-    let member = |name: &str| MEMBERS.iter().find(|m| **m == name).copied();
-    // A member that is absent carries no value to echo; serde names it.
-    if let Some(rest) = e.message().strip_prefix("missing field `")
-        && let Some(name) = rest.split('`').next().and_then(member)
-    {
-        return anyhow::anyhow!(
-            "{}: the config does not parse: the member {name} is missing",
-            path.display()
-        );
-    }
-    let Some(span) = e.span() else {
-        return anyhow::anyhow!("{}: the config does not parse", path.display());
-    };
-    let start = span.start.min(content.len());
-    let line = content[..start].matches('\n').count() + 1;
-    let text = content.lines().nth(line - 1).unwrap_or("");
-    match text
-        .split_once('=')
-        .and_then(|(name, _)| member(name.trim()))
-    {
-        Some(name) => anyhow::anyhow!(
-            "{}: the config does not parse at line {line}, the member {name}",
-            path.display()
-        ),
-        None => anyhow::anyhow!(
-            "{}: the config does not parse at line {line}",
-            path.display()
-        ),
-    }
-}
 
 /// The adapter's error as the link carries it.
 pub fn fault(e: &GateError) -> TurnFault {
@@ -197,10 +161,13 @@ pub async fn run(
     };
     client::run(
         link,
-        |link| FromClient::Hello {
-            agent: link.agent.clone(),
-            plane: Plane::Gate,
-            tail: None,
+        |link: &LinkConfig| {
+            std::future::ready(Ok(FromClient::Hello {
+                agent: link.agent.clone(),
+                plane: Plane::Gate,
+                tail: None,
+                ceiling: None,
+            }))
         },
         reload,
         backoff,

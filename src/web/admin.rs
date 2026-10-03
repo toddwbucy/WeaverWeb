@@ -1,10 +1,9 @@
 //! The admin surface: everything that crosses the operator boundary -
-//! lifecycle verbs (sudo weaver-admin) and trace views. Every route
+//! the legacy lifecycle page, which runs no verb, and trace views. Every route
 //! here is unavailable until the session/IAM act, per the operator
 //! ruling of 2026-09-21. The handlers remain compiled behind that gate.
 
 use super::{AppResult, AppState, nav_agents, sse_cursor};
-use crate::lifecycle;
 use crate::registry::Participant;
 use crate::traceview::TraceEvent;
 use askama::Template;
@@ -124,9 +123,6 @@ async fn run_verb(
     };
     if !legacy_has_agent(&agent) {
         return Ok((StatusCode::NOT_FOUND, "no such agent").into_response());
-    }
-    if !lifecycle::VERBS.contains(&verb.as_str()) {
-        return Ok((StatusCode::NOT_FOUND, "no such verb").into_response());
     }
     // Unreachable while the roster is empty; kept so the outcome's
     // verbatim rendering stays where act 5 finds it.

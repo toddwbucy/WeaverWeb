@@ -102,6 +102,53 @@ pub fn read_private(path: &Path) -> anyhow::Result<String> {
     Ok(content)
 }
 
+/// Parse a connector's config, **naming only its own members in an error**
+/// (see `unparsed`).
+pub fn parse_config<T: serde::de::DeserializeOwned>(
+    path: &Path,
+    content: &str,
+    members: &[&str],
+) -> anyhow::Result<T> {
+    toml::from_str(content).map_err(|e| unparsed(path, content, &e, members))
+}
+
+/// **A parse error names the line and the member, never the text**: toml's
+/// message can quote the rejected value (a key pasted into an integer
+/// member, a PEM line that lost its quoting), and the file carries a key.
+/// The member is named only where it is one of the connector's members, since a corrupted
+/// line's own "key" may be base64 of the key itself.
+fn unparsed(path: &Path, content: &str, e: &toml::de::Error, members: &[&str]) -> anyhow::Error {
+    let member = |name: &str| members.iter().find(|m| **m == name).copied();
+    // A member that is absent carries no value to echo; serde names it.
+    if let Some(rest) = e.message().strip_prefix("missing field `")
+        && let Some(name) = rest.split('`').next().and_then(member)
+    {
+        return anyhow::anyhow!(
+            "{}: the config does not parse: the member {name} is missing",
+            path.display()
+        );
+    }
+    let Some(span) = e.span() else {
+        return anyhow::anyhow!("{}: the config does not parse", path.display());
+    };
+    let start = span.start.min(content.len());
+    let line = content[..start].matches('\n').count() + 1;
+    let text = content.lines().nth(line - 1).unwrap_or("");
+    match text
+        .split_once('=')
+        .and_then(|(name, _)| member(name.trim()))
+    {
+        Some(name) => anyhow::anyhow!(
+            "{}: the config does not parse at line {line}, the member {name}",
+            path.display()
+        ),
+        None => anyhow::anyhow!(
+            "{}: the config does not parse at line {line}",
+            path.display()
+        ),
+    }
+}
+
 /// The members `weaver-web register` writes into every connector's config.
 /// A connector's own config flattens this and adds its box facts.
 #[derive(Clone, PartialEq, Eq, Deserialize)]
@@ -112,6 +159,9 @@ pub struct LinkConfig {
     /// authority's and never the dialed address.
     pub server_name: String,
     pub agent: String,
+    /// The row's identity (`ag-...`), which a re-install is held to: the
+    /// name is not unique across boxes. Rotation keeps the row and so this.
+    pub agent_id: String,
     pub plane: Plane,
     pub server_certificate: String,
     pub certificate: String,
@@ -125,6 +175,7 @@ impl std::fmt::Debug for LinkConfig {
             .field("server", &self.server)
             .field("server_name", &self.server_name)
             .field("agent", &self.agent)
+            .field("agent_id", &self.agent_id)
             .field("plane", &self.plane)
             .finish_non_exhaustive()
     }
@@ -273,6 +324,9 @@ impl Link {
                 if let Err(e) = keepalive(fd, cadence) {
                     tracing::warn!("TCP keepalive could not be set on the link: {e}");
                 }
+                if let Err(e) = bound_unsent(fd) {
+                    tracing::warn!("the link's unsent bound could not be set: {e}");
+                }
                 Connect::Admitted(Connection::start(reader, write, cadence, acknowledged))
             }
             ToClient::Refusal { reason } => Connect::Refused(reason),
@@ -328,6 +382,36 @@ fn keepalive(fd: RawFd, cadence: Duration) -> std::io::Result<()> {
     set(libc::IPPROTO_TCP, libc::TCP_KEEPCNT, 2)?;
     set(libc::IPPROTO_TCP, libc::TCP_USER_TIMEOUT, secs * 2000)?;
     Ok(())
+}
+
+/// The most bytes the socket holds unsent: see `bound_unsent`.
+pub const UNSENT_BOUND: usize = 64 * 1024;
+
+/// **What the kernel holds unsent ahead of the next frame is bounded**, so
+/// a frame the connector sends next, a verb's answer among them, waits
+/// behind at most `UNSENT_BOUND` bytes plus what the link carries in
+/// flight, and not behind a send buffer autotuned to megabytes on a slow
+/// link, which would hold an admission `show` past its deadline whatever
+/// order the connector chose. A write blocks while the unsent bytes stand
+/// above the bound, and the link's throughput is not otherwise affected.
+fn bound_unsent(fd: RawFd) -> std::io::Result<()> {
+    let value = UNSENT_BOUND as libc::c_int;
+    // SAFETY: a descriptor the caller's stream holds open, and an int option
+    // of the size the call is told.
+    let r = unsafe {
+        libc::setsockopt(
+            fd,
+            libc::IPPROTO_TCP,
+            libc::TCP_NOTSENT_LOWAT,
+            &value as *const libc::c_int as *const libc::c_void,
+            std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+        )
+    };
+    if r < 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
 }
 
 type Reader = LineReader<ReadHalf<TlsStream<TcpStream>>>;
@@ -597,9 +681,9 @@ pub struct LinkStatus {
 /// is what never exiting requires. `malformed` and `wrong_plane` are this
 /// connector's own defect and say so; every other end retries on the normal
 /// backoff. It returns only on shutdown.
-pub async fn run<S, F>(
+pub async fn run<S, F, H, HF>(
     mut link: Link,
-    hello: impl Fn(&LinkConfig) -> FromClient,
+    mut hello: H,
     mut reload: impl FnMut() -> Option<LinkConfig>,
     backoff: Backoff,
     mut shutdown: watch::Receiver<bool>,
@@ -608,6 +692,8 @@ pub async fn run<S, F>(
 ) where
     S: FnMut(Connection) -> F,
     F: Future<Output = Ended>,
+    H: FnMut(&LinkConfig) -> HF,
+    HF: Future<Output = Result<FromClient, String>>,
 {
     const REINSTALL: &str = "Re-install this agent's config at the path this connector was started with, from `weaver-web register` or `weaver-web rotate`: it is re-read before each retry at the cap, so no restart is needed";
     let mut failures: u32 = 0;
@@ -620,25 +706,54 @@ pub async fn run<S, F>(
             && let Some(fresh) = reload()
             && fresh != *link.config()
         {
-            match Link::new(fresh) {
-                Ok(fresh) => {
-                    tracing::info!(
-                        "{} ({}): the config at its path changed; dialing with its credential",
-                        fresh.config().agent,
-                        fresh.config().plane
-                    );
-                    link = fresh;
+            // **Only the link's members change at a re-install**: the
+            // agent and the plane are what the rest of the connector is
+            // bound to (gate-con's socket, admin-con's tailer and invoker),
+            // so a config for another agent or plane at the path would
+            // file one agent's traffic under another's row. It is refused
+            // and the credential in hand kept. The agent is compared by its
+            // row's identity, never its name, which another box may share.
+            let held = link.config();
+            if fresh.agent_id != held.agent_id || fresh.plane != held.plane {
+                tracing::error!(
+                    "{} {} ({}): the config at its path is for {} {} ({}), not the agent and plane this connector runs for; refused, keeping the credential in hand. Restart the connector to serve another agent",
+                    held.agent_id,
+                    held.agent,
+                    held.plane,
+                    fresh.agent_id,
+                    fresh.agent,
+                    fresh.plane
+                );
+            } else {
+                match Link::new(fresh) {
+                    Ok(fresh) => {
+                        tracing::info!(
+                            "{} ({}): the config at its path changed; dialing with its credential",
+                            fresh.config().agent,
+                            fresh.config().plane
+                        );
+                        link = fresh;
+                    }
+                    Err(e) => tracing::error!(
+                        "the config at its path changed but its credential does not build ({e:#}); keeping the one in hand"
+                    ),
                 }
-                Err(e) => tracing::error!(
-                    "the config at its path changed but its credential does not build ({e:#}); keeping the one in hand"
-                ),
             }
         }
         let agent = link.config().agent.clone();
         let plane = link.config().plane;
         status.send_modify(|s| s.attempts += 1);
+        // The hello is the plane's to make: admin-con's reads its trace
+        // file's tail and asks its invoker for the ceiling, either of which
+        // can fail and is then an attempt that ended.
         let attempt = tokio::select! {
-            c = link.connect(hello(link.config())) => c,
+            made = hello(link.config()) => match made {
+                Ok(frame) => tokio::select! {
+                    c = link.connect(frame) => c,
+                    _ = shutdown.changed() => return,
+                },
+                Err(why) => Connect::Failed(why),
+            },
             _ = shutdown.changed() => return,
         };
         let ended = match attempt {

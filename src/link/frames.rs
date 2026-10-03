@@ -3,7 +3,6 @@
 //! Acts 3 and 4 implement the client side of these shapes.
 
 use crate::adapters::gate::GateClose;
-use crate::lifecycle::VerbOutcome;
 use crate::traceview::TraceEvent;
 use serde::{Deserialize, Serialize};
 
@@ -134,6 +133,56 @@ pub struct Position {
     pub digest: String,
 }
 
+/// The outcome of one verb as admin answered it (Spec 7.2): one JSON object,
+/// a `lifecycle-answer` or a `lifecycle-refusal`, carried verbatim, with
+/// whatever the invocation reported beside it so nothing is swallowed. The
+/// invoker that produces it is admin-con's (`link::admin_con`); this crate
+/// carries no privileged one.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VerbOutcome {
+    pub verb: String,
+    pub agent: String,
+    pub exit_code: Option<i32>,
+    /// The answer parsed as one JSON object, when it is one.
+    pub answer: Option<serde_json::Value>,
+    /// The raw answer, kept when it did not parse so nothing is swallowed.
+    pub raw_stdout: Option<String>,
+    pub stderr: Option<String>,
+}
+
+/// Who a verb is asked for, **a claim and never an authorization input on
+/// the box** (Spec 8, 2.13): the requesting person, or the server for its
+/// own asks, of which the admission's `show` is the one today.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Principal {
+    Server,
+    Person { name: String },
+}
+
+/// admin-con's typed error on a verb answer (Spec 8): why the verb was not
+/// run, never a refusal of the connection.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VerbFault {
+    pub kind: String,
+    pub message: String,
+}
+
+impl VerbFault {
+    /// The ask names a verb outside the ceiling admin-con declared: the
+    /// server's own defect, answered and not run, the connection kept.
+    pub const OUTSIDE_CEILING: &'static str = "outside_ceiling";
+    /// admin-con holds as many asks as it waits behind, its bound.
+    pub const BUSY: &'static str = "busy";
+    /// The invocation passed its bound and was ended: whether admin acted
+    /// is not known. A bound passed is this fault, never an outcome, so
+    /// the fact has one shape.
+    pub const UNKNOWN: &'static str = "unknown";
+    /// The server's own: admin answered, and the store could not land the
+    /// answer, so the ask answers the failure and is owed again.
+    pub const NOT_LANDED: &'static str = "not_landed";
+}
+
 /// The gate adapter's typed error as a connector carries it (section 7.1's
 /// variants verbatim in kind).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -155,6 +204,12 @@ pub enum FromClient {
         plane: Plane,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tail: Option<Position>,
+        /// **On the admin plane, the ceiling** (Spec 8): exactly the verbs
+        /// admin's `grants` answers for admin-con's role, empty until
+        /// WeaverAgent #50 lands. Absent on the gate plane, which declares
+        /// none.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ceiling: Option<Vec<String>>,
     },
     /// At the cadence the hello's answer named.
     Heartbeat,
@@ -174,13 +229,13 @@ pub enum FromClient {
         error: Option<TurnFault>,
     },
     /// The admin plane's answer to a verb ask: admin's JSON object
-    /// verbatim with its exit status, or why it was not run.
+    /// verbatim with its exit status, or the typed reason it was not run.
     Verb {
         id: u64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         outcome: Option<VerbOutcome>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        error: Option<String>,
+        error: Option<VerbFault>,
     },
     /// One trace event from admin-con with its position and whether it
     /// was relayed from behind the file's tail (Spec 7.2).
@@ -210,6 +265,8 @@ pub enum ToClient {
     Verb {
         id: u64,
         verb: String,
+        /// The principal, as a claim the box records (Spec 8).
+        principal: Principal,
     },
     /// The position the server has landed through.
     Ack {
@@ -284,6 +341,7 @@ mod shape {
                 offset: 120,
                 digest: "d".into(),
             }),
+            ceiling: Some(vec!["show".to_owned()]),
         };
         let line = serde_json::to_string(&hello).unwrap();
         assert!(line.starts_with("{\"svc\":\"hello\""), "{line}");

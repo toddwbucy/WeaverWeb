@@ -30,16 +30,16 @@
 //! is acknowledged that did not land and no lifecycle update is lost.
 
 use crate::adapters::gate::GateClose;
-use crate::lifecycle::VerbOutcome;
 use crate::link::authority::{Authority, fingerprint};
 use crate::link::frames::{
-    FromClient, Line, LineReader, Plane, Position, Refusal, ToClient, TurnFault,
+    FromClient, Line, LineReader, Plane, Position, Principal, Refusal, ToClient, TurnFault,
+    VerbFault, VerbOutcome,
 };
 use crate::link::register::{CredentialState, Observation, REVOCATION_CHANNEL};
 use crate::store::{AgentId, Store};
 use crate::traceview::{TraceEvent, TraceViews};
 use chrono::{DateTime, Utc};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
@@ -99,7 +99,59 @@ struct LiveConnection {
     /// so no frame of its own enters the ordered channel ahead of the
     /// answer.
     ready: bool,
+    /// **On the admin plane, the ceiling this connection's hello declared**
+    /// (Spec 8), held with the connection and fixed for its life: every
+    /// verb ask is checked against it under the live map's lock, so a
+    /// reconnection that narrows the ceiling cannot race an ask. The row's
+    /// copy is what surfaces read and never the authorization input.
+    ceiling: Option<Arc<BTreeSet<String>>>,
 }
+
+/// Why an ask did not reach a connection.
+enum AskError {
+    /// No ready connection on the plane, or it dropped mid-ask.
+    NotConnected,
+    /// The verb is outside the connection's ceiling: refused on the server
+    /// before any frame left it (Spec 8).
+    OutsideCeiling(Vec<String>),
+}
+
+/// Why a verb was not answered with an outcome.
+#[derive(Debug)]
+pub enum VerbError {
+    /// No admin-con is connected for this agent, or it dropped mid-ask.
+    NotConnected,
+    /// The verb is outside the ceiling the connection declared; refused on
+    /// the server before any frame left it (Spec 8).
+    OutsideCeiling { verb: String, ceiling: Vec<String> },
+    /// admin-con's typed reason it did not run the verb.
+    Fault(VerbFault),
+}
+
+impl std::fmt::Display for VerbError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            VerbError::NotConnected => write!(f, "no admin-con is connected for this agent"),
+            VerbError::OutsideCeiling { verb, ceiling } => write!(
+                f,
+                "{verb} is outside the ceiling admin-con declared ({}), so it was not asked",
+                if ceiling.is_empty() {
+                    "empty".to_owned()
+                } else {
+                    ceiling.join(", ")
+                }
+            ),
+            VerbError::Fault(fault) => write!(f, "{}: {}", fault.kind, fault.message),
+        }
+    }
+}
+
+impl std::error::Error for VerbError {}
+
+/// The most verbs a ceiling may name, and the longest name: the hello is
+/// bounded like every frame's content (Spec 8, five verbs today).
+const CEILING_BOUND: usize = 16;
+const VERB_NAME_BOUND: usize = 32;
 
 /// What landing a verb's answer did: wrote an observation on the row,
 /// had nothing to write (no answer, or not a state), or failed at the
@@ -528,31 +580,45 @@ impl Listener {
         let text = text.to_owned();
         match self
             .inner
-            .ask(agent, Plane::Gate, |id| ToClient::Turn { id, text })
+            .ask(agent, Plane::Gate, None, |id| ToClient::Turn { id, text })
             .await
         {
-            Some(FromClient::Turn { close: Some(c), .. }) => Ok(c),
-            Some(FromClient::Turn { error: Some(e), .. }) => Err(TurnError::Gate(e)),
+            Ok(FromClient::Turn { close: Some(c), .. }) => Ok(c),
+            Ok(FromClient::Turn { error: Some(e), .. }) => Err(TurnError::Gate(e)),
             _ => Err(TurnError::NotConnected),
         }
     }
 
-    /// One verb across the link (Spec 7.2): routed to the agent's
-    /// admin-con, whose answer lands on the row where it is `show` or
-    /// `list` before it is answered here. The invocation's ceiling is
-    /// admin-con's, as the seed's was the connector's.
-    pub async fn verb(&self, agent: &AgentId, verb: &str) -> anyhow::Result<VerbOutcome> {
+    /// One verb across the link (Spec 7.2), asked for a principal (Spec
+    /// 8): routed to the agent's admin-con, whose answer lands on the row
+    /// where it is `show` before it is answered here. **A verb outside the
+    /// ceiling the live connection declared is refused here**, before any
+    /// frame leaves the server.
+    pub async fn verb(
+        &self,
+        agent: &AgentId,
+        verb: &str,
+        principal: Principal,
+    ) -> Result<VerbOutcome, VerbError> {
         let v = verb.to_owned();
         match self
             .inner
-            .ask(agent, Plane::Admin, |id| ToClient::Verb { id, verb: v })
+            .ask(agent, Plane::Admin, Some(verb), |id| ToClient::Verb {
+                id,
+                verb: v,
+                principal,
+            })
             .await
         {
-            Some(FromClient::Verb {
+            Ok(FromClient::Verb {
                 outcome: Some(o), ..
             }) => Ok(o),
-            Some(FromClient::Verb { error: Some(e), .. }) => anyhow::bail!("{e}"),
-            _ => anyhow::bail!("no admin-con is connected for this agent"),
+            Ok(FromClient::Verb { error: Some(e), .. }) => Err(VerbError::Fault(e)),
+            Err(AskError::OutsideCeiling(ceiling)) => Err(VerbError::OutsideCeiling {
+                verb: verb.to_owned(),
+                ceiling,
+            }),
+            _ => Err(VerbError::NotConnected),
         }
     }
 }
@@ -562,8 +628,9 @@ impl Inner {
         &self,
         agent: &AgentId,
         plane: Plane,
+        verb: Option<&str>,
         make: impl FnOnce(u64) -> ToClient,
-    ) -> Option<FromClient> {
+    ) -> Result<FromClient, AskError> {
         let id = self.next_ask.fetch_add(1, Ordering::Relaxed);
         let (reply_tx, reply_rx) = oneshot::channel();
         // **The sender is inserted in the same critical section that found
@@ -573,7 +640,18 @@ impl Inner {
         // could land in a map nothing reads and wait forever.
         let (tx, pending, close, silent) = {
             let live = self.live.lock().unwrap();
-            let conn = live.get(&(agent.clone(), plane)).filter(|c| c.ready)?;
+            let conn = live
+                .get(&(agent.clone(), plane))
+                .filter(|c| c.ready)
+                .ok_or(AskError::NotConnected)?;
+            // **The ceiling is the live connection's own**, checked under
+            // the same lock that found the connection (Spec 8).
+            if let Some(verb) = verb {
+                let ceiling = conn.ceiling.as_deref().cloned().unwrap_or_default();
+                if !ceiling.contains(verb) {
+                    return Err(AskError::OutsideCeiling(ceiling.into_iter().collect()));
+                }
+            }
             conn.pending.lock().unwrap().insert(id, reply_tx);
             (
                 conn.tx.clone(),
@@ -591,7 +669,7 @@ impl Inner {
             Ok(Ok(())) => {}
             Ok(Err(_)) => {
                 pending.lock().unwrap().remove(&id);
-                return None;
+                return Err(AskError::NotConnected);
             }
             Err(_) => {
                 tracing::warn!(
@@ -600,7 +678,7 @@ impl Inner {
                 silent.store(true, Ordering::Relaxed);
                 let _ = close.send(true);
                 pending.lock().unwrap().remove(&id);
-                return None;
+                return Err(AskError::NotConnected);
             }
         }
         // **A cancelled ask removes its own entry**: the guard runs when
@@ -614,7 +692,7 @@ impl Inner {
             }
         }
         let _unask = Unask(pending.clone(), id);
-        reply_rx.await.ok()
+        reply_rx.await.map_err(|_| AskError::NotConnected)
     }
 
     /// The revoking act's close (Spec 8): a notification names a
@@ -1010,9 +1088,14 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
             return;
         }
     };
-    let (name, said_plane, tail) = match hello {
+    let (name, said_plane, tail, ceiling) = match hello {
         Ok(Line::Frame(line)) => match serde_json::from_str::<FromClient>(&line) {
-            Ok(FromClient::Hello { agent, plane, tail }) => (agent, plane, tail),
+            Ok(FromClient::Hello {
+                agent,
+                plane,
+                tail,
+                ceiling,
+            }) => (agent, plane, tail, ceiling),
             _ => {
                 tracing::warn!("link from {peer}: the first frame was not a hello, refused");
                 refuse(tx, writer, Refusal::Malformed).await;
@@ -1057,6 +1140,26 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
         }
         (Plane::Gate, _) => None,
     };
+    // **The ceiling is the admin plane's and is declared in its hello**
+    // (Spec 8): an admin hello without one, a gate hello with one, or a
+    // ceiling past its bound is refused as malformed.
+    let ceiling: Option<Arc<BTreeSet<String>>> = match (plane, ceiling) {
+        (Plane::Admin, Some(verbs))
+            if verbs.len() <= CEILING_BOUND && verbs.iter().all(|v| v.len() <= VERB_NAME_BOUND) =>
+        {
+            Some(Arc::new(verbs.into_iter().collect()))
+        }
+        (Plane::Gate, None) => None,
+        (plane, _) => {
+            tracing::warn!(
+                "link from {peer}: {} ({plane}) said hello with a ceiling the plane does not carry or past its bound, refused",
+                agent.agent_id
+            );
+            refuse(tx, writer, Refusal::Malformed).await;
+            return;
+        }
+    };
+    let ceiling_copy: Option<Vec<String>> = ceiling.as_deref().map(|c| c.iter().cloned().collect());
 
     let incarnation = (inner.epoch << 32) | inner.next_incarnation.fetch_add(1, Ordering::Relaxed);
     let pending = Arc::new(Mutex::new(HashMap::new()));
@@ -1071,6 +1174,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
             &fp,
             incarnation,
             &peer.to_string(),
+            ceiling_copy.as_deref(),
             // The monitor halts the listener on the failed ping; this
             // admission is refused.
             async || match inner.prove_lock().await {
@@ -1100,8 +1204,8 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                         close: close_tx.clone(),
 
                         silent: silent.clone(),
-
                         ready: false,
+                        ceiling: ceiling.clone(),
                     },
                 );
                 Ok(())
@@ -1177,22 +1281,28 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                     "admin-con reconnected: a replay follows",
                 );
             }
-            let id = inner.next_ask.fetch_add(1, Ordering::Relaxed);
-            if let Err(why) = enqueue(
-                &tx,
-                ToClient::Verb {
-                    id,
-                    verb: "show".into(),
-                },
-                inner.silence,
-                &mut close_rx,
-            )
-            .await
-            {
-                reason = why;
-                break 'serve;
+            // **Only where the ceiling grants `show`** (Spec 7.2, 8): where
+            // it does not, nothing is asked, admission completes at
+            // `caught_up`, and the row's state stands on live events.
+            if ceiling.as_deref().is_some_and(|c| c.contains("show")) {
+                let id = inner.next_ask.fetch_add(1, Ordering::Relaxed);
+                if let Err(why) = enqueue(
+                    &tx,
+                    ToClient::Verb {
+                        id,
+                        verb: "show".into(),
+                        principal: Principal::Server,
+                    },
+                    inner.silence,
+                    &mut close_rx,
+                )
+                .await
+                {
+                    reason = why;
+                    break 'serve;
+                }
+                admission_show = Some((id, tokio::time::Instant::now() + inner.silence));
             }
-            admission_show = Some((id, tokio::time::Instant::now() + inner.silence));
         }
         // The hello's answer and, on the admin plane, the admission's show
         // are in the channel ahead of anything an ask could add: the
@@ -1205,8 +1315,6 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
             conn.ready = true;
         }
 
-        // Whether an event at or beyond the boundary in its generation has
-        // arrived yet, which is what classifies events of other generations.
         // Whether admin-con's replay has reached the boundary (Spec 7.2): the
         // frame that decides what is replayed and what is live.
         let mut caught_up = false;
@@ -1348,7 +1456,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                     };
                     let landing = match &outcome {
                         Some(outcome) => match bounded(
-                            inner.land_verb(&agent.agent_id, &agent.name, outcome),
+                            inner.land_verb(&agent.agent_id, outcome),
                             bound,
                             &mut close_rx,
                         )
@@ -1404,9 +1512,10 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                             FromClient::Verb {
                                 id,
                                 outcome: None,
-                                error: Some(
-                                    "the store could not land admin's answer; the connection is closed and the ask is owed again".into(),
-                                ),
+                                error: Some(VerbFault {
+                                    kind: VerbFault::NOT_LANDED.into(),
+                                    message: "the store could not land admin's answer; the connection is closed and the ask is owed again".into(),
+                                }),
                             },
                         );
                         send(
@@ -1426,7 +1535,9 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                             tracing::warn!(
                                 "{}: the admission's show answered without a usable observation ({}), closed so the reconnect asks again",
                                 agent.agent_id,
-                                error.as_deref().unwrap_or("no state in the answer")
+                                error
+                                    .as_ref()
+                                    .map_or("no state in the answer", |e| e.message.as_str())
                             );
                             send(
                                 &tx,
@@ -1489,7 +1600,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                         }
                         Bounded::Done(Err(refusal)) => {
                             tracing::warn!(
-                                "{}: an event at or beyond the boundary arrived before the replay was caught up, refused",
+                                "{}: an event beyond the boundary arrived before the replay was caught up, refused",
                                 agent.agent_id
                             );
                             send(&tx, ToClient::Refusal { reason: refusal }).await;
@@ -1502,15 +1613,22 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                             .lock()
                             .unwrap()
                             .insert(agent.agent_id.clone(), position.clone());
-                        if let Err(why) = enqueue(
-                            &tx,
-                            ToClient::Ack { position },
-                            inner.silence,
-                            &mut close_rx,
-                        )
-                        .await
+                        // **An ack never blocks the read loop** (Spec 7.2):
+                        // admin-con reads acks only between its replay steps,
+                        // so a backfill of many small records fills the write
+                        // queue with acks while it is still sending, and an
+                        // enqueue that waited would stop this loop reading
+                        // the events that would let it drain: both ends
+                        // blocked until the silence bound. An ack is dropped
+                        // where the queue is full. Nothing is lost by it:
+                        // each ack names a later position than the last, the
+                        // position the hello's answer resumes from is the one
+                        // recorded above and not the frames sent, and
+                        // admin-con keeps no state from acks.
+                        if let Err(mpsc::error::TrySendError::Closed(_)) =
+                            tx.try_send(ToClient::Ack { position })
                         {
-                            reason = why;
+                            reason = "the write path is gone";
                             break;
                         }
                     } else {
@@ -1659,13 +1777,11 @@ fn event_time(event: &TraceEvent) -> Option<DateTime<Utc>> {
 }
 
 impl Inner {
-    /// **A `show` or `list` answer is admin's word** (Spec 7.2, 2.12) and
-    /// lands on the row under the arrival sequence. Of a `list` answer only
-    /// the summary for this connection's own row lands; the others write
-    /// nothing. Any other verb's answer lands nothing. **The date is the
-    /// receipt's**, a gap section 2.12 names: admin's answer carries no
-    /// time of its own.
-    async fn land_verb(&self, agent: &AgentId, name: &str, outcome: &VerbOutcome) -> Landing {
+    /// **A `show` answer is admin's word** (Spec 7.2, 2.12) and lands on
+    /// the row under the arrival sequence, naming `show` as its source. Any
+    /// other verb's answer lands nothing. **The date is the receipt's**, a
+    /// gap section 2.12 names: admin's answer carries no time of its own.
+    async fn land_verb(&self, agent: &AgentId, outcome: &VerbOutcome) -> Landing {
         let Some(answer) = &outcome.answer else {
             return Landing::Nothing;
         };
@@ -1673,14 +1789,6 @@ impl Inner {
             "show" if answer.get("kind").and_then(|k| k.as_str()) == Some("state") => {
                 Some(answer.clone())
             }
-            "list" if answer.get("kind").and_then(|k| k.as_str()) == Some("agents") => answer
-                .get("agents")
-                .and_then(|a| a.as_array())
-                .and_then(|rows| {
-                    rows.iter()
-                        .find(|r| r.get("name").and_then(|n| n.as_str()) == Some(name))
-                })
-                .cloned(),
             _ => None,
         };
         let Some(summary) = summary else {
@@ -1693,6 +1801,7 @@ impl Inner {
                 .map(str::to_owned),
             tuple: summary.get("load").cloned().filter(|l| !l.is_null()),
             at: Utc::now(),
+            source: "show",
         };
         if self.land(agent, observation).await {
             Landing::Observation
@@ -1702,15 +1811,11 @@ impl Inner {
     }
 
     /// **An event feeds the window, and only a live load or unload writes
-    /// the row** (Spec 7.2, 2.12). **The server classifies by its own
-    /// boundary and needs no flag from the client.** In the boundary's
-    /// generation an event is replayed where its offset is behind the
-    /// boundary's. In another generation the stream's own order decides,
-    /// which the source guarantees (Spec 7.2, one ordered stream): every
-    /// event of another generation that arrives before the first event at
-    /// or beyond the boundary is the old file's tail, replayed; every one
-    /// arriving after is a rotation after the hello, live. The client's
-    /// flag is a check and a disagreement is logged.
+    /// the row** (Spec 7.2, 2.12). **The `caught_up` frame classifies, and
+    /// the client's flag is a check**: an event before it is the replay's,
+    /// in whatever generation, and one after it is live. In the boundary's
+    /// generation the offset rule checks the frame, and a disagreement
+    /// with the flag is logged.
     async fn land_event(
         &self,
         agent: &AgentId,
@@ -1722,18 +1827,25 @@ impl Inner {
     ) -> Result<bool, Refusal> {
         // **The frame decides** (Spec 7.2): before `caught_up` an event is
         // the replay's, after it live. The boundary's offset rule and the
-        // client's mark are checks: an event at or beyond the boundary in
-        // its generation before the frame is a protocol fault and refused,
+        // client's flag are checks: an event beyond the boundary in its
+        // generation before the frame is a protocol fault and refused,
         // and any other disagreement is logged. The stream's order alone
         // could not decide, since a file rotated after the hello before
         // any event of the boundary's generation reached the boundary would
         // leave every live event of the new generation looking like an
         // older generation's tail.
         let behind = !caught_up;
+        // **Marks are held to the offset rule as records are**: a mark
+        // carries the position relaying resumes at, never past the
+        // boundary before `caught_up`.
         if let Some(b) = boundary
             && b.generation == position.generation
         {
-            let offset_says_behind = position.offset < b.offset;
+            // **A position is the byte after its record** (Spec 7.2), so the
+            // event whose position equals the boundary is the last one
+            // behind it, and one beyond the boundary is one whose position
+            // is past it.
+            let offset_says_behind = position.offset <= b.offset;
             if !caught_up && !offset_says_behind {
                 return Err(Refusal::Malformed);
             }
@@ -1770,11 +1882,13 @@ impl Inner {
                 load_state: Some("idle".into()),
                 tuple: payload,
                 at,
+                source: "event",
             }),
             Some("unload") if !behind => Some(Observation {
                 load_state: Some("unloaded".into()),
                 tuple: None,
                 at,
+                source: "event",
             }),
             _ => None,
         };

@@ -72,6 +72,13 @@ pub struct Agent {
     pub tuple_at: Option<DateTime<Utc>>,
     pub load_state: Option<String>,
     pub load_state_at: Option<DateTime<Utc>>,
+    /// Which source the tuple and the load state stand on: `show` or
+    /// `event` (Spec 2.12). Its date is the load state's.
+    pub state_source: Option<String>,
+    /// The ceiling admin-con last declared, with its date (Spec 2.12, 8):
+    /// the copy surfaces read, never the authorization input.
+    pub ceiling: Option<Vec<String>>,
+    pub ceiling_at: Option<DateTime<Utc>>,
 }
 
 impl Agent {
@@ -166,6 +173,8 @@ pub struct Observation {
     pub load_state: Option<String>,
     pub tuple: Option<serde_json::Value>,
     pub at: DateTime<Utc>,
+    /// `show` or `event` (Spec 2.12): which source this observation is.
+    pub source: &'static str,
 }
 
 const COLUMNS: &str = "agent_id, name, box, author, version, registered_at, \
@@ -173,7 +182,7 @@ const COLUMNS: &str = "agent_id, name, box, author, version, registered_at, \
     gate_incarnation, gate_address, gate_address_at, \
     admin_fingerprint, admin_authority, admin_state, admin_state_at, admin_connected, admin_link_at, \
     admin_incarnation, admin_address, admin_address_at, \
-    tuple, tuple_at, load_state, load_state_at";
+    tuple, tuple_at, load_state, load_state_at, state_source, admin_ceiling, admin_ceiling_at";
 
 fn credential_from_row(row: &PgRow, plane: &str) -> anyhow::Result<Credential> {
     let col = |s: &str| format!("{plane}_{s}");
@@ -205,6 +214,9 @@ fn agent_from_row(row: &PgRow) -> anyhow::Result<Agent> {
         tuple_at: row.try_get("tuple_at")?,
         load_state: row.try_get("load_state")?,
         load_state_at: row.try_get("load_state_at")?,
+        state_source: row.try_get("state_source")?,
+        ceiling: row.try_get("admin_ceiling")?,
+        ceiling_at: row.try_get("admin_ceiling_at")?,
     })
 }
 
@@ -305,8 +317,10 @@ impl Store {
         authority: &str,
     ) -> anyhow::Result<(AgentId, Vec<String>)> {
         let mut conn = self.pool.acquire().await?;
+        let id = Self::mint_agent_id_on(&mut conn).await?;
         Self::register_agent_on(
             &mut conn,
+            &id,
             r#box,
             name,
             author,
@@ -317,11 +331,26 @@ impl Store {
         .await
     }
 
-    /// The same on a given connection: a verb that holds the authority
-    /// lock runs its store work on the lock's own session, so a lost session
-    /// kills the transaction with it.
+    /// **A new row's identity, minted by the store** through the function
+    /// every kind's identity comes from, before the row is written: the
+    /// register verbs stage each client config with the identity it will
+    /// name before the store commits (Spec 8).
+    pub async fn mint_agent_id_on(conn: &mut sqlx::PgConnection) -> anyhow::Result<AgentId> {
+        let id: String = sqlx::query_scalar("SELECT weaver_key('ag')")
+            .fetch_one(&mut *conn)
+            .await?;
+        id.parse().map_err(|e: String| anyhow::anyhow!(e))
+    }
+
+    /// The same on a given connection, under an identity minted first: a
+    /// verb that holds the authority lock runs its store work on the lock's
+    /// own session, so a lost session kills the transaction with it.
+    // The row's members arrive as the verb holds them: eight arguments,
+    // each one a column of the one insert the lock orders.
+    #[allow(clippy::too_many_arguments)]
     pub async fn register_agent_on(
         conn: &mut sqlx::PgConnection,
+        id: &AgentId,
         r#box: &str,
         name: &str,
         author: Option<&str>,
@@ -373,9 +402,9 @@ impl Store {
             }
         }
         let id: String = sqlx::query_scalar(
-            "INSERT INTO agent (name, box, author, gate_fingerprint, admin_fingerprint, \
+            "INSERT INTO agent (agent_id, name, box, author, gate_fingerprint, admin_fingerprint, \
              gate_authority, admin_authority) \
-             VALUES ($1, $2, $3, $4, $5, $6, $6) RETURNING agent_id",
+             VALUES ($7, $1, $2, $3, $4, $5, $6, $6) RETURNING agent_id",
         )
         .bind(name)
         .bind(r#box)
@@ -383,6 +412,7 @@ impl Store {
         .bind(gate_fingerprint)
         .bind(admin_fingerprint)
         .bind(authority)
+        .bind(id.as_str())
         .fetch_one(&mut *tx)
         .await?;
         tx.commit().await?;
@@ -662,8 +692,8 @@ impl Store {
     /// the observed address. The install runs while the lock is held, so a
     /// revocation either waits for this to commit and then closes what it
     /// finds installed, or committed first and the recheck refuses.
-    // The row's identity, the connection's three facts, and the two hooks
-    // that run under the row's lock: eight arguments, each one the lock
+    // The row's identity, the connection's four facts, and the two hooks
+    // that run under the row's lock: nine arguments, each one the lock
     // orders against the others.
     #[allow(clippy::too_many_arguments)]
     pub async fn admit(
@@ -673,6 +703,7 @@ impl Store {
         fingerprint: &str,
         incarnation: i64,
         address: &str,
+        ceiling: Option<&[String]>,
         prove: impl AsyncFnOnce() -> Result<(), Refusal>,
         install: impl FnOnce() -> Result<(), Refusal>,
     ) -> anyhow::Result<Result<(), Refusal>> {
@@ -716,6 +747,19 @@ impl Store {
         .bind(address)
         .execute(&mut *tx)
         .await?;
+        // **The ceiling's copy lands with the admission** (Spec 2.12, 8),
+        // under the same lock, so the row's copy is the ceiling of the
+        // connection the row records connected. Surfaces read it; the
+        // listener authorizes against the live connection's own.
+        if let Some(ceiling) = ceiling {
+            sqlx::query(
+                "UPDATE agent SET admin_ceiling = $2, admin_ceiling_at = now() WHERE agent_id = $1",
+            )
+            .bind(agent_id.as_str())
+            .bind(ceiling)
+            .execute(&mut *tx)
+            .await?;
+        }
         tx.commit().await?;
         #[cfg(test)]
         fail_after_commit("admit")?;
@@ -802,7 +846,8 @@ impl Store {
         let affected = sqlx::query(
             "UPDATE agent SET \
                load_state = $2, load_state_at = $3, load_epoch = $4, load_arrival = $5, \
-               tuple = $6, tuple_at = $3, tuple_epoch = $4, tuple_arrival = $5 \
+               tuple = $6, tuple_at = $3, tuple_epoch = $4, tuple_arrival = $5, \
+               state_source = $7 \
              WHERE agent_id = $1 \
                AND (load_epoch IS NULL OR (load_epoch, load_arrival) < ($4, $5)) \
                AND (tuple_epoch IS NULL OR (tuple_epoch, tuple_arrival) < ($4, $5))",
@@ -813,6 +858,7 @@ impl Store {
         .bind(epoch)
         .bind(arrival)
         .bind(&observation.tuple)
+        .bind(observation.source)
         .execute(&self.pool)
         .await?
         .rows_affected();

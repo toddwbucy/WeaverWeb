@@ -23,7 +23,7 @@ use tokio::task::JoinHandle;
 
 /// A backoff fast enough for a test: the cap is what a credential refusal
 /// waits, so it is short and still distinguishable from the base.
-const FAST: Backoff = Backoff {
+pub(super) const FAST: Backoff = Backoff {
     base: Duration::from_millis(20),
     cap: Duration::from_millis(400),
 };
@@ -547,16 +547,16 @@ async fn shutdown_lets_a_turn_in_flight_finish() {
 
 /// A fake server: the authority's TLS, one connection, the hello read and
 /// answered with the given cadence, and the rest left to the test.
-struct FakeServer {
-    _dir: tempfile::TempDir,
-    authority: Authority,
-    listener: TcpListener,
+pub(super) struct FakeServer {
+    pub(super) _dir: tempfile::TempDir,
+    pub(super) authority: Authority,
+    pub(super) listener: TcpListener,
 }
 
-type ServerStream = tokio_rustls::server::TlsStream<tokio::net::TcpStream>;
+pub(super) type ServerStream = tokio_rustls::server::TlsStream<tokio::net::TcpStream>;
 
 impl FakeServer {
-    async fn start() -> Self {
+    pub(super) async fn start() -> Self {
         let dir = tempfile::tempdir().unwrap();
         let authority = Authority::init(&dir.path().join("authority"), "weaver-web", &[]).unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -567,12 +567,13 @@ impl FakeServer {
         }
     }
 
-    fn link(&self, plane: Plane) -> LinkConfig {
+    pub(super) fn link(&self, plane: Plane) -> LinkConfig {
         let credential = self.authority.mint_client("karl", plane).unwrap();
         LinkConfig {
             server: self.listener.local_addr().unwrap().to_string(),
             server_name: "weaver-web".into(),
             agent: "karl".into(),
+            agent_id: "ag-0000000000000001".into(),
             plane,
             server_certificate: self.authority.certificate_pem().to_owned(),
             certificate: credential.certificate_pem,
@@ -581,15 +582,44 @@ impl FakeServer {
     }
 
     /// Accept one connection, read its hello, answer it.
-    async fn admit(
+    pub(super) async fn admit(
         &self,
         cadence_secs: u64,
     ) -> (
         LineReader<tokio::io::ReadHalf<ServerStream>>,
         tokio::io::WriteHalf<ServerStream>,
     ) {
+        self.admit_with(cadence_secs, None).await
+    }
+
+    /// As `admit`, with the accepted socket's receive buffer set, so a
+    /// slow reader stands for a slow link and the bytes the path holds are
+    /// few.
+    pub(super) async fn admit_with(
+        &self,
+        cadence_secs: u64,
+        receive_buffer: Option<usize>,
+    ) -> (
+        LineReader<tokio::io::ReadHalf<ServerStream>>,
+        tokio::io::WriteHalf<ServerStream>,
+    ) {
         let acceptor = tokio_rustls::TlsAcceptor::from(self.authority.server_tls().unwrap());
         let (tcp, _) = self.listener.accept().await.unwrap();
+        if let Some(bytes) = receive_buffer {
+            use std::os::fd::AsRawFd;
+            let value = bytes as libc::c_int;
+            // SAFETY: a valid descriptor and a c_int option of its size.
+            let set = unsafe {
+                libc::setsockopt(
+                    tcp.as_raw_fd(),
+                    libc::SOL_SOCKET,
+                    libc::SO_RCVBUF,
+                    &value as *const libc::c_int as *const libc::c_void,
+                    std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+                )
+            };
+            assert_eq!(set, 0, "SO_RCVBUF");
+        }
         let stream = acceptor.accept(tcp).await.unwrap();
         let (read, mut write) = tokio::io::split(stream);
         let mut reader = LineReader::new(read);
@@ -644,6 +674,7 @@ async fn a_server_line_past_the_bound_ends_the_connection() {
                 agent: "karl".into(),
                 plane: Plane::Gate,
                 tail: None,
+                ceiling: None,
             })
             .await
         else {
@@ -725,6 +756,7 @@ fn config_text(server: &FakeServer, plane: Plane, gate: Option<&str>, extra: &st
     table.insert("server".into(), link.server.into());
     table.insert("server_name".into(), link.server_name.into());
     table.insert("agent".into(), link.agent.into());
+    table.insert("agent_id".into(), link.agent_id.into());
     table.insert("plane".into(), plane.as_str().into());
     table.insert("server_certificate".into(), link.server_certificate.into());
     table.insert("certificate".into(), link.certificate.into());
@@ -940,6 +972,56 @@ async fn a_reinstalled_config_is_picked_up_at_the_next_capped_retry() {
     con.stop().await;
 }
 
+/// **A config for another agent re-installed at the path is refused**:
+/// only the link's members change at a re-install, and the agent is told
+/// by its row's identity. gate-con's credential is revoked and it retries
+/// at the cap; another box's agent of the same name, then another name,
+/// has its gate config written over the file; the capped retries read
+/// each, refuse it, and keep dialing with the credential in hand, so
+/// neither other row is ever connected through a gate-con bound to this
+/// one's socket.
+#[tokio::test]
+async fn a_reinstalled_config_for_another_agent_is_refused() {
+    let Some(lab) = Lab::open().await else { return };
+    let gate = FakeGate::start();
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, "karl", &gate.path, out.path(), None).await;
+    let twin_out = tempfile::tempdir().unwrap();
+    let (twin, twin_path) = installed(&lab, "karl", &gate.path, twin_out.path(), None).await;
+    let other_out = tempfile::tempdir().unwrap();
+    let (other, other_path) = installed(&lab, "kevin", &gate.path, other_out.path(), None).await;
+    let mut con = Running::from_file(&path, FAST);
+    con.wait("admitted", |s| s.admitted).await;
+
+    let row = lab.agent(&id).await;
+    lab.store
+        .revoke_credential(&row, Plane::Gate, Some("lab"))
+        .await
+        .unwrap();
+    con.wait("refused not_live", |s| {
+        s.last_refusal == Some(Refusal::NotLive)
+    })
+    .await;
+    for (foreign, foreign_path) in [(&twin, &twin_path), (&other, &other_path)] {
+        let staged = path.with_extension("installing");
+        write_mode(
+            &staged,
+            &std::fs::read_to_string(foreign_path).unwrap(),
+            0o600,
+        );
+        std::fs::rename(&staged, &path).unwrap();
+        let attempts = con.status().attempts;
+        con.wait("three capped retries", |s| s.attempts >= attempts + 3)
+            .await;
+        let status = con.status();
+        assert!(!status.admitted, "{status:?}");
+        assert_eq!(status.last_refusal, Some(Refusal::NotLive), "{status:?}");
+        assert_eq!(status.admissions, 1, "{status:?}");
+        assert!(!lab.agent(foreign).await.gate.connected);
+    }
+    con.stop().await;
+}
+
 /// **An ask past the waiting bound is answered `busy` at once**, gate-con's
 /// own back-pressure: one turn in flight and two waiting, so of five held
 /// asks three answer and two are refused `busy` without reaching the gate.
@@ -995,6 +1077,7 @@ async fn a_hello_answer_naming_an_absurd_cadence_is_a_protocol_fault() {
             agent: "karl".into(),
             plane: Plane::Gate,
             tail: None,
+            ceiling: None,
         })
     );
     match attempt {

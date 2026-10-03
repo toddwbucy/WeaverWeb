@@ -18,6 +18,7 @@
 //! revoked and refuses. The listener's in-process map is mutated only under
 //! that lock, which is what makes it agree with the row.
 
+pub mod admin_con;
 pub mod authority;
 pub mod client;
 pub mod frames;
@@ -26,6 +27,8 @@ pub mod listener;
 pub mod register;
 pub mod verbs;
 
+#[cfg(test)]
+mod admin_con_tests;
 #[cfg(test)]
 mod client_tests;
 #[cfg(test)]

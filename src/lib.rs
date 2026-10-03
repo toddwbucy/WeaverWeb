@@ -3,14 +3,13 @@
 //! of agents, and listens for the two connectors over the link of Spec
 //! section 8. The connectors, gate-con and admin-con, are this crate's
 //! binaries beside the agent: gate-con (`link::gate_con`, relaying through
-//! `adapters/gate.rs`) stands; admin-con is act 6's, the tailer half of
-//! `traceview.rs` its seed. `lifecycle.rs` runs the verbs through sudo and is
-//! not carried forward (Spec 7.2: no privileged invocation in this crate).
+//! `adapters/gate.rs`) and admin-con (`link::admin_con`, tailing the trace
+//! file and answering verbs through an invoker that carries no privilege
+//! code, Spec 7.2).
 
 pub mod adapters;
 pub mod config;
 pub mod fault;
-pub mod lifecycle;
 pub mod link;
 pub mod registry;
 pub mod store;

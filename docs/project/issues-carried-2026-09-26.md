@@ -53,7 +53,7 @@ The smallest true fix landed with PR #350: the deployment notes now name the pat
 
 **The reason it is still compiled is this issue's own subject.** Lifting the conversation half out found that `registry.rs` carries `Participant` with its `role` field and `is_admin()`, which `web/admin.rs` gates on, and that is the role model the rewritten charter's section 6 keeps as structural. **Separating the participant-as-conversation-member from the role-as-standing-fact is the section 6 act**, which is where identity and authentication are deferred with a named trigger. So this issue and the removal are the same act's two halves.
 
-**The session token stored in the clear is unmoved.** `migrations/0001_init.sql` still declares `token TEXT NOT NULL UNIQUE`, and the store on olympus holds five session rows, per the reading recorded in `inventory-weaver-web-code`. A digest column with the bearer hashed before lookup remains the ordinary shape and remains unbuilt.
+**The session token stored in the clear is unmoved.** `migrations/0001_init.sql` still declares `token TEXT NOT NULL UNIQUE`, so the seed's session table stores tokens in the clear. A digest column with the bearer hashed before lookup remains the ordinary shape and remains unbuilt.
 
 **What has changed around it.** The charter these deferrals were written against was replaced whole on 2026-09-04. The PRD's section 7 that deferred authentication and the Spec's section 14 that stated the role posture are both in the retired text, readable at `13b8a6a`. The rewritten charter defers identity at its section 6 with a named trigger, so the deferral survives the rewrite, but **this issue's citations point at sections that no longer exist**.
 

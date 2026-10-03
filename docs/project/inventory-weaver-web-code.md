@@ -532,11 +532,12 @@ of its own rather than a line here.
   the corrected probe. **Ten stand**, and they stand on this register's own
   ground.
 
-- **Two sites carry code a merged act moved past, and both now say so in
-  place.** Found by the reviews of PR #510 rather than by this reading.
-  `adapters/gate.rs`'s `socket_exists` infers load state from a socket
+- **Two sites carried code a merged act moved past, and said so in place.**
+  Found by the reviews of PR #510 rather than by this reading.
+  `adapters/gate.rs`'s `socket_exists` inferred load state from a socket
   path's existence, which the charter's section 8 retired on 2026-09-04 at
-  issue #440 in favour of the harness answering with `observe`. And
+  issue #440 in favour of the harness answering with `observe`; it left the
+  tree with the alignment act of 2026-10-03, unused. And
   `store.rs`'s `reconcile_roles` writes `participants.role`, where Spec
   section 2.8 puts the role on the session, onto a table the schema no
   longer creates. **Neither is a citation defect and neither is fixed by

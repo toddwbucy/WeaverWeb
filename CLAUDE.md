@@ -171,7 +171,8 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
 - **admin-con** reads the file `register` wrote plus `trace_file`, the agent's trace path, a
   required box fact with no default, and optional `backfill_bytes` (1 MiB, at most 256 MiB),
   the tail relayed after a server restart. Same trust rule as gate-con's. It tails the trace
-  file by group read, relays with replay and marked discontinuities, and declares in its hello
+  file by what the box grants it (`toddwbucy/WeaverAgent#61`), relays with replay and marked
+  discontinuities, and declares in its hello
   exactly what its invoker's `grants` answers. The only invoker shipped, `NoVerbs`, answers an
   empty `grants` and runs nothing, so the server asks it nothing until WeaverAgent #50 lands.
   Its tests (`link::admin_con_tests`) run it against a temporary trace file, the real listener

@@ -1406,6 +1406,8 @@ async fn a_load_events_date_is_the_traces_own() {
 ///
 /// Perturbation: drop the `turn.started` arm in `land_event`. The row never
 /// reads `active` between the two events.
+///
+/// conforms: web-tuple-is-admins-word-and-never-gate-cons
 #[tokio::test]
 async fn a_turns_start_and_close_refresh_the_load_state() {
     let Some(lab) = Lab::open().await else { return };

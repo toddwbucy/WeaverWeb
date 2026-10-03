@@ -123,8 +123,16 @@ enum AskError {
 /// Why a verb was not answered with an outcome.
 #[derive(Debug)]
 pub enum VerbError {
-    /// No admin-con is connected for this agent, or it dropped mid-ask.
+    /// No admin-con is connected for this agent: the verb never left the
+    /// server.
     NotConnected,
+    /// **The verb was sent and never answered: its outcome is unknown
+    /// here.** The connection ended with the verb in flight, and it may
+    /// have run on the box, which `toddwbucy/WeaverAgent#60` makes
+    /// dangerous to guess about. admin's trace and its next `show` hold
+    /// the outcome. It is never "not connected", which would say the verb
+    /// did not run.
+    Unanswered,
     /// The verb is outside the ceiling the connection declared; refused on
     /// the server before any frame left it (Spec 8).
     OutsideCeiling { verb: String, ceiling: Vec<String> },
@@ -136,6 +144,10 @@ impl std::fmt::Display for VerbError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             VerbError::NotConnected => write!(f, "no admin-con is connected for this agent"),
+            VerbError::Unanswered => write!(
+                f,
+                "the verb was sent and the connection ended before its answer came back: its outcome is unknown here, and admin's trace and its next show hold it"
+            ),
             VerbError::OutsideCeiling { verb, ceiling } => write!(
                 f,
                 "{verb} is outside the ceiling admin-con declared ({}), so it was not asked",
@@ -636,6 +648,7 @@ impl Listener {
                 verb: verb.to_owned(),
                 ceiling,
             }),
+            Err(AskError::Unanswered) => Err(VerbError::Unanswered),
             _ => Err(VerbError::NotConnected),
         }
     }

@@ -1967,3 +1967,41 @@ async fn a_rewrite_during_a_drain_is_drained_to_its_tail_ahead_of_the_answer() {
     );
     con.stop().await;
 }
+
+/// **A verb whose link ends with it in flight has an unknown outcome**: a
+/// slow invocation is still running when admin-con stops and its grace
+/// ends, the connection closes with the verb sent and unanswered, and the
+/// caller is answered `Unanswered`, never `NotConnected`: the verb may have
+/// run on the box, and admin's trace and next `show` hold what it did.
+#[tokio::test]
+async fn a_verb_whose_link_ends_in_flight_is_answered_as_unknown() {
+    let Some(lab) = Lab::open().await else { return };
+    let trace = Trace::new();
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, &trace.path, out.path(), None).await;
+    let invoker = FakeInvoker::new(&["show"], "idle");
+    let mut con = Running::start(config(&path, POLL), invoker.clone());
+    con.wait("admitted", |s| s.admitted).await;
+    lab.wait_for(&id, "the admission's show", |a| {
+        a.state_source.as_deref() == Some("show")
+    })
+    .await;
+
+    invoker.script(Step {
+        delay: admin_con::SHUTDOWN_GRACE + Duration::from_secs(5),
+        ..Step::default()
+    });
+    let listener = lab.listener.clone();
+    let asked = id.clone();
+    let pending = tokio::spawn(async move { verb(&listener, &asked, "show").await });
+    let until = tokio::time::Instant::now() + SOON;
+    while invoker.ran().len() < 2 {
+        assert!(tokio::time::Instant::now() < until, "the verb never ran");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    con.stop().await;
+    match pending.await.unwrap() {
+        Err(VerbError::Unanswered) => {}
+        other => panic!("expected the unknown outcome, got {other:?}"),
+    }
+}

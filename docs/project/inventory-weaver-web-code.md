@@ -360,11 +360,11 @@ act that comes first.
 
 **A dated observation by a named reporter**, which is the shape this crate's
 own section 2.3 requires of presence and is the honest shape for this too.
-No store stands on the box this register was written from, `postgresql`
-being inactive there, and one stands on olympus.
+The reading below was reported on 2026-09-06 from a development `weaver_web`
+database.
 
-**Reported by the olympus seat on 2026-09-06**, from a `weaver_web` database
-with both migrations applied:
+**Reported by the WeaverAgent planning seat on 2026-09-06**, from a
+`weaver_web` database with both migrations applied:
 
 | table | rows | |
 |---|---|---|
@@ -377,11 +377,6 @@ with both migrations applied:
 **Every event falls between 2026-08-19 and 2026-08-20**, the two days around
 the roles ruling `0002_roles.sql` carries. The turn rows name eighteen runs
 of the alpha agent by run label and ten turns by turn label.
-
-**No `weaver-web` unit is installed on that box.** That is the observation.
-Whether a process, a container, or a hand-started binary serves the database
-was not checked, so this register says a unit is absent and does not say
-nothing is serving it.
 
 **What this does and does not settle, by row.** The 158 turn rows, opens and
 closes, are **a mirror of turns whose canonical record is the trace under

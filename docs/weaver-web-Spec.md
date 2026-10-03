@@ -274,7 +274,7 @@ Everything identifying the conditions lives in the run's own row:
   different prompts are never one condition
 - **the state-management values in effect**, the agent's `[state-management]` settings
   as the load event records them at that load, per `toddwbucy/WeaverAgent#1` and `#58`,
-  so two runs under different memory settings are never one condition
+  so two runs under different state-management settings are never one condition
 - the parent run reference and branch position, where the run is a branch,
   **which are lineage and stand outside tuple equality**
 - **the parting position** where the run is a branch, the first at which its

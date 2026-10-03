@@ -360,11 +360,11 @@ act that comes first.
 
 **A dated observation by a named reporter**, which is the shape this crate's
 own section 2.3 requires of presence and is the honest shape for this too.
-No store stands on the box this register was written from, `postgresql`
-being inactive there, and one stands on olympus.
+The reading below was reported on 2026-09-06 from a development `weaver_web`
+database.
 
-**Reported by the olympus seat on 2026-09-06**, from a `weaver_web` database
-with both migrations applied:
+**Reported by the WeaverAgent planning seat on 2026-09-06**, from a
+`weaver_web` database with both migrations applied:
 
 | table | rows | |
 |---|---|---|
@@ -377,11 +377,6 @@ with both migrations applied:
 **Every event falls between 2026-08-19 and 2026-08-20**, the two days around
 the roles ruling `0002_roles.sql` carries. The turn rows name eighteen runs
 of the alpha agent by run label and ten turns by turn label.
-
-**No `weaver-web` unit is installed on that box.** That is the observation.
-Whether a process, a container, or a hand-started binary serves the database
-was not checked, so this register says a unit is absent and does not say
-nothing is serving it.
 
 **What this does and does not settle, by row.** The 158 turn rows, opens and
 closes, are **a mirror of turns whose canonical record is the trace under
@@ -532,11 +527,12 @@ of its own rather than a line here.
   the corrected probe. **Ten stand**, and they stand on this register's own
   ground.
 
-- **Two sites carry code a merged act moved past, and both now say so in
-  place.** Found by the reviews of PR #510 rather than by this reading.
-  `adapters/gate.rs`'s `socket_exists` infers load state from a socket
+- **Two sites carried code a merged act moved past, and said so in place.**
+  Found by the reviews of PR #510 rather than by this reading.
+  `adapters/gate.rs`'s `socket_exists` inferred load state from a socket
   path's existence, which the charter's section 8 retired on 2026-09-04 at
-  issue #440 in favour of the harness answering with `observe`. And
+  issue #440 in favour of the harness answering with `observe`; it left the
+  tree with the alignment act of 2026-10-03, unused. And
   `store.rs`'s `reconcile_roles` writes `participants.role`, where Spec
   section 2.8 puts the role on the session, onto a table the schema no
   longer creates. **Neither is a citation defect and neither is fixed by

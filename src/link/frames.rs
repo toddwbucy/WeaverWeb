@@ -174,6 +174,9 @@ impl VerbFault {
     pub const OUTSIDE_CEILING: &'static str = "outside_ceiling";
     /// admin-con holds as many asks as it waits behind, its bound.
     pub const BUSY: &'static str = "busy";
+    /// admin-con stopped before the verb was invoked: it did not run, and
+    /// may be asked again. admin-con's own, like `busy`.
+    pub const NOT_STARTED: &'static str = "not_started";
     /// The invocation passed its bound and was ended: whether admin acted
     /// is not known. A bound passed is this fault, never an outcome, so
     /// the fact has one shape.

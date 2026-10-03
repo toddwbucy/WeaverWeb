@@ -109,6 +109,24 @@ const MEMBERS: &[&str] = &[
     "turns_in_flight",
 ];
 
+/// **The fault for an ask that never reached the gate**, gate-con's own
+/// like `busy` and not one of the gate's kinds: answered at shutdown to
+/// every ask still waiting behind the in-flight bound, so its caller knows
+/// the turn did not run.
+pub const NOT_STARTED: &str = "not_started";
+
+fn not_started(id: u64) -> FromClient {
+    FromClient::Turn {
+        id,
+        close: None,
+        error: Some(TurnFault {
+            kind: NOT_STARTED.to_owned(),
+            message: "gate-con stopped before this turn reached the gate; it did not run"
+                .to_owned(),
+        }),
+    }
+}
+
 /// The adapter's error as the link carries it.
 pub fn fault(e: &GateError) -> TurnFault {
     TurnFault {
@@ -210,10 +228,23 @@ async fn serve(
     .await;
     let grace_ends = tokio::time::Instant::now() + SHUTDOWN_GRACE;
     if matches!(ended, Ended::Shutdown) {
+        // **Asks still waiting are answered `not_started` first**, while the
+        // link still stands: none reached the gate, so its caller is told it
+        // definitely did not run and may be asked again, which a turn lost
+        // with the link, whose outcome is unknown, cannot be (Spec 7.1).
+        let declined = tokio::time::timeout_at(grace_ends, async {
+            for (id, _) in waiting.drain(..) {
+                if conn.send(not_started(id)).await.is_err() {
+                    return;
+                }
+            }
+        })
+        .await;
+        if declined.is_err() {
+            tracing::warn!("the asks still waiting were not all answered within the grace");
+        }
         // **Shutdown lets turns in flight finish within a grace**, their
-        // answers sent while the link still stands; asks still waiting are
-        // dropped, and the server answers their callers as not connected
-        // when the link closes.
+        // answers sent while the link still stands.
         let finished = tokio::time::timeout_at(grace_ends, async {
             while let Some(done) = in_flight.join_next().await {
                 if let Ok(frame) = done
@@ -269,10 +300,14 @@ async fn relay(
     in_flight: &mut JoinSet<FromClient>,
     waiting: &mut VecDeque<(u64, String)>,
 ) -> Ended {
-    if *shutdown.borrow_and_update() {
-        return Ended::Shutdown;
-    }
     loop {
+        // **A stop is checked before any waiting turn is promoted**: a turn
+        // still waiting when the stop began must stay waiting, to be
+        // answered `not_started` by `serve`, and never reach the gate in
+        // the grace. A stop seen while a send waited lands here.
+        if *shutdown.borrow_and_update() {
+            return Ended::Shutdown;
+        }
         // **At most `bound` turns in flight, the rest waiting in arrival
         // order.** The gate serializes turns for the agent anyway; the
         // bound is this process's protection against an unbounded task set.
@@ -282,7 +317,11 @@ async fn relay(
             let adapter = adapter.clone();
             in_flight.spawn(async move { answer(id, adapter.turn(&text).await) });
         }
+        // **Biased, the stop first**: ready together with a completion or
+        // a frame, the stop wins, so the next pass cannot promote a turn
+        // that was waiting when it began.
         tokio::select! {
+            biased;
             _ = shutdown.changed() => return Ended::Shutdown,
             Some(done) = in_flight.join_next(), if !in_flight.is_empty() => {
                 let frame = match done {

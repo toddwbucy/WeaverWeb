@@ -53,10 +53,10 @@ without saying which binary runs them, and `link/` had described one dialed
 link between two processes, which section 8 no longer says. The two
 connectors are named as binaries under `bin/` because the split between them
 is a split of posture and not of module: admin-con runs as a service user
-holding the agent's admin role and read access to its trace file, gate-con
-as one holding the agent's gate role and nothing more, neither holding any
-privilege of its own per section 8, and a module tree cannot say which
-process carries which. **The box-bound
+holding the agent's admin role and what the box grants it for the trace,
+gate-con as one holding what the box grants it for the gate, both as ruled
+on `toddwbucy/WeaverAgent#61`, neither holding any privilege of its own per
+section 8, and a module tree cannot say which process carries which. **The box-bound
 reaches are linked by the two connector binaries and never by the server**,
 which is how the server's never reaching an agent is a build fact rather
 than a sentence.
@@ -269,6 +269,12 @@ Everything identifying the conditions lives in the run's own row:
   by the floor's parse. **The set stops being empty at the first act that charters a
   reachable organ**, which carries the declaration member from birth and which the load
   event then records, per issue #438
+- **the prompt file's digest, `identity_file`**, the identity the agent was given to
+  hold, which the load event records per `toddwbucy/WeaverAgent#57`, so two runs under
+  different prompts are never one condition
+- **the state-management values in effect**, the agent's `[state-management]` settings
+  as the load event records them at that load, per `toddwbucy/WeaverAgent#1` and `#58`,
+  so two runs under different state-management settings are never one condition
 - the parent run reference and branch position, where the run is a branch,
   **which are lineage and stand outside tuple equality**
 - **the parting position** where the run is a branch, the first at which its
@@ -364,6 +370,15 @@ enough to catch a quantization difference, so the tuple loses no distinction by 
 the word. The boundary set stays and is empty for the reason its own bullet gives. All
 three were found by issue #532 while the ingest was being written, and the operator
 ruled them on 2026-09-09.
+
+**The prompt's digest and the state-management values joined the tuple on
+2026-10-03**, per WeaverAgent's answer to question 3 on
+`toddwbucy/WeaverAgent#59`: both are run conditions. Both come from the
+load event and neither crosses yet, so **their columns arrive with the
+load event that carries them and not before**, by this section's rule for
+a member with no producer: the schema gains them in the act that meets
+WeaverAgent's load event carrying both, and until then a reader finds the
+members are not there to ask for.
 
 **The engine is in the compound, so the row holds it.** The tuple is a model
 on a device under a kernel, and a divergence between two rows
@@ -602,10 +617,12 @@ draft buffer. Each row carries:
   section 2 defines
 - **the corpus commit its field shape was written against**, which is this
   row's staleness rule per section 7.2: when the floor moves, the pin says
-  so and `validate` refuses in a way the surface can name
+  so, and the draft is named stale before it is offered for install
 - the parent declaration where this one is derived, and **the one thing
   that moved**, which is what the charter's section 3.6 draws
-- the last answer `validate` gave, with when it was given
+- the last answer `validate` gave, with when it was given, **meaningful only
+  where the operator installed this row's declaration**: `validate` judges
+  the declaration placed on the box and never a draft, per section 7.2
 - **the author**, per section 3.2
 - **the row's version**, per section 3.2, which is not the corpus commit
   above: that one answers whether the field shape is current, this one
@@ -1091,10 +1108,16 @@ never a bare socket's. Each row carries:
   observed** its connectors connecting from, with its date. The two are kept
   apart because one is a claim the operator made at registration and the
   other is a fact the listener saw
-- **the declared tuple as admin reported it, and when**, from `show` and from
-  the load event the trace carries, per section 7.2. It is admin's word and
-  carries admin's date, and nothing on the data plane may fill it, per
-  section 8
+- **the declared tuple as the agent's side reported it, and when**, kept
+  exactly as its source gave it: the `load` member of a `show` answer,
+  which is admin's word, or the payload of the load event the trace
+  carries, which is the agent's own record, per section 7.2. **It is
+  opaque**: the two sources give different shapes and stay so, per
+  `toddwbucy/WeaverAgent#59`, so the row's shape differs by source, which
+  the tuple's source member below records (migration `0012`), and nothing compares
+  it. **The run's tuple of section 2.2 is the compared one**, written only
+  by ingest, and the two are not the same thing. Nothing on the data plane
+  may fill it, per section 8
 - **the two credentials**, each as the fingerprint of its client certificate
   and never the key, each with its plane, gate or admin, its state, live or
   revoked, and the date the state was set. The posture is section 2.8's
@@ -1110,14 +1133,24 @@ never a bare socket's. Each row carries:
   what no connection holds. Section 8 states the reset, and it binds every
   link-state write to the connection it describes, so a stale teardown
   cannot mark a plane missing after its replacement was admitted
-- **the load state as admin's word, with its date**, which is section 7.2's
-  rule restated at the row: the state is what `show` last answered or the
-  trace last carried, never an inference from a socket's existence,
-  and never fresher than its date says
-- **which source the tuple and the load state stand on**, a `show` answer or
-  a live trace event, with its date, so a surface can say a
-  state is unconfirmed since the last admission where the agent's ceiling
-  grants no `show`, per section 7.2
+- **the load state, with its date**, which is section 7.2's rule restated at
+  the row: the state is what `show` last answered, admin's word, or what the
+  trace last carried, the agent's own record (a load, an unload, or a turn's
+  start as `active` and its close as `idle`), never an inference from a
+  socket's existence, and never fresher than its date says. **An unclean
+  stop writes no `unload`**, and the trace writer's queued tail can be lost
+  with it, per `toddwbucy/WeaverAgent#59`, so a state from an event can
+  outlive the process: a turn's start and close keep it no older than the
+  agent's last turn, and the full answer, the reset event of
+  `toddwbucy/WeaverAgent#58`, is owed until that lands
+- **which source each of the tuple and the load state stands on**, one
+  source per member, a `show` answer or a live trace event, each dated with
+  its member. The load state's source lets a surface say a state is
+  unconfirmed since the last admission where the agent's ceiling grants no
+  `show`, per section 7.2. **The tuple's source says which shape the opaque
+  tuple has**, so it moves only with the tuple: a turn's start or close
+  moves the load state and its source and leaves the tuple and its source
+  as they were (migration `0012`)
 - **the ceiling admin-con declared**, the verbs its role on the box grants as
   its hello named them, with the date, per section 8. It is the box's word
   about itself and an upper bound, never a grant, and this copy is what
@@ -1149,7 +1182,7 @@ to: web-one-live-row-per-box-and-name
 ```
 
 **What the link observes is not an edit.** The observed address, the link states, the ceiling, the tuple, the load state
-and the source those two stand on are facts the listener and admin reported, and the link writes them as it
+and the source those two stand on are facts the listener and the agent's side reported, and the link writes them as it
 learns them, each with its own date, so a reader can tell when the server
 last knew each one. **Observations are ordered on the server's own arrival
 sequence and never on their source date.** The sequence has two members
@@ -1167,10 +1200,11 @@ same act as the startup reset of section 8. The source date stays on the
 row for display and decides nothing, because the server's own epoch and
 counter cannot step backward or collide and a date from the box can do
 both. **A gap named 2026-10-01 by the act that built the listener**: a
-trace event carries its own time and the row takes it as admin's date,
-but admin's `show` answers carry none, so for those the date
-stored is the server's receipt and not admin's until the answer carries
-one; the ask goes to WeaverAgent as an interface issue. **A replayed event never writes a
+trace event carries its own time, the harness's `wall_ms` on a clock that
+is not monotonic, and the row takes it as the event's date, but admin's
+`show` answers carry none, so for those the date stored is the server's
+receipt and not admin's until the answer carries one, which
+`toddwbucy/WeaverAgent#52` asks. **A replayed event never writes a
 member of this row at all**: every event admin-con relays from behind the
 file's tail, at a reconnection or a backfill, is marked as replayed on the
 link per section 7.2 and feeds the server's live window and nothing else.
@@ -1410,6 +1444,14 @@ rather than this document's.
   rotate`, and the agent's row for `register`, `revoke` and `rotate`, and its
   action is the verb**, in the host's records today as in a person's later.
 
+**An agent holds one conversation.** Every gate connection lands in the
+agent's one session working structure, per `toddwbucy/WeaverAgent#59`, so
+turns granted to two people on one agent interleave in one context, and
+each person's turns are read by the agent beside the other's. **The console
+says so wherever more than one person holds `turn` on an agent**, beside
+the grant and wherever a turn is placed. This is a rule for the surfaces;
+nothing enforces it yet, and no grant is narrowed for it.
+
 ```graph
 node: web-verb-refused-before-an-ask-unless-granted
 kind: assertion
@@ -1592,6 +1634,15 @@ position**: it would name a place in the parent's tape the number does not mean.
 5 says what a branch position is and the authoring path writes it, this ingest writing
 the parent reference alone and leaving the branch position to the row that authored the
 branch.
+
+**The lineage's shape moves with `toddwbucy/WeaverAgent#58`, and this ingest's change is
+owed until it merges.** Per WeaverAgent's answer to question 1 on
+`toddwbucy/WeaverAgent#59`, once #58 lands the parent is read from the lineage's
+`built_from` only, and a lineage without it is a continuation of its run and names no
+parent. **A restore from a save point is a new run, and its turn keys restart at 1**,
+per the operator's ruling of 2026-10-02 on the same issue, so `weaver-gate-world-contract`
+does not move and the turn keys of section 2.1 hold. The rules above stand until the act
+that meets #58 rewrites them.
 
 **The boundary set is written empty**, per section 2.2, which is a fact about every run
 this ingest can meet rather than a default standing in for one. **Precision is written
@@ -2033,7 +2084,10 @@ grain**: the sweep forks the run at its branch position and the fork forks a pos
 inside a turn, so 5.4 stands on it as a sweep does. Section 3.1 derives the parting
 position for the sweep's arms, which the mechanism makes, and leaves it absent on a fork
 until the fork has one, per section 6's rule. The row's members are not narrowed for the
-wait.
+wait. **A branch at a turn is made on the box**: WeaverAgent's offline builder rebuilds the
+record up to the cut and writes it as a save point, which the agent then restores, per
+`toddwbucy/WeaverAgent#59`. So a staged arm that branches is a proposal for the operator,
+as a declaration is per section 7.2, and this crate places nothing on the box.
 
 ### 5.1 The five states
 
@@ -2200,7 +2254,9 @@ reached rather than for what it does.
 
 **A surface that authors or exchanges also holds an exchange outside this
 crate**, a call out and an answer back rather than a write left for someone
-else to drain. Compose writes its draft and asks `validate`. Live carries a
+else to drain. Compose keeps drafts and produces a declaration file the
+operator installs, and reads `validate`'s judgment of what is installed.
+Live carries a
 turn to the gate and reads the measurement that comes back. Agents drives
 the lifecycle verbs and reads the observation exchange. Section 7 names
 each of those reaches. The gate is section 7.1 and the charter carries no seam
@@ -2295,7 +2351,12 @@ to: web-uncertified-diagnostic-record-is-not-drawn
 
 A turn crosses at the gate as any client's does. The gate does not stream,
 so a whole-turn answer is presented whole and an in-flight state is clear
-rather than simulated. Closes render by kind, and an unnamed close is this
+rather than simulated. Closes render by kind. **A close that names no turn
+is the agent's own stop where it is `stopped` and carries a `reason`**: the
+agent closes that way when its working structure holds a hole, and stopped
+and refused closes carry `reason` in place of `text`, per
+`toddwbucy/WeaverAgent#59`. It renders as the agent's stop with that reason.
+A close that names no turn and is not a stop the agent explains is this
 crate's own defect and surfaces as an application error rather than as an
 agent's words.
 
@@ -2318,9 +2379,11 @@ connectors are this crate's. It is the operator's name for what the
 whiteboard called web-con. It stands on the agent's box, dials the gate's
 socket by path once per turn as the seed's gate adapter does, carries one
 request line in and one close line out, and is admitted by the kernel's peer
-credential under the declaration's allow list, so what gate-con needs on the
-box is a uid that list names and nothing more. Everything it carries crosses
-the link of section 8 to the server, which never dials the gate itself.
+credential. **What gate-con needs on the box is what the box grants it for
+the gate, as ruled on `toddwbucy/WeaverAgent#61`**: an entry in the
+declaration's allow list alone does not reach the socket, and this document
+names no group, mode or path for it. Everything it carries crosses the link
+of section 8 to the server, which never dials the gate itself.
 **The server sends a turn to gate-con only for a person whose grants on the
 agent permit `turn`**, per section 2.13, and gate-con relays what it is sent
 and checks nothing of the person, the box's own gate for the data plane
@@ -2328,14 +2391,31 @@ being the gate's admission of gate-con's user.
 **It learns nothing of the interior and the server learns nothing through
 it**: the tuple and the load state come by admin-con alone, per sections 7.2
 and 8, and a gate-con that reported either would be reporting what the
-contract's section 6 says it cannot know.
+contract's section 6 says it cannot know. **A turn whose request has crossed
+to the agent runs to its end whatever becomes of its caller**, per
+`toddwbucy/WeaverAgent#59`, so a turn gate-con abandons at its shutdown, or
+one in flight when the link ends, has an unknown outcome: the server
+answers it as sent and never answered, never as not connected, and the
+agent's trace, relayed by admin-con, is where its outcome is read. **A turn
+still waiting behind gate-con's in-flight bound at its shutdown never
+reached the gate**, so gate-con answers it `not_started`, its own fault like
+`busy`, while the link still stands, and its caller knows it did not run
+and may ask again. On a link loss the connector cannot answer and the
+server cannot tell a turn started from one queued, so every turn the link
+held answers unknown, which is the conservative answer. **Every
+gate connection lands in the agent's one conversation**, per the same
+issue: turns from different callers interleave in its one session working
+structure, which section 2.13 carries to the surfaces.
 
 ### 7.2 The admin verbs
 
 **There is no admin socket as of 2026-10-02.** It retired on 2026-08-05, per
 `weaver-admin-operator-contract` section 1, and nothing crosses into admin by
 a channel. Each verb answers one JSON object, a `lifecycle-answer` or a
-`lifecycle-refusal`, per `weaver-admin-Spec` section 2. Five parse as of
+`lifecycle-refusal`, per `weaver-admin-Spec` section 2. A refusal is
+admin's answer about the verb and never a load state: `no_such_agent` means
+the agent is not registered on that box, never that it is unloaded, per
+`toddwbucy/WeaverAgent#59`. Five parse as of
 2026-10-02: `load`, `unload`, `validate`, `stop` and `show`. **`list` was
 retired by `toddwbucy/WeaverAgent#45`**, because enumerating agents is this
 crate's register of section 2.12 and weaver-admin is one agent's organ.
@@ -2355,16 +2435,37 @@ operator's reason, and the server that chooses a verb's arguments is reached
 by the network by construction. Today every verb requires root, per
 `weaver-admin-Spec` section 2, so **until #50 lands no verb runs from this
 crate**. The trace's tail and replay below need no privilege: admin-con's
-user reads the trace file through group read access. admin-con's verb
+user reads the trace file by what the box grants it for the trace, as ruled
+on `toddwbucy/WeaverAgent#61`, and this document names no group, mode or
+path for it. **A trace admin-con cannot read leaves the link up and the verb
+plane closed**, per the operator's decision of 2026-10-03: admin-con still
+connects, its hello marks the trace unreadable, the server records that on
+the row and treats the connection's ceiling as empty, and no verb is asked
+until a later admission reads the trace. Verbs without the trace would lose
+the ordering of `show` answers against trace events, which rests on the
+replay boundary below and which the four ordering clauses of section 9
+enforce. This document writes the rule as of 2026-10-03; its code is owed
+to the next code act, and section 9 marks the row owed. admin-con's verb
 plane runs against an abstract invoker that carries no privilege code, and
 the only one this crate ships answers an empty `grants` and runs nothing;
 the seed's `lifecycle.rs`, which invoked the verbs through sudo, left the
 tree with the act that built admin-con.
 
+```graph
+node: web-an-unreadable-trace-asks-no-verb
+kind: assertion
+tag: perturbation
+
+edge: asserts
+from: weaver-web
+to: web-an-unreadable-trace-asks-no-verb
+```
+
 `show` answers the agent's load facts, the observation exchange of
 2026-09-04. Load
-state is therefore **the harness's own word rather than an inference from a
-socket's existence**, and no surface labels it as inferred.
+state is therefore **the agent's side's own word rather than an inference
+from a socket's existence**: a `show` answer is admin's word, a trace event
+is the agent's own record, and no surface labels either as inferred.
 
 **What crosses out of the agent is the trace, and admin-con tails the file
 it lands in.** The trace crosses as NDJSON, one event per line, to a sink
@@ -2382,9 +2483,13 @@ loses nothing to an admin-con restart, a load needs nothing of this crate's
 to succeed, and the file is the durable record itself, so nothing needs
 teeing. The stream is one-way and nothing behind the sink reaches back; what
 admin-con decides from reading it comes back by running a verb, per the
-contract's section 6. The load event in that stream carries the
-declaration's digest, which admin computes at the inventory, so the trace and
-`show` are the two sources of section 2.12's tuple and both are admin's word.
+contract's section 6. **The load event in that stream, and its `wall_ms`,
+are the harness's**, written on the harness's clock, which is not monotonic,
+and carried by the sink admin opens, per `toddwbucy/WeaverAgent#59`. It
+carries the declaration's digest, so the trace and `show` are the two
+sources of section 2.12's tuple: a `show` answer is admin's word, a trace
+event is the agent's own record, and both are the agent's side and never the
+data plane's.
 
 **The trace file is replayed from an acknowledged position, and this is this
 document's election of 2026-10-01 and not a ruling.** A tailer that relays
@@ -2455,7 +2560,9 @@ could not be landed answers an error and never the outcome.
 not persisted**, per the operator's ruling of 2026-10-01: the server's copy
 of the live trace is a live window and not a record, and durability stays
 on the agent's box, per the contract's section 3 and the file-sink ruling
-above. A persisted position would outlive the events it names, since the
+above. **The live trace has no durable copy here, and that is scoped to the
+live trace**: series derived from the record reach this crate's store
+lawfully through `weaver-analysis-web-contract`, per section 7.3. A persisted position would outlive the events it names, since the
 server holds relayed events in memory and section 3.1's store holds a
 projection and not the trace, so admin-con would resume past a hole no mark
 covers. So within one server process a reconnection resumes from the
@@ -2561,7 +2668,23 @@ newer one. The gate contract's rule for the data plane, one turn in flight
 per agent and a second request waits, is the same shape on this plane. The
 pause and the wait are bounded because the invocation is, the invoker's
 bound capping it, and the drain is bounded by the backlog, which
-is the tailer's lag and not the file. **Every position admin-con records
+is the tailer's lag and not the file. **What a verb dropped at that bound,
+or at the end of a shutdown's grace, leaves on the box is ruled in
+`toddwbucy/WeaverAgent#50` and `#60`**, and this crate assumes nothing about
+it until then: today a drop can strand the agent's worker, a dropped verb
+answers `unknown` and never a guess at what admin did, and admin-con's
+dropping is held for review against that ruling. A verb lost with the link
+answers unknown too, since it may have run. **A verb counts as started
+only once its invocation begins.** So a verb still waiting behind the one in
+flight at admin-con's shutdown, or one taken from the queue and still in
+its pre-invocation drain, was never invoked, and admin-con answers it
+`not_started` while the link still stands, before the verb in flight gets
+its grace, and its caller knows it did not run. The invocation checks the
+stop as its first act, so a verb pushed but not yet begun when the stop
+came is declined rather than run, and only a verb whose run began gets the
+grace and, outlasting it, answers unknown; on a link loss
+nothing can answer it and the server cannot tell it from the verb in
+flight, so it answers unknown. **Every position admin-con records
 or acknowledges is a record boundary, the byte after a delimiter**, so the
 tail it records before a verb is the end of the last complete record at
 that moment, the drain emits through it, and a record still unterminated
@@ -2602,22 +2725,29 @@ would have designed around a refusal that no longer stands.
 No verb chains another. This crate offers each as a separate act and nothing
 composite.
 
-**`validate` is also the composition oracle, and what it can answer is
-bounded.** It transitions nothing, refuses an incoherent declaration naming
-the field, and reaches **the box facts admin holds custody of**, per
-`weaver-admin-PRD` section 4.3 as ruled 2026-09-05 on issue #456: admin
-adjudicates what it provisions, asks the owner where one can be asked
-before a process exists, and leaves to the organ what only the organ can
-judge. So the Compose surface writes its draft and asks rather than
-judging, **and a clean `validate` is acceptance for filing rather than
-approval to load.** Whether the artifact resolves, whether the family
-exposes the taps the declaration elects, and whether these weights load at
-this precision are answered at admission under the agent's identity and
-not here. **This crate therefore carries no second copy of the
-rules**, only a copy of the declaration's field shape written against
-`weaver-types-Spec` section 2 **at a named corpus commit**, which is that
-copy's staleness rule: when the floor moves, the pin says so and `validate`
-refuses in a way the surface can name.
+**`validate` judges only what is placed on the box**, per the operator's
+ruling of 2026-10-02 on `toddwbucy/WeaverAgent#59`: declarations are the
+operator's to place, `validate` takes only an agent's name and judges the
+declaration installed for it, and no verb judges a supplied declaration. So
+the Compose surface keeps drafts and produces a declaration file for the
+operator to install, judging nothing itself, and **a `validate` answer is a
+reading of the installed declaration and never of a draft**, meaningful for
+a row of section 2.4 only where the operator installed that row's
+declaration. What it can answer is bounded: it transitions nothing, refuses
+an incoherent declaration naming the field, and reaches **the box facts
+admin holds custody of**, per `weaver-admin-PRD` section 4.3 as ruled
+2026-09-05 on issue #456: admin adjudicates what it provisions, asks the
+owner where one can be asked before a process exists, and leaves to the
+organ what only the organ can judge. **A clean `validate` is acceptance for
+filing rather than approval to load.** Whether the artifact resolves,
+whether the family exposes the taps the declaration elects, and whether
+these weights load at this precision are answered at admission under the
+agent's identity and not here. **This crate therefore carries no second
+copy of the rules**, only a copy of the declaration's field shape written
+against `weaver-types-Spec` section 2 **at a named corpus commit**, which is
+the draft's staleness rule: when the floor moves, the pin says so, and a
+draft written against the old floor is named stale before it is offered for
+install.
 
 ### 7.3 The analysis stream
 
@@ -2657,10 +2787,12 @@ two connectors.
 
 **Each connector runs as a dedicated service user**, one per agent and plane
 and never the operator's own uid, per the operator's ruling of 2026-10-02,
-and holds only what its plane needs: gate-con's user holds the agent's gate
-role, the allow list of its declaration, and nothing else; admin-con's user
-holds read access to the agent's trace file and the agent's admin role on
-the box, and nothing else. **Neither holds any privilege**: no sudo rule, no
+and holds only what its plane needs: gate-con's user holds what the box
+grants it for the gate, and nothing else; admin-con's user holds what the
+box grants it for the trace and the agent's admin role on the box, and
+nothing else. What each grant is, is ruled on `toddwbucy/WeaverAgent#61`:
+an entry in the declaration's allow list alone does not reach the gate's
+socket, and this document names no group, mode or path for either. **Neither holds any privilege**: no sudo rule, no
 root wrapper and no setuid binary stands anywhere in this crate, per section
 7.2. Creating those users and placing each connector's config at 0600 under
 its own user is the install's, and carries no box path into the repository.
@@ -2801,8 +2933,9 @@ on the box grants, which admin-con declares and the server never exceeds.
 decides whether the caller's role permits the verb, per
 `toddwbucy/WeaverAgent#50`. **A turn on the data plane passes the first
 gate and then the gate's own admission**: the person's grants on the agent
-must permit `turn`, and on the box gate-con's user is admitted because the
-agent's allow-list names it, which is the box's gate for the data plane. No
+must permit `turn`, and on the box gate-con's user is admitted by what the
+box grants it for the gate, as ruled on `toddwbucy/WeaverAgent#61`, which is
+the box's gate for the data plane. No
 verb ceiling applies to a turn, since gate-con declares none. Each gate bounds what the one before it can
 reach, so a fault in one is caught by the next rather than becoming the
 box's. The link between them is already cryptographic per agent and per
@@ -2928,7 +3061,9 @@ another box may share. Every other refusal retries on the normal backoff,
 `malformed` and `wrong_plane` logged as the connector's own defect. **It
 does not exit**, because a supervisor would restart it into the same loop;
 it ends only on its own shutdown, which lets exchanges in flight finish
-within a short grace before closing the link. **gate-con's turns in flight
+within a short grace before closing the link; asks still waiting are
+answered `not_started` before the grace begins, and a turn still in flight
+at the grace's end is answered to its caller as unknown, per section 7.1. **gate-con's turns in flight
 are bounded, and so are the asks waiting behind them**; an ask arriving to
 a full queue is answered at once with the fault `busy`, gate-con's own
 back-pressure and not one of the gate's kinds of section 7.1, so a surface
@@ -3002,11 +3137,15 @@ to: web-agent-present-only-when-both-planes-match-one-row
 ```
 
 **The tuple and the load state arrive through admin-con only**, by `show`
-and by the load event in the trace, per section 7.2. gate-con is forbidden by
-its contract from learning any of it, so a server that accepted either from
-the data plane would be writing a fact from a party that cannot know it, and
+and by the trace's events, per section 7.2. gate-con is forbidden by its
+contract from learning any of it, so a server that accepted either from the
+data plane would be writing a fact from a party that cannot know it, and
 section 2.12's row would carry a value with no source. The row's tuple and
-load state are admin's word and carry admin's date.
+load state are the agent's side's: a `show` answer is admin's word and a
+trace event is the agent's own record, each with its own date, and neither
+is ever the data plane's. The node below keeps its identifier, since its
+claim, that the tuple comes by admin-con and never by gate-con, has not
+moved.
 
 ```graph
 node: web-tuple-is-admins-word-and-never-gate-cons
@@ -3118,31 +3257,36 @@ missing while it was relaying.
 | an agent is present only when both planes connect from one row | perturbation: mark present on either plane alone, an agent whose admin-con is down reads present with a tuple and a load state nobody has confirmed |
 | the server's authority is loaded before the listener starts and never minted at start | perturbation: mint the authority at start instead of loading it, restart the server, and every connector's hello is refused against a certificate it does not pin |
 | the client credential is stored as a fingerprint and never the key | perturbation, at the schema: store the key, a read of the register is a set of credentials anyone can present |
-| the tuple is admin's word and never gate-con's | perturbation: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it; let a replayed load event write the tuple, restart the server after an unload, backfill, and the row reads loaded; ask `show` before fixing the replay boundary, unload between the two, and the row reads loaded until the next `show`. **Four clauses are admin-con's ordering**, against the real listener with a fake invoker in `src/link/admin_con_tests.rs`: let a `show` answer cross the link out of order with the file events around it, unload during the `show`, and the row reads loaded until the next `show`; place the answer in the stream at receipt and unload between the snapshot and the receipt, and the row reads loaded; skip the drain, leave an unread load event behind the tail, invoke `show` after an unload, and the row reads loaded; run two verbs at once on one connection, and an older answer lands after a newer one |
+| the tuple and the load state come by admin-con and never by gate-con | perturbation: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it; let a replayed load event write the tuple, restart the server after an unload, backfill, and the row reads loaded; ask `show` before fixing the replay boundary, unload between the two, and the row reads loaded until the next `show`. **Four clauses are admin-con's ordering**, against the real listener with a fake invoker in `src/link/admin_con_tests.rs`: let a `show` answer cross the link out of order with the file events around it, unload during the `show`, and the row reads loaded until the next `show`; place the answer in the stream at receipt and unload between the snapshot and the receipt, and the row reads loaded; skip the drain, leave an unread load event behind the tail, invoke `show` after an unload, and the row reads loaded; run two verbs at once on one connection, and an older answer lands after a newer one. **A turn's start and close refresh the load state**, against the real listener in `src/link/tests.rs`: drop the `turn.started` mapping, and the row never reads `active` between a turn's start and close; let a replayed `turn.started` land, and the row reads `active` from history; let a turn's event write the tuple, and the row loses the tuple it held; let a turn's event write the tuple's source, and a `show`-shaped tuple reads as an event's |
 | nothing crosses the link in the clear | perturbation: offer a plaintext hello to the listener, it is refused below any roster; and review, over the listener, that no plaintext accept path exists |
 | the server never asks a verb outside the agent's ceiling | perturbation: drop the ceiling check, ask a verb admin-con's hello did not declare, and it leaves the server; and admin-con's half, drop its typed error answer, and it reaches the invoker. **One clause is owed**: check against the row's copy, narrow the ceiling by reconnecting between the check and the enqueue, and an ask outside the new ceiling leaves. The race has no deterministic staging, and the guard is held by review: the check reads the live connection's ceiling under the live map's lock that finds the connection |
 | a verb or turn its principal may not ask is refused before an ask | perturbation, **owed**: drop the grant check, a person whose role permits `show` asks `stop`, and the ask leaves the server; let the server principal ask a lifecycle verb, and it leaves without a grant; drop the enabled check, and a disabled person's live session still asks a verb; drop the grant check on turns, and a person granted only `show` places a turn; take the check outside the exclusion, revoke between the check and the enqueue, and the ask is authorized on a revoked grant; take a register verb's check outside the exclusion, disable its admin between the check and the commit, and the register verb lands. Lands with the IAM act |
 | a person, role or grant written by a principal not permitted to write it is refused | perturbation, **owed**: drop the check, and a person granted only `show` writes themselves the operator role and passes the first gate; let a person write a grant on themselves, and an admin widens their own grants or the last admin removes the only admin grant; let an admin holding the observer role on an agent add `stop` to that role, and their own grant widens without a grant written; let a surface write as the host principal, and a grant lands with no admin behind it; drop the exclusion, have two admins remove each other at once, and no admin remains; disable the sole admin, or have two admins disable each other at once, and no enabled admin remains; grant a role to its editor while the edit is in flight, and the editor widens a role they hold; let a person write another person's authentication material, and they can sign in as them; reuse a consumed enrollment token, or use one past its expiry, and a second credential lands on someone else's row; disable a person holding an unredeemed token, redeem it, and a credential lands on a disabled row; issue or redeem a token for a person who already has a credential, and an admin replaces that person's credential. Lands with the IAM act |
 | every verb or turn asked and every person, role or grant written has an audit record naming its principal, and its outcome is a second record naming the first | perturbation, **owed**: write the first record after the ask instead of before, fail the store between the two, and an ask leaves with no record; update the first record with the outcome instead of appending a second, and an ask whose answer is lost reads as never answered with no trace of the rewrite; drop the refusal's record, and a refused verb leaves no trace; write a grant with the audit write dropped, and the grant lands with no record; enroll a person or rotate their authentication material with the audit write dropped, and the write lands with no record; record the material in an authentication write's record, and a read of the audit table is a set of credentials. Lands with the IAM act |
 | the admission's `show` is required only where the ceiling grants it | perturbation: ask `show` at every admission, and an agent whose ceiling grants no `show` is closed `admission_incomplete` at every reconnection and never stays admitted; skip it where it is granted, and the row reads the last process's state as current |
+| a connection whose trace is unreadable is asked no verb | perturbation, **owed** to the next code act: honour the declared ceiling of a hello that marks the trace unreadable, and a verb is asked whose answer has no replay boundary to be ordered against |
 | no privileged invocation exists in the repository | review, and a test, `tests/no_privilege.rs`: it reads every tracked file outside `docs/`, never following a symlink, comment lines aside by each file's syntax and Markdown read in its fences only, for a privilege-escalating program named as a word, a setuid family call, a child's user or group set on a command, and a setuid or setgid mode bit, and is shown to fail when one of each is planted, in Rust and in a README fence |
 
 **A watch that cannot fail is not a test.** For each perturbation above, the
 act that lands it states what removal makes it fail and confirms it does.
 
-**A row marked owed has no instrument and is not counted as enforced.** Four
-stand so marked as of 2026-10-02. The batch's order is owed because section
+**A row marked owed has no instrument and is not counted as enforced.** Five
+stand so marked as of 2026-10-03. The batch's order is owed because section
 2.11 describes its table and no migration builds it. Three rows of the role
 shape ruled on 2026-10-02 are owed to the IAM act: the principal check, the
-writer's check for persons, roles and grants, and the audit record. The act
+writer's check for persons, roles and grants, and the audit record. The
+unreadable trace's rule, written by the alignment act of 2026-10-03, is
+owed to the next code act. The act
 that built admin-con stood up the trace file's replay from the acknowledged
 position, the ceiling on both halves, the conditional admission `show`, the
 four clauses of the tuple row that are admin-con's ordering, and the absence
 of a privileged invocation, each shown to fail with its guard removed; one
 clause of the ceiling row, a race with no deterministic staging, is marked
 owed inside the row, and two guards of the replay row are held by review for
-the same reason. The other ten rows of the link landed with the act that
-built the listener and the register, each shown to fail with its guard
+the same reason. The alignment act of 2026-10-03 added four clauses to the
+tuple row, a turn's start and close on the load state, and a fourth, the
+tuple's own source, each shown to fail with its guard removed. The other ten rows of the link landed with the act
+that built the listener and the register, each shown to fail with its guard
 removed. The marking is the point: a row
 reading like the enforced ones beside it would tell a reader the claim is held,
 which is the same failure as a watch that passes either way and is why this
@@ -3286,8 +3430,8 @@ a `web-` assertion beside `weaver-admin`'s.
   registers agents, the one role the store fixes per section 2.13. The
   converser is this document's proposal and not the operator's. The box's
   roles of `toddwbucy/WeaverAgent#50` were proposed with the observer and
-  operator names and carry no `turn`, the gate's allow-list governing the
-  data plane on the box, so whether a grant here and a role there share one
+  operator names and carry no `turn`, the gate's own admission governing the
+  data plane on the box, per `toddwbucy/WeaverAgent#61`, so whether a grant here and a role there share one
   vocabulary is part of the election.
 - **What section 7 is called, now that one of its three is not a seam**,
   opened 2026-09-16 by the act that deleted this crate's seam record to

@@ -171,7 +171,8 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
 - **admin-con** reads the file `register` wrote plus `trace_file`, the agent's trace path, a
   required box fact with no default, and optional `backfill_bytes` (1 MiB, at most 256 MiB),
   the tail relayed after a server restart. Same trust rule as gate-con's. It tails the trace
-  file by group read, relays with replay and marked discontinuities, and declares in its hello
+  file by what the box grants it (`toddwbucy/WeaverAgent#61`), relays with replay and marked
+  discontinuities, and declares in its hello
   exactly what its invoker's `grants` answers. The only invoker shipped, `NoVerbs`, answers an
   empty `grants` and runs nothing, so the server asks it nothing until WeaverAgent #50 lands.
   Its tests (`link::admin_con_tests`) run it against a temporary trace file, the real listener
@@ -218,8 +219,9 @@ identity, the digest before each offset, rotation and truncation marked, a bound
 the replay and `caught_up`, and the verb plane, one verb at a time with its answer placed at the
 invocation, behind an `Invoker` that carries no privilege code; the real invoker waits on
 WeaverAgent #50. The listener holds each connection's ceiling, asks `show` only where it is
-granted, and records the ceiling and the state's source on the row (migration `0011`;
-`0010` is frozen). `traceview.rs` keeps the rings, the listener's live window; its seed
+granted, and records the ceiling and the load state's source on the row (migration `0011`),
+and the tuple's own source (`0012`, since a turn moves the state and not the tuple; `0010`
+and `0011` are frozen). `traceview.rs` keeps the rings, the listener's live window; its seed
 tailer and `lifecycle.rs` (which ran the verbs through sudo) left the tree.
 
 **Still leaves: `web/`**, the legacy `/admin` routes, already answering 503, and

@@ -1980,7 +1980,19 @@ async fn handle(
                         }
                     ),
                 })
-            } else if queue.waiting.len() >= VERB_QUEUE {
+            } else if !(verb == "show" && principal == Principal::Server)
+                && queue
+                    .waiting
+                    .iter()
+                    .filter(|ask| !ask.served_during_the_replay())
+                    .count()
+                    >= VERB_QUEUE
+            {
+                // **The bound is on ordinary asks**: a `show` the server
+                // asked is never answered `busy`, since it is what completes
+                // an admission or an opening and the server asks at most one
+                // for each, so the reserve is that one observation ask and
+                // never a second queue.
                 Some(VerbFault {
                     kind: VerbFault::BUSY.into(),
                     message: format!("admin-con holds {VERB_QUEUE} asks waiting, its bound"),

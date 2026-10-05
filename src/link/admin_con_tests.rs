@@ -2456,3 +2456,64 @@ async fn an_opening_serves_its_show_before_a_verb_queued_at_it() {
     assert_eq!(status.last_refusal, None, "{status:?}");
     con.stop().await;
 }
+
+/// **A `show` the server asks is never answered `busy`** (Spec 7.2): the
+/// queue's bound of ordinary asks fills while an opening reads to its
+/// boundary, and the opening's `show` is still taken, served first, and
+/// completes the opening; every queued ask is answered after it.
+#[tokio::test]
+async fn an_openings_show_is_taken_past_a_full_queue() {
+    use std::sync::atomic::Ordering;
+    let Some(lab) = Lab::open().await else { return };
+    let mut trace = Trace::closed();
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
+    let invoker = FakeInvoker::new(&["show", "validate"], "unloaded");
+    let mut con = Running::start(config(&path), invoker.clone());
+    con.wait("admitted", |s| s.admitted).await;
+    lab.wait_for(&id, "the admission's show", |a| {
+        a.state_source.as_deref() == Some("show")
+    })
+    .await;
+
+    trace.relay.hold(true);
+    trace.relay.start();
+    let until = tokio::time::Instant::now() + SOON;
+    while trace.relay.counts.connections.load(Ordering::Relaxed) == 0 {
+        assert!(
+            tokio::time::Instant::now() < until,
+            "the opening never dialed"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let asks: Vec<_> = (0..admin_con::VERB_QUEUE)
+        .map(|n| {
+            let listener = lab.listener.clone();
+            let asked = id.clone();
+            let person = Principal::Person {
+                name: format!("ada-{n}"),
+            };
+            tokio::spawn(async move {
+                tokio::time::timeout(
+                    Duration::from_secs(20),
+                    listener.verb(&asked, "validate", person),
+                )
+                .await
+            })
+        })
+        .collect();
+    tokio::time::sleep(SETTLE).await;
+    trace.relay.hold(false);
+
+    for ask in asks {
+        let answered = ask.await.unwrap().expect("the ask was answered");
+        assert_eq!(answered.unwrap().verb, "validate");
+    }
+    let ran = invoker.ran();
+    assert_eq!(&ran[..2], ["show", "show"], "{ran:?}");
+    assert_eq!(ran.len(), 2 + admin_con::VERB_QUEUE, "{ran:?}");
+    let status = con.status();
+    assert_eq!(status.admissions, 1, "{status:?}");
+    assert_eq!(status.last_refusal, None, "{status:?}");
+    con.stop().await;
+}

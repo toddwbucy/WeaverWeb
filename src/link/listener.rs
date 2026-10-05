@@ -1123,14 +1123,15 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
             return;
         }
     };
-    let (name, said_plane, tail, ceiling) = match hello {
+    let (name, said_plane, tail, ceiling, door) = match hello {
         Ok(Line::Frame(line)) => match serde_json::from_str::<FromClient>(&line) {
             Ok(FromClient::Hello {
                 agent,
                 plane,
                 tail,
                 ceiling,
-            }) => (agent, plane, tail, ceiling),
+                door,
+            }) => (agent, plane, tail, ceiling, door),
             _ => {
                 tracing::warn!("link from {peer}: the first frame was not a hello, refused");
                 refuse(tx, writer, Refusal::Malformed).await;
@@ -1161,19 +1162,34 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
         refuse(tx, writer, Refusal::RosterMismatch).await;
         return;
     }
-    // **The replay boundary is fixed from the hello** (Spec 7.2): an admin
-    // hello that carries no tail cannot fix one and is refused.
-    let boundary = match (plane, tail) {
-        (Plane::Admin, Some(tail)) => Some(tail),
-        (Plane::Admin, None) => {
+    // **The replay boundary is fixed from the hello where the trace door
+    // is open** (Spec 7.2): an open door's hello carries the boundary
+    // admin-con took at the opening, and **a closed door's carries none**,
+    // its replay ended at once, `caught_up` taken as sent, so the server
+    // admits it and serves verbs per the ceiling with their answers landing
+    // at receipt. An admin hello whose door and boundary disagree, or that
+    // names no door, is refused; a gate hello carries no door.
+    let (mut boundary, door) = match (plane, door, tail) {
+        (Plane::Admin, Some(true), Some(tail)) => (Some(tail), Some(true)),
+        (Plane::Admin, Some(false), None) => (None, Some(false)),
+        (Plane::Admin, door, tail) => {
             tracing::warn!(
-                "link from {peer}: admin-con of {} said hello with no tail, refused: no boundary",
+                "link from {peer}: admin-con of {} said hello with door {door:?} and {} boundary, refused",
+                agent.agent_id,
+                if tail.is_some() { "a" } else { "no" }
+            );
+            refuse(tx, writer, Refusal::Malformed).await;
+            return;
+        }
+        (Plane::Gate, None, _) => (None, None),
+        (Plane::Gate, Some(_), _) => {
+            tracing::warn!(
+                "link from {peer}: gate-con of {} said hello with a trace door, refused",
                 agent.agent_id
             );
             refuse(tx, writer, Refusal::Malformed).await;
             return;
         }
-        (Plane::Gate, _) => None,
     };
     // **The ceiling is the admin plane's and is declared in its hello**
     // (Spec 8): an admin hello without one, a gate hello with one, or a
@@ -1210,6 +1226,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
             incarnation,
             &peer.to_string(),
             ceiling_copy.as_deref(),
+            door,
             // The monitor halts the listener on the failed ping; this
             // admission is refused.
             async || match inner.prove_lock().await {
@@ -1351,8 +1368,9 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
         }
 
         // Whether admin-con's replay has reached the boundary (Spec 7.2): the
-        // frame that decides what is replayed and what is live.
-        let mut caught_up = false;
+        // frame that decides what is replayed and what is live. **A closed
+        // door's hello has no replay**, so it is taken as sent.
+        let mut caught_up = door == Some(false);
         loop {
             // The read waits to the silence bound, or to the admission
             // show's deadline where that is sooner.
@@ -1589,6 +1607,107 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                 }
                 (
                     Plane::Admin,
+                    FromClient::Door {
+                        open,
+                        wall_ms,
+                        tail,
+                    },
+                ) => {
+                    // **Every opening of the door is an admission of the
+                    // trace** (Spec 7.2): it carries its boundary, events
+                    // until the next `caught_up` are its replay, and `show`
+                    // is asked where the ceiling grants it, the opening
+                    // complete only when both have arrived. A closing ends
+                    // any replay: nothing is behind a closed door. A door
+                    // and boundary that disagree are malformed.
+                    let tail = match (open, tail) {
+                        (true, Some(tail)) => Some(tail),
+                        (false, None) => None,
+                        _ => {
+                            tracing::warn!(
+                                "link from {peer}: {} (admin) sent a door frame whose state and boundary disagree, refused",
+                                agent.agent_id
+                            );
+                            send(
+                                &tx,
+                                ToClient::Refusal {
+                                    reason: Refusal::Malformed,
+                                },
+                            )
+                            .await;
+                            reason = "refused as malformed";
+                            break;
+                        }
+                    };
+                    let at = i64::try_from(wall_ms)
+                        .ok()
+                        .and_then(DateTime::<Utc>::from_timestamp_millis)
+                        .unwrap_or_else(Utc::now);
+                    // **Bound to the connection like a link-state write**
+                    // (Spec 2.12): it lands only while this incarnation is
+                    // the row's live admin connection.
+                    match bounded(
+                        inner
+                            .store
+                            .land_door(&agent.agent_id, incarnation, open, at),
+                        inner.silence,
+                        &mut close_rx,
+                    )
+                    .await
+                    {
+                        Bounded::Done(Ok(true)) => {}
+                        Bounded::Done(Ok(false)) => tracing::warn!(
+                            "{}: the door's state was not landed: the row names another connection",
+                            agent.agent_id
+                        ),
+                        Bounded::Done(Err(_)) | Bounded::TimedOut => {
+                            tracing::error!(
+                                "{}: the door's state could not be landed, closing the connection",
+                                agent.agent_id
+                            );
+                            send(
+                                &tx,
+                                ToClient::Refusal {
+                                    reason: Refusal::StoreUnavailable,
+                                },
+                            )
+                            .await;
+                            reason = "the store was unavailable";
+                            break;
+                        }
+                        Bounded::Closed => {
+                            reason = if silent.load(Ordering::Relaxed) {
+                                "silent for the bound: the peer stopped reading"
+                            } else {
+                                "closed by revocation, rotation or halt"
+                            };
+                            break;
+                        }
+                    }
+                    caught_up = !open;
+                    boundary = tail;
+                    if open && ceiling.as_deref().is_some_and(|c| c.contains("show")) {
+                        let id = inner.next_ask.fetch_add(1, Ordering::Relaxed);
+                        if let Err(why) = enqueue(
+                            &tx,
+                            ToClient::Verb {
+                                id,
+                                verb: "show".into(),
+                                principal: Principal::Server,
+                            },
+                            inner.silence,
+                            &mut close_rx,
+                        )
+                        .await
+                        {
+                            reason = why;
+                            break;
+                        }
+                        admission_show = Some((id, tokio::time::Instant::now() + inner.silence));
+                    }
+                }
+                (
+                    Plane::Admin,
                     FromClient::Event {
                         position,
                         replayed,
@@ -1788,6 +1907,7 @@ fn frame_name(frame: &FromClient) -> &'static str {
         FromClient::CaughtUp => "caught_up",
         FromClient::Turn { .. } => "turn",
         FromClient::Verb { .. } => "verb",
+        FromClient::Door { .. } => "door",
         FromClient::Event { .. } => "event",
     }
 }

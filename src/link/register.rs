@@ -748,6 +748,7 @@ impl Store {
         incarnation: i64,
         address: &str,
         ceiling: Option<&[String]>,
+        door: Option<bool>,
         prove: impl AsyncFnOnce() -> Result<(), Refusal>,
         install: impl FnOnce() -> Result<(), Refusal>,
     ) -> anyhow::Result<Result<(), Refusal>> {
@@ -804,10 +805,47 @@ impl Store {
             .execute(&mut *tx)
             .await?;
         }
+        // **The trace door's state lands with the admission too** (Spec
+        // 2.12, 7.2): admin-con's word in its hello, dated at admission.
+        if let Some(door) = door {
+            sqlx::query(
+                "UPDATE agent SET trace_door = $2, trace_door_at = now() WHERE agent_id = $1",
+            )
+            .bind(agent_id.as_str())
+            .bind(door)
+            .execute(&mut *tx)
+            .await?;
+        }
         tx.commit().await?;
         #[cfg(test)]
         fail_after_commit("admit")?;
         Ok(Ok(()))
+    }
+
+    /// **A change of the trace door's state, bound to the incarnation**
+    /// (Spec 2.12, 7.2): admin-con's word on its live connection, with its
+    /// date, landing only while this incarnation is the row's live admin
+    /// connection, as a link-state write does. Answers whether it landed.
+    pub async fn land_door(
+        &self,
+        agent_id: &AgentId,
+        incarnation: i64,
+        open: bool,
+        at: DateTime<Utc>,
+    ) -> anyhow::Result<bool> {
+        let landed = sqlx::query(audited(
+            "UPDATE agent SET trace_door = $3, trace_door_at = $4 \
+             WHERE agent_id = $1 AND admin_incarnation = $2"
+                .to_owned(),
+        ))
+        .bind(agent_id.as_str())
+        .bind(incarnation)
+        .bind(open)
+        .bind(at)
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
+        Ok(landed == 1)
     }
 
     /// **Teardown under the row's lock, bound to the incarnation** (Spec

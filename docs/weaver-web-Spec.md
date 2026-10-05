@@ -1141,8 +1141,10 @@ never a bare socket's. Each row carries:
   only while the agent runs, so a closed door beside an `unloaded` load
   state is the normal state, and a closed door while a run stands is shown
   for the operator to read and is never a fault this crate raises. The door
-  never gates a verb. The member is this document's as of 2026-10-05, and
-  its column and frame are the code act's
+  never gates a verb. **A closed door's interval writes no member of the row
+  but the door's state itself**: what the agent wrote meanwhile is replayed
+  at the next opening, per section 7.2. The member is this document's as of
+  2026-10-05, and its column and frame are the code act's
 - **the load state, with its date**, which is section 7.2's rule restated at
   the row: the state is what `show` last answered, admin's word, or what the
   trace last carried, the agent's own record (a load, an unload, or a turn's
@@ -2474,8 +2476,9 @@ of the paragraphs below runs only while the agent runs, so a closed door
 while the agent is unloaded is the normal state, and `load` must be askable
 while the door is closed. The door's state is shown on the row, per section 2.12. The
 ordering of `show` answers against trace events, the four clauses of section
-9, holds while the door is open. While it is closed there are no events to
-order against, and a `show` answer lands at receipt with its source.
+9, holds while the door is open. While it is closed, verb answers land at
+receipt with their source, and nothing written while it was closed ever
+writes the row, per the rule for a door's opening below.
 
 ```graph
 node: web-ceiling-is-what-the-sudo-rules-grant
@@ -2563,6 +2566,41 @@ is a fact about the box with no authorization in it, so it moves as the
 replay's marks do. A closed door while the load state is `unloaded` renders
 as the normal state. A closed door while a run stands is shown as such for
 the operator to read, and is never a fault this crate raises.
+
+**Every opening of the door is an admission of the trace, and a closed door
+writes nothing to the row.** At each opening, at the hello or later on the
+live connection when the relay is reached, admin-con takes a boundary at
+the opening and relays everything from the server's acknowledged position,
+or from the backfill's start after a server restart, to that boundary,
+marked replayed, which feeds the window and writes no member of the row.
+It ends that with `caught_up`, the server then asks `show` where the
+ceiling grants it, exactly as at admission, and events after the boundary
+are live. This is the admission rule below applied at every opening, not a
+new mechanism, and the boundary's measure is the owed one below
+(`toddwbucy/WeaverAgent#88`). **A hello while the door is closed carries no
+boundary**: the server admits it with the replay ended at once, `caught_up`
+with nothing behind it, serves verbs per the ceiling, and their answers land
+at receipt. So `load` is askable while the agent is unloaded, and nothing
+deadlocks: the door opens after the load, that opening runs the rule above,
+and the file's earlier contents never arrive as live events. **While a run
+stands and the door is closed**, as when the relay died, which keeps it
+closed until the next load per the contract's section 5, the agent may
+still be writing. Verbs still serve per the ceiling and their answers land
+at receipt, but **nothing written while the door was closed ever writes the
+row**: at the next opening every event from the acknowledged position to
+that opening's boundary stands behind the boundary and is marked replayed,
+so it reaches the window and never the row, and the `show` asked after
+`caught_up` re-establishes the row. That is the same discipline as a server
+outage, and it is why landing at receipt is safe: the stale-event inversion
+the four clauses of section 9 guard against needs an event from the closed
+interval to land live, and none can. The drain before a verb applies while
+the door is open. With the door closed there is nothing to drain, and the
+row says the door is closed, so an operator reading a `show` answer knows
+the trace behind it is not being followed. **One rule serves both seams**:
+the acknowledged position and the replay boundary already exist to separate
+what the server holds from what is new, and a door's opening is the same
+seam as a reconnection, so it takes the same rule rather than a second
+ordering regime.
 
 **The trace is replayed from an acknowledged position, and this is this
 document's election of 2026-10-01 and not a ruling.** A reader that relays
@@ -2675,8 +2713,9 @@ would leave every live event of the new generation looking like an older
 generation's tail. Replayed events reach the server's live window only:
 they write no member of section 2.12's row, whose tuple and load state come
 from `show` answers and live events alone. On every admission of an
-admin-con connection the server first fixes the replay boundary, the file
-position admin-con reports as its tail at that moment, so that every event
+admin-con connection whose door is open, and at every later opening of the
+door per the rule above, the server first fixes the replay boundary, the
+file position admin-con reports as its tail at that moment, so that every event
 beyond it is live and every event behind it is replayed, in the reading of
 a position above, and then,
 where the agent's ceiling grants `show`, asks `show` for the row, so the
@@ -3412,7 +3451,7 @@ missing while it was relaying.
 | a hello's identity is its certificate's binding and never its roster | perturbation: act on the roster's name and plane, a hello on a gate credential naming another agent, or naming admin, is believed, and the seed's first-hello-wins returns through the roster |
 | at most one row per box and name holds live credentials | perturbation, at the schema: drop the partial index, register one agent twice, and two rows each hold live credentials for one agent, so the server attributes one agent's observations and verbs to two rows |
 | the link state is reset when the listener starts | perturbation: skip the reset, restart the server with no connector up, and a surface reads an agent present whose sockets are gone |
-| the trace is replayed from the acknowledged position | perturbation, each clause against the real listener in `src/link/admin_con_tests.rs`: drop the replay, break the link during a run and reconnect, and the server's window has a hole with no mark; drop the digest from the position, truncate the file in place during the outage and regrow it past the offset, and the window carries the new prefix nowhere and marks nothing, where the relay refuses the position and admin-con marks it; ignore a `truncated` line, and the window carries the shrunk file as a continuation with no mark; drop the identity from the position, replace the file between runs and grow the replacement past the offset, and the window carries its prefix nowhere and marks nothing, where the next run's header names a new identity; derive the identity from process state, restart admin-con against the unchanged file, and the server receives a false discontinuity and the file again from its start; restart the server and resume from a remembered position, and the window has a hole with no mark; start the backfill anywhere but the first record boundary within `backfill_bytes` of the end, and the window carries half a record or more than the bound; record a boundary inside an unterminated record and resume from it, and the window carries half a record and a parse failure; end the replay on a step that sent nothing, and a load behind a record past the bound is taken as live and writes the row; send a record's frame unmeasured, and a 1 MiB record of NUL bytes passes the line bound; block the read on an ack, and a backfill of many small records stalls the link and readmits; exempt marks from the offset rule, and a mark past the boundary lands before `caught_up`. **Restated for the relay on 2026-10-05**: the act that built admin-con showed each clause against the tailer it then had, and the code act re-shows each against the relay client. The tailer's own clauses, a skipped record's digest, the tail's search, the replaced generation, the symlinked path, and the two guards held by review for the live switch and the open, leave with the tailer |
+| the trace is replayed from the acknowledged position | perturbation, each clause against the real listener in `src/link/admin_con_tests.rs`: drop the replay, break the link during a run and reconnect, and the server's window has a hole with no mark; drop the digest from the position, truncate the file in place during the outage and regrow it past the offset, and the window carries the new prefix nowhere and marks nothing, where the relay refuses the position and admin-con marks it; ignore a `truncated` line, and the window carries the shrunk file as a continuation with no mark; drop the identity from the position, replace the file between runs and grow the replacement past the offset, and the window carries its prefix nowhere and marks nothing, where the next run's header names a new identity; derive the identity from process state, restart admin-con against the unchanged file, and the server receives a false discontinuity and the file again from its start; restart the server and resume from a remembered position, and the window has a hole with no mark; start the backfill anywhere but the first record boundary within `backfill_bytes` of the end, and the window carries half a record or more than the bound; record a boundary inside an unterminated record and resume from it, and the window carries half a record and a parse failure; end the replay on a step that sent nothing, and a load behind a record past the bound is taken as live and writes the row; send a record's frame unmeasured, and a 1 MiB record of NUL bytes passes the line bound; block the read on an ack, and a backfill of many small records stalls the link and readmits; exempt marks from the offset rule, and a mark past the boundary lands before `caught_up`. **Restated for the relay on 2026-10-05**: the act that built admin-con showed each clause against the tailer it then had, and the code act re-shows each against the relay client. The tailer's own clauses, a skipped record's digest, the tail's search, the replaced generation, the symlinked path, and the two guards held by review for the live switch and the open, leave with the tailer. **Two clauses are owed to the code act**, for the door's opening: open the door mid-connection without a boundary, and an event from the closed interval writes the row; admit a closed door with a boundary it cannot take, and the hello never completes |
 | an agent is present only when both planes connect from one row | perturbation: mark present on either plane alone, an agent whose admin-con is down reads present with a tuple and a load state nobody has confirmed |
 | the server's authority is loaded before the listener starts and never minted at start | perturbation: mint the authority at start instead of loading it, restart the server, and every connector's hello is refused against a certificate it does not pin |
 | the client credential is stored as a fingerprint and never the key | perturbation, at the schema: store the key, a read of the register is a set of credentials anyone can present |
@@ -3438,7 +3477,8 @@ writer's check for persons, roles and grants, and the audit record. Two rows
 of the management plane ruled on 2026-10-03 are owed to the code act that
 builds the sudo invoker: the ceiling as the sudo rules grant it, and no
 privileged invocation outside that invoker. The replay row is restated for
-the relay by the act of 2026-10-05 and is re-shown by that code act. The act
+the relay by the act of 2026-10-05 and is re-shown by that code act, and
+two of its clauses, for the door's opening, are marked owed inside it. The act
 that built admin-con stood up the trace file's replay from the acknowledged
 position, the ceiling on both halves, the conditional admission `show`, the
 four clauses of the tuple row that are admin-con's ordering, and the absence

@@ -1160,7 +1160,9 @@ never a bare socket's. Each row carries:
   moves the load state and its source and leaves the tuple and its source
   as they were (migration `0012`)
 - **the ceiling admin-con declared**, the verbs the box's sudo rules grant
-  its user as its hello named them, with the date, per section 8. It is the box's word
+  its user as its hello named them, with the date, per section 8, and,
+  where a failed containment check narrowed it to `show` and `unload`, that
+  narrowing with its reason. It is the box's word
   about itself and an upper bound, never a grant, and this copy is what
   surfaces read: the server authorizes against the live connection's own,
   per section 8
@@ -2453,8 +2455,8 @@ repository invokes privilege; the test's change to allow exactly that module
 is the code act's, owed in section 9. **The person never crosses to the
 box**: the cause the agent records is the uid sudo reports, admin-con's own,
 per `weaver-types-Spec` section 3.1, and which person asked is section
-2.13's audit record alone. The only invoker this crate ships until that code
-act declares an empty ceiling and runs nothing. The seed's `lifecycle.rs`,
+2.13's audit record alone. Until that code act, the only invoker this crate
+ships declares an empty ceiling and runs nothing. The seed's `lifecycle.rs`,
 which ran the verbs through an unscoped sudo, left the tree with the act
 that built admin-con.
 
@@ -2631,9 +2633,11 @@ measures the code act settles under the relay, owed to it**: the boundary
 the hello names, and the tail a verb's drain records, are both "everything
 the file held at that moment", which admin-con reads today from the file's
 length. Under the relay admin-con reads no file, and the relay names no
-length, so the act that builds the relay client fixes how each is taken,
-the relay's idle heartbeat after a request being the stream's own word that
-everything written so far has been sent. Section 8's one-connection
+length, so the act that builds the relay client fixes how each is taken.
+The relay's heartbeat after a request is the stream's own word that
+everything written so far has been sent, but it comes only while the relay
+is idle, so an agent that writes continuously gives no such moment, which
+is why the measure stays owed rather than elected here. Section 8's one-connection
 paragraph refers here for what a reconnection carries. **Every event
 relayed from behind the file's tail at a reconnection is marked as replayed
 on the link, and the replay ends with a frame admin-con sends when it
@@ -3161,9 +3165,20 @@ process of the run sits in admin-con's containment. **admin-con checks
 containment at every load as well**: `show` names the run's constituents,
 the worker, the state member and the relay, by process id where a run
 stands, per the contract's section 3, and admin-con confirms each sits in
-its own containment. A failed check is logged by name and marked on the
-row, and admin-con serves no verb until a load passes it, so the recovery is
-its orderly stop, which unloads, and a load under a fresh admin-con. `show`
+its own containment. **A failed check narrows the ceiling to `show` and
+`unload`**: it is logged by name, and the narrowing is marked on the row
+with its reason, so the operator sees why every other verb is withheld.
+Failing closed means the agent comes down, and `unload` is how it comes
+down from the console, so it stays askable: a plane that served nothing
+would leave an uncontained agent running with no verb to end it. admin-con
+does not unload on its own initiative here, since recovery decisions are
+this crate's, per `toddwbucy/WeaverWeb#15`: the operator reads the row and
+asks `unload`. The narrowing holds until the uncontained run ends, by that
+`unload` or otherwise, and then the full ceiling returns and the next load
+is checked again. Because the server fixes a connection's ceiling for its
+life, the narrowed ceiling reaches it through a fresh hello, a mechanism
+the code act builds. admin-con's orderly stop, which unloads, remains the
+other path. `show`
 carrying the pids is promised and owed on WeaverAgent's side, and the code
 act names that. **Without a cgroup-capable supervisor only the orderly stop
 holds**: a process group does not contain an agent whose worker leaves its

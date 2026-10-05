@@ -1163,8 +1163,9 @@ never a bare socket's. Each row carries:
   as they were (migration `0012`)
 - **the ceiling admin-con declared**, the verbs the box's sudo rules grant
   its user as its hello named them, with the date, per section 8, and,
-  where a failed containment check narrowed it to `show` and `unload`, that
-  narrowing with its reason. It is the box's word
+  where a failed containment check narrowed it to `show` and `unload`, the
+  failure's frame with its reason, the pids that failed and its date, per
+  section 8. It is the box's word
   about itself and an upper bound, never a grant, and this copy is what
   surfaces read: the server authorizes against the live connection's own,
   per section 8
@@ -2753,7 +2754,18 @@ sets above the box's load bound**, not a constant of this crate; the member
 is the code act's. **A verb runs to completion**, per the operator's rulings
 of 2026-10-03 on `toddwbucy/WeaverWeb#14`: an invocation finishes even when
 its caller disappears, so at its bound admin-con leaves the process running,
-answers `unknown`, and the next `show` reads the real state. A dropped verb
+answers `unknown`, and the next `show` reads the real state. **The
+invocation slot stays occupied until that process exits and is reaped**,
+even after its caller was answered `unknown`: verbs that arrive meanwhile
+queue behind it under the existing bound and `busy`, and the orderly stop's
+`unload` waits for it too, per section 8. Answering at the bound and freeing
+the slot would end the one-verb-at-a-time span while the verb still ran, so
+the next verb could run beside it. The box has its own guard beside this
+one: weaver-admin holds an invocation lock for the whole of every verb but
+`show` and refuses a concurrent one `InvocationInFlight`, per
+`weaver-admin-Spec` section 3, so the box would refuse the overlap, and
+admin-con's slot is what keeps this crate's ordering of answers against the
+trace. A dropped verb
 answers `unknown` and never a guess at what admin did, and a verb lost with
 the link answers unknown too, since it may have run. **A verb counts as
 started only once its invocation begins.** So a verb still waiting behind
@@ -3171,9 +3183,11 @@ live and die inside the invoker's containment. The invoker's resource limits
 contain the agent too, so they are sized for it, model loading included, or
 left unset, and an upgrade of admin-con is planned as an unload, the
 upgrade, then a load. **An orderly stop unloads first**: admin-con answers
-its waiting asks `not_started`, waits for the verb in flight to finish
-within its bound, issues `unload` through its own granted line, and then
-exits. That `unload` is admin-con's one act on its own initiative. A kill is
+its waiting asks `not_started`, waits for the verb in flight, until its
+process exits and is reaped, within the stop's grace, issues `unload`
+through its own granted line, and then exits. A verb whose process
+outlasts the grace means the `unload` is not issued, and the kill that
+follows is an unclean stop, reset at the next load. That `unload` is admin-con's one act on its own initiative. A kill is
 an unclean stop, whose next load resets the agent to its latest save point.
 **The install owes three things**, named here and built by the install act:
 the unit's control-group kill mode; a stop timeout covering the box's load
@@ -3184,8 +3198,14 @@ containment at every load as well**: `show` names the run's constituents,
 the worker, the state member and the relay, by process id where a run
 stands, per the contract's section 3, and admin-con confirms each sits in
 its own containment. **A failed check narrows the ceiling to `show` and
-`unload`**: it is logged by name, and the narrowing is marked on the row
-with its reason, so the operator sees why every other verb is withheld.
+`unload`**, and is logged by name. **The failure itself crosses on the live
+connection as a frame from admin-con**, carrying the reason and the
+constituent pids that failed, and lands on the row with its date like the
+door's frame of section 7.2, bound to the connection that reports it, so
+the operator sees why every other verb is withheld. The reason never rides
+the hello, since a ceiling from the sudo rules can legitimately be exactly
+`show` and `unload`, and a ceiling alone could not say which it is. That
+frame is the code act's and owed.
 Failing closed means the agent comes down, and `unload` is how it comes
 down from the console, so it stays askable: a plane that served nothing
 would leave an uncontained agent running with no verb to end it. admin-con

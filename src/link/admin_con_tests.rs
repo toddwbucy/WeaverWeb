@@ -2517,3 +2517,99 @@ async fn an_openings_show_is_taken_past_a_full_queue() {
     assert_eq!(status.last_refusal, None, "{status:?}");
     con.stop().await;
 }
+
+/// **A position the server holds past a boundary taken at its bound is
+/// caught up already** (Spec 7.2): admin-con relays a long trace and stops;
+/// restarted against a relay slower than the opening's bound, it takes its
+/// boundary short of what the server acknowledged, and the opening sends
+/// `caught_up` at once and resumes live from the server's position. The
+/// connection is admitted once, a verb runs, and a record written after is
+/// relayed.
+#[tokio::test]
+async fn an_acknowledgement_past_a_bounded_boundary_is_caught_up() {
+    use std::sync::atomic::Ordering;
+    let Some(lab) = Lab::open().await else { return };
+    let trace = Trace::new();
+    let mut body = String::new();
+    let mut n = 0u64;
+    while body.len() < 2 * 1024 * 1024 {
+        n += 1;
+        body.push_str(&format!("{{\"wall_ms\":1,\"payload\":{{\"n\":{n}}}}}\n"));
+    }
+    trace.append_raw(body.as_bytes());
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
+    let invoker = FakeInvoker::new(&["show"], "idle");
+    let mut con = Running::start(config(&path), invoker.clone());
+    con.wait("admitted", |s| s.admitted).await;
+    let until = tokio::time::Instant::now() + Duration::from_secs(30);
+    while lab.listener.acknowledged(&id).map(|p| p.offset) != Some(trace.len()) {
+        assert!(
+            tokio::time::Instant::now() < until,
+            "never acknowledged through the end"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    con.stop().await;
+    lab.wait_for(&id, "admin down", |a| !a.admin.connected)
+        .await;
+
+    // A chunk every 200 ms: the opening's 500 ms bound reads a few chunks.
+    trace
+        .relay
+        .counts
+        .chunk_pause_ms
+        .store(200, Ordering::SeqCst);
+    let mut cfg = config(&path);
+    cfg.boundary_bound = Duration::from_millis(500);
+    let mut con = Running::start(cfg, invoker.clone());
+    con.wait("admitted again", |s| s.admitted).await;
+    trace.relay.counts.chunk_pause_ms.store(0, Ordering::SeqCst);
+    verb(&lab.listener, &id, "show").await.unwrap();
+    trace.append(n + 1, "turn");
+    wait_window(&lab, &id, "the record after", |e| {
+        ns(e).last() == Some(&(n + 1))
+    })
+    .await;
+    let status = con.status();
+    assert_eq!(status.admissions, 1, "{status:?}");
+    assert_eq!(status.last_refusal, None, "{status:?}");
+    con.stop().await;
+}
+
+/// **Only a clean end before a header is a refused position**: a relay
+/// that sends half a header and drops, at a redial from a position past
+/// zero, is a broken door, not a verdict on the position. The door closes
+/// and reopens as an admission, and nothing is marked refused or relayed
+/// again from zero.
+#[tokio::test]
+async fn a_half_header_at_a_redial_closes_the_door_rather_than_refusing() {
+    use std::sync::atomic::Ordering;
+    let Some(lab) = Lab::open().await else { return };
+    let trace = Trace::new();
+    for n in 1..=3 {
+        trace.append(n, "turn");
+    }
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
+    let mut con = Running::start(config(&path), Arc::new(NoVerbs));
+    con.wait("admitted", |s| s.admitted).await;
+    wait_window(&lab, &id, "the first three", |e| ns(e) == [1, 2, 3]).await;
+    let opened = wait_door(&lab, &id, true).await.trace_door_at;
+
+    trace
+        .relay
+        .counts
+        .half_header_next
+        .store(true, Ordering::SeqCst);
+    trace.relay.kick();
+    lab.wait_for(&id, "the door closed and opened again", |a| {
+        a.trace_door == Some(true) && a.trace_door_at > opened
+    })
+    .await;
+    trace.append(4, "turn");
+    wait_window(&lab, &id, "the fourth", |e| ns(e) == [1, 2, 3, 4]).await;
+    let marks = marks(&window(&lab, &id));
+    assert!(!marks.iter().any(|m| m.contains("refused")), "{marks:?}");
+    con.stop().await;
+}

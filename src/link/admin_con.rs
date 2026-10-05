@@ -550,6 +550,9 @@ struct Replay {
     /// Where the ring does not hold the whole span, the second read: from
     /// where, keeping only records that start at or after the offset.
     again: Option<(Position, u64)>,
+    /// Where the server already holds a position past the boundary, the
+    /// replay is empty and the stream resumes live from that position.
+    live_from: Option<Position>,
 }
 
 /// **The replay an opening relays behind its boundary** (Spec 7.2): from
@@ -567,7 +570,11 @@ fn plan(ring: Ring, boundary: &Position, resume: &Resume, backfill: u64) -> Repl
                 front.push(backfill_mark(ring.start.clone()));
             }
             front.extend(ring.items.into_iter().map(|(item, _)| item));
-            Replay { front, again: None }
+            Replay {
+                front,
+                again: None,
+                live_from: None,
+            }
         }
         Resume::Backfill => Replay {
             front: Vec::new(),
@@ -575,12 +582,32 @@ fn plan(ring: Ring, boundary: &Position, resume: &Resume, backfill: u64) -> Repl
                 relay::zero(&boundary.generation),
                 boundary.offset.saturating_sub(backfill),
             )),
+            live_from: None,
         },
+        // **A position the server holds past the boundary is caught up
+        // already**: a boundary taken at its bound can stand short of what
+        // a previous connection relayed. Nothing is behind it, `caught_up`
+        // goes at once, and the stream resumes live from the server's
+        // position, which the relay verifies as any resumption.
+        Resume::Ack(acked)
+            if acked.generation == boundary.generation && acked.offset > boundary.offset =>
+        {
+            Replay {
+                front: Vec::new(),
+                again: None,
+                live_from: Some(acked.clone()),
+            }
+        }
         Resume::Ack(acked) if acked.generation == boundary.generation => match ring.after(acked) {
-            Some(front) => Replay { front, again: None },
+            Some(front) => Replay {
+                front,
+                again: None,
+                live_from: None,
+            },
             None => Replay {
                 front: Vec::new(),
                 again: Some((acked.clone(), 0)),
+                live_from: None,
             },
         },
         Resume::Ack(acked) => {
@@ -596,10 +623,12 @@ fn plan(ring: Ring, boundary: &Position, resume: &Resume, backfill: u64) -> Repl
                 Some(items) => Replay {
                     front: std::iter::once(mark).chain(items).collect(),
                     again: None,
+                    live_from: None,
                 },
                 None => Replay {
                     front: vec![mark],
                     again: Some((zero, 0)),
+                    live_from: None,
                 },
             }
         }
@@ -710,13 +739,19 @@ impl Door {
         self.open = true;
         self.failures = 0;
         self.heartbeat = None;
-        match replay.again {
-            None => {
+        match (replay.again, replay.live_from) {
+            (None, Some(from)) => {
+                drop(stream);
+                self.stream = None;
+                self.at = from;
+                self.target = None;
+            }
+            (None, None) => {
                 self.stream = Some(stream);
                 self.at = boundary;
                 self.target = None;
             }
-            Some((from, keep_from)) => {
+            (Some((from, keep_from)), _) => {
                 drop(stream);
                 self.stream = None;
                 self.at = from;

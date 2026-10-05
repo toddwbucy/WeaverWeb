@@ -61,6 +61,14 @@ pub(super) struct Counts {
     /// Milliseconds the relay waits before each header, as one verifying a
     /// position after a long record does.
     pub(super) header_delay_ms: std::sync::atomic::AtomicU64,
+    /// Milliseconds the relay pauses after each chunk of the file: a relay
+    /// slower than an opening's bound over a long trace.
+    pub(super) chunk_pause_ms: std::sync::atomic::AtomicU64,
+    /// When set, the next stream sends half its header and ends, once.
+    pub(super) half_header_next: std::sync::atomic::AtomicBool,
+    /// Every stream started before this count last moved ends at its next
+    /// step: a relay dropping its reader without stopping its run.
+    pub(super) kicks: AtomicUsize,
 }
 
 /// The fake relay for one trace file.
@@ -134,6 +142,11 @@ impl FakeRelay {
         let _ = std::fs::remove_file(&self.socket);
     }
 
+    /// End the streams standing now, the run going on.
+    pub(super) fn kick(&self) {
+        self.counts.kicks.fetch_add(1, Ordering::SeqCst);
+    }
+
     /// Hold the stream, or let it go on.
     pub(super) fn hold(&self, held: bool) {
         self.counts.held.store(held, Ordering::SeqCst);
@@ -195,6 +208,7 @@ async fn serve(
     birth: bool,
     counts: Arc<Counts>,
 ) {
+    let kicked = counts.kicks.load(Ordering::SeqCst);
     let mut stream = BufReader::new(stream);
     let mut request = Vec::new();
     let read = tokio::time::timeout(
@@ -236,9 +250,12 @@ async fn serve(
             Ok(Ok(()))
         )
     };
-    if !send(&mut stream, &line(serde_json::json!({ "header": header }))).await
-        || counts.end_after_header.load(Ordering::SeqCst)
-    {
+    let header = line(serde_json::json!({ "header": header }));
+    if counts.half_header_next.swap(false, Ordering::SeqCst) {
+        let _ = send(&mut stream, &header[..header.len() / 2]).await;
+        return;
+    }
+    if !send(&mut stream, &header).await || counts.end_after_header.load(Ordering::SeqCst) {
         return;
     }
     let mut position = offset;
@@ -247,6 +264,9 @@ async fn serve(
     // written until it ends.
     let mut mid_line = false;
     loop {
+        if counts.kicks.load(Ordering::SeqCst) != kicked {
+            return;
+        }
         if counts.held.load(Ordering::SeqCst) {
             tokio::time::sleep(TICK).await;
             last_write = tokio::time::Instant::now();
@@ -286,7 +306,12 @@ async fn serve(
                 last_write = tokio::time::Instant::now();
                 mid_line = buf[take - 1] != b'\n';
                 // A backlog goes out at the pace the reader takes it.
-                tokio::task::yield_now().await;
+                let pause = counts.chunk_pause_ms.load(Ordering::SeqCst);
+                if pause > 0 {
+                    tokio::time::sleep(Duration::from_millis(pause)).await;
+                } else {
+                    tokio::task::yield_now().await;
+                }
                 continue;
             }
         } else if !mid_line && counts.truncate_next.swap(false, Ordering::SeqCst) {

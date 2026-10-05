@@ -149,7 +149,11 @@ pub async fn dial(socket: &Path, from: &Position) -> Dial {
         Err(_) => Dial::Closed(format!(
             "the trace relay sent no header within {HEADER_BOUND:?}"
         )),
-        Ok(Raw::Ended(_)) => Dial::Refused,
+        // **Only a clean end with no byte received is a refusal**: the
+        // relay refuses by closing before a header. A partial header or a
+        // read error is a broken door, not a verdict on the position.
+        Ok(Raw::Ended { clean: true, .. }) => Dial::Refused,
+        Ok(Raw::Ended { why, .. }) => Dial::Closed(why),
         Ok(Raw::Control(TraceControl::Header(header))) => {
             stream.identity = identity(&header);
             Dial::Open(Box::new(stream))
@@ -175,9 +179,17 @@ pub enum Read {
 
 enum Raw {
     Record(Vec<u8>),
-    Oversized { len: u64, digest: String },
+    Oversized {
+        len: u64,
+        digest: String,
+    },
     Control(TraceControl),
-    Ended(String),
+    /// The stream ended: `clean` where it closed with no byte pending and
+    /// no read error.
+    Ended {
+        why: String,
+        clean: bool,
+    },
 }
 
 /// The relay's stream, after its header.
@@ -208,7 +220,7 @@ impl Stream {
             Raw::Control(TraceControl::Header(_)) => {
                 Read::Ended("the trace relay sent a second header".to_owned())
             }
-            Raw::Ended(why) => Read::Ended(why),
+            Raw::Ended { why, .. } => Read::Ended(why),
         }
     }
 
@@ -216,15 +228,23 @@ impl Stream {
         loop {
             let chunk = match self.reader.fill_buf().await {
                 Ok(chunk) => chunk,
-                Err(e) => return Raw::Ended(format!("reading the trace relay: {e}")),
+                Err(e) => {
+                    return Raw::Ended {
+                        why: format!("reading the trace relay: {e}"),
+                        clean: false,
+                    };
+                }
             };
             if chunk.is_empty() {
                 let partial = self.line.len() as u64 + self.over.as_ref().map_or(0, |o| o.1);
-                return Raw::Ended(if partial > 0 {
-                    format!("the trace relay's stream ended inside a record, {partial} bytes in")
-                } else {
-                    "the trace relay's stream ended".to_owned()
-                });
+                return Raw::Ended {
+                    why: if partial > 0 {
+                        format!("the trace relay's stream ended inside a line, {partial} bytes in")
+                    } else {
+                        "the trace relay's stream ended".to_owned()
+                    },
+                    clean: partial == 0,
+                };
             }
             let newline = chunk.iter().position(|&b| b == b'\n');
             let take = newline.map_or(chunk.len(), |i| i + 1);

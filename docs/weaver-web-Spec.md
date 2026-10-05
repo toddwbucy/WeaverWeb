@@ -1135,12 +1135,14 @@ never a bare socket's. Each row carries:
   link-state write to the connection it describes, so a stale teardown
   cannot mark a plane missing after its replacement was admitted
 - **the trace door's state**, open or closed, with the date it last
-  changed, as admin-con's hello reports it, per section 7.2. The relay runs
+  changed: admin-con's word at admission, in its hello, and at every change
+  after, in a frame on the live connection, each write bound to the
+  connection that reports it like a link-state write, per section 7.2. The relay runs
   only while the agent runs, so a closed door beside an `unloaded` load
   state is the normal state, and a closed door while a run stands is shown
   for the operator to read and is never a fault this crate raises. The door
   never gates a verb. The member is this document's as of 2026-10-05, and
-  its column is the code act's
+  its column and frame are the code act's
 - **the load state, with its date**, which is section 7.2's rule restated at
   the row: the state is what `show` last answered, admin's word, or what the
   trace last carried, the agent's own record (a load, an unload, or a turn's
@@ -2547,11 +2549,19 @@ serves every run**: each run appends to the same file and opens with its
 `load` event, and a stream resumes across runs within the file, per
 `weaver-admin-Spec` section 6. **The relay runs only while the agent
 runs**, so the door is closed while it is unloaded, which is the normal
-state: admin-con redials on its backoff, and its hello says whether the
-door is open. The row records that with its date, per section 2.12. A
-closed door while the load state is `unloaded` renders as the normal state.
-A closed door while a run stands is shown as such for the operator to read,
-and is never a fault this crate raises.
+state: admin-con redials on its backoff. **The door's state is admin-con's
+word at admission and at every change**: the hello carries it at
+admission, and because the connection outlives loads and unloads, every
+change after crosses on the live connection as a frame from admin-con with
+its date, and lands on the row like a link-state write, bound to the
+connection that reports it, per section 2.12. That frame is the code act's
+and owed. **A frame and not a fresh hello**, unlike the containment
+narrowing of section 8: the ceiling is fixed for a connection's life as a
+security bound, so narrowing it takes a fresh hello, while the door's state
+is a fact about the box with no authorization in it, so it moves as the
+replay's marks do. A closed door while the load state is `unloaded` renders
+as the normal state. A closed door while a run stands is shown as such for
+the operator to read, and is never a fault this crate raises.
 
 **The trace is replayed from an acknowledged position, and this is this
 document's election of 2026-10-01 and not a ruling.** A reader that relays
@@ -2611,12 +2621,13 @@ and not the trace, so admin-con would resume past a hole no mark covers.
 So within one server process a reconnection resumes from the acknowledged
 position as written here. **A server that restarts answers the hello with no
 position, and admin-con then relays a bounded tail**, with a discontinuity
-mark at the front saying what was not relayed. **The tail's start is this
+mark at the front saying what was not relayed. **The tail's shape is this
 document's election of 2026-10-05**: the relay cannot start mid-file
 without a digest, and admin-con no longer reads the file, so admin-con
 requests from offset zero, reads and discards locally until it stands
 within `backfill_bytes` of the file's end, and relays from the first record
-boundary there. The link and the server's window stay bounded, while the
+boundary there. Where the file's end is measured from is the third of the
+owed measures below. The link and the server's window stay bounded, while the
 local read is not, which is the price of reading only through the door.
 This is right because the record is the file on the box and the Replay
 surface renders landed deposits through the analysis seam of section 7.3,
@@ -2628,16 +2639,23 @@ since the relay holds the run's file by descriptor, and reaches admin-con as
 a new identity in the next run's header, or as a position the relay refuses:
 either way the old file's unrelayed tail is lost to the reader, sent as a
 marked discontinuity, and the new file is relayed from its start. That is
-the contract's rule in section 3 that nothing is shed silently. **Two
+the contract's rule in section 3 that nothing is shed silently. **Three
 measures the code act settles under the relay, owed to it**: the boundary
-the hello names, and the tail a verb's drain records, are both "everything
-the file held at that moment", which admin-con reads today from the file's
-length. Under the relay admin-con reads no file, and the relay names no
-length, so the act that builds the relay client fixes how each is taken.
-The relay's heartbeat after a request is the stream's own word that
-everything written so far has been sent, but it comes only while the relay
-is idle, so an agent that writes continuously gives no such moment, which
-is why the measure stays owed rather than elected here. Section 8's one-connection
+the hello names, the backfill's start after a server restart, and the tail
+a verb's drain records. Each is "everything the file held at that moment",
+which admin-con reads today from the file's length. Under the relay
+admin-con reads no file, and the relay names no length, so the act that
+builds the relay client fixes how each is taken. The relay's heartbeat
+after a request is the stream's own word that everything written so far
+has been sent, but it comes only while the relay is idle, so an agent that
+writes continuously gives no such moment, which is why the measures stay
+owed rather than elected here: without one, a backfill under such an agent
+would never place its start, never reach `caught_up`, and hold every
+ordinary verb behind it. **This crate has asked WeaverAgent for the file's
+length in the relay's header at the moment of the request**, on
+`toddwbucy/WeaverAgent#88`, which would settle the backfill's start and the
+hello's boundary at once. The drain's tail would still need a moment in the
+middle of a stream, and stays owed either way. Section 8's one-connection
 paragraph refers here for what a reconnection carries. **Every event
 relayed from behind the file's tail at a reconnection is marked as replayed
 on the link, and the replay ends with a frame admin-con sends when it

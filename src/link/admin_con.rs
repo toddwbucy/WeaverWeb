@@ -1052,7 +1052,7 @@ pub async fn run<I: Invoker>(
         .await
         .unwrap_or_else(|_| tokio::time::Instant::now());
     orderly_stop(
-        &*invoker,
+        invoker,
         &slot,
         &cfg.link.agent,
         asked + cfg.stop_grace,
@@ -1073,8 +1073,18 @@ pub async fn run<I: Invoker>(
 /// alone: a lost link never reaches here, since the client loop returns
 /// only on the stop. The `unload`'s answer is logged; its events reach the
 /// server through the trace when admin-con next connects.
+///
+/// **Every wait here ends by the stop's deadline**: the ceiling's ask by
+/// the earlier of the deadline and its own bound, so a slot freed just
+/// before the deadline cannot carry the stop past it. **The `unload` runs
+/// in a task of its own**, which owns the child and both its readers to the
+/// end and reaps it, as an ordinary invocation does: at the deadline the
+/// stop stops waiting and admin-con exits, and the child, in its own
+/// session and never killed, runs on. Its pipes close when admin-con exits,
+/// which the contract covers: admin ignores the broken pipe, finishes, and
+/// records the outcome in its own log on the box.
 async fn orderly_stop<I: Invoker>(
-    invoker: &I,
+    invoker: Arc<I>,
     slot: &Slot,
     agent: &str,
     deadline: tokio::time::Instant,
@@ -1093,14 +1103,17 @@ async fn orderly_stop<I: Invoker>(
             return;
         }
     };
-    let granted = match tokio::time::timeout(grants_bound, invoker.grants()).await {
+    let asked_until = deadline.min(tokio::time::Instant::now() + grants_bound);
+    let granted = match tokio::time::timeout_at(asked_until, invoker.grants()).await {
         Ok(Ok(verbs)) => verbs.iter().any(|v| v == "unload"),
         Ok(Err(e)) => {
             tracing::warn!("{agent}: the ceiling could not be read at the stop ({e:#})");
             false
         }
         Err(_) => {
-            tracing::warn!("{agent}: the ceiling was not read within {grants_bound:?} at the stop");
+            tracing::warn!(
+                "{agent}: the ceiling was not read within its bound or the stop's grace; the stop issues no unload"
+            );
             false
         }
     };
@@ -1109,23 +1122,30 @@ async fn orderly_stop<I: Invoker>(
         return;
     }
     tracing::info!("{agent}: the orderly stop unloads the agent");
-    match tokio::time::timeout_at(deadline, invoker.run(agent, "unload", &Principal::Server)).await
-    {
-        Ok(Ok(outcome)) => tracing::info!(
+    let unload = tokio::spawn({
+        let agent = agent.to_owned();
+        async move {
+            let ran = invoker.run(&agent, "unload", &Principal::Server).await;
+            drop(permit);
+            ran
+        }
+    });
+    match tokio::time::timeout_at(deadline, unload).await {
+        Ok(Ok(Ok(outcome))) => tracing::info!(
             "{agent}: the stop's unload answered, exit {:?}: {}",
             outcome.exit_code,
             outcome.answer.map(|a| a.to_string()).unwrap_or_default()
         ),
-        Ok(Err(fault)) => tracing::error!(
+        Ok(Ok(Err(fault))) => tracing::error!(
             "{agent}: the stop's unload faulted ({}): {}",
             fault.kind,
             fault.message
         ),
+        Ok(Err(e)) => tracing::error!("{agent}: the stop's unload ended without an answer: {e}"),
         Err(_) => tracing::error!(
-            "{agent}: the stop's unload outlasted the stop's grace; its outcome is unknown"
+            "{agent}: the stop's unload runs on past the stop's grace; its outcome is in the box's admin.log"
         ),
     }
-    drop(permit);
 }
 
 #[derive(Clone)]

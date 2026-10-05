@@ -31,6 +31,7 @@ use crate::link::frames::{Principal, VerbFault, VerbOutcome};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::Arc;
 use tokio::io::AsyncReadExt;
 
 /// The verbs a rule may grant, and so the only verbs this invoker builds a
@@ -58,6 +59,12 @@ const LIST: &str = "-l";
 pub struct SudoInvoker {
     weaver_admin: PathBuf,
     agent: String,
+    /// **One listing at a time**, held by the task that owns the listing's
+    /// child until it exits: a `grants` cancelled at its bound while a
+    /// listing hangs leaves that one listing running, and the next `grants`
+    /// waits on it rather than starting another, so reconnection attempts
+    /// cannot pile up listings.
+    listing: Arc<tokio::sync::Mutex<()>>,
     /// A test's `PATH` for the child, so the generated fake sudo is found
     /// first; a test build runs nothing without it. Absent from a service
     /// build, where the child inherits admin-con's.
@@ -78,6 +85,7 @@ impl SudoInvoker {
         Ok(Self {
             weaver_admin: weaver_admin.to_owned(),
             agent: agent.to_owned(),
+            listing: Arc::new(tokio::sync::Mutex::new(())),
             #[cfg(test)]
             path: None,
         })
@@ -131,17 +139,22 @@ impl SudoInvoker {
     }
 
     /// Whether the rule grants this exact line, asking without running it.
+    /// **The listing runs in a task that owns its child to the end** and
+    /// reaps it, holding the listing lock until then, so a caller dropped
+    /// at its bound leaves a reaper behind and never a second listing.
     async fn granted(&self, verb: &str) -> anyhow::Result<bool> {
         let Some(argv) = self.argv(verb, true) else {
             return Ok(false);
         };
-        let status = self
-            .command(&argv)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .await?;
-        Ok(status.success())
+        let mut command = self.command(&argv);
+        command.stdout(Stdio::null()).stderr(Stdio::null());
+        let held = self.listing.clone().lock_owned().await;
+        let listing = tokio::spawn(async move {
+            let status = command.status().await;
+            drop(held);
+            status
+        });
+        Ok(listing.await??.success())
     }
 }
 

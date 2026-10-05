@@ -27,7 +27,7 @@ const PLANTED: &str = "planted-principal-name";
 
 /// The fake's script: it records its argv (with `$0`, the file the kernel
 /// ran), its session and its standard input, answers `-l` from the grants
-/// file, and otherwise runs a verb as scripted by files named after it: a
+/// file after the delay named `delay.list`, and otherwise runs a verb as scripted by files named after it: a
 /// delay, standard error, standard output and an exit status. A second run
 /// starting while one runs is recorded as an overlap, by an atomic `mkdir`,
 /// and an answer whose write fails, a pipe closed before it was read, as
@@ -42,6 +42,7 @@ printf '%s\n' "$line" >> "$dir/log"
 read -r _pid _comm _state _ppid _pgrp session _rest < /proc/$$/stat
 printf 'context\t%s\t%s\t%s\n' "$$" "$session" "$(readlink /proc/$$/fd/0)" >> "$dir/log"
 if [ "$2" = "-l" ]; then
+  if [ -f "$dir/delay.list" ]; then sleep "$(cat "$dir/delay.list")"; fi
   grep -qx -- "$4" "$dir/grants" 2>/dev/null
   exit $?
 fi
@@ -151,6 +152,14 @@ impl FakeSudo {
             .collect()
     }
 
+    /// How many listings (`-n -l` lines) the fake was run with.
+    fn listings(&self) -> usize {
+        self.argvs()
+            .iter()
+            .filter(|a| a.get(2).map(String::as_str) == Some("-l"))
+            .count()
+    }
+
     /// The verbs run (not listed), in the order their runs started and
     /// ended, with any overlap or broken answer: `start show`, `end show`,
     /// ...
@@ -254,6 +263,40 @@ async fn the_grants_are_exactly_the_lines_the_rules_grant() {
     // A box that grants nothing declares the empty ceiling.
     let fake = FakeSudo::new();
     assert!(fake.invoker().grants().await.unwrap().is_empty());
+}
+
+/// **A listing that hangs is never doubled**: two `grants` asked at once
+/// and both dropped at their bound start one listing, not two, and that
+/// listing is owned to its end, so the next `grants` runs once it exits.
+#[tokio::test]
+async fn a_hung_listing_is_never_doubled() {
+    let fake = FakeSudo::new();
+    fake.grant(&["show"]);
+    fake.delay("list", Duration::from_millis(1500));
+    let invoker = fake.invoker();
+    let bound = Duration::from_millis(400);
+    let asked = tokio::time::Instant::now();
+    let (first, second) = tokio::join!(
+        tokio::time::timeout(bound, invoker.grants()),
+        tokio::time::timeout(bound, invoker.grants()),
+    );
+    assert!(
+        first.is_err() && second.is_err(),
+        "both asks passed their bound"
+    );
+    assert_eq!(fake.listings(), 1, "{:?}", fake.argvs());
+
+    std::fs::remove_file(fake.dir.path().join("delay.list")).unwrap();
+    let granted = tokio::time::timeout(SOON, invoker.grants())
+        .await
+        .expect("the hung listing ended and released the next");
+    assert_eq!(granted.unwrap(), ["show"]);
+    assert!(
+        asked.elapsed() >= Duration::from_millis(1400),
+        "the next grants waited for the hung listing's child to exit: {:?}",
+        asked.elapsed()
+    );
+    fake.assert_every_line_ran_the_fake();
 }
 
 /// **The command line is constants and config alone**, the argv
@@ -645,6 +688,59 @@ async fn a_child_that_outlasts_the_grace_leaves_the_unload_unissued() {
     con.fake.wait_run("end validate").await;
     // Long enough for an unload the stop wrongly left behind to start.
     tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(
+        con.fake.runs(),
+        ["start show", "end show", "start validate", "end validate"]
+    );
+    con.fake.assert_every_line_ran_the_fake();
+}
+
+/// **The stop's `unload` runs on past the grace, owned to its end**: the
+/// stop ends at its deadline, and the child, still read and reaped by its
+/// task, writes its whole answer rather than into a closed pipe.
+#[tokio::test]
+async fn the_stops_unload_runs_on_past_the_grace_unbroken() {
+    let Some(con) = Con::open(&["show", "unload"]).await else {
+        return;
+    };
+    con.fake.delay("unload", Duration::from_millis(2000));
+    let grace = Duration::from_millis(1000);
+    let running = con.start(grace).await;
+    let stopped = tokio::time::Instant::now();
+    running.stop().await;
+    assert!(
+        stopped.elapsed() < Duration::from_millis(1800),
+        "the stop kept to its grace: {:?}",
+        stopped.elapsed()
+    );
+    con.fake.wait_run("end unload").await;
+    assert_eq!(
+        con.fake.runs(),
+        ["start show", "end show", "start unload", "end unload"]
+    );
+    con.fake.assert_every_line_ran_the_fake();
+}
+
+/// **The stop's ceiling ask ends by the stop's deadline**: a slot freed a
+/// second before the deadline, then a listing that hangs, and the stop
+/// ends at the deadline with no `unload`, not a hello's bound after it.
+#[tokio::test]
+async fn the_stops_ceiling_ask_ends_by_the_deadline() {
+    let Some(con) = Con::open(&["show", "validate", "unload"]).await else {
+        return;
+    };
+    con.fake.delay("validate", Duration::from_millis(1300));
+    let grace = Duration::from_millis(2000);
+    let running = con.start(grace).await;
+    con.ask_past_the_bound("validate").await;
+    con.fake.delay("list", Duration::from_secs(5));
+    let stopped = tokio::time::Instant::now();
+    running.stop().await;
+    assert!(
+        stopped.elapsed() < Duration::from_millis(2600),
+        "the stop ended by its deadline: {:?}",
+        stopped.elapsed()
+    );
     assert_eq!(
         con.fake.runs(),
         ["start show", "end show", "start validate", "end validate"]

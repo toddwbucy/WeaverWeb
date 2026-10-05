@@ -387,6 +387,10 @@ struct Opened {
     /// in every case, so the window tells what the file did and nothing is
     /// smoothed.
     marks: Vec<Item>,
+    /// **The stream `verify` opened at the server's position past the
+    /// boundary**, handed to the door, so the position the door resumes
+    /// from and the stream it reads came from one dial.
+    resumed: Option<relay::Stream>,
 }
 
 /// **An opening's boundary is the position at the first heartbeat after
@@ -440,6 +444,7 @@ async fn measure(
                 boundary: at,
                 ring,
                 marks,
+                resumed: None,
             });
         };
         match read {
@@ -466,6 +471,7 @@ async fn measure(
                     boundary: at,
                     ring,
                     marks,
+                    resumed: None,
                 });
             }
             Read::Truncated { size } => {
@@ -546,7 +552,7 @@ enum Resume {
 /// **A position the server holds past the boundary is verified inside the
 /// opening, before anything is sent** (Spec 7.2): the relay is dialed at
 /// it. Where it answers in the boundary's file, the opening is caught up
-/// and the door resumes there. Where it refuses, the position names
+/// and the door reads that very stream. Where it refuses, the position names
 /// nothing the file still holds: a mark goes at the replay's front and the
 /// replay is a backfill to the boundary, so the file's history stays behind
 /// the boundary and the opening's `show` re-establishes the row. Anything
@@ -572,9 +578,7 @@ async fn verify(
     };
     match tokio::time::timeout(bound, relay::dial(socket, acked)).await {
         Ok(Dial::Open(stream)) if stream.identity == opened.boundary.generation => {
-            // Verified; the door redials there, so its stream and its
-            // position agree by construction.
-            drop(stream);
+            opened.resumed = Some(*stream);
             Ok(resume.clone())
         }
         Ok(Dial::Open(stream)) => Err(format!(
@@ -781,6 +785,7 @@ impl Door {
             boundary,
             ring,
             marks,
+            resumed,
         } = opened;
         // **One mark per discontinuity**: where the opening's read already
         // marked one and started the file again from zero, the server's
@@ -796,10 +801,13 @@ impl Door {
         self.heartbeat = None;
         match (replay.again, replay.live_from) {
             // The server's position, verified by the opening: the door
-            // redials there at its next read.
+            // reads the stream that verified it, so position and stream
+            // came from one dial. Without one, a redial owed from the
+            // position; only an opening that skipped `verify` reaches that,
+            // which nothing in service does.
             (None, Some(from)) => {
                 drop(stream);
-                self.stream = None;
+                self.stream = resumed;
                 self.at = from;
                 self.target = None;
             }

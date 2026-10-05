@@ -1557,21 +1557,41 @@ async fn relay<I: Invoker>(
     let mut in_flight = futures::stream::FuturesUnordered::new();
     // Whether a waiting ask's hold behind a detached process was logged.
     let mut held_logged = false;
+    // **An opening on the live connection serves its own `show` first**
+    // (Spec 7.2): until the server's `show` asked at the opening is taken
+    // into the slot, ordinary asks wait as they do behind the replay, so a
+    // person's verb queued at the opening cannot hold that `show` past the
+    // opening's deadline. Bounded by the silence bound from the door's
+    // frame, the cadence's four, so a server that never asks cannot hold
+    // the queue.
+    let mut opening_show: Option<tokio::time::Instant> = None;
     loop {
         if *shutdown.borrow_and_update() {
             decline_waiting(conn, &mut queue).await;
             return Ended::Shutdown;
         }
+        if opening_show.is_some_and(|until| tokio::time::Instant::now() >= until) {
+            tracing::warn!(
+                "{}: the opening's show was not asked within the silence bound; ordinary asks are served",
+                opts.agent
+            );
+            opening_show = None;
+        }
+        // Only a `show` the server asked is served while this holds.
+        let restricted = replaying || opening_show.is_some();
         // **A verb, one at a time, its answer placed at the invocation**
         // (Spec 7.2): drain the door to the relay's heartbeat, invoke with
         // the door unread, emit the answer, then read on. A second ask
         // waits its turn in arrival order; `VERBS_IN_FLIGHT` is the rule's
         // one number.
         while in_flight.len() < VERBS_IN_FLIGHT
-            && queue.servable(replaying)
+            && queue.servable(restricted)
             && let Ok(permit) = opts.slot.permit.clone().try_acquire_owned()
-            && let Some(ask) = queue.next(replaying)
+            && let Some(ask) = queue.next(restricted)
         {
+            if ask.served_during_the_replay() {
+                opening_show = None;
+            }
             // **During the replay only a `show` the server asked is served,
             // at once and with no drain** (Spec 7.2): the admission's held
             // behind a long backfill would miss its deadline. Its snapshot
@@ -1589,7 +1609,7 @@ async fn relay<I: Invoker>(
             // answered `not_started` at a stop, so the drain races the stop.
             // Dropping the drain is safe: the door's read is cancel-safe and
             // the connection's writer takes a frame whole or not at all.
-            if !replaying {
+            if !restricted {
                 let stopped = tokio::select! {
                     biased;
                     _ = shutdown.changed() => true,
@@ -1651,7 +1671,7 @@ async fn relay<I: Invoker>(
         // is logged once, with that verb's name**: on a fresh connection it
         // can be the admission's `show`, and an operator reading admissions
         // that keep closing `admission_incomplete` reads why here.
-        let held = in_flight.is_empty() && queue.servable(replaying) && !opts.slot.free();
+        let held = in_flight.is_empty() && queue.servable(restricted) && !opts.slot.free();
         if held && !held_logged {
             let running = opts.slot.running.lock().unwrap().clone();
             tracing::warn!(
@@ -1757,8 +1777,9 @@ async fn relay<I: Invoker>(
         // timed-out verb's process ending while an ask or an opening waits
         // for it, or the door's next opening, taken only while nothing is
         // in flight or waiting to start.
-        let opening_due = !door.open && opts.slot.free() && !queue.servable(replaying);
+        let opening_due = !door.open && opts.slot.free() && !queue.servable(restricted);
         let next_try = door.next_try;
+        let show_until = opening_show;
         tokio::select! {
             _ = shutdown.changed() => {
                 decline_waiting(conn, &mut queue).await;
@@ -1766,7 +1787,10 @@ async fn relay<I: Invoker>(
             }
             // The slot freed by a timed-out verb's process ending wakes an
             // ask waiting for it, and a closed door's opening owed after it.
-            () = opts.slot.freed(), if !opts.slot.free() && (queue.servable(replaying) || !door.open) => {}
+            () = opts.slot.freed(), if !opts.slot.free() && (queue.servable(restricted) || !door.open) => {}
+            // The opening's hold ends at its bound even with nothing else
+            // to wake the loop.
+            () = tokio::time::sleep_until(show_until.unwrap_or(next_try)), if show_until.is_some() => {}
             step = door.read(), if door.open => {
                 if let Err(end) = send_outs(conn, shared, step_outs(step)).await {
                     return end;
@@ -1777,6 +1801,9 @@ async fn relay<I: Invoker>(
                     Ok(Some(queued)) => {
                         outbox.extend(queued);
                         replaying = true;
+                        if ceiling.contains("show") {
+                            opening_show = Some(tokio::time::Instant::now() + conn.cadence * 4);
+                        }
                     }
                     Ok(None) => {}
                     Err(end) => return end,

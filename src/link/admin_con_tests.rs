@@ -125,6 +125,8 @@ struct FakeInvoker {
     state: Mutex<String>,
     steps: Mutex<VecDeque<Step>>,
     ran: Mutex<Vec<String>>,
+    /// A delay for every run of one verb, whatever its order.
+    slow: Mutex<Option<(String, Duration)>>,
 }
 
 impl FakeInvoker {
@@ -134,7 +136,12 @@ impl FakeInvoker {
             state: Mutex::new(state.to_owned()),
             steps: Mutex::new(VecDeque::new()),
             ran: Mutex::new(Vec::new()),
+            slow: Mutex::new(None),
         })
+    }
+
+    fn slow(&self, verb: &str, delay: Duration) {
+        *self.slow.lock().unwrap() = Some((verb.to_owned(), delay));
     }
 
     fn script(&self, step: Step) {
@@ -178,6 +185,12 @@ impl Invoker for FakeInvoker {
             self.set_state(&state);
         }
         tokio::time::sleep(step.delay).await;
+        let slow = self.slow.lock().unwrap().clone();
+        if let Some((slow, delay)) = slow
+            && slow == verb
+        {
+            tokio::time::sleep(delay).await;
+        }
         let load = if snapshot == "idle" {
             json!({"declaration": "sha-show"})
         } else {
@@ -2382,5 +2395,64 @@ async fn a_refused_position_is_marked_once_under_the_servers_position() {
         .filter(|m| m.contains("refused offset"))
         .collect();
     assert_eq!(refused.len(), 1, "{refused:?}");
+    con.stop().await;
+}
+
+/// **An opening serves its own `show` before any ordinary verb** (Spec
+/// 7.2): a person's slow `validate` is queued while the opening reads to
+/// its boundary, and the replay behind it is empty. The opening's `show`
+/// is served first, inside the opening's deadline, then the `validate`;
+/// both answers land and the connection is never closed
+/// `admission_incomplete`.
+#[tokio::test]
+async fn an_opening_serves_its_show_before_a_verb_queued_at_it() {
+    use std::sync::atomic::Ordering;
+    let Some(lab) = Lab::open_with(Duration::from_secs(4)).await else {
+        return;
+    };
+    let mut trace = Trace::closed();
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
+    let invoker = FakeInvoker::new(&["show", "validate"], "unloaded");
+    let mut con = Running::start(config(&path), invoker.clone());
+    con.wait("admitted", |s| s.admitted).await;
+    lab.wait_for(&id, "the admission's show", |a| {
+        a.state_source.as_deref() == Some("show")
+    })
+    .await;
+
+    // The relay comes up holding its stream, so the opening waits on its
+    // heartbeat while the person's ask arrives.
+    trace.relay.hold(true);
+    trace.relay.start();
+    let until = tokio::time::Instant::now() + SOON;
+    while trace.relay.counts.connections.load(Ordering::Relaxed) == 0 {
+        assert!(
+            tokio::time::Instant::now() < until,
+            "the opening never dialed"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    // The `validate` takes longer than the opening's deadline.
+    invoker.slow("validate", Duration::from_secs(6));
+    let listener = lab.listener.clone();
+    let asked = id.clone();
+    let person = Principal::Person { name: "ada".into() };
+    let validated = tokio::spawn(async move {
+        tokio::time::timeout(
+            Duration::from_secs(20),
+            listener.verb(&asked, "validate", person),
+        )
+        .await
+    });
+    tokio::time::sleep(SETTLE).await;
+    trace.relay.hold(false);
+
+    let answered = validated.await.unwrap().expect("the validate was answered");
+    assert_eq!(answered.unwrap().verb, "validate");
+    assert_eq!(invoker.ran(), ["show", "show", "validate"]);
+    let status = con.status();
+    assert_eq!(status.admissions, 1, "{status:?}");
+    assert_eq!(status.last_refusal, None, "{status:?}");
     con.stop().await;
 }

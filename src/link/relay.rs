@@ -16,6 +16,11 @@
 //! empty at offset zero. A record of any length is hashed whole, in pieces,
 //! so a position after a record past `RECORD_BOUND` is still one the relay
 //! verifies.
+//!
+//! **admin-con does not check the relay's peer**: the relay's socket stands
+//! in a root-owned run directory that only the agent's access group reaches,
+//! per `weaver-admin-Spec` section 6, so only root could stand a false relay
+//! at that path, and the contract names no identity for the reader to check.
 
 use crate::link::frames::{LINE_BOUND, Position};
 use serde::{Deserialize, Serialize};

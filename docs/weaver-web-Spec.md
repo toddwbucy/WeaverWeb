@@ -2719,15 +2719,28 @@ where that covers the span from the server's position, and read again from
 that position where it does not. **The backfill's start** is the first
 record boundary within `backfill_bytes` of that boundary. **The drain
 before a verb** reads the stream until a heartbeat dated at or after the
-drain's start. **The residue is a writer that never idles**, and a file
-that ends inside a record, since the relay heartbeats only at the file's
-end and never mid-line: no heartbeat comes, and the opening, the hello with
-it, and the drain wait on the writer, bounded by nothing else. **This crate
-has asked WeaverAgent for the file's length in the relay's header at the
-moment of the request**, on `toddwbucy/WeaverAgent#88`, which would settle
-the boundary and the backfill's start at once. The drain's moment in the
-middle of a stream would still rest on the heartbeat, and stays the
-residue either way. Section 8's one-connection
+drain's start. **Each falls back to a bound, and the heartbeat stays the
+measure**: a writer that never idles, or a file that ends inside a record,
+gets no heartbeat, since the relay heartbeats only at the file's end and
+never mid-line. **Where none comes within 30 seconds of the opening's
+request, the boundary is taken at the position read so far**: an earlier
+boundary only makes more of the backlog live, the agent's own record in
+order, so the row may read a transient older state and converges to the
+trace's tail, and the opening's `show` re-establishes it. **Where none
+dated at or after the drain's start comes within 10 seconds, the verb is
+invoked anyway**: what is unread then is read after the answer and ordered
+behind it. The inversion that matters, an unload written before a `show`'s
+snapshot and relayed after its answer, cannot pass through that gap, since
+an unload holds the box's invocation lock for its whole run and a `show`
+meeting it answers `InTransition`, which claims no state; a turn's event
+ordered behind an answer is a transient the next event corrects. So a
+writer that never idles never holds the link down or a verb back, and the
+operator can always unload a runaway agent. **The residue narrows to the
+order inside those windows.** **This crate has asked WeaverAgent for the
+file's length in the relay's header at the moment of the request**, on
+`toddwbucy/WeaverAgent#88`, which would make the boundary and the
+backfill's start exact. The drain's moment in the middle of a stream would
+still rest on the heartbeat and its bound either way. Section 8's one-connection
 paragraph refers here for what a reconnection carries. **Every event
 relayed from behind the file's tail at a reconnection is marked as replayed
 on the link, and the replay ends with a frame admin-con sends when it
@@ -3480,7 +3493,7 @@ missing while it was relaying.
 | a hello's identity is its certificate's binding and never its roster | perturbation: act on the roster's name and plane, a hello on a gate credential naming another agent, or naming admin, is believed, and the seed's first-hello-wins returns through the roster |
 | at most one row per box and name holds live credentials | perturbation, at the schema: drop the partial index, register one agent twice, and two rows each hold live credentials for one agent, so the server attributes one agent's observations and verbs to two rows |
 | the link state is reset when the listener starts | perturbation: skip the reset, restart the server with no connector up, and a surface reads an agent present whose sockets are gone |
-| the trace is replayed from the acknowledged position | perturbation, each clause against the real listener and a fake relay (`src/link/fake_relay.rs`, a Unix socket server built to the relay's wire) in `src/link/admin_con_tests.rs`: drop the replay, break the link during a run and reconnect, and the server's window has a hole with no mark; drop the digest from the position, truncate the file in place during the outage and regrow it past the offset, and the window carries the new prefix nowhere and marks nothing, where the relay refuses the position and admin-con marks it; ignore a `truncated` line, and the window carries the shrunk file as a continuation with no mark; drop the identity from the position, replace the file between runs and grow the replacement past the offset, and the window carries its prefix nowhere and marks nothing, where the next run's header names a new identity; derive the identity from process state, restart admin-con against the unchanged file, and the server receives a false discontinuity and the file again from its start; restart the server and resume from a remembered position, and the window has a hole with no mark; start the backfill anywhere but the first record boundary within `backfill_bytes` of the end, and the window carries half a record or more than the bound; record a boundary inside an unterminated record and resume from it, and the window carries half a record and a parse failure; end the replay on a step that sent nothing, and a load behind a record past the bound is taken as live and writes the row; send a record's frame unmeasured, and a 1 MiB record of NUL bytes passes the line bound; block the read on an ack, and a backfill of many small records stalls the link and readmits; exempt marks from the offset rule, and a mark past the boundary lands before `caught_up`; replay an opening from what it read where that does not hold the span from the server's position, and an outage longer than the backfill bound leaves a hole with no mark. **Re-shown against the relay client on 2026-10-05**, by the act that built it; the act that built admin-con showed each clause against the tailer it then had, and the tailer's own clauses, a skipped record's digest, the tail's search, the replaced generation, the symlinked path, a rewrite regrown between two polls, and the two guards held by review for the live switch and the open, left with the tailer. **The door's three clauses**: open the door mid-connection without a boundary, and an event from the closed interval writes the row; admit a closed door with a boundary it cannot take, and the hello never completes; take an opening while a verb is in flight, and a long load closes the connection `admission_incomplete`. **One clause is the residue `toddwbucy/WeaverAgent#88` closes, and has no instrument**: a writer that never idles, or a file that ends inside a record, gives no heartbeat, so the opening and the drain wait on the writer; a test shows only that a stop still interrupts such an opening within its grace |
+| the trace is replayed from the acknowledged position | perturbation, each clause against the real listener and a fake relay (`src/link/fake_relay.rs`, a Unix socket server built to the relay's wire) in `src/link/admin_con_tests.rs`: drop the replay, break the link during a run and reconnect, and the server's window has a hole with no mark; drop the digest from the position, truncate the file in place during the outage and regrow it past the offset, and the window carries the new prefix nowhere and marks nothing, where the relay refuses the position and admin-con marks it; ignore a `truncated` line, and the window carries the shrunk file as a continuation with no mark; drop the identity from the position, replace the file between runs and grow the replacement past the offset, and the window carries its prefix nowhere and marks nothing, where the next run's header names a new identity; derive the identity from process state, restart admin-con against the unchanged file, and the server receives a false discontinuity and the file again from its start; restart the server and resume from a remembered position, and the window has a hole with no mark; start the backfill anywhere but the first record boundary within `backfill_bytes` of the end, and the window carries half a record or more than the bound; record a boundary inside an unterminated record and resume from it, and the window carries half a record and a parse failure; end the replay on a step that sent nothing, and a load behind a record past the bound is taken as live and writes the row; send a record's frame unmeasured, and a 1 MiB record of NUL bytes passes the line bound; block the read on an ack, and a backfill of many small records stalls the link and readmits; exempt marks from the offset rule, and a mark past the boundary lands before `caught_up`; replay an opening from what it read where that does not hold the span from the server's position, and an outage longer than the backfill bound leaves a hole with no mark. **Re-shown against the relay client on 2026-10-05**, by the act that built it; the act that built admin-con showed each clause against the tailer it then had, and the tailer's own clauses, a skipped record's digest, the tail's search, the replaced generation, the symlinked path, a rewrite regrown between two polls, and the two guards held by review for the live switch and the open, left with the tailer. **The door's three clauses**: open the door mid-connection without a boundary, and an event from the closed interval writes the row; admit a closed door with a boundary it cannot take, and the hello never completes; take an opening while a verb is in flight, and a long load closes the connection `admission_incomplete`. **The measures' bounds**, against a fake writer that never idles: remove the boundary's bound, and admin-con behind such a writer is never admitted; remove the drain's bound, and a verb behind it never runs. **The residue `toddwbucy/WeaverAgent#88` narrows** is the order inside those bounds' windows, a transient the convergence of section 7.2 covers, with no instrument |
 | an agent is present only when both planes connect from one row | perturbation: mark present on either plane alone, an agent whose admin-con is down reads present with a tuple and a load state nobody has confirmed |
 | the server's authority is loaded before the listener starts and never minted at start | perturbation: mint the authority at start instead of loading it, restart the server, and every connector's hello is refused against a certificate it does not pin |
 | the client credential is stored as a fingerprint and never the key | perturbation, at the schema: store the key, a read of the register is a set of credentials anyone can present |
@@ -3504,9 +3517,9 @@ shape ruled on 2026-10-02 are owed to the IAM act: the principal check, the
 writer's check for persons, roles and grants, and the audit record. The
 act that built the relay client on 2026-10-05 re-showed the replay row
 against the relay, its three clauses for the door's opening among them,
-each shown to fail with its guard removed, and names inside the row the
-one clause `toddwbucy/WeaverAgent#88` closes, a residue with no
-instrument. The act that built the sudo invoker on 2026-10-05 stood up the two rows of the
+and the bounds under its measures, each shown to fail with its guard
+removed, and names inside the row the residue `toddwbucy/WeaverAgent#88`
+narrows, with no instrument. The act that built the sudo invoker on 2026-10-05 stood up the two rows of the
 management plane ruled on 2026-10-03, the ceiling as the sudo rules grant
 it and no privileged invocation outside that invoker, which replaced the
 row that held no privileged invocation anywhere, and the tuple row's

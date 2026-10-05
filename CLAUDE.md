@@ -191,8 +191,8 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
   null, the child in its own session, never killed, and holding admin-con's one invocation
   slot across reconnections until it is reaped. An orderly stop waits for that child within
   the grace, then unloads the agent where the ceiling grants `unload`. A writer that never
-  idles gives the relay no heartbeat, so openings and drains wait on it
-  (`toddwbucy/WeaverAgent#88`). Its tests (`link::admin_con_tests`) run it against a fake
+  idles gives the relay no heartbeat, so an opening takes its boundary at 30 s and a drain
+  invokes at 10 s (`BOUNDARY_BOUND`, `DRAIN_BOUND`; `toddwbucy/WeaverAgent#88`). Its tests (`link::admin_con_tests`) run it against a fake
   relay (`link::fake_relay`) serving a temporary trace file, the real listener and a fake
   invoker, and
   `link::sudo_invoker_tests` against a fake `sudo` generated at test time and first on the

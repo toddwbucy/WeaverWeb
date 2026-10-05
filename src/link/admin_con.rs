@@ -47,6 +47,16 @@ pub const MAX_BACKFILL_BYTES: u64 = 256 * 1024 * 1024;
 pub use crate::link::relay::RECORD_BOUND;
 /// Verb asks waiting behind the one in flight.
 pub const VERB_QUEUE: usize = 16;
+/// **The floor under an opening's boundary** (Spec 7.2): where no heartbeat
+/// comes this long after the opening's request, as under a writer that
+/// never idles, the boundary is taken at the position read so far. The
+/// heartbeat stays the measure; this is what keeps the link up without it.
+pub const BOUNDARY_BOUND: Duration = Duration::from_secs(30);
+/// **The floor under the drain before a verb** (Spec 7.2): where no
+/// heartbeat dated at or after the drain's start comes this long after it,
+/// the verb is invoked anyway, so a writer that never idles cannot hold an
+/// `unload` back.
+pub const DRAIN_BOUND: Duration = Duration::from_secs(10);
 /// The bound on one invocation when the config names none (Spec 7.2): it
 /// must exceed the box's own load bound, 900 seconds unless the agent's
 /// root names another, so a load that answers in time is never answered
@@ -157,6 +167,14 @@ pub struct AdminConConfig {
     /// test can reach it.
     #[serde(skip, default = "default_grants_bound")]
     pub grants_bound: Duration,
+    /// `BOUNDARY_BOUND`. Not a config member: settable in code so a test
+    /// can reach it.
+    #[serde(skip, default = "default_boundary_bound")]
+    pub boundary_bound: Duration,
+    /// `DRAIN_BOUND`. Not a config member: settable in code so a test can
+    /// reach it.
+    #[serde(skip, default = "default_drain_bound")]
+    pub drain_bound: Duration,
 }
 
 fn default_backfill() -> u64 {
@@ -182,6 +200,14 @@ fn seconds<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Duration, D::Error>
 
 fn default_grants_bound() -> Duration {
     Duration::from_secs(client::HELLO_SECS)
+}
+
+fn default_boundary_bound() -> Duration {
+    BOUNDARY_BOUND
+}
+
+fn default_drain_bound() -> Duration {
+    DRAIN_BOUND
 }
 
 /// The members an admin-con config may carry: the only names a parse error
@@ -362,14 +388,37 @@ struct Opened {
 /// there is everything the file held at that moment. The read starts at
 /// `from`, admin-con's last relayed position, or at offset zero where the
 /// relay refuses it or serves another file, and keeps the last `cap` bytes
-/// of what it read. **The residue is a writer that never idles**: no
-/// heartbeat comes, and the opening waits on the writer, bounded by
-/// nothing else, which the header's length (#88) would close.
-async fn measure(socket: &Path, from: &Position, cap: u64) -> Result<Opened, String> {
+/// of what it read. **Where no heartbeat comes within `bound` of the
+/// request**, as under a writer that never idles or a file that ends inside
+/// a record, the boundary is taken at the position read so far: an earlier
+/// boundary only makes more of the backlog live, the agent's own record in
+/// order, so the row converges to the trace's tail and the opening's `show`
+/// re-establishes it. The header's length (#88) would make the boundary
+/// exact.
+async fn measure(
+    socket: &Path,
+    from: &Position,
+    cap: u64,
+    bound: Duration,
+) -> Result<Opened, String> {
     let (mut stream, mut at) = connect(socket, from).await?;
     let mut ring = Ring::new(at.clone(), cap);
+    let mut until = tokio::time::Instant::now() + bound;
     loop {
-        match stream.next().await {
+        // The stream's read is cancel-safe, so the bound drops nothing.
+        let Ok(read) = tokio::time::timeout_at(until, stream.next()).await else {
+            tracing::warn!(
+                "no heartbeat from the trace relay within {bound:?} of the opening's request; the boundary is taken at {}:{}, read so far",
+                at.generation,
+                at.offset
+            );
+            return Ok(Opened {
+                stream,
+                boundary: at,
+                ring,
+            });
+        };
+        match read {
             Read::Record { line, digest } => {
                 let len = line.len() as u64;
                 at.offset += len;
@@ -401,6 +450,7 @@ async fn measure(socket: &Path, from: &Position, cap: u64) -> Result<Opened, Str
                 );
                 (stream, at) = connect(socket, &relay::zero(&at.generation)).await?;
                 ring = Ring::new(at.clone(), cap);
+                until = tokio::time::Instant::now() + bound;
             }
             Read::Ended(why) => return Err(why),
         }
@@ -973,6 +1023,8 @@ pub async fn run<I: Invoker>(
         socket: cfg.trace_socket.clone(),
         backoff,
         backfill: cfg.backfill_bytes,
+        boundary_bound: cfg.boundary_bound,
+        drain_bound: cfg.drain_bound,
         verb_bound: cfg.verb_bound,
         stop_grace: cfg.stop_grace,
         slot: slot.clone(),
@@ -980,6 +1032,7 @@ pub async fn run<I: Invoker>(
     let grants_bound = cfg.grants_bound;
     let socket = cfg.trace_socket.clone();
     let backfill = cfg.backfill_bytes;
+    let boundary_bound = cfg.boundary_bound;
     // The stop's grace runs from the moment the stop is asked, whatever
     // the link is doing then.
     let stop_asked = {
@@ -1026,7 +1079,7 @@ pub async fn run<I: Invoker>(
                 // with no boundary, and redialed on the backoff.
                 let mut shared = shared.lock().await;
                 let from = shared.cursor.clone();
-                let opened = match measure(&socket, &from, backfill).await {
+                let opened = match measure(&socket, &from, backfill, boundary_bound).await {
                     Ok(opened) => Some(opened),
                     Err(why) => {
                         tracing::info!("the trace door is closed at the hello: {why}");
@@ -1170,6 +1223,8 @@ struct ServeOptions {
     /// The door's redial, the connector's own backoff.
     backoff: Backoff,
     backfill: u64,
+    boundary_bound: Duration,
+    drain_bound: Duration,
     verb_bound: Duration,
     stop_grace: Duration,
     slot: Arc<Slot>,
@@ -1360,7 +1415,7 @@ async fn take_opening(
     shutdown: &mut watch::Receiver<bool>,
 ) -> Result<Option<Vec<Out>>, Ended> {
     let from = shared.cursor.clone();
-    let read = measure(&opts.socket, &from, opts.backfill);
+    let read = measure(&opts.socket, &from, opts.backfill, opts.boundary_bound);
     tokio::pin!(read);
     let measured = loop {
         tokio::select! {
@@ -1485,7 +1540,7 @@ async fn relay<I: Invoker>(
                 let stopped = tokio::select! {
                     biased;
                     _ = shutdown.changed() => true,
-                    drained = drain(conn, &mut door, shared) => match drained {
+                    drained = drain(conn, &mut door, shared, opts.drain_bound) => match drained {
                         Ok(()) => false,
                         Err(end) => return end,
                     },
@@ -1760,13 +1815,31 @@ fn not_started(id: u64, verb: &str) -> FromClient {
 /// (`toddwbucy/WeaverAgent#88`): a heartbeat dated at or after the drain's
 /// start says everything written before it was sent, so the door is read
 /// until one comes. A heartbeat already in flight, dated before, says
-/// nothing of what was written since. **The residue is a writer that never
-/// idles**: no heartbeat comes, and the verb waits on the writer, bounded
-/// by nothing else. With the door closed there is nothing to drain.
-async fn drain(conn: &Connection, door: &mut Door, shared: &mut Shared) -> Result<(), Ended> {
+/// nothing of what was written since. **Where none comes within `bound`**,
+/// as under a writer that never idles, the verb is invoked anyway: what is
+/// unread then is read after the answer and ordered behind it. The
+/// inversion that matters, an unload written before a `show`'s snapshot and
+/// relayed after its answer, cannot pass through this gap, since an unload
+/// holds the box's invocation lock for its whole run and a `show` meeting
+/// it answers `InTransition`, which claims no state; a turn's event ordered
+/// behind the answer is a transient the next event corrects. With the door
+/// closed there is nothing to drain.
+async fn drain(
+    conn: &Connection,
+    door: &mut Door,
+    shared: &mut Shared,
+    bound: Duration,
+) -> Result<(), Ended> {
     let since = now_ms();
+    let until = tokio::time::Instant::now() + bound;
     while door.open {
-        let step = door.read().await;
+        // The door's read is cancel-safe, so the bound drops nothing.
+        let Ok(step) = tokio::time::timeout_at(until, door.read()).await else {
+            tracing::warn!(
+                "no heartbeat from the trace relay within {bound:?} of the drain's start; the verb is invoked with what was read"
+            );
+            return Ok(());
+        };
         send_outs(conn, shared, step_outs(step)).await?;
         if door.heartbeat.is_some_and(|at| at >= since) {
             return Ok(());

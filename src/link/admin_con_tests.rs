@@ -500,6 +500,8 @@ async fn admin_con_answers_an_ask_outside_its_ceiling_and_keeps_the_connection()
         verb_bound: admin_con::VERB_BOUND,
         stop_grace: GRACE,
         grants_bound: Duration::from_secs(super::client::HELLO_SECS),
+        boundary_bound: admin_con::BOUNDARY_BOUND,
+        drain_bound: admin_con::DRAIN_BOUND,
     };
     let con = Running::start(cfg, invoker.clone());
     let (mut reader, mut write) = server.admit(15).await;
@@ -1334,6 +1336,8 @@ async fn an_ask_during_the_replay_waits_behind_one_frame_not_a_step() {
         verb_bound: admin_con::VERB_BOUND,
         stop_grace: GRACE,
         grants_bound: Duration::from_secs(super::client::HELLO_SECS),
+        boundary_bound: admin_con::BOUNDARY_BOUND,
+        drain_bound: admin_con::DRAIN_BOUND,
     };
     let con = Running::start(cfg, invoker.clone());
     let status = con.status.clone();
@@ -1428,6 +1432,8 @@ async fn an_ordinary_verb_asked_during_the_replay_waits_for_caught_up_and_the_dr
         verb_bound: admin_con::VERB_BOUND,
         stop_grace: GRACE,
         grants_bound: Duration::from_secs(super::client::HELLO_SECS),
+        boundary_bound: admin_con::BOUNDARY_BOUND,
+        drain_bound: admin_con::DRAIN_BOUND,
     };
     let con = Running::start(cfg, invoker.clone());
     let (mut reader, mut write) = server.admit(15).await;
@@ -1522,6 +1528,8 @@ async fn a_stop_against_a_server_that_stopped_reading_returns_within_the_grace()
         verb_bound: admin_con::VERB_BOUND,
         stop_grace: GRACE,
         grants_bound: Duration::from_secs(super::client::HELLO_SECS),
+        boundary_bound: admin_con::BOUNDARY_BOUND,
+        drain_bound: admin_con::DRAIN_BOUND,
     };
     let con = Running::start(cfg, Arc::new(NoVerbs));
     // Admitted on a cadence far past the grace, then never read: the
@@ -1547,9 +1555,8 @@ async fn a_stop_against_a_server_that_stopped_reading_returns_within_the_grace()
 }
 
 /// **An opening that waits on its heartbeat is interrupted by a stop**:
-/// the relay sends its header and then nothing, as one behind a writer that
-/// never idles does (the residue `toddwbucy/WeaverAgent#88` would close),
-/// so the hello's opening waits; the runtime stays free, and a stop asked
+/// the relay sends its header and then nothing, so the hello's opening
+/// waits, within its bound; the runtime stays free, and a stop asked
 /// meanwhile returns within the grace, nothing admitted.
 #[tokio::test]
 async fn a_stop_during_an_opening_that_waits_on_its_heartbeat_returns_within_the_grace() {
@@ -1565,6 +1572,8 @@ async fn a_stop_during_an_opening_that_waits_on_its_heartbeat_returns_within_the
         verb_bound: admin_con::VERB_BOUND,
         stop_grace: GRACE,
         grants_bound: Duration::from_secs(super::client::HELLO_SECS),
+        boundary_bound: admin_con::BOUNDARY_BOUND,
+        drain_bound: admin_con::DRAIN_BOUND,
     };
     let begun = std::time::Instant::now();
     let con = Running::start(cfg, Arc::new(NoVerbs));
@@ -2070,5 +2079,79 @@ async fn a_relay_that_drops_every_stream_is_redialed_on_the_backoff() {
     tokio::time::sleep(Duration::from_millis(1500)).await;
     let dialed = trace.relay.counts.connections.load(Ordering::Relaxed) - before;
     assert!(dialed < 30, "{dialed} dials in a second and a half");
+    con.stop().await;
+}
+
+/// A writer that never idles: a record every 20 ms, faster than the fake
+/// relay's heartbeat, so the relay never heartbeats while it runs.
+fn never_idle(trace: &Trace) -> JoinHandle<()> {
+    let path = trace.path.clone();
+    tokio::spawn(async move {
+        for n in 1_000.. {
+            let mut f = std::fs::OpenOptions::new()
+                .append(true)
+                .open(&path)
+                .unwrap();
+            f.write_all(record(n, "turn").as_bytes()).unwrap();
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+}
+
+/// **A writer that never idles is admitted at the boundary's bound** (Spec
+/// 7.2): no heartbeat comes, the opening takes its boundary at the position
+/// read so far once its bound passes, and the link comes up with the trace
+/// relayed live behind it.
+#[tokio::test]
+async fn a_never_idle_writer_is_admitted_at_the_boundarys_bound() {
+    let Some(lab) = Lab::open().await else { return };
+    let trace = Trace::new();
+    let writer = never_idle(&trace);
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
+    let mut cfg = config(&path);
+    cfg.boundary_bound = Duration::from_secs(1);
+    let mut con = Running::start(cfg, Arc::new(NoVerbs));
+    con.wait("admitted", |s| s.admitted).await;
+    wait_door(&lab, &id, true).await;
+    let seen = ns(&window(&lab, &id)).len();
+    wait_window(&lab, &id, "live records past the boundary", |e| {
+        ns(e).len() > seen + 10
+    })
+    .await;
+    writer.abort();
+    con.stop().await;
+}
+
+/// **A verb behind a writer that never idles runs at the drain's bound**
+/// (Spec 7.2): no heartbeat dated after the drain's start comes, and the
+/// verb is invoked once the bound passes rather than held behind the
+/// writer, so an operator can still unload a runaway agent.
+#[tokio::test]
+async fn a_verb_behind_a_never_idle_writer_runs_at_the_drains_bound() {
+    let Some(lab) = Lab::open().await else { return };
+    let trace = Trace::new();
+    let writer = never_idle(&trace);
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
+    let invoker = FakeInvoker::new(&["show", "unload"], "idle");
+    let mut cfg = config(&path);
+    cfg.boundary_bound = Duration::from_secs(1);
+    cfg.drain_bound = Duration::from_secs(1);
+    let mut con = Running::start(cfg, invoker.clone());
+    con.wait("admitted", |s| s.admitted).await;
+    lab.wait_for(&id, "the admission's show", |a| {
+        a.state_source.as_deref() == Some("show")
+    })
+    .await;
+    let unloaded = tokio::time::timeout(
+        Duration::from_secs(8),
+        lab.listener.verb(&id, "unload", Principal::Server),
+    )
+    .await
+    .expect("the unload ran behind the writer");
+    assert_eq!(unloaded.unwrap().verb, "unload");
+    assert!(invoker.ran().contains(&"unload".to_owned()));
+    writer.abort();
     con.stop().await;
 }

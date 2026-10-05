@@ -47,9 +47,11 @@ pub const MAX_BACKFILL_BYTES: u64 = 256 * 1024 * 1024;
 pub use crate::link::relay::RECORD_BOUND;
 /// Verb asks waiting behind the one in flight.
 pub const VERB_QUEUE: usize = 16;
-/// **The floor under an opening's boundary** (Spec 7.2): where no heartbeat
-/// comes this long after the opening's request, as under a writer that
-/// never idles, the boundary is taken at the position read so far. The
+/// **The floor under an opening's boundary** (Spec 7.2), covering the
+/// opening whole, its dials included: where no heartbeat comes this long
+/// after the opening's start, as under a writer that never idles, the
+/// boundary is taken at the position read so far, and a dial that reaches
+/// no header by then leaves the door closed, retried on the backoff. The
 /// heartbeat stays the measure; this is what keeps the link up without it.
 pub const BOUNDARY_BOUND: Duration = Duration::from_secs(30);
 /// **The floor under the drain before a verb** (Spec 7.2): where no
@@ -379,9 +381,11 @@ struct Opened {
     stream: relay::Stream,
     boundary: Position,
     ring: Ring,
-    /// **What the read met on its way**, a truncation it read through,
-    /// one mark for each: sent at the front of the replay in every case, so
-    /// the window tells what the file did and nothing is smoothed.
+    /// **What the read met on its way**, in order: a position the relay
+    /// refused, a file other than the one admin-con last read, a truncation
+    /// it read through, one mark for each. Sent at the front of the replay
+    /// in every case, so the window tells what the file did and nothing is
+    /// smoothed.
     marks: Vec<Item>,
 }
 
@@ -392,9 +396,12 @@ struct Opened {
 /// there is everything the file held at that moment. The read starts at
 /// `from`, admin-con's last relayed position, or at offset zero where the
 /// relay refuses it or serves another file, and keeps the last `cap` bytes
-/// of what it read. **Where no heartbeat comes within `bound` of the
-/// request**, as under a writer that never idles or a file that ends inside
-/// a record, the boundary is taken at the position read so far: an earlier
+/// of what it read. **One deadline, `bound` from the opening's start,
+/// covers the opening whole**, its dials and reads alike: a dial that
+/// reaches no header by then is a closed door, retried on the backoff, and
+/// where no heartbeat comes by then, as under a writer that never idles or
+/// a file that ends inside a record, the boundary is taken at the position
+/// read so far: an earlier
 /// boundary only makes more of the backlog live, the agent's own record in
 /// order, so the row converges to the trace's tail and the opening's `show`
 /// re-establishes it. The header's length (#88) would make the boundary
@@ -405,15 +412,26 @@ async fn measure(
     cap: u64,
     bound: Duration,
 ) -> Result<Opened, String> {
-    let (mut stream, mut at) = connect(socket, from).await?;
-    let mut ring = Ring::new(at.clone(), cap);
+    let until = tokio::time::Instant::now() + bound;
     let mut marks = Vec::new();
-    let mut until = tokio::time::Instant::now() + bound;
+    let dial = async |from: &Position, marks: &mut Vec<Item>| match tokio::time::timeout_at(
+        until,
+        connect(socket, from, marks),
+    )
+    .await
+    {
+        Ok(connected) => connected,
+        Err(_) => Err(format!(
+            "the trace relay gave no header within {bound:?} of the opening's start"
+        )),
+    };
+    let (mut stream, mut at) = dial(from, &mut marks).await?;
+    let mut ring = Ring::new(at.clone(), cap);
     loop {
         // The stream's read is cancel-safe, so the bound drops nothing.
         let Ok(read) = tokio::time::timeout_at(until, stream.next()).await else {
             tracing::warn!(
-                "no heartbeat from the trace relay within {bound:?} of the opening's request; the boundary is taken at {}:{}, read so far",
+                "no heartbeat from the trace relay within {bound:?} of the opening's start; the boundary is taken at {}:{}, read so far",
                 at.generation,
                 at.offset
             );
@@ -460,9 +478,8 @@ async fn measure(
                     position: relay::zero(&at.generation),
                     reason,
                 });
-                (stream, at) = connect(socket, &relay::zero(&at.generation)).await?;
+                (stream, at) = dial(&relay::zero(&at.generation), &mut marks).await?;
                 ring = Ring::new(at.clone(), cap);
-                until = tokio::time::Instant::now() + bound;
             }
             Read::Ended(why) => return Err(why),
         }
@@ -470,30 +487,43 @@ async fn measure(
 }
 
 /// Dial from `from`, or from offset zero where the relay refuses it or
-/// serves another file than `from` names: the stream and its start.
-async fn connect(socket: &Path, from: &Position) -> Result<(relay::Stream, Position), String> {
+/// serves another file than `from` names, **each marked** at offset zero of
+/// the file now served: the stream and its start.
+async fn connect(
+    socket: &Path,
+    from: &Position,
+    marks: &mut Vec<Item>,
+) -> Result<(relay::Stream, Position), String> {
     let mut at = from.clone();
     loop {
         match relay::dial(socket, &at).await {
             Dial::Open(stream) if at.offset > 0 && stream.identity != at.generation => {
-                tracing::info!(
-                    "the trace relay serves {}, not {} where admin-con last read; reading it from its start",
-                    stream.identity,
-                    at.generation
+                let reason = format!(
+                    "the relay serves {}, not {} where admin-con last read; the new file is relayed from its start",
+                    stream.identity, at.generation
                 );
+                tracing::info!("{reason}");
                 at = relay::zero(&stream.identity);
+                marks.push(Item::Mark {
+                    position: at.clone(),
+                    reason,
+                });
             }
             Dial::Open(stream) => {
                 at.generation = stream.identity.clone();
                 return Ok((*stream, at));
             }
             Dial::Refused if at.offset > 0 => {
-                tracing::info!(
-                    "the trace relay refused offset {} of {}: truncated or rewritten below it; reading it from its start",
-                    at.offset,
-                    at.generation
+                let reason = format!(
+                    "the relay refused offset {} of {}: truncated or rewritten below it while admin-con was not reading; relayed from its start",
+                    at.offset, at.generation
                 );
+                tracing::info!("{reason}");
                 at = relay::zero(&at.generation);
+                marks.push(Item::Mark {
+                    position: at.clone(),
+                    reason,
+                });
             }
             Dial::Refused => {
                 return Err("the trace relay refused a request from offset zero".into());
@@ -668,7 +698,15 @@ impl Door {
             ring,
             marks,
         } = opened;
-        let replay = plan(ring, &boundary, resume, backfill);
+        // **One mark per discontinuity**: where the opening's read already
+        // marked one and started the file again from zero, the server's
+        // position stands before that same discontinuity, so the replay
+        // starts at zero of the file now served with no second mark.
+        let resume = match resume {
+            Resume::Ack(_) if !marks.is_empty() => Resume::Ack(relay::zero(&boundary.generation)),
+            other => other.clone(),
+        };
+        let replay = plan(ring, &boundary, &resume, backfill);
         self.open = true;
         self.failures = 0;
         self.heartbeat = None;

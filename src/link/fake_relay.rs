@@ -58,6 +58,9 @@ pub(super) struct Counts {
     /// `truncated` there, once, instead of a heartbeat: a file rewritten
     /// under the reader as it reached the end.
     pub(super) truncate_next: std::sync::atomic::AtomicBool,
+    /// Milliseconds the relay waits before each header, as one verifying a
+    /// position after a long record does.
+    pub(super) header_delay_ms: std::sync::atomic::AtomicU64,
 }
 
 /// The fake relay for one trace file.
@@ -215,6 +218,8 @@ async fn serve(
         counts.refused.fetch_add(1, Ordering::Relaxed);
         return;
     }
+    let delay = counts.header_delay_ms.load(Ordering::SeqCst);
+    tokio::time::sleep(Duration::from_millis(delay)).await;
     let meta = file.metadata().unwrap();
     let mut header = serde_json::json!({"device": meta.dev(), "inode": meta.ino()});
     if birth && let Ok(created) = meta.created() {

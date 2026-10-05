@@ -2191,3 +2191,196 @@ async fn a_truncation_during_an_opening_is_marked_at_the_replays_front() {
     );
     con.stop().await;
 }
+
+/// Stop the server, run `between` once admin-con has seen the link go, and
+/// start the server again on its address with no positions held.
+async fn restart_after(lab: &mut Lab, con: &mut Running, between: impl AsyncFnOnce()) {
+    let address = lab.listener.address();
+    lab.listener.stop().await;
+    con.wait("the link down", |s| !s.admitted).await;
+    between().await;
+    let until = tokio::time::Instant::now() + SOON;
+    lab.listener = loop {
+        match Listener::start(
+            lab.store.clone(),
+            &lab.authority,
+            &address.to_string(),
+            SILENCE,
+        )
+        .await
+        {
+            Ok(listener) => break listener,
+            Err(_) if tokio::time::Instant::now() < until => {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            Err(e) => panic!("the listener restarts on its address: {e:#}"),
+        }
+    };
+}
+
+/// **A position the relay refuses at an opening is marked** under a server
+/// that holds no position: the file is rewritten in place while the link
+/// is down, the opening's read from admin-con's last position is refused
+/// and starts again from zero, and the window's first event is the mark.
+#[tokio::test]
+async fn a_refused_position_at_an_opening_is_marked_under_no_server_position() {
+    let Some(mut lab) = Lab::open().await else {
+        return;
+    };
+    let trace = Trace::new();
+    for n in 1..=3 {
+        trace.append(n, "turn");
+    }
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
+    let mut con = Running::start(config(&path), Arc::new(NoVerbs));
+    con.wait("admitted", |s| s.admitted).await;
+    wait_window(&lab, &id, "the first three", |e| ns(e) == [1, 2, 3]).await;
+    restart_after(&mut lab, &mut con, async || {
+        std::fs::write(&trace.path, "").unwrap();
+        for n in 4..=6 {
+            trace.append(n, "turn");
+        }
+    })
+    .await;
+    con.wait("admitted again", |s| s.admitted && s.admissions >= 2)
+        .await;
+    wait_window(&lab, &id, "the rewritten file", |e| ns(e) == [4, 5, 6]).await;
+    let events = window(&lab, &id);
+    let first = events
+        .first()
+        .and_then(|e| e.mark.clone())
+        .unwrap_or_default();
+    assert!(
+        first.contains("the relay refused offset"),
+        "{:?}",
+        marks(&events)
+    );
+    assert_eq!(marks(&events).len(), 1, "one mark: {:?}", marks(&events));
+    con.stop().await;
+}
+
+/// **A new file at an opening is marked** under a server that holds no
+/// position: while the link is down the file is replaced by a copy grown
+/// past it, a new file whose bytes still verify admin-con's last position,
+/// and a new run's relay serves it; the header names the new identity, the
+/// opening reads it from zero, and the window's first event is the mark.
+#[tokio::test]
+async fn a_new_file_at_an_opening_is_marked_under_no_server_position() {
+    let Some(mut lab) = Lab::open().await else {
+        return;
+    };
+    let mut trace = Trace::new();
+    for n in 1..=3 {
+        trace.append(n, "turn");
+    }
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
+    let mut con = Running::start(config(&path), Arc::new(NoVerbs));
+    con.wait("admitted", |s| s.admitted).await;
+    wait_window(&lab, &id, "the first three", |e| ns(e) == [1, 2, 3]).await;
+    restart_after(&mut lab, &mut con, async || {
+        let old = trace.path.with_extension("1");
+        std::fs::rename(&trace.path, &old).unwrap();
+        std::fs::copy(&old, &trace.path).unwrap();
+        for n in 7..=9 {
+            trace.append(n, "turn");
+        }
+        trace.relay.restart().await;
+    })
+    .await;
+    con.wait("admitted again", |s| s.admitted && s.admissions >= 2)
+        .await;
+    wait_window(&lab, &id, "the new file", |e| ns(e) == [1, 2, 3, 7, 8, 9]).await;
+    let events = window(&lab, &id);
+    let first = events
+        .first()
+        .and_then(|e| e.mark.clone())
+        .unwrap_or_default();
+    assert!(first.contains("the relay serves"), "{:?}", marks(&events));
+    assert_eq!(marks(&events).len(), 1, "one mark: {:?}", marks(&events));
+    con.stop().await;
+}
+
+/// **The boundary's bound covers the opening whole, its dials included**:
+/// a relay that holds its header past the bound leaves the hello's door
+/// closed at the bound, so admin-con is admitted then, not when the header
+/// comes.
+#[tokio::test]
+async fn a_header_held_past_the_bound_leaves_the_door_closed() {
+    use std::sync::atomic::Ordering;
+    let Some(lab) = Lab::open().await else { return };
+    let trace = Trace::new();
+    trace.append(1, "turn");
+    trace
+        .relay
+        .counts
+        .header_delay_ms
+        .store(6_000, Ordering::SeqCst);
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
+    let mut cfg = config(&path);
+    cfg.boundary_bound = Duration::from_secs(1);
+    let started = tokio::time::Instant::now();
+    let mut con = Running::start(cfg, Arc::new(NoVerbs));
+    con.wait("admitted", |s| s.admitted).await;
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "admitted after {:?}",
+        started.elapsed()
+    );
+    assert_eq!(lab.agent(&id).await.trace_door, Some(false));
+    con.stop().await;
+}
+
+/// **One mark per discontinuity**: the server keeps its position while the
+/// link drops, the file was rewritten in place while admin-con was not
+/// reading, the opening's read is refused at admin-con's last position and
+/// marks it, and the replay from the server's position, standing before the
+/// same discontinuity, adds no second mark.
+#[tokio::test]
+async fn a_refused_position_is_marked_once_under_the_servers_position() {
+    let Some(lab) = Lab::open().await else { return };
+    let trace = Trace::new();
+    for n in 1..=3 {
+        trace.append(n, "turn");
+    }
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
+    let invoker = FakeInvoker::new(&["show"], "idle");
+    let mut cfg = config(&path);
+    cfg.drain_bound = Duration::from_millis(300);
+    let mut con = Running::start(cfg, invoker.clone());
+    con.wait("admitted", |s| s.admitted).await;
+    wait_window(&lab, &id, "the first three", |e| ns(e) == [1, 2, 3]).await;
+    wait_acknowledged(&lab, &id, &trace).await;
+    lab.wait_for(&id, "the admission's show", |a| {
+        a.state_source.as_deref() == Some("show")
+    })
+    .await;
+
+    // The relay sends nothing while the file is rewritten, and the show's
+    // answer cannot land, so the server closes the link holding its
+    // position.
+    trace.relay.hold(true);
+    std::fs::write(&trace.path, "").unwrap();
+    for n in 4..=6 {
+        trace.append(n, "turn");
+    }
+    lab.listener.fail_next_land();
+    let _ = verb(&lab.listener, &id, "show").await;
+    trace.relay.hold(false);
+    con.wait("admitted again", |s| s.admitted && s.admissions >= 2)
+        .await;
+    wait_window(&lab, &id, "the rewritten file", |e| {
+        ns(e) == [1, 2, 3, 4, 5, 6]
+    })
+    .await;
+    tokio::time::sleep(SETTLE).await;
+    let refused: Vec<String> = marks(&window(&lab, &id))
+        .into_iter()
+        .filter(|m| m.contains("refused offset"))
+        .collect();
+    assert_eq!(refused.len(), 1, "{refused:?}");
+    con.stop().await;
+}

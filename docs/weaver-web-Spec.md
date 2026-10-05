@@ -1145,8 +1145,9 @@ never a bare socket's. Each row carries:
   closed write no member of the row**: they are replayed at the next
   opening, per section 7.2. Verb answers during that interval land at
   receipt, as section 7.2 says, so a `show` asked while the door is closed
-  still refreshes the tuple and the load state. The member is this document's as of
-  2026-10-05, and its column and frame are the code act's
+  still refreshes the tuple and the load state. Its columns stand (migration
+  `0013`) and are written by the code act that builds the relay client, with
+  the frame
 - **the load state, with its date**, which is section 7.2's rule restated at
   the row: the state is what `show` last answered, admin's word, or what the
   trace last carried, the agent's own record (a load, an unload, or a turn's
@@ -1173,8 +1174,9 @@ never a bare socket's. Each row carries:
 - **the run's constituents as the last `show` named them**, by process id,
   with that answer's date, per section 8: a fact for the operator and for
   the install's one-time containment check, which drives no behaviour of
-  admin-con's. The member is this document's as of 2026-10-05, and its
-  column is the code act's
+  admin-con's. A `show` that names none writes none, so the member reads
+  null where no run holds the agent's run lock, dated still (migration
+  `0013`)
 
 **It is an authored row and takes section 3.2's members.** Registration is a
 write the operator makes, so the row carries the author member and the
@@ -2463,13 +2465,13 @@ reaches the command. The server sends admin-con an abstract verb and never a
 command. admin-con maps it locally to the granted line, builds the command
 from constants and the agent's configured name alone, runs sudo
 non-interactively, and closes the invocation's standard input. The invoker
-is one module, and `tests/no_privilege.rs` pins that nothing else in the
-repository invokes privilege; the test's change to allow exactly that module
-is the code act's, owed in section 9. **The person never crosses to the
+is one module, `src/link/sudo_invoker.rs`, and `tests/no_privilege.rs`
+pins that nothing else in the repository invokes privilege, per section 9.
+**The person never crosses to the
 box**: the cause the agent records is the uid sudo reports, admin-con's own,
 per `weaver-types-Spec` section 3.1, and which person asked is section
-2.13's audit record alone. Until that code act, the only invoker this crate
-ships declares an empty ceiling and runs nothing. The seed's `lifecycle.rs`,
+2.13's audit record alone. The child runs in a session of its own, so
+admin-con's own signals never reach it. The seed's `lifecycle.rs`,
 which ran the verbs through an unscoped sudo, left the tree with the act
 that built admin-con.
 
@@ -2813,8 +2815,8 @@ caller parses. **`load` answers once the agent is up or refused**, within
 the box's own bound, 900 seconds unless the agent's root names another, and
 **`unload` takes at most 105 seconds**, per `weaver-admin-Spec` sections 2
 and 3. **admin-con's verb bound is a member of its config that the install
-sets above the box's load bound**, not a constant of this crate; the member
-is the code act's. **A verb runs to completion**, per the operator's rulings
+sets above the box's load bound**, `verb_bound_secs`, 960 unless set, not a
+constant of this crate. **A verb runs to completion**, per the operator's rulings
 of 2026-10-03 on `toddwbucy/WeaverWeb#14`: an invocation finishes even when
 its caller disappears, so at its bound admin-con leaves the process running,
 answers `unknown`, and the next `show` reads the real state. **The
@@ -2956,19 +2958,9 @@ entry in the declaration's allow list alone does not reach the gate's
 socket. This document names no group, socket path, mode or uid for either.
 **One privileged invocation stands in this crate, admin-con's sudo
 invoker**, per section 7.2; no other sudo, no root wrapper and no setuid
-binary stands anywhere in it. Placing each connector's config at 0600 under
-its own user is the install's, and carries no box path into the
-repository.
-
-```graph
-node: web-no-privileged-invocation
-kind: assertion
-tag: review
-
-edge: asserts
-from: weaver-web
-to: web-no-privileged-invocation
-```
+binary stands anywhere in it, per section 9's row. Placing each connector's
+config at 0600 under its own user is the install's, and carries no box path
+into the repository.
 
 **Nothing in the read or write path is box-bound to the agents.** The reader
 is a store client, the runner is a queue consumer, and the front end with
@@ -3254,7 +3246,11 @@ its waiting asks `not_started`, waits for the verb in flight, until its
 process exits and is reaped, within the stop's grace, issues `unload`
 through its own granted line, and then exits. A verb whose process
 outlasts the grace means the `unload` is not issued, and the kill that
-follows is an unclean stop, reset at the next load. That `unload` is
+follows is an unclean stop, reset at the next load. **The stop's grace is
+a member of admin-con's config**, `stop_grace_secs`, 1080 unless set: the
+box's load bound, the unload bound and a margin, timed from the stop's
+signal. The `unload`'s answer is logged, and the events it writes reach
+the server through the trace at admin-con's next connection. That `unload` is
 admin-con's one act on its own initiative. A kill is an unclean stop, whose
 next load resets the agent to its latest save point.
 **The binding is a property of how the box is provisioned, and admin-con
@@ -3268,16 +3264,19 @@ binding answers by provisioning, so a check at runtime would guard only
 against a misprovisioned box, which is the install's question. WeaverAgent's
 setup writes the sudo rule with no login session, so the agent's processes
 land inside admin-con's service, per the contract's section 2, and **the
-install owes three things**, named here and built by the install act: the
+install owes four things**, named here and built by the install act: the
 unit's control-group kill mode; a stop timeout covering the box's load bound
 plus the unload bound plus a margin, so an orderly stop that meets a `load`
-in flight still unloads; and **one check, after the first load**, that the
+in flight still unloads; a fixed `PATH` in the unit's environment, since the
+invoker finds sudo by it, a path to it being a box path this repository
+does not carry, so the unit's environment is part of what the invocation
+trusts; and **one check, after the first load**, that the
 run's constituents, the processes `show` names by id where a run stands,
 per the contract's section 3, sit inside admin-con's service, failing the
 install by name otherwise. `show`'s pids reach the row as a fact for the
 operator and for that check, per section 2.12, and drive no behaviour of
-admin-con's; `show` carrying them is promised and owed on WeaverAgent's
-side, and the code act names that. **Without a cgroup-capable supervisor only the orderly stop
+admin-con's; `show` carries them on WeaverAgent's side, per
+`weaver-types` `LifecycleAnswer::State`. **Without a cgroup-capable supervisor only the orderly stop
 holds**: a process group does not contain an agent whose worker leaves its
 session, so an admin-con that dies uncleanly there leaves its agent running.
 The gap is stated rather than imitated.
@@ -3475,36 +3474,37 @@ missing while it was relaying.
 | an agent is present only when both planes connect from one row | perturbation: mark present on either plane alone, an agent whose admin-con is down reads present with a tuple and a load state nobody has confirmed |
 | the server's authority is loaded before the listener starts and never minted at start | perturbation: mint the authority at start instead of loading it, restart the server, and every connector's hello is refused against a certificate it does not pin |
 | the client credential is stored as a fingerprint and never the key | perturbation, at the schema: store the key, a read of the register is a set of credentials anyone can present |
-| the tuple and the load state come by admin-con and never by gate-con | perturbation: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it; let a replayed load event write the tuple, restart the server after an unload, backfill, and the row reads loaded; ask `show` before fixing the replay boundary, unload between the two, and the row reads loaded until the next `show`. **Four clauses are admin-con's ordering**, against the real listener with a fake invoker in `src/link/admin_con_tests.rs`: let a `show` answer cross the link out of order with the file events around it, unload during the `show`, and the row reads loaded until the next `show`; place the answer in the stream at receipt and unload between the snapshot and the receipt, and the row reads loaded; skip the drain, leave an unread load event behind the tail, invoke `show` after an unload, and the row reads loaded; run two verbs at once on one connection, and an older answer lands after a newer one. **One clause of the slot is owed to the code act**: free the slot at a reconnection while a timed-out verb's process still runs, and a verb asked on the new connection runs beside it. **A turn's start and close refresh the load state**, against the real listener in `src/link/tests.rs`: drop the `turn.started` mapping, and the row never reads `active` between a turn's start and close; let a replayed `turn.started` land, and the row reads `active` from history; let a turn's event write the tuple, and the row loses the tuple it held; let a turn's event write the tuple's source, and a `show`-shaped tuple reads as an event's |
+| the tuple and the load state come by admin-con and never by gate-con | perturbation: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it; let a replayed load event write the tuple, restart the server after an unload, backfill, and the row reads loaded; ask `show` before fixing the replay boundary, unload between the two, and the row reads loaded until the next `show`. **Four clauses are admin-con's ordering**, against the real listener with a fake invoker in `src/link/admin_con_tests.rs`: let a `show` answer cross the link out of order with the file events around it, unload during the `show`, and the row reads loaded until the next `show`; place the answer in the stream at receipt and unload between the snapshot and the receipt, and the row reads loaded; skip the drain, leave an unread load event behind the tail, invoke `show` after an unload, and the row reads loaded; run two verbs at once on one connection, and an older answer lands after a newer one. **The slot's clause**, against the real listener with the sudo invoker over a fake `sudo` in `src/link/sudo_invoker_tests.rs`: free the slot at a reconnection while a timed-out verb's process still runs, and the new connection's admission `show` runs beside it. **A turn's start and close refresh the load state**, against the real listener in `src/link/tests.rs`: drop the `turn.started` mapping, and the row never reads `active` between a turn's start and close; let a replayed `turn.started` land, and the row reads `active` from history; let a turn's event write the tuple, and the row loses the tuple it held; let a turn's event write the tuple's source, and a `show`-shaped tuple reads as an event's |
 | nothing crosses the link in the clear | perturbation: offer a plaintext hello to the listener, it is refused below any roster; and review, over the listener, that no plaintext accept path exists |
 | the server never asks a verb outside the agent's ceiling | perturbation: drop the ceiling check, ask a verb admin-con's hello did not declare, and it leaves the server; and admin-con's half, drop its typed error answer, and it reaches the invoker. **One clause is owed**: check against the row's copy, narrow the ceiling by reconnecting between the check and the enqueue, and an ask outside the new ceiling leaves. The race has no deterministic staging, and the guard is held by review: the check reads the live connection's ceiling under the live map's lock that finds the connection |
 | a verb or turn its principal may not ask is refused before an ask | perturbation, **owed**: drop the grant check, a person whose role permits `show` asks `stop`, and the ask leaves the server; let the server principal ask a lifecycle verb, and it leaves without a grant; drop the enabled check, and a disabled person's live session still asks a verb; drop the grant check on turns, and a person granted only `show` places a turn; take the check outside the exclusion, revoke between the check and the enqueue, and the ask is authorized on a revoked grant; take a register verb's check outside the exclusion, disable its admin between the check and the commit, and the register verb lands. Lands with the IAM act |
 | a person, role or grant written by a principal not permitted to write it is refused | perturbation, **owed**: drop the check, and a person granted only `show` writes themselves the operator role and passes the first gate; let a person write a grant on themselves, and an admin widens their own grants or the last admin removes the only admin grant; let an admin holding the observer role on an agent add `stop` to that role, and their own grant widens without a grant written; let a surface write as the host principal, and a grant lands with no admin behind it; drop the exclusion, have two admins remove each other at once, and no admin remains; disable the sole admin, or have two admins disable each other at once, and no enabled admin remains; grant a role to its editor while the edit is in flight, and the editor widens a role they hold; let a person write another person's authentication material, and they can sign in as them; reuse a consumed enrollment token, or use one past its expiry, and a second credential lands on someone else's row; disable a person holding an unredeemed token, redeem it, and a credential lands on a disabled row; issue or redeem a token for a person who already has a credential, and an admin replaces that person's credential. Lands with the IAM act |
 | every verb or turn asked and every person, role or grant written has an audit record naming its principal, and its outcome is a second record naming the first | perturbation, **owed**: write the first record after the ask instead of before, fail the store between the two, and an ask leaves with no record; update the first record with the outcome instead of appending a second, and an ask whose answer is lost reads as never answered with no trace of the rewrite; drop the refusal's record, and a refused verb leaves no trace; write a grant with the audit write dropped, and the grant lands with no record; enroll a person or rotate their authentication material with the audit write dropped, and the write lands with no record; record the material in an authentication write's record, and a read of the audit table is a set of credentials. Lands with the IAM act |
 | the admission's `show` is required only where the ceiling grants it | perturbation: ask `show` at every admission, and an agent whose ceiling grants no `show` is closed `admission_incomplete` at every reconnection and never stays admitted; skip it where it is granted, and the row reads the last process's state as current |
-| no privileged invocation exists in the repository | review, and a test, `tests/no_privilege.rs`: it reads every tracked file outside `docs/`, never following a symlink, comment lines aside by each file's syntax and Markdown read in its fences only, for a privilege-escalating program named as a word, a setuid family call, a child's user or group set on a command, and a setuid or setgid mode bit, and is shown to fail when one of each is planted, in Rust and in a README fence |
-| the ceiling declared in the hello is exactly what the box's sudo rules grant | perturbation, **owed** to the code act: declare a verb `sudo -n -l` refuses, and the server asks it and the box refuses it |
-| no privileged invocation exists outside admin-con's sudo invoker | perturbation, **owed** to the code act: `tests/no_privilege.rs` rewritten to allow exactly the invoker's module, shown to fail when sudo is planted elsewhere or the invoker builds its command from anything but its constants and the agent's name. Until that act the row above holds whole, since no invoker exists |
+| the ceiling declared in the hello is exactly what the box's sudo rules grant | perturbation, against a fake `sudo` generated at test time in `src/link/sudo_invoker_tests.rs`: answer `grants` from anything but each verb's own `sudo -n -l` line, and a verb the rule refuses is declared, or one it grants is not |
+| no privileged invocation exists outside admin-con's sudo invoker | perturbation, two instruments. A test, `tests/no_privilege.rs`: it reads every tracked file outside `docs/`, never following a symlink, comment lines aside by each file's syntax and Markdown read in its fences only, for a privilege-escalating program named as a word, a setuid family call, a child's user or group set on a command, and a setuid or setgid mode bit, with the program's word allowed in `src/link/sudo_invoker.rs` and its test module alone; shown to fail when one of each family is planted, in Rust and in a README fence, when the program is planted in another file of the invoker's name, and when another family is planted in the invoker's own files. And the argv instrument in `src/link/sudo_invoker_tests.rs`: plant the principal's name from the ask into the command, and the line the fake records is no longer exactly `sudo -n <weaver_admin> <verb> <agent>` |
 
 **A watch that cannot fail is not a test.** For each perturbation above, the
 act that lands it states what removal makes it fail and confirms it does.
 
-**A row marked owed has no instrument and is not counted as enforced.** Six
+**A row marked owed has no instrument and is not counted as enforced.** Four
 stand so marked as of 2026-10-05. The batch's order is owed because section
 2.11 describes its table and no migration builds it. Three rows of the role
 shape ruled on 2026-10-02 are owed to the IAM act: the principal check, the
-writer's check for persons, roles and grants, and the audit record. Two rows
-of the management plane ruled on 2026-10-03 are owed to the code act that
-builds the sudo invoker: the ceiling as the sudo rules grant it, and no
-privileged invocation outside that invoker. The replay row is restated for
-the relay by the act of 2026-10-05 and is re-shown by that code act, and
-three of its clauses, for the door's opening, are marked owed inside it;
-one clause of the tuple row, the slot held across connections, is owed
-inside that row to the same act. The act
+writer's check for persons, roles and grants, and the audit record. The
+replay row is restated for the relay by the act of 2026-10-05 and is
+re-shown by the code act that builds the relay client, and three of its
+clauses, for the door's opening, are marked owed inside it. The act that
+built the sudo invoker on 2026-10-05 stood up the two rows of the
+management plane ruled on 2026-10-03, the ceiling as the sudo rules grant
+it and no privileged invocation outside that invoker, which replaced the
+row that held no privileged invocation anywhere, and the tuple row's
+clause of the slot held across connections, each shown to fail with its
+guard removed. The act
 that built admin-con stood up the trace file's replay from the acknowledged
 position, the ceiling on both halves, the conditional admission `show`, the
 four clauses of the tuple row that are admin-con's ordering, and the absence
-of a privileged invocation, each shown to fail with its guard removed; one
+of a privileged invocation then, each shown to fail with its guard removed; one
 clause of the ceiling row, a race with no deterministic staging, is marked
 owed inside the row, and two guards of the replay row are held by review for
 the same reason. The alignment act of 2026-10-03 added four clauses to the

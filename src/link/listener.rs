@@ -35,7 +35,9 @@ use crate::link::frames::{
     FromClient, Line, LineReader, Plane, Position, Principal, Refusal, ToClient, TurnFault,
     VerbFault, VerbOutcome,
 };
-use crate::link::register::{CredentialState, Observation, REVOCATION_CHANNEL, TupleWrite};
+use crate::link::register::{
+    ConstituentsWrite, CredentialState, Observation, REVOCATION_CHANNEL, TupleWrite,
+};
 use crate::store::{AgentId, Store};
 use crate::traceview::{TraceEvent, TraceViews};
 use chrono::{DateTime, Utc};
@@ -1835,12 +1837,30 @@ impl Inner {
             tuple: TupleWrite::Write(summary.get("load").cloned().filter(|l| !l.is_null())),
             at: Utc::now(),
             source: "show",
+            // **The run's constituents, as this answer names them** (Spec
+            // 2.12): admin's pids of the worker, the state member and the
+            // relay where a run holds the lock, absent otherwise. A pid that
+            // does not fit the column is not a pid, and the answer's
+            // constituents are then recorded as none rather than guessed.
+            constituents: ConstituentsWrite::Write(Self::constituents_of(&summary)),
         };
         if self.land(agent, observation).await {
             Landing::Observation
         } else {
             Landing::Failed
         }
+    }
+
+    /// The constituents a `show` answer names, `None` where it names none or
+    /// names one that is not a pid the column can hold.
+    fn constituents_of(summary: &serde_json::Value) -> Option<Vec<i32>> {
+        let pids = summary.get("constituents")?.as_array()?;
+        if pids.is_empty() {
+            return None;
+        }
+        pids.iter()
+            .map(|p| p.as_u64().and_then(|p| i32::try_from(p).ok()))
+            .collect()
     }
 
     /// **An event feeds the window, and only a live load or unload writes
@@ -1916,12 +1936,14 @@ impl Inner {
                 tuple: TupleWrite::Write(payload),
                 at,
                 source: "event",
+                constituents: ConstituentsWrite::Keep,
             }),
             Some("unload") if !behind => Some(Observation {
                 load_state: Some("unloaded".into()),
                 tuple: TupleWrite::Write(None),
                 at,
                 source: "event",
+                constituents: ConstituentsWrite::Keep,
             }),
             // **A turn's start and close refresh the load state** (Spec
             // 2.12): an unclean stop writes no `unload`, so a state from an
@@ -1934,12 +1956,14 @@ impl Inner {
                 tuple: TupleWrite::Keep,
                 at,
                 source: "event",
+                constituents: ConstituentsWrite::Keep,
             }),
             Some("turn.closed") if !behind => Some(Observation {
                 load_state: Some("idle".into()),
                 tuple: TupleWrite::Keep,
                 at,
                 source: "event",
+                constituents: ConstituentsWrite::Keep,
             }),
             _ => None,
         };

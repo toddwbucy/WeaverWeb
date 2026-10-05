@@ -1,18 +1,21 @@
 //! admin-con: the management plane's connector, beside the agent as its own
-//! unprivileged service user (Spec sections 7.2 and 8). Reads its config
-//! (what `weaver-web register` wrote, plus `trace_file`), connects to the
-//! server over the link, tails the agent's trace file with replay and marked
-//! discontinuities, and answers verb asks through its invoker. **The invoker
-//! it ships runs nothing**: it answers an empty `grants`, so the ceiling is
-//! empty until WeaverAgent #50 lands. The config's path has no default: a
-//! default would be a box path in the repository.
+//! service user (Spec sections 7.2 and 8). Reads its config (what
+//! `weaver-web register` wrote, plus the box facts the install adds),
+//! connects to the server over the link, relays the agent's trace with
+//! replay and marked discontinuities, and answers verb asks through its
+//! sudo invoker, the one privileged invocation in this crate: the fixed
+//! `weaver-admin <verb> <agent>` lines the box's sudo rule grants, with
+//! nothing from the link in the command. On an orderly stop it unloads its
+//! agent first. The config's path has no default: a default would be a box
+//! path in the repository.
 
 use clap::Parser;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::watch;
-use weaver_web::link::admin_con::{self, AdminConConfig, NoVerbs};
+use weaver_web::link::admin_con::{self, AdminConConfig};
 use weaver_web::link::client::{Backoff, LinkStatus};
+use weaver_web::link::sudo_invoker::SudoInvoker;
 
 #[derive(Parser)]
 #[command(
@@ -21,7 +24,7 @@ use weaver_web::link::client::{Backoff, LinkStatus};
 )]
 struct Args {
     /// Path to admin-con's TOML config: the file `weaver-web register`
-    /// wrote, with `trace_file` added at install.
+    /// wrote, with `trace_file` and `weaver_admin` added at install.
     #[arg(long)]
     config: PathBuf,
 }
@@ -38,10 +41,12 @@ async fn main() -> anyhow::Result<()> {
     // Refuses to start on a config another party could read or swap, one
     // minted for the gate plane, or one missing a member.
     let cfg = AdminConConfig::load(&args.config)?;
+    let invoker = SudoInvoker::new(&cfg.weaver_admin, &cfg.link.agent)?;
     tracing::info!(
-        "admin-con for {} tailing its trace file, server {}, an empty ceiling until WeaverAgent #50 lands",
+        "admin-con for {} tailing its trace file, server {}, verbs through its invoker of {}",
         cfg.link.agent,
-        cfg.link.server
+        cfg.link.server,
+        cfg.weaver_admin.display()
     );
     let (stop, shutdown) = watch::channel(false);
     tokio::spawn(async move {
@@ -62,13 +67,15 @@ async fn main() -> anyhow::Result<()> {
                 }
             } => {}
         }
-        tracing::info!("admin-con stopping: a verb in flight finishes within the grace");
+        tracing::info!(
+            "admin-con stopping: the verb in flight is waited for, then the agent is unloaded"
+        );
         let _ = stop.send(true);
     });
     let (status, _) = watch::channel(LinkStatus::default());
     admin_con::run(
         cfg,
-        Arc::new(NoVerbs),
+        Arc::new(invoker),
         Some(args.config),
         Backoff::default(),
         shutdown,

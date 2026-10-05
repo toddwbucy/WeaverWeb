@@ -8,12 +8,12 @@
 //! invoker, one at a time, each answer placed in the stream at its
 //! invocation.
 //!
-//! **There is no privileged code here.** The verbs reach admin through the
-//! interface `toddwbucy/WeaverAgent#50` settles, behind the [`Invoker`]
-//! trait; the only implementation this crate ships, [`NoVerbs`], answers an
-//! empty `grants` and runs nothing, so the ceiling is empty, the server asks
-//! nothing, and admission completes at `caught_up` (Spec 8). The trace file
-//! is read through group read access and never written.
+//! **There is no privileged code here.** The verbs reach admin behind the
+//! [`Invoker`] trait, whose service implementation is the sudo invoker of
+//! `link::sudo_invoker`, the one privileged invocation in this crate. This
+//! module owns the order around it: the process-wide invocation slot, the
+//! verb bound, and the orderly stop's `unload` (Spec 7.2, 8). The trace
+//! file is read through group read access and never written.
 //!
 //! **One task owns the tailer and the connection's outbound stream**, so
 //! everything admin-con sends, file events and verb answers alike, is one
@@ -58,48 +58,48 @@ pub const DIGEST_WINDOW: usize = 64 * 1024;
 pub const READ_BUDGET: usize = 1024 * 1024;
 /// Verb asks waiting behind the one in flight.
 pub const VERB_QUEUE: usize = 16;
-/// The bound on one invocation: the invoker's, which caps the pause and
-/// the wait (Spec 7.2).
-pub const VERB_BOUND: Duration = Duration::from_secs(300);
+/// The bound on one invocation when the config names none (Spec 7.2): it
+/// must exceed the box's own load bound, 900 seconds unless the agent's
+/// root names another, so a load that answers in time is never answered
+/// `unknown`.
+pub const VERB_BOUND: Duration = Duration::from_secs(960);
 /// Verbs running at once on one connection (Spec 7.2): one, so invocation
 /// spans never overlap and an older answer can never follow a newer one.
 pub const VERBS_IN_FLIGHT: usize = 1;
-/// How long shutdown lets a verb in flight finish.
-pub const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
+/// The orderly stop's grace when the config names none (Spec 8): the box's
+/// load bound, 900 seconds, plus the unload's 105, plus a margin, so a stop
+/// that meets a `load` in flight still unloads.
+pub const STOP_GRACE: Duration = Duration::from_secs(1080);
 
 // ---------- the invoker ----------
 
 /// **The verb plane's one reach to admin** (Spec 7.2, 8): `grants` answers
-/// which verbs admin-con's role permits on this agent, and `run` invokes
-/// one. The real implementation waits on WeaverAgent #50; this crate carries
-/// no privilege code.
+/// which verbs the box grants admin-con on this agent, and `run` invokes
+/// one. The one privileged implementation is
+/// [`crate::link::sudo_invoker::SudoInvoker`].
 pub trait Invoker: Send + Sync + 'static {
-    /// The verbs the caller's role permits on this agent, read-only.
+    /// The verbs the box grants on this agent, read-only: the ceiling.
     fn grants(&self) -> impl Future<Output = anyhow::Result<Vec<String>>> + Send;
-    /// Run one verb on this agent for a principal, answering admin's object.
+    /// Run one verb on this agent for a principal, answering admin's object
+    /// or a typed fault.
     ///
-    /// **A dropped invocation is not safe on today's admin**
-    /// (`toddwbucy/WeaverAgent#60`): an admin ended between starting the
-    /// worker's unit and sending its enter strands the worker, and no verb
-    /// recovers it. So the real implementation must not end a verb it has
-    /// started, by killing a child or closing what it holds, until
-    /// WeaverAgent #50 rules what a dropped invocation means, and it
-    /// follows that ruling. admin-con drops this future at `VERB_BOUND`
-    /// and at the end of the shutdown grace; that dropping is held for
-    /// review against the same ruling, and nothing here assumes a drop
-    /// leaves the box clean. `NoVerbs` runs nothing and is unaffected.
+    /// **A verb runs to completion** (Spec 7.2): the future is driven to its
+    /// end by a task of its own, which holds admin-con's invocation slot
+    /// until it ends, and admin-con answers `unknown` at its bound without
+    /// dropping it. An implementation therefore owns whatever it starts
+    /// until that ends, and never kills it.
     fn run(
         &self,
         agent: &str,
         verb: &str,
         principal: &Principal,
-    ) -> impl Future<Output = VerbOutcome> + Send;
+    ) -> impl Future<Output = Result<VerbOutcome, VerbFault>> + Send;
 }
 
-/// **The only invoker this crate ships**: an empty `grants`, so the
-/// ceiling is empty and the server asks nothing (Spec 8). It is the honest
-/// declaration of what the box grants until WeaverAgent #50 lands, and its
-/// `run` is never reached, since nothing is inside the ceiling.
+/// **An invoker that grants nothing**: an empty `grants`, so the ceiling is
+/// empty and the server asks nothing (Spec 8), and a `run` never reached,
+/// since nothing is inside the ceiling. The tests' invoker where no verb is
+/// meant to run.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NoVerbs;
 
@@ -108,29 +108,36 @@ impl Invoker for NoVerbs {
         Ok(Vec::new())
     }
 
-    async fn run(&self, agent: &str, verb: &str, _principal: &Principal) -> VerbOutcome {
-        VerbOutcome {
-            verb: verb.to_owned(),
-            agent: agent.to_owned(),
-            exit_code: None,
-            answer: None,
-            raw_stdout: None,
-            stderr: Some("no verb runs until WeaverAgent #50 lands".to_owned()),
-        }
+    async fn run(
+        &self,
+        _agent: &str,
+        verb: &str,
+        _principal: &Principal,
+    ) -> Result<VerbOutcome, VerbFault> {
+        Err(VerbFault {
+            kind: VerbFault::NOT_STARTED.into(),
+            message: format!("this invoker grants nothing and runs nothing, {verb} included"),
+        })
     }
 }
 
 // ---------- the config ----------
 
-/// admin-con's config: what `weaver-web register` wrote, plus the trace
-/// file's path, a box fact filled at install with no default, and the
-/// backfill bound for the first connection after a server restart.
+/// admin-con's config: what `weaver-web register` wrote, plus the box facts
+/// filled at install with no default (the trace file's path and the
+/// absolute path of `weaver-admin` the box's sudo rule names), the backfill
+/// bound for the first connection after a server restart, and the verb's
+/// bound and the stop's grace (Spec 7.2, 8).
 #[derive(Debug, Clone, Deserialize)]
 pub struct AdminConConfig {
     #[serde(flatten)]
     pub link: LinkConfig,
     /// The agent's trace file, read by group read and never written.
     pub trace_file: PathBuf,
+    /// The absolute path of `weaver-admin` the box's sudo rule names, the
+    /// one config value in a privileged command line beside the agent's
+    /// name (Spec 7.2).
+    pub weaver_admin: PathBuf,
     /// How much of the file's tail is relayed after a server restart.
     #[serde(default = "default_backfill")]
     pub backfill_bytes: u64,
@@ -138,10 +145,25 @@ pub struct AdminConConfig {
     /// `DEFAULT_POLL`, settable in code so a test can reach it.
     #[serde(skip, default = "default_poll")]
     pub poll: Duration,
-    /// The bound on one invocation. Not a config member: `VERB_BOUND`,
-    /// settable in code so a test can reach it.
-    #[serde(skip, default = "default_verb_bound")]
+    /// The bound on one invocation, `verb_bound_secs` in the file
+    /// (`VERB_BOUND` by default): it must exceed the box's load bound, so
+    /// the install sets it above that (Spec 7.2). Past it admin-con answers
+    /// `unknown` and the invocation runs on, holding the slot.
+    #[serde(
+        rename = "verb_bound_secs",
+        default = "default_verb_bound",
+        deserialize_with = "seconds"
+    )]
     pub verb_bound: Duration,
+    /// The orderly stop's grace, `stop_grace_secs` in the file
+    /// (`STOP_GRACE` by default): it covers a verb in flight, a load at its
+    /// bound, and the `unload` after it (Spec 8).
+    #[serde(
+        rename = "stop_grace_secs",
+        default = "default_stop_grace",
+        deserialize_with = "seconds"
+    )]
+    pub stop_grace: Duration,
     /// The bound on the `grants` ask at each hello. Not a config member:
     /// the hello's own bound, `client::HELLO_SECS`, settable in code so a
     /// test can reach it.
@@ -166,6 +188,19 @@ fn default_verb_bound() -> Duration {
     VERB_BOUND
 }
 
+fn default_stop_grace() -> Duration {
+    STOP_GRACE
+}
+
+/// A whole number of seconds, at least one.
+fn seconds<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Duration, D::Error> {
+    let secs = u64::deserialize(d)?;
+    if secs == 0 {
+        return Err(serde::de::Error::custom("a bound of zero seconds"));
+    }
+    Ok(Duration::from_secs(secs))
+}
+
 fn default_grants_bound() -> Duration {
     Duration::from_secs(client::HELLO_SECS)
 }
@@ -182,13 +217,17 @@ const MEMBERS: &[&str] = &[
     "certificate",
     "key",
     "trace_file",
+    "weaver_admin",
     "backfill_bytes",
+    "verb_bound_secs",
+    "stop_grace_secs",
 ];
 
 impl AdminConConfig {
     /// Read the config under the trust rule of `client::read_private`, and
-    /// refuse one minted for the gate plane, one missing a member, or a
-    /// backfill past `MAX_BACKFILL_BYTES`.
+    /// refuse one minted for the gate plane, one missing a member, a
+    /// backfill past `MAX_BACKFILL_BYTES`, or a `weaver_admin` that is not
+    /// absolute, since the box's sudo rule names it absolutely.
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let content = client::read_private(path)?;
         let cfg: Self = client::parse_config(path, &content, MEMBERS)?;
@@ -200,6 +239,13 @@ impl AdminConConfig {
                 "{}: backfill_bytes is {}, over the {MAX_BACKFILL_BYTES} a backfill may relay",
                 path.display(),
                 cfg.backfill_bytes
+            );
+        }
+        if !cfg.weaver_admin.is_absolute() {
+            anyhow::bail!(
+                "{}: weaver_admin {} is not an absolute path",
+                path.display(),
+                cfg.weaver_admin.display()
             );
         }
         Ok(cfg)
@@ -921,13 +967,25 @@ pub async fn run<I: Invoker>(
     let hello_shared = shared.clone();
     let hello_invoker = invoker.clone();
     let serve_shutdown = shutdown.clone();
+    let slot = Arc::new(Slot::new());
     let opts = ServeOptions {
         agent: cfg.link.agent.clone(),
         backfill: cfg.backfill_bytes,
         poll: cfg.poll,
         verb_bound: cfg.verb_bound,
+        stop_grace: cfg.stop_grace,
+        slot: slot.clone(),
     };
     let grants_bound = cfg.grants_bound;
+    // The stop's grace runs from the moment the stop is asked, whatever
+    // the link is doing then.
+    let stop_asked = {
+        let mut signal = shutdown.clone();
+        tokio::spawn(async move {
+            let _ = signal.wait_for(|stop| *stop).await;
+            tokio::time::Instant::now()
+        })
+    };
     client::run(
         link,
         |link: &LinkConfig| {
@@ -990,7 +1048,104 @@ pub async fn run<I: Invoker>(
         },
     )
     .await;
+    let asked = stop_asked
+        .await
+        .unwrap_or_else(|_| tokio::time::Instant::now());
+    orderly_stop(
+        invoker,
+        &slot,
+        &cfg.link.agent,
+        asked + cfg.stop_grace,
+        grants_bound,
+    )
+    .await;
     Ok(())
+}
+
+/// **The orderly stop unloads the agent first** (Spec 8), admin-con's one
+/// act on its own initiative: the link's half (asks still waiting answered
+/// `not_started`, the verb in flight's answer sent) is done by the time
+/// this runs; here the verb in flight is waited for until its process exits
+/// and is reaped, then `unload` runs through the invoker where the ceiling
+/// grants it, all within the stop's grace. A process that outlasts the
+/// grace means the `unload` is not issued, and the kill that follows is an
+/// unclean stop, reset at the next load. The stop is the shutdown signal
+/// alone: a lost link never reaches here, since the client loop returns
+/// only on the stop. The `unload`'s answer is logged; its events reach the
+/// server through the trace when admin-con next connects.
+///
+/// **Every wait here ends by the stop's deadline**: the ceiling's ask by
+/// the earlier of the deadline and its own bound, so a slot freed just
+/// before the deadline cannot carry the stop past it. **The `unload` runs
+/// in a task of its own**, which owns the child and both its readers to the
+/// end and reaps it, as an ordinary invocation does: at the deadline the
+/// stop stops waiting and admin-con exits, and the child, in its own
+/// session and never killed, runs on. Its pipes close when admin-con exits,
+/// which the contract covers: admin ignores the broken pipe, finishes, and
+/// records the outcome in its own log on the box.
+async fn orderly_stop<I: Invoker>(
+    invoker: Arc<I>,
+    slot: &Slot,
+    agent: &str,
+    deadline: tokio::time::Instant,
+    grants_bound: Duration,
+) {
+    let permit = match tokio::time::timeout_at(deadline, slot.permit.clone().acquire_owned()).await
+    {
+        Ok(Ok(permit)) => permit,
+        Ok(Err(_)) => return,
+        Err(_) => {
+            let running = slot.running.lock().unwrap().clone();
+            tracing::error!(
+                "{agent}: {} still runs at the end of the stop's grace; unload not issued, and the stop is unclean",
+                running.as_deref().unwrap_or("a verb")
+            );
+            return;
+        }
+    };
+    let asked_until = deadline.min(tokio::time::Instant::now() + grants_bound);
+    let granted = match tokio::time::timeout_at(asked_until, invoker.grants()).await {
+        Ok(Ok(verbs)) => verbs.iter().any(|v| v == "unload"),
+        Ok(Err(e)) => {
+            tracing::warn!("{agent}: the ceiling could not be read at the stop ({e:#})");
+            false
+        }
+        Err(_) => {
+            tracing::warn!(
+                "{agent}: the ceiling was not read within its bound or the stop's grace; the stop issues no unload"
+            );
+            false
+        }
+    };
+    if !granted {
+        tracing::warn!("{agent}: the ceiling grants no unload; the stop issues none");
+        return;
+    }
+    tracing::info!("{agent}: the orderly stop unloads the agent");
+    let unload = tokio::spawn({
+        let agent = agent.to_owned();
+        async move {
+            let ran = invoker.run(&agent, "unload", &Principal::Server).await;
+            drop(permit);
+            ran
+        }
+    });
+    match tokio::time::timeout_at(deadline, unload).await {
+        Ok(Ok(Ok(outcome))) => tracing::info!(
+            "{agent}: the stop's unload answered, exit {:?}: {}",
+            outcome.exit_code,
+            outcome.answer.map(|a| a.to_string()).unwrap_or_default()
+        ),
+        Ok(Ok(Err(fault))) => tracing::error!(
+            "{agent}: the stop's unload faulted ({}): {}",
+            fault.kind,
+            fault.message
+        ),
+        Ok(Err(e)) => tracing::error!("{agent}: the stop's unload ended without an answer: {e}"),
+        Err(_) => tracing::error!(
+            "{agent}: the stop's unload runs on past the stop's grace; its outcome is in the box's admin.log"
+        ),
+    }
 }
 
 #[derive(Clone)]
@@ -999,6 +1154,41 @@ struct ServeOptions {
     backfill: u64,
     poll: Duration,
     verb_bound: Duration,
+    stop_grace: Duration,
+    slot: Arc<Slot>,
+}
+
+/// **admin-con's invocation slot, one per process** (Spec 7.2): held from
+/// an invocation's start until its process exits and is reaped, across
+/// connection attempts, so a verb asked on a fresh connection while a
+/// timed-out one still runs queues behind it and never runs beside it. The
+/// box's own guard stands beside this one, weaver-admin's invocation lock;
+/// this slot is what keeps this crate's ordering of answers against the
+/// trace.
+struct Slot {
+    permit: Arc<tokio::sync::Semaphore>,
+    /// The verb that holds the slot, for the stop's log.
+    running: std::sync::Mutex<Option<String>>,
+}
+
+impl Slot {
+    fn new() -> Self {
+        Self {
+            permit: Arc::new(tokio::sync::Semaphore::new(1)),
+            running: std::sync::Mutex::new(None),
+        }
+    }
+
+    fn free(&self) -> bool {
+        self.permit.available_permits() > 0
+    }
+
+    /// Wait until the slot is free, without taking it.
+    async fn freed(&self) {
+        if let Ok(permit) = self.permit.acquire().await {
+            drop(permit);
+        }
+    }
 }
 
 /// A verb ask waiting its turn.
@@ -1071,12 +1261,12 @@ async fn serve<I: Invoker>(
     let mut signal = shutdown.clone();
     let mut grace_ends = None;
     let ended = {
-        let relay = relay(&mut conn, &mut shared, &*invoker, &opts, &mut shutdown);
+        let relay = relay(&mut conn, &mut shared, invoker, &opts, &mut shutdown);
         tokio::pin!(relay);
         tokio::select! {
             ended = &mut relay => ended,
             () = async { let _ = signal.wait_for(|stop| *stop).await; } => {
-                let ends = tokio::time::Instant::now() + SHUTDOWN_GRACE;
+                let ends = tokio::time::Instant::now() + opts.stop_grace;
                 grace_ends = Some(ends);
                 tokio::time::timeout_at(ends, &mut relay)
                     .await
@@ -1090,7 +1280,7 @@ async fn serve<I: Invoker>(
             conn.close_within(ends.saturating_duration_since(tokio::time::Instant::now()))
                 .await
         }
-        None if matches!(ended, Ended::Shutdown) => conn.close_within(SHUTDOWN_GRACE).await,
+        None if matches!(ended, Ended::Shutdown) => conn.close_within(opts.stop_grace).await,
         None => conn.close().await,
     }
     ended
@@ -1324,7 +1514,7 @@ fn replay_state(tailer: &mut Tailer, boundary: &Position, moved: bool) -> anyhow
 async fn relay<I: Invoker>(
     conn: &mut Connection,
     shared: &mut Shared,
-    invoker: &I,
+    invoker: Arc<I>,
     opts: &ServeOptions,
     shutdown: &mut watch::Receiver<bool>,
 ) -> Ended {
@@ -1358,6 +1548,8 @@ async fn relay<I: Invoker>(
     let mut outbox: VecDeque<FromClient> = frames_of(front, true, &mut seq).into();
     let mut queue = Asks::new();
     let mut in_flight = futures::stream::FuturesUnordered::new();
+    // Whether a waiting ask's hold behind a detached process was logged.
+    let mut held_logged = false;
     let mut tick = tokio::time::interval(opts.poll);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
@@ -1372,6 +1564,8 @@ async fn relay<I: Invoker>(
         // its turn in arrival order; `VERBS_IN_FLIGHT` is the rule's one
         // number.
         while in_flight.len() < VERBS_IN_FLIGHT
+            && queue.servable(replaying)
+            && let Ok(permit) = opts.slot.permit.clone().try_acquire_owned()
             && let Some(ask) = queue.next(replaying)
         {
             // **During the replay only a `show` the server asked is served,
@@ -1405,30 +1599,69 @@ async fn relay<I: Invoker>(
                 };
                 if stopped || *shutdown.borrow() {
                     shared.seq = seq;
+                    drop(permit);
                     decline(conn, &ask).await;
                     decline_waiting(conn, &mut queue).await;
                     return Ended::Shutdown;
                 }
             }
             shared.seq = seq;
-            let agent = opts.agent.as_str();
+            let agent = opts.agent.clone();
             let bound = opts.verb_bound;
             let stop = shutdown.clone();
+            let invoker = invoker.clone();
+            let slot = opts.slot.clone();
             in_flight.push(Box::pin(async move {
                 // **The stop is checked as the invocation's first act**, so
                 // a verb pushed but not yet polled when the stop came, by
                 // the select below or by the grace's loop, never begins:
-                // only a verb whose run began gets the grace.
+                // only a verb whose run began is waited for.
                 if *stop.borrow() {
+                    drop(permit);
                     return (ask.id, Invocation::NotStarted(ask.verb));
                 }
-                let outcome =
-                    tokio::time::timeout(bound, invoker.run(agent, &ask.verb, &ask.principal))
-                        .await
-                        .ok();
+                // **The invocation runs to its end in a task of its own,
+                // which holds the slot until then** (Spec 7.2): at the bound
+                // the answer is `unknown` and the task runs on, the slot
+                // still held, so no verb runs beside it on this connection
+                // or the next.
+                *slot.running.lock().unwrap() = Some(ask.verb.clone());
+                let task = tokio::spawn({
+                    let verb = ask.verb.clone();
+                    let principal = ask.principal.clone();
+                    let slot = slot.clone();
+                    async move {
+                        let ran = invoker.run(&agent, &verb, &principal).await;
+                        *slot.running.lock().unwrap() = None;
+                        drop(permit);
+                        ran
+                    }
+                });
+                let outcome = match tokio::time::timeout(bound, task).await {
+                    Ok(Ok(ran)) => Some(ran),
+                    Ok(Err(e)) => Some(Err(VerbFault {
+                        kind: VerbFault::FAULT.into(),
+                        message: format!("the invocation's task ended without an answer: {e}"),
+                    })),
+                    Err(_) => None,
+                };
                 (ask.id, Invocation::Ran(outcome))
             }));
         }
+        // **An ask held behind a process an earlier invocation left running
+        // is logged once, with that verb's name**: on a fresh connection it
+        // can be the admission's `show`, and an operator reading admissions
+        // that keep closing `admission_incomplete` reads why here.
+        let held = in_flight.is_empty() && queue.servable(replaying) && !opts.slot.free();
+        if held && !held_logged {
+            let running = opts.slot.running.lock().unwrap().clone();
+            tracing::warn!(
+                "{}: an ask waits for the invocation slot, held by {} still running past its bound",
+                opts.agent,
+                running.as_deref().unwrap_or("a verb")
+            );
+        }
+        held_logged = held;
         if !in_flight.is_empty() {
             // The connection is still read, so asks queue and a refusal is
             // seen; the file is not, so nothing written during the
@@ -1446,9 +1679,11 @@ async fn relay<I: Invoker>(
                 }
                 _ = shutdown.changed() => {
                     decline_waiting(conn, &mut queue).await;
-                    // **Shutdown lets a verb in flight finish within a
-                    // grace**, its answer still going out in order.
-                    let finished = tokio::time::timeout(SHUTDOWN_GRACE, async {
+                    // **The stop waits for the verb in flight within its
+                    // grace** (Spec 8), its answer still going out in order;
+                    // the process it started is waited for until reaped by
+                    // the orderly stop after the link closes.
+                    let finished = tokio::time::timeout(opts.stop_grace, async {
                         while let Some((id, outcome)) = in_flight.next().await {
                             if conn.send(answer(id, outcome, opts.verb_bound)).await.is_err() {
                                 return;
@@ -1474,7 +1709,7 @@ async fn relay<I: Invoker>(
             if let Some(end) = take_incoming(conn, &mut queue, &ceiling, &opts.agent).await {
                 return end;
             }
-            if queue.servable(replaying) {
+            if queue.servable(replaying) && opts.slot.free() {
                 continue;
             }
             if let Some(frame) = outbox.pop_front() {
@@ -1505,12 +1740,14 @@ async fn relay<I: Invoker>(
             }
             continue;
         }
-        // **Live**: wait for the poll, an ask, or shutdown.
+        // **Live**: wait for the poll, an ask, shutdown, or the slot freed
+        // by a timed-out verb's process ending while an ask waits for it.
         tokio::select! {
             _ = shutdown.changed() => {
                 decline_waiting(conn, &mut queue).await;
                 return Ended::Shutdown;
             }
+            () = opts.slot.freed(), if queue.servable(replaying) && !opts.slot.free() => {}
             _ = tick.tick() => {
                 if let Err(end) = live_step(conn, &mut shared.tailer, &mut seq).await {
                     return end;
@@ -1528,7 +1765,9 @@ async fn relay<I: Invoker>(
 /// How an invocation ended: it ran, answering admin's object or passing
 /// its bound, or it was declined before its run began because a stop came.
 enum Invocation {
-    Ran(Option<VerbOutcome>),
+    /// The invocation's answer or fault, or `None` where it passed its
+    /// bound and runs on.
+    Ran(Option<Result<VerbOutcome, VerbFault>>),
     NotStarted(String),
 }
 
@@ -1539,10 +1778,15 @@ enum Invocation {
 fn answer(id: u64, invocation: Invocation, bound: Duration) -> FromClient {
     match invocation {
         Invocation::NotStarted(verb) => not_started(id, &verb),
-        Invocation::Ran(Some(outcome)) => FromClient::Verb {
+        Invocation::Ran(Some(Ok(outcome))) => FromClient::Verb {
             id,
             outcome: Some(outcome),
             error: None,
+        },
+        Invocation::Ran(Some(Err(fault))) => FromClient::Verb {
+            id,
+            outcome: None,
+            error: Some(fault),
         },
         Invocation::Ran(None) => FromClient::Verb {
             id,
@@ -1550,7 +1794,7 @@ fn answer(id: u64, invocation: Invocation, bound: Duration) -> FromClient {
             error: Some(VerbFault {
                 kind: VerbFault::UNKNOWN.into(),
                 message: format!(
-                    "the invocation passed its {bound:?} bound and was ended; whether the verb took effect is unknown"
+                    "the invocation passed its {bound:?} bound and runs on; whether the verb took effect is unknown until the next show"
                 ),
             }),
         },

@@ -23,12 +23,20 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
-const POLL: Duration = Duration::from_millis(50);
+pub(super) const POLL: Duration = Duration::from_millis(50);
+
+/// The stop's grace in these tests, where the service's default covers a
+/// load at the box's bound and would hold every stop for minutes.
+pub(super) const GRACE: Duration = Duration::from_secs(5);
+
+/// A `weaver_admin` for configs whose invoker never runs a line: absolute,
+/// as the config requires, and naming nothing.
+pub(super) const NO_WEAVER_ADMIN: &str = "/nonexistent/weaver-admin";
 
 /// A trace file in a temporary directory.
-struct Trace {
+pub(super) struct Trace {
     _dir: tempfile::TempDir,
-    path: PathBuf,
+    pub(super) path: PathBuf,
 }
 
 /// One trace record: its kind, and `n` in its payload to tell events apart.
@@ -43,7 +51,7 @@ fn record(n: u64, kind: &str) -> String {
 }
 
 impl Trace {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("trace.ndjson");
         std::fs::write(&path, "").unwrap();
@@ -118,7 +126,12 @@ impl Invoker for FakeInvoker {
         Ok(self.grants.clone())
     }
 
-    async fn run(&self, agent: &str, verb: &str, _principal: &Principal) -> VerbOutcome {
+    async fn run(
+        &self,
+        agent: &str,
+        verb: &str,
+        _principal: &Principal,
+    ) -> Result<VerbOutcome, VerbFault> {
         self.ran.lock().unwrap().push(verb.to_owned());
         let step = self.steps.lock().unwrap().pop_front().unwrap_or_default();
         if let Some((path, line)) = step.first_append {
@@ -141,26 +154,26 @@ impl Invoker for FakeInvoker {
         } else {
             serde_json::Value::Null
         };
-        VerbOutcome {
+        Ok(VerbOutcome {
             verb: verb.to_owned(),
             agent: agent.to_owned(),
             exit_code: Some(0),
             answer: Some(json!({"kind": "state", "state": snapshot, "load": load})),
             raw_stdout: None,
             stderr: None,
-        }
+        })
     }
 }
 
 /// admin-con run in-process.
-struct Running {
+pub(super) struct Running {
     stop: watch::Sender<bool>,
     status: watch::Receiver<LinkStatus>,
     task: JoinHandle<anyhow::Result<()>>,
 }
 
 impl Running {
-    fn start<I: Invoker>(cfg: AdminConConfig, invoker: Arc<I>) -> Self {
+    pub(super) fn start<I: Invoker>(cfg: AdminConConfig, invoker: Arc<I>) -> Self {
         Self::start_with(cfg, invoker, FAST)
     }
 
@@ -196,7 +209,11 @@ impl Running {
         self.status.borrow().clone()
     }
 
-    async fn wait(&mut self, what: &str, cond: impl Fn(&LinkStatus) -> bool) -> LinkStatus {
+    pub(super) async fn wait(
+        &mut self,
+        what: &str,
+        cond: impl Fn(&LinkStatus) -> bool,
+    ) -> LinkStatus {
         let reached = tokio::time::timeout(SOON, self.status.wait_for(|s| cond(s)))
             .await
             .ok()
@@ -207,7 +224,7 @@ impl Running {
         }
     }
 
-    async fn stop(self) {
+    pub(super) async fn stop(self) {
         let _ = self.stop.send(true);
         tokio::time::timeout(SOON * 2, self.task)
             .await
@@ -219,7 +236,7 @@ impl Running {
 
 /// An agent registered by the verbs, and its admin config as `register`
 /// wrote it with `trace_file` (and a backfill bound, where given) added.
-async fn installed(
+pub(super) async fn installed(
     lab: &Lab,
     trace: &Path,
     out: &Path,
@@ -251,8 +268,9 @@ async fn installed_as(
     let path = PathBuf::from(answer.value["configs"][1].as_str().unwrap());
     assert!(path.ends_with("admin-con.toml"));
     let mut extra = format!(
-        "trace_file = {}\n",
-        toml::Value::String(trace.display().to_string())
+        "trace_file = {}\nweaver_admin = {}\n",
+        toml::Value::String(trace.display().to_string()),
+        toml::Value::String(NO_WEAVER_ADMIN.to_owned())
     );
     if let Some(bytes) = backfill {
         extra.push_str(&format!("backfill_bytes = {bytes}\n"));
@@ -266,9 +284,10 @@ async fn installed_as(
     (id, path)
 }
 
-fn config(path: &Path, poll: Duration) -> AdminConConfig {
+pub(super) fn config(path: &Path, poll: Duration) -> AdminConConfig {
     let mut cfg = AdminConConfig::load(path).unwrap();
     cfg.poll = poll;
+    cfg.stop_grace = GRACE;
     cfg
 }
 
@@ -327,7 +346,11 @@ async fn wait_acknowledged(lab: &Lab, id: &AgentId, trace: &Trace) {
     }
 }
 
-async fn verb(listener: &Listener, id: &AgentId, verb: &str) -> Result<VerbOutcome, VerbError> {
+pub(super) async fn verb(
+    listener: &Listener,
+    id: &AgentId,
+    verb: &str,
+) -> Result<VerbOutcome, VerbError> {
     tokio::time::timeout(
         Duration::from_secs(20),
         listener.verb(id, verb, Principal::Server),
@@ -449,9 +472,11 @@ async fn admin_con_answers_an_ask_outside_its_ceiling_and_keeps_the_connection()
     let cfg = AdminConConfig {
         link: server.link(Plane::Admin),
         trace_file: trace.path.clone(),
+        weaver_admin: PathBuf::from(NO_WEAVER_ADMIN),
         backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
         poll: POLL,
         verb_bound: admin_con::VERB_BOUND,
+        stop_grace: GRACE,
         grants_bound: Duration::from_secs(super::client::HELLO_SECS),
         scan_delay: Duration::ZERO,
     };
@@ -635,26 +660,7 @@ async fn a_server_restart_relays_a_bounded_tail_with_a_mark() {
     wait_acknowledged(&lab, &id, &trace).await;
 
     // The server goes and comes back on its address; its window is new.
-    let address = lab.listener.address();
-    lab.listener.stop().await;
-    trace.append(31, "turn");
-    let until = tokio::time::Instant::now() + SOON;
-    lab.listener = loop {
-        match Listener::start(
-            lab.store.clone(),
-            &lab.authority,
-            &address.to_string(),
-            SILENCE,
-        )
-        .await
-        {
-            Ok(listener) => break listener,
-            Err(_) if tokio::time::Instant::now() < until => {
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }
-            Err(e) => panic!("the listener restarts on its address: {e:#}"),
-        }
-    };
+    restart_on_its_address(&mut lab, || trace.append(31, "turn")).await;
     con.wait("admitted again", |s| s.admitted && s.admissions >= 2)
         .await;
     wait_window(&lab, &id, "the bounded tail again", |e| {
@@ -673,6 +679,31 @@ async fn a_server_restart_relays_a_bounded_tail_with_a_mark() {
         ns(&second)
     );
     con.stop().await;
+}
+
+/// The server stopped and started again on its address, so admin-con's
+/// config still reaches it; `between` runs while it is down.
+pub(super) async fn restart_on_its_address(lab: &mut Lab, between: impl FnOnce()) {
+    let address = lab.listener.address();
+    lab.listener.stop().await;
+    between();
+    let until = tokio::time::Instant::now() + SOON;
+    lab.listener = loop {
+        match Listener::start(
+            lab.store.clone(),
+            &lab.authority,
+            &address.to_string(),
+            SILENCE,
+        )
+        .await
+        {
+            Ok(listener) => break listener,
+            Err(_) if tokio::time::Instant::now() < until => {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            Err(e) => panic!("the listener restarts on its address: {e:#}"),
+        }
+    };
 }
 
 /// **A record is relayed only whole**: an unterminated record at the tail
@@ -824,21 +855,36 @@ async fn an_admin_con_config_that_is_not_trusted_is_refused_at_start() {
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
         path
     };
-    let good = write("good.toml", text(Plane::Admin, "trace_file = \"/trace\"\n"));
+    let good = write(
+        "good.toml",
+        text(
+            Plane::Admin,
+            "trace_file = \"/trace\"\nweaver_admin = \"/w\"\n",
+        ),
+    );
     let cfg = AdminConConfig::load(&good).unwrap();
     assert_eq!(cfg.backfill_bytes, admin_con::DEFAULT_BACKFILL_BYTES);
     let refused = |path: &Path| AdminConConfig::load(path).unwrap_err().to_string();
-    let gate = write("gate.toml", text(Plane::Gate, "trace_file = \"/trace\"\n"));
+    let gate = write(
+        "gate.toml",
+        text(
+            Plane::Gate,
+            "trace_file = \"/trace\"\nweaver_admin = \"/w\"\n",
+        ),
+    );
     assert!(refused(&gate).contains("gate plane"));
     let missing = write("missing.toml", text(Plane::Admin, ""));
     assert!(refused(&missing).contains("trace_file"));
     let unnamed = write(
         "unnamed.toml",
-        text(Plane::Admin, "trace_file = \"/trace\"\n")
-            .lines()
-            .filter(|l| !l.starts_with("agent_id"))
-            .map(|l| format!("{l}\n"))
-            .collect(),
+        text(
+            Plane::Admin,
+            "trace_file = \"/trace\"\nweaver_admin = \"/w\"\n",
+        )
+        .lines()
+        .filter(|l| !l.starts_with("agent_id"))
+        .map(|l| format!("{l}\n"))
+        .collect(),
     );
     assert!(refused(&unnamed).contains("agent_id"));
     let big = write(
@@ -846,7 +892,7 @@ async fn an_admin_con_config_that_is_not_trusted_is_refused_at_start() {
         text(
             Plane::Admin,
             &format!(
-                "trace_file = \"/trace\"\nbackfill_bytes = {}\n",
+                "trace_file = \"/trace\"\nweaver_admin = \"/w\"\nbackfill_bytes = {}\n",
                 admin_con::MAX_BACKFILL_BYTES + 1
             ),
         ),
@@ -1185,7 +1231,7 @@ async fn a_grants_ask_that_never_answers_declares_the_empty_ceiling() {
         async fn grants(&self) -> anyhow::Result<Vec<String>> {
             std::future::pending().await
         }
-        async fn run(&self, _: &str, _: &str, _: &Principal) -> VerbOutcome {
+        async fn run(&self, _: &str, _: &str, _: &Principal) -> Result<VerbOutcome, VerbFault> {
             unreachable!("nothing is inside the empty ceiling")
         }
     }
@@ -1601,9 +1647,11 @@ async fn an_ask_during_the_replay_waits_behind_one_frame_not_a_step() {
     let cfg = AdminConConfig {
         link: server.link(Plane::Admin),
         trace_file: trace.path.clone(),
+        weaver_admin: PathBuf::from(NO_WEAVER_ADMIN),
         backfill_bytes: 16 * 1024 * 1024,
         poll: POLL,
         verb_bound: admin_con::VERB_BOUND,
+        stop_grace: GRACE,
         grants_bound: Duration::from_secs(super::client::HELLO_SECS),
         scan_delay: Duration::ZERO,
     };
@@ -1695,9 +1743,11 @@ async fn an_ordinary_verb_asked_during_the_replay_waits_for_caught_up_and_the_dr
     let cfg = AdminConConfig {
         link: server.link(Plane::Admin),
         trace_file: trace.path.clone(),
+        weaver_admin: PathBuf::from(NO_WEAVER_ADMIN),
         backfill_bytes: 4 * 1024 * 1024,
         poll: Duration::from_secs(30),
         verb_bound: admin_con::VERB_BOUND,
+        stop_grace: GRACE,
         grants_bound: Duration::from_secs(super::client::HELLO_SECS),
         scan_delay: Duration::ZERO,
     };
@@ -1824,9 +1874,11 @@ async fn a_stop_against_a_server_that_stopped_reading_returns_within_the_grace()
     let cfg = AdminConConfig {
         link: server.link(Plane::Admin),
         trace_file: trace.path.clone(),
+        weaver_admin: PathBuf::from(NO_WEAVER_ADMIN),
         backfill_bytes: 32 * 1024 * 1024,
         poll: POLL,
         verb_bound: admin_con::VERB_BOUND,
+        stop_grace: GRACE,
         grants_bound: Duration::from_secs(super::client::HELLO_SECS),
         scan_delay: Duration::ZERO,
     };
@@ -1838,16 +1890,16 @@ async fn a_stop_against_a_server_that_stopped_reading_returns_within_the_grace()
     let Running { stop, task, .. } = con;
     let started = tokio::time::Instant::now();
     let _ = stop.send(true);
-    let finished = tokio::time::timeout(admin_con::SHUTDOWN_GRACE * 2, task).await;
+    let finished = tokio::time::timeout(GRACE * 2, task).await;
     let took = started.elapsed();
     assert!(
         finished.is_ok(),
         "the stop was still waiting after {took:?}"
     );
     assert!(
-        took <= admin_con::SHUTDOWN_GRACE + Duration::from_millis(500),
+        took <= GRACE + Duration::from_millis(500),
         "the stop took {took:?}, past the {:?} grace",
-        admin_con::SHUTDOWN_GRACE
+        GRACE
     );
     drop(reader);
     drop(write);
@@ -1866,9 +1918,11 @@ async fn a_stop_during_a_long_tail_scan_returns_within_the_grace() {
     let cfg = AdminConConfig {
         link: server.link(Plane::Admin),
         trace_file: trace.path.clone(),
+        weaver_admin: PathBuf::from(NO_WEAVER_ADMIN),
         backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
         poll: POLL,
         verb_bound: admin_con::VERB_BOUND,
+        stop_grace: GRACE,
         grants_bound: Duration::from_secs(super::client::HELLO_SECS),
         // 128 chunks of 64 KiB at 100 ms each: about thirteen seconds.
         scan_delay: Duration::from_millis(100),
@@ -1889,16 +1943,16 @@ async fn a_stop_during_a_long_tail_scan_returns_within_the_grace() {
     } = con;
     let started = tokio::time::Instant::now();
     let _ = stop.send(true);
-    let finished = tokio::time::timeout(admin_con::SHUTDOWN_GRACE * 3, task).await;
+    let finished = tokio::time::timeout(GRACE * 3, task).await;
     let took = started.elapsed();
     assert!(
         finished.is_ok(),
         "the stop was still waiting after {took:?}"
     );
     assert!(
-        took < admin_con::SHUTDOWN_GRACE,
+        took < GRACE,
         "the stop took {took:?}, past the {:?} grace",
-        admin_con::SHUTDOWN_GRACE
+        GRACE
     );
     assert_eq!(status.borrow().admissions, 0, "the scan was still running");
 }
@@ -1988,7 +2042,7 @@ async fn a_verb_whose_link_ends_in_flight_is_answered_as_unknown() {
     .await;
 
     invoker.script(Step {
-        delay: admin_con::SHUTDOWN_GRACE + Duration::from_secs(5),
+        delay: GRACE + Duration::from_secs(5),
         ..Step::default()
     });
     let listener = lab.listener.clone();
@@ -2066,7 +2120,7 @@ async fn a_verb_still_draining_at_a_stop_is_answered_not_started() {
     let mut cfg = config(&path, POLL);
     // Every scan chunk waits past the grace: the hello's once, and the
     // drain's when the verb is asked.
-    cfg.scan_delay = admin_con::SHUTDOWN_GRACE + Duration::from_secs(2);
+    cfg.scan_delay = GRACE + Duration::from_secs(2);
     let con = Running::start(cfg, invoker.clone());
     let until = tokio::time::Instant::now() + Duration::from_secs(30);
     while lab.agent(&id).await.state_source.as_deref() != Some("show") {

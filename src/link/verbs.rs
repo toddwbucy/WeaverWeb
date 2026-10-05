@@ -229,10 +229,31 @@ fn client_config(
     table.insert("key".into(), credential.key_pem.clone().into());
     format!(
         "# Written by `weaver-web register` on {}. Carries this connector's key:\n\
-         # keep it on the agent's box and never in a repository.\n{}",
+         # keep it on the agent's box and never in a repository.\n{}{}",
         chrono::Utc::now().format("%Y-%m-%d"),
-        toml::to_string(&table).expect("a table of strings serializes")
+        toml::to_string(&table).expect("a table of strings serializes"),
+        box_facts(plane)
     )
+}
+
+/// **The box's facts a connector needs, as commented placeholders**: the
+/// install fills them on the box, since the server knows none of them and
+/// none has a default. The admin plane's bounds are named with their
+/// defaults, to be raised where the box's own bounds are.
+fn box_facts(plane: Plane) -> &'static str {
+    match plane {
+        Plane::Gate => {
+            "\n# The box's facts, added on the box by the install:\n\
+             # gate_socket = \"<the agent's gate socket>\"\n"
+        }
+        Plane::Admin => {
+            "\n# The box's facts, added on the box by the install:\n\
+             # trace_file = \"<the agent's trace file>\"\n\
+             # weaver_admin = \"<weaver-admin's absolute path, as the box's rule names it>\"\n\
+             # verb_bound_secs = 960    # past the box's load bound\n\
+             # stop_grace_secs = 1080   # the load bound, the unload bound and a margin\n"
+        }
+    }
 }
 
 /// **An agent's config directory, `<out>/<box>/<name>/`, held by

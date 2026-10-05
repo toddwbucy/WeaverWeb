@@ -184,6 +184,10 @@ impl VerbFault {
     /// The server's own: admin answered, and the store could not land the
     /// answer, so the ask answers the failure and is owed again.
     pub const NOT_LANDED: &'static str = "not_landed";
+    /// The invocation ended with no answer to read: a status other than an
+    /// answer's or a refusal's, no answer object, or one past its bound.
+    /// The caller reads the next `show` for the real state.
+    pub const FAULT: &'static str = "fault";
 }
 
 /// The gate adapter's typed error as a connector carries it (section 7.1's
@@ -208,9 +212,8 @@ pub enum FromClient {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tail: Option<Position>,
         /// **On the admin plane, the ceiling** (Spec 8): exactly the verbs
-        /// admin's `grants` answers for admin-con's role, empty until
-        /// WeaverAgent #50 lands. Absent on the gate plane, which declares
-        /// none.
+        /// admin-con's invoker `grants`, the lines the box's sudo rules
+        /// grant its user. Absent on the gate plane, which declares none.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         ceiling: Option<Vec<String>>,
     },

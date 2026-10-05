@@ -2573,9 +2573,14 @@ live connection when the relay is reached, admin-con takes a boundary at
 the opening and relays everything from the server's acknowledged position,
 or from the backfill's start after a server restart, to that boundary,
 marked replayed, which feeds the window and writes no member of the row.
-It ends that with `caught_up`, the server then asks `show` where the
-ceiling grants it, exactly as at admission, and events after the boundary
-are live. This is the admission rule below applied at every opening, not a
+It ends that with `caught_up`, and events after the boundary are live.
+**Where the ceiling grants `show`, the opening asks it exactly as at
+admission, including when it is asked**: the server asks it at the
+opening, and admin-con serves it during the replay with no drain, per the
+paragraph below on the server principal's `show`, so its snapshot is taken
+after the boundary and every live event written before its invocation is
+relayed after its answer. The opening completes only when both that answer
+and `caught_up` have arrived. This is the admission rule below applied at every opening, not a
 new mechanism, and the boundary's measure is the owed one below
 (`toddwbucy/WeaverAgent#88`). **A hello while the door is closed carries no
 boundary**: the server admits it with the replay ended at once, `caught_up`
@@ -2589,8 +2594,8 @@ still be writing. Verbs still serve per the ceiling and their answers land
 at receipt, but **nothing written while the door was closed ever writes the
 row**: at the next opening every event from the acknowledged position to
 that opening's boundary stands behind the boundary and is marked replayed,
-so it reaches the window and never the row, and the `show` asked after
-`caught_up` re-establishes the row. That is the same discipline as a server
+so it reaches the window and never the row, and the opening's `show`
+re-establishes the row. That is the same discipline as a server
 outage, and it is why landing at receipt is safe: the stale-event inversion
 the four clauses of section 9 guard against needs an event from the closed
 interval to land live, and none can. The drain before a verb applies while

@@ -3264,10 +3264,13 @@ binding answers by provisioning, so a check at runtime would guard only
 against a misprovisioned box, which is the install's question. WeaverAgent's
 setup writes the sudo rule with no login session, so the agent's processes
 land inside admin-con's service, per the contract's section 2, and **the
-install owes three things**, named here and built by the install act: the
+install owes four things**, named here and built by the install act: the
 unit's control-group kill mode; a stop timeout covering the box's load bound
 plus the unload bound plus a margin, so an orderly stop that meets a `load`
-in flight still unloads; and **one check, after the first load**, that the
+in flight still unloads; a fixed `PATH` in the unit's environment, since the
+invoker finds sudo by it, a path to it being a box path this repository
+does not carry, so the unit's environment is part of what the invocation
+trusts; and **one check, after the first load**, that the
 run's constituents, the processes `show` names by id where a run stands,
 per the contract's section 3, sit inside admin-con's service, failing the
 install by name otherwise. `show`'s pids reach the row as a fact for the

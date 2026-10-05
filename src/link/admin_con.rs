@@ -1528,6 +1528,8 @@ async fn relay<I: Invoker>(
     let mut outbox: VecDeque<FromClient> = frames_of(front, true, &mut seq).into();
     let mut queue = Asks::new();
     let mut in_flight = futures::stream::FuturesUnordered::new();
+    // Whether a waiting ask's hold behind a detached process was logged.
+    let mut held_logged = false;
     let mut tick = tokio::time::interval(opts.poll);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
@@ -1626,6 +1628,20 @@ async fn relay<I: Invoker>(
                 (ask.id, Invocation::Ran(outcome))
             }));
         }
+        // **An ask held behind a process an earlier invocation left running
+        // is logged once, with that verb's name**: on a fresh connection it
+        // can be the admission's `show`, and an operator reading admissions
+        // that keep closing `admission_incomplete` reads why here.
+        let held = in_flight.is_empty() && queue.servable(replaying) && !opts.slot.free();
+        if held && !held_logged {
+            let running = opts.slot.running.lock().unwrap().clone();
+            tracing::warn!(
+                "{}: an ask waits for the invocation slot, held by {} still running past its bound",
+                opts.agent,
+                running.as_deref().unwrap_or("a verb")
+            );
+        }
+        held_logged = held;
         if !in_flight.is_empty() {
             // The connection is still read, so asks queue and a refusal is
             // seen; the file is not, so nothing written during the

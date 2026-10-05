@@ -1141,9 +1141,11 @@ never a bare socket's. Each row carries:
   only while the agent runs, so a closed door beside an `unloaded` load
   state is the normal state, and a closed door while a run stands is shown
   for the operator to read and is never a fault this crate raises. The door
-  never gates a verb. **A closed door's interval writes no member of the row
-  but the door's state itself**: what the agent wrote meanwhile is replayed
-  at the next opening, per section 7.2. The member is this document's as of
+  never gates a verb. **Trace events the agent writes while the door is
+  closed write no member of the row**: they are replayed at the next
+  opening, per section 7.2. Verb answers during that interval land at
+  receipt, as section 7.2 says, so a `show` asked while the door is closed
+  still refreshes the tuple and the load state. The member is this document's as of
   2026-10-05, and its column and frame are the code act's
 - **the load state, with its date**, which is section 7.2's rule restated at
   the row: the state is what `show` last answered, admin's word, or what the
@@ -1232,9 +1234,13 @@ that
 only kept replayed events behind what this process observed would still
 let a backfilled load event after a restart overwrite the state a newer
 `show` answer had set before it, which is why the rule is absolute rather
-than ordered. **And on every admission of an admin-con connection the
-server first fixes the replay boundary and then, where the agent's ceiling
-grants `show`, asks `show` for that row**:
+than ordered. **And on every admission of an admin-con connection whose
+door is open, and at every later opening of the door, the server first
+fixes the replay boundary and then, where the agent's ceiling grants
+`show`, asks `show` for that row**, per section 7.2's rule for the door. An
+admission whose door is closed carries no boundary and is admitted with the
+replay ended at once; where the ceiling grants `show` it is still asked,
+and its answer lands at receipt. Where the door is open:
 the boundary is the file position admin-con reports as its tail at that
 moment, every event beyond it is live and every event behind it is
 replayed, "beyond" and "behind" read as section 7.2's sentence on a
@@ -2477,8 +2483,8 @@ while the agent is unloaded is the normal state, and `load` must be askable
 while the door is closed. The door's state is shown on the row, per section 2.12. The
 ordering of `show` answers against trace events, the four clauses of section
 9, holds while the door is open. While it is closed, verb answers land at
-receipt with their source, and nothing written while it was closed ever
-writes the row, per the rule for a door's opening below.
+receipt with their source, and nothing the agent writes to the trace while
+it is closed ever writes the row, per the rule for a door's opening below.
 
 ```graph
 node: web-ceiling-is-what-the-sudo-rules-grant
@@ -2603,8 +2609,8 @@ and the file's earlier contents never arrive as live events. **While a run
 stands and the door is closed**, as when the relay died, which keeps it
 closed until the next load per the contract's section 5, the agent may
 still be writing. Verbs still serve per the ceiling and their answers land
-at receipt, but **nothing written while the door was closed ever writes the
-row**: at the next opening every event from the acknowledged position to
+at receipt, but **nothing the agent writes to the trace while the door is
+closed ever writes the row**: at the next opening every event from the acknowledged position to
 that opening's boundary stands behind the boundary and is marked replayed,
 so it reaches the window and never the row, and the opening's `show`
 re-establishes the row. That is the same discipline as a server

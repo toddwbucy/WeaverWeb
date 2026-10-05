@@ -2613,3 +2613,74 @@ async fn a_half_header_at_a_redial_closes_the_door_rather_than_refusing() {
     assert!(!marks.iter().any(|m| m.contains("refused")), "{marks:?}");
     con.stop().await;
 }
+
+/// **A position the server holds past a bounded boundary is verified before
+/// the replay ends** (Spec 7.2): the file is rewritten in place below the
+/// acknowledged position while admin-con is down, the restarted opening's
+/// boundary falls short of that position, the relay refuses it, and the
+/// replacement is replayed behind the boundary with the refusal's mark at
+/// its front: its old load writes nothing, and the row stands on the
+/// opening's `show`.
+#[tokio::test]
+async fn a_rewritten_file_below_an_acknowledgement_past_the_boundary_is_replayed() {
+    use std::sync::atomic::Ordering;
+    let Some(lab) = Lab::open().await else { return };
+    let trace = Trace::new();
+    let filler = |from: u64, bytes: usize| {
+        let mut body = String::new();
+        let mut n = from;
+        while body.len() < bytes {
+            body.push_str(&format!("{{\"wall_ms\":1,\"payload\":{{\"n\":{n}}}}}\n"));
+            n += 1;
+        }
+        body
+    };
+    trace.append_raw(filler(1, 2 * 1024 * 1024).as_bytes());
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
+    let invoker = FakeInvoker::new(&["show"], "unloaded");
+    let mut con = Running::start(config(&path), invoker.clone());
+    con.wait("admitted", |s| s.admitted).await;
+    let until = tokio::time::Instant::now() + Duration::from_secs(30);
+    while lab.listener.acknowledged(&id).map(|p| p.offset) != Some(trace.len()) {
+        assert!(
+            tokio::time::Instant::now() < until,
+            "never acknowledged through the end"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    con.stop().await;
+    lab.wait_for(&id, "admin down", |a| !a.admin.connected)
+        .await;
+
+    // Rewritten in place, same file: a load at its front, then more than
+    // the bound reads, all of it inside the window's ring.
+    std::fs::write(&trace.path, record(9_000_000, "load")).unwrap();
+    trace.append_raw(filler(10_000_000, 250 * 1024).as_bytes());
+    trace
+        .relay
+        .counts
+        .chunk_pause_ms
+        .store(200, Ordering::SeqCst);
+    let mut cfg = config(&path);
+    cfg.boundary_bound = Duration::from_millis(500);
+    let mut con = Running::start(cfg, invoker.clone());
+    con.wait("admitted again", |s| s.admitted).await;
+    trace.relay.counts.chunk_pause_ms.store(0, Ordering::SeqCst);
+    wait_window(&lab, &id, "the rewritten file", |e| {
+        ns(e).contains(&9_000_000)
+    })
+    .await;
+    tokio::time::sleep(SETTLE).await;
+    let row = lab.agent(&id).await;
+    assert_eq!(row.load_state.as_deref(), Some("unloaded"), "{row:?}");
+    assert_eq!(row.state_source.as_deref(), Some("show"), "{row:?}");
+    let marks = marks(&window(&lab, &id));
+    assert!(
+        marks
+            .iter()
+            .any(|m| m.contains("refused the acknowledged offset")),
+        "{marks:?}"
+    );
+    con.stop().await;
+}

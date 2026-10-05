@@ -543,6 +543,61 @@ enum Resume {
     Backfill,
 }
 
+/// **A position the server holds past the boundary is verified inside the
+/// opening, before anything is sent** (Spec 7.2): the relay is dialed at
+/// it. Where it answers in the boundary's file, the opening is caught up
+/// and the door resumes there. Where it refuses, the position names
+/// nothing the file still holds: a mark goes at the replay's front and the
+/// replay is a backfill to the boundary, so the file's history stays behind
+/// the boundary and the opening's `show` re-establishes the row. Anything
+/// else fails the opening, the door left closed on the backoff. Every other
+/// position is planned as it stands.
+async fn verify(
+    socket: &Path,
+    opened: &mut Opened,
+    resume: &Resume,
+    bound: Duration,
+) -> Result<Resume, String> {
+    let acked = match resume {
+        // An opening whose read already marked a discontinuity replays from
+        // zero of its file, per `begin`, and verifies nothing here.
+        Resume::Ack(acked)
+            if opened.marks.is_empty()
+                && acked.generation == opened.boundary.generation
+                && acked.offset > opened.boundary.offset =>
+        {
+            acked
+        }
+        other => return Ok(other.clone()),
+    };
+    match tokio::time::timeout(bound, relay::dial(socket, acked)).await {
+        Ok(Dial::Open(stream)) if stream.identity == opened.boundary.generation => {
+            // Verified; the door redials there, so its stream and its
+            // position agree by construction.
+            drop(stream);
+            Ok(resume.clone())
+        }
+        Ok(Dial::Open(stream)) => Err(format!(
+            "the trace relay serves {}, not {}, at the acknowledged position",
+            stream.identity, opened.boundary.generation
+        )),
+        Ok(Dial::Refused) => {
+            opened.marks.push(Item::Mark {
+                position: relay::zero(&opened.boundary.generation),
+                reason: format!(
+                    "the relay refused the acknowledged offset {}: truncated or rewritten below it; the file is relayed from its start, replayed to the boundary",
+                    acked.offset
+                ),
+            });
+            Ok(Resume::Backfill)
+        }
+        Ok(Dial::Closed(why)) => Err(why),
+        Err(_) => Err(format!(
+            "the trace relay gave no header within {bound:?} at the acknowledged position"
+        )),
+    }
+}
+
 /// An opening's replay behind its boundary.
 struct Replay {
     /// Sent first, as replayed.
@@ -740,6 +795,8 @@ impl Door {
         self.failures = 0;
         self.heartbeat = None;
         match (replay.again, replay.live_from) {
+            // The server's position, verified by the opening: the door
+            // redials there at its next read.
             (None, Some(from)) => {
                 drop(stream);
                 self.stream = None;
@@ -1534,8 +1591,27 @@ async fn take_opening(
         opened.boundary.generation,
         opened.boundary.offset
     );
+    let mut opened = opened;
+    let resume = match verify(
+        &opts.socket,
+        &mut opened,
+        &shared.resume,
+        opts.boundary_bound,
+    )
+    .await
+    {
+        Ok(resume) => resume,
+        Err(why) => {
+            door.failures = door.failures.saturating_add(1);
+            door.next_try = tokio::time::Instant::now() + door.backoff.delay(door.failures);
+            tracing::info!(
+                "{}: the opening failed at the acknowledged position: {why}",
+                opts.agent
+            );
+            return Ok(None);
+        }
+    };
     let boundary = opened.boundary.clone();
-    let resume = shared.resume.clone();
     let front = door.begin(opened, &resume, opts.backfill);
     let mut sent = vec![Out::Frame(FromClient::Door {
         open: true,
@@ -1577,12 +1653,36 @@ async fn relay<I: Invoker>(
     // as sent, and the door is redialed on the backoff.
     let mut replaying = false;
     match opened {
-        Some(opened) => {
-            let resume = shared.resume.clone();
-            let front = door.begin(opened, &resume, opts.backfill);
-            outbox.extend(outs(front, true));
-            if door.target.is_none() {
-                outbox.push_back(Out::Frame(FromClient::CaughtUp));
+        Some(mut opened) => {
+            match verify(
+                &opts.socket,
+                &mut opened,
+                &shared.resume,
+                opts.boundary_bound,
+            )
+            .await
+            {
+                Ok(resume) => {
+                    let front = door.begin(opened, &resume, opts.backfill);
+                    outbox.extend(outs(front, true));
+                    if door.target.is_none() {
+                        outbox.push_back(Out::Frame(FromClient::CaughtUp));
+                    }
+                }
+                // The hello reported the door open; it closes before
+                // anything is behind it.
+                Err(why) => {
+                    tracing::info!(
+                        "{}: the opening failed at the acknowledged position: {why}",
+                        opts.agent
+                    );
+                    door.close(false);
+                    outbox.push_back(Out::Frame(FromClient::Door {
+                        open: false,
+                        wall_ms: now_ms(),
+                        tail: None,
+                    }));
+                }
             }
             replaying = true;
         }

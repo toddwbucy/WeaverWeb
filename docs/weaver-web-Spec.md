@@ -2791,7 +2791,8 @@ such re-confirmation acts on nothing and converges the same way, so the
 rule needs no knowledge of where the admission's `show` falls among the
 asks. The connector's socket holds a bounded number of
 bytes unsent, so on a slow link the answer waits behind no send buffer
-grown to megabytes either. **admin-con runs one verb at a time per connection**, each from
+grown to megabytes either. **admin-con runs one verb at a time**, in one
+invocation slot per admin-con process and not per connection, each from
 its pre-invocation drain, where it takes one, through the emission of its
 answer, and a second
 ask that arrives while one is in flight waits its turn in arrival order,
@@ -2822,7 +2823,11 @@ even after its caller was answered `unknown`: verbs that arrive meanwhile
 queue behind it under the existing bound and `busy`, and the orderly stop's
 `unload` waits for it too, per section 8. Answering at the bound and freeing
 the slot would end the one-verb-at-a-time span while the verb still ran, so
-the next verb could run beside it. The box has its own guard beside this
+the next verb could run beside it. **The slot is admin-con's own, one per
+process, and is held across connection attempts**: a link that drops while
+a timed-out verb's process still runs leaves the slot occupied, so a verb
+asked on the fresh connection, admitted at once with a closed door, queues
+behind it under the same bound and `busy` and never runs beside it. The box has its own guard beside this
 one: weaver-admin holds an invocation lock for the whole of every verb but
 `show` and refuses a concurrent one `InvocationInFlight`, per
 `weaver-admin-Spec` section 3, so the box would refuse the overlap, and
@@ -3470,7 +3475,7 @@ missing while it was relaying.
 | an agent is present only when both planes connect from one row | perturbation: mark present on either plane alone, an agent whose admin-con is down reads present with a tuple and a load state nobody has confirmed |
 | the server's authority is loaded before the listener starts and never minted at start | perturbation: mint the authority at start instead of loading it, restart the server, and every connector's hello is refused against a certificate it does not pin |
 | the client credential is stored as a fingerprint and never the key | perturbation, at the schema: store the key, a read of the register is a set of credentials anyone can present |
-| the tuple and the load state come by admin-con and never by gate-con | perturbation: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it; let a replayed load event write the tuple, restart the server after an unload, backfill, and the row reads loaded; ask `show` before fixing the replay boundary, unload between the two, and the row reads loaded until the next `show`. **Four clauses are admin-con's ordering**, against the real listener with a fake invoker in `src/link/admin_con_tests.rs`: let a `show` answer cross the link out of order with the file events around it, unload during the `show`, and the row reads loaded until the next `show`; place the answer in the stream at receipt and unload between the snapshot and the receipt, and the row reads loaded; skip the drain, leave an unread load event behind the tail, invoke `show` after an unload, and the row reads loaded; run two verbs at once on one connection, and an older answer lands after a newer one. **A turn's start and close refresh the load state**, against the real listener in `src/link/tests.rs`: drop the `turn.started` mapping, and the row never reads `active` between a turn's start and close; let a replayed `turn.started` land, and the row reads `active` from history; let a turn's event write the tuple, and the row loses the tuple it held; let a turn's event write the tuple's source, and a `show`-shaped tuple reads as an event's |
+| the tuple and the load state come by admin-con and never by gate-con | perturbation: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it; let a replayed load event write the tuple, restart the server after an unload, backfill, and the row reads loaded; ask `show` before fixing the replay boundary, unload between the two, and the row reads loaded until the next `show`. **Four clauses are admin-con's ordering**, against the real listener with a fake invoker in `src/link/admin_con_tests.rs`: let a `show` answer cross the link out of order with the file events around it, unload during the `show`, and the row reads loaded until the next `show`; place the answer in the stream at receipt and unload between the snapshot and the receipt, and the row reads loaded; skip the drain, leave an unread load event behind the tail, invoke `show` after an unload, and the row reads loaded; run two verbs at once on one connection, and an older answer lands after a newer one. **One clause of the slot is owed to the code act**: free the slot at a reconnection while a timed-out verb's process still runs, and a verb asked on the new connection runs beside it. **A turn's start and close refresh the load state**, against the real listener in `src/link/tests.rs`: drop the `turn.started` mapping, and the row never reads `active` between a turn's start and close; let a replayed `turn.started` land, and the row reads `active` from history; let a turn's event write the tuple, and the row loses the tuple it held; let a turn's event write the tuple's source, and a `show`-shaped tuple reads as an event's |
 | nothing crosses the link in the clear | perturbation: offer a plaintext hello to the listener, it is refused below any roster; and review, over the listener, that no plaintext accept path exists |
 | the server never asks a verb outside the agent's ceiling | perturbation: drop the ceiling check, ask a verb admin-con's hello did not declare, and it leaves the server; and admin-con's half, drop its typed error answer, and it reaches the invoker. **One clause is owed**: check against the row's copy, narrow the ceiling by reconnecting between the check and the enqueue, and an ask outside the new ceiling leaves. The race has no deterministic staging, and the guard is held by review: the check reads the live connection's ceiling under the live map's lock that finds the connection |
 | a verb or turn its principal may not ask is refused before an ask | perturbation, **owed**: drop the grant check, a person whose role permits `show` asks `stop`, and the ask leaves the server; let the server principal ask a lifecycle verb, and it leaves without a grant; drop the enabled check, and a disabled person's live session still asks a verb; drop the grant check on turns, and a person granted only `show` places a turn; take the check outside the exclusion, revoke between the check and the enqueue, and the ask is authorized on a revoked grant; take a register verb's check outside the exclusion, disable its admin between the check and the commit, and the register verb lands. Lands with the IAM act |
@@ -3493,7 +3498,9 @@ of the management plane ruled on 2026-10-03 are owed to the code act that
 builds the sudo invoker: the ceiling as the sudo rules grant it, and no
 privileged invocation outside that invoker. The replay row is restated for
 the relay by the act of 2026-10-05 and is re-shown by that code act, and
-three of its clauses, for the door's opening, are marked owed inside it. The act
+three of its clauses, for the door's opening, are marked owed inside it;
+one clause of the tuple row, the slot held across connections, is owed
+inside that row to the same act. The act
 that built admin-con stood up the trace file's replay from the acknowledged
 position, the ceiling on both halves, the conditional admission `show`, the
 four clauses of the tuple row that are admin-con's ordering, and the absence

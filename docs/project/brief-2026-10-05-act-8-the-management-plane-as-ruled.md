@@ -7,6 +7,11 @@ documents, so that act 9 (#17, the code) has text to build to. Keep it **narrow*
 change is named below, and nothing else in the Spec moves. Where a fact is the code act's
 to settle, say so and stop.
 
+Superseded in part, 2026-10-05: the containment check at every load and the narrowed
+ceiling in sections 2 (fact 8), 3 (section 8's paragraph) and 4 are withdrawn by the
+operator's ruling of 2026-10-05, recorded in Spec section 8; the install's one-time check
+after the first load stands. The Spec is the text.
+
 ## 1. Read first
 
 - WeaverWeb #18 (the shape in force), #16 (this act), #14 and #15 (the two interface

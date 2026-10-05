@@ -2155,3 +2155,39 @@ async fn a_verb_behind_a_never_idle_writer_runs_at_the_drains_bound() {
     writer.abort();
     con.stop().await;
 }
+
+/// **A truncation met during an opening's read is marked** (Spec 7.2,
+/// nothing is smoothed): with no position on the server, the relay answers
+/// `truncated` as the opening reaches the file's end, the opening reads
+/// the file again from its start, and the backfill it relays carries the
+/// truncation's mark at its front.
+#[tokio::test]
+async fn a_truncation_during_an_opening_is_marked_at_the_replays_front() {
+    use std::sync::atomic::Ordering;
+    let Some(lab) = Lab::open().await else { return };
+    let trace = Trace::new();
+    for n in 1..=3 {
+        trace.append(n, "turn");
+    }
+    trace
+        .relay
+        .counts
+        .truncate_next
+        .store(true, Ordering::SeqCst);
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
+    let mut con = Running::start(config(&path), Arc::new(NoVerbs));
+    con.wait("admitted", |s| s.admitted).await;
+    wait_window(&lab, &id, "the file", |e| ns(e) == [1, 2, 3]).await;
+    let events = window(&lab, &id);
+    let marks = marks(&events);
+    assert!(
+        marks.iter().any(|m| m.contains("while an opening read it")),
+        "{marks:?}"
+    );
+    assert!(
+        events.first().is_some_and(|e| e.mark.is_some()),
+        "the mark leads the replay: {events:?}"
+    );
+    con.stop().await;
+}

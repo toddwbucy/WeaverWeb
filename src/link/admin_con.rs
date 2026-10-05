@@ -379,6 +379,10 @@ struct Opened {
     stream: relay::Stream,
     boundary: Position,
     ring: Ring,
+    /// **What the read met on its way**, a truncation it read through,
+    /// one mark for each: sent at the front of the replay in every case, so
+    /// the window tells what the file did and nothing is smoothed.
+    marks: Vec<Item>,
 }
 
 /// **An opening's boundary is the position at the first heartbeat after
@@ -403,6 +407,7 @@ async fn measure(
 ) -> Result<Opened, String> {
     let (mut stream, mut at) = connect(socket, from).await?;
     let mut ring = Ring::new(at.clone(), cap);
+    let mut marks = Vec::new();
     let mut until = tokio::time::Instant::now() + bound;
     loop {
         // The stream's read is cancel-safe, so the bound drops nothing.
@@ -416,6 +421,7 @@ async fn measure(
                 stream,
                 boundary: at,
                 ring,
+                marks,
             });
         };
         match read {
@@ -441,13 +447,19 @@ async fn measure(
                     stream,
                     boundary: at,
                     ring,
+                    marks,
                 });
             }
             Read::Truncated { size } => {
-                tracing::info!(
-                    "the trace file was truncated to {size} bytes, below offset {}, during an opening's read; reading it from its start",
+                let reason = format!(
+                    "the file was truncated to {size} bytes, below offset {}, while an opening read it; relayed from its start",
                     at.offset
                 );
+                tracing::info!("{reason}");
+                marks.push(Item::Mark {
+                    position: relay::zero(&at.generation),
+                    reason,
+                });
                 (stream, at) = connect(socket, &relay::zero(&at.generation)).await?;
                 ring = Ring::new(at.clone(), cap);
                 until = tokio::time::Instant::now() + bound;
@@ -645,8 +657,8 @@ impl Door {
             };
     }
 
-    /// **Hold an opening**: its replay's front, sent as replayed, and the
-    /// frames that follow. Where the ring holds the span the stream stands
+    /// **Hold an opening**: its replay's front, sent as replayed, the marks
+    /// of what the opening's read met first, and the frames that follow. Where the ring holds the span the stream stands
     /// at the boundary and `caught_up` follows the front; else the second
     /// read reaches it.
     fn begin(&mut self, opened: Opened, resume: &Resume, backfill: u64) -> Vec<Item> {
@@ -654,6 +666,7 @@ impl Door {
             stream,
             boundary,
             ring,
+            marks,
         } = opened;
         let replay = plan(ring, &boundary, resume, backfill);
         self.open = true;
@@ -676,7 +689,9 @@ impl Door {
                 });
             }
         }
-        replay.front
+        // The read's own marks lead, ahead of the plan's and of any
+        // second read.
+        marks.into_iter().chain(replay.front).collect()
     }
 
     /// **One read of the door**, cancel-safe: the stream's read keeps a

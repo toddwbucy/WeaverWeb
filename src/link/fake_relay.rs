@@ -54,6 +54,10 @@ pub(super) struct Counts {
     /// While set, every stream ends right after its header: a relay that
     /// admits a reader and drops it at once.
     pub(super) end_after_header: std::sync::atomic::AtomicBool,
+    /// When set, the next stream to reach the file's end answers
+    /// `truncated` there, once, instead of a heartbeat: a file rewritten
+    /// under the reader as it reached the end.
+    pub(super) truncate_next: std::sync::atomic::AtomicBool,
 }
 
 /// The fake relay for one trace file.
@@ -280,6 +284,13 @@ async fn serve(
                 tokio::task::yield_now().await;
                 continue;
             }
+        } else if !mid_line && counts.truncate_next.swap(false, Ordering::SeqCst) {
+            let _ = send(
+                &mut stream,
+                &line(serde_json::json!({"truncated": {"size": size}})),
+            )
+            .await;
+            return;
         } else if !mid_line && last_write.elapsed() >= timing.heartbeat {
             if !send(
                 &mut stream,

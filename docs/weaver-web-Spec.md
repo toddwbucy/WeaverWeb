@@ -1166,13 +1166,15 @@ never a bare socket's. Each row carries:
   moves the load state and its source and leaves the tuple and its source
   as they were (migration `0012`)
 - **the ceiling admin-con declared**, the verbs the box's sudo rules grant
-  its user as its hello named them, with the date, per section 8, and,
-  where a failed containment check narrowed it to `show` and `unload`, the
-  failure's frame with its reason, the pids that failed and its date, per
-  section 8. It is the box's word
+  its user as its hello named them, with the date, per section 8. It is the box's word
   about itself and an upper bound, never a grant, and this copy is what
   surfaces read: the server authorizes against the live connection's own,
   per section 8
+- **the run's constituents as the last `show` named them**, by process id,
+  with that answer's date, per section 8: a fact for the operator and for
+  the install's one-time containment check, which drives no behaviour of
+  admin-con's. The member is this document's as of 2026-10-05, and its
+  column is the code act's
 
 **It is an authored row and takes section 3.2's members.** Registration is a
 write the operator makes, so the row carries the author member and the
@@ -2565,11 +2567,9 @@ admission, and because the connection outlives loads and unloads, every
 change after crosses on the live connection as a frame from admin-con with
 its date, and lands on the row like a link-state write, bound to the
 connection that reports it, per section 2.12. That frame is the code act's
-and owed. **A frame and not a fresh hello**, unlike the containment
-narrowing of section 8: the ceiling is fixed for a connection's life as a
-security bound, so narrowing it takes a fresh hello, while the door's state
-is a fact about the box with no authorization in it, so it moves as the
-replay's marks do. A closed door while the load state is `unloaded` renders
+and owed. **A frame and not a fresh hello**: the ceiling is fixed for a
+connection's life as a security bound, while the door's state carries no
+authorization, so it moves as the replay's marks do. A closed door while the load state is `unloaded` renders
 as the normal state. A closed door while a run stands is shown as such for
 the operator to read, and is never a fault this crate raises.
 
@@ -3249,38 +3249,30 @@ its waiting asks `not_started`, waits for the verb in flight, until its
 process exits and is reaped, within the stop's grace, issues `unload`
 through its own granted line, and then exits. A verb whose process
 outlasts the grace means the `unload` is not issued, and the kill that
-follows is an unclean stop, reset at the next load. That `unload` is admin-con's one act on its own initiative. A kill is
-an unclean stop, whose next load resets the agent to its latest save point.
-**The install owes three things**, named here and built by the install act:
-the unit's control-group kill mode; a stop timeout covering the box's load
-bound plus the unload bound plus a margin, so an orderly stop that meets a
-`load` in flight still unloads; and a check after the first load that every
-process of the run sits in admin-con's containment. **admin-con checks
-containment at every load as well**: `show` names the run's constituents,
-the worker, the state member and the relay, by process id where a run
-stands, per the contract's section 3, and admin-con confirms each sits in
-its own containment. **A failed check narrows the ceiling to `show` and
-`unload`**, and is logged by name. **The failure itself crosses on the live
-connection as a frame from admin-con**, carrying the reason and the
-constituent pids that failed, and lands on the row with its date like the
-door's frame of section 7.2, bound to the connection that reports it, so
-the operator sees why every other verb is withheld. The reason never rides
-the hello, since a ceiling from the sudo rules can legitimately be exactly
-`show` and `unload`, and a ceiling alone could not say which it is. That
-frame is the code act's and owed.
-Failing closed means the agent comes down, and `unload` is how it comes
-down from the console, so it stays askable: a plane that served nothing
-would leave an uncontained agent running with no verb to end it. admin-con
-does not unload on its own initiative here, since recovery decisions are
-this crate's, per `toddwbucy/WeaverWeb#15`: the operator reads the row and
-asks `unload`. The narrowing holds until the uncontained run ends, by that
-`unload` or otherwise, and then the full ceiling returns and the next load
-is checked again. Because the server fixes a connection's ceiling for its
-life, the narrowed ceiling reaches it through a fresh hello, a mechanism
-the code act builds. admin-con's orderly stop, which unloads, remains the
-other path. `show`
-carrying the pids is promised and owed on WeaverAgent's side, and the code
-act names that. **Without a cgroup-capable supervisor only the orderly stop
+follows is an unclean stop, reset at the next load. That `unload` is
+admin-con's one act on its own initiative. A kill is an unclean stop, whose
+next load resets the agent to its latest save point.
+**The binding is a property of how the box is provisioned, and admin-con
+enforces none of it**, on the operator's ruling of 2026-10-05. admin-con is
+a connector that abstracts the agent's primitives and polices nothing on
+the box: on its own it does exactly three things, runs a granted line when
+asked, reads the relay, and unloads its agent at its own orderly stop. There
+is no adversary between admin-con and weaver-admin, both being the
+operator's; the one adversary is a hijacked management plane, which the
+binding answers by provisioning, so a check at runtime would guard only
+against a misprovisioned box, which is the install's question. WeaverAgent's
+setup writes the sudo rule with no login session, so the agent's processes
+land inside admin-con's service, per the contract's section 2, and **the
+install owes three things**, named here and built by the install act: the
+unit's control-group kill mode; a stop timeout covering the box's load bound
+plus the unload bound plus a margin, so an orderly stop that meets a `load`
+in flight still unloads; and **one check, after the first load**, that the
+run's constituents, the processes `show` names by id where a run stands,
+per the contract's section 3, sit inside admin-con's service, failing the
+install by name otherwise. `show`'s pids reach the row as a fact for the
+operator and for that check, per section 2.12, and drive no behaviour of
+admin-con's; `show` carrying them is promised and owed on WeaverAgent's
+side, and the code act names that. **Without a cgroup-capable supervisor only the orderly stop
 holds**: a process group does not contain an agent whose worker leaves its
 session, so an admin-con that dies uncleanly there leaves its agent running.
 The gap is stated rather than imitated.

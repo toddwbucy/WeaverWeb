@@ -25,12 +25,15 @@ pub mod frames;
 pub mod gate_con;
 pub mod listener;
 pub mod register;
+pub mod sudo_invoker;
 pub mod verbs;
 
 #[cfg(test)]
 mod admin_con_tests;
 #[cfg(test)]
 mod client_tests;
+#[cfg(test)]
+mod sudo_invoker_tests;
 #[cfg(test)]
 mod tests;
 

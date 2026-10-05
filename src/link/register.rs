@@ -83,6 +83,17 @@ pub struct Agent {
     /// the copy surfaces read, never the authorization input.
     pub ceiling: Option<Vec<String>>,
     pub ceiling_at: Option<DateTime<Utc>>,
+    /// The run's constituents as the last `show` named them, by process
+    /// id, with that answer's date (Spec 2.12): a fact for the operator and
+    /// for the install's one-time containment check, which drives nothing
+    /// in admin-con. `None` where the answer named none.
+    pub constituents: Option<Vec<i32>>,
+    pub constituents_at: Option<DateTime<Utc>>,
+    /// The trace door's state, open or closed, with its date (Spec 2.12):
+    /// admin-con's word at admission and at every change after. Written by
+    /// the act that builds the relay client.
+    pub trace_door: Option<bool>,
+    pub trace_door_at: Option<DateTime<Utc>>,
 }
 
 impl Agent {
@@ -180,6 +191,18 @@ pub struct Observation {
     pub at: DateTime<Utc>,
     /// `show` or `event` (Spec 2.12): which source this observation is.
     pub source: &'static str,
+    /// What the observation does to the run's constituents.
+    pub constituents: ConstituentsWrite,
+}
+
+/// What an observation does to the row's constituents (Spec 2.12). **Only
+/// a `show` answer names them**, so a trace event keeps the ones the row
+/// holds, with their date; a `show` answer writes them, `None` where it
+/// named none, which is where no run holds the agent's run lock.
+#[derive(Debug, Clone)]
+pub enum ConstituentsWrite {
+    Write(Option<Vec<i32>>),
+    Keep,
 }
 
 /// What an observation does to the row's tuple. **A turn's start or close
@@ -198,7 +221,7 @@ const COLUMNS: &str = "agent_id, name, box, author, version, registered_at, \
     admin_fingerprint, admin_authority, admin_state, admin_state_at, admin_connected, admin_link_at, \
     admin_incarnation, admin_address, admin_address_at, \
     tuple, tuple_at, tuple_source, load_state, load_state_at, state_source, admin_ceiling, \
-    admin_ceiling_at";
+    admin_ceiling_at, constituents, constituents_at, trace_door, trace_door_at";
 
 fn credential_from_row(row: &PgRow, plane: &str) -> anyhow::Result<Credential> {
     let col = |s: &str| format!("{plane}_{s}");
@@ -234,6 +257,10 @@ fn agent_from_row(row: &PgRow) -> anyhow::Result<Agent> {
         tuple_source: row.try_get("tuple_source")?,
         ceiling: row.try_get("admin_ceiling")?,
         ceiling_at: row.try_get("admin_ceiling_at")?,
+        constituents: row.try_get("constituents")?,
+        constituents_at: row.try_get("constituents_at")?,
+        trace_door: row.try_get("trace_door")?,
+        trace_door_at: row.try_get("trace_door_at")?,
     })
 }
 
@@ -868,6 +895,8 @@ impl Store {
                tuple_epoch = CASE WHEN $8 THEN tuple_epoch ELSE $4 END, \
                tuple_arrival = CASE WHEN $8 THEN tuple_arrival ELSE $5 END, \
                tuple_source = CASE WHEN $8 THEN tuple_source ELSE $7 END, \
+               constituents = CASE WHEN $9 THEN constituents ELSE $10 END, \
+               constituents_at = CASE WHEN $9 THEN constituents_at ELSE $3 END, \
                state_source = $7 \
              WHERE agent_id = $1 \
                AND (load_epoch IS NULL OR (load_epoch, load_arrival) < ($4, $5)) \
@@ -884,6 +913,11 @@ impl Store {
         })
         .bind(observation.source)
         .bind(matches!(observation.tuple, TupleWrite::Keep))
+        .bind(matches!(observation.constituents, ConstituentsWrite::Keep))
+        .bind(match &observation.constituents {
+            ConstituentsWrite::Write(pids) => pids.clone(),
+            ConstituentsWrite::Keep => None,
+        })
         .execute(&self.pool)
         .await?
         .rows_affected();

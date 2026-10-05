@@ -175,18 +175,22 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
   0600 or tighter, opened without following a symlink, or one minted for the admin plane. Its
   tests (`link::client_tests`) run it in-process against a fake gate and the real listener;
   no test reaches an agent.
-- **admin-con** reads the file `register` wrote plus a required box fact with no default, and
-  optional `backfill_bytes` (1 MiB, at most 256 MiB), the tail relayed after a server
-  restart. Same trust rule as gate-con's. It relays the trace with replay and marked
-  discontinuities. **Today's build** takes `trace_file` and tails that file, and its only
-  invoker, `NoVerbs`, declares an empty ceiling and runs nothing, so the server asks it
-  nothing. **As ruled (Spec 7.2 and 8) and owed to the code act (#17)**: the box fact becomes
-  the trace relay's socket path, read as the relay's stream; the sudo invoker runs the box's
-  fixed lines, with `weaver-admin`'s path and the verb bound as config members the install
-  sets; the hello declares the ceiling the sudo rules grant; and an orderly stop unloads the
-  agent first. Those config members are the code act's to name. Its tests
-  (`link::admin_con_tests`) run it against a temporary trace file, the real listener and a
-  fake invoker; no test reaches an agent.
+- **admin-con** reads the file `register` wrote plus two required box facts with no default,
+  `trace_file` (the trace it tails) and `weaver_admin` (the absolute path the box's rule
+  names), and optional `backfill_bytes` (1 MiB, at most 256 MiB, the tail relayed after a
+  server restart), `verb_bound_secs` (960, set above the box's load bound) and
+  `stop_grace_secs` (1080, the load bound, the unload bound and a margin). Same trust rule as
+  gate-con's. It relays the trace with replay and marked discontinuities, and runs verbs
+  through `link::sudo_invoker`, the repository's one privileged invocation: `sudo -n
+  <weaver_admin> <verb> <agent>`, the hello's ceiling from `sudo -n -l` on each line, stdin
+  null, the child in its own session, never killed, and holding admin-con's one invocation
+  slot across reconnections until it is reaped. An orderly stop waits for that child within
+  the grace, then unloads the agent where the ceiling grants `unload`. The trace relay's
+  socket replaces `trace_file` in act 9b (#17). Its tests (`link::admin_con_tests`) run it
+  against a temporary trace file, the real listener and a fake invoker, and
+  `link::sudo_invoker_tests` against a fake `sudo` generated at test time and first on the
+  child's `PATH` (a test build refuses to run without it); no test reaches an agent or a real
+  `sudo`.
 - **Register verbs** answer one JSON object on stdout with the exit status agreeing, the shape
   `weaver-admin` uses. `revoke` closes a live connection in a running server through the
   store's notification channel; nothing else links the verb's process to the server's.
@@ -227,11 +231,13 @@ the reconnect policy of Spec 8). **admin-con landed on 2026-10-02** (act 6):
 `src/bin/admin-con.rs` over `link::admin_con`: the tailer (the generation from the file's
 identity, the digest before each offset, rotation and truncation marked, a bounded backfill),
 the replay and `caught_up`, and the verb plane, one verb at a time with its answer placed at the
-invocation, behind an `Invoker` that carries no privilege code yet; the sudo invoker and the
-relay client are the code act (#17). The listener holds each connection's ceiling, asks `show` only where it is
+invocation, behind an `Invoker`. **The sudo invoker landed in act 9a** (#17):
+`link::sudo_invoker`, the process-wide slot and the orderly stop's `unload`; the relay
+client is act 9b. The listener holds each connection's ceiling, asks `show` only where it is
 granted, and records the ceiling and the load state's source on the row (migration `0011`),
-and the tuple's own source (`0012`, since a turn moves the state and not the tuple; `0010`
-and `0011` are frozen). `traceview.rs` keeps the rings, the listener's live window; its seed
+the tuple's own source (`0012`, since a turn moves the state and not the tuple), and the
+run's constituents from `show` beside the trace door's columns 9b writes (`0013`); `0010`
+through `0012` are frozen. `traceview.rs` keeps the rings, the listener's live window; its seed
 tailer and `lifecycle.rs` (which ran the verbs through sudo) left the tree.
 
 **Still leaves: `web/`**, the legacy `/admin` routes, already answering 503, and

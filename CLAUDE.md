@@ -43,18 +43,19 @@ Weaver-Web has three inputs and no others:
 - **gate (the data plane)** carries the work entering an agent and the answers leaving it.
   Contract: `weaver-gate-world-contract`. Reached only through **gate-con**.
 - **admin (the management plane)** carries the lifecycle verbs (`load`, `unload`, `validate`,
-  `stop`, `show`, and later quiesce / resume) and the agent's trace, which leaves the
-  agent through the sink admin opens at load. Contract: `weaver-admin-operator-contract`.
-  Reached only through **admin-con**. There is no admin socket; the verbs are invocations
-  and the sink is the one crossing.
+  `stop`, `show`, and later `save-point` / `restore`) and the agent's trace, which lands in
+  the sink admin opens at load and is read through the relay the agent's start step
+  launches. Contract: `weaver-admin-operator-contract`. Reached only through **admin-con**.
+  There is no admin socket; the verbs are fixed command lines the box's sudo rule grants,
+  and the relay is the trace's door.
 - **weaver-analysis** reads the diagnostic record and sends finished records here: a
   per-position series (turn, ordinal, token, entropy, surprisal) and a per-generation summary.
   Contract: `weaver-analysis-web-contract`. They land in this repository's own Postgres store.
 
 **The connectors are this repository's** (design session 2026-09-30, operator 2026-10-01).
 gate-con and admin-con are two binaries that stand on the agent's box and are the one party
-that reaches it: gate-con dials the gate socket, admin-con runs the verbs and tails the trace
-file. gate-con is the operator's name for what the whiteboard called web-con. Both are
+that reaches it: gate-con dials the gate socket, admin-con runs the verbs through the box's
+sudo rule and reads the trace through its relay socket. gate-con is the operator's name for what the whiteboard called web-con. Both are
 **clients** of this server's listener over a mutually authenticated link, and the server
 keeps a register of agents with two credentials per agent. The design is Spec section 8 and
 the brief named above. Both binaries stand: `gate-con` (act 3) and `admin-con` (act 6),
@@ -75,15 +76,21 @@ deposits first (a trace plus its state store, as a replay), then build live view
   minted on the server at registration and dropped into a client's config file by an install
   script; the server keeps fingerprints and never keys. The connectors authenticate; the gate
   and admin authorize.
-- **No sudo, no root wrapper, no privileged invocation anywhere in this repository**
-  (operator's ruling of 2026-10-02): a root process parsing arguments that arrived over a
-  network is where a CVE comes from. The connectors run as dedicated service users, one per
-  agent and plane, never the operator's uid. Verbs are authorized by role on the box by
-  weaver-admin (`toddwbucy/WeaverAgent#50`), and every verb asked of an agent passes three
-  gates: this server's IAM, the box's ceiling declared in admin-con's hello, and
-  weaver-admin's role check (Spec 2.13 and 8). A turn needs a grant too and then passes the
-  gate's own admission. The register verbs act on the server and take their own path (Spec
-  2.13). Until #50 lands no verb runs from this repository.
+- **One privileged invocation in this repository, admin-con's sudo invoker, and nothing
+  else** (operator's ruling of 2026-10-03, revising the 2026-10-02 rule of no sudo at all;
+  #14, Spec 7.2). The box's strict per-agent sudo rule grants admin-con's own service user
+  exactly the fixed `weaver-admin <verb> <agent>` lines for its agent. The server sends an
+  abstract verb, never a command; admin-con maps it to the granted line, builds the command
+  from constants and the configured agent name alone, runs `sudo -n` with stdin closed, and
+  passes nothing about the person to the box. A root process parsing arguments that arrived
+  over a network is still where a CVE comes from, which is why nothing from the link enters
+  the command. The connectors run as dedicated service users, one per agent and plane, never
+  the operator's uid. Every verb passes three gates: this server's IAM, the ceiling admin-con
+  derives from the sudo rules (`sudo -n -l` on each exact line) and declares in its hello,
+  and the box's sudo rule itself (Spec 2.13 and 8). A turn needs a grant too and then passes
+  the gate's own admission. The register verbs act on the server and take their own path
+  (Spec 2.13). No group name, socket path, mode, uid or sudoers text enters this repository;
+  cite WeaverAgent's documents instead.
 - **Do not edit WeaverAgent.** When a door contract lacks something, file an issue on
   `toddwbucy/WeaverAgent`, one issue per interface question, until the operator rules
   otherwise. Say what was measured, what is asked, and which document would have to move. The
@@ -168,15 +175,18 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
   0600 or tighter, opened without following a symlink, or one minted for the admin plane. Its
   tests (`link::client_tests`) run it in-process against a fake gate and the real listener;
   no test reaches an agent.
-- **admin-con** reads the file `register` wrote plus `trace_file`, the agent's trace path, a
-  required box fact with no default, and optional `backfill_bytes` (1 MiB, at most 256 MiB),
-  the tail relayed after a server restart. Same trust rule as gate-con's. It tails the trace
-  file by what the box grants it (`toddwbucy/WeaverAgent#61`), relays with replay and marked
-  discontinuities, and declares in its hello
-  exactly what its invoker's `grants` answers. The only invoker shipped, `NoVerbs`, answers an
-  empty `grants` and runs nothing, so the server asks it nothing until WeaverAgent #50 lands.
-  Its tests (`link::admin_con_tests`) run it against a temporary trace file, the real listener
-  and a fake invoker; no test reaches an agent.
+- **admin-con** reads the file `register` wrote plus a required box fact with no default, and
+  optional `backfill_bytes` (1 MiB, at most 256 MiB), the tail relayed after a server
+  restart. Same trust rule as gate-con's. It relays the trace with replay and marked
+  discontinuities. **Today's build** takes `trace_file` and tails that file, and its only
+  invoker, `NoVerbs`, declares an empty ceiling and runs nothing, so the server asks it
+  nothing. **As ruled (Spec 7.2 and 8) and owed to the code act (#17)**: the box fact becomes
+  the trace relay's socket path, read as the relay's stream; the sudo invoker runs the box's
+  fixed lines, with `weaver-admin`'s path and the verb bound as config members the install
+  sets; the hello declares the ceiling the sudo rules grant; and an orderly stop unloads the
+  agent first. Those config members are the code act's to name. Its tests
+  (`link::admin_con_tests`) run it against a temporary trace file, the real listener and a
+  fake invoker; no test reaches an agent.
 - **Register verbs** answer one JSON object on stdout with the exit status agreeing, the shape
   `weaver-admin` uses. `revoke` closes a live connection in a running server through the
   store's notification channel; nothing else links the verb's process to the server's.
@@ -217,8 +227,8 @@ the reconnect policy of Spec 8). **admin-con landed on 2026-10-02** (act 6):
 `src/bin/admin-con.rs` over `link::admin_con`: the tailer (the generation from the file's
 identity, the digest before each offset, rotation and truncation marked, a bounded backfill),
 the replay and `caught_up`, and the verb plane, one verb at a time with its answer placed at the
-invocation, behind an `Invoker` that carries no privilege code; the real invoker waits on
-WeaverAgent #50. The listener holds each connection's ceiling, asks `show` only where it is
+invocation, behind an `Invoker` that carries no privilege code yet; the sudo invoker and the
+relay client are the code act (#17). The listener holds each connection's ceiling, asks `show` only where it is
 granted, and records the ceiling and the load state's source on the row (migration `0011`),
 and the tuple's own source (`0012`, since a turn moves the state and not the tuple; `0010`
 and `0011` are frozen). `traceview.rs` keeps the rings, the listener's live window; its seed

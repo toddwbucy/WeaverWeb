@@ -37,8 +37,8 @@ src/
   queue/        staged experiments and their states
   surfaces/     one module per surface of charter section 3
   seams/        the box-bound reaches of section 7, the gate client, the
-                admin verbs and the trace tailer, beside the analysis
-                stream reader of section 7.3
+                admin verbs and the trace relay's reader, beside the
+                analysis stream reader of section 7.3
   link/         the link of section 8, both halves: the listener and the
                 register verbs the server runs, and the client each
                 connector runs. The link of this entry is a connection and
@@ -53,10 +53,11 @@ without saying which binary runs them, and `link/` had described one dialed
 link between two processes, which section 8 no longer says. The two
 connectors are named as binaries under `bin/` because the split between them
 is a split of posture and not of module: admin-con runs as a service user
-holding the agent's admin role and what the box grants it for the trace,
-gate-con as one holding what the box grants it for the gate, both as ruled
-on `toddwbucy/WeaverAgent#61`, neither holding any privilege of its own per
-section 8, and a module tree cannot say which process carries which. **The box-bound
+the box's sudo rule grants the agent's fixed command lines and the trace
+relay admits as its one reader, per section 7.2, and gate-con as one the
+gate admits, per section 7.1. admin-con's sudo invoker is the one
+privileged invocation in this crate, per section 7.2, and a module tree
+cannot say which process carries which. **The box-bound
 reaches are linked by the two connector binaries and never by the server**,
 which is how the server's never reaching an agent is a build fact rather
 than a sentence.
@@ -1133,6 +1134,13 @@ never a bare socket's. Each row carries:
   what no connection holds. Section 8 states the reset, and it binds every
   link-state write to the connection it describes, so a stale teardown
   cannot mark a plane missing after its replacement was admitted
+- **the trace door's state**, open or closed, with the date it last
+  changed, as admin-con's hello reports it, per section 7.2. The relay runs
+  only while the agent runs, so a closed door beside an `unloaded` load
+  state is the normal state, and a closed door while a run stands is shown
+  for the operator to read and is never a fault this crate raises. The door
+  never gates a verb. The member is this document's as of 2026-10-05, and
+  its column is the code act's
 - **the load state, with its date**, which is section 7.2's rule restated at
   the row: the state is what `show` last answered, admin's word, or what the
   trace last carried, the agent's own record (a load, an unload, or a turn's
@@ -1151,8 +1159,8 @@ never a bare socket's. Each row carries:
   tuple has**, so it moves only with the tuple: a turn's start or close
   moves the load state and its source and leaves the tuple and its source
   as they were (migration `0012`)
-- **the ceiling admin-con declared**, the verbs its role on the box grants as
-  its hello named them, with the date, per section 8. It is the box's word
+- **the ceiling admin-con declared**, the verbs the box's sudo rules grant
+  its user as its hello named them, with the date, per section 8. It is the box's word
   about itself and an upper bound, never a grant, and this copy is what
   surfaces read: the server authorizes against the live connection's own,
   per section 8
@@ -1305,14 +1313,12 @@ rather than this document's.
   can never land a credential on a disabled row.
 - **The server, one of the two principals that are not a person**, for the
   asks the server makes itself, of which the admission's `show` of section 7.2 is the
-  one today. It may ask `show`, the one observation verb the server asks
-  through the link, and never a lifecycle verb or a turn; `grants` is
-  admin-con's own ask of admin per section 8 and is never asked through the
-  link. It holds no grant and needs none, and it is still bounded
-  by the agent's ceiling, the second gate, like any ask. Its asks are
-  audited as a person's are, the first record naming the server as the
-  principal, and the claim that crosses to the box per section 8 names the
-  server too. **It needs no person behind it because it acts on nothing**:
+  one today. It may ask `show` only, the one observation verb, and never a
+  lifecycle verb or a turn. It holds no grant and needs none, and it is
+  still bounded by the agent's ceiling, the second gate, like any ask. Its
+  asks are audited as a person's are, the first record naming the server as
+  the principal, and the link frame's principal names the server too, per
+  section 8, a member that never reaches the box. **It needs no person behind it because it acts on nothing**:
   it re-confirms state the row already holds, so its asks change no agent,
   and every lifecycle verb, which does change one, has a person behind it.
 - **The host, the other principal that is not a person**, for the writes an
@@ -1323,8 +1329,8 @@ rather than this document's.
   authorized by access to the store and the authority's directory and not by
   this section's grants, since it is how the first grant comes to exist. Its
   audit records name the host as the principal and carry the name the
-  command was given with `--author` as an unverified claim, the way section
-  8's claim crosses to the box. **It is the one path that writes a grant
+  command was given with `--author` as an unverified claim, as the link
+  frame's principal is one, per section 8. **It is the one path that writes a grant
   without holding the admin grant, which is why no surface can reach it**: a
   surface writing as the host would land a grant with no admin behind it.
   **These two are the only principals that are not a person**, and each is
@@ -1422,16 +1428,17 @@ rather than this document's.
   answer lands, the write commits, or either fails, so nothing is ever
   rewritten and an act whose outcome never came is visible as a first
   record with no second. A refusal at the first gate is one record
-  carrying the refusal as its outcome, since no ask left. The principal also
-  crosses to the box as section 8's claim, so these records and the box's
-  operations log can be matched. **Audit records are written by this crate's
+  carrying the refusal as its outcome, since no ask left. **Nothing about
+  the person crosses to the box**: the box records the uid sudo reports,
+  admin-con's own, per section 7.2, so these records are the one record of
+  who asked. **Audit records are written by this crate's
   own processes alone, the server or a host command, and never edited**: they are not authored rows and take no version,
   and they are not observations of an agent, so they sit outside both halves
   as the session does.
 - **The register verbs take their own path.** `authority`, `register`,
   `revoke` and `rotate` act on the server, its authority and its store, and
   nothing they do crosses to a box, so the three gates do not apply: there
-  is no box ceiling and no weaver-admin check for them, and registering an
+  is no box ceiling and no sudo rule for them, and registering an
   agent could not pass gates that need a registered agent. **Today they are
   the operator's commands on the server's host**, written as the host
   principal above and audited as its writes are, authorized by access to
@@ -2380,7 +2387,7 @@ whiteboard called web-con. It stands on the agent's box, dials the gate's
 socket by path once per turn as the seed's gate adapter does, carries one
 request line in and one close line out, and is admitted by the kernel's peer
 credential. **What gate-con needs on the box is what the box grants it for
-the gate, as ruled on `toddwbucy/WeaverAgent#61`**: an entry in the
+the gate, as `toddwbucy/WeaverAgent#70` rules**: an entry in the
 declaration's allow list alone does not reach the socket, and this document
 names no group, mode or path for it. Everything it carries crosses the link
 of section 8 to the server, which never dials the gate itself.
@@ -2415,50 +2422,74 @@ a channel. Each verb answers one JSON object, a `lifecycle-answer` or a
 `lifecycle-refusal`, per `weaver-admin-Spec` section 2. A refusal is
 admin's answer about the verb and never a load state: `no_such_agent` means
 the agent is not registered on that box, never that it is unloaded, per
-`toddwbucy/WeaverAgent#59`. Five parse as of
-2026-10-02: `load`, `unload`, `validate`, `stop` and `show`. **`list` was
-retired by `toddwbucy/WeaverAgent#45`**, because enumerating agents is this
-crate's register of section 2.12 and weaver-admin is one agent's organ.
-**admin-con
-runs them, and it is this crate's binary**, the management plane's one
-reach, and the server asks admin-con over the link of section 8 rather than
-running anything.
+`toddwbucy/WeaverAgent#59`. Five are command lines as of 2026-10-03: `show`,
+`validate`, `load`, `unload` and `stop`, per `weaver-admin-operator-contract`
+section 2. **`save-point` and `restore` against a running agent are owed** to
+WeaverAgent's code act for `toddwbucy/WeaverAgent#58`, and no rule grants
+them until it lands. **`list` was retired by `toddwbucy/WeaverAgent#45`**,
+because enumerating agents is this crate's register of section 2.12 and
+weaver-admin is one agent's organ. **admin-con runs them, and it is this
+crate's binary**, the management plane's one reach, and the server asks
+admin-con over the link of section 8 rather than running anything.
 
-**Access to the verbs is a role on the box, and admin-con holds no privilege
-of its own**, per the operator's rulings of 2026-10-02. admin-con reaches the
-verbs through the interface `toddwbucy/WeaverAgent#50` settles, as a
-dedicated service user whose role the box grants, and weaver-admin decides
-whether that role permits each verb before anything is touched. **There is
-no sudo and no root wrapper anywhere in this crate**: a root process parsing
-arguments that arrived over a network is where a CVE comes from, which is the
-operator's reason, and the server that chooses a verb's arguments is reached
-by the network by construction. Today every verb requires root, per
-`weaver-admin-Spec` section 2, so **until #50 lands no verb runs from this
-crate**. The trace's tail and replay below need no privilege: admin-con's
-user reads the trace file by what the box grants it for the trace, as ruled
-on `toddwbucy/WeaverAgent#61`, and this document names no group, mode or
-path for it. **A trace admin-con cannot read leaves the link up and the verb
-plane closed**, per the operator's decision of 2026-10-03: admin-con still
-connects, its hello marks the trace unreadable, the server records that on
-the row and treats the connection's ceiling as empty, and no verb is asked
-until a later admission reads the trace. Verbs without the trace would lose
-the ordering of `show` answers against trace events, which rests on the
-replay boundary below and which the four ordering clauses of section 9
-enforce. This document writes the rule as of 2026-10-03; its code is owed
-to the next code act, and section 9 marks the row owed. admin-con's verb
-plane runs against an abstract invoker that carries no privilege code, and
-the only one this crate ships answers an empty `grants` and runs nothing;
-the seed's `lifecycle.rs`, which invoked the verbs through sudo, left the
-tree with the act that built admin-con.
+**Access to the verbs is the box's sudo rule, and this crate holds exactly
+one privileged invocation: admin-con's sudo invoker**, on the operator's
+ruling of 2026-10-03, which revised the rule of 2026-10-02 that no sudo
+stands anywhere here (`toddwbucy/WeaverWeb#14`). The box installs one strict
+rule per agent: it names admin-con's own service user and grants it exactly
+the fixed `weaver-admin <verb> <agent>` command lines for that one agent,
+with no argument the caller chooses, nothing read on standard input, and no
+login session opened for them, per `weaver-admin-operator-contract` sections
+1 and 2. An observer's rule grants `show`, and an operator's adds
+`validate`, `load`, `unload` and `stop`. **The operator's reason for the old
+rule still holds**, that a root process parsing arguments which arrived over
+a network is where a CVE comes from, because nothing that crossed the link
+reaches the command. The server sends admin-con an abstract verb and never a
+command. admin-con maps it locally to the granted line, builds the command
+from constants and the agent's configured name alone, runs sudo
+non-interactively, and closes the invocation's standard input. The invoker
+is one module, and `tests/no_privilege.rs` pins that nothing else in the
+repository invokes privilege; the test's change to allow exactly that module
+is the code act's, owed in section 9. **The person never crosses to the
+box**: the cause the agent records is the uid sudo reports, admin-con's own,
+per `weaver-types-Spec` section 3.1, and which person asked is section
+2.13's audit record alone. The only invoker this crate ships until that code
+act declares an empty ceiling and runs nothing. The seed's `lifecycle.rs`,
+which ran the verbs through an unscoped sudo, left the tree with the act
+that built admin-con.
+
+**The ceiling comes from the box's sudo rules, and a verb is asked whenever
+the ceiling grants it.** admin-con asks sudo, for each verb it knows,
+whether that exact line is granted without running it (`sudo -n -l` on the
+line), and declares exactly the granted set in its hello, per section 8 and
+`toddwbucy/WeaverWeb#14`. The listing needs no password only while every
+sudo entry admin-con's user holds is `NOPASSWD`, which the rule's narrowness
+already requires. **The trace door's state never gates a verb.** The relay
+of the paragraphs below runs only while the agent runs, so a closed door
+while the agent is unloaded is the normal state, and `load` must be askable
+while the door is closed. The door's state is shown on the row, per section 2.12. The
+ordering of `show` answers against trace events, the four clauses of section
+9, holds while the door is open. While it is closed there are no events to
+order against, and a `show` answer lands at receipt with its source.
 
 ```graph
-node: web-an-unreadable-trace-asks-no-verb
+node: web-ceiling-is-what-the-sudo-rules-grant
 kind: assertion
 tag: perturbation
 
 edge: asserts
 from: weaver-web
-to: web-an-unreadable-trace-asks-no-verb
+to: web-ceiling-is-what-the-sudo-rules-grant
+```
+
+```graph
+node: web-no-privilege-outside-the-sudo-invoker
+kind: assertion
+tag: perturbation
+
+edge: asserts
+from: weaver-web
+to: web-no-privilege-outside-the-sudo-invoker
 ```
 
 `show` answers the agent's load facts, the observation exchange of
@@ -2467,94 +2498,103 @@ state is therefore **the agent's side's own word rather than an inference
 from a socket's existence**: a `show` answer is admin's word, a trace event
 is the agent's own record, and no surface labels either as inferred.
 
-**What crosses out of the agent is the trace, and admin-con tails the file
-it lands in.** The trace crosses as NDJSON, one event per line, to a sink
-admin opens at load under root, per `weaver-admin-Spec` section 5, and the
-contract's section 3 names a file as a conforming sink and the record behind
-it as the operator's own. **Per the operator's ruling of 2026-10-01, the
-agent's declaration names a `File` sink, root-owned and append-only, and
-admin-con tails that file**, as the seed's `traceview.rs` already does,
-tracking the file's identity. The ruling replaced a socket sink with
-admin-con as its listener, and the reason is stated here: admin opens a
-socket sink once at load and never reconnects, so an admin-con crash while
-an agent was loaded would have lost the rest of the run's trace until the
-agent was reloaded, and closing that is WeaverAgent's work. A file sink
-loses nothing to an admin-con restart, a load needs nothing of this crate's
-to succeed, and the file is the durable record itself, so nothing needs
-teeing. The stream is one-way and nothing behind the sink reaches back; what
-admin-con decides from reading it comes back by running a verb, per the
-contract's section 6. **The load event in that stream, and its `wall_ms`,
-are the harness's**, written on the harness's clock, which is not monotonic,
-and carried by the sink admin opens, per `toddwbucy/WeaverAgent#59`. It
-carries the declaration's digest, so the trace and `show` are the two
-sources of section 2.12's tuple: a `show` answer is admin's word, a trace
-event is the agent's own record, and both are the agent's side and never the
-data plane's.
+**What crosses out of the agent is the trace, and admin-con reads it
+through the trace door, the relay the agent's start step launches.** The
+trace crosses as NDJSON, one event per line, to a sink admin opens at load
+under root, per `weaver-admin-Spec` section 5, and the contract's section 3
+names a file as a conforming sink and the record behind it as the
+operator's own. **Per the operator's ruling of 2026-10-01, the agent's
+declaration names a `File` sink, root-owned and append-only**, and the
+reason that ruling gave still stands: a file sink loses nothing to an
+admin-con restart, a load needs nothing of this crate's to succeed, and the
+file is the durable record itself, so nothing needs teeing. **Per the
+operator's rulings of 2026-10-03, admin-con reads that file through the
+relay and never by a grant of its own**, per `weaver-admin-operator-contract`
+sections 1 to 3 and `weaver-admin-Spec` section 6. The relay runs beside the
+worker for the run's life, holds the run's file by descriptor, and listens
+on a socket only the agent's access group can reach, admitting exactly one
+reader: admin-con's own service user, declared as the agent's
+`trace-reader` in its boundary file. **The relay replaces the tail** because
+a reader of the record through the relay reads it through no grant of its
+own, so the territory's layout gives admin-con nothing, and because one
+declared reader is the whole of the box's fan-out: more readers are this
+crate's to serve, from the server, never the box's. The stream is one-way
+and nothing behind the sink reaches back; what admin-con decides from
+reading it comes back by running a verb, per the contract's section 6.
+**The load event in that stream, and its `wall_ms`, are the harness's**,
+written on the harness's clock, which is not monotonic, and carried by the
+sink admin opens, per `toddwbucy/WeaverAgent#59`. It carries the
+declaration's digest, so the trace and `show` are the two sources of
+section 2.12's tuple: a `show` answer is admin's word, a trace event is the
+agent's own record, and both are the agent's side and never the data
+plane's.
 
-**The trace file is replayed from an acknowledged position, and this is this
-document's election of 2026-10-01 and not a ruling.** A tailer that relays
+**The relay's stream, per `weaver-types-Spec` section 3.1.** admin-con
+sends one `TraceRequest` line, an offset on a record boundary and the digest
+of the record ending there, within five seconds of connecting and at most
+4096 bytes. The relay refuses a position whose prior record does not hash to
+that digest, before a byte is sent. Otherwise it writes a `TraceHeader` line
+naming the file's identity, its device, inode and birth time in nanoseconds
+where the filesystem reports one, then the trace's own lines byte for byte
+from that position, and at the end of the file it keeps following, with a
+heartbeat line while idle. Every line the relay adds is a `TraceLine` whose
+one member is `trace_stream`: `header`, `heartbeat` or `truncated`. **After
+`truncated` the stream ends**, and admin-con requests again from offset
+zero. The newest connection from the reader replaces the old. **One sink
+serves every run**: each run appends to the same file and opens with its
+`load` event, and a stream resumes across runs within the file, per
+`weaver-admin-Spec` section 6. **The relay runs only while the agent
+runs**, so the door is closed while it is unloaded, which is the normal
+state: admin-con redials on its backoff, and its hello says whether the
+door is open. The row records that with its date, per section 2.12. A
+closed door while the load state is `unloaded` renders as the normal state.
+A closed door while a run stands is shown as such for the operator to read,
+and is never a fault this crate raises.
+
+**The trace is replayed from an acknowledged position, and this is this
+document's election of 2026-10-01 and not a ruling.** A reader that relays
 what it reads and sends none of what it read while the link was down leaves
 the server's copy of the trace permanently short of every outage. So the
 server answers admin-con's hello with the last position it holds for that
-row's trace, admin-con resumes relaying from there, and the server
+row's trace, admin-con resumes the relay from there, and the server
 acknowledges as it lands, so the position advances. **The acknowledged
-position has three members: a generation, the byte offset within the file,
-always a record boundary per the rule stated below so that no offset in
-this document names the inside of a record, and a digest of the last
-acknowledged line.** **The generation
-is derived from the file's durable identity and never from process state**:
-the device and inode `traceview.rs` tracks, together with the file's birth
-time where the filesystem reports it, so that a reused inode after a
-rotation still reads as a new generation and a restarted admin-con derives
-the same generation for the same file. **A symlinked sink is not
-supported**, per the ruling of 2026-10-02: admin-con reads the path's own
-identity without following a link and opens it so that a link is never
-followed, and a symlink at the path is refused and marked, since a link
-anyone who can write the sink's directory could plant would otherwise turn
-the tailer on any file admin-con can read, its own credential among them.
-Minted from process state it would
-fail the other way, a restarted admin-con reading the hello's generation as
-a replacement, emitting a false discontinuity and replaying the unchanged
-file from its start. **The bound is stated**: on a filesystem reporting no
-birth time the generation rests on device and inode and the last-line
-digest below, and a replacement that reuses the inode and repeats the final
-line at the same offset is accepted as the old generation. This is named
-rather than closed because closing it would need a marker of admin-con's
-own persisted beside the file, and the operator's sinks stand on
-filesystems that report birth time, so the act that meets one that does
-not is the act that adds the marker. The identifier is admin-con's own, in
-a form the act chooses, and carries no trace field, for the same reason
-the offset is
-elected over the event's sequence: resuming then reads none of the event
-schema this document restates none of, and a sequence would make the link
-depend on a trace field. **The digest is of the bytes
-immediately before the offset**, and admin-con reads those bytes and compares
-before resuming at the offset. A file truncated in place while admin-con
-was stopped and regrown past the offset before it reconnected keeps its
-device, inode and birth time, and its length hides the truncation, so the
-identity alone would resume past the new prefix with no mark; the digest
-catches it, and a mismatch is treated exactly as a different generation,
-the old tail marked as a discontinuity and the file relayed from its
-start. The digest is admin-con's own and reads no event schema, for the
-same reason as the offset. **The guard's bound is stated**: the digest
-guards against truncation, which the contract's append-only open and root
-ownership already make an operator's act rather than the program's; it does
-not guard against an in-place rewrite that preserves the final line at the
-same offset, which only root can perform and which a digest of the whole
-prefix would catch at a cost proportional to the file at every reconnect,
-declined for that reason. The position crosses the link with every event, the
-server acknowledges it, and the hello's answer carries it; **an
-acknowledgement never blocks the server's read**, and one that finds the
-connection's write queue full is dropped, since each names a later
-position than the last and the hello's answer carries the position the
-server recorded rather than the last frame it sent. **An
-acknowledgement never names an event the store does not hold**, which the
-act that built the listener reads as a rule on the connection: a store
-failure while landing anything on a connection closes it with a typed
-refusal, the acknowledged position standing at the last success, so the
-reconnection's replay resends the failed event and everything after and
-the admission's `show`, where the ceiling grants it, is asked again, and a pending ask whose answer
-could not be landed answers an error and never the outcome.
+position has three members, and together they are exactly what the relay
+verifies**: the file's identity, as the relay's header names it; a byte
+offset that is always a record boundary, per the rule stated below, so that
+no offset in this document names the inside of a record; and **the sha256
+hex of the record that ends at that offset, over the record's bytes from the
+start of its line through its terminating newline**, absent only at offset
+zero, which is the relay's own digest rule. A resumption is a
+`TraceRequest` of the offset and the digest, and a check of the header's
+identity against the position's. **The mapping from admin-con's present
+position is the code act's and owed**: today admin-con names a file by a
+generation it reads from the file's device, inode and birth time, and
+digests at most the last 64 KiB of the record, and the act that builds the
+relay client carries both to the relay's terms. **The identity and the
+digest each close what the other leaves open.** The identity tells a file
+rotated between runs from the old one, which an offset alone could not: a
+replacement grown past the acknowledged offset would otherwise resume past
+its own prefix with no mark. The digest catches a file truncated in place
+and regrown past the offset, which keeps its identity, and the relay refuses
+that position before a byte is sent. **The bound is stated**, as the
+relay's own documents state it: a file with no birth time rests on device,
+inode and the digest, and a replacement reusing the inode that repeats the
+record at the same offset reads as the old file. The identity and the
+offset are admin-con's and the relay's, never a trace field, so resuming
+reads none of the event schema this document restates none of. The
+position crosses the link with every event, the server acknowledges it, and
+the hello's answer carries it; **an acknowledgement never blocks the
+server's read**, and one that finds the connection's write queue full is
+dropped, since each names a later position than the last and the hello's
+answer carries the position the server recorded rather than the last frame
+it sent. **An acknowledgement never names an event the store does not
+hold**, which the act that built the listener reads as a rule on the
+connection: a store failure while landing anything on a connection closes
+it with a typed refusal, the acknowledged position standing at the last
+success, so the reconnection's replay resends the failed event and
+everything after and the admission's `show`, where the ceiling grants it, is
+asked again, and a pending ask whose answer could not be landed answers an
+error and never the outcome.
 
 **The acknowledged position lives for the life of a server process and is
 not persisted**, per the operator's ruling of 2026-10-01: the server's copy
@@ -2562,30 +2602,38 @@ of the live trace is a live window and not a record, and durability stays
 on the agent's box, per the contract's section 3 and the file-sink ruling
 above. **The live trace has no durable copy here, and that is scoped to the
 live trace**: series derived from the record reach this crate's store
-lawfully through `weaver-analysis-web-contract`, per section 7.3. A persisted position would outlive the events it names, since the
-server holds relayed events in memory and section 3.1's store holds a
-projection and not the trace, so admin-con would resume past a hole no mark
-covers. So within one server process a reconnection resumes from the
-acknowledged position as written here; a server that restarts answers the hello
-with no position, and admin-con then relays from a bounded tail of the
-file, the bound a member of admin-con's config, with a discontinuity mark
-at the front saying what was not relayed, as the seed's backfill in
-`traceview.rs` does. This is right because the record is the file on the
-box and the Replay surface renders landed deposits through the analysis
-seam of section 7.3, so the server's window owes completeness only to the
-process that holds it. **An offset alone would not do**: a trace file rotated during
-the outage and grown past the acknowledged offset before admin-con
-reconnects is indistinguishable from the old one by offset, and a resume at
-the old offset would skip the replacement's prefix silently, which is why
-`traceview.rs` tracks file identity. On reconnect admin-con compares the
-acknowledged generation with the file it holds: the same generation resumes
-at the offset; a different generation means the old file was replaced, so
-any unreplayed tail of the old generation that admin-con no longer has is
-sent as a marked discontinuity and the new generation is relayed from its
-start. A file truncated below the acknowledged offset fails the digest
-read and is sent the same way. Nothing
-is smoothed, which is `traceview.rs`'s own rule and the contract's rule in
-section 3 that nothing is shed silently. Section 8's one-connection
+lawfully through `weaver-analysis-web-contract`, per section 7.3. A
+persisted position would outlive the events it names, since the server
+holds relayed events in memory and section 3.1's store holds a projection
+and not the trace, so admin-con would resume past a hole no mark covers.
+So within one server process a reconnection resumes from the acknowledged
+position as written here. **A server that restarts answers the hello with no
+position, and admin-con then relays a bounded tail**, with a discontinuity
+mark at the front saying what was not relayed. **The tail's start is this
+document's election of 2026-10-05**: the relay cannot start mid-file
+without a digest, and admin-con no longer reads the file, so admin-con
+requests from offset zero, reads and discards locally until it stands
+within `backfill_bytes` of the file's end, and relays from the first record
+boundary there. The link and the server's window stay bounded, while the
+local read is not, which is the price of reading only through the door.
+This is right because the record is the file on the box and the Replay
+surface renders landed deposits through the analysis seam of section 7.3,
+so the server's window owes completeness only to the process that holds it.
+**Truncation and rotation are marked, and nothing is smoothed.** A
+`truncated` line ends the stream, and admin-con requests again from offset
+zero, marking the discontinuity. A rotation is invisible within a run,
+since the relay holds the run's file by descriptor, and reaches admin-con as
+a new identity in the next run's header, or as a position the relay refuses:
+either way the old file's unrelayed tail is lost to the reader, sent as a
+marked discontinuity, and the new file is relayed from its start. That is
+the contract's rule in section 3 that nothing is shed silently. **Two
+measures the code act settles under the relay, owed to it**: the boundary
+the hello names, and the tail a verb's drain records, are both "everything
+the file held at that moment", which admin-con reads today from the file's
+length. Under the relay admin-con reads no file, and the relay names no
+length, so the act that builds the relay client fixes how each is taken,
+the relay's idle heartbeat after a request being the stream's own word that
+everything written so far has been sent. Section 8's one-connection
 paragraph refers here for what a reconnection carries. **Every event
 relayed from behind the file's tail at a reconnection is marked as replayed
 on the link, and the replay ends with a frame admin-con sends when it
@@ -2668,23 +2716,33 @@ newer one. The gate contract's rule for the data plane, one turn in flight
 per agent and a second request waits, is the same shape on this plane. The
 pause and the wait are bounded because the invocation is, the invoker's
 bound capping it, and the drain is bounded by the backlog, which
-is the tailer's lag and not the file. **What a verb dropped at that bound,
-or at the end of a shutdown's grace, leaves on the box is ruled in
-`toddwbucy/WeaverAgent#50` and `#60`**, and this crate assumes nothing about
-it until then: today a drop can strand the agent's worker, a dropped verb
-answers `unknown` and never a guess at what admin did, and admin-con's
-dropping is held for review against that ruling. A verb lost with the link
-answers unknown too, since it may have run. **A verb counts as started
-only once its invocation begins.** So a verb still waiting behind the one in
-flight at admin-con's shutdown, or one taken from the queue and still in
-its pre-invocation drain, was never invoked, and admin-con answers it
-`not_started` while the link still stands, before the verb in flight gets
-its grace, and its caller knows it did not run. The invocation checks the
-stop as its first act, so a verb pushed but not yet begun when the stop
-came is declined rather than run, and only a verb whose run began gets the
-grace and, outlasting it, answers unknown; on a link loss
-nothing can answer it and the server cannot tell it from the verb in
-flight, so it answers unknown. **Every position admin-con records
+is the tailer's lag and not the file.
+
+**The answer and the invocation have named bounds**, per
+`weaver-admin-operator-contract` section 3. A command line prints one JSON
+object on standard output, at most 64 KiB. Exit 0 is an answer and 1 a
+refusal; any other status, or a status with no object, is a fault the caller
+answers by reading the next `show`. Standard error carries diagnostics no
+caller parses. **`load` answers once the agent is up or refused**, within
+the box's own bound, 900 seconds unless the agent's root names another, and
+**`unload` takes at most 105 seconds**, per `weaver-admin-Spec` sections 2
+and 3. **admin-con's verb bound is a member of its config that the install
+sets above the box's load bound**, not a constant of this crate; the member
+is the code act's. **A verb runs to completion**, per the operator's rulings
+of 2026-10-03 on `toddwbucy/WeaverWeb#14`: an invocation finishes even when
+its caller disappears, so at its bound admin-con leaves the process running,
+answers `unknown`, and the next `show` reads the real state. A dropped verb
+answers `unknown` and never a guess at what admin did, and a verb lost with
+the link answers unknown too, since it may have run. **A verb counts as
+started only once its invocation begins.** So a verb still waiting behind
+the one in flight at admin-con's stop, or one taken from the queue and still
+in its pre-invocation drain, was never invoked, and admin-con answers it
+`not_started` while the link still stands, and its caller knows it did not
+run. The invocation checks the stop as its first act, so a verb pushed but
+not yet begun when the stop came is declined rather than run, and only a
+verb whose run began is waited for, within its bound, and, outlasting it,
+answers unknown; on a link loss nothing can answer it and the server cannot
+tell it from the verb in flight, so it answers unknown. **Every position admin-con records
 or acknowledges is a record boundary, the byte after a delimiter**, so the
 tail it records before a verb is the end of the last complete record at
 that moment, the drain emits through it, and a record still unterminated
@@ -2786,16 +2844,20 @@ the same date: everything after it is presentation of what comes out of the
 two connectors.
 
 **Each connector runs as a dedicated service user**, one per agent and plane
-and never the operator's own uid, per the operator's ruling of 2026-10-02,
-and holds only what its plane needs: gate-con's user holds what the box
-grants it for the gate, and nothing else; admin-con's user holds what the
-box grants it for the trace and the agent's admin role on the box, and
-nothing else. What each grant is, is ruled on `toddwbucy/WeaverAgent#61`:
-an entry in the declaration's allow list alone does not reach the gate's
-socket, and this document names no group, mode or path for either. **Neither holds any privilege**: no sudo rule, no
-root wrapper and no setuid binary stands anywhere in this crate, per section
-7.2. Creating those users and placing each connector's config at 0600 under
-its own user is the install's, and carries no box path into the repository.
+and never the operator's own uid, per the operator's rulings of 2026-10-02
+and 2026-10-03, and holds only what its plane needs. **admin-con's user
+holds the agent's access group and the lines the box's sudo rule grants it,
+and nothing of the agent's own**: WeaverAgent's `create-agent.sh` creates
+that user, the rule and the trace-reader declaration, per
+`toddwbucy/WeaverAgent#79`. **gate-con's user holds what the box admits it
+by for the gate, and nothing else**, as `toddwbucy/WeaverAgent#70` rules: an
+entry in the declaration's allow list alone does not reach the gate's
+socket. This document names no group, socket path, mode or uid for either.
+**One privileged invocation stands in this crate, admin-con's sudo
+invoker**, per section 7.2; no other sudo, no root wrapper and no setuid
+binary stands anywhere in it. Placing each connector's config at 0600 under
+its own user is the install's, and carries no box path into the
+repository.
 
 ```graph
 node: web-no-privileged-invocation
@@ -2921,38 +2983,38 @@ to: web-link-refuses-a-credential-not-live-before-the-roster
 ```
 
 **Every verb asked of a registered agent passes three gates**, per the
-operator's ruling of 2026-10-02, and each is held by a different party; the
+operator's rulings of 2026-10-02 and 2026-10-03, and each is held by a
+different party; the
 register verbs, which act on the server and reach no box, take section
 2.13's own path. **First, this crate's identity and
 access**: a person authenticated to the server, holding a grant on the agent
 whose role permits the verb, or the server itself asking an observation verb
 for its own purposes, per section 2.13, checked on the server before any ask
-leaves it. **Second, the box's ceiling**: the verbs admin-con's role
-on the box grants, which admin-con declares and the server never exceeds.
-**Third, weaver-admin's role check**: the party holding root on the box
-decides whether the caller's role permits the verb, per
-`toddwbucy/WeaverAgent#50`. **A turn on the data plane passes the first
-gate and then the gate's own admission**: the person's grants on the agent
-must permit `turn`, and on the box gate-con's user is admitted by what the
-box grants it for the gate, as ruled on `toddwbucy/WeaverAgent#61`, which is
-the box's gate for the data plane. No
+leaves it. **Second, the ceiling**: the verbs the box's sudo rules grant
+admin-con's user, which admin-con derives by asking sudo, for each exact
+line, whether it is granted (`sudo -n -l`), declares in its hello, and the
+server never exceeds. **Third, the box's sudo rule itself**: a line the rule
+does not grant never reaches weaver-admin, sudo refusing it, per
+`weaver-admin-operator-contract` section 5. **A turn on the data plane
+passes the first gate and then the gate's own admission**: the person's
+grants on the agent must permit `turn`, and on the box gate-con's user is
+admitted as `toddwbucy/WeaverAgent#70` rules, which is the box's gate for
+the data plane. No
 verb ceiling applies to a turn, since gate-con declares none. Each gate bounds what the one before it can
 reach, so a fault in one is caught by the next rather than becoming the
 box's. The link between them is already cryptographic per agent and per
 plane by the rules above: the server knows which agent and plane each
 connection is, and each connector knows it is talking to its own server.
 
-**The box's ceiling is declared in admin-con's hello.** admin-con's hello
-names the verbs its role on the box grants, exactly as admin's `grants` ask
-answers them, per `toddwbucy/WeaverAgent#50`: a read-only ask permitted to
-any role holder, answering which verbs the caller's role permits on this
-agent. admin-con keeps no list of its own, so the box's role map is the
-single source. **`grants` is an ask admin-con makes of admin for itself, not
-a verb the server asks through the link**, and it never enters the frame
-vocabulary as a verb. **Until #50 lands there is no `grants` ask and no verb
-runs, so admin-con declares an empty ceiling**: the server asks nothing, and
-admission completes at `caught_up` per section 7.2. The empty ceiling is the
-honest declaration and not a placeholder: it is what the box grants today. **The server holds it with that live
+**The ceiling is declared in admin-con's hello.** admin-con's hello names
+exactly the verbs the box's sudo rules grant its user, each found by asking
+sudo whether that exact line is granted without running it, per section
+7.2. admin-con keeps no list beyond the verbs it knows, so the rules are the
+single source, and **there is no `grants` ask and none will be added**, per
+`toddwbucy/WeaverWeb#14`. **An agent whose rule grants nothing declares an
+empty ceiling**: the server asks nothing, and admission completes at
+`caught_up` per section 7.2. The empty ceiling is the honest declaration and
+not a placeholder: it is what the rules grant today. **The server holds it with that live
 connection, fixed for the connection's life, and checks every ask against
 the ceiling of the connection the frame will be enqueued on**, so a
 reconnecting admin-con that narrows its ceiling cannot race an ask. It also
@@ -2966,13 +3028,13 @@ logged against the row, nothing run, and the connection kept. It is not a
 refusal frame, which is the server's typed close of a connection and travels
 from the server only, and closing would put a compromised server's connector
 into a reconnect loop and gain nothing, the ask having been refused already.
-The error's kind is the admin-con act's to name. **The reason is the server's position**: the
+**The reason is the server's position**: the
 connectors trust their server by design, so a compromised server reaches
 whatever a connector can do, and the ceiling, which the box sets and the
 server only reads, bounds that to the verbs the box chose. The declaration
 is the box's statement about itself and not its authorization, which stays
-weaver-admin's: a ceiling that over-declares is still refused at the third
-gate. The hello's member is added by the admin-con act.
+the sudo rule's: a ceiling that over-declares is still refused at the third
+gate.
 
 ```graph
 node: web-server-never-asks-a-verb-outside-the-ceiling
@@ -2985,12 +3047,13 @@ to: web-server-never-asks-a-verb-outside-the-ceiling
 ```
 
 **Each verb ask names its principal, as a claim**: the requesting person, or
-the server for its own asks, per section 2.13. admin-con passes it to admin for the box's operations log, per `toddwbucy/WeaverAgent#51`,
-labelled as the server's claim. **It is never an authorization input on the
-box**: admin cannot verify it, and it neither widens nor narrows what
-admin-con's role permits. Its use is audit, matching the box's log to
-section 2.13's audit record of who asked. The frame's member is added by the
-admin-con act.
+the server for its own asks, per section 2.13. **The frame keeps the member,
+and admin-con passes nothing of it to admin**: it serves admin-con's own log
+and the row, and the box records the uid sudo reports, admin-con's own, per
+section 7.2. `toddwbucy/WeaverAgent#51`, which would have carried it to
+admin, is closed as superseded. **It is never an authorization input
+anywhere on the box**, and section 2.13's audit is the one record of who
+asked.
 
 **One connection at a time per connector, ever.** A second connection on a
 credential already connected is refused rather than replacing the first, per
@@ -3051,7 +3114,7 @@ attempt and no restart is needed; without the re-read the guidance could
 never take effect. **Only the link's members change at a re-install**: a
 re-read config naming another agent or plane than the one the connector
 runs for is refused and logged, and the credential in hand kept, since the
-rest of the connector (gate-con's socket, admin-con's trace file and
+rest of the connector (gate-con's socket, admin-con's relay socket and
 invoker) stays bound to the agent it started for, and dialing as another
 would file one agent's traffic under another's row. **A client config
 names its row by identity**: `register` and `rotate` write the row's
@@ -3063,7 +3126,8 @@ does not exit**, because a supervisor would restart it into the same loop;
 it ends only on its own shutdown, which lets exchanges in flight finish
 within a short grace before closing the link; asks still waiting are
 answered `not_started` before the grace begins, and a turn still in flight
-at the grace's end is answered to its caller as unknown, per section 7.1. **gate-con's turns in flight
+at the grace's end is answered to its caller as unknown, per section 7.1;
+admin-con's stop is the orderly stop below. **gate-con's turns in flight
 are bounded, and so are the asks waiting behind them**; an ask arriving to
 a full queue is answered at once with the fault `busy`, gate-con's own
 back-pressure and not one of the gate's kinds of section 7.1, so a surface
@@ -3073,6 +3137,48 @@ included, is held to the cadence, and TCP keepalive with a user timeout of
 two cadences ends a connection whose peer stopped acknowledging. A
 connection that is merely quiet is not dead: the server sends nothing
 unasked on the gate plane, and its kernel still answers.
+
+**The agent's lifetime is bound to its admin-con, and the agent fails
+closed with it**, on the operator's ruling of 2026-10-03 on
+`toddwbucy/WeaverWeb#15`, per `weaver-admin-operator-contract` section 3.
+Each agent has its own admin-con, and stopping that admin-con stops its
+agent and only its agent: the management plane going down may mean it was
+taken over. **admin-con's service contains the agent it starts**, under
+control-group kill and never `KillMode=process`, so the agent's processes
+live and die inside the invoker's containment. The invoker's resource limits
+contain the agent too, so they are sized for it, model loading included, or
+left unset, and an upgrade of admin-con is planned as an unload, the
+upgrade, then a load. **An orderly stop unloads first**: admin-con answers
+its waiting asks `not_started`, waits for the verb in flight to finish
+within its bound, issues `unload` through its own granted line, and then
+exits. That `unload` is admin-con's one act on its own initiative. A kill is
+an unclean stop, whose next load resets the agent to its latest save point.
+**The install owes three things**, named here and built by the install act:
+the unit's control-group kill mode; a stop timeout covering the box's load
+bound plus the unload bound plus a margin, so an orderly stop that meets a
+`load` in flight still unloads; and a check after the first load that every
+process of the run sits in admin-con's containment. **admin-con checks
+containment at every load as well**: `show` names the run's constituents,
+the worker, the state member and the relay, by process id where a run
+stands, per the contract's section 3, and admin-con confirms each sits in
+its own containment. A failed check is logged by name and marked on the
+row, and admin-con serves no verb until a load passes it, so the recovery is
+its orderly stop, which unloads, and a load under a fresh admin-con. `show`
+carrying the pids is promised and owed on WeaverAgent's side, and the code
+act names that. **Without a cgroup-capable supervisor only the orderly stop
+holds**: a process group does not contain an agent whose worker leaves its
+session, so an admin-con that dies uncleanly there leaves its agent running.
+The gap is stated rather than imitated.
+
+**A lost link never unloads an agent**, on the operator's confirmation of
+2026-10-03 on `toddwbucy/WeaverWeb#15`: a network disruption must never
+cause an agent failure, so the management plane is admin-con's process and
+not its connection, and a server restart takes no agent down. The trace is
+the record of what the agent did meanwhile, and the server catches up from
+the acknowledged position when the link returns, per section 7.2. **Recovery
+decisions are this crate's**, the operator in the console now and a server
+policy later, and reach admin-con as ordinary verbs, `show` and then
+`unload` and `load`.
 
 **At listener start the server sets every plane recorded as connected to
 disconnected, with the start's date, before it accepts a connection.** A
@@ -3253,7 +3359,7 @@ missing while it was relaying.
 | a hello's identity is its certificate's binding and never its roster | perturbation: act on the roster's name and plane, a hello on a gate credential naming another agent, or naming admin, is believed, and the seed's first-hello-wins returns through the roster |
 | at most one row per box and name holds live credentials | perturbation, at the schema: drop the partial index, register one agent twice, and two rows each hold live credentials for one agent, so the server attributes one agent's observations and verbs to two rows |
 | the link state is reset when the listener starts | perturbation: skip the reset, restart the server with no connector up, and a surface reads an agent present whose sockets are gone |
-| the trace file is replayed from the acknowledged position | perturbation, each clause against the real listener in `src/link/admin_con_tests.rs`: drop the replay, break the link during a run and reconnect, and the server's window has a hole with no mark; truncate the file in place during the outage, let it regrow past the offset, reconnect, and the window carries the new prefix nowhere and marks nothing; drop the generation from the position, rotate the trace file during the outage, let the replacement grow past the offset, reconnect, and the window carries the replacement's prefix nowhere and marks nothing; mint the generation from process state, restart admin-con against the unchanged file, and the server receives a false discontinuity and the file again from its start; restart the server and resume from a remembered position, and the window has a hole with no mark; record a tail inside an unterminated record and resume from it, and the window carries half a record and a parse failure where an event was; end the replay on a step that sent nothing, put a record past the bound before the boundary with a load behind it, and the load is taken as live and writes the row; mark a skipped record without its digest, acknowledge at the mark and reconnect, and the window carries a false truncation; send a record's frame unmeasured, relay a 1 MiB record of NUL bytes, and the frame passes the line bound; look for the tail only within the record bound, leave a longer unterminated fragment at the file's end, and the hello never completes; clear the replaced generation at every hello attempt, rotate during an outage and have the reconnections refused, and the old file's tail is lost under a mark; follow the trace path through a symlink, and the refusal goes unmarked; block the read on an ack, backfill many small records, and the link stalls and readmits; exempt marks from the offset rule, send a mark past the boundary before `caught_up`, and it lands rather than being refused. **Two guards are held by review**: the live switch to a replacing file waits for a read of the held one that moves nothing, the replacement sampled before that read, and a replacement landing between a read and the switch has no deterministic staging; and the open refuses to follow a link, against a symlink planted between the path's check and the open, which has none either |
+| the trace is replayed from the acknowledged position | perturbation, each clause against the real listener in `src/link/admin_con_tests.rs`: drop the replay, break the link during a run and reconnect, and the server's window has a hole with no mark; drop the digest from the position, truncate the file in place during the outage and regrow it past the offset, and the window carries the new prefix nowhere and marks nothing, where the relay refuses the position and admin-con marks it; ignore a `truncated` line, and the window carries the shrunk file as a continuation with no mark; drop the identity from the position, replace the file between runs and grow the replacement past the offset, and the window carries its prefix nowhere and marks nothing, where the next run's header names a new identity; derive the identity from process state, restart admin-con against the unchanged file, and the server receives a false discontinuity and the file again from its start; restart the server and resume from a remembered position, and the window has a hole with no mark; start the backfill anywhere but the first record boundary within `backfill_bytes` of the end, and the window carries half a record or more than the bound; record a boundary inside an unterminated record and resume from it, and the window carries half a record and a parse failure; end the replay on a step that sent nothing, and a load behind a record past the bound is taken as live and writes the row; send a record's frame unmeasured, and a 1 MiB record of NUL bytes passes the line bound; block the read on an ack, and a backfill of many small records stalls the link and readmits; exempt marks from the offset rule, and a mark past the boundary lands before `caught_up`. **Restated for the relay on 2026-10-05**: the act that built admin-con showed each clause against the tailer it then had, and the code act re-shows each against the relay client. The tailer's own clauses, a skipped record's digest, the tail's search, the replaced generation, the symlinked path, and the two guards held by review for the live switch and the open, leave with the tailer |
 | an agent is present only when both planes connect from one row | perturbation: mark present on either plane alone, an agent whose admin-con is down reads present with a tuple and a load state nobody has confirmed |
 | the server's authority is loaded before the listener starts and never minted at start | perturbation: mint the authority at start instead of loading it, restart the server, and every connector's hello is refused against a certificate it does not pin |
 | the client credential is stored as a fingerprint and never the key | perturbation, at the schema: store the key, a read of the register is a set of credentials anyone can present |
@@ -3264,19 +3370,22 @@ missing while it was relaying.
 | a person, role or grant written by a principal not permitted to write it is refused | perturbation, **owed**: drop the check, and a person granted only `show` writes themselves the operator role and passes the first gate; let a person write a grant on themselves, and an admin widens their own grants or the last admin removes the only admin grant; let an admin holding the observer role on an agent add `stop` to that role, and their own grant widens without a grant written; let a surface write as the host principal, and a grant lands with no admin behind it; drop the exclusion, have two admins remove each other at once, and no admin remains; disable the sole admin, or have two admins disable each other at once, and no enabled admin remains; grant a role to its editor while the edit is in flight, and the editor widens a role they hold; let a person write another person's authentication material, and they can sign in as them; reuse a consumed enrollment token, or use one past its expiry, and a second credential lands on someone else's row; disable a person holding an unredeemed token, redeem it, and a credential lands on a disabled row; issue or redeem a token for a person who already has a credential, and an admin replaces that person's credential. Lands with the IAM act |
 | every verb or turn asked and every person, role or grant written has an audit record naming its principal, and its outcome is a second record naming the first | perturbation, **owed**: write the first record after the ask instead of before, fail the store between the two, and an ask leaves with no record; update the first record with the outcome instead of appending a second, and an ask whose answer is lost reads as never answered with no trace of the rewrite; drop the refusal's record, and a refused verb leaves no trace; write a grant with the audit write dropped, and the grant lands with no record; enroll a person or rotate their authentication material with the audit write dropped, and the write lands with no record; record the material in an authentication write's record, and a read of the audit table is a set of credentials. Lands with the IAM act |
 | the admission's `show` is required only where the ceiling grants it | perturbation: ask `show` at every admission, and an agent whose ceiling grants no `show` is closed `admission_incomplete` at every reconnection and never stays admitted; skip it where it is granted, and the row reads the last process's state as current |
-| a connection whose trace is unreadable is asked no verb | perturbation, **owed** to the next code act: honour the declared ceiling of a hello that marks the trace unreadable, and a verb is asked whose answer has no replay boundary to be ordered against |
 | no privileged invocation exists in the repository | review, and a test, `tests/no_privilege.rs`: it reads every tracked file outside `docs/`, never following a symlink, comment lines aside by each file's syntax and Markdown read in its fences only, for a privilege-escalating program named as a word, a setuid family call, a child's user or group set on a command, and a setuid or setgid mode bit, and is shown to fail when one of each is planted, in Rust and in a README fence |
+| the ceiling declared in the hello is exactly what the box's sudo rules grant | perturbation, **owed** to the code act: declare a verb `sudo -n -l` refuses, and the server asks it and the box refuses it |
+| no privileged invocation exists outside admin-con's sudo invoker | perturbation, **owed** to the code act: `tests/no_privilege.rs` rewritten to allow exactly the invoker's module, shown to fail when sudo is planted elsewhere or the invoker builds its command from anything but its constants and the agent's name. Until that act the row above holds whole, since no invoker exists |
 
 **A watch that cannot fail is not a test.** For each perturbation above, the
 act that lands it states what removal makes it fail and confirms it does.
 
-**A row marked owed has no instrument and is not counted as enforced.** Five
-stand so marked as of 2026-10-03. The batch's order is owed because section
+**A row marked owed has no instrument and is not counted as enforced.** Six
+stand so marked as of 2026-10-05. The batch's order is owed because section
 2.11 describes its table and no migration builds it. Three rows of the role
 shape ruled on 2026-10-02 are owed to the IAM act: the principal check, the
-writer's check for persons, roles and grants, and the audit record. The
-unreadable trace's rule, written by the alignment act of 2026-10-03, is
-owed to the next code act. The act
+writer's check for persons, roles and grants, and the audit record. Two rows
+of the management plane ruled on 2026-10-03 are owed to the code act that
+builds the sudo invoker: the ceiling as the sudo rules grant it, and no
+privileged invocation outside that invoker. The replay row is restated for
+the relay by the act of 2026-10-05 and is re-shown by that code act. The act
 that built admin-con stood up the trace file's replay from the acknowledged
 position, the ceiling on both halves, the conditional admission `show`, the
 four clauses of the tuple row that are admin-con's ordering, and the absence
@@ -3422,16 +3531,15 @@ a `web-` assertion beside `weaver-admin`'s.
   that one asks what the member means once a person stands, this one how a
   person comes to stand.
 - **The role vocabulary**, opened 2026-10-02 and the operator's. Proposed,
-  per agent: an observer whose role permits `show`, which on the box of
-  `toddwbucy/WeaverAgent#50` is `show` plus `grants`, the read-only ask
-  admin-con makes for itself; a converser
+  per agent: an observer whose role permits `show`, which on the box is the
+  observer's sudo rule granting `show`, per `weaver-admin-operator-contract`
+  section 2; a converser
   adding `turn` and no lifecycle verb; and an operator adding `turn`,
   `validate`, `load`, `unload` and `stop`. Server-wide: an admin who
   registers agents, the one role the store fixes per section 2.13. The
   converser is this document's proposal and not the operator's. The box's
-  roles of `toddwbucy/WeaverAgent#50` were proposed with the observer and
-  operator names and carry no `turn`, the gate's own admission governing the
-  data plane on the box, per `toddwbucy/WeaverAgent#61`, so whether a grant here and a role there share one
+  rules, an observer's and an operator's, carry no `turn`, the gate's own admission governing the
+  data plane on the box, per `toddwbucy/WeaverAgent#70`, so whether a grant here and a role there share one
   vocabulary is part of the election.
 - **What section 7 is called, now that one of its three is not a seam**,
   opened 2026-09-16 by the act that deleted this crate's seam record to

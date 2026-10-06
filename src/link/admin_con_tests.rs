@@ -2798,6 +2798,7 @@ async fn no_opening_is_taken_while_an_openings_hold_stands() {
     };
     let con = Running::start(cfg, invoker.clone());
     let (mut reader, mut write) = server.admit(15).await;
+    admission_show(&mut reader, &mut write).await;
     // The next frame that is not a heartbeat, or none within `wait`.
     let next = async |reader: &mut super::frames::LineReader<_>, wait: Duration| loop {
         match tokio::time::timeout(wait, reader.next()).await {
@@ -2996,6 +2997,7 @@ async fn an_openings_show_asked_late_is_still_served_first() {
     };
     let con = Running::start(cfg, invoker.clone());
     let (mut reader, mut write) = server.admit(1).await;
+    admission_show(&mut reader, &mut write).await;
     let next = async |reader: &mut super::frames::LineReader<_>, wait: Duration| loop {
         match tokio::time::timeout(wait, reader.next()).await {
             Err(_) => return None,
@@ -3119,6 +3121,7 @@ async fn the_openings_hold_covers_the_servers_deadline() {
     };
     let con = Running::start(cfg, invoker.clone());
     let (mut reader, mut write) = server.admit_answering(1, Some(7), None).await;
+    admission_show(&mut reader, &mut write).await;
     let next = async |reader: &mut super::frames::LineReader<_>, wait: Duration| loop {
         match tokio::time::timeout(wait, reader.next()).await {
             Err(_) => return None,
@@ -3291,6 +3294,40 @@ async fn the_hellos_verification_runs_beside_the_admissions_show() {
     con.stop().await;
 }
 
+/// **The admission's `show`, asked and answered** as the listener asks it
+/// at every admission where the ceiling grants it: a fake server owes
+/// admin-con this before anything else, since the hello holds ordinary asks
+/// until it is answered.
+async fn admission_show<R, W>(reader: &mut super::frames::LineReader<R>, write: &mut W)
+where
+    R: tokio::io::AsyncRead + Unpin,
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let id = u64::MAX;
+    let mut ask = serde_json::to_vec(&ToClient::Verb {
+        id,
+        verb: "show".into(),
+        principal: Principal::Server,
+    })
+    .unwrap();
+    ask.push(b'\n');
+    write.write_all(&ask).await.unwrap();
+    let until = tokio::time::Instant::now() + SOON;
+    loop {
+        match tokio::time::timeout_at(until, reader.next()).await {
+            Ok(Line::Frame(line)) => {
+                if let FromClient::Verb { id: answered, .. } = serde_json::from_str(&line).unwrap()
+                    && answered == id
+                {
+                    return;
+                }
+            }
+            Ok(other) => panic!("the connection ended: {other:?}"),
+            Err(_) => panic!("the admission's show was never answered"),
+        }
+    }
+}
+
 /// **A `show` that faults keeps the opening's hold**: the opening's `show`
 /// answers with a fault, which the listener will not land, so it is about
 /// to close the connection; a person's `load` queued at the opening waits
@@ -3301,7 +3338,6 @@ async fn a_faulting_openings_show_keeps_the_hold() {
     let server = FakeServer::start().await;
     let mut trace = Trace::closed();
     let invoker = FakeInvoker::new(&["show", "load"], "idle");
-    invoker.fail("show");
     let cfg = AdminConConfig {
         link: server.link(Plane::Admin),
         trace_socket: trace.socket.clone(),
@@ -3315,6 +3351,8 @@ async fn a_faulting_openings_show_keeps_the_hold() {
     };
     let con = Running::start(cfg, invoker.clone());
     let (mut reader, mut write) = server.admit(15).await;
+    admission_show(&mut reader, &mut write).await;
+    invoker.fail("show");
     let next = async |reader: &mut super::frames::LineReader<_>, wait: Duration| loop {
         match tokio::time::timeout(wait, reader.next()).await {
             Err(_) => return None,
@@ -3354,7 +3392,11 @@ async fn a_faulting_openings_show_keeps_the_hold() {
         }
     }
     assert_eq!(answered, [1], "only the faulting show was answered");
-    assert_eq!(invoker.ran(), ["show"], "the load ran under the hold");
+    assert_eq!(
+        invoker.ran(),
+        ["show", "show"],
+        "the load ran under the hold"
+    );
     drop(reader);
     drop(write);
     con.stop().await;
@@ -3382,6 +3424,7 @@ async fn a_late_openings_show_still_runs_before_a_queued_verb() {
     };
     let con = Running::start(cfg, invoker.clone());
     let (mut reader, mut write) = server.admit(1).await;
+    admission_show(&mut reader, &mut write).await;
     let next = async |reader: &mut super::frames::LineReader<_>, wait: Duration| loop {
         match tokio::time::timeout(wait, reader.next()).await {
             Err(_) => return None,
@@ -3412,11 +3455,7 @@ async fn a_late_openings_show_still_runs_before_a_queued_verb() {
     let person = Principal::Person { name: "ada".into() };
     write.write_all(&ask(2, "validate", person)).await.unwrap();
     tokio::time::sleep_until(opened + Duration::from_secs(7)).await;
-    assert_eq!(
-        invoker.ran(),
-        Vec::<String>::new(),
-        "the verb ran under the hold"
-    );
+    assert_eq!(invoker.ran(), ["show"], "the verb ran under the hold");
     write
         .write_all(&ask(1, "show", Principal::Server))
         .await
@@ -3430,6 +3469,69 @@ async fn a_late_openings_show_still_runs_before_a_queued_verb() {
         }
     }
     assert_eq!(answered, [1, 2], "the opening's show was served first");
+    drop(reader);
+    drop(write);
+    con.stop().await;
+}
+
+/// **A closed door's hello holds ordinary asks until its `show` is
+/// answered** (Spec 7.2), at the hello as at every opening: the relay is
+/// down, a person's `load` is queued, and the admission's `show` faults, so
+/// the listener will close the connection. Only the `show` runs; the `load`
+/// never starts in that window.
+#[tokio::test]
+async fn a_closed_door_hello_holds_ordinary_asks_until_its_show() {
+    let server = FakeServer::start().await;
+    let trace = Trace::closed();
+    let invoker = FakeInvoker::new(&["show", "load"], "idle");
+    invoker.fail("show");
+    let cfg = AdminConConfig {
+        link: server.link(Plane::Admin),
+        trace_socket: trace.socket.clone(),
+        weaver_admin: PathBuf::from(NO_WEAVER_ADMIN),
+        backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
+        verb_bound: admin_con::VERB_BOUND,
+        stop_grace: GRACE,
+        grants_bound: Duration::from_secs(super::client::HELLO_SECS),
+        boundary_bound: admin_con::BOUNDARY_BOUND,
+        drain_bound: admin_con::DRAIN_BOUND,
+    };
+    let con = Running::start(cfg, invoker.clone());
+    let (mut reader, mut write) = server.admit(15).await;
+    let ask = |id: u64, verb: &str, principal: Principal| {
+        let mut line = serde_json::to_vec(&ToClient::Verb {
+            id,
+            verb: verb.into(),
+            principal,
+        })
+        .unwrap();
+        line.push(b'\n');
+        line
+    };
+    let person = Principal::Person { name: "ada".into() };
+    write.write_all(&ask(2, "load", person)).await.unwrap();
+    write
+        .write_all(&ask(1, "show", Principal::Server))
+        .await
+        .unwrap();
+    let mut answered = Vec::new();
+    let until = tokio::time::Instant::now() + Duration::from_secs(2);
+    while let Ok(line) = tokio::time::timeout_at(until, reader.next()).await {
+        match line {
+            Line::Frame(line) => {
+                if let FromClient::Verb { id, .. } = serde_json::from_str(&line).unwrap() {
+                    answered.push(id);
+                }
+            }
+            other => panic!("the connection ended: {other:?}"),
+        }
+    }
+    assert_eq!(answered, [1], "only the faulting show was answered");
+    assert_eq!(
+        invoker.ran(),
+        ["show"],
+        "the load ran under the hello's hold"
+    );
     drop(reader);
     drop(write);
     con.stop().await;

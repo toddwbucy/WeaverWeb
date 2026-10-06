@@ -1753,7 +1753,9 @@ async fn relay<I: Invoker>(
     let mut held_logged = false;
     // **An opening on the live connection serves its own `show` first,
     // and holds every ordinary ask until that `show` is answered** (Spec
-    // 7.2): where the ceiling grants `show`, ordinary asks wait from the
+    // 7.2), **at the hello as at every opening**, since the hello is an
+    // admission and its `show` is owed whatever the door's state: where the
+    // ceiling grants `show`, ordinary asks wait from the hello or the
     // opening until the `show` the server asks has been answered with a
     // `state` answer and that answer sent. **The hold runs on no clock of
     // admin-con's**: the server always asks after a door frame where the
@@ -1762,7 +1764,7 @@ async fn relay<I: Invoker>(
     // connection, which ends the hold. That deadline is the only clock, and
     // it is the right one, since no deadline admin-con computes can be
     // proven to outlast it.
-    let mut opening_show = false;
+    let mut opening_show = owes_show(&ceiling);
     // The `show` taken under the hold, whose answer may release it.
     let mut hold_show: Option<u64> = None;
     loop {
@@ -2053,9 +2055,7 @@ async fn relay<I: Invoker>(
                     Ok(Some(queued)) => {
                         outbox.extend(queued);
                         replaying = true;
-                        if ceiling.contains("show") {
-                            opening_show = true;
-                        }
+                        opening_show = owes_show(&ceiling);
                     }
                     Ok(None) => {}
                     Err(end) => return end,
@@ -2078,6 +2078,13 @@ impl Drop for Verifying {
     fn drop(&mut self) {
         self.0.abort();
     }
+}
+
+/// **Whether an admission or an opening owes a `show`, and so holds
+/// ordinary asks until it is answered**: where the ceiling grants it. The
+/// one place the hold is decided, at the hello and at every opening.
+fn owes_show(ceiling: &BTreeSet<String>) -> bool {
+    ceiling.contains("show")
 }
 
 /// Whether an invocation answered with a `state` answer, the one that ends

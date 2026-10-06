@@ -48,12 +48,21 @@ pub use crate::link::relay::RECORD_BOUND;
 /// Verb asks waiting behind the one in flight.
 pub const VERB_QUEUE: usize = 16;
 /// **The floor under an opening's boundary** (Spec 7.2), covering the
-/// opening whole, its dials and its verification included: where no heartbeat comes this long
-/// after the opening's start, as under a writer that never idles, the
-/// boundary is taken at the position read so far, and a dial that reaches
-/// no header by then leaves the door closed, retried on the backoff. The
-/// heartbeat stays the measure; this is what keeps the link up without it.
+/// opening whole, its dials and its verification included, the last
+/// `VERIFY_RESERVE` of it kept for the verification: where no heartbeat
+/// comes this long, less that reserve, after the opening's start, as under
+/// a writer that never idles, the boundary is taken at the position read so
+/// far, and a dial that reaches no header by then leaves the door closed,
+/// retried on the backoff. The heartbeat stays the measure; this is what
+/// keeps the link up without it.
 pub const BOUNDARY_BOUND: Duration = Duration::from_secs(30);
+/// **The last part of an opening's bound, kept for verifying the server's
+/// position** past the boundary: the opening's read takes its fallback
+/// boundary this much before the bound, so the verification always has
+/// time. A quarter of the bound where the bound is shorter than four of
+/// these. The server's position is unknown when the read starts, so the
+/// reserve is always kept.
+pub const VERIFY_RESERVE: Duration = Duration::from_secs(5);
 /// **The floor under the drain before a verb** (Spec 7.2): where no
 /// heartbeat dated at or after the drain's start comes this long after it,
 /// the verb is invoked anyway, so a writer that never idles cannot hold an
@@ -419,7 +428,11 @@ async fn measure(
     cap: u64,
     bound: Duration,
 ) -> Result<Opened, String> {
-    let until = tokio::time::Instant::now() + bound;
+    // The opening's one deadline, and the read's: the read stops short of
+    // the deadline by the reserve, so verifying the server's position after
+    // it always has time.
+    let deadline = tokio::time::Instant::now() + bound;
+    let until = deadline - VERIFY_RESERVE.min(bound / 4);
     let mut marks = Vec::new();
     let dial = async |from: &Position, marks: &mut Vec<Item>| match tokio::time::timeout_at(
         until,
@@ -448,7 +461,7 @@ async fn measure(
                 ring,
                 marks,
                 resumed: None,
-                until,
+                until: deadline,
             });
         };
         match read {
@@ -476,7 +489,7 @@ async fn measure(
                     ring,
                     marks,
                     resumed: None,
-                    until,
+                    until: deadline,
                 });
             }
             Read::Truncated { size } => {
@@ -552,6 +565,17 @@ enum Resume {
     Ack(Position),
     /// The server holds none: a first connection, or a server restart.
     Backfill,
+}
+
+/// **A failed verification still moves the next opening forward**: the
+/// cursor, where the next opening's read starts, becomes the boundary this
+/// one measured, so each attempt reads onward toward the server's position
+/// instead of again from the same start, and once a boundary passes it no
+/// verification is needed. The cursor is then a measured position and not
+/// a relayed one, which is safe because the relay verifies it at the next
+/// dial, refusing it where the file changed below it.
+fn progress(shared: &mut Shared, opened: &Opened) {
+    shared.cursor = opened.boundary.clone();
 }
 
 /// **A position the server holds past the boundary is verified inside the
@@ -1608,6 +1632,7 @@ async fn take_opening(
     let resume = match verify(&opts.socket, &mut opened, &shared.resume).await {
         Ok(resume) => resume,
         Err(why) => {
+            progress(shared, &opened);
             door.failures = door.failures.saturating_add(1);
             door.next_try = tokio::time::Instant::now() + door.backoff.delay(door.failures);
             tracing::info!(
@@ -1675,6 +1700,7 @@ async fn relay<I: Invoker>(
                         "{}: the opening failed at the acknowledged position: {why}",
                         opts.agent
                     );
+                    progress(shared, &opened);
                     door.close(false);
                     outbox.push_back(Out::Frame(FromClient::Door {
                         open: false,

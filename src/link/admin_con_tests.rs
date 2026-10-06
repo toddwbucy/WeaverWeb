@@ -2828,3 +2828,123 @@ async fn no_opening_is_taken_while_an_openings_hold_stands() {
     drop(write);
     con.stop().await;
 }
+
+/// A trace of `bytes` of small records, acknowledged through its end by an
+/// admin-con that then stops: the server holds a position far ahead of
+/// where a restarted admin-con's first opening can read to.
+async fn acknowledged_long_trace(
+    lab: &Lab,
+    trace: &Trace,
+    bytes: usize,
+) -> (AgentId, PathBuf, tempfile::TempDir) {
+    let mut body = String::new();
+    let mut n = 0u64;
+    while body.len() < bytes {
+        n += 1;
+        body.push_str(&format!("{{\"wall_ms\":1,\"payload\":{{\"n\":{n}}}}}\n"));
+    }
+    trace.append_raw(body.as_bytes());
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(lab, &trace.socket, out.path(), None).await;
+    let mut con = Running::start(config(&path), Arc::new(NoVerbs));
+    con.wait("admitted", |s| s.admitted).await;
+    let until = tokio::time::Instant::now() + Duration::from_secs(30);
+    while lab.listener.acknowledged(&id).map(|p| p.offset) != Some(trace.len()) {
+        assert!(
+            tokio::time::Instant::now() < until,
+            "never acknowledged through the end"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    con.stop().await;
+    lab.wait_for(&id, "admin down", |a| !a.admin.connected)
+        .await;
+    (id, path, out)
+}
+
+/// **The opening's bound keeps a reserve for verifying the server's
+/// position**: a restarted admin-con's opening reads a relay too slow to
+/// reach the server's far position within the bound, takes its boundary
+/// short of it before the reserve, and verifies that position inside what
+/// remains, so the door opens on the first attempt and a verb runs.
+#[tokio::test]
+async fn the_openings_bound_keeps_a_reserve_for_the_verification() {
+    use std::sync::atomic::Ordering;
+    let Some(lab) = Lab::open().await else { return };
+    let trace = Trace::new();
+    let (id, path, _out) = acknowledged_long_trace(&lab, &trace, 2 * 1024 * 1024).await;
+    trace
+        .relay
+        .counts
+        .chunk_pause_ms
+        .store(300, Ordering::SeqCst);
+    let invoker = FakeInvoker::new(&["show"], "idle");
+    let mut cfg = config(&path);
+    cfg.boundary_bound = Duration::from_secs(2);
+    let started = tokio::time::Instant::now();
+    let mut con = Running::start(cfg, invoker.clone());
+    con.wait("admitted again", |s| s.admitted).await;
+    // A record written now reaches the window live only once an opening has
+    // caught up at the server's position.
+    trace.append(9_999_999, "turn");
+    wait_window(&lab, &id, "the record after the restart", |e| {
+        ns(e).contains(&9_999_999)
+    })
+    .await;
+    assert!(
+        started.elapsed() < Duration::from_secs(4),
+        "caught up after {:?}",
+        started.elapsed()
+    );
+    trace.relay.counts.chunk_pause_ms.store(0, Ordering::SeqCst);
+    verb(&lab.listener, &id, "show").await.unwrap();
+    con.stop().await;
+}
+
+/// **A failed verification moves the next opening forward**: every dial's
+/// header is held past the reserve, so each verification fails, but each
+/// opening reads on from the boundary the last one measured, until a
+/// boundary reaches the server's position and the door opens with nothing
+/// to verify; a verb runs.
+#[tokio::test]
+async fn failed_verifications_move_the_openings_toward_the_servers_position() {
+    use std::sync::atomic::Ordering;
+    let Some(lab) = Lab::open().await else { return };
+    let trace = Trace::new();
+    let (id, path, _out) = acknowledged_long_trace(&lab, &trace, 512 * 1024).await;
+    trace
+        .relay
+        .counts
+        .chunk_pause_ms
+        .store(100, Ordering::SeqCst);
+    trace
+        .relay
+        .counts
+        .header_delay_ms
+        .store(1_000, Ordering::SeqCst);
+    let invoker = FakeInvoker::new(&["show"], "idle");
+    let mut cfg = config(&path);
+    cfg.boundary_bound = Duration::from_secs(2);
+    let mut con = Running::start(cfg, invoker.clone());
+    con.wait("admitted again", |s| s.admitted).await;
+    // A record written now reaches the window live only once an opening has
+    // caught up at the server's position.
+    trace.append(9_999_999, "turn");
+    let until = tokio::time::Instant::now() + Duration::from_secs(20);
+    while !ns(&window(&lab, &id)).contains(&9_999_999) {
+        assert!(
+            tokio::time::Instant::now() < until,
+            "never caught up after {} dials",
+            trace.relay.counts.connections.load(Ordering::SeqCst)
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    trace
+        .relay
+        .counts
+        .header_delay_ms
+        .store(0, Ordering::SeqCst);
+    trace.relay.counts.chunk_pause_ms.store(0, Ordering::SeqCst);
+    verb(&lab.listener, &id, "show").await.unwrap();
+    con.stop().await;
+}

@@ -128,6 +128,21 @@ where they differ.** The section's original text stands below and these govern i
    since its missing span may diverge, and the surface shows `unknown`. Deriving later,
    if the child is ever completed, is owed with ruling 8's resolution. Spec 3.1 and
    section 9's parting row say so.
+22. A known divergence needs every child position before it; this refines ruling 21. A
+   divergence the walk finds is the first differing position only where no child
+   position before it was skipped, so the walk records `parting_known = true` with the
+   position only where every child position through the observed divergence is present.
+   Where a skipped span precedes it, the parting stays unknown, since the span may hold
+   an earlier difference, and the surface shows `unknown`. A known null (never parted)
+   still needs both paths whole.
+23. Parents in the same emission resolve in the same ingest. After every run of an
+   emission has landed and closed, the ingest makes a second pass over the emission's
+   branches: where a parent named by `parent_reference` is now held, the link is set and
+   the walk runs under rulings 9, 21 and 22, so the result never depends on the order of
+   runs within one emission. Resolution across emissions, a parent landing in a later
+   ingest, stays owed to a later act as ruling 8 says. Perturbation: a two-run emission
+   listing the child first; without the second pass the child lands unlinked, with it
+   the link is set and the parting known.
 
 **Three pull requests, in order**, each its own act: 10a lands the design, 10b lands the
 ingest the surface reads from, 10c lands the surface. 10b exists because nothing writes

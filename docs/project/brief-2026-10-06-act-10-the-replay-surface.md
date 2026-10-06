@@ -157,6 +157,17 @@ where they differ.** The section's original text stands below and these govern i
    `unknown` in 10b, so Spec 6's absence rule and the design README's vocabulary note
    gain the word in 10b, not 10c, amending ruling 9's "in 10c"; 10c inherits a word the
    repository already admits.
+27. A branch closes only after its resolution; this amends ruling 23 where they differ.
+   Ruling 23's second pass runs before the branches close, not after: every run of the
+   emission lands and its points are written while its row reads `writing`; then, for
+   each branch, the resolution (the link where the parent is held, the walk under
+   rulings 9, 21 and 22) and the transition to `whole` or `short` happen in one
+   transaction. An ingest that dies between the two leaves the branch `writing`,
+   visibly partial, and never `whole` with an unlinked parent or an unknown parting
+   that a replay would not repair. Non-branches close as before. Ruling 14's
+   equal-replay rule completes such a `writing` branch, resolution included.
+   Perturbation: kill the ingest after the points and before the resolution, and the
+   branch reads `writing`; without the ordering it reads `whole` unlinked.
 
 **Three pull requests, in order**, each its own act: 10a lands the design, 10b lands the
 ingest the surface reads from, 10c lands the surface. 10b exists because nothing writes

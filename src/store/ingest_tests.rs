@@ -830,3 +830,97 @@ async fn an_unreadable_emission_lands_nothing() {
     let empty = s.ingest(&b""[..]).await.value;
     assert!(empty["error"].as_str().unwrap().contains("empty"));
 }
+
+/// **A cycle closed through a stored, closed run is found** (Codex pass
+/// one on PR #23): A, a branch of a B the store does not hold, lands and
+/// closes `whole`; replayed equal beside a new B naming A, it closes a
+/// cycle through itself, and B is refused while A, which this ingest did
+/// not create, is reported refused in the answer and stays `whole`.
+#[tokio::test]
+async fn a_cycle_through_a_replayed_closed_run_is_refused() {
+    let Some(s) = store().await else { return };
+    let t = tag("cycle-closed");
+    let a = Wire::of(CERTIFIED)
+        .renamed(&format!("a#{t}"))
+        .branch_of(&format!("b#{t}"));
+    let b = Wire::of(CERTIFIED)
+        .renamed(&format!("b#{t}"))
+        .branch_of(&format!("a#{t}"));
+    assert_eq!(ingest(&s, &a).await["ok"], json!(true));
+    assert_eq!(landed(&s, &a.run()).await.unwrap().status, "whole");
+    let answer = ingest(&s, &a.clone().then(b.clone())).await;
+    assert_eq!(answer["ok"], json!(false), "{answer}");
+    assert_eq!(answer["runs"][0]["status"], json!("refused"));
+    assert_eq!(answer["runs"][0]["stored"], json!("whole"));
+    let row = landed(&s, &b.run()).await.unwrap();
+    assert_eq!(row.status, "refused", "B closes the cycle: {row:?}");
+    assert!(row.reason.unwrap().contains("reference cycle"));
+    assert_eq!(landed(&s, &a.run()).await.unwrap().status, "whole");
+}
+
+/// **A cycle closed through a stored row the emission does not name is
+/// found too**: A, stored `whole` and naming a B the store does not hold;
+/// an emission carrying only B, naming A. B is refused, and A is reported
+/// refused in the answer with its stored status, its row untouched.
+#[tokio::test]
+async fn a_cycle_through_a_stored_row_alone_is_refused() {
+    let Some(s) = store().await else { return };
+    let t = tag("cycle-stored");
+    let a = Wire::of(CERTIFIED)
+        .renamed(&format!("a#{t}"))
+        .branch_of(&format!("b#{t}"));
+    let b = Wire::of(CERTIFIED)
+        .renamed(&format!("b#{t}"))
+        .branch_of(&format!("a#{t}"));
+    assert_eq!(ingest(&s, &a).await["ok"], json!(true));
+    let answer = ingest(&s, &b).await;
+    assert_eq!(answer["ok"], json!(false), "{answer}");
+    assert_eq!(landed(&s, &b.run()).await.unwrap().status, "refused");
+    let reported = answer["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["run"] == json!(a.run()))
+        .unwrap_or_else(|| panic!("A is reported: {answer}"));
+    assert_eq!(reported["status"], json!("refused"));
+    assert_eq!(reported["stored"], json!("whole"));
+    assert_eq!(landed(&s, &a.run()).await.unwrap().status, "whole");
+}
+
+/// **An equal replay of a closed run answers with what the store holds**
+/// (Codex pass one on PR #23): a replayed `short` run carries its reason,
+/// and a replayed resolved branch its link and its parting.
+#[tokio::test]
+async fn an_equal_replay_answers_with_what_the_store_holds() {
+    let Some(s) = store().await else { return };
+    let t = tag("replay-answer");
+    let sampling = Wire::of(CERTIFIED).summary["generations"][0]["effective_sampling"].clone();
+    let mut short = Wire::of(COLUMNS_A).tagged(&t);
+    for g in short.generations_mut() {
+        g["effective_sampling"] = sampling.clone();
+    }
+    ingest(&s, &short).await;
+    let again = ingest(&s, &short).await;
+    assert_eq!(again["runs"][0]["status"], json!("short"), "{again}");
+    assert!(
+        again["runs"][0]["reason"]
+            .as_str()
+            .is_some_and(|r| r.contains("no resident count")),
+        "{again}"
+    );
+
+    let parent = Wire::of(SERVING).tagged(&t);
+    ingest(&s, &parent).await;
+    let mut child = Wire::of(HAND_MADE_BRANCH)
+        .tagged(&t)
+        .renamed(&format!("child#{t}"));
+    let held = child.points[100]["token"].as_i64().unwrap();
+    child.points[100]["token"] = json!(held + 1);
+    ingest(&s, &child).await;
+    let again = ingest(&s, &child).await;
+    let out = &again["runs"][0];
+    assert_eq!(out["replayed"], json!(true), "{again}");
+    assert_eq!(out["parent_linked"], json!(true), "{again}");
+    assert_eq!(out["parting_known"], json!(true), "{again}");
+    assert_eq!(out["parting_position"], json!(204), "{again}");
+}

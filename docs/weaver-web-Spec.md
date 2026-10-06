@@ -1648,7 +1648,9 @@ record itself, so section 5's gate is held upstream (`toddwbucy/WeaverAnalysis#1
   exist (its generations disagreeing, no effective sampling, no weights hash, a position
   it cannot form, one key named twice with two payloads) gets no row, and its refusal
   is the answer's. **The answer is one object per run**: its identity, its status and
-  reason, the positions and generations landed, and the members absent; the exit status
+  reason, the positions and generations landed, and the members absent, an equal replay
+  of a closed run answering with what the store holds, its reason, link and parting
+  included; the exit status
   is 0 where every run is `whole` or `short`, and 1 where any run or the emission itself
   is refused, the object still listing what landed.
 
@@ -1697,9 +1699,13 @@ after its resolution**: once every run of the emission has landed, each branch's
 its walk and its move to `whole` or `short` are one transaction, parents before
 children over the references, so a chain of any depth resolves in one ingest whatever
 the emission's order, and an ingest that dies first leaves the branch `writing`. **A
-reference cycle among the emission's branches is refused by name**: each run names at
-most one parent, so cycles are vertex-disjoint and one cycle is one strongly connected
-component, whose rows this ingest created move to `refused` in one transaction.
+reference cycle an open branch is on is refused by name**, whether it closes among the
+emission's branches or through a run the store already holds, a closed run the emission
+replayed or a row it does not name: each open branch's reference chain is followed
+through held rows until it ends or returns. Each run names at most one parent, so
+cycles are vertex-disjoint and one cycle is one strongly connected component, whose
+rows this ingest created move to `refused` in one transaction; every other run on it is
+reported refused in the answer with the status the store keeps.
 
 **The walk compares on the position coordinate and nothing else, from the child's first
 landed position upward.** A branch is a new run whose turn keys restart, its first
@@ -3649,7 +3655,7 @@ missing while it was relaying.
 | a run's ingest status is written first and read by every surface | perturbation: create the row `whole` rather than `writing`, and an ingest stopped by the test-only step hook after the points leaves a branch reading `whole` and unlinked; draw every row's status as `whole` on Record, and a `writing`, `short` or `refused` run reads as completed |
 | an absent entropy lands absent | perturbation in `src/store/ingest_tests.rs`: write an omitted entropy as zero, and the position reads a floor |
 | the parting position is derived only where it is provable, and recorded as unknown otherwise | perturbation in `src/store/ingest_tests.rs`, each guard: walk a parent that is held but not whole, drop the monotone guard, read a position only the parent holds as never parted, take a difference after a skipped span as known, read no difference in a short child as never parted, set the link for a parent not held, close a branch with the non-branches (the same-emission parent lands unlinked), resolve in the emission's order rather than parents first; and on Record, draw an unwalked parting as never parted, or an unheld parent as linked |
-| a reference cycle is refused in one transaction, and only on rows the ingest created | perturbation in `src/store/ingest_tests.rs`, the test-only step hook stopping inside the cycle's transaction: commit the refusals row by row, and one row reads `refused` beside one `writing`; persist the refusal on a replayed row, and a row this ingest did not create changes status |
+| a reference cycle is refused in one transaction, and only on rows the ingest created | perturbation in `src/store/ingest_tests.rs`, the test-only step hook stopping inside the cycle's transaction: commit the refusals row by row, and one row reads `refused` beside one `writing`; persist the refusal on a replayed row, and a row this ingest did not create changes status; seek cycles among the open branches alone, and a branch closing a cycle through a replayed closed run, or through a stored row the emission does not name, lands `whole` |
 | a chip filters only on a column section 2.7 indexes | review, over Record's filters: a chip on an unindexed column is a sequential scan the surface offers as though it were cheap |
 | the run list is paged and records nothing | perturbation: page on the ingest's clock alone, a tie larger than the page drops its remainder, and record a query row per page, section 2.6 fills with a list nobody reruns |
 | the seated prefix's length is landed and never derived | perturbation: derive it here from the two counts, every row reads the first draw's position as the prefix and every whole-run arm branches one input too late |

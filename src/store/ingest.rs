@@ -133,6 +133,12 @@ pub struct IngestAnswer {
 struct Stored {
     members: RunMembers,
     status: String,
+    /// What the store says of the run beyond its members, which an equal
+    /// replay of a closed run answers with.
+    reason: Option<String>,
+    linked: bool,
+    parting_known: bool,
+    parting_position: Option<i32>,
     generations: Vec<GenerationRow>,
     positions: HashMap<(String, i32), StoredPosition>,
 }
@@ -143,6 +149,14 @@ struct Stored {
 struct StoredPosition {
     row: PositionRow,
     unfilled: bool,
+}
+
+/// A run a cycle may run through: its parent reference, the status the
+/// store holds for it, and its entry in the answer where it has one.
+struct Named {
+    parent: Option<String>,
+    status: String,
+    outcome: Option<usize>,
 }
 
 /// One run this ingest holds open as `writing`, after the first pass.
@@ -208,6 +222,10 @@ impl Store {
         let store_error = |e: sqlx::Error| format!("the store failed: {e}");
         // **The first pass**: each run lands, branches left open.
         let mut open: Vec<Open> = Vec::new();
+        // Every run the emission names whose row the store holds after the
+        // first pass, with its parent reference: the open ones and the
+        // closed ones replayed equal, which a cycle may run through.
+        let mut named: HashMap<String, Named> = HashMap::new();
         for (run, planned) in emission.plan() {
             let plan = match planned {
                 Ok(plan) => plan,
@@ -231,10 +249,24 @@ impl Store {
                         continue;
                     }
                     if stored.status != "writing" {
-                        // An equal replay of a closed run is a no-op that
-                        // counts as written.
-                        outcome.status = stored.status;
+                        // **An equal replay of a closed run is a no-op that
+                        // counts as written**, and answers with what the
+                        // store holds for it, the reason, the link and the
+                        // parting included.
+                        outcome.status = stored.status.clone();
+                        outcome.reason = stored.reason.clone();
+                        outcome.parent_linked = stored.linked;
+                        outcome.parting_known = stored.parting_known;
+                        outcome.parting_position = stored.parting_position;
                         outcomes.push(outcome);
+                        named.insert(
+                            run.clone(),
+                            Named {
+                                parent: plan.members.parent_reference.clone(),
+                                status: stored.status,
+                                outcome: Some(outcomes.len() - 1),
+                            },
+                        );
                         continue;
                     }
                     // A `writing` row whose every key is equal is completed.
@@ -271,6 +303,14 @@ impl Store {
                 outcomes.push(outcome);
             } else {
                 outcomes.push(outcome);
+                named.insert(
+                    run.clone(),
+                    Named {
+                        parent: plan.members.parent_reference.clone(),
+                        status: "writing".into(),
+                        outcome: Some(outcomes.len() - 1),
+                    },
+                );
                 open.push(Open {
                     run,
                     plan,
@@ -284,30 +324,62 @@ impl Store {
             return Err("stopped by the test's hook after the points".into());
         }
 
-        // **The second pass**: cycles among the open branches. Each run names
-        // at most one parent, so the graph is functional and its cycles are
-        // vertex-disjoint, one cycle being one strongly connected component
-        // (ruling 30).
-        let parent_of: HashMap<&str, &str> = open
-            .iter()
-            .filter_map(|o| {
-                let parent = o.plan.members.parent_reference.as_deref()?;
-                open.iter()
-                    .any(|p| p.run == parent)
-                    .then_some((o.run.as_str(), parent))
-            })
-            .collect();
-        let cycles = cycles(
-            &open.iter().map(|o| o.run.as_str()).collect::<Vec<_>>(),
-            &parent_of,
-        );
-        let in_cycle: HashSet<String> = cycles.iter().flatten().cloned().collect();
+        // **The second pass**: cycles. Each run names at most one parent, so
+        // the graph is functional and its cycles are vertex-disjoint, one
+        // cycle being one strongly connected component (ruling 30). **A cycle
+        // this ingest would close runs through an open branch**, and may
+        // close through any run the store holds: a closed run the emission
+        // replayed, or a row the emission does not name at all. So each open
+        // branch's reference chain is followed through held rows until it
+        // ends, joins a chain already followed, or returns.
+        let mut in_cycle: HashSet<String> = HashSet::new();
+        let mut explored: HashSet<String> = HashSet::new();
+        let mut cycles: Vec<Vec<String>> = Vec::new();
+        for start in &open {
+            let mut path: Vec<String> = Vec::new();
+            let mut at = start.run.clone();
+            loop {
+                if in_cycle.contains(&at) || explored.contains(&at) {
+                    break;
+                }
+                if let Some(from) = path.iter().position(|n| *n == at) {
+                    let cycle = path[from..].to_vec();
+                    // A cycle no open branch is on was in the store before
+                    // this ingest, and is not this ingest's to refuse.
+                    if cycle.iter().any(|n| open.iter().any(|o| o.run == *n)) {
+                        in_cycle.extend(cycle.iter().cloned());
+                        cycles.push(cycle);
+                    }
+                    break;
+                }
+                let parent = match named.get(&at) {
+                    Some(n) => n.parent.clone(),
+                    None => match self.reference_of(&at).await.map_err(store_error)? {
+                        Some((parent, status)) => {
+                            named.insert(
+                                at.clone(),
+                                Named {
+                                    parent: parent.clone(),
+                                    status,
+                                    outcome: None,
+                                },
+                            );
+                            parent
+                        }
+                        // Not held: the chain ends.
+                        None => break,
+                    },
+                };
+                path.push(at.clone());
+                match parent {
+                    Some(parent) => at = parent,
+                    None => break,
+                }
+            }
+            explored.extend(path.into_iter().filter(|n| !in_cycle.contains(n)));
+        }
         for cycle in &cycles {
-            let named = format!(
-                "a reference cycle among the emission's branches: {} -> {}",
-                cycle.join(" -> "),
-                cycle[0]
-            );
+            let named_cycle = format!("a reference cycle: {} -> {}", cycle.join(" -> "), cycle[0]);
             let created: Vec<&Open> = open
                 .iter()
                 .filter(|o| cycle.contains(&o.run) && o.created)
@@ -321,7 +393,7 @@ impl Store {
                      WHERE run_id = $1 AND ingest_status = 'writing'",
                 )
                 .bind(&row.run)
-                .bind(&named)
+                .bind(&named_cycle)
                 .execute(&mut *tx)
                 .await
                 .map_err(store_error)?;
@@ -332,15 +404,38 @@ impl Store {
                 }
             }
             tx.commit().await.map_err(store_error)?;
-            for o in open.iter().filter(|o| cycle.contains(&o.run)) {
-                let outcome = &mut outcomes[o.outcome];
+            // Every other run on the cycle is reported refused in the answer
+            // with the status the store keeps for it.
+            for run in cycle {
+                let created = created.iter().any(|o| o.run == *run);
+                let held = &named[run];
+                let index = match held.outcome {
+                    Some(index) => index,
+                    None => {
+                        let mut outcome = RunOutcome::refused(run, String::new());
+                        outcome.replayed = true;
+                        outcome.parent_reference = held.parent.clone();
+                        outcomes.push(outcome);
+                        outcomes.len() - 1
+                    }
+                };
+                let outcome = &mut outcomes[index];
                 outcome.status = "refused".into();
-                outcome.reason = Some(named.clone());
-                if !o.created {
-                    outcome.stored = Some("writing".into());
+                outcome.reason = Some(named_cycle.clone());
+                if !created {
+                    outcome.stored = Some(held.status.clone());
                 }
             }
         }
+        let parent_of: HashMap<&str, &str> = open
+            .iter()
+            .filter_map(|o| {
+                let parent = o.plan.members.parent_reference.as_deref()?;
+                open.iter()
+                    .any(|p| p.run == parent)
+                    .then_some((o.run.as_str(), parent))
+            })
+            .collect();
 
         // **The third pass**: every other branch, parents first, resolved
         // and closed in one transaction each (rulings 23, 27 and 28).
@@ -373,11 +468,27 @@ impl Store {
         Ok(())
     }
 
+    /// A held run's parent reference and status, or `None` where the store
+    /// holds no row for it.
+    async fn reference_of(
+        &self,
+        run: &str,
+    ) -> Result<Option<(Option<String>, String)>, sqlx::Error> {
+        Ok(
+            sqlx::query("SELECT parent_reference, ingest_status FROM run WHERE run_id = $1")
+                .bind(run)
+                .fetch_optional(&self.pool)
+                .await?
+                .map(|r| (r.get("parent_reference"), r.get("ingest_status"))),
+        )
+    }
+
     /// What the store holds for `run`, or `None` where it holds no row.
     async fn stored(&self, run: &str) -> Result<Option<Stored>, sqlx::Error> {
         let Some(row) = sqlx::query(
             "SELECT record_identity, seed::text AS seed, sampler, device, engine, field_depth, \
-             record_session, record_digest, prefix_length, parent_reference, ingest_status \
+             record_session, record_digest, prefix_length, parent_reference, ingest_status, \
+             ingest_reason, parent_run_id IS NOT NULL AS linked, parting_known, parting_position \
              FROM run WHERE run_id = $1",
         )
         .bind(run)
@@ -399,6 +510,10 @@ impl Store {
             parent_reference: row.get("parent_reference"),
         };
         let status: String = row.get("ingest_status");
+        let reason: Option<String> = row.get("ingest_reason");
+        let linked: bool = row.get("linked");
+        let parting_known: bool = row.get("parting_known");
+        let parting_position: Option<i32> = row.get("parting_position");
         let generations = sqlx::query(
             "SELECT seq, turn, perplexity, resident, output_count, generation_seed::text AS generation_seed \
              FROM generation WHERE run_id = $1 ORDER BY seq",
@@ -445,6 +560,10 @@ impl Store {
         Ok(Some(Stored {
             members,
             status,
+            reason,
+            linked,
+            parting_known,
+            parting_position,
             generations,
             positions,
         }))
@@ -730,35 +849,6 @@ fn member_difference(a: &RunMembers, b: &RunMembers) -> String {
     ];
     let differ: Vec<&str> = names.iter().filter(|(_, d)| *d).map(|(n, _)| *n).collect();
     format!("the run's {} differs", differ.join(", "))
-}
-
-/// The cycles of a functional graph over `nodes`, each in walk order.
-fn cycles(nodes: &[&str], parent_of: &HashMap<&str, &str>) -> Vec<Vec<String>> {
-    let mut state: HashMap<&str, u8> = HashMap::new(); // 1 on the path, 2 done
-    let mut found = Vec::new();
-    for &start in nodes {
-        let mut path: Vec<&str> = Vec::new();
-        let mut at = Some(start);
-        while let Some(node) = at {
-            match state.get(node) {
-                Some(2) => break,
-                Some(1) => {
-                    let from = path.iter().position(|n| *n == node).expect("on the path");
-                    found.push(path[from..].iter().map(|n| n.to_string()).collect());
-                    break;
-                }
-                _ => {
-                    state.insert(node, 1);
-                    path.push(node);
-                    at = parent_of.get(node).copied();
-                }
-            }
-        }
-        for node in path {
-            state.insert(node, 2);
-        }
-    }
-    found
 }
 
 /// The parting position as the walk found it.

@@ -44,11 +44,18 @@ pub enum Step {
     AfterCycleRow,
 }
 
-/// The ingest's options: a test's stop, and nothing in a release build.
+/// The ingest's options: a test's stop and a test's race, and nothing in a
+/// release build.
 #[derive(Debug, Default, Clone)]
 pub struct Options {
     #[cfg(test)]
     pub stop_at: Option<Step>,
+    /// **A second ingest landed between this one's read of a run and its
+    /// insert of that run's row**, as a concurrent ingest of the same
+    /// emission would: the race of two ingests of one unseen run, staged
+    /// where no clock could stage it.
+    #[cfg(test)]
+    pub race: Option<Emission>,
 }
 
 /// How one run came out, which the answer reports.
@@ -234,72 +241,121 @@ impl Store {
                     continue;
                 }
             };
-            let stored = self.stored(&run).await.map_err(store_error)?;
-            let created = stored.is_none();
+            let mut stored = self.stored(&run).await.map_err(store_error)?;
+            let mut created = false;
+            if stored.is_none() {
+                #[cfg(test)]
+                if let Some(race) = &options.race {
+                    Box::pin(self.ingest_with(Ok(race.clone()), &Options::default())).await;
+                }
+                match self.create(&run, &plan).await {
+                    Ok(()) => created = true,
+                    // **Another ingest created the row since it was read**:
+                    // this one is a replay of it, compared and completed
+                    // like any other, and never a refusal for having lost
+                    // a race it did not know it ran.
+                    Err(e) if unique_violation(&e) => {
+                        stored = self.stored(&run).await.map_err(store_error)?;
+                    }
+                    Err(e) => return Err(store_error(e)),
+                }
+            }
             let mut outcome = RunOutcome::landed(&run, &plan, !created);
-            match stored {
-                Some(stored) => {
-                    if let Err(why) = compare(&plan, &stored) {
-                        // **A conflicting replay changes nothing stored**
-                        // (ruling 17): the refusal is the answer's alone.
-                        outcome.status = "refused".into();
-                        outcome.reason = Some(why);
-                        outcome.stored = Some(stored.status);
-                        outcomes.push(outcome);
-                        continue;
+            if !created {
+                let Some(stored) = stored else {
+                    outcome.status = "refused".into();
+                    outcome.reason = Some(
+                        "the run's row was created and removed while this ingest read it".into(),
+                    );
+                    outcomes.push(outcome);
+                    continue;
+                };
+                if let Err(why) = compare(&plan, &stored) {
+                    // **A conflicting replay changes nothing stored**
+                    // (ruling 17): the refusal is the answer's alone.
+                    outcome.status = "refused".into();
+                    outcome.reason = Some(why);
+                    outcome.stored = Some(stored.status);
+                    outcomes.push(outcome);
+                    continue;
+                }
+                if stored.status != "writing" {
+                    // **An equal replay of a closed run is a no-op that
+                    // counts as written**, and answers with what the
+                    // store holds for it, the reason, the link and the
+                    // parting included.
+                    answer_stored(&mut outcome, &stored);
+                    outcomes.push(outcome);
+                    named.insert(
+                        run.clone(),
+                        Named {
+                            parent: plan.members.parent_reference.clone(),
+                            status: stored.status,
+                            outcome: Some(outcomes.len() - 1),
+                        },
+                    );
+                    continue;
+                }
+            }
+            // **The generations and points, filled under the row's lock**:
+            // one transaction per generation for a row this ingest created,
+            // one for a replayed `writing` row, each comparing what another
+            // ingest may have written meanwhile and inserting only what is
+            // missing.
+            let scopes: Vec<Option<i32>> = if created {
+                plan.generations.iter().map(|g| Some(g.seq)).collect()
+            } else {
+                vec![None]
+            };
+            let mut settled = None;
+            for scope in scopes {
+                match self.fill(&run, &plan, scope).await.map_err(store_error)? {
+                    Fill::Done => {}
+                    Fill::Closed => {
+                        settled = Some(None);
+                        break;
                     }
-                    if stored.status != "writing" {
-                        // **An equal replay of a closed run is a no-op that
-                        // counts as written**, and answers with what the
-                        // store holds for it, the reason, the link and the
-                        // parting included.
-                        outcome.status = stored.status.clone();
-                        outcome.reason = stored.reason.clone();
-                        outcome.parent_linked = stored.linked;
-                        outcome.parting_known = stored.parting_known;
-                        outcome.parting_position = stored.parting_position;
-                        outcomes.push(outcome);
-                        named.insert(
-                            run.clone(),
-                            Named {
-                                parent: plan.members.parent_reference.clone(),
-                                status: stored.status,
-                                outcome: Some(outcomes.len() - 1),
-                            },
-                        );
-                        continue;
+                    Fill::Differs(why) => {
+                        settled = Some(Some(why));
+                        break;
                     }
-                    // A `writing` row whose every key is equal is completed.
-                    self.complete(&run, &plan, &stored)
+                }
+            }
+            match settled {
+                None => {}
+                // Another ingest closed the row meanwhile: answer with what
+                // the store holds.
+                Some(None) => {
+                    self.answer_from_store(&run, &mut outcome)
                         .await
                         .map_err(store_error)?;
+                    outcomes.push(outcome);
+                    continue;
                 }
-                None => {
-                    if let Err(e) = self.create(&run, &plan).await {
-                        // Another ingest created the row since it was read.
-                        outcome.status = "refused".into();
-                        outcome.reason = Some(format!(
-                            "the run's row could not be created ({e}); another ingest may hold it, and a replay compares against it"
-                        ));
-                        outcomes.push(outcome);
-                        continue;
-                    }
-                    for generation in &plan.generations {
-                        self.write_generation(&run, &plan, generation.seq)
-                            .await
-                            .map_err(store_error)?;
-                    }
+                Some(Some(why)) => {
+                    outcome.status = "refused".into();
+                    outcome.reason = Some(why);
+                    outcome.stored = Some("writing".into());
+                    outcomes.push(outcome);
+                    continue;
                 }
             }
             if plan.members.parent_reference.is_none() {
                 // **A run that is not a branch closes as soon as its points
                 // are written** (ruling 27).
                 let (status, reason) = plan.closing();
-                close(&self.pool, &run, status, reason.as_deref())
+                if close(&self.pool, &run, status, reason.as_deref())
                     .await
-                    .map_err(store_error)?;
-                outcome.status = status.into();
-                outcome.reason = reason;
+                    .map_err(store_error)?
+                {
+                    outcome.status = status.into();
+                    outcome.reason = reason;
+                } else {
+                    // Another ingest of the run closed it first.
+                    self.answer_from_store(&run, &mut outcome)
+                        .await
+                        .map_err(store_error)?;
+                }
                 outcomes.push(outcome);
             } else {
                 outcomes.push(outcome);
@@ -457,7 +513,13 @@ impl Store {
         let mut order: Vec<&Open> = open.iter().filter(|o| !in_cycle.contains(&o.run)).collect();
         order.sort_by_key(|o| depth(&o.run));
         for o in order {
-            let resolved = self.resolve(o).await.map_err(store_error)?;
+            let Some(resolved) = self.resolve(o).await.map_err(store_error)? else {
+                // Another ingest of the run resolved and closed it first.
+                self.answer_from_store(&o.run, &mut outcomes[o.outcome])
+                    .await
+                    .map_err(store_error)?;
+                continue;
+            };
             let outcome = &mut outcomes[o.outcome];
             outcome.status = resolved.status.into();
             outcome.reason = resolved.reason;
@@ -595,57 +657,101 @@ impl Store {
         Ok(())
     }
 
-    /// **One generation and its points, in one transaction**: bulk per
-    /// generation and never per point (Spec 3.1). The run's row is locked
-    /// and must still read `writing`, so nothing lands on a closed run.
-    async fn write_generation(
+    /// **Generations and points filled under the row's lock**, in one
+    /// transaction: one generation where `scope` names it, every one the
+    /// plan holds otherwise. The row must still read `writing`, so nothing
+    /// lands on a closed run. What is already stored, which another ingest
+    /// of the run may have written since this one read it, is compared and
+    /// never rewritten; only what is missing is inserted, bulk per
+    /// generation (Spec 3.1).
+    async fn fill(
         &self,
         run: &str,
         plan: &RunPlan,
-        seq: i32,
-    ) -> Result<(), sqlx::Error> {
+        scope: Option<i32>,
+    ) -> Result<Fill, sqlx::Error> {
         let mut tx = self.pool.begin().await?;
-        lock_open(&mut tx, run).await?;
-        let generation = &plan.generations[seq as usize];
-        insert_generation(&mut tx, run, generation).await?;
+        if !lock(&mut tx, run).await? {
+            return Ok(Fill::Closed);
+        }
+        let generations: Vec<&GenerationRow> = plan
+            .generations
+            .iter()
+            .filter(|g| scope.is_none_or(|seq| g.seq == seq))
+            .collect();
+        let held: HashMap<i32, GenerationRow> = sqlx::query(
+            "SELECT seq, turn, perplexity, resident, output_count, generation_seed::text AS generation_seed \
+             FROM generation WHERE run_id = $1",
+        )
+        .bind(run)
+        .fetch_all(&mut *tx)
+        .await?
+        .into_iter()
+        .map(|r| {
+            let g = GenerationRow {
+                seq: r.get("seq"),
+                turn: r.get("turn"),
+                perplexity: r.get("perplexity"),
+                resident: r.get("resident"),
+                output_count: r.get("output_count"),
+                generation_seed: r.get("generation_seed"),
+            };
+            (g.seq, g)
+        })
+        .collect();
+        for g in &generations {
+            match held.get(&g.seq) {
+                Some(stored) if stored == *g => {}
+                Some(_) => {
+                    return Ok(Fill::Differs(format!(
+                        "generation {} was written meanwhile with a different summary",
+                        g.seq
+                    )));
+                }
+                None => insert_generation(&mut tx, run, g).await?,
+            }
+        }
         let points: Vec<&PositionRow> = plan
             .points
             .iter()
-            .filter(|(s, _)| *s == seq)
+            .filter(|(seq, _)| scope.is_none_or(|s| *seq == s))
             .map(|(_, p)| p)
             .collect();
-        insert_points(&mut tx, run, &points).await?;
-        tx.commit().await
+        let stored = stored_positions(&mut tx, run, &points).await?;
+        let mut missing = Vec::new();
+        for p in points {
+            match stored.get(&(p.turn.clone(), p.position)) {
+                Some(held) if held.row == *p && held.unfilled => {}
+                Some(_) => {
+                    return Ok(Fill::Differs(format!(
+                        "turn {} position {} was written meanwhile with a different payload",
+                        p.turn, p.position
+                    )));
+                }
+                None => missing.push(p),
+            }
+        }
+        insert_points(&mut tx, run, &missing).await?;
+        tx.commit().await?;
+        Ok(Fill::Done)
     }
 
-    /// **A replayed `writing` row, completed**: the generations and points
-    /// it lacks, in one transaction, every stored key having compared equal.
-    async fn complete(
+    /// The outcome of a run another ingest closed: what the store holds.
+    async fn answer_from_store(
         &self,
         run: &str,
-        plan: &RunPlan,
-        stored: &Stored,
+        outcome: &mut RunOutcome,
     ) -> Result<(), sqlx::Error> {
-        let mut tx = self.pool.begin().await?;
-        lock_open(&mut tx, run).await?;
-        let held: HashSet<i32> = stored.generations.iter().map(|g| g.seq).collect();
-        for generation in plan.generations.iter().filter(|g| !held.contains(&g.seq)) {
-            insert_generation(&mut tx, run, generation).await?;
+        if let Some(stored) = self.stored(run).await? {
+            answer_stored(outcome, &stored);
         }
-        let missing: Vec<&PositionRow> = plan
-            .points
-            .iter()
-            .map(|(_, p)| p)
-            .filter(|p| !stored.positions.contains_key(&(p.turn.clone(), p.position)))
-            .collect();
-        insert_points(&mut tx, run, &missing).await?;
-        tx.commit().await
+        Ok(())
     }
 
     /// **One branch, resolved and closed in one transaction**: the link
     /// where the parent is held whatever its status (ruling 18), the walk
     /// only where the parent is also whole, and the close.
-    async fn resolve(&self, open: &Open) -> Result<Resolved, sqlx::Error> {
+    async fn resolve(&self, open: &Open) -> Result<Option<Resolved>, sqlx::Error> {
         let parent = open
             .plan
             .members
@@ -653,7 +759,9 @@ impl Store {
             .as_deref()
             .expect("only branches resolve");
         let mut tx = self.pool.begin().await?;
-        lock_open(&mut tx, &open.run).await?;
+        if !lock(&mut tx, &open.run).await? {
+            return Ok(None);
+        }
         let parent_status: Option<String> =
             sqlx::query_scalar("SELECT ingest_status FROM run WHERE run_id = $1 FOR SHARE")
                 .bind(parent)
@@ -682,12 +790,12 @@ impl Store {
         .execute(&mut *tx)
         .await?;
         tx.commit().await?;
-        Ok(Resolved {
+        Ok(Some(Resolved {
             status,
             reason,
             linked,
             parting,
-        })
+        }))
     }
 }
 
@@ -698,20 +806,98 @@ struct Resolved {
     parting: Parting,
 }
 
-/// Lock the run's row inside `tx`, refusing where it no longer reads
-/// `writing`.
-async fn lock_open(tx: &mut Transaction<'_, Postgres>, run: &str) -> Result<(), sqlx::Error> {
+/// Lock the run's row inside `tx`: whether it still reads `writing`. Two
+/// ingests of one run serialize here, the second reading what the first
+/// wrote once the first commits.
+async fn lock(tx: &mut Transaction<'_, Postgres>, run: &str) -> Result<bool, sqlx::Error> {
     let status: Option<String> =
         sqlx::query_scalar("SELECT ingest_status FROM run WHERE run_id = $1 FOR UPDATE")
             .bind(run)
             .fetch_optional(&mut **tx)
             .await?;
-    match status.as_deref() {
-        Some("writing") => Ok(()),
-        other => Err(sqlx::Error::Protocol(format!(
-            "run {run} is no longer open: it reads {other:?}"
-        ))),
-    }
+    Ok(status.as_deref() == Some("writing"))
+}
+
+/// How a fill ended.
+enum Fill {
+    Done,
+    /// The row no longer reads `writing`: another ingest closed it.
+    Closed,
+    /// Another ingest wrote a key with a different payload meanwhile.
+    Differs(String),
+}
+
+/// Whether a store error is a unique-key conflict.
+fn unique_violation(e: &sqlx::Error) -> bool {
+    matches!(e, sqlx::Error::Database(d) if d.code().as_deref() == Some("23505"))
+}
+
+/// An outcome answering with what the store holds for the run.
+fn answer_stored(outcome: &mut RunOutcome, stored: &Stored) {
+    outcome.status = stored.status.clone();
+    outcome.reason = stored.reason.clone();
+    outcome.parent_linked = stored.linked;
+    outcome.parting_known = stored.parting_known;
+    outcome.parting_position = stored.parting_position;
+}
+
+/// The stored positions among `points`' keys: one generation's turn and
+/// span where they share one, the run's every position otherwise.
+async fn stored_positions(
+    tx: &mut Transaction<'_, Postgres>,
+    run: &str,
+    points: &[&PositionRow],
+) -> Result<HashMap<(String, i32), StoredPosition>, sqlx::Error> {
+    let one_turn = points
+        .first()
+        .map(|p| p.turn.as_str())
+        .filter(|t| points.iter().all(|p| p.turn == *t));
+    let rows = match one_turn {
+        Some(turn) => {
+            let low = points.iter().map(|p| p.position).min().unwrap_or(0);
+            let high = points.iter().map(|p| p.position).max().unwrap_or(0);
+            sqlx::query(
+                "SELECT turn, position, token_id, entropy, surprisal, \
+                 (token_text IS NULL AND alternatives IS NULL AND realized IS NULL AND residual IS NULL) AS unfilled \
+                 FROM position WHERE run_id = $1 AND turn = $2 AND position BETWEEN $3 AND $4",
+            )
+            .bind(run)
+            .bind(turn)
+            .bind(low)
+            .bind(high)
+            .fetch_all(&mut **tx)
+            .await?
+        }
+        None => {
+            sqlx::query(
+                "SELECT turn, position, token_id, entropy, surprisal, \
+                 (token_text IS NULL AND alternatives IS NULL AND realized IS NULL AND residual IS NULL) AS unfilled \
+                 FROM position WHERE run_id = $1",
+            )
+            .bind(run)
+            .fetch_all(&mut **tx)
+            .await?
+        }
+    };
+    Ok(rows
+        .into_iter()
+        .map(|r| {
+            let row = PositionRow {
+                turn: r.get("turn"),
+                position: r.get("position"),
+                token_id: r.get("token_id"),
+                entropy: r.get("entropy"),
+                surprisal: r.get("surprisal"),
+            };
+            (
+                (row.turn.clone(), row.position),
+                StoredPosition {
+                    row,
+                    unfilled: r.get("unfilled"),
+                },
+            )
+        })
+        .collect())
 }
 
 async fn insert_generation(
@@ -770,8 +956,8 @@ async fn close(
     run: &str,
     status: &str,
     reason: Option<&str>,
-) -> Result<(), sqlx::Error> {
-    sqlx::query(
+) -> Result<bool, sqlx::Error> {
+    let closed = sqlx::query(
         "UPDATE run SET ingest_status = $2, ingest_reason = $3 \
          WHERE run_id = $1 AND ingest_status = 'writing'",
     )
@@ -780,7 +966,7 @@ async fn close(
     .bind(reason)
     .execute(pool)
     .await?;
-    Ok(())
+    Ok(closed.rows_affected() == 1)
 }
 
 /// **A replay compared against what is stored**, key by key, before

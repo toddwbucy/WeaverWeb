@@ -1629,7 +1629,21 @@ the `signals` emission carries neither, the emitter refusing an uncertified diag
 record itself, so section 5's gate is held upstream (`toddwbucy/WeaverAnalysis#11`).
 
 - Writes are **bulk per generation**, never per token: one transaction lands a
-  generation's summary and its points.
+  generation's summary and its points, under a lock on the run's row that must still
+  read `writing`. **What is already stored is compared and only what is missing is
+  inserted**, so two ingests of one run serialize on that lock and the second reads
+  what the first wrote; an ingest that meets the row another created between its read
+  and its insert is a replay of it, compared and completed like any other, and never a
+  refusal for having lost the race.
+- **The reader is bounded, and these are its bounds.** The emission is held in memory
+  whole, since a run is planned whole before any row is written. A line runs at most
+  16 MiB; a summary announces at most four million positions (`POSITIONS_BOUND`, an
+  elected figure with headroom over thirty generations each filling a 131,072-token
+  context, not a measurement, since the deposits that might hold a larger trace are not
+  in this repository); the points may not run past the announced count, refused at the
+  first one over; and the emission carries at most 1 GiB (`EMISSION_BOUND`). The output
+  counts are summed checked, an overflow refused by name. Past any of these the
+  emission is refused whole and nothing lands.
 - Writes are **idempotent on the run, turn and position key, and a key replayed with a
   different payload is a refusal**, so a replayed or partially failed ingest cannot
   produce two truths about one position. A replay is compared with what is stored, key
@@ -3654,6 +3668,8 @@ missing while it was relaying.
 | a generation's summary lands, and its points only where they can be addressed | perturbation in `src/store/ingest_tests.rs`: close a run whose generations carry no resident count `whole`, and it reads as completed; give a turnless point a turn, and it lands under a key nobody recorded |
 | a run's ingest status is written first and read by every surface | perturbation: create the row `whole` rather than `writing`, and an ingest stopped by the test-only step hook after the points leaves a branch reading `whole` and unlinked; draw every row's status as `whole` on Record, and a `writing`, `short` or `refused` run reads as completed |
 | an absent entropy lands absent | perturbation in `src/store/ingest_tests.rs`: write an omitted entropy as zero, and the position reads a floor |
+| the ingest's reader is bounded | perturbation in `src/store/emission.rs`: read on past the announced count, and an endless stream is read to the byte bound rather than stopped at its first extra point; drop the positions bound, and a summary announcing past it is read; drop the byte bound, and a stream of blank lines is read whole; sum the output counts unchecked, and two counts past `u64` wrap to a sum that passes |
+| an ingest that loses the race to create a run replays it | perturbation in `src/store/ingest_tests.rs`, a test-only race option landing a second ingest between the read and the insert: refuse on the unique conflict, and the run reads refused in the answer of an ingest whose emission the store already holds equal |
 | the parting position is derived only where it is provable, and recorded as unknown otherwise | perturbation in `src/store/ingest_tests.rs`, each guard: walk a parent that is held but not whole, drop the monotone guard, read a position only the parent holds as never parted, take a difference after a skipped span as known, read no difference in a short child as never parted, set the link for a parent not held, close a branch with the non-branches (the same-emission parent lands unlinked), resolve in the emission's order rather than parents first; and on Record, draw an unwalked parting as never parted, or an unheld parent as linked |
 | a reference cycle is refused in one transaction, and only on rows the ingest created | perturbation in `src/store/ingest_tests.rs`, the test-only step hook stopping inside the cycle's transaction: commit the refusals row by row, and one row reads `refused` beside one `writing`; persist the refusal on a replayed row, and a row this ingest did not create changes status; seek cycles among the open branches alone, and a branch closing a cycle through a replayed closed run, or through a stored row the emission does not name, lands `whole` |
 | a chip filters only on a column section 2.7 indexes | review, over Record's filters: a chip on an unindexed column is a sequential scan the surface offers as though it were cheap |

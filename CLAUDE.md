@@ -206,8 +206,12 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
   the parent is held, the walk where it is also whole), parents first. A replay is compared key
   by key: equal is a no-op, different is refused in the answer and changes nothing stored. It
   answers one JSON object listing every run, exit 1 where any run or the emission is refused.
+  The reader's bounds (Spec 3.1): a line at most 16 MiB, a summary announcing at most
+  `POSITIONS_BOUND` (four million) positions, no point past the announced count, and at most
+  `EMISSION_BOUND` (1 GiB) in all, the emission being held in memory whole. Two ingests of one
+  run serialize on the run row's lock, the loser of the creation race replaying the winner's row.
   `src/store/emission.rs` reads and plans, `src/store/ingest.rs` writes; a test-only step hook
-  (`ingest::Step`) stops it at the two seams the kill perturbations need. Its tests read the
+  (`ingest::Step`) stops it at the two seams the kill perturbations need, and a test-only race option lands a second ingest between the read and the insert. Its tests read the
   emissions vendored under `tests/fixtures/signals/`, made once by WeaverAnalysis `12a7243`'s
   `signals` command on its own fixtures (the README there names each command), beside one
   hand-made branch emission labelled as such; no test runs the WeaverAnalysis binary. The

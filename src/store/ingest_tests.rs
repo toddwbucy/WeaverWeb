@@ -151,6 +151,7 @@ async fn ingest_stopping(s: &Store, w: &Wire, step: Step) -> Value {
         Emission::read(w.text().as_bytes()),
         &Options {
             stop_at: Some(step),
+            ..Options::default()
         },
     )
     .await
@@ -819,11 +820,14 @@ async fn an_unreadable_emission_lands_nothing() {
     let Some(s) = store().await else { return };
     let w = Wire::of(CERTIFIED).tagged(&tag("unreadable"));
     let mut text = w.text();
-    text = text.replacen("\"positions\":455", "\"positions\":454", 1);
+    text = text.replacen("\"positions\":455", "\"positions\":456", 1);
     let answer = s.ingest(text.as_bytes()).await.value;
     assert_eq!(answer["ok"], json!(false));
     assert!(
-        answer["error"].as_str().unwrap().contains("455"),
+        answer["error"]
+            .as_str()
+            .unwrap()
+            .contains("counts 456 positions"),
         "{answer}"
     );
     assert_eq!(landed(&s, &w.run()).await, None);
@@ -923,4 +927,30 @@ async fn an_equal_replay_answers_with_what_the_store_holds() {
     assert_eq!(out["parent_linked"], json!(true), "{again}");
     assert_eq!(out["parting_known"], json!(true), "{again}");
     assert_eq!(out["parting_position"], json!(204), "{again}");
+}
+
+/// **An ingest that loses the race to create a run replays it** (Codex pass
+/// two on PR #23): a second ingest of the same emission lands between this
+/// one's read of the run and its insert of the row, by the test-only race
+/// option. This one meets the row on its insert, compares and answers the
+/// run's stored outcome, rather than refusing for having lost a race.
+#[tokio::test]
+async fn an_ingest_that_loses_the_race_to_create_a_run_replays_it() {
+    let Some(s) = store().await else { return };
+    let w = Wire::of(CERTIFIED).tagged(&tag("race"));
+    let answer = s
+        .ingest_with(
+            Emission::read(w.text().as_bytes()),
+            &Options {
+                race: Some(Emission::read(w.text().as_bytes()).unwrap()),
+                ..Options::default()
+            },
+        )
+        .await
+        .value;
+    assert_eq!(answer["ok"], json!(true), "{answer}");
+    assert_eq!(answer["runs"][0]["status"], json!("whole"));
+    assert_eq!(answer["runs"][0]["replayed"], json!(true));
+    assert_eq!(landed(&s, &w.run()).await.unwrap().status, "whole");
+    assert_eq!(count(&s, "position", &w.run()).await, 455);
 }

@@ -26,6 +26,36 @@ use std::io::BufRead;
 /// refuses the emission rather than growing a buffer without end.
 pub const LINE_BOUND: usize = 16 * 1024 * 1024;
 
+/// **The most positions a summary may announce.** The whole emission is
+/// held in memory, since a run is planned whole before any row is written,
+/// so its size needs a bound and not only its lines. This is an elected
+/// figure with headroom and not a measurement: thirty generations each
+/// filling a 131,072-token context is about four million positions, past
+/// any trace this repository's fixtures hold, and the deposits that might
+/// hold a larger one are not in this repository. A later act may raise it.
+pub const POSITIONS_BOUND: usize = 4_000_000;
+
+/// **The most bytes an emission may carry**, every line counted. At the
+/// emitter's few dozen bytes a point, `POSITIONS_BOUND` points sit well
+/// inside it.
+pub const EMISSION_BOUND: u64 = 1024 * 1024 * 1024;
+
+/// The reader's bounds, the documented ones unless a test names others.
+#[derive(Debug, Clone, Copy)]
+pub struct Bounds {
+    pub positions: usize,
+    pub bytes: u64,
+}
+
+impl Default for Bounds {
+    fn default() -> Self {
+        Self {
+            positions: POSITIONS_BOUND,
+            bytes: EMISSION_BOUND,
+        }
+    }
+}
+
 /// The summary line, contract section 2.2, with the counts the emitter
 /// takes over its own points.
 #[derive(Debug, Deserialize)]
@@ -82,15 +112,27 @@ pub struct Emission {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Unreadable(pub String);
 
-/// Read a line no longer than `LINE_BOUND`, without its newline. `None` at
-/// the end of the input.
-fn bounded_line(input: &mut impl BufRead, n: usize) -> Result<Option<String>, Unreadable> {
+/// Read a line no longer than `LINE_BOUND`, without its newline, adding
+/// what it read to `total` and refusing past `limit`. `None` at the end of
+/// the input.
+fn bounded_line(
+    input: &mut impl BufRead,
+    n: usize,
+    total: &mut u64,
+    limit: u64,
+) -> Result<Option<String>, Unreadable> {
     let mut bytes = Vec::new();
     let read = std::io::Read::take(&mut *input, LINE_BOUND as u64 + 1)
         .read_until(b'\n', &mut bytes)
         .map_err(|e| Unreadable(format!("line {n} could not be read: {e}")))?;
     if read == 0 {
         return Ok(None);
+    }
+    *total += read as u64;
+    if *total > limit {
+        return Err(Unreadable(format!(
+            "the emission runs past {limit} bytes at line {n}, the reader's bound"
+        )));
     }
     if bytes.last() == Some(&b'\n') {
         bytes.pop();
@@ -108,8 +150,18 @@ impl Emission {
     /// output counts partition the points in landing order, each
     /// generation's ordinals running from zero under its turn; anything else
     /// is an emission this reader cannot address and refuses whole.
-    pub fn read(mut input: impl BufRead) -> Result<Self, Unreadable> {
-        let Some(first) = bounded_line(&mut input, 1)? else {
+    pub fn read(input: impl BufRead) -> Result<Self, Unreadable> {
+        Self::read_within(input, Bounds::default())
+    }
+
+    /// As `read`, under `bounds`. **The emission is held whole within them**:
+    /// a summary announcing more positions than the bound is refused before a
+    /// point is read, points past the announced count are refused at the
+    /// first one over, and the bytes read are bounded however the lines
+    /// fall.
+    pub fn read_within(mut input: impl BufRead, bounds: Bounds) -> Result<Self, Unreadable> {
+        let mut total = 0u64;
+        let Some(first) = bounded_line(&mut input, 1, &mut total, bounds.bytes)? else {
             return Err(Unreadable("the emission is empty: no summary line".into()));
         };
         let summary: SummaryLine = serde_json::from_str(&first)
@@ -119,15 +171,29 @@ impl Emission {
                 "the summary names no run identity: an emitter older than 2026-09-09, whose emission keys no row (weaver-analysis-web-contract section 2.2)".into(),
             ));
         }
+        if summary.positions > bounds.positions {
+            return Err(Unreadable(format!(
+                "the summary announces {} positions, past the reader's bound of {}",
+                summary.positions, bounds.positions
+            )));
+        }
+        // Grown as points arrive rather than reserved from the announced
+        // count, which a summary could overstate.
         let mut points = Vec::new();
         let mut n = 1;
         loop {
             n += 1;
-            let Some(line) = bounded_line(&mut input, n)? else {
+            let Some(line) = bounded_line(&mut input, n, &mut total, bounds.bytes)? else {
                 break;
             };
             if line.is_empty() {
                 continue;
+            }
+            if points.len() == summary.positions {
+                return Err(Unreadable(format!(
+                    "line {n} is a point past the {} the summary announced",
+                    summary.positions
+                )));
             }
             let point: WirePoint = serde_json::from_str(&line)
                 .map_err(|e| Unreadable(format!("line {n} is not a point: {e}")))?;
@@ -148,10 +214,17 @@ impl Emission {
                 summary.with_entropy, summary.with_surprisal
             )));
         }
-        let total: u64 = summary.generations.iter().map(|g| g.output_count).sum();
-        if total != points.len() as u64 {
+        let mut counted: u64 = 0;
+        for (index, g) in summary.generations.iter().enumerate() {
+            counted = counted.checked_add(g.output_count).ok_or_else(|| {
+                Unreadable(format!(
+                    "the generations' output counts overflow at generation {index}"
+                ))
+            })?;
+        }
+        if counted != points.len() as u64 {
             return Err(Unreadable(format!(
-                "the generations' output counts sum to {total} and the emission carries {} points",
+                "the generations' output counts sum to {counted} and the emission carries {} points",
                 points.len()
             )));
         }
@@ -543,5 +616,113 @@ impl RunPlan {
             .flatten(),
         );
         absent
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! The reader's bounds, over streams built here and no store.
+
+    use super::*;
+    use std::io::{BufReader, Read};
+
+    /// A summary announcing `positions` with one generation of that many
+    /// points, as text.
+    fn summary(positions: usize, generations: &[u64]) -> String {
+        let generations: Vec<serde_json::Value> = generations
+            .iter()
+            .map(|count| serde_json::json!({"turn": "t-1", "output_count": count, "run": "r"}))
+            .collect();
+        serde_json::json!({
+            "positions": positions, "with_entropy": 0, "with_surprisal": 0,
+            "generations": generations,
+        })
+        .to_string()
+            + "\n"
+    }
+
+    /// A stream of points that never ends, counting the bytes taken from it.
+    struct Endless {
+        line: Vec<u8>,
+        at: usize,
+        taken: std::rc::Rc<std::cell::Cell<usize>>,
+    }
+
+    impl Read for Endless {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            let mut n = 0;
+            while n < buf.len() {
+                buf[n] = self.line[self.at];
+                self.at = (self.at + 1) % self.line.len();
+                n += 1;
+            }
+            self.taken.set(self.taken.get() + n);
+            Ok(n)
+        }
+    }
+
+    /// **Points past the announced count are refused at the first one
+    /// over**, so an endless stream never grows the reader: two announced,
+    /// and the reader stops within a buffer or two of the third.
+    #[test]
+    fn points_past_the_announced_count_are_refused_at_the_first() {
+        let taken = std::rc::Rc::new(std::cell::Cell::new(0));
+        let stream = Endless {
+            line: b"{\"turn\":\"t-1\",\"ordinal\":0,\"token\":1}\n".to_vec(),
+            at: 0,
+            taken: taken.clone(),
+        };
+        let head = summary(2, &[2]);
+        let input = BufReader::new(head.as_bytes().chain(stream));
+        let refused = Emission::read(input).unwrap_err();
+        assert!(
+            refused.0.contains("past the 2 the summary announced"),
+            "{}",
+            refused.0
+        );
+        assert!(
+            taken.get() < 64 * 1024,
+            "read {} bytes of an endless stream",
+            taken.get()
+        );
+    }
+
+    /// **A summary announcing more positions than the bound is refused
+    /// before a point is read.**
+    #[test]
+    fn a_summary_past_the_positions_bound_is_refused() {
+        let text = summary(POSITIONS_BOUND + 1, &[POSITIONS_BOUND as u64 + 1]);
+        let refused = Emission::read(text.as_bytes()).unwrap_err();
+        assert!(
+            refused.0.contains("past the reader's bound"),
+            "{}",
+            refused.0
+        );
+    }
+
+    /// **The bytes read are bounded however the lines fall**: blank lines
+    /// carry no point and still count.
+    #[test]
+    fn the_bytes_read_are_bounded() {
+        let text = summary(0, &[]) + &"\n".repeat(4096);
+        let bounds = Bounds {
+            positions: POSITIONS_BOUND,
+            bytes: 1024,
+        };
+        let refused = Emission::read_within(text.as_bytes(), bounds).unwrap_err();
+        assert!(refused.0.contains("runs past 1024 bytes"), "{}", refused.0);
+    }
+
+    /// **Output counts that overflow are refused by name**, never a panic
+    /// in a debug build or a wrap in a release one.
+    #[test]
+    fn output_counts_that_overflow_are_refused() {
+        let text = summary(0, &[u64::MAX, 1]);
+        let refused = Emission::read(text.as_bytes()).unwrap_err();
+        assert!(
+            refused.0.contains("overflow at generation 1"),
+            "{}",
+            refused.0
+        );
     }
 }

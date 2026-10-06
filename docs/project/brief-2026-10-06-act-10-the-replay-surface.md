@@ -24,6 +24,19 @@ where they differ.** The section's original text stands below and these govern i
 5. The status vocabulary is `writing`, `whole`, `short` and `refused`.
 6. `run.sampler` is the declared members of the effective sampling with
    `generation_seed` removed, and the seed column is the declared seed.
+7. The ingest's answer is per run: the object carries `runs`, one entry per run in the
+   emission, with its identity, its status (`whole`, `short` naming the generation, or
+   `refused` with the reason), the positions written, the generations landed and the
+   members absent. Exit 0 where every run is `whole` or `short`; exit 1 where any run is
+   `refused` or the emission itself is (unreadable, no summary line), the object still
+   listing what landed, so a caller never loses an outcome behind one status.
+8. A branch whose parent is not held still lands. The foreign key on `parent_run_id`
+   stays; `0014` adds `parent_reference TEXT`, the lineage's parent run identity as the
+   record spelled it, written always for a branch, and `parent_run_id` is set only where
+   that parent is in the store. The parting position is derived only where the parent
+   is held and is absent otherwise; the surface shows the reference with `absent` for
+   the link. Resolving the reference when the parent lands later is owed to a later act.
+   Spec 2.2's lineage bullet gains the member in 10b.
 
 **Three pull requests, in order**, each its own act: 10a lands the design, 10b lands the
 ingest the surface reads from, 10c lands the surface. 10b exists because nothing writes

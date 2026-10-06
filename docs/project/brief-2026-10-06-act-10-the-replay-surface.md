@@ -178,6 +178,16 @@ where they differ.** The section's original text stands below and these govern i
    still `writing`), the rest of the emission landing. Perturbation: a three-run
    emission listed child, branch-parent, root; without the ordering the child closes
    with its parting unknown, with it every link is set and every walk runs.
+29. A cycle's persisted refusal reaches only rows this ingest created; this refines
+   ruling 28 by ruling 17. Where a reference cycle includes a run that existed before
+   this ingest (a replayed row, `writing` or otherwise), that row keeps its stored
+   status and reason, and the refusal is reported for it in the command's answer alone;
+   `refused` is persisted only for the cycle's rows this ingest created. A replayed
+   `writing` row caught in a cycle therefore stays `writing`, since the cycle blocks the
+   equal replay that would complete it, and the answer says why. Perturbation: leave
+   A -> B `writing` by ruling 27's hook, then replay A identically with a new B -> A;
+   without the fix A's stored status changes, with it A stays `writing` and only B is
+   persisted `refused`.
 
 **Three pull requests, in order**, each its own act: 10a lands the design, 10b lands the
 ingest the surface reads from, 10c lands the surface. 10b exists because nothing writes

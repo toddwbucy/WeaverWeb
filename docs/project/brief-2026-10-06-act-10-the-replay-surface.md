@@ -105,6 +105,21 @@ where they differ.** The section's original text stands below and these govern i
    refusal in the answer alone. The `refused` status is written only by the ingest that
    created the row, for a refusal met before the row was closed. Spec 3.1's bullet says
    a refusal on replay is the answer's and never the row's.
+18. The link follows presence; only the walk follows completeness. This amends ruling 10
+   where they differ. `parent_run_id` is set whenever the referenced parent is held in
+   the store, whatever its status, and `parting_known` is true only where the walk ran
+   against a `whole` parent. Spec 3.1 reads accordingly: the reference is always stored,
+   the link is set where the parent is held, and the walk runs where it is also whole.
+   Record then links a held incomplete parent and shows its parting as `unknown`.
+19. Absent entropy is drawn as an absence too. The timeline draws each series where its
+   points carry the value and hatches the span where they do not, entropy and surprisal
+   alike; "the entropy series always" in the 10c section becomes "the entropy series
+   where measured". The test counts both the plotted points and the hatched spans for
+   each series, and the perturbation "draw a zero" applies to both.
+20. `0014` backfills `parting_known`: rows whose `parting_position` is not null are set
+   true, since that value was computed, and every other row keeps the false default, a
+   pre-existing null parting being unknown rather than never parted, the honest reading
+   of a column that did not yet say which.
 
 **Three pull requests, in order**, each its own act: 10a lands the design, 10b lands the
 ingest the surface reads from, 10c lands the surface. 10b exists because nothing writes

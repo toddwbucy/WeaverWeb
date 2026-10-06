@@ -1157,6 +1157,9 @@ fn frame_out(out: Out, seq: &mut u64) -> Option<FromClient> {
 struct Prepared {
     ceiling: BTreeSet<String>,
     opened: Option<Opened>,
+    /// When the hello left for the server: the server connection's time
+    /// from here is not the opening's.
+    measured: tokio::time::Instant,
 }
 
 /// State shared between the hellos and the serves of the process.
@@ -1281,6 +1284,7 @@ pub async fn run<I: Invoker>(
                 shared.prepared = Some(Prepared {
                     ceiling: ceiling.clone(),
                     opened,
+                    measured: tokio::time::Instant::now(),
                 });
                 Ok(FromClient::Hello {
                     agent,
@@ -1675,7 +1679,20 @@ async fn relay<I: Invoker>(
     let Some(prepared) = shared.prepared.take() else {
         return Ended::Lost("the attempt prepared no hello".to_owned());
     };
-    let Prepared { ceiling, opened } = prepared;
+    let Prepared {
+        ceiling,
+        mut opened,
+        measured,
+    } = prepared;
+    // **The server connection's time is not the opening's**: the hello's
+    // opening was measured before the handshake and the hello, and its
+    // deadline moves forward by what they took, so the reserve the
+    // verification gets is what the measurement left it. Only this path
+    // needs it: a later opening runs on a live connection, with no
+    // handshake between its measurement and its verification.
+    if let Some(opened) = &mut opened {
+        opened.until += measured.elapsed();
+    }
     // **Where this connection's openings replay from** (Spec 7.2): the
     // server's acknowledged position, or a backfill where it holds none.
     shared.resume = match conn.acknowledged.clone() {

@@ -3245,3 +3245,83 @@ async fn the_openings_hold_covers_the_servers_deadline() {
     drop(write);
     con.stop().await;
 }
+
+/// **The server connection's time is not charged to the hello's opening**:
+/// the opening reads a slow relay for its whole read bound, its boundary
+/// falling short of the server's position, and the server answers the hello
+/// only after a delay longer than the reserve. The verification still has
+/// what the measurement left it, so the door stays open and the replay
+/// ends, rather than the door closing at once after admission.
+#[tokio::test]
+async fn a_hello_answered_late_still_leaves_the_verification_its_reserve() {
+    use std::os::unix::fs::MetadataExt;
+    use std::sync::atomic::Ordering;
+    let server = FakeServer::start().await;
+    let trace = Trace::new();
+    let mut body = String::new();
+    let mut n = 0u64;
+    let mut last = String::new();
+    while body.len() < 1024 * 1024 {
+        n += 1;
+        last = format!("{{\"wall_ms\":1,\"payload\":{{\"n\":{n}}}}}\n");
+        body.push_str(&last);
+    }
+    trace.append_raw(body.as_bytes());
+    // The server holds the file's end, as the relay names it.
+    let meta = std::fs::metadata(&trace.path).unwrap();
+    let birth = meta
+        .created()
+        .unwrap()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let acknowledged = super::frames::Position {
+        generation: format!("{}:{}:{birth}", meta.dev(), meta.ino()),
+        offset: trace.len(),
+        digest: super::relay::digest(last.as_bytes()),
+    };
+    trace
+        .relay
+        .counts
+        .chunk_pause_ms
+        .store(300, Ordering::SeqCst);
+    let cfg = AdminConConfig {
+        link: server.link(Plane::Admin),
+        trace_socket: trace.socket.clone(),
+        weaver_admin: PathBuf::from(NO_WEAVER_ADMIN),
+        backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
+        verb_bound: admin_con::VERB_BOUND,
+        stop_grace: GRACE,
+        grants_bound: Duration::from_secs(super::client::HELLO_SECS),
+        boundary_bound: Duration::from_secs(2),
+        drain_bound: admin_con::DRAIN_BOUND,
+    };
+    let con = Running::start(cfg, Arc::new(NoVerbs));
+    let (mut reader, write) = server
+        .admit_late(15, Some(acknowledged), Duration::from_secs(1))
+        .await;
+    let mut frames = Vec::new();
+    let until = tokio::time::Instant::now() + Duration::from_secs(3);
+    while let Ok(line) = tokio::time::timeout_at(until, reader.next()).await {
+        match line {
+            Line::Frame(line) => match serde_json::from_str::<FromClient>(&line).unwrap() {
+                FromClient::Heartbeat => {}
+                frame => frames.push(frame),
+            },
+            other => panic!("the connection ended: {other:?}"),
+        }
+    }
+    assert!(
+        frames.iter().any(|f| matches!(f, FromClient::CaughtUp)),
+        "the replay never ended: {frames:?}"
+    );
+    assert!(
+        !frames
+            .iter()
+            .any(|f| matches!(f, FromClient::Door { open: false, .. })),
+        "the door closed after admission: {frames:?}"
+    );
+    drop(reader);
+    drop(write);
+    con.stop().await;
+}

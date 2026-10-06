@@ -724,6 +724,21 @@ impl FakeServer {
             .await
     }
 
+    /// As `admit_answering`, the answer naming a server position and sent
+    /// only after `delay`: a slow server's hello.
+    pub(super) async fn admit_late(
+        &self,
+        cadence_secs: u64,
+        acknowledged: Option<super::frames::Position>,
+        delay: Duration,
+    ) -> (
+        LineReader<tokio::io::ReadHalf<ServerStream>>,
+        tokio::io::WriteHalf<ServerStream>,
+    ) {
+        self.admit_full(cadence_secs, None, None, acknowledged, delay)
+            .await
+    }
+
     /// As `admit_with`, naming the silence bound the answer carries, four
     /// cadences where none is given.
     pub(super) async fn admit_answering(
@@ -731,6 +746,27 @@ impl FakeServer {
         cadence_secs: u64,
         silence_secs: Option<u64>,
         receive_buffer: Option<usize>,
+    ) -> (
+        LineReader<tokio::io::ReadHalf<ServerStream>>,
+        tokio::io::WriteHalf<ServerStream>,
+    ) {
+        self.admit_full(
+            cadence_secs,
+            silence_secs,
+            receive_buffer,
+            None,
+            Duration::ZERO,
+        )
+        .await
+    }
+
+    async fn admit_full(
+        &self,
+        cadence_secs: u64,
+        silence_secs: Option<u64>,
+        receive_buffer: Option<usize>,
+        acknowledged: Option<super::frames::Position>,
+        delay: Duration,
     ) -> (
         LineReader<tokio::io::ReadHalf<ServerStream>>,
         tokio::io::WriteHalf<ServerStream>,
@@ -764,10 +800,11 @@ impl FakeServer {
             }
             other => panic!("expected the hello, got {other:?}"),
         }
+        tokio::time::sleep(delay).await;
         let mut answer = serde_json::to_vec(&ToClient::HelloAnswer {
             cadence_secs,
             silence_secs: silence_secs.unwrap_or(cadence_secs.saturating_mul(4)),
-            acknowledged: None,
+            acknowledged,
         })
         .unwrap();
         answer.push(b'\n');

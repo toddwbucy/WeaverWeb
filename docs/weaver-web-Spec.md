@@ -1648,7 +1648,10 @@ record itself, so section 5's gate is held upstream (`toddwbucy/WeaverAnalysis#1
   elected figure with headroom over thirty generations each filling a 131,072-token
   context, not a measurement, since the deposits that might hold a larger trace are not
   in this repository); the points may not run past the announced count, refused at the
-  first one over; and the emission carries at most 1 GiB (`EMISSION_BOUND`). The output
+  first one over; the emission carries at most 1 GiB (`EMISSION_BOUND`); and every keyed
+  or indexed text member, the run's identity, its parent reference, its record identity,
+  its session and every turn key, runs at most 1024 bytes (`KEY_BOUND`), well under
+  PostgreSQL's btree entry limit, a longer one refused for its run while planning. The output
   counts are summed checked, an overflow refused by name. Past any of these the
   emission is refused whole and nothing lands.
 - Writes are **idempotent on the run, turn and position key, and a key replayed with a
@@ -1736,7 +1739,12 @@ under the resolution's locks**, since a concurrent ingest may create a run namin
 branch after the scan: with the branch's row locked for update and its parent for share,
 the chain is followed from the parent through held rows, each locked for share as it is
 read, and where it returns to the branch the branch is refused by name in that
-transaction instead of closing. Two branches naming each other lock in opposite orders,
+transaction instead of closing. **The scan and the order are linear in the runs and
+references**: the held references reachable from the emission's are read in batches, one
+per step of the chains; the scan's return check is a lookup in its path's index and a
+walk stops where an earlier one settled; each depth is computed once; and the recheck
+remembers where each chain it followed ended, a reference never changing once written,
+so a long chain is followed once and not once per branch on it. Two branches naming each other lock in opposite orders,
 and the resolution the store aborts for the deadlock is retried once the other commits.
 
 **The walk compares on the position coordinate and nothing else, from the child's first
@@ -3686,7 +3694,8 @@ missing while it was relaying.
 | a generation's summary lands, and its points only where they can be addressed | perturbation in `src/store/ingest_tests.rs`: close a run whose generations carry no resident count `whole`, and it reads as completed; give a turnless point a turn, and it lands under a key nobody recorded |
 | a run's ingest status is written first and read by every surface | perturbation: create the row `whole` rather than `writing`, and an ingest stopped by the test-only step hook after the points leaves a branch reading `whole` and unlinked; draw every row's status as `whole` on Record, and a `writing`, `short` or `refused` run reads as completed |
 | an absent entropy lands absent | perturbation in `src/store/ingest_tests.rs`: write an omitted entropy as zero, and the position reads a floor |
-| a member the schema refuses is refused while planning, and the answer's counts are what landed | perturbation in `src/store/ingest_tests.rs`: leave the digest's shape or a NUL byte to the store, and the run planted with it fails the whole ingest at its insert, the good run after it never landing; report the plan's counts on a refusal, and a refused replay reports 455 positions it never wrote |
+| a member the schema refuses is refused while planning, and the answer's counts are what landed | perturbation in `src/store/ingest_tests.rs`: leave the digest's shape, a NUL byte or a key's length to the store, and the run planted with it fails the whole ingest at its insert, the good run after it never landing; report the plan's counts on a refusal, and a refused replay reports 455 positions it never wrote |
+| the cycle scan and the resolution order are linear in the runs and references | **bound test** in `src/store/ingest_tests.rs`, not a failing one: a chain of fifty thousand branches and the same chain closed into one cycle are scanned and ordered within two seconds in a debug build; search the path for the return, and it takes about thirteen seconds, and re-walk each depth per branch, and it passes five minutes |
 | the ingest's reader is bounded | perturbation in `src/store/emission.rs`: read on past the announced count, and an endless stream is read to the byte bound rather than stopped at its first extra point; drop the positions bound, and a summary announcing past it is read; drop the byte bound, and a stream of blank lines is read whole; sum the output counts unchecked, and two counts past `u64` wrap to a sum that passes |
 | an ingest that loses the race to create a run replays it, and one that finds its run closed by another compares it | perturbation in `src/store/ingest_tests.rs`, a test-only race option landing a second ingest at a named point: refuse on the unique conflict, and the run reads refused in the answer of an ingest whose emission the store already holds equal; answer a run another ingest closed without comparing it, and an ingest whose second generation differs from the one the other wrote reports `whole`; close without comparing under the close's lock, in a run's close or a branch's, and an ingest carrying the first generation alone closes `whole` a run another has written two into |
 | the parting position is derived only where it is provable, and recorded as unknown otherwise | perturbation in `src/store/ingest_tests.rs`, each guard: walk a parent that is held but not whole, drop the monotone guard, read a position only the parent holds as never parted, take a difference after a skipped span as known, read no difference in a short child as never parted, set the link for a parent not held, close a branch with the non-branches (the same-emission parent lands unlinked), resolve in the emission's order rather than parents first; and on Record, draw an unwalked parting as never parted, or an unheld parent as linked |

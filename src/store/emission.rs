@@ -35,6 +35,14 @@ pub const LINE_BOUND: usize = 16 * 1024 * 1024;
 /// hold a larger one are not in this repository. A later act may raise it.
 pub const POSITIONS_BOUND: usize = 4_000_000;
 
+/// **The longest key a run may carry, in bytes**: its identity, its parent
+/// reference, its record identity, its session and every turn key are keyed
+/// or indexed in the store, and PostgreSQL refuses a btree entry past about a
+/// third of a page, some 2.7 KB, at the insert, which would fail the whole
+/// ingest. This bound sits well under that limit and far over any key a
+/// record carries.
+pub const KEY_BOUND: usize = 1024;
+
 /// **The most bytes an emission may carry**, every line counted. At the
 /// emitter's few dozen bytes a point, `POSITIONS_BOUND` points sit well
 /// inside it.
@@ -362,6 +370,17 @@ fn no_nul(name: &str, text: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// A keyed or indexed text member refused past `KEY_BOUND` bytes.
+fn no_longer(name: &str, key: &str) -> Result<(), String> {
+    if key.len() > KEY_BOUND {
+        return Err(format!(
+            "the run's {name} runs {} bytes, past the {KEY_BOUND} a key may carry",
+            key.len()
+        ));
+    }
+    Ok(())
+}
+
 /// A JSON member refused where any key or string in it holds a NUL byte,
 /// which PostgreSQL refuses in `JSONB`.
 fn no_nul_in(name: &str, json: &serde_json::Value) -> Result<(), String> {
@@ -421,8 +440,12 @@ impl RunPlan {
         //   refused below unless both payloads agree;
         // - the status and its reason, the link and the reference, and the
         //   parting and its knowledge go together (0014): written by the
-        //   ingest only in the pairs the checks allow.
+        //   ingest only in the pairs the checks allow;
+        // - every keyed or indexed text member (the run's identity, its
+        //   parent reference, its record identity, its session, every turn
+        //   key) fits a btree entry: bounded at `KEY_BOUND` below.
         no_nul("run identity", run)?;
+        no_longer("run identity", run)?;
         // **Agreement, member by member, before anything is formed**: a run
         // whose generations disagree is a defect the reader names, never a
         // run with two of anything (contract 2.2). Presence counts: an entry
@@ -515,6 +538,16 @@ impl RunPlan {
         for (entry, _) in entries.iter().map(|e| (&e.0, &e.1)) {
             if let Some(turn) = &entry.turn {
                 no_nul("turn key", turn)?;
+                no_longer("turn key", turn)?;
+            }
+        }
+        for (name, key) in [
+            ("record identity", Some(record_identity.as_str())),
+            ("session", session.as_deref()),
+            ("parent reference", parent_reference.as_deref()),
+        ] {
+            if let Some(key) = key {
+                no_longer(name, key)?;
             }
         }
         let members = RunMembers {

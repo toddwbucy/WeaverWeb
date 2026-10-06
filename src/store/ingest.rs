@@ -441,61 +441,62 @@ impl Store {
         // cycle being one strongly connected component (ruling 30). **A cycle
         // this ingest would close runs through an open branch**, and may
         // close through any run the store holds: a closed run the emission
-        // replayed, or a row the emission does not name at all. So each open
-        // branch's reference chain is followed through held rows until it
-        // ends, joins a chain already followed, or returns.
-        let mut in_cycle: HashSet<String> = HashSet::new();
-        let mut explored: HashSet<String> = HashSet::new();
-        let mut cycles: Vec<Vec<String>> = Vec::new();
-        for start in &open {
-            let mut path: Vec<String> = Vec::new();
-            let mut at = start.run.clone();
-            loop {
-                if in_cycle.contains(&at) || explored.contains(&at) {
-                    break;
+        // replayed, or a row the emission does not name at all. So the held
+        // references reachable from the emission's are read first, one batch
+        // per step of the chains, and the scan then runs over them in memory,
+        // linear in the runs and references (Spec 3.1).
+        let mut references: HashMap<String, Option<String>> = named
+            .iter()
+            .map(|(run, n)| (run.clone(), n.parent.clone()))
+            .collect();
+        let mut asked: HashSet<String> = HashSet::new();
+        let mut frontier: Vec<String> = references
+            .values()
+            .flatten()
+            .filter(|r| !references.contains_key(*r))
+            .cloned()
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+        while !frontier.is_empty() {
+            asked.extend(frontier.iter().cloned());
+            let held = sqlx::query(
+                "SELECT run_id, parent_reference, ingest_status FROM run WHERE run_id = ANY($1)",
+            )
+            .bind(&frontier)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(store_error)?;
+            let mut next = HashSet::new();
+            for row in held {
+                let run: String = row.get("run_id");
+                let parent: Option<String> = row.get("parent_reference");
+                if let Some(parent) = &parent
+                    && !references.contains_key(parent)
+                    && !asked.contains(parent)
+                {
+                    next.insert(parent.clone());
                 }
-                if let Some(from) = path.iter().position(|n| *n == at) {
-                    let cycle = path[from..].to_vec();
-                    // A cycle no open branch is on was in the store before
-                    // this ingest, and is not this ingest's to refuse.
-                    if cycle.iter().any(|n| open.iter().any(|o| o.run == *n)) {
-                        in_cycle.extend(cycle.iter().cloned());
-                        cycles.push(cycle);
-                    }
-                    break;
-                }
-                let parent = match named.get(&at) {
-                    Some(n) => n.parent.clone(),
-                    None => match self.reference_of(&at).await.map_err(store_error)? {
-                        Some((parent, status)) => {
-                            named.insert(
-                                at.clone(),
-                                Named {
-                                    parent: parent.clone(),
-                                    status,
-                                    outcome: None,
-                                },
-                            );
-                            parent
-                        }
-                        // Not held: the chain ends.
-                        None => break,
-                    },
-                };
-                path.push(at.clone());
-                match parent {
-                    Some(parent) => at = parent,
-                    None => break,
-                }
+                named.entry(run.clone()).or_insert(Named {
+                    parent: parent.clone(),
+                    status: row.get("ingest_status"),
+                    outcome: None,
+                });
+                references.insert(run, parent);
             }
-            explored.extend(path.into_iter().filter(|n| !in_cycle.contains(n)));
+            frontier = next.into_iter().collect();
         }
+        let open_runs: Vec<String> = open.iter().map(|o| o.run.clone()).collect();
+        let (cycles, order) = plan_resolution(&open_runs, &references);
+        let in_cycle: HashSet<&str> = cycles.iter().flatten().map(String::as_str).collect();
         for cycle in &cycles {
             let named_cycle = format!("a reference cycle: {} -> {}", cycle.join(" -> "), cycle[0]);
+            let on_cycle: HashSet<&str> = cycle.iter().map(String::as_str).collect();
             let created: Vec<&Open> = open
                 .iter()
-                .filter(|o| cycle.contains(&o.run) && o.created)
+                .filter(|o| o.created && on_cycle.contains(o.run.as_str()))
                 .collect();
+            let created_runs: HashSet<&str> = created.iter().map(|o| o.run.as_str()).collect();
             // **One transaction per cycle** (ruling 30), persisted only on the
             // rows this ingest created (ruling 29).
             let mut tx = self.pool.begin().await.map_err(store_error)?;
@@ -519,7 +520,7 @@ impl Store {
             // Every other run on the cycle is reported refused in the answer
             // with the status the store keeps for it.
             for run in cycle {
-                let created = created.iter().any(|o| o.run == *run);
+                let created = created_runs.contains(run.as_str());
                 let held = &named[run];
                 let index = match held.outcome {
                     Some(index) => index,
@@ -539,39 +540,28 @@ impl Store {
                 }
             }
         }
-        let parent_of: HashMap<&str, &str> = open
-            .iter()
-            .filter_map(|o| {
-                let parent = o.plan.members.parent_reference.as_deref()?;
-                open.iter()
-                    .any(|p| p.run == parent)
-                    .then_some((o.run.as_str(), parent))
-            })
-            .collect();
-
         // **The third pass**: every other branch, parents first, resolved
-        // and closed in one transaction each (rulings 23, 27 and 28).
-        // A chain that leads into a cycle stops there: the cycle's rows are
-        // refused or left `writing`, never whole, so its children resolve
-        // after it with their parting unknown.
-        let depth = |run: &str| {
-            let mut depth = 0;
-            let mut at = run;
-            while let Some(parent) = parent_of.get(at) {
-                depth += 1;
-                if in_cycle.contains(*parent) {
-                    break;
-                }
-                at = parent;
-            }
-            depth
-        };
-        let mut order: Vec<&Open> = open.iter().filter(|o| !in_cycle.contains(&o.run)).collect();
-        order.sort_by_key(|o| depth(&o.run));
+        // and closed in one transaction each (rulings 23, 27 and 28), in the
+        // order `plan_resolution` gave. A chain that leads into a cycle
+        // stops there: the cycle's rows are refused or left `writing`, never
+        // whole, so its children resolve after it with their parting unknown.
+        let by_run: HashMap<&str, &Open> = open.iter().map(|o| (o.run.as_str(), o)).collect();
+        let order: Vec<&Open> = order
+            .iter()
+            .filter(|run| !in_cycle.contains(run.as_str()))
+            .map(|run| by_run[run.as_str()])
+            .collect();
+        // The ends of chains this ingest's resolutions have followed, so a
+        // long chain is followed once and not once per branch on it.
+        let mut tails: HashMap<String, Option<String>> = HashMap::new();
         #[cfg(test)]
         self.race(options, Race::BeforeResolve).await;
         for o in order {
-            let Some(resolved) = self.resolve_retrying(o).await.map_err(store_error)? else {
+            let Some(resolved) = self
+                .resolve_retrying(o, &mut tails)
+                .await
+                .map_err(store_error)?
+            else {
                 // Another ingest of the run resolved and closed it first.
                 self.settle_closed(&o.run, &o.plan, &mut outcomes[o.outcome])
                     .await
@@ -594,21 +584,6 @@ impl Store {
             outcome.parting_position = resolved.parting.position();
         }
         Ok(())
-    }
-
-    /// A held run's parent reference and status, or `None` where the store
-    /// holds no row for it.
-    async fn reference_of(
-        &self,
-        run: &str,
-    ) -> Result<Option<(Option<String>, String)>, sqlx::Error> {
-        Ok(
-            sqlx::query("SELECT parent_reference, ingest_status FROM run WHERE run_id = $1")
-                .bind(run)
-                .fetch_optional(&self.pool)
-                .await?
-                .map(|r| (r.get("parent_reference"), r.get("ingest_status"))),
-        )
     }
 
     /// What the store holds for `run`, or `None` where it holds no row.
@@ -892,10 +867,14 @@ impl Store {
     /// ingest's resolution: two branches naming each other lock each other's
     /// rows in opposite orders, and the one the store aborts resolves again
     /// once the other has committed.
-    async fn resolve_retrying(&self, open: &Open) -> Result<Option<Resolved>, sqlx::Error> {
+    async fn resolve_retrying(
+        &self,
+        open: &Open,
+        tails: &mut HashMap<String, Option<String>>,
+    ) -> Result<Option<Resolved>, sqlx::Error> {
         let mut tries = 0;
         loop {
-            match self.resolve(open).await {
+            match self.resolve(open, tails).await {
                 Err(sqlx::Error::Database(d))
                     if tries < 3 && matches!(d.code().as_deref(), Some("40P01" | "40001")) =>
                 {
@@ -909,7 +888,11 @@ impl Store {
     /// **One branch, resolved and closed in one transaction**: the link
     /// where the parent is held whatever its status (ruling 18), the walk
     /// only where the parent is also whole, and the close.
-    async fn resolve(&self, open: &Open) -> Result<Option<Resolved>, sqlx::Error> {
+    async fn resolve(
+        &self,
+        open: &Open,
+        tails: &mut HashMap<String, Option<String>>,
+    ) -> Result<Option<Resolved>, sqlx::Error> {
         let parent = open
             .plan
             .members
@@ -946,18 +929,42 @@ impl Store {
         // chain is followed from the parent through held rows, each locked
         // for share as it is read; where it returns to this branch, the
         // branch is refused by name rather than closed on a cycle.
+        //
+        // **References never change once written**, so where a resolution
+        // earlier in this ingest followed a chain, its end is remembered:
+        // `None` where it ended at a run naming no parent or joined a cycle
+        // elsewhere, which no new row can change, and the run it ended at,
+        // not then held, otherwise, which is where this walk goes on. A long
+        // chain is so followed once and not once per branch on it.
         if linked {
             let mut chain = vec![open.run.clone(), parent.to_owned()];
             let mut seen: HashSet<String> = chain.iter().cloned().collect();
+            let mut visited: Vec<String> = Vec::new();
             let mut at = parent.to_owned();
-            loop {
-                let next: Option<Option<String>> = sqlx::query_scalar(
-                    "SELECT parent_reference FROM run WHERE run_id = $1 FOR SHARE",
-                )
-                .bind(&at)
-                .fetch_optional(&mut *tx)
-                .await?;
-                let Some(Some(next)) = next else { break };
+            let end: Option<String> = loop {
+                let next: Option<Option<String>> = match tails.get(&at) {
+                    // Followed before: go on from where that walk ended.
+                    Some(None) => break None,
+                    Some(Some(absent)) => Some(Some(absent.clone())),
+                    None => {
+                        let next = sqlx::query_scalar(
+                            "SELECT parent_reference FROM run WHERE run_id = $1 FOR SHARE",
+                        )
+                        .bind(&at)
+                        .fetch_optional(&mut *tx)
+                        .await?;
+                        visited.push(at.clone());
+                        next
+                    }
+                };
+                let next = match next {
+                    // Not held: the chain ends at `at`, which may be created
+                    // later naming something.
+                    None => break Some(at.clone()),
+                    // Names no parent: the chain ends for good.
+                    Some(None) => break None,
+                    Some(Some(next)) => next,
+                };
                 if next == open.run {
                     let reason =
                         format!("a reference cycle: {} -> {}", chain.join(" -> "), open.run);
@@ -990,10 +997,14 @@ impl Store {
                     }));
                 }
                 if !seen.insert(next.clone()) {
-                    break;
+                    // Joined a cycle this branch is not on.
+                    break None;
                 }
                 chain.push(next.clone());
                 at = next;
+            };
+            for run in visited {
+                tails.insert(run, end.clone());
             }
         }
         let parting = if parent_status.as_deref() == Some("whole") {
@@ -1260,6 +1271,95 @@ fn member_difference(a: &RunMembers, b: &RunMembers) -> String {
     ];
     let differ: Vec<&str> = names.iter().filter(|(_, d)| *d).map(|(n, _)| *n).collect();
     format!("the run's {} differs", differ.join(", "))
+}
+
+/// **The cycles the open branches are on, and the order the others resolve
+/// in**, over every held run's parent reference (`references`, a run absent
+/// from it not being held). Linear in the runs and references: the return
+/// check is a lookup in the path's index, a walk stops where it meets a run
+/// an earlier walk settled, and each depth is computed once.
+///
+/// The cycles are the ones an open branch is on; a cycle no open branch is
+/// on was in the store before the ingest and is not its to refuse. The order
+/// holds every open branch not on a cycle, parents before children over the
+/// references among them, the emission's order kept between equals.
+pub(crate) fn plan_resolution(
+    open: &[String],
+    references: &HashMap<String, Option<String>>,
+) -> (Vec<Vec<String>>, Vec<String>) {
+    let open_set: HashSet<&str> = open.iter().map(String::as_str).collect();
+    let mut in_cycle: HashSet<&str> = HashSet::new();
+    let mut settled: HashSet<&str> = HashSet::new();
+    let mut cycles: Vec<Vec<String>> = Vec::new();
+    for start in open {
+        let mut path: Vec<&str> = Vec::new();
+        let mut index: HashMap<&str, usize> = HashMap::new();
+        let mut at: &str = start;
+        loop {
+            if in_cycle.contains(at) || settled.contains(at) {
+                break;
+            }
+            if let Some(&from) = index.get(at) {
+                let cycle = &path[from..];
+                if cycle.iter().any(|n| open_set.contains(n)) {
+                    in_cycle.extend(cycle.iter().copied());
+                    cycles.push(cycle.iter().map(|n| n.to_string()).collect());
+                }
+                break;
+            }
+            // Not held: the chain ends.
+            let Some((held, parent)) = references.get_key_value(at) else {
+                break;
+            };
+            index.insert(held, path.len());
+            path.push(held);
+            match parent {
+                Some(parent) => at = parent,
+                None => break,
+            }
+        }
+        settled.extend(path.into_iter().filter(|n| !in_cycle.contains(n)));
+    }
+    // Depths among the open branches not on a cycle, each computed once.
+    let parent_of = |run: &str| -> Option<&str> {
+        references
+            .get(run)
+            .and_then(|p| p.as_deref())
+            .filter(|p| open_set.contains(p) && !in_cycle.contains(p))
+    };
+    let mut depth: HashMap<&str, usize> = HashMap::new();
+    for start in open
+        .iter()
+        .map(String::as_str)
+        .filter(|r| !in_cycle.contains(r))
+    {
+        let mut chain: Vec<&str> = Vec::new();
+        let mut at = start;
+        let mut base = None;
+        loop {
+            if let Some(&d) = depth.get(at) {
+                base = Some(d);
+                break;
+            }
+            chain.push(at);
+            match parent_of(at) {
+                Some(parent) => at = parent,
+                None => break,
+            }
+        }
+        for run in chain.into_iter().rev() {
+            let d = base.map_or(0, |d| d + 1);
+            depth.insert(run, d);
+            base = Some(d);
+        }
+    }
+    let mut order: Vec<String> = open
+        .iter()
+        .filter(|r| !in_cycle.contains(r.as_str()))
+        .cloned()
+        .collect();
+    order.sort_by_key(|r| depth[r.as_str()]);
+    (cycles, order)
 }
 
 /// The parting position as the walk found it.

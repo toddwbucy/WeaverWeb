@@ -1214,6 +1214,25 @@ async fn a_member_the_schema_refuses_is_refused_while_planning() {
             }),
         ),
         (
+            "a run identity past KEY_BOUND",
+            Box::new(|w: &mut Wire| {
+                // Characters that do not repeat, so the store cannot compress
+                // the key under its btree limit and the bound is what is tested.
+                let mut x: u64 = 0x9e37_79b9_7f4a_7c15;
+                let run: String = (0..4096)
+                    .map(|_| {
+                        x ^= x << 13;
+                        x ^= x >> 7;
+                        x ^= x << 17;
+                        char::from(b'a' + (x % 26) as u8)
+                    })
+                    .collect();
+                for g in w.generations_mut() {
+                    g["run"] = json!(run);
+                }
+            }),
+        ),
+        (
             "a token past BIGINT",
             Box::new(|w: &mut Wire| {
                 w.points[0]["token"] = json!(i64::MAX as u64 + 1);
@@ -1246,4 +1265,40 @@ async fn a_member_the_schema_refuses_is_refused_while_planning() {
             "{what}"
         );
     }
+}
+
+/// **The cycle scan and the resolution order are linear in the runs and
+/// references** (Codex pass six on PR #23): a bound test and not a failing
+/// one. A chain of fifty thousand branches, each naming the one before and
+/// listed child first, and the same chain closed into one cycle, are each
+/// scanned and ordered within two seconds in a debug build; the quadratic
+/// forms, a linear search of the path for the return and a depth re-walked
+/// per branch, take far longer at this size. Fifty thousand and not ten,
+/// so the two forms are apart by more than a slow machine's margin.
+#[test]
+fn the_cycle_scan_and_the_order_are_linear() {
+    use super::ingest::plan_resolution;
+    use std::collections::HashMap;
+    let n = 50_000;
+    let started = std::time::Instant::now();
+    let open: Vec<String> = (0..n).rev().map(|i| format!("r{i}")).collect();
+    let mut references: HashMap<String, Option<String>> = (0..n)
+        .map(|i| (format!("r{i}"), (i > 0).then(|| format!("r{}", i - 1))))
+        .collect();
+    let (cycles, order) = plan_resolution(&open, &references);
+    assert!(cycles.is_empty());
+    assert_eq!(
+        order.first().map(String::as_str),
+        Some("r0"),
+        "parents first"
+    );
+    assert_eq!(order.last(), Some(&format!("r{}", n - 1)));
+
+    references.insert("r0".into(), Some(format!("r{}", n - 1)));
+    let (cycles, order) = plan_resolution(&open, &references);
+    assert_eq!(cycles.len(), 1);
+    assert_eq!(cycles[0].len(), n);
+    assert!(order.is_empty());
+    let took = started.elapsed();
+    assert!(took < std::time::Duration::from_secs(2), "took {took:?}");
 }

@@ -1502,7 +1502,10 @@ async fn an_ordinary_verb_asked_during_the_replay_waits_for_caught_up_and_the_dr
         };
         match serde_json::from_str::<FromClient>(&line).unwrap() {
             FromClient::CaughtUp => order.push("caught_up"),
-            FromClient::Verb { id: 1, .. } => order.push("admission"),
+            FromClient::Verb { id: 1, .. } => {
+                write.write_all(&landed(1)).await.unwrap();
+                order.push("admission")
+            }
             FromClient::Verb { id: 2, .. } => order.push("ordinary"),
             FromClient::Event { event, .. } if event.raw["payload"]["n"] == 999_999 => {
                 order.push("live")
@@ -2844,6 +2847,7 @@ async fn no_opening_is_taken_while_an_openings_hold_stands() {
         Some(FromClient::Verb { id: 1, outcome, .. }) => assert!(outcome.is_some()),
         other => panic!("expected the show's answer, got {other:?}"),
     }
+    write.write_all(&landed(1)).await.unwrap();
     match next(&mut reader, SOON).await {
         Some(FromClient::Door { open: true, .. }) => {}
         other => panic!("expected the door opening again, got {other:?}"),
@@ -3039,7 +3043,12 @@ async fn an_openings_show_asked_late_is_still_served_first() {
     let mut answered = Vec::new();
     while answered.len() < 2 {
         match next(&mut reader, SOON * 2).await {
-            Some(FromClient::Verb { id, .. }) => answered.push(id),
+            Some(FromClient::Verb { id, .. }) => {
+                if id == 1 {
+                    write.write_all(&landed(1)).await.unwrap();
+                }
+                answered.push(id)
+            }
             Some(_) => {}
             None => panic!("the answers never came: {answered:?}"),
         }
@@ -3159,7 +3168,12 @@ async fn the_openings_hold_covers_the_servers_deadline() {
     let mut answered = Vec::new();
     while answered.len() < 2 {
         match next(&mut reader, SOON * 2).await {
-            Some(FromClient::Verb { id, .. }) => answered.push(id),
+            Some(FromClient::Verb { id, .. }) => {
+                if id == 1 {
+                    write.write_all(&landed(1)).await.unwrap();
+                }
+                answered.push(id)
+            }
             Some(_) => {}
             None => panic!("the answers never came: {answered:?}"),
         }
@@ -3294,10 +3308,17 @@ async fn the_hellos_verification_runs_beside_the_admissions_show() {
     con.stop().await;
 }
 
-/// **The admission's `show`, asked and answered** as the listener asks it
-/// at every admission where the ceiling grants it: a fake server owes
-/// admin-con this before anything else, since the hello holds ordinary asks
-/// until it is answered.
+/// **The admission's `show`, asked, answered and reported landed** as the
+/// listener does at every admission where the ceiling grants it: a fake
+/// server owes admin-con this before anything else, since the hello holds
+/// ordinary asks until the server reports that `show` landed.
+/// The frame by which a fake server reports a `show` it asked landed.
+fn landed(id: u64) -> Vec<u8> {
+    let mut line = serde_json::to_vec(&ToClient::Landed { id }).unwrap();
+    line.push(b'\n');
+    line
+}
+
 async fn admission_show<R, W>(reader: &mut super::frames::LineReader<R>, write: &mut W)
 where
     R: tokio::io::AsyncRead + Unpin,
@@ -3319,6 +3340,7 @@ where
                 if let FromClient::Verb { id: answered, .. } = serde_json::from_str(&line).unwrap()
                     && answered == id
                 {
+                    write.write_all(&landed(id)).await.unwrap();
                     return;
                 }
             }
@@ -3463,7 +3485,12 @@ async fn a_late_openings_show_still_runs_before_a_queued_verb() {
     let mut answered = Vec::new();
     while answered.len() < 2 {
         match next(&mut reader, SOON).await {
-            Some(FromClient::Verb { id, .. }) => answered.push(id),
+            Some(FromClient::Verb { id, .. }) => {
+                if id == 1 {
+                    write.write_all(&landed(1)).await.unwrap();
+                }
+                answered.push(id)
+            }
             Some(_) => {}
             None => panic!("the answers never came: {answered:?}"),
         }
@@ -3534,5 +3561,152 @@ async fn a_closed_door_hello_holds_ordinary_asks_until_its_show() {
     );
     drop(reader);
     drop(write);
+    con.stop().await;
+}
+
+/// **The hold ends when the server reports the `show` landed, and not when
+/// its answer is sent** (Spec 7.2): a fake server reads the admission's
+/// `show`, answered with a state, and reports nothing landed, with a
+/// person's `load` queued. The `load` does not run; a `landed` for another
+/// id releases nothing; the `landed` for the `show` releases the hold.
+#[tokio::test]
+async fn a_show_answered_but_not_landed_keeps_the_hold() {
+    let server = FakeServer::start().await;
+    let trace = Trace::closed();
+    let invoker = FakeInvoker::new(&["show", "load"], "idle");
+    let cfg = AdminConConfig {
+        link: server.link(Plane::Admin),
+        trace_socket: trace.socket.clone(),
+        weaver_admin: PathBuf::from(NO_WEAVER_ADMIN),
+        backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
+        verb_bound: admin_con::VERB_BOUND,
+        stop_grace: GRACE,
+        grants_bound: Duration::from_secs(super::client::HELLO_SECS),
+        boundary_bound: admin_con::BOUNDARY_BOUND,
+        drain_bound: admin_con::DRAIN_BOUND,
+    };
+    let con = Running::start(cfg, invoker.clone());
+    let (mut reader, mut write) = server.admit(15).await;
+    let ask = |id: u64, verb: &str, principal: Principal| {
+        let mut line = serde_json::to_vec(&ToClient::Verb {
+            id,
+            verb: verb.into(),
+            principal,
+        })
+        .unwrap();
+        line.push(b'\n');
+        line
+    };
+    let answers = async |reader: &mut super::frames::LineReader<_>, wait: Duration| {
+        let mut answered = Vec::new();
+        let until = tokio::time::Instant::now() + wait;
+        while let Ok(line) = tokio::time::timeout_at(until, reader.next()).await {
+            match line {
+                Line::Frame(line) => {
+                    if let FromClient::Verb { id, outcome, .. } =
+                        serde_json::from_str(&line).unwrap()
+                    {
+                        answered.push((id, outcome.is_some()));
+                    }
+                }
+                other => panic!("the connection ended: {other:?}"),
+            }
+        }
+        answered
+    };
+    write
+        .write_all(&ask(1, "show", Principal::Server))
+        .await
+        .unwrap();
+    let person = Principal::Person { name: "ada".into() };
+    write.write_all(&ask(2, "load", person)).await.unwrap();
+    assert_eq!(
+        answers(&mut reader, Duration::from_secs(2)).await,
+        [(1, true)],
+        "the show answered with a state, and nothing else"
+    );
+    assert_eq!(invoker.ran(), ["show"], "the load ran before the landing");
+
+    write.write_all(&landed(99)).await.unwrap();
+    assert_eq!(
+        answers(&mut reader, Duration::from_secs(1)).await,
+        [],
+        "another id's landing released the hold"
+    );
+    assert_eq!(invoker.ran(), ["show"], "the load ran on another landing");
+
+    write.write_all(&landed(1)).await.unwrap();
+    assert_eq!(
+        answers(&mut reader, Duration::from_secs(2)).await,
+        [(2, true)],
+        "the show's landing released the hold"
+    );
+    assert_eq!(invoker.ran(), ["show", "load"]);
+    drop(reader);
+    drop(write);
+    con.stop().await;
+}
+
+/// **An opening's `show` the store does not land keeps the hold until the
+/// connection closes** (Spec 7.2), against the real listener: the opening's
+/// `show` is answered with a state and its landing stalls, so the listener
+/// sends no `landed` and closes the connection at the opening's deadline; a
+/// person's `load` queued at the opening never runs on that connection. A
+/// stall rather than a failure, since a failed landing closes the
+/// connection within milliseconds, before the replay's end and the drain
+/// would let the `load` start even without the hold, and so tells the two
+/// apart less than a store slow past the opening's deadline does.
+#[tokio::test]
+async fn an_openings_show_the_store_does_not_land_keeps_the_hold() {
+    use std::sync::atomic::Ordering;
+    let Some(lab) = Lab::open_with(Duration::from_secs(4)).await else {
+        return;
+    };
+    let mut trace = Trace::closed();
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
+    let invoker = FakeInvoker::new(&["show", "load"], "unloaded");
+    let mut con = Running::start(config(&path), invoker.clone());
+    con.wait("admitted", |s| s.admitted).await;
+    lab.wait_for(&id, "the admission's show", |a| {
+        a.state_source.as_deref() == Some("show")
+    })
+    .await;
+
+    // The relay comes up holding its stream, so the opening waits on its
+    // heartbeat while the person's ask arrives.
+    trace.relay.hold(true);
+    trace.relay.start();
+    let until = tokio::time::Instant::now() + SOON;
+    while trace.relay.counts.connections.load(Ordering::Relaxed) == 0 {
+        assert!(
+            tokio::time::Instant::now() < until,
+            "the opening never dialed"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    lab.listener.stall_next_land();
+    let listener = lab.listener.clone();
+    let asked = id.clone();
+    let person = Principal::Person { name: "ada".into() };
+    let loaded = tokio::spawn(async move {
+        tokio::time::timeout(
+            Duration::from_secs(20),
+            listener.verb(&asked, "load", person),
+        )
+        .await
+    });
+    tokio::time::sleep(SETTLE).await;
+    trace.relay.hold(false);
+
+    con.wait("admitted again", |s| s.admitted && s.admissions >= 2)
+        .await;
+    let answer = loaded.await.unwrap().expect("the load was answered");
+    assert!(answer.is_err(), "the load was answered as run: {answer:?}");
+    assert!(
+        !invoker.ran().iter().any(|v| v == "load"),
+        "the load ran before the close: {:?}",
+        invoker.ran()
+    );
     con.stop().await;
 }

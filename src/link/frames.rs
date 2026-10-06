@@ -300,6 +300,15 @@ pub enum ToClient {
     Ack {
         position: Position,
     },
+    /// **The server landed the observation of a `show` it asked itself**,
+    /// at an admission or at an opening (Spec 7.2): sent only after the
+    /// store took it, so a `show` whose landing fails, stalls or carries no
+    /// state gets none and the connection closes instead. admin-con's hold
+    /// on ordinary asks ends here and nowhere else but the connection's
+    /// end.
+    Landed {
+        id: u64,
+    },
     /// Typed, before the connection closes.
     Refusal {
         reason: Refusal,

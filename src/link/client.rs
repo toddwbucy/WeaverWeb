@@ -353,6 +353,7 @@ pub fn to_client_name(frame: &ToClient) -> &'static str {
         ToClient::Turn { .. } => "turn",
         ToClient::Verb { .. } => "verb",
         ToClient::Ack { .. } => "ack",
+        ToClient::Landed { .. } => "landed",
         ToClient::Refusal { .. } => "refusal",
     }
 }

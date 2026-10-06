@@ -1479,12 +1479,15 @@ impl Ask {
 /// The asks waiting their turn.
 struct Asks {
     waiting: VecDeque<Ask>,
+    /// The ids the server reported landed, for the hold to read.
+    landed: Vec<u64>,
 }
 
 impl Asks {
     fn new() -> Self {
         Self {
             waiting: VecDeque::new(),
+            landed: Vec::new(),
         }
     }
 
@@ -1752,25 +1755,34 @@ async fn relay<I: Invoker>(
     // Whether a waiting ask's hold behind a detached process was logged.
     let mut held_logged = false;
     // **An opening on the live connection serves its own `show` first,
-    // and holds every ordinary ask until that `show` is answered** (Spec
+    // and holds every ordinary ask until that `show` is landed** (Spec
     // 7.2), **at the hello as at every opening**, since the hello is an
     // admission and its `show` is owed whatever the door's state: where the
     // ceiling grants `show`, ordinary asks wait from the hello or the
-    // opening until the `show` the server asks has been answered with a
-    // `state` answer and that answer sent. **The hold runs on no clock of
+    // opening until **the server reports that `show` landed**. A local send
+    // of the answer is not that: the frame is only queued, and the listener
+    // may still fail to land it and close `store_unavailable`, so a release
+    // there would be a clock in disguise. **The hold runs on no clock of
     // admin-con's**: the server always asks after a door frame where the
-    // ceiling grants `show`, and if it does not, or the `show` faults or
-    // answers anything but a state, its own admission deadline closes the
-    // connection, which ends the hold. That deadline is the only clock, and
-    // it is the right one, since no deadline admin-con computes can be
-    // proven to outlast it.
+    // ceiling grants `show`, and if it does not, or the `show` faults,
+    // answers anything but a state, or does not land, no `landed` comes and
+    // its own deadline or refusal closes the connection, which ends the
+    // hold.
     let mut opening_show = owes_show(&ceiling);
-    // The `show` taken under the hold, whose answer may release it.
+    // The `show` taken under the hold, whose landing releases it.
     let mut hold_show: Option<u64> = None;
     loop {
         if *shutdown.borrow_and_update() {
             decline_waiting(conn, &mut queue).await;
             return Ended::Shutdown;
+        }
+        // Only the held ask's landing releases the hold; any other is
+        // ignored.
+        for id in queue.landed.drain(..) {
+            if hold_show == Some(id) {
+                hold_show = None;
+                opening_show = false;
+            }
         }
         // Only a `show` the server asked is served while this holds.
         let restricted = replaying || opening_show;
@@ -1784,7 +1796,7 @@ async fn relay<I: Invoker>(
             && let Ok(permit) = opts.slot.permit.clone().try_acquire_owned()
             && let Some(ask) = queue.next(restricted)
         {
-            if opening_show && ask.served_during_the_replay() {
+            if opening_show && hold_show.is_none() && ask.served_during_the_replay() {
                 hold_show = Some(ask.id);
             }
             // **During the replay only a `show` the server asked is served,
@@ -1882,18 +1894,8 @@ async fn relay<I: Invoker>(
             // invocation is emitted ahead of its answer.
             tokio::select! {
                 Some((id, outcome)) = in_flight.next() => {
-                    let releases = hold_show == Some(id) && answered_a_state(&outcome);
                     if let Err(why) = conn.send(answer(id, outcome, opts.verb_bound)).await {
                         return Ended::Lost(why);
-                    }
-                    // The opening's `show` answered with a state and sent:
-                    // the hold ends. Answered otherwise, the hold stands
-                    // until the server closes the connection.
-                    if hold_show == Some(id) {
-                        hold_show = None;
-                        if releases {
-                            opening_show = false;
-                        }
                     }
                 }
                 incoming = conn.recv() => {
@@ -2081,25 +2083,11 @@ impl Drop for Verifying {
 }
 
 /// **Whether an admission or an opening owes a `show`, and so holds
-/// ordinary asks until it is answered**: where the ceiling grants it. The
-/// one place the hold is decided, at the hello and at every opening.
+/// ordinary asks until the server reports it landed**: where the ceiling
+/// grants it. The one place the hold is decided, at the hello and at every
+/// opening.
 fn owes_show(ceiling: &BTreeSet<String>) -> bool {
     ceiling.contains("show")
-}
-
-/// Whether an invocation answered with a `state` answer, the one that ends
-/// an opening's hold.
-fn answered_a_state(invocation: &Invocation) -> bool {
-    matches!(
-        invocation,
-        Invocation::Ran(Some(Ok(outcome)))
-            if outcome
-                .answer
-                .as_ref()
-                .and_then(|a| a.get("kind"))
-                .and_then(|k| k.as_str())
-                == Some("state")
-    )
 }
 
 /// How an invocation ended: it ran, answering admin's object or passing
@@ -2241,6 +2229,10 @@ async fn handle(
 ) -> Option<Ended> {
     match incoming {
         Incoming::Frame(ToClient::Ack { .. }) => None,
+        Incoming::Frame(ToClient::Landed { id }) => {
+            queue.landed.push(id);
+            None
+        }
         Incoming::Frame(ToClient::Verb {
             id,
             verb,

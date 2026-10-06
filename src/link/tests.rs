@@ -936,6 +936,11 @@ async fn the_tuple_is_admins_word_and_never_gate_cons() {
         })
         .await;
     assert!(row.tuple.is_none());
+    // The server reports the admission's `show` landed.
+    assert!(matches!(
+        admin.recv().await,
+        Some(ToClient::Landed { id: 1 })
+    ));
 
     // (2) A replayed event feeds the window and writes nothing.
     admin
@@ -1392,6 +1397,10 @@ async fn events_of_another_generation_classify_by_the_streams_order() {
         a.load_state.as_deref() == Some("unloaded")
     })
     .await;
+    assert!(matches!(
+        admin.recv().await,
+        Some(ToClient::Landed { id: 1 })
+    ));
 
     // The old generation's tail, before caught_up: replayed whatever the
     // client says.
@@ -3171,6 +3180,10 @@ async fn a_landing_that_stalls_closes_the_connection_without_an_ack() {
             a.admin.connected && a.load_state.as_deref() == Some("idle")
         })
         .await;
+        match admin.recv().await {
+            Some(ToClient::Landed { id: landed }) => assert_eq!(landed, id),
+            other => panic!("expected the show's landing, got {other:?}"),
+        }
         admin
     }
 

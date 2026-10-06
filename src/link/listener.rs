@@ -1585,6 +1585,10 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                     if is_admission {
                         if landing == Landing::Observation {
                             admission_show = None;
+                            // **The server's acceptance is the one signal**
+                            // that ends admin-con's hold (Spec 7.2): sent
+                            // only once the store took the observation.
+                            send(&tx, ToClient::Landed { id }).await;
                         } else {
                             tracing::warn!(
                                 "{}: the admission's show answered without a usable observation ({}), closed so the reconnect asks again",

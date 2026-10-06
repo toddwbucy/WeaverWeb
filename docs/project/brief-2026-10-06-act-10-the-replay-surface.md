@@ -153,6 +153,10 @@ where they differ.** The section's original text stands below and these govern i
    so an insert that forgets the status fails rather than reading as any word. The
    ingest writes `writing` explicitly at the row's creation, and the test seeders write
    a status. `ingest_reason` stays nullable.
+26. The fifth absence word lands with its first use. Ruling 11 has Record render
+   `unknown` in 10b, so Spec 6's absence rule and the design README's vocabulary note
+   gain the word in 10b, not 10c, amending ruling 9's "in 10c"; 10c inherits a word the
+   repository already admits.
 
 **Three pull requests, in order**, each its own act: 10a lands the design, 10b lands the
 ingest the surface reads from, 10c lands the surface. 10b exists because nothing writes

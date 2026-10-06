@@ -2948,3 +2948,79 @@ async fn failed_verifications_move_the_openings_toward_the_servers_position() {
     verb(&lab.listener, &id, "show").await.unwrap();
     con.stop().await;
 }
+
+/// **The opening's hold runs from the door frame's send, with a cadence
+/// for the `show`'s delivery**: a fake server on a one-second cadence takes
+/// the door frame, asks a person's slow `validate` at once, and asks the
+/// opening's `show` 4.5 s after the frame, within the listener's deadline
+/// from its receipt and a delivery. The `show` is still served first.
+#[tokio::test]
+async fn the_openings_hold_runs_from_the_door_frames_send() {
+    let server = FakeServer::start().await;
+    let mut trace = Trace::closed();
+    let invoker = FakeInvoker::new(&["show", "validate"], "idle");
+    invoker.slow("validate", Duration::from_secs(3));
+    let cfg = AdminConConfig {
+        link: server.link(Plane::Admin),
+        trace_socket: trace.socket.clone(),
+        weaver_admin: PathBuf::from(NO_WEAVER_ADMIN),
+        backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
+        verb_bound: admin_con::VERB_BOUND,
+        stop_grace: GRACE,
+        grants_bound: Duration::from_secs(super::client::HELLO_SECS),
+        boundary_bound: admin_con::BOUNDARY_BOUND,
+        drain_bound: admin_con::DRAIN_BOUND,
+    };
+    let con = Running::start(cfg, invoker.clone());
+    let (mut reader, mut write) = server.admit(1).await;
+    let next = async |reader: &mut super::frames::LineReader<_>, wait: Duration| loop {
+        match tokio::time::timeout(wait, reader.next()).await {
+            Err(_) => return None,
+            Ok(Line::Frame(line)) => match serde_json::from_str::<FromClient>(&line).unwrap() {
+                FromClient::Heartbeat => continue,
+                frame => return Some(frame),
+            },
+            Ok(other) => panic!("the connection ended: {other:?}"),
+        }
+    };
+    let ask = |id: u64, verb: &str, principal: Principal| {
+        let mut line = serde_json::to_vec(&ToClient::Verb {
+            id,
+            verb: verb.into(),
+            principal,
+        })
+        .unwrap();
+        line.push(b'\n');
+        line
+    };
+
+    trace.relay.start();
+    match next(&mut reader, SOON).await {
+        Some(FromClient::Door { open: true, .. }) => {}
+        other => panic!("expected the door opening, got {other:?}"),
+    }
+    let opened = tokio::time::Instant::now();
+    let person = Principal::Person { name: "ada".into() };
+    write.write_all(&ask(2, "validate", person)).await.unwrap();
+    match next(&mut reader, SOON).await {
+        Some(FromClient::CaughtUp) => {}
+        other => panic!("expected caught_up, got {other:?}"),
+    }
+    tokio::time::sleep_until(opened + Duration::from_millis(4500)).await;
+    write
+        .write_all(&ask(1, "show", Principal::Server))
+        .await
+        .unwrap();
+    let mut answered = Vec::new();
+    while answered.len() < 2 {
+        match next(&mut reader, SOON * 2).await {
+            Some(FromClient::Verb { id, .. }) => answered.push(id),
+            Some(_) => {}
+            None => panic!("the answers never came: {answered:?}"),
+        }
+    }
+    assert_eq!(answered, [1, 2], "the opening's show was served first");
+    drop(reader);
+    drop(write);
+    con.stop().await;
+}

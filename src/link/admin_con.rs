@@ -1721,16 +1721,20 @@ async fn relay<I: Invoker>(
     // (Spec 7.2): until the server's `show` asked at the opening is taken
     // into the slot, ordinary asks wait as they do behind the replay, so a
     // person's verb queued at the opening cannot hold that `show` past the
-    // opening's deadline. Bounded by the silence bound from the door's
-    // frame, the cadence's four, so a server that never asks cannot hold
-    // the queue.
-    let mut opening_show: Option<tokio::time::Instant> = None;
+    // opening's deadline. **Its clock runs from the door frame's send**,
+    // not the opening's measurement, as the listener's own deadline runs
+    // from the frame's receipt: the silence bound, the cadence's four, and
+    // one cadence more for the `show`'s delivery, so the hold outlasts the
+    // listener's deadline and a server that never asks still cannot hold
+    // the queue. `Unsent` until the frame has gone.
+    let mut opening_show: Option<Hold> = None;
     loop {
         if *shutdown.borrow_and_update() {
             decline_waiting(conn, &mut queue).await;
             return Ended::Shutdown;
         }
-        if opening_show.is_some_and(|until| tokio::time::Instant::now() >= until) {
+        if matches!(opening_show, Some(Hold::Until(until)) if tokio::time::Instant::now() >= until)
+        {
             tracing::warn!(
                 "{}: the opening's show was not asked within the silence bound; ordinary asks are served",
                 opts.agent
@@ -1903,6 +1907,12 @@ async fn relay<I: Invoker>(
                     return Ended::Lost(why);
                 }
                 sent(shared, &frame);
+                if matches!(frame, FromClient::Door { open: true, .. })
+                    && matches!(opening_show, Some(Hold::Unsent))
+                {
+                    opening_show =
+                        Some(Hold::Until(tokio::time::Instant::now() + conn.cadence * 5));
+                }
                 if ends_the_replay {
                     replaying = false;
                 }
@@ -1943,7 +1953,10 @@ async fn relay<I: Invoker>(
         let opening_due =
             !door.open && opening_show.is_none() && opts.slot.free() && !queue.servable(restricted);
         let next_try = door.next_try;
-        let show_until = opening_show;
+        let show_until = match opening_show {
+            Some(Hold::Until(until)) => Some(until),
+            _ => None,
+        };
         tokio::select! {
             _ = shutdown.changed() => {
                 decline_waiting(conn, &mut queue).await;
@@ -1966,7 +1979,7 @@ async fn relay<I: Invoker>(
                         outbox.extend(queued);
                         replaying = true;
                         if ceiling.contains("show") {
-                            opening_show = Some(tokio::time::Instant::now() + conn.cadence * 4);
+                            opening_show = Some(Hold::Unsent);
                         }
                     }
                     Ok(None) => {}
@@ -1980,6 +1993,15 @@ async fn relay<I: Invoker>(
             }
         }
     }
+}
+
+/// An opening's hold on ordinary asks, until its `show` is taken.
+#[derive(Debug, Clone, Copy)]
+enum Hold {
+    /// The door frame has not gone yet; the clock has not started.
+    Unsent,
+    /// The frame went; the hold ends here at the latest.
+    Until(tokio::time::Instant),
 }
 
 /// How an invocation ended: it ran, answering admin's object or passing

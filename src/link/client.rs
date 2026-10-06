@@ -313,6 +313,7 @@ impl Link {
         match answer {
             ToClient::HelloAnswer {
                 cadence_secs,
+                silence_secs,
                 acknowledged,
             } => {
                 if cadence_secs == 0 || cadence_secs > CADENCE_MAX_SECS {
@@ -320,14 +321,28 @@ impl Link {
                         "protocol fault: the hello's answer named a cadence of {cadence_secs} s, outside 1 to {CADENCE_MAX_SECS}"
                     ));
                 }
+                // The bound is at least four cadences, the cadence being its
+                // quotient, and no more than the longest cadence's four.
+                if silence_secs < cadence_secs * 4 || silence_secs > CADENCE_MAX_SECS * 4 {
+                    return Connect::Failed(format!(
+                        "protocol fault: the hello's answer named a silence bound of {silence_secs} s against a cadence of {cadence_secs} s"
+                    ));
+                }
                 let cadence = Duration::from_secs(cadence_secs);
+                let silence = Duration::from_secs(silence_secs);
                 if let Err(e) = keepalive(fd, cadence) {
                     tracing::warn!("TCP keepalive could not be set on the link: {e}");
                 }
                 if let Err(e) = bound_unsent(fd) {
                     tracing::warn!("the link's unsent bound could not be set: {e}");
                 }
-                Connect::Admitted(Connection::start(reader, write, cadence, acknowledged))
+                Connect::Admitted(Connection::start(
+                    reader,
+                    write,
+                    cadence,
+                    silence,
+                    acknowledged,
+                ))
             }
             ToClient::Refusal { reason } => Connect::Refused(reason),
             other => Connect::Failed(format!(
@@ -422,6 +437,9 @@ pub struct Connection {
     /// The cadence the hello's answer named: the heartbeat's period and
     /// every write's bound.
     pub cadence: Duration,
+    /// The server's silence bound, as the hello's answer named it: the
+    /// deadline the server holds for what it awaits from this connector.
+    pub silence: Duration,
     /// On the admin plane, the position this server process acknowledged
     /// (Spec 7.2); none on the gate plane.
     pub acknowledged: Option<Position>,
@@ -448,6 +466,7 @@ impl Connection {
         reader: Reader,
         mut write: Writer,
         cadence: Duration,
+        silence: Duration,
         acknowledged: Option<Position>,
     ) -> Self {
         let (tx, mut rx) = mpsc::channel::<(FromClient, Option<oneshot::Sender<()>>)>(WRITE_QUEUE);
@@ -511,6 +530,7 @@ impl Connection {
         });
         Self {
             cadence,
+            silence,
             acknowledged,
             reader,
             tx: Some(tx),

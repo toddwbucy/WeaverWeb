@@ -1306,6 +1306,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
             &tx,
             ToClient::HelloAnswer {
                 cadence_secs: inner.silence.as_secs() / 4,
+                silence_secs: inner.silence.as_secs(),
                 acknowledged,
             },
             inner.silence,

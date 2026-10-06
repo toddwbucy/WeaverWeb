@@ -274,11 +274,14 @@ pub enum FromClient {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "svc", rename_all = "snake_case")]
 pub enum ToClient {
-    /// The send cadence, the silence bound divided by four (Spec 8), and
+    /// The send cadence, the silence bound divided by four (Spec 8), **the
+    /// silence bound itself**, so a connector timing against the server's
+    /// deadline reads it rather than rebuilding it from the quotient, and
     /// on the admin plane the acknowledged position this server process
     /// holds, or none after a restart (Spec 7.2).
     HelloAnswer {
         cadence_secs: u64,
+        silence_secs: u64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         acknowledged: Option<Position>,
     },
@@ -382,10 +385,19 @@ mod shape {
 
         let answer = ToClient::HelloAnswer {
             cadence_secs: 15,
+            silence_secs: 60,
             acknowledged: None,
         };
         let line = serde_json::to_string(&answer).unwrap();
-        assert_eq!(line, "{\"svc\":\"hello_answer\",\"cadence_secs\":15}");
+        assert_eq!(
+            line,
+            "{\"svc\":\"hello_answer\",\"cadence_secs\":15,\"silence_secs\":60}"
+        );
+        // A cadence with no bound is not an answer.
+        assert!(
+            serde_json::from_str::<ToClient>("{\"svc\":\"hello_answer\",\"cadence_secs\":15}")
+                .is_err()
+        );
 
         let refusal = ToClient::Refusal {
             reason: Refusal::NotLive,

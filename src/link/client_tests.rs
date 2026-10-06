@@ -720,6 +720,21 @@ impl FakeServer {
         LineReader<tokio::io::ReadHalf<ServerStream>>,
         tokio::io::WriteHalf<ServerStream>,
     ) {
+        self.admit_answering(cadence_secs, None, receive_buffer)
+            .await
+    }
+
+    /// As `admit_with`, naming the silence bound the answer carries, four
+    /// cadences where none is given.
+    pub(super) async fn admit_answering(
+        &self,
+        cadence_secs: u64,
+        silence_secs: Option<u64>,
+        receive_buffer: Option<usize>,
+    ) -> (
+        LineReader<tokio::io::ReadHalf<ServerStream>>,
+        tokio::io::WriteHalf<ServerStream>,
+    ) {
         let acceptor = tokio_rustls::TlsAcceptor::from(self.authority.server_tls().unwrap());
         let (tcp, _) = self.listener.accept().await.unwrap();
         if let Some(bytes) = receive_buffer {
@@ -751,6 +766,7 @@ impl FakeServer {
         }
         let mut answer = serde_json::to_vec(&ToClient::HelloAnswer {
             cadence_secs,
+            silence_secs: silence_secs.unwrap_or(cadence_secs.saturating_mul(4)),
             acknowledged: None,
         })
         .unwrap();

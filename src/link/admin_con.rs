@@ -1732,8 +1732,9 @@ async fn relay<I: Invoker>(
     // person's verb queued at the opening cannot hold that `show` past the
     // opening's deadline. **Its clock runs from the door frame's send**,
     // not the opening's measurement, as the listener's own deadline runs
-    // from the frame's receipt: the silence bound, the cadence's four, and
-    // one cadence more for the `show`'s delivery, so the hold outlasts the
+    // from the frame's receipt: the server's silence bound, as its hello's
+    // answer named it, and one cadence more for the `show`'s delivery, so
+    // the hold outlasts the
     // listener's deadline and a server that never asks still cannot hold
     // the queue. `Unsent` until the frame has gone, **gone meaning written
     // to the socket**: a frame queued behind others has not reached the
@@ -1750,7 +1751,7 @@ async fn relay<I: Invoker>(
             match delivered.try_recv() {
                 Ok(()) => {
                     door_delivered = None;
-                    start_hold(&mut opening_show, conn.cadence);
+                    start_hold(&mut opening_show, conn);
                 }
                 Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {}
                 // The writer ended: the connection is ending, and no hold
@@ -1995,7 +1996,7 @@ async fn relay<I: Invoker>(
             delivered = async { door_delivered.as_mut().expect("guarded").await }, if door_delivered.is_some() => {
                 door_delivered = None;
                 if delivered.is_ok() {
-                    start_hold(&mut opening_show, conn.cadence);
+                    start_hold(&mut opening_show, conn);
                 }
             }
             // The opening's hold ends at its bound even with nothing else
@@ -2028,11 +2029,15 @@ async fn relay<I: Invoker>(
     }
 }
 
-/// Start an unclocked hold's clock: the silence bound, four cadences, and
-/// one more for the `show`'s delivery.
-fn start_hold(hold: &mut Option<Hold>, cadence: Duration) {
+/// Start an unclocked hold's clock: **the server's own silence bound**, as
+/// its hello's answer named it, and one cadence more for the `show`'s
+/// delivery, so the hold covers the server's deadline for that `show`
+/// whatever the bound's quotient.
+fn start_hold(hold: &mut Option<Hold>, conn: &Connection) {
     if matches!(hold, Some(Hold::Unsent)) {
-        *hold = Some(Hold::Until(tokio::time::Instant::now() + cadence * 5));
+        *hold = Some(Hold::Until(
+            tokio::time::Instant::now() + conn.silence + conn.cadence,
+        ));
     }
 }
 

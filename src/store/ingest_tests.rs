@@ -305,6 +305,14 @@ async fn a_replay_is_compared_and_a_differing_one_changes_nothing() {
     assert_eq!(again["ok"], json!(true), "{again}");
     assert_eq!(again["runs"][0]["status"], json!("whole"));
     assert_eq!(again["runs"][0]["replayed"], json!(true));
+    assert_eq!(
+        (
+            again["runs"][0]["positions"].clone(),
+            again["runs"][0]["generations"].clone()
+        ),
+        (json!(455), json!(2)),
+        "an equal replay answers what the store holds"
+    );
     assert_eq!(count(&s, "position", &run).await, 455, "nothing doubled");
 
     let mut changed = w.clone();
@@ -314,6 +322,14 @@ async fn a_replay_is_compared_and_a_differing_one_changes_nothing() {
     assert_eq!(refused["ok"], json!(false), "{refused}");
     assert_eq!(refused["runs"][0]["status"], json!("refused"));
     assert_eq!(refused["runs"][0]["stored"], json!("whole"));
+    assert_eq!(
+        (
+            refused["runs"][0]["positions"].clone(),
+            refused["runs"][0]["generations"].clone()
+        ),
+        (json!(0), json!(0)),
+        "a refused replay wrote nothing and says so"
+    );
     let why = refused["runs"][0]["reason"].as_str().unwrap();
     assert!(why.contains("turn t-1 position 63"), "{why}");
     let token: i64 = sqlx::query_scalar(
@@ -1109,4 +1125,125 @@ async fn a_shorter_branch_never_closes_a_run_holding_more() {
     assert_eq!(landed(&s, &whole.run()).await.unwrap().status, "writing");
     assert_eq!(ingest(&s, &whole).await["ok"], json!(true));
     assert_eq!(landed(&s, &whole.run()).await.unwrap().status, "whole");
+}
+
+/// One defect, planted in an emission by editing it.
+type Plant = Box<dyn Fn(&mut Wire)>;
+
+/// **Every constraint the schema holds a row to is met while planning**
+/// (Codex pass five on PR #23): each defect below is planted in one run of a
+/// two-run emission, before a good run. The planted run is refused by name
+/// before a row, and the good run after it lands `whole`: a store refusal
+/// at the insert would have failed the whole ingest instead.
+#[tokio::test]
+async fn a_member_the_schema_refuses_is_refused_while_planning() {
+    let Some(s) = store().await else { return };
+    let past_i32 = json!(i32::MAX as u64 + 1);
+    let plants: Vec<(&str, Plant)> = vec![
+        (
+            "a digest that is not sha256 hex",
+            Box::new(|w: &mut Wire| {
+                for g in w.generations_mut() {
+                    g["digest"] = json!("XYZ");
+                }
+            }),
+        ),
+        (
+            "a NUL in the session",
+            Box::new(|w: &mut Wire| {
+                for g in w.generations_mut() {
+                    g["session"] = json!("s\u{0}x");
+                }
+            }),
+        ),
+        (
+            "a NUL in the run identity",
+            Box::new(|w: &mut Wire| {
+                let run = format!("{}\u{0}", w.run());
+                for g in w.generations_mut() {
+                    g["run"] = json!(run);
+                }
+            }),
+        ),
+        (
+            "a NUL in a turn key",
+            Box::new(|w: &mut Wire| {
+                w.summary["generations"][0]["turn"] = json!("t\u{0}1");
+                for p in w.points.iter_mut().take(12) {
+                    p["turn"] = json!("t\u{0}1");
+                }
+            }),
+        ),
+        (
+            "a NUL in the effective sampling",
+            Box::new(|w: &mut Wire| {
+                for g in w.generations_mut() {
+                    g["effective_sampling"]["sampler"] = json!("top\u{0}k");
+                }
+            }),
+        ),
+        (
+            "a seated prefix past INTEGER",
+            Box::new({
+                let past = past_i32.clone();
+                move |w: &mut Wire| {
+                    for g in w.generations_mut() {
+                        g["prefix_length"] = past.clone();
+                    }
+                }
+            }),
+        ),
+        (
+            "a field depth past INTEGER",
+            Box::new({
+                let past = past_i32.clone();
+                move |w: &mut Wire| {
+                    for g in w.generations_mut() {
+                        g["field_depth"] = past.clone();
+                    }
+                }
+            }),
+        ),
+        (
+            "a resident count past INTEGER",
+            Box::new({
+                let past = past_i32.clone();
+                move |w: &mut Wire| {
+                    w.summary["generations"][0]["resident"] = past.clone();
+                }
+            }),
+        ),
+        (
+            "a token past BIGINT",
+            Box::new(|w: &mut Wire| {
+                w.points[0]["token"] = json!(i64::MAX as u64 + 1);
+            }),
+        ),
+    ];
+    for (i, (what, plant)) in plants.iter().enumerate() {
+        let t = tag(&format!("plant-{i}"));
+        let mut bad = Wire::of(CERTIFIED).renamed(&format!("bad#{t}"));
+        plant(&mut bad);
+        let good = Wire::of(SERVING).tagged(&t);
+        let answer = ingest(&s, &bad.clone().then(good.clone())).await;
+        assert!(
+            answer.get("error").is_none(),
+            "{what}: the store refused rather than the planner: {answer}"
+        );
+        assert_eq!(
+            answer["runs"][0]["status"],
+            json!("refused"),
+            "{what}: {answer}"
+        );
+        assert_eq!(
+            answer["runs"][1]["status"],
+            json!("whole"),
+            "{what}: {answer}"
+        );
+        assert_eq!(
+            landed(&s, &good.run()).await.unwrap().status,
+            "whole",
+            "{what}"
+        );
+    }
 }

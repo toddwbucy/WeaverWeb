@@ -93,6 +93,10 @@ pub struct RunOutcome {
     /// `status`: a replay refused in the answer alone leaves it as it was.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stored: Option<String>,
+    /// The positions and generations the store holds for the run as this
+    /// ingest left it: what it wrote, or, for a run it found already
+    /// written equal, what is stored. Never the plan's counts where they
+    /// did not land.
     pub positions: usize,
     pub generations: usize,
     pub absent: Vec<String>,
@@ -132,8 +136,10 @@ impl RunOutcome {
             reason: None,
             replayed,
             stored: None,
-            positions: plan.points.len(),
-            generations: plan.generations.len(),
+            // What this ingest wrote, counted as it writes; a refusal that
+            // wrote nothing reports none.
+            positions: 0,
+            generations: 0,
             absent: plan.absent(),
             not_stored: if plan.verdict_crossed {
                 vec!["verdict (no column until its kind lands, Spec 2.2)"]
@@ -326,6 +332,7 @@ impl Store {
                 vec![None]
             };
             let mut settled = None;
+            let (mut written_generations, mut written_positions) = (0, 0);
             for (index, scope) in scopes.into_iter().enumerate() {
                 #[cfg(test)]
                 if index == 1 {
@@ -333,7 +340,10 @@ impl Store {
                 }
                 let _ = index;
                 match self.fill(&run, &plan, scope).await.map_err(store_error)? {
-                    Fill::Done => {}
+                    Fill::Done(generations, positions) => {
+                        written_generations += generations;
+                        written_positions += positions;
+                    }
                     Fill::Closed => {
                         settled = Some(None);
                         break;
@@ -344,6 +354,8 @@ impl Store {
                     }
                 }
             }
+            outcome.generations = written_generations;
+            outcome.positions = written_positions;
             match settled {
                 None => {}
                 // **Another ingest closed the row meanwhile**: compared whole
@@ -383,6 +395,10 @@ impl Store {
                     Close::Closed(status, reason) => {
                         outcome.status = status.into();
                         outcome.reason = reason;
+                        // Closed over exactly the plan, so the plan's counts
+                        // are what the store holds.
+                        outcome.generations = plan.generations.len();
+                        outcome.positions = plan.points.len();
                     }
                     // Another ingest of the run closed it first.
                     Close::NotOpen => {
@@ -563,10 +579,15 @@ impl Store {
                 continue;
             };
             let outcome = &mut outcomes[o.outcome];
-            if let Some(stored) = resolved.stored {
+            if let Some(stored) = resolved.stored.clone() {
                 outcome.stored = Some(stored);
             }
             outcome.status = resolved.status.into();
+            if resolved.stored.is_none() && resolved.status != "refused" {
+                // Closed over exactly the plan.
+                outcome.generations = o.plan.generations.len();
+                outcome.positions = o.plan.points.len();
+            }
             outcome.reason = resolved.reason;
             outcome.parent_linked = resolved.linked;
             outcome.parting_known = resolved.parting.is_known();
@@ -787,6 +808,7 @@ impl Store {
             (g.seq, g)
         })
         .collect();
+        let mut inserted = 0;
         for g in &generations {
             match held.get(&g.seq) {
                 Some(stored) if stored == *g => {}
@@ -796,7 +818,10 @@ impl Store {
                         g.seq
                     )));
                 }
-                None => insert_generation(&mut tx, run, g).await?,
+                None => {
+                    insert_generation(&mut tx, run, g).await?;
+                    inserted += 1;
+                }
             }
         }
         let points: Vec<&PositionRow> = plan
@@ -821,7 +846,7 @@ impl Store {
         }
         insert_points(&mut tx, run, &missing).await?;
         tx.commit().await?;
-        Ok(Fill::Done)
+        Ok(Fill::Done(inserted, missing.len()))
     }
 
     /// **The outcome of a run another ingest closed**: the stored run
@@ -1035,7 +1060,8 @@ enum Close {
 
 /// How a fill ended.
 enum Fill {
-    Done,
+    /// Filled, with the generations and positions this fill inserted.
+    Done(usize, usize),
     /// The row no longer reads `writing`: another ingest closed it.
     Closed,
     /// Another ingest wrote a key with a different payload meanwhile.
@@ -1049,6 +1075,8 @@ fn unique_violation(e: &sqlx::Error) -> bool {
 
 /// An outcome answering with what the store holds for the run.
 fn answer_stored(outcome: &mut RunOutcome, stored: &Stored) {
+    outcome.generations = stored.generations.len();
+    outcome.positions = stored.positions.len();
     outcome.status = stored.status.clone();
     outcome.reason = stored.reason.clone();
     outcome.parent_linked = stored.linked;

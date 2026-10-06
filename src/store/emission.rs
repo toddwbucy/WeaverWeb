@@ -265,7 +265,7 @@ impl Emission {
         order
             .into_iter()
             .map(|run| {
-                let planned = RunPlan::of(&by_run[&run]);
+                let planned = RunPlan::of(&run, &by_run[&run]);
                 (run, planned)
             })
             .collect()
@@ -351,6 +351,31 @@ fn agreed<T: PartialEq + Clone>(
     Ok(first)
 }
 
+/// A text member refused where it holds a NUL byte, which PostgreSQL
+/// refuses in `TEXT`.
+fn no_nul(name: &str, text: &str) -> Result<(), String> {
+    if text.contains('\0') {
+        return Err(format!(
+            "the run's {name} holds a NUL byte, which the store refuses"
+        ));
+    }
+    Ok(())
+}
+
+/// A JSON member refused where any key or string in it holds a NUL byte,
+/// which PostgreSQL refuses in `JSONB`.
+fn no_nul_in(name: &str, json: &serde_json::Value) -> Result<(), String> {
+    match json {
+        serde_json::Value::String(s) => no_nul(name, s),
+        serde_json::Value::Array(items) => items.iter().try_for_each(|v| no_nul_in(name, v)),
+        serde_json::Value::Object(map) => map.iter().try_for_each(|(k, v)| {
+            no_nul(name, k)?;
+            no_nul_in(name, v)
+        }),
+        _ => Ok(()),
+    }
+}
+
 /// The effective sampling's declared members: the per-generation derived
 /// seed removed, since every run of more than one generation disagrees on
 /// it by construction (contract 2.2).
@@ -371,7 +396,33 @@ fn unsigned_text(value: Option<&serde_json::Value>) -> Result<Option<String>, ()
 }
 
 impl RunPlan {
-    fn of(entries: &[&(GenerationEntry, Vec<WirePoint>)]) -> Result<Self, String> {
+    fn of(run: &str, entries: &[&(GenerationEntry, Vec<WirePoint>)]) -> Result<Self, String> {
+        // **Every constraint the schema holds a run, generation or position
+        // row to is checked here, before a row exists**, so the store
+        // refusing an insert is never how a malformed run is found: that
+        // would fail the whole ingest and drop every later run's outcome
+        // where it should refuse one run by name. The schema's rules, and
+        // where each is met:
+        // - no text column or JSON string holds a NUL byte, which PostgreSQL
+        //   refuses in `TEXT` and `JSONB`: checked below on the run's
+        //   identity, every text member and every JSON member;
+        // - `record_digest` is 64 lowercase hex characters (migration 0003):
+        //   checked below;
+        // - `record_identity` and `sampler` are present (0001): refused
+        //   below where absent;
+        // - `seed` and `generation_seed` fit `NUMERIC(20,0)`: read as `u64`,
+        //   whose every value fits;
+        // - `field_depth`, `prefix_length`, `resident`, `output_count` and
+        //   `position` fit `INTEGER` and are not negative (0001, 0004,
+        //   0014): read unsigned and converted checked;
+        // - `token_id` fits `BIGINT`: converted checked;
+        // - `turn` is present on a position and its key is unique: a
+        //   turnless generation lands no point, and a key named twice is
+        //   refused below unless both payloads agree;
+        // - the status and its reason, the link and the reference, and the
+        //   parting and its knowledge go together (0014): written by the
+        //   ingest only in the pairs the checks allow.
+        no_nul("run identity", run)?;
         // **Agreement, member by member, before anything is formed**: a run
         // whose generations disagree is a defect the reader names, never a
         // run with two of anything (contract 2.2). Presence counts: an entry
@@ -430,6 +481,42 @@ impl RunPlan {
             i32::try_from(n)
                 .map_err(|_| format!("the run's {what} ({n}) is past the column's range"))
         };
+        // The record digest's shape (migration 0003), and no NUL in any
+        // text or JSON member the row would carry.
+        if let Some(digest) = &digest
+            && !(digest.len() == 64
+                && digest
+                    .bytes()
+                    .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
+        {
+            return Err(format!(
+                "the run's digest is not sha256 as lowercase hex (64 characters): {digest:?}"
+            ));
+        }
+        for (name, text) in [
+            ("weights hash", Some(record_identity.as_str())),
+            ("session", session.as_deref()),
+            ("digest", digest.as_deref()),
+            ("device model", device.as_deref()),
+            ("parent reference", parent_reference.as_deref()),
+        ] {
+            if let Some(text) = text {
+                no_nul(name, text)?;
+            }
+        }
+        for (name, json) in [
+            ("effective sampling", Some(&sampler)),
+            ("code identity", engine.as_ref()),
+        ] {
+            if let Some(json) = json {
+                no_nul_in(name, json)?;
+            }
+        }
+        for (entry, _) in entries.iter().map(|e| (&e.0, &e.1)) {
+            if let Some(turn) = &entry.turn {
+                no_nul("turn key", turn)?;
+            }
+        }
         let members = RunMembers {
             record_identity,
             seed,

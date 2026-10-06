@@ -205,7 +205,9 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
   then the close, `whole` or `short`; a branch closes only after its resolution (the link where
   the parent is held, the walk where it is also whole), parents first. A replay is compared key
   by key: equal is a no-op, different is refused in the answer and changes nothing stored. It
-  answers one JSON object listing every run, exit 1 where any run or the emission is refused.
+  answers one JSON object listing every run, exit 1 where any run or the emission is refused;
+  every constraint the schema holds a row to is checked while planning (`RunPlan::of` lists them),
+  so a malformed run is refused alone and never fails the ingest at an insert.
   The reader's bounds (Spec 3.1): a line at most 16 MiB, a summary announcing at most
   `POSITIONS_BOUND` (four million) positions, no point past the announced count, and at most
   `EMISSION_BOUND` (1 GiB) in all, the emission being held in memory whole. Two ingests of one

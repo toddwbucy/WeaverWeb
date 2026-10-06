@@ -1668,8 +1668,13 @@ record itself, so section 5's gate is held upstream (`toddwbucy/WeaverAnalysis#1
   ingest refuses only disagreement within a run. A run refused before its row would
   exist (its generations disagreeing, no effective sampling, no weights hash, a position
   it cannot form, one key named twice with two payloads) gets no row, and its refusal
-  is the answer's. **The answer is one object per run**: its identity, its status and
-  reason, the positions and generations landed, and the members absent, an equal replay
+  is the answer's. **Every constraint the schema holds a run, generation or position row
+  to is met while planning**, the digest's shape, the integer columns' ranges, a NUL byte
+  nowhere in a text or JSON member among them, so a store refusing an insert is never how
+  a malformed run is found: that would fail the whole ingest and drop every later run's
+  outcome where one run should be refused by name. **The answer is one object per run**: its identity, its status and
+  reason, the positions and generations the store holds for it as the ingest left it
+  (none where a refusal wrote nothing), and the members absent, an equal replay
   of a closed run answering with what the store holds, its reason, link and parting
   included; the exit status
   is 0 where every run is `whole` or `short`, and 1 where any run or the emission itself
@@ -3681,6 +3686,7 @@ missing while it was relaying.
 | a generation's summary lands, and its points only where they can be addressed | perturbation in `src/store/ingest_tests.rs`: close a run whose generations carry no resident count `whole`, and it reads as completed; give a turnless point a turn, and it lands under a key nobody recorded |
 | a run's ingest status is written first and read by every surface | perturbation: create the row `whole` rather than `writing`, and an ingest stopped by the test-only step hook after the points leaves a branch reading `whole` and unlinked; draw every row's status as `whole` on Record, and a `writing`, `short` or `refused` run reads as completed |
 | an absent entropy lands absent | perturbation in `src/store/ingest_tests.rs`: write an omitted entropy as zero, and the position reads a floor |
+| a member the schema refuses is refused while planning, and the answer's counts are what landed | perturbation in `src/store/ingest_tests.rs`: leave the digest's shape or a NUL byte to the store, and the run planted with it fails the whole ingest at its insert, the good run after it never landing; report the plan's counts on a refusal, and a refused replay reports 455 positions it never wrote |
 | the ingest's reader is bounded | perturbation in `src/store/emission.rs`: read on past the announced count, and an endless stream is read to the byte bound rather than stopped at its first extra point; drop the positions bound, and a summary announcing past it is read; drop the byte bound, and a stream of blank lines is read whole; sum the output counts unchecked, and two counts past `u64` wrap to a sum that passes |
 | an ingest that loses the race to create a run replays it, and one that finds its run closed by another compares it | perturbation in `src/store/ingest_tests.rs`, a test-only race option landing a second ingest at a named point: refuse on the unique conflict, and the run reads refused in the answer of an ingest whose emission the store already holds equal; answer a run another ingest closed without comparing it, and an ingest whose second generation differs from the one the other wrote reports `whole`; close without comparing under the close's lock, in a run's close or a branch's, and an ingest carrying the first generation alone closes `whole` a run another has written two into |
 | the parting position is derived only where it is provable, and recorded as unknown otherwise | perturbation in `src/store/ingest_tests.rs`, each guard: walk a parent that is held but not whole, drop the monotone guard, read a position only the parent holds as never parted, take a difference after a skipped span as known, read no difference in a short child as never parted, set the link for a parent not held, close a branch with the non-branches (the same-emission parent lands unlinked), resolve in the emission's order rather than parents first; and on Record, draw an unwalked parting as never parted, or an unheld parent as linked |

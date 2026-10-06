@@ -52,6 +52,17 @@ where they differ.** The section's original text stands below and these govern i
    whole; otherwise it stores the parent's reference, leaves `parent_run_id` unset and
    the parting position unknown, and the resolution is owed to a later act. Section 9's
    parting row follows.
+11. The new members reach the existing read and surface in 10b, not 10c.
+   `parent_reference` and `parting_known` are carried by the run tuple type, read three
+   and read five. Read five's parent chip filters on `parent_reference`, which a branch
+   names whether or not its parent is held, `parent_run_id` being the resolved link, and
+   `0014` indexes `parent_reference` as `parent_run_id` is indexed. Record renders a
+   branch's parent as the reference, linked where resolved and `absent` for the link
+   where not, and the parting position as the position where known, `absent` (never
+   parted) where known null, and `unknown` where not known, so no branch reads as having
+   reproduced its parent on an incomplete walk. Spec 4's read-three and read-five
+   bullets and its sentence reading a null parting position as reproduction are revised
+   in 10b with 2.2 and 3.1; 10c inherits the words.
 
 **Three pull requests, in order**, each its own act: 10a lands the design, 10b lands the
 ingest the surface reads from, 10c lands the surface. 10b exists because nothing writes

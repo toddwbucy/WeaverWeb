@@ -9,6 +9,22 @@ replay, before any live view") and the design of 2026-09-30 drew as the `Main` a
 3.4) and the Spec serves it with reads 1, 2 and 3 of section 4. This brief uses that
 name; "the Replay surface" is the operator's name for the same thing.
 
+**Rulings of 2026-10-06, after the executor's reading, which amend the 10b section below
+where they differ.** The section's original text stands below and these govern it:
+1. Migration `0014` adds the `generation` table, keyed `(run_id, seq)` in landing order,
+   with the turn, the perplexity, the resident count, the output count and the
+   generation's seed; 10c reads the summary and the turn order from it.
+2. `0014` makes `token_text`, `entropy`, `alternatives` and `realized` nullable, the read
+   types becoming `Option`, since the signals wire carries none of the last three and
+   entropy only where the generation measured it.
+3. A point whose generation lacks its resident count does not land, since no position
+   can be derived for it, and the run reads `short` naming the generation, per Spec 3.1.
+4. Several runs in one emission each land as their own row with their own status; the
+   ingest refuses only disagreement within a run.
+5. The status vocabulary is `writing`, `whole`, `short` and `refused`.
+6. `run.sampler` is the declared members of the effective sampling with
+   `generation_seed` removed, and the seed column is the declared seed.
+
 **Three pull requests, in order**, each its own act: 10a lands the design, 10b lands the
 ingest the surface reads from, 10c lands the surface. 10b exists because nothing writes
 a run or a position to the store today outside tests: the analysis ingest of Spec 3.1

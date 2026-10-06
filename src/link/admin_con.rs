@@ -48,7 +48,7 @@ pub use crate::link::relay::RECORD_BOUND;
 /// Verb asks waiting behind the one in flight.
 pub const VERB_QUEUE: usize = 16;
 /// **The floor under an opening's boundary** (Spec 7.2), covering the
-/// opening whole, its dials included: where no heartbeat comes this long
+/// opening whole, its dials and its verification included: where no heartbeat comes this long
 /// after the opening's start, as under a writer that never idles, the
 /// boundary is taken at the position read so far, and a dial that reaches
 /// no header by then leaves the door closed, retried on the backoff. The
@@ -391,6 +391,9 @@ struct Opened {
     /// boundary**, handed to the door, so the position the door resumes
     /// from and the stream it reads came from one dial.
     resumed: Option<relay::Stream>,
+    /// The opening's one deadline, taken before its first dial: its
+    /// verification gets only what remains of it.
+    until: tokio::time::Instant,
 }
 
 /// **An opening's boundary is the position at the first heartbeat after
@@ -445,6 +448,7 @@ async fn measure(
                 ring,
                 marks,
                 resumed: None,
+                until,
             });
         };
         match read {
@@ -472,6 +476,7 @@ async fn measure(
                     ring,
                     marks,
                     resumed: None,
+                    until,
                 });
             }
             Read::Truncated { size } => {
@@ -558,12 +563,7 @@ enum Resume {
 /// the boundary and the opening's `show` re-establishes the row. Anything
 /// else fails the opening, the door left closed on the backoff. Every other
 /// position is planned as it stands.
-async fn verify(
-    socket: &Path,
-    opened: &mut Opened,
-    resume: &Resume,
-    bound: Duration,
-) -> Result<Resume, String> {
+async fn verify(socket: &Path, opened: &mut Opened, resume: &Resume) -> Result<Resume, String> {
     let acked = match resume {
         // An opening whose read already marked a discontinuity replays from
         // zero of its file, per `begin`, and verifies nothing here.
@@ -576,7 +576,10 @@ async fn verify(
         }
         other => return Ok(other.clone()),
     };
-    match tokio::time::timeout(bound, relay::dial(socket, acked)).await {
+    // **The verification dial gets only what remains of the opening's one
+    // deadline**: where nothing remains it fails at once, a closed door on
+    // the backoff, as a dial past the deadline does.
+    match tokio::time::timeout_at(opened.until, relay::dial(socket, acked)).await {
         Ok(Dial::Open(stream)) if stream.identity == opened.boundary.generation => {
             opened.resumed = Some(*stream);
             Ok(resume.clone())
@@ -596,9 +599,10 @@ async fn verify(
             Ok(Resume::Backfill)
         }
         Ok(Dial::Closed(why)) => Err(why),
-        Err(_) => Err(format!(
-            "the trace relay gave no header within {bound:?} at the acknowledged position"
-        )),
+        Err(_) => Err(
+            "the trace relay gave no header at the acknowledged position within the opening's bound"
+                .to_owned(),
+        ),
     }
 }
 
@@ -786,6 +790,7 @@ impl Door {
             ring,
             marks,
             resumed,
+            ..
         } = opened;
         // **One mark per discontinuity**: where the opening's read already
         // marked one and started the file again from zero, the server's
@@ -1600,14 +1605,7 @@ async fn take_opening(
         opened.boundary.offset
     );
     let mut opened = opened;
-    let resume = match verify(
-        &opts.socket,
-        &mut opened,
-        &shared.resume,
-        opts.boundary_bound,
-    )
-    .await
-    {
+    let resume = match verify(&opts.socket, &mut opened, &shared.resume).await {
         Ok(resume) => resume,
         Err(why) => {
             door.failures = door.failures.saturating_add(1);
@@ -1662,14 +1660,7 @@ async fn relay<I: Invoker>(
     let mut replaying = false;
     match opened {
         Some(mut opened) => {
-            match verify(
-                &opts.socket,
-                &mut opened,
-                &shared.resume,
-                opts.boundary_bound,
-            )
-            .await
-            {
+            match verify(&opts.socket, &mut opened, &shared.resume).await {
                 Ok(resume) => {
                     let front = door.begin(opened, &resume, opts.backfill);
                     outbox.extend(outs(front, true));
@@ -1920,7 +1911,11 @@ async fn relay<I: Invoker>(
         // timed-out verb's process ending while an ask or an opening waits
         // for it, or the door's next opening, taken only while nothing is
         // in flight or waiting to start.
-        let opening_due = !door.open && opts.slot.free() && !queue.servable(restricted);
+        // **No new opening while an opening's hold stands**: the hold
+        // resolves first, its `show` served or its bound passed, so a
+        // `show` from an earlier opening never clears a later one's hold.
+        let opening_due =
+            !door.open && opening_show.is_none() && opts.slot.free() && !queue.servable(restricted);
         let next_try = door.next_try;
         let show_until = opening_show;
         tokio::select! {

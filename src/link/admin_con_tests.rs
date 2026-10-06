@@ -2684,3 +2684,147 @@ async fn a_rewritten_file_below_an_acknowledgement_past_the_boundary_is_replayed
     );
     con.stop().await;
 }
+
+/// **The verification gets only what remains of the opening's bound**: a
+/// restarted admin-con's opening uses its whole bound reading a slow relay,
+/// its boundary falls short of the server's position, and the relay then
+/// holds the verification dial's header. The verification fails at once,
+/// the door reported closed within one bound of the start, not two.
+#[tokio::test]
+async fn the_verification_gets_only_what_remains_of_the_openings_bound() {
+    use std::sync::atomic::Ordering;
+    let Some(lab) = Lab::open().await else { return };
+    let trace = Trace::new();
+    let mut body = String::new();
+    let mut n = 0u64;
+    while body.len() < 2 * 1024 * 1024 {
+        n += 1;
+        body.push_str(&format!("{{\"wall_ms\":1,\"payload\":{{\"n\":{n}}}}}\n"));
+    }
+    trace.append_raw(body.as_bytes());
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
+    let mut con = Running::start(config(&path), Arc::new(NoVerbs));
+    con.wait("admitted", |s| s.admitted).await;
+    let until = tokio::time::Instant::now() + Duration::from_secs(30);
+    while lab.listener.acknowledged(&id).map(|p| p.offset) != Some(trace.len()) {
+        assert!(
+            tokio::time::Instant::now() < until,
+            "never acknowledged through the end"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    con.stop().await;
+    lab.wait_for(&id, "admin down", |a| !a.admin.connected)
+        .await;
+
+    // The opening reads a chunk every 400 ms and gets no heartbeat in its
+    // 2 s bound; the verification dial after it meets a held header.
+    trace
+        .relay
+        .counts
+        .chunk_pause_ms
+        .store(400, Ordering::SeqCst);
+    let dialed = trace.relay.counts.connections.load(Ordering::SeqCst);
+    let mut cfg = config(&path);
+    cfg.boundary_bound = Duration::from_secs(2);
+    let started = tokio::time::Instant::now();
+    let con = Running::start(cfg, Arc::new(NoVerbs));
+    while trace.relay.counts.connections.load(Ordering::SeqCst) == dialed {
+        assert!(started.elapsed() < SOON, "the opening never dialed");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    trace
+        .relay
+        .counts
+        .header_delay_ms
+        .store(10_000, Ordering::SeqCst);
+    let row = lab
+        .wait_for(&id, "the door reported closed", |a| {
+            a.admin.connected && a.trace_door == Some(false)
+        })
+        .await;
+    assert!(
+        started.elapsed() < Duration::from_millis(3200),
+        "the opening took {:?}: {row:?}",
+        started.elapsed()
+    );
+    con.stop().await;
+}
+
+/// **No new opening while an opening's hold stands**: a fake server takes
+/// an opening's door frame and holds back its `show`; the relay closes and
+/// comes back, and admin-con does not open the door again until that
+/// `show` is asked and served, so the earlier opening's `show` can never
+/// clear a later opening's hold.
+#[tokio::test]
+async fn no_opening_is_taken_while_an_openings_hold_stands() {
+    let server = FakeServer::start().await;
+    let mut trace = Trace::closed();
+    let invoker = FakeInvoker::new(&["show"], "idle");
+    let cfg = AdminConConfig {
+        link: server.link(Plane::Admin),
+        trace_socket: trace.socket.clone(),
+        weaver_admin: PathBuf::from(NO_WEAVER_ADMIN),
+        backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
+        verb_bound: admin_con::VERB_BOUND,
+        stop_grace: GRACE,
+        grants_bound: Duration::from_secs(super::client::HELLO_SECS),
+        boundary_bound: admin_con::BOUNDARY_BOUND,
+        drain_bound: admin_con::DRAIN_BOUND,
+    };
+    let con = Running::start(cfg, invoker.clone());
+    let (mut reader, mut write) = server.admit(15).await;
+    // The next frame that is not a heartbeat, or none within `wait`.
+    let next = async |reader: &mut super::frames::LineReader<_>, wait: Duration| loop {
+        match tokio::time::timeout(wait, reader.next()).await {
+            Err(_) => return None,
+            Ok(Line::Frame(line)) => match serde_json::from_str::<FromClient>(&line).unwrap() {
+                FromClient::Heartbeat => continue,
+                frame => return Some(frame),
+            },
+            Ok(other) => panic!("the connection ended: {other:?}"),
+        }
+    };
+
+    trace.relay.start();
+    match next(&mut reader, SOON).await {
+        Some(FromClient::Door { open: true, .. }) => {}
+        other => panic!("expected the door opening, got {other:?}"),
+    }
+    // The opening's `show` is not asked yet. The relay closes and returns.
+    trace.relay.stop().await;
+    loop {
+        match next(&mut reader, SOON).await {
+            Some(FromClient::Door { open: false, .. }) => break,
+            Some(FromClient::CaughtUp) => continue,
+            other => panic!("expected the door closing, got {other:?}"),
+        }
+    }
+    trace.relay.start();
+    let early = next(&mut reader, Duration::from_millis(1500)).await;
+    assert!(
+        early.is_none(),
+        "the door opened again while the hold stood: {early:?}"
+    );
+
+    let mut ask = serde_json::to_vec(&ToClient::Verb {
+        id: 1,
+        verb: "show".into(),
+        principal: Principal::Server,
+    })
+    .unwrap();
+    ask.push(b'\n');
+    write.write_all(&ask).await.unwrap();
+    match next(&mut reader, SOON).await {
+        Some(FromClient::Verb { id: 1, outcome, .. }) => assert!(outcome.is_some()),
+        other => panic!("expected the show's answer, got {other:?}"),
+    }
+    match next(&mut reader, SOON).await {
+        Some(FromClient::Door { open: true, .. }) => {}
+        other => panic!("expected the door opening again, got {other:?}"),
+    }
+    drop(reader);
+    drop(write);
+    con.stop().await;
+}

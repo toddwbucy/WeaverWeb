@@ -313,11 +313,19 @@ impl Link {
         match answer {
             ToClient::HelloAnswer {
                 cadence_secs,
+                silence_secs,
                 acknowledged,
             } => {
                 if cadence_secs == 0 || cadence_secs > CADENCE_MAX_SECS {
                     return Connect::Failed(format!(
                         "protocol fault: the hello's answer named a cadence of {cadence_secs} s, outside 1 to {CADENCE_MAX_SECS}"
+                    ));
+                }
+                // The bound is at least four cadences, the cadence being its
+                // quotient, and no more than the longest cadence's four.
+                if silence_secs < cadence_secs * 4 || silence_secs > CADENCE_MAX_SECS * 4 {
+                    return Connect::Failed(format!(
+                        "protocol fault: the hello's answer named a silence bound of {silence_secs} s against a cadence of {cadence_secs} s"
                     ));
                 }
                 let cadence = Duration::from_secs(cadence_secs);
@@ -345,6 +353,7 @@ pub fn to_client_name(frame: &ToClient) -> &'static str {
         ToClient::Turn { .. } => "turn",
         ToClient::Verb { .. } => "verb",
         ToClient::Ack { .. } => "ack",
+        ToClient::Landed { .. } => "landed",
         ToClient::Refusal { .. } => "refusal",
     }
 }

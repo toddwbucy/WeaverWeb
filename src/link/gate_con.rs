@@ -185,6 +185,7 @@ pub async fn run(
                 plane: Plane::Gate,
                 tail: None,
                 ceiling: None,
+                door: None,
             }))
         },
         reload,

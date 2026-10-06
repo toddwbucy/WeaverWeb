@@ -326,6 +326,7 @@ impl Lab {
             plane,
             tail: Some(position(100)),
             ceiling: (plane == Plane::Admin).then(|| vec!["show".to_owned()]),
+            door: (plane == Plane::Admin).then_some(true),
         })
         .await;
         match fake.recv().await {
@@ -416,6 +417,7 @@ async fn one_live_connection_per_credential() {
             plane: Plane::Gate,
             tail: None,
             ceiling: None,
+            door: None,
         })
         .await;
     second.expect_refusal(Refusal::AlreadyConnected).await;
@@ -455,6 +457,7 @@ async fn one_live_connection_per_credential() {
             &karl.gate.fingerprint,
             99,
             "127.0.0.1:1",
+            None,
             None,
             async || Ok(()),
             || {
@@ -513,6 +516,7 @@ async fn identity_is_the_certificates_binding_never_the_roster() {
             plane: Plane::Gate,
             tail: None,
             ceiling: None,
+            door: None,
         })
         .await;
     other_name.expect_refusal(Refusal::RosterMismatch).await;
@@ -524,6 +528,7 @@ async fn identity_is_the_certificates_binding_never_the_roster() {
             plane: Plane::Admin,
             tail: None,
             ceiling: Some(vec!["show".to_owned()]),
+            door: Some(true),
         })
         .await;
     other_plane.expect_refusal(Refusal::RosterMismatch).await;
@@ -532,6 +537,115 @@ async fn identity_is_the_certificates_binding_never_the_roster() {
         let row = lab.agent(id).await;
         assert!(!row.gate.connected && !row.admin.connected, "{row:?}");
     }
+}
+
+/// **The trace door and its boundary agree, on the hello and on the door's
+/// frame** (Spec 7.2): an open door's hello carries its boundary and a
+/// closed door's carries none. An admin hello naming no door, an open door
+/// with no boundary, or a closed one with a boundary is refused as
+/// malformed, as are a gate hello naming a door and a door frame whose
+/// state and boundary disagree. **A closed door's hello is admitted at
+/// once**, its `show` asked, and the row reads the door closed.
+#[tokio::test]
+async fn the_trace_door_and_its_boundary_agree() {
+    let Some(lab) = Lab::open().await else { return };
+    let karl = lab.register("karl").await;
+    for (door, tail) in [
+        (None, Some(position(100))),
+        (Some(true), None),
+        (Some(false), Some(position(100))),
+    ] {
+        let mut fake = lab.connect(&karl.admin).await;
+        fake.send(FromClient::Hello {
+            agent: karl.name.clone(),
+            plane: Plane::Admin,
+            tail,
+            ceiling: Some(vec!["show".to_owned()]),
+            door,
+        })
+        .await;
+        fake.expect_refusal(Refusal::Malformed).await;
+    }
+    let mut gate = lab.connect(&karl.gate).await;
+    gate.send(FromClient::Hello {
+        agent: karl.name.clone(),
+        plane: Plane::Gate,
+        tail: None,
+        ceiling: None,
+        door: Some(true),
+    })
+    .await;
+    gate.expect_refusal(Refusal::Malformed).await;
+
+    let mut closed = lab.connect(&karl.admin).await;
+    closed
+        .send(FromClient::Hello {
+            agent: karl.name.clone(),
+            plane: Plane::Admin,
+            tail: None,
+            ceiling: Some(vec!["show".to_owned()]),
+            door: Some(false),
+        })
+        .await;
+    match closed.recv().await {
+        Some(ToClient::HelloAnswer { .. }) => {}
+        other => panic!("expected the hello answer, got {other:?}"),
+    }
+    match closed.recv().await {
+        Some(ToClient::Verb { verb, .. }) if verb == "show" => {}
+        other => panic!("expected the show ask, got {other:?}"),
+    }
+    lab.wait_for(&karl.id, "the closed door admitted", |a| {
+        a.admin.connected && a.trace_door == Some(false) && a.trace_door_at.is_some()
+    })
+    .await;
+    closed
+        .send(FromClient::Door {
+            open: true,
+            wall_ms: 1_790_000_000_000,
+            tail: None,
+        })
+        .await;
+    closed.expect_refusal(Refusal::Malformed).await;
+}
+
+/// **A door frame the row no longer takes closes the connection**: the
+/// row names another admin connection (a rotation or revocation committed
+/// whose notification has not yet closed this socket, staged here by moving
+/// the row's incarnation), so the door's landing finds nothing to write.
+/// The connection is refused `not_live` at once, and nothing it carries
+/// after writes the row.
+#[tokio::test]
+async fn a_door_frame_the_row_no_longer_takes_closes_the_connection() {
+    let Some(lab) = Lab::open().await else { return };
+    let karl = lab.register("karl").await;
+    let mut admin = lab.admit(&karl, Plane::Admin).await;
+    sqlx::query("UPDATE agent SET admin_incarnation = admin_incarnation + 1 WHERE agent_id = $1")
+        .bind(karl.id.as_str())
+        .execute(&lab.store.pool)
+        .await
+        .unwrap();
+    admin
+        .send(FromClient::Door {
+            open: false,
+            wall_ms: 1_790_000_000_000,
+            tail: None,
+        })
+        .await;
+    // A live load right behind it: a connection the row retired must not
+    // land it.
+    admin
+        .try_send(FromClient::Event {
+            position: position(200),
+            replayed: false,
+            event: trace_event(1, "load", json!({"declaration": "sha-1"})),
+        })
+        .await;
+    admin.expect_refusal(Refusal::NotLive).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let row = lab.agent(&karl.id).await;
+    assert_eq!(row.trace_door, Some(true), "{row:?}");
+    assert_eq!(row.load_state, None, "{row:?}");
 }
 
 /// **At most one row per box and name holds live credentials**, at the
@@ -698,6 +812,7 @@ async fn a_credential_of_another_authority_fails_the_handshake() {
                 plane: Plane::Gate,
                 tail: None,
                 ceiling: None,
+                door: None,
             })
             .await;
             assert!(
@@ -821,6 +936,11 @@ async fn the_tuple_is_admins_word_and_never_gate_cons() {
         })
         .await;
     assert!(row.tuple.is_none());
+    // The server reports the admission's `show` landed.
+    assert!(matches!(
+        admin.recv().await,
+        Some(ToClient::Landed { id: 1 })
+    ));
 
     // (2) A replayed event feeds the window and writes nothing.
     admin
@@ -919,6 +1039,7 @@ async fn nothing_crosses_the_link_in_the_clear() {
         plane: Plane::Gate,
         tail: None,
         ceiling: None,
+        door: None,
     })
     .unwrap();
     plain
@@ -984,6 +1105,7 @@ async fn the_acknowledged_position_is_per_process() {
             plane: Plane::Admin,
             tail: Some(position(200)),
             ceiling: Some(vec!["show".to_owned()]),
+            door: Some(true),
         })
         .await;
     match again.recv().await {
@@ -1004,6 +1126,7 @@ async fn the_acknowledged_position_is_per_process() {
             plane: Plane::Admin,
             tail: Some(position(200)),
             ceiling: Some(vec!["show".to_owned()]),
+            door: Some(true),
         })
         .await;
     match fresh.recv().await {
@@ -1188,6 +1311,7 @@ async fn rotation_closes_both_live_connections_and_admits_the_new_pair() {
             plane: Plane::Gate,
             tail: None,
             ceiling: None,
+            door: None,
         })
         .await;
     raced.expect_refusal(Refusal::NotLive).await;
@@ -1207,7 +1331,7 @@ async fn rotation_closes_both_live_connections_and_admits_the_new_pair() {
     assert!(lab.agent(&karl.id).await.present());
 }
 
-/// An admin hello with no tail fixes no boundary and is refused; a line
+/// An open door's admin hello with no tail fixes no boundary and is refused; a line
 /// past the bound is refused as malformed rather than read whole; a second
 /// hello mid-stream is refused.
 #[tokio::test]
@@ -1222,6 +1346,7 @@ async fn a_tailless_admin_hello_and_a_line_past_the_bound_are_malformed() {
             plane: Plane::Admin,
             tail: None,
             ceiling: Some(vec!["show".to_owned()]),
+            door: Some(true),
         })
         .await;
     tailless.expect_refusal(Refusal::Malformed).await;
@@ -1241,6 +1366,7 @@ async fn a_tailless_admin_hello_and_a_line_past_the_bound_are_malformed() {
             plane: Plane::Gate,
             tail: None,
             ceiling: None,
+            door: None,
         })
         .await;
     twice.expect_refusal(Refusal::Malformed).await;
@@ -1271,6 +1397,10 @@ async fn events_of_another_generation_classify_by_the_streams_order() {
         a.load_state.as_deref() == Some("unloaded")
     })
     .await;
+    assert!(matches!(
+        admin.recv().await,
+        Some(ToClient::Landed { id: 1 })
+    ));
 
     // The old generation's tail, before caught_up: replayed whatever the
     // client says.
@@ -1367,6 +1497,101 @@ async fn events_of_another_generation_classify_by_the_streams_order() {
         })
         .await;
     admin.expect_refusal(Refusal::Malformed).await;
+}
+
+/// **An acknowledgement never blocks the server's read** (Spec 7.2): an
+/// admin-con that sends many events and reads nothing back fills the
+/// server's write path with acks, and the server drops the acks that do not
+/// fit rather than stop reading, so every event lands and the last one is
+/// acknowledged. An ack that waited for room would stop the read, and both
+/// ends would wait on each other to the silence bound.
+#[tokio::test]
+async fn an_ack_never_blocks_the_servers_read() {
+    let Some(lab) = Lab::open().await else { return };
+    let karl = lab.register("karl").await;
+    let mut admin = lab.admit(&karl, Plane::Admin).await;
+    let events = 20_000u64;
+    let sent = tokio::time::timeout(Duration::from_secs(30), async {
+        for n in 1..=events {
+            admin
+                .send(FromClient::Event {
+                    position: position_in("g1", 100 + n),
+                    replayed: false,
+                    event: trace_event(n, "turn", json!({})),
+                })
+                .await;
+        }
+    })
+    .await;
+    assert!(sent.is_ok(), "the server stopped reading");
+    let until = tokio::time::Instant::now() + Duration::from_secs(30);
+    while lab.listener.acknowledged(&karl.id).map(|p| p.offset) != Some(100 + events) {
+        assert!(
+            tokio::time::Instant::now() < until,
+            "never acknowledged through the last: {:?}",
+            lab.listener.acknowledged(&karl.id)
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// **The `landed` frame is delivered or the connection closes** (Spec 8):
+/// an admin-con that stops reading fills the server's write path with acks
+/// while the admission's `show` is outstanding, then answers it and keeps
+/// its heartbeats coming. The `landed` cannot be delivered, and the server
+/// closes the connection at the bound rather than dropping the frame and
+/// leaving admin-con holding every ordinary verb on a live connection.
+#[tokio::test]
+async fn an_undeliverable_landed_closes_the_connection() {
+    let Some(lab) = Lab::open_with(Duration::from_secs(8)).await else {
+        return;
+    };
+    let karl = lab.register("karl").await;
+    let mut admin = lab.admit(&karl, Plane::Admin).await;
+    // Each ack names a long generation, so a few thousand outrun every
+    // buffer between the server's queue and this reader.
+    let generation = "g".repeat(4096);
+    let events = 5_000u64;
+    for n in 1..=events {
+        admin
+            .send(FromClient::Event {
+                position: position_in(&generation, 100 + n),
+                replayed: false,
+                event: trace_event(n, "turn", json!({})),
+            })
+            .await;
+    }
+    let until = tokio::time::Instant::now() + Duration::from_secs(30);
+    while lab.listener.acknowledged(&karl.id).map(|p| p.offset) != Some(100 + events) {
+        assert!(
+            tokio::time::Instant::now() < until,
+            "never acknowledged through the last: {:?}",
+            lab.listener.acknowledged(&karl.id)
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    admin
+        .send(FromClient::Verb {
+            id: 1,
+            outcome: Some(show_answer("karl", "idle", None)),
+            error: None,
+        })
+        .await;
+    lab.wait_for(&karl.id, "the show landed", |a| {
+        a.state_source.as_deref() == Some("show")
+    })
+    .await;
+    // Heartbeats keep the read side alive for three bounds; only the
+    // undeliverable frame can close it.
+    let until = tokio::time::Instant::now() + Duration::from_secs(24);
+    while lab.listener.connected(&karl.id, Plane::Admin) {
+        assert!(
+            tokio::time::Instant::now() < until,
+            "the connection stayed up with the landing undelivered"
+        );
+        admin.try_send(FromClient::Heartbeat).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
 }
 
 /// **A load or unload event carries admin's date**, the trace's own
@@ -1620,6 +1845,7 @@ async fn an_observation_the_register_never_took_is_not_acknowledged() {
             plane: Plane::Admin,
             tail: Some(position(200)),
             ceiling: Some(vec!["show".to_owned()]),
+            door: Some(true),
         })
         .await;
     match again.recv().await {
@@ -1992,6 +2218,7 @@ async fn the_listener_halts_when_its_lock_session_is_lost() {
             plane: Plane::Gate,
             tail: None,
             ceiling: None,
+            door: None,
         })
         .await;
     lena_gate.expect_refusal(Refusal::StoreUnavailable).await;
@@ -2278,6 +2505,7 @@ async fn an_admission_whose_answer_was_lost_is_reconciled() {
         plane: Plane::Gate,
         tail: None,
         ceiling: None,
+        door: None,
     })
     .await;
     assert!(
@@ -2845,6 +3073,7 @@ async fn an_admission_whose_show_is_not_answered_is_closed() {
                 plane: Plane::Admin,
                 tail: Some(position(100)),
                 ceiling: Some(vec!["show".to_owned()]),
+                door: Some(true),
             })
             .await;
         assert!(matches!(
@@ -2987,6 +3216,7 @@ async fn a_landing_that_stalls_closes_the_connection_without_an_ack() {
                 plane: Plane::Admin,
                 tail: Some(position(100)),
                 ceiling: Some(vec!["show".to_owned()]),
+                door: Some(true),
             })
             .await;
         assert!(matches!(
@@ -3009,6 +3239,10 @@ async fn a_landing_that_stalls_closes_the_connection_without_an_ack() {
             a.admin.connected && a.load_state.as_deref() == Some("idle")
         })
         .await;
+        match admin.recv().await {
+            Some(ToClient::Landed { id: landed }) => assert_eq!(landed, id),
+            other => panic!("expected the show's landing, got {other:?}"),
+        }
         admin
     }
 

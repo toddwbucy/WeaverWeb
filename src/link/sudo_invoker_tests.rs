@@ -7,7 +7,7 @@
 
 use super::admin_con::Invoker;
 use super::admin_con_tests::{
-    GRACE, POLL, Running, Trace, config, installed, restart_on_its_address, verb,
+    GRACE, Running, Trace, config, installed, restart_on_its_address, verb,
 };
 use super::frames::{Principal, VerbFault};
 use super::listener::VerbError;
@@ -494,7 +494,7 @@ impl Con {
         }
         let trace = Trace::new();
         let out = tempfile::tempdir().unwrap();
-        let (id, path) = installed(&lab, &trace.path, out.path(), None).await;
+        let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
         Some(Self {
             lab,
             fake,
@@ -506,7 +506,7 @@ impl Con {
     }
 
     async fn start(&self, grace: Duration) -> Running {
-        let mut cfg = config(&self.path, POLL);
+        let mut cfg = config(&self.path);
         cfg.verb_bound = BOUND;
         cfg.stop_grace = grace;
         let mut con = Running::start(cfg, std::sync::Arc::new(self.fake.invoker()));

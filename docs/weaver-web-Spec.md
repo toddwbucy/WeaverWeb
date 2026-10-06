@@ -1145,9 +1145,9 @@ never a bare socket's. Each row carries:
   closed write no member of the row**: they are replayed at the next
   opening, per section 7.2. Verb answers during that interval land at
   receipt, as section 7.2 says, so a `show` asked while the door is closed
-  still refreshes the tuple and the load state. Its columns stand (migration
-  `0013`) and are written by the code act that builds the relay client, with
-  the frame
+  still refreshes the tuple and the load state. Its columns are written at
+  admission from the hello and at every change from admin-con's `door`
+  frame (migration `0013`)
 - **the load state, with its date**, which is section 7.2's rule restated at
   the row: the state is what `show` last answered, admin's word, or what the
   trace last carried, the agent's own record (a load, an unload, or a turn's
@@ -2551,7 +2551,9 @@ plane's.
 sends one `TraceRequest` line, an offset on a record boundary and the digest
 of the record ending there, within five seconds of connecting and at most
 4096 bytes. The relay refuses a position whose prior record does not hash to
-that digest, before a byte is sent. Otherwise it writes a `TraceHeader` line
+that digest, before a byte is sent, so **only a clean close before any byte
+is a refusal**: a partial header or a read error is a closed door, and the
+next opening applies the admission's rule. Otherwise it writes a `TraceHeader` line
 naming the file's identity, its device, inode and birth time in nanoseconds
 where the filesystem reports one, then the trace's own lines byte for byte
 from that position, and at the end of the file it keeps following, with a
@@ -2568,8 +2570,9 @@ word at admission and at every change**: the hello carries it at
 admission, and because the connection outlives loads and unloads, every
 change after crosses on the live connection as a frame from admin-con with
 its date, and lands on the row like a link-state write, bound to the
-connection that reports it, per section 2.12. That frame is the code act's
-and owed. **A frame and not a fresh hello**: the ceiling is fixed for a
+connection that reports it, per section 2.12. That frame is `door`, with
+its date, and at an opening the boundary the opening took. **A frame and
+not a fresh hello**: the ceiling is fixed for a
 connection's life as a security bound, while the door's state carries no
 authorization, so it moves as the replay's marks do. A closed door while the load state is `unloaded` renders
 as the normal state. A closed door while a run stands is shown as such for
@@ -2588,8 +2591,27 @@ opening, and admin-con serves it during the replay with no drain, per the
 paragraph below on the server principal's `show`, so its snapshot is taken
 after the boundary and every live event written before its invocation is
 relayed after its answer. The opening completes only when both that answer
-and `caught_up` have arrived. **An opening is taken only while no
-invocation of this crate's is in flight.** The door opens during a `load`,
+and `caught_up` have arrived. **An opening on the live connection serves
+its own `show` before any ordinary verb**: from the opening, where the
+ceiling grants `show`, admin-con serves only a `show` the server asked, as
+during a replay, so a person's verb queued at the opening cannot hold that
+`show` past the opening's deadline and close the connection
+`admission_incomplete`, losing that person's answer. **The hold is set at
+the hello as at every opening**: the hello is an admission, and where the
+ceiling grants `show` its `show` is owed whatever the door's state, so a
+hello with the door closed, which has no replay to restrict it, holds
+ordinary asks the same way; one rule decides the hold at both. **The hold
+ends when the server reports the opening's `show` landed, or with the
+connection, and runs on no clock of admin-con's**: the report is section
+8's `landed` frame, sent only once the store took the observation, so a
+`show` that faults, answers anything but a state, or whose landing fails or
+stalls keeps the hold until the server closes the connection. Sending the
+answer is not the end of it, since a send only queues the frame and the
+server may still fail to land it, and no deadline admin-con could compute
+is proven to outlast the server's own, which is the one clock. A new opening waits
+until that hold resolves, so an earlier opening's `show` never clears a
+later one's. **An opening is taken only while no invocation of this
+crate's is in flight.** The door opens during a `load`,
 since the start step launches the relay before the load's command exits,
 and admin-con may reach the relay at any time; but it takes the opening's
 boundary, reports the door open, and runs the opening's replay and `show`
@@ -2601,8 +2623,8 @@ would close a normal long load's connection as incomplete and answer its
 caller unknown. Nothing is lost by waiting: what the agent wrote meanwhile
 stands behind the opening's boundary, and the opening's `show`, asked once
 the load has answered, reads the state the load left. This is the admission rule below applied at every opening, not a
-new mechanism, and the boundary's measure is the owed one below
-(`toddwbucy/WeaverAgent#88`). **A hello while the door is closed carries no
+new mechanism, and the boundary's measure is the one elected below while
+the relay names no length (`toddwbucy/WeaverAgent#88`). **A hello while the door is closed carries no
 boundary**: the server admits it with the replay ended at once, `caught_up`
 with nothing behind it, serves verbs per the ceiling, and their answers land
 at receipt. So `load` is askable while the agent is unloaded, and nothing
@@ -2642,11 +2664,11 @@ hex of the record that ends at that offset, over the record's bytes from the
 start of its line through its terminating newline**, absent only at offset
 zero, which is the relay's own digest rule. A resumption is a
 `TraceRequest` of the offset and the digest, and a check of the header's
-identity against the position's. **The mapping from admin-con's present
-position is the code act's and owed**: today admin-con names a file by a
-generation it reads from the file's device, inode and birth time, and
-digests at most the last 64 KiB of the record, and the act that builds the
-relay client carries both to the relay's terms. **The identity and the
+identity against the position's. **admin-con's position is the relay's**:
+it names a file by the identity the header gives, its device, inode and
+birth time, `-` where the filesystem reports none and never zero, and
+digests the whole record, in pieces where it passes the record bound, so a
+position after any record is one the relay verifies. **The identity and the
 digest each close what the other leaves open.** The identity tells a file
 rotated between runs from the old one, which an offset alone could not: a
 replacement grown past the acknowledged offset would otherwise resume past
@@ -2688,10 +2710,10 @@ position, and admin-con then relays a bounded tail**, with a discontinuity
 mark at the front saying what was not relayed. **The tail's shape is this
 document's election of 2026-10-05**: the relay cannot start mid-file
 without a digest, and admin-con no longer reads the file, so admin-con
-requests from offset zero, reads and discards locally until it stands
-within `backfill_bytes` of the file's end, and relays from the first record
-boundary there. Where the file's end is measured from is the third of the
-owed measures below. The link and the server's window stay bounded, while the
+reads from offset zero, discards locally until it stands within
+`backfill_bytes` of the file's end, and relays from the first record
+boundary there; the file's end is the opening's boundary, the first of the
+measures below. The link and the server's window stay bounded, while the
 local read is not, which is the price of reading only through the door.
 This is right because the record is the file on the box and the Replay
 surface renders landed deposits through the analysis seam of section 7.3,
@@ -2704,22 +2726,58 @@ a new identity in the next run's header, or as a position the relay refuses:
 either way the old file's unrelayed tail is lost to the reader, sent as a
 marked discontinuity, and the new file is relayed from its start. That is
 the contract's rule in section 3 that nothing is shed silently. **Three
-measures the code act settles under the relay, owed to it**: the boundary
-the hello names, the backfill's start after a server restart, and the tail
-a verb's drain records. Each is "everything the file held at that moment",
-which admin-con reads today from the file's length. Under the relay
-admin-con reads no file, and the relay names no length, so the act that
-builds the relay client fixes how each is taken. The relay's heartbeat
-after a request is the stream's own word that everything written so far
-has been sent, but it comes only while the relay is idle, so an agent that
-writes continuously gives no such moment, which is why the measures stay
-owed rather than elected here: without one, a backfill under such an agent
-would never place its start, never reach `caught_up`, and hold every
-ordinary verb behind it. **This crate has asked WeaverAgent for the file's
-length in the relay's header at the moment of the request**, on
-`toddwbucy/WeaverAgent#88`, which would settle the backfill's start and the
-hello's boundary at once. The drain's tail would still need a moment in the
-middle of a stream, and stays owed either way. Section 8's one-connection
+measures, each "everything the file held at that moment", are taken on the
+relay's heartbeat**, the election of the act that built the relay client
+on 2026-10-05, since admin-con reads no file and the relay names no length.
+The heartbeat comes only once the relay has sent everything the file held
+and has stood idle, so the position at it is that moment's. **The
+opening's boundary**, the hello's or a later opening's, is the position at
+the first heartbeat after the opening's request. The opening reads from
+admin-con's last relayed position, or from offset zero where the relay
+refuses it or serves another file, and keeps the last `backfill_bytes` of
+what it read, so the replay behind the boundary is sent from what it holds
+where that covers the span from the server's position, and read again from
+that position where it does not. **A position the server holds past a
+boundary taken at its bound is caught up already**, once verified before
+the replay ends, the verification running beside the connection's reads so
+the admission's `show` is served meanwhile: the opening dials the relay at it, and where the relay
+answers, nothing is behind it, `caught_up` goes at once, and the stream
+resumes live from there. Where the relay refuses it, the position names
+nothing the file still holds, so a mark goes at the replay's front and the
+replay is a backfill to the boundary, the file's history staying behind it. **The backfill's start** is the first
+record boundary within `backfill_bytes` of that boundary. **The drain
+before a verb** reads the stream until a heartbeat dated at or after the
+drain's start. **Each falls back to a bound, and the heartbeat stays the
+measure**: a writer that never idles, or a file that ends inside a record,
+gets no heartbeat, since the relay heartbeats only at the file's end and
+never mid-line. **Where none comes by 30 seconds from the opening's
+start, the boundary is taken at the position read so far**, the bound
+covering the opening whole, its dials and its verification included, the
+last part of it, 5 seconds, reserved for verifying the server's position,
+and on the hello's opening the server connection's handshake and hello
+not counted against it, since they fall between its read and its
+verification,
+so a relay that holds its header past it leaves the door closed, retried on
+the backoff; and a verification that fails leaves the next opening reading
+on from the boundary this one measured, so each attempt moves toward the
+server's position: an earlier
+boundary only makes more of the backlog live, the agent's own record in
+order, so the row may read a transient older state and converges to the
+trace's tail, and the opening's `show` re-establishes it. **Where none
+dated at or after the drain's start comes within 10 seconds, the verb is
+invoked anyway**: what is unread then is read after the answer and ordered
+behind it. The inversion that matters, an unload written before a `show`'s
+snapshot and relayed after its answer, cannot pass through that gap, since
+an unload holds the box's invocation lock for its whole run and a `show`
+meeting it answers `InTransition`, which claims no state; a turn's event
+ordered behind an answer is a transient the next event corrects. So a
+writer that never idles never holds the link down or a verb back, and the
+operator can always unload a runaway agent. **The residue narrows to the
+order inside those windows.** **This crate has asked WeaverAgent for the
+file's length in the relay's header at the moment of the request**, on
+`toddwbucy/WeaverAgent#88`, which would make the boundary and the
+backfill's start exact. The drain's moment in the middle of a stream would
+still rest on the heartbeat and its bound either way. Section 8's one-connection
 paragraph refers here for what a reconnection carries. **Every event
 relayed from behind the file's tail at a reconnection is marked as replayed
 on the link, and the replay ends with a frame admin-con sends when it
@@ -2760,15 +2818,15 @@ source and its date per section 2.12, so a surface says the state is
 unconfirmed since the reconnection rather than presenting it as current.
 Asking a verb outside the ceiling to complete an admission would be the
 defect section 8 refuses. **admin-con emits everything it
-sends over its connection, verb answers and file events alike, as one
+sends over its connection, verb answers and trace events alike, as one
 ordered stream**, and a verb answer takes its place in that stream at the
 invocation rather than at the receipt: before invoking a verb admin-con
-records the file's current tail and drains to it, reading and emitting
-every event up to that position, then invokes with the tailer paused,
-receives, emits the answer, and resumes from the recorded tail. The drain
+drains the relay's stream to its next heartbeat, per the measure above,
+emitting every event read, then invokes with the stream unread, receives,
+emits the answer, and reads on. The drain
 is what makes "every event read before the invocation is ahead of the
-answer" true of every event written before it and not only of those the
-tailer happened to have read: without it an unread older load event
+answer" true of every event written before it and not only of those
+admin-con happened to have read: without it an unread older load event
 behind the tail would be emitted after a newer `show` answer and overwrite
 it. Every event read after the receipt is behind the
 answer, and nothing is read in between, so the snapshot the verb took somewhere inside that
@@ -2803,8 +2861,10 @@ answer; two verbs run at once would let an older answer be emitted after a
 newer one. The gate contract's rule for the data plane, one turn in flight
 per agent and a second request waits, is the same shape on this plane. The
 pause and the wait are bounded because the invocation is, the invoker's
-bound capping it, and the drain is bounded by the backlog, which
-is the tailer's lag and not the file.
+bound capping it, and the drain by the relay's next heartbeat, which only
+the measures' residue withholds. A relay that drops admin-con while it
+reads nothing, during a verb, costs nothing: admin-con redials from its
+position, which the relay verifies, and reads on.
 
 **The answer and the invocation have named bounds**, per
 `weaver-admin-operator-contract` section 3. A command line prints one JSON
@@ -2829,7 +2889,10 @@ the next verb could run beside it. **The slot is admin-con's own, one per
 process, and is held across connection attempts**: a link that drops while
 a timed-out verb's process still runs leaves the slot occupied, so a verb
 asked on the fresh connection, admitted at once with a closed door, queues
-behind it under the same bound and `busy` and never runs beside it. The box has its own guard beside this
+behind it under the same bound and `busy` and never runs beside it. **The
+bound counts ordinary asks only**: a `show` the server asked is never
+answered `busy`, since it completes an admission or an opening and the
+server asks at most one for each. The box has its own guard beside this
 one: weaver-admin holds an invocation lock for the whole of every verb but
 `show` and refuses a concurrent one `InvocationInFlight`, per
 `weaver-admin-Spec` section 3, so the box would refuse the overlap, and
@@ -2847,9 +2910,9 @@ verb whose run began is waited for, within its bound, and, outlasting it,
 answers unknown; on a link loss nothing can answer it and the server cannot
 tell it from the verb in flight, so it answers unknown. **Every position admin-con records
 or acknowledges is a record boundary, the byte after a delimiter**, so the
-tail it records before a verb is the end of the last complete record at
-that moment, the drain emits through it, and a record still unterminated
-at that moment is read after the answer and ordered behind it. That order
+drain before a verb ends at the end of a complete record, since the relay
+heartbeats only between records, and a record still unterminated at that
+moment is read after the answer and ordered behind it. That order
 is right rather than a concession: an event is in the file only once its
 delimiter is, so a record unterminated at the invocation was not yet
 written when the verb ran and is concurrent with the snapshot rather than
@@ -2858,7 +2921,7 @@ line without its delimiter, and what the seed's `traceview.rs` already
 says of an unterminated tail. A byte tail recorded inside an unfinished
 record would make neither draining through it nor resuming from it well
 defined. Placed at the receipt
-instead, a file event the tailer read between the verb's snapshot and the
+instead, a trace event read between the verb's snapshot and the
 answer's arrival would stand ahead of the answer and the older snapshot
 would overwrite it. The server's arrival number then carries the source
 order, so a `show` answer still in flight when a load or unload lands
@@ -3129,6 +3192,19 @@ is the box's statement about itself and not its authorization, which stays
 the sudo rule's: a ceiling that over-declares is still refused at the third
 gate.
 
+**The server reports a `show` it asked landed, in a `landed` frame naming
+the ask's id**, at an admission and at every opening, sent only once the
+store took that `show`'s observation, and **delivered or the connection
+closes**: it is enqueued as an ask is, held to the silence bound, and a
+write path still full at the bound closes the connection, so admin-con's
+hold ends with it and the reconnect admits again rather than holding every
+ordinary verb on a connection the server keeps. A landing that fails or stalls, or an
+answer that carries no state, gets no `landed`, and the connection closes
+`store_unavailable` or `admission_incomplete` instead. It is the one signal
+that ends admin-con's hold on ordinary asks, per section 7.2, since a
+connector's own send of the answer only queues it and says nothing of
+whether the server took it. admin-con ignores a `landed` for any other id.
+
 ```graph
 node: web-server-never-asks-a-verb-outside-the-ceiling
 kind: assertion
@@ -3176,7 +3252,11 @@ bound is the one tunable, a member of the server's config and set nowhere
 else**: the server tells each connector its send cadence in the answer to
 its hello, and the cadence is the bound divided by four, so an operator who
 changes the bound changes both and a client can never be configured to send
-slower than the server tolerates. The server refuses a bound under four
+slower than the server tolerates. **The answer names the bound itself too**,
+`silence_secs` beside `cadence_secs`, which a connector checks the cadence
+against; an answer naming a cadence and no bound, or a bound under four
+cadences, is a protocol fault. No connector times an opening's hold by it,
+since that hold runs on no clock of the connector's. The server refuses a bound under four
 seconds or over four days, so the cadence lies between one second and the
 one day a connector accepts, both ends holding the ceiling as one constant. **This document elects the bound at sixty
 seconds, as the planner's election of 2026-10-01 and not the operator's
@@ -3470,7 +3550,7 @@ missing while it was relaying.
 | a hello's identity is its certificate's binding and never its roster | perturbation: act on the roster's name and plane, a hello on a gate credential naming another agent, or naming admin, is believed, and the seed's first-hello-wins returns through the roster |
 | at most one row per box and name holds live credentials | perturbation, at the schema: drop the partial index, register one agent twice, and two rows each hold live credentials for one agent, so the server attributes one agent's observations and verbs to two rows |
 | the link state is reset when the listener starts | perturbation: skip the reset, restart the server with no connector up, and a surface reads an agent present whose sockets are gone |
-| the trace is replayed from the acknowledged position | perturbation, each clause against the real listener in `src/link/admin_con_tests.rs`: drop the replay, break the link during a run and reconnect, and the server's window has a hole with no mark; drop the digest from the position, truncate the file in place during the outage and regrow it past the offset, and the window carries the new prefix nowhere and marks nothing, where the relay refuses the position and admin-con marks it; ignore a `truncated` line, and the window carries the shrunk file as a continuation with no mark; drop the identity from the position, replace the file between runs and grow the replacement past the offset, and the window carries its prefix nowhere and marks nothing, where the next run's header names a new identity; derive the identity from process state, restart admin-con against the unchanged file, and the server receives a false discontinuity and the file again from its start; restart the server and resume from a remembered position, and the window has a hole with no mark; start the backfill anywhere but the first record boundary within `backfill_bytes` of the end, and the window carries half a record or more than the bound; record a boundary inside an unterminated record and resume from it, and the window carries half a record and a parse failure; end the replay on a step that sent nothing, and a load behind a record past the bound is taken as live and writes the row; send a record's frame unmeasured, and a 1 MiB record of NUL bytes passes the line bound; block the read on an ack, and a backfill of many small records stalls the link and readmits; exempt marks from the offset rule, and a mark past the boundary lands before `caught_up`. **Restated for the relay on 2026-10-05**: the act that built admin-con showed each clause against the tailer it then had, and the code act re-shows each against the relay client. The tailer's own clauses, a skipped record's digest, the tail's search, the replaced generation, the symlinked path, and the two guards held by review for the live switch and the open, leave with the tailer. **Three clauses are owed to the code act**, for the door's opening: open the door mid-connection without a boundary, and an event from the closed interval writes the row; admit a closed door with a boundary it cannot take, and the hello never completes; take an opening while a verb is in flight, and a long load closes the connection `admission_incomplete` |
+| the trace is replayed from the acknowledged position | perturbation, each clause against the real listener and a fake relay (`src/link/fake_relay.rs`, a Unix socket server built to the relay's wire) in `src/link/admin_con_tests.rs`: drop the replay, break the link during a run and reconnect, and the server's window has a hole with no mark; drop the digest from the position, truncate the file in place during the outage and regrow it past the offset, and the window carries the new prefix nowhere and marks nothing, where the relay refuses the position and admin-con marks it; ignore a `truncated` line, and the window carries the shrunk file as a continuation with no mark; drop the identity from the position, replace the file between runs and grow the replacement past the offset, and the window carries its prefix nowhere and marks nothing, where the next run's header names a new identity; derive the identity from process state, restart admin-con against the unchanged file, and the server receives a false discontinuity and the file again from its start; restart the server and resume from a remembered position, and the window has a hole with no mark; start the backfill anywhere but the first record boundary within `backfill_bytes` of the end, and the window carries half a record or more than the bound; record a boundary inside an unterminated record and resume from it, and the window carries half a record and a parse failure; end the replay on a step that sent nothing, and a load behind a record past the bound is taken as live and writes the row; send a record's frame unmeasured, and a 1 MiB record of NUL bytes passes the line bound; block the read on an ack, and a backfill of many small records stalls the link and readmits; exempt marks from the offset rule, and a mark past the boundary lands before `caught_up`; replay an opening from what it read where that does not hold the span from the server's position, and an outage longer than the backfill bound leaves a hole with no mark; drop the marks an opening's read met, a truncation it read through, a position the relay refused, or a file other than the one admin-con last read, and under a server holding no position the window carries the new content as continuous; mark a discontinuity again from the server's position after the opening's read marked it, and the window carries it twice; let an opening's dial outlast its bound, and a relay holding its header holds queued verbs past it; serve a person's verb queued at an opening ahead of the opening's `show`, and a verb longer than the opening's deadline closes the connection `admission_incomplete` and loses that person's answer; count the opening's `show` against the queue's bound, and asks filling the queue during an opening have it answered `busy` and the connection closed `admission_incomplete`; replay toward a boundary taken at its bound from a server position past it, and a mark past the boundary is refused as malformed and the opening never completes; take that position as caught up unverified, rewrite the file below it, and the replacement is relayed live and its old load writes the row; give the verification a bound of its own, and an opening takes two bounds while asks wait behind it; leave the verification no reserve, or retry a failed one from the same start, and against a relay slower than the bound the door never opens; charge the hello's handshake to its opening, and a server slow to answer leaves the verification nothing and closes the door just admitted; verify the hello's opening without reading the connection, and a relay slow to answer the verification holds the admission's `show` past its deadline; open the door again while an earlier opening's hold stands, and that opening's `show` clears the later hold, so an ordinary verb runs ahead of the later `show`; give the hold a clock of admin-con's, or none at all, and a server that asks the opening's `show` late finds an ordinary verb ahead of it; release the hold on the local send of the `show`'s answer rather than the server's `landed`, and a `show` answered with a state that the server never reports landed lets a queued `load` run, and against the real listener a landing that stalls lets it run before the connection closes; release it on a `landed` for any id, and another ask's landing lets the `load` run; send `landed` before the store takes the observation, and the same stalled landing lets it run; send `landed` on the best-effort path rather than delivered or the connection closed, and an admin-con whose write path is full of acks as the landing completes stays connected with the frame dropped and its hold stuck; set no hold at the hello, at the hello as at every opening, and a closed door's hello whose admission `show` faults lets a queued `load` run before the listener closes the connection; compare the header's identity only past offset zero, and a file rotated while the position stood at zero after a truncation is relayed as the same file, the rotation unmarked; take a partial header at a redial for a refused position, and the file is marked and relayed live from zero, its history landing on the row. **Re-shown against the relay client on 2026-10-05**, by the act that built it; the act that built admin-con showed each clause against the tailer it then had, and the tailer's own clauses, a skipped record's digest, the tail's search, the replaced generation, the symlinked path, a rewrite regrown between two polls, and the two guards held by review for the live switch and the open, left with the tailer. **The door's three clauses**: open the door mid-connection without a boundary, and an event from the closed interval writes the row; admit a closed door with a boundary it cannot take, and the hello never completes; take an opening while a verb is in flight, and a long load closes the connection `admission_incomplete`; carry on past a door frame the row no longer takes, its incarnation another connection's, and the retired connection's next event writes the row. **The measures' bounds**, against a fake writer that never idles: remove the boundary's bound, and admin-con behind such a writer is never admitted; remove the drain's bound, and a verb behind it never runs. **The residue `toddwbucy/WeaverAgent#88` narrows** is the order inside those bounds' windows, a transient the convergence of section 7.2 covers, with no instrument |
 | an agent is present only when both planes connect from one row | perturbation: mark present on either plane alone, an agent whose admin-con is down reads present with a tuple and a load state nobody has confirmed |
 | the server's authority is loaded before the listener starts and never minted at start | perturbation: mint the authority at start instead of loading it, restart the server, and every connector's hello is refused against a certificate it does not pin |
 | the client credential is stored as a fingerprint and never the key | perturbation, at the schema: store the key, a read of the register is a set of credentials anyone can present |
@@ -3492,10 +3572,11 @@ stand so marked as of 2026-10-05. The batch's order is owed because section
 2.11 describes its table and no migration builds it. Three rows of the role
 shape ruled on 2026-10-02 are owed to the IAM act: the principal check, the
 writer's check for persons, roles and grants, and the audit record. The
-replay row is restated for the relay by the act of 2026-10-05 and is
-re-shown by the code act that builds the relay client, and three of its
-clauses, for the door's opening, are marked owed inside it. The act that
-built the sudo invoker on 2026-10-05 stood up the two rows of the
+act that built the relay client on 2026-10-05 re-showed the replay row
+against the relay, its three clauses for the door's opening among them,
+and the bounds under its measures, each shown to fail with its guard
+removed, and names inside the row the residue `toddwbucy/WeaverAgent#88`
+narrows, with no instrument. The act that built the sudo invoker on 2026-10-05 stood up the two rows of the
 management plane ruled on 2026-10-03, the ceiling as the sudo rules grant
 it and no privileged invocation outside that invoker, which replaced the
 row that held no privileged invocation anywhere, and the tuple row's

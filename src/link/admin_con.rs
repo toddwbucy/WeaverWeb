@@ -1,9 +1,10 @@
 //! admin-con, the management plane's connector (Spec sections 7.2 and 8):
 //! beside the agent as its own unprivileged service user, a client of the
 //! server's listener over the link with the admin credential the register
-//! verb minted. It tails the agent's trace file, relays every event with its
-//! position, replays from the acknowledged position on reconnect, and marks
-//! every discontinuity; it declares its ceiling in the hello, exactly what
+//! verb minted. It reads the agent's trace through the relay's door
+//! (`link::relay`), relays every event with its position, replays from the
+//! acknowledged position at every opening of the door, and marks every
+//! discontinuity; it declares its ceiling in the hello, exactly what
 //! its invoker's `grants` answers; and it answers verb asks through that
 //! invoker, one at a time, each answer placed in the stream at its
 //! invocation.
@@ -12,14 +13,14 @@
 //! [`Invoker`] trait, whose service implementation is the sudo invoker of
 //! `link::sudo_invoker`, the one privileged invocation in this crate. This
 //! module owns the order around it: the process-wide invocation slot, the
-//! verb bound, and the orderly stop's `unload` (Spec 7.2, 8). The trace
-//! file is read through group read access and never written.
+//! verb bound, and the orderly stop's `unload` (Spec 7.2, 8). No file is
+//! read: the record reaches admin-con through the relay alone.
 //!
-//! **One task owns the tailer and the connection's outbound stream**, so
-//! everything admin-con sends, file events and verb answers alike, is one
+//! **One task owns the door and the connection's outbound stream**, so
+//! everything admin-con sends, trace events and verb answers alike, is one
 //! ordered stream (Spec 7.2): an answer is emitted after a drain to the
-//! file's tail and before anything read after the invocation, and only one
-//! verb runs at a time.
+//! relay's heartbeat and before anything read after the invocation, and
+//! only one verb runs at a time.
 
 use crate::link::client::{
     self, Backoff, Connection, Ended, Incoming, Link, LinkConfig, LinkStatus,
@@ -27,13 +28,12 @@ use crate::link::client::{
 use crate::link::frames::{
     FromClient, LINE_BOUND, Plane, Position, Principal, ToClient, VerbFault, VerbOutcome,
 };
+use crate::link::relay::{self, Dial, Read};
 use crate::traceview::{TraceEvent, parse_line};
 use futures::StreamExt;
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
 use std::collections::{BTreeSet, VecDeque};
 use std::future::Future;
-use std::os::unix::fs::{FileExt, MetadataExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -44,20 +44,30 @@ use tokio::sync::watch;
 pub const DEFAULT_BACKFILL_BYTES: u64 = 1024 * 1024;
 /// The most a config may name, so a backfill stays bounded.
 pub const MAX_BACKFILL_BYTES: u64 = 256 * 1024 * 1024;
-/// How often the tailer looks at the file when nothing is pending.
-pub const DEFAULT_POLL: Duration = Duration::from_millis(250);
-/// A record longer than this is not relayed: its event, re-encoded inside a
-/// frame, could pass the link's line bound. It is marked instead.
-pub const RECORD_BOUND: usize = LINE_BOUND / 2;
-/// The digest covers the record ending at an offset, or its last this many
-/// bytes where it is longer (Spec 7.2: the bytes immediately before the
-/// offset).
-pub const DIGEST_WINDOW: usize = 64 * 1024;
-/// Bytes of records read per step, so a long backlog interleaves with the
-/// connection's reads and the server's acknowledgements.
-pub const READ_BUDGET: usize = 1024 * 1024;
+pub use crate::link::relay::RECORD_BOUND;
 /// Verb asks waiting behind the one in flight.
 pub const VERB_QUEUE: usize = 16;
+/// **The floor under an opening's boundary** (Spec 7.2), covering the
+/// opening whole, its dials and its verification included, the last
+/// `VERIFY_RESERVE` of it kept for the verification: where no heartbeat
+/// comes this long, less that reserve, after the opening's start, as under
+/// a writer that never idles, the boundary is taken at the position read so
+/// far, and a dial that reaches no header by then leaves the door closed,
+/// retried on the backoff. The heartbeat stays the measure; this is what
+/// keeps the link up without it.
+pub const BOUNDARY_BOUND: Duration = Duration::from_secs(30);
+/// **The last part of an opening's bound, kept for verifying the server's
+/// position** past the boundary: the opening's read takes its fallback
+/// boundary this much before the bound, so the verification always has
+/// time. A quarter of the bound where the bound is shorter than four of
+/// these. The server's position is unknown when the read starts, so the
+/// reserve is always kept.
+pub const VERIFY_RESERVE: Duration = Duration::from_secs(5);
+/// **The floor under the drain before a verb** (Spec 7.2): where no
+/// heartbeat dated at or after the drain's start comes this long after it,
+/// the verb is invoked anyway, so a writer that never idles cannot hold an
+/// `unload` back.
+pub const DRAIN_BOUND: Duration = Duration::from_secs(10);
 /// The bound on one invocation when the config names none (Spec 7.2): it
 /// must exceed the box's own load bound, 900 seconds unless the agent's
 /// root names another, so a load that answers in time is never answered
@@ -124,7 +134,7 @@ impl Invoker for NoVerbs {
 // ---------- the config ----------
 
 /// admin-con's config: what `weaver-web register` wrote, plus the box facts
-/// filled at install with no default (the trace file's path and the
+/// filled at install with no default (the trace relay's socket and the
 /// absolute path of `weaver-admin` the box's sudo rule names), the backfill
 /// bound for the first connection after a server restart, and the verb's
 /// bound and the stop's grace (Spec 7.2, 8).
@@ -132,19 +142,18 @@ impl Invoker for NoVerbs {
 pub struct AdminConConfig {
     #[serde(flatten)]
     pub link: LinkConfig,
-    /// The agent's trace file, read by group read and never written.
-    pub trace_file: PathBuf,
+    /// The trace relay's socket, absolute: the door the agent's start step
+    /// opens for admin-con's user alone (Spec 7.2).
+    pub trace_socket: PathBuf,
     /// The absolute path of `weaver-admin` the box's sudo rule names, the
     /// one config value in a privileged command line beside the agent's
     /// name (Spec 7.2).
     pub weaver_admin: PathBuf,
-    /// How much of the file's tail is relayed after a server restart.
+    /// How much of the file's tail is relayed after a server restart, and
+    /// how much of what an opening read it holds to replay without reading
+    /// again.
     #[serde(default = "default_backfill")]
     pub backfill_bytes: u64,
-    /// How often the tailer looks at the file. Not a config member:
-    /// `DEFAULT_POLL`, settable in code so a test can reach it.
-    #[serde(skip, default = "default_poll")]
-    pub poll: Duration,
     /// The bound on one invocation, `verb_bound_secs` in the file
     /// (`VERB_BOUND` by default): it must exceed the box's load bound, so
     /// the install sets it above that (Spec 7.2). Past it admin-con answers
@@ -169,19 +178,18 @@ pub struct AdminConConfig {
     /// test can reach it.
     #[serde(skip, default = "default_grants_bound")]
     pub grants_bound: Duration,
-    /// A pause before each chunk of a scan that may cross a record of any
-    /// length. Not a config member: zero, settable in code so a test can
-    /// make a scan take time without a file of gigabytes.
-    #[serde(skip)]
-    pub scan_delay: Duration,
+    /// `BOUNDARY_BOUND`. Not a config member: settable in code so a test
+    /// can reach it.
+    #[serde(skip, default = "default_boundary_bound")]
+    pub boundary_bound: Duration,
+    /// `DRAIN_BOUND`. Not a config member: settable in code so a test can
+    /// reach it.
+    #[serde(skip, default = "default_drain_bound")]
+    pub drain_bound: Duration,
 }
 
 fn default_backfill() -> u64 {
     DEFAULT_BACKFILL_BYTES
-}
-
-fn default_poll() -> Duration {
-    DEFAULT_POLL
 }
 
 fn default_verb_bound() -> Duration {
@@ -205,6 +213,14 @@ fn default_grants_bound() -> Duration {
     Duration::from_secs(client::HELLO_SECS)
 }
 
+fn default_boundary_bound() -> Duration {
+    BOUNDARY_BOUND
+}
+
+fn default_drain_bound() -> Duration {
+    DRAIN_BOUND
+}
+
 /// The members an admin-con config may carry: the only names a parse error
 /// may print.
 const MEMBERS: &[&str] = &[
@@ -216,7 +232,7 @@ const MEMBERS: &[&str] = &[
     "server_certificate",
     "certificate",
     "key",
-    "trace_file",
+    "trace_socket",
     "weaver_admin",
     "backfill_bytes",
     "verb_bound_secs",
@@ -226,8 +242,10 @@ const MEMBERS: &[&str] = &[
 impl AdminConConfig {
     /// Read the config under the trust rule of `client::read_private`, and
     /// refuse one minted for the gate plane, one missing a member, a
-    /// backfill past `MAX_BACKFILL_BYTES`, or a `weaver_admin` that is not
-    /// absolute, since the box's sudo rule names it absolutely.
+    /// backfill past `MAX_BACKFILL_BYTES`, or a `weaver_admin` or
+    /// `trace_socket` that is not absolute: the box's sudo rule names the
+    /// one absolutely, and the other is a box fact never resolved against
+    /// admin-con's working directory.
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let content = client::read_private(path)?;
         let cfg: Self = client::parse_config(path, &content, MEMBERS)?;
@@ -248,596 +266,795 @@ impl AdminConConfig {
                 cfg.weaver_admin.display()
             );
         }
+        if !cfg.trace_socket.is_absolute() {
+            anyhow::bail!(
+                "{}: trace_socket {} is not an absolute path",
+                path.display(),
+                cfg.trace_socket.display()
+            );
+        }
         Ok(cfg)
     }
 }
 
-// ---------- the tailer ----------
+// ---------- the door ----------
 
-/// The digest of the record that ends at an offset: SHA-256 over its last
-/// `DIGEST_WINDOW` bytes, its delimiter included. Empty at offset zero.
-fn digest_of(record: &[u8]) -> String {
-    let tail = &record[record.len().saturating_sub(DIGEST_WINDOW)..];
-    format!("{:x}", Sha256::digest(tail))
-}
-
-/// **The generation, from the file's durable identity and never from
-/// process state** (Spec 7.2): device, inode, and birth time where the
-/// filesystem reports it, so a restarted admin-con derives the same
-/// generation for the same file and a reused inode after a rotation reads
-/// as a new one. The form is admin-con's own and carries no trace field.
-fn generation_of(meta: &std::fs::Metadata) -> String {
-    let birth = meta
-        .created()
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| format!("{}.{:09}", d.as_secs(), d.subsec_nanos()))
-        .unwrap_or_else(|| "-".to_owned());
-    format!("{:x}.{:x}.{birth}", meta.dev(), meta.ino())
-}
-
-/// The generation an absent file stands under: the agent has never written
-/// its trace, or the sink moved. A file that appears later is a new
-/// generation, marked.
-const ABSENT: &str = "absent";
-
-/// One open generation of the trace file.
-struct Held {
-    file: std::fs::File,
-    generation: String,
-}
-
-/// What stands at the trace path, seen without following a symlink.
-enum AtPath {
-    Missing,
-    File(String),
-    /// A symlink or anything but a regular file: refused, never followed.
-    Refused(&'static str),
-}
-
-/// **A symlinked sink is not supported, and the path is never followed
-/// through one**: anyone who can write the trace's directory could
-/// otherwise point it at admin-con's own config and have the key relayed
-/// as events. The path is seen with `lstat` and opened with `O_NOFOLLOW`.
-fn at_path(path: &Path) -> std::io::Result<AtPath> {
-    match std::fs::symlink_metadata(path) {
-        Ok(meta) if meta.file_type().is_symlink() => Ok(AtPath::Refused(
-            "the trace path is a symlink, and a symlinked sink is not supported: nothing is read through it",
-        )),
-        Ok(meta) if meta.file_type().is_file() => Ok(AtPath::File(generation_of(&meta))),
-        Ok(_) => Ok(AtPath::Refused(
-            "the trace path is not a regular file: nothing is read from it",
-        )),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(AtPath::Missing),
-        Err(e) => Err(e),
-    }
-}
-
-/// Open the trace file read-only, without following a symlink and without
-/// blocking (a FIFO at the path cannot hang the tailer), and only where it
-/// is a regular file. `None` where nothing openable stands.
-fn open_trace(path: &Path) -> std::io::Result<Option<Held>> {
-    use std::os::unix::fs::OpenOptionsExt;
-    let file = match std::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
-        .open(path)
-    {
-        Ok(f) => f,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) if e.raw_os_error() == Some(libc::ELOOP) => return Ok(None),
-        Err(e) => return Err(e),
-    };
-    let meta = file.metadata()?;
-    if !meta.file_type().is_file() {
-        return Ok(None);
-    }
-    let generation = generation_of(&meta);
-    Ok(Some(Held { file, generation }))
-}
-
-/// The bytes a scan reads at a time.
-const SCAN_CHUNK: usize = 64 * 1024;
-
-/// **A scan that may cross a record of any length runs off the
-/// connection's task and stops when it is no longer wanted**: the work is
-/// file reads, synchronous and unbounded by the record bound, so it runs
-/// under `spawn_blocking`, and the future awaiting it can be dropped by a
-/// stop or the shutdown that ends a hello, which tells the scan to stop at
-/// its next chunk. The task stays responsive and a stop is honoured within
-/// its grace. `delay` is a test's throttle on each chunk, zero in service.
-async fn off_task<T: Send + 'static>(
-    delay: Duration,
-    scan: impl FnOnce(&Scan) -> std::io::Result<T> + Send + 'static,
-) -> std::io::Result<T> {
-    struct StopOnDrop(Arc<std::sync::atomic::AtomicBool>);
-    impl Drop for StopOnDrop {
-        fn drop(&mut self) {
-            self.0.store(true, std::sync::atomic::Ordering::Relaxed);
-        }
-    }
-    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let _stop_on_drop = StopOnDrop(stop.clone());
-    let scan_state = Scan { stop, delay };
-    tokio::task::spawn_blocking(move || scan(&scan_state))
-        .await
-        .map_err(std::io::Error::other)?
-}
-
-/// What a scan checks between chunks.
-struct Scan {
-    stop: Arc<std::sync::atomic::AtomicBool>,
-    delay: Duration,
-}
-
-impl Scan {
-    fn next_chunk(&self) -> std::io::Result<()> {
-        if self.stop.load(std::sync::atomic::Ordering::Relaxed) {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Interrupted,
-                "the scan was stopped",
-            ));
-        }
-        if !self.delay.is_zero() {
-            std::thread::sleep(self.delay);
-        }
-        Ok(())
-    }
-}
-
-/// The end of the last complete record in the file, its tail (the byte
-/// after the last delimiter, 0 where there is none), and the file's length.
-/// **Found at any distance**, scanned back in bounded chunks, so a long
-/// unterminated fragment at the end never stops a hello; run through
-/// `off_task`.
-fn tail_of(file: &std::fs::File, scan: &Scan) -> std::io::Result<(u64, u64)> {
-    let len = file.metadata()?.len();
-    let mut end = len;
-    let mut buf = vec![0u8; SCAN_CHUNK];
-    while end > 0 {
-        scan.next_chunk()?;
-        let start = end.saturating_sub(buf.len() as u64);
-        let n = (end - start) as usize;
-        file.read_exact_at(&mut buf[..n], start)?;
-        if let Some(i) = buf[..n].iter().rposition(|&b| b == b'\n') {
-            return Ok((start + i as u64 + 1, len));
-        }
-        end = start;
-    }
-    Ok((0, len))
-}
-
-/// `tail_of` off the connection's task.
-async fn tail_of_off_task(file: &std::fs::File, delay: Duration) -> std::io::Result<(u64, u64)> {
-    let file = file.try_clone()?;
-    off_task(delay, move |scan| tail_of(&file, scan)).await
-}
-
-/// The first record boundary at or after `start` and before `end`, found
-/// at any distance scanning forward in bounded chunks, or `end` where there
-/// is none; run through `off_task`.
-fn first_boundary(file: &std::fs::File, start: u64, end: u64, scan: &Scan) -> std::io::Result<u64> {
-    if start == 0 {
-        return Ok(0);
-    }
-    let mut at = start - 1;
-    let mut buf = vec![0u8; SCAN_CHUNK];
-    loop {
-        if at >= end {
-            return Ok(end);
-        }
-        scan.next_chunk()?;
-        let n = ((end - at) as usize).min(buf.len());
-        file.read_exact_at(&mut buf[..n], at)?;
-        if let Some(i) = buf[..n].iter().position(|&b| b == b'\n') {
-            return Ok(at + i as u64 + 1);
-        }
-        at += n as u64;
-    }
-}
-
-/// The digest of the record ending at `offset`, or `None` where `offset` is
-/// past the file's end or not a record boundary.
-fn digest_before(file: &std::fs::File, offset: u64) -> std::io::Result<Option<String>> {
-    if offset == 0 {
-        return Ok(Some(String::new()));
-    }
-    if offset > file.metadata()?.len() {
-        return Ok(None);
-    }
-    let start = offset.saturating_sub(DIGEST_WINDOW as u64 + 1);
-    let mut window = vec![0u8; (offset - start) as usize];
-    file.read_exact_at(&mut window, start)?;
-    if window.last() != Some(&b'\n') {
-        return Ok(None);
-    }
-    let body = &window[..window.len() - 1];
-    let record_start = body.iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1);
-    Ok(Some(digest_of(&window[record_start..])))
-}
-
-/// What the tailer hands the connection.
+/// What the door hands the connection.
 enum Item {
     Record { position: Position, line: Vec<u8> },
     Mark { position: Position, reason: String },
 }
 
-/// A record past `RECORD_BOUND` being skipped through its delimiter: where
-/// it began, and its last `DIGEST_WINDOW` bytes so far, so the mark at its
-/// end carries the digest the file has there.
-struct Skip {
-    start: u64,
-    tail: Vec<u8>,
-}
-
-impl Skip {
-    fn take(&mut self, bytes: &[u8]) {
-        self.tail.extend_from_slice(bytes);
-        let excess = self.tail.len().saturating_sub(DIGEST_WINDOW);
-        self.tail.drain(..excess);
+impl Item {
+    fn position(&self) -> &Position {
+        match self {
+            Item::Record { position, .. } | Item::Mark { position, .. } => position,
+        }
     }
 }
 
-/// The tailer: a held generation, the next record boundary to read from,
-/// and the digest of the record that ends there.
-struct Tailer {
-    path: PathBuf,
-    held: Option<Held>,
-    offset: u64,
-    digest: String,
-    /// Inside a record longer than `RECORD_BOUND`, waiting for its end.
-    skip: Option<Skip>,
-    /// **A generation replaced while the link was down, still held**: its
-    /// tail past the acknowledged position is relayed before the new file,
-    /// since admin-con still has it (Spec 7.2). Only the resume clears it,
-    /// so a hello attempt that fails does not lose it.
-    previous: Option<Held>,
-    /// While the previous generation's tail is relayed, the current file
-    /// waiting behind it (`Some(None)` where nothing openable stands at the
-    /// path).
-    pending: Option<Option<Held>>,
-    /// What was refused at the path and already marked, so a refusal is
-    /// marked once and not at every poll.
-    refused: Option<&'static str>,
-    /// The held file's length and modification time when it was last
-    /// checked, so the digest is read again only where the file changed.
-    seen: Option<(u64, Option<std::time::SystemTime>)>,
-    /// Marks found at the hello, sent at the front of the replay.
-    notes: Vec<String>,
-    /// A test's throttle on each chunk of a long scan, zero in service.
-    scan_delay: Duration,
-    /// How many times the position has gone back to 0: see `restart`.
-    restarts: u64,
+/// The mark for a record past `RECORD_BOUND`, at the position after it.
+fn oversized(position: Position, len: u64) -> Item {
+    let start = position.offset - len;
+    Item::Mark {
+        reason: format!(
+            "a record at offset {start} of {len} bytes passed the {RECORD_BOUND} byte bound and was not relayed"
+        ),
+        position,
+    }
 }
 
-impl Tailer {
-    fn new(path: PathBuf, scan_delay: Duration) -> Self {
+/// The mark at the front of a backfill that starts past offset zero.
+fn backfill_mark(position: Position) -> Item {
+    Item::Mark {
+        reason: format!(
+            "the server holds no acknowledged position (a first connection, or a server restart): backfill starts {} bytes into the file, and the bytes before it were not relayed",
+            position.offset
+        ),
+        position,
+    }
+}
+
+/// Milliseconds since the epoch on this box's clock, which is the relay's.
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// **What an opening read behind its boundary, the last `cap` bytes of
+/// it**, so a replay whose span it holds is sent without reading the
+/// file through the relay a second time. Bounded by the backfill bound,
+/// so a long outage costs a second read and never memory.
+struct Ring {
+    /// The position the first kept item starts at.
+    start: Position,
+    /// Whether anything before `start` was read and let go.
+    dropped: bool,
+    items: VecDeque<(Item, u64)>,
+    bytes: u64,
+    cap: u64,
+}
+
+impl Ring {
+    fn new(start: Position, cap: u64) -> Self {
         Self {
-            scan_delay,
-            restarts: 0,
-            path,
-            held: None,
-            offset: 0,
-            digest: String::new(),
-            skip: None,
-            previous: None,
-            pending: None,
-            refused: None,
-            seen: None,
-            notes: Vec::new(),
+            start,
+            dropped: false,
+            items: VecDeque::new(),
+            bytes: 0,
+            cap,
         }
     }
 
-    fn generation(&self) -> &str {
-        self.held.as_ref().map_or(ABSENT, |h| h.generation.as_str())
-    }
-
-    fn position(&self) -> Position {
-        Position {
-            generation: self.generation().to_owned(),
-            offset: self.offset,
-            digest: self.digest.clone(),
+    /// Keep one item of `len` file bytes, letting the oldest go past `cap`.
+    /// **What is kept is exactly the records from the first record boundary
+    /// within `cap` bytes of the end**: an item is let go only while the
+    /// span from its start to the end passes `cap`, so the first kept
+    /// item starts at the boundary a backfill of `cap` bytes starts at.
+    fn push(&mut self, item: Item, len: u64) {
+        self.items.push_back((item, len));
+        self.bytes += len;
+        while self.bytes > self.cap
+            && let Some((item, len)) = self.items.pop_front()
+        {
+            self.bytes -= len;
+            self.start = item.position().clone();
+            self.dropped = true;
         }
     }
 
-    fn reset_to(&mut self, held: Option<Held>) {
-        if held.is_some() {
-            self.refused = None;
+    /// The items after `from`, where the ring holds everything after it.
+    fn after(self, from: &Position) -> Option<Vec<Item>> {
+        if *from == self.start {
+            return Some(self.items.into_iter().map(|(item, _)| item).collect());
         }
-        self.held = held;
-        self.restart();
+        let at = self
+            .items
+            .iter()
+            .position(|(item, _)| item.position() == from)?;
+        Some(
+            self.items
+                .into_iter()
+                .skip(at + 1)
+                .map(|(item, _)| item)
+                .collect(),
+        )
     }
+}
 
-    /// **Read the held file from its start, its next poll checked afresh**:
-    /// the one place a position goes back to 0, whether the file was
-    /// switched (rotation, a file appearing, a refusal) or restarted in
-    /// place (truncation, rewrite). Each counts in `restarts`, which is how
-    /// a drain knows its target named a file that is no longer the one
-    /// being read.
-    fn restart(&mut self) {
-        self.offset = 0;
-        self.digest = String::new();
-        self.skip = None;
-        self.seen = None;
-        self.restarts += 1;
-    }
+/// An opening's read through the relay to its boundary.
+struct Opened {
+    /// The stream, standing at the boundary.
+    stream: relay::Stream,
+    boundary: Position,
+    ring: Ring,
+    /// **What the read met on its way**, in order: a position the relay
+    /// refused, a file other than the one admin-con last read, a truncation
+    /// it read through, one mark for each. Sent at the front of the replay
+    /// in every case, so the window tells what the file did and nothing is
+    /// smoothed.
+    marks: Vec<Item>,
+    /// **The stream `verify` opened at the server's position past the
+    /// boundary**, handed to the door, so the position the door resumes
+    /// from and the stream it reads came from one dial.
+    resumed: Option<relay::Stream>,
+    /// The opening's one deadline, taken before its first dial: its
+    /// verification gets only what remains of it.
+    until: tokio::time::Instant,
+}
 
-    fn held_len(&self) -> std::io::Result<u64> {
-        match &self.held {
-            Some(held) => Ok(held.file.metadata()?.len()),
-            None => Ok(0),
-        }
-    }
-
-    /// The file's current tail as a position (Spec 7.2): the hello's
-    /// boundary. The held generation, where the path's file replaced it, is
-    /// kept aside as `previous` (once: an older one already kept is the one
-    /// a reconnection most likely acknowledged) and the current file held,
-    /// so the boundary is always the current file's. Notes what it refused
-    /// and an unterminated fragment past any record's bound.
-    async fn current_tail(&mut self) -> anyhow::Result<Position> {
-        self.pending = None;
-        self.notes.clear();
-        match at_path(&self.path)? {
-            AtPath::File(generation) => {
-                let replaced = self
-                    .held
-                    .as_ref()
-                    .is_some_and(|h| h.generation != generation);
-                if replaced || self.held.is_none() {
-                    if replaced && self.previous.is_none() {
-                        self.previous = self.held.take();
-                    }
-                    let held = open_trace(&self.path)?;
-                    self.reset_to(held);
-                }
-            }
-            AtPath::Refused(why) => {
-                if self.held.is_some() && self.previous.is_none() {
-                    self.previous = self.held.take();
-                }
-                self.reset_to(None);
-                self.refused = Some(why);
-                self.notes.push(why.to_owned());
-            }
-            // A deleted file still held is still readable; nothing held and
-            // nothing at the path is the absent generation.
-            AtPath::Missing => {}
-        }
-        let Some(held) = &self.held else {
-            return Ok(Position {
-                generation: ABSENT.to_owned(),
-                offset: 0,
-                digest: String::new(),
+/// **An opening's boundary is the position at the first heartbeat after
+/// its request** (Spec 7.2), this act's election while the relay names no
+/// length (`toddwbucy/WeaverAgent#88`): the relay heartbeats only while
+/// idle, once everything the file held has been sent, so the position
+/// there is everything the file held at that moment. The read starts at
+/// `from`, admin-con's last relayed position, or at offset zero where the
+/// relay refuses it or serves another file, and keeps the last `cap` bytes
+/// of what it read. **One deadline, `bound` from the opening's start,
+/// covers the opening whole**, its dials and reads alike: a dial that
+/// reaches no header by then is a closed door, retried on the backoff, and
+/// where no heartbeat comes by then, as under a writer that never idles or
+/// a file that ends inside a record, the boundary is taken at the position
+/// read so far: an earlier
+/// boundary only makes more of the backlog live, the agent's own record in
+/// order, so the row converges to the trace's tail and the opening's `show`
+/// re-establishes it. The header's length (#88) would make the boundary
+/// exact.
+async fn measure(
+    socket: &Path,
+    from: &Position,
+    cap: u64,
+    bound: Duration,
+) -> Result<Opened, String> {
+    // The opening's one deadline, and the read's: the read stops short of
+    // the deadline by the reserve, so verifying the server's position after
+    // it always has time.
+    let deadline = tokio::time::Instant::now() + bound;
+    let until = deadline - VERIFY_RESERVE.min(bound / 4);
+    let mut marks = Vec::new();
+    let dial = async |from: &Position, marks: &mut Vec<Item>| match tokio::time::timeout_at(
+        until,
+        connect(socket, from, marks),
+    )
+    .await
+    {
+        Ok(connected) => connected,
+        Err(_) => Err(format!(
+            "the trace relay gave no header within {bound:?} of the opening's start"
+        )),
+    };
+    let (mut stream, mut at) = dial(from, &mut marks).await?;
+    let mut ring = Ring::new(at.clone(), cap);
+    loop {
+        // The stream's read is cancel-safe, so the bound drops nothing.
+        let Ok(read) = tokio::time::timeout_at(until, stream.next()).await else {
+            tracing::warn!(
+                "no heartbeat from the trace relay within {bound:?} of the opening's start; the boundary is taken at {}:{}, read so far",
+                at.generation,
+                at.offset
+            );
+            return Ok(Opened {
+                stream,
+                boundary: at,
+                ring,
+                marks,
+                resumed: None,
+                until: deadline,
             });
         };
-        let (tail, len) = tail_of_off_task(&held.file, self.scan_delay).await?;
-        if len - tail > RECORD_BOUND as u64 {
-            self.notes.push(format!(
-                "an unterminated fragment of {} bytes follows the tail at {tail}; it passes the {RECORD_BOUND} byte bound and will be marked, not relayed, once it ends",
-                len - tail
-            ));
-        }
-        let digest = digest_before(&held.file, tail)?.unwrap_or_default();
-        Ok(Position {
-            generation: held.generation.clone(),
-            offset: tail,
-            digest,
-        })
-    }
-
-    /// What stands at the path in place of the held file, **sampled and
-    /// never acted on**: `None` where the path is the held file, or holds
-    /// nothing (a deleted file still held is still read), or holds what was
-    /// already refused and marked.
-    fn replacement(&self) -> std::io::Result<Option<AtPath>> {
-        Ok(match at_path(&self.path)? {
-            AtPath::Missing => None,
-            AtPath::File(generation)
-                if self
-                    .held
-                    .as_ref()
-                    .is_some_and(|h| h.generation == generation) =>
-            {
-                None
+        match read {
+            Read::Record { line, digest } => {
+                let len = line.len() as u64;
+                at.offset += len;
+                at.digest = digest;
+                ring.push(
+                    Item::Record {
+                        position: at.clone(),
+                        line,
+                    },
+                    len,
+                );
             }
-            AtPath::Refused(why) if self.held.is_none() && self.refused == Some(why) => None,
-            other => Some(other),
-        })
-    }
-
-    /// The held file was truncated below the position: marked, and read
-    /// again from its start. **Wherever the file's length or modification
-    /// time changed since the last look, the record before the position is
-    /// checked by its digest, as a reconnection checks it**, so a copy and
-    /// truncate that regrows past the position between two polls is caught
-    /// though its length hides it. While a record past the bound is being
-    /// skipped the position is inside it, so the bytes the skip kept, the
-    /// record's last up to `DIGEST_WINDOW` read so far, are compared with
-    /// the file's bytes before the position instead.
-    fn truncated(&mut self) -> std::io::Result<Option<Item>> {
-        let Some(held) = &self.held else {
-            return Ok(None);
-        };
-        let meta = held.file.metadata()?;
-        let seen = (meta.len(), meta.modified().ok());
-        if self.seen == Some(seen) {
-            return Ok(None);
+            Read::Oversized { len, digest } => {
+                at.offset += len;
+                at.digest = digest;
+                ring.push(oversized(at.clone(), len), len);
+            }
+            Read::Heartbeat { .. } => {
+                return Ok(Opened {
+                    stream,
+                    boundary: at,
+                    ring,
+                    marks,
+                    resumed: None,
+                    until: deadline,
+                });
+            }
+            Read::Truncated { size } => {
+                let reason = format!(
+                    "the file was truncated to {size} bytes, below offset {}, while an opening read it; relayed from its start",
+                    at.offset
+                );
+                tracing::info!("{reason}");
+                marks.push(Item::Mark {
+                    position: relay::zero(&at.generation),
+                    reason,
+                });
+                (stream, at) = dial(&relay::zero(&at.generation), &mut marks).await?;
+                ring = Ring::new(at.clone(), cap);
+            }
+            Read::Ended(why) => return Err(why),
         }
-        self.seen = Some(seen);
-        let shrunk = meta.len() < self.offset;
-        let rewritten = !shrunk
-            && match &self.skip {
-                None => {
-                    digest_before(&held.file, self.offset)?.as_deref() != Some(self.digest.as_str())
+    }
+}
+
+/// Dial from `from`, or from offset zero where the relay refuses it or
+/// serves another file than `from` names, **each marked** at offset zero of
+/// the file now served: the stream and its start.
+async fn connect(
+    socket: &Path,
+    from: &Position,
+    marks: &mut Vec<Item>,
+) -> Result<(relay::Stream, Position), String> {
+    let mut at = from.clone();
+    loop {
+        match relay::dial(socket, &at).await {
+            // **Another file than the position names is a replacement at
+            // any offset**, zero included: only the empty generation, the
+            // position before any header was read, names no file. A request
+            // from zero already reads the new file from its start, so its
+            // stream is kept; one past zero is dialed again from zero.
+            Dial::Open(stream) if !at.generation.is_empty() && stream.identity != at.generation => {
+                let reason = format!(
+                    "the relay serves {}, not {} where admin-con last read; the new file is relayed from its start",
+                    stream.identity, at.generation
+                );
+                tracing::info!("{reason}");
+                let from_zero = at.offset == 0;
+                at = relay::zero(&stream.identity);
+                marks.push(Item::Mark {
+                    position: at.clone(),
+                    reason,
+                });
+                if from_zero {
+                    return Ok((*stream, at));
                 }
-                Some(skip) => {
-                    let kept = skip.tail.len() as u64;
-                    let mut there = vec![0u8; skip.tail.len()];
-                    held.file
-                        .read_exact_at(&mut there, self.offset.saturating_sub(kept))?;
-                    there != skip.tail
-                }
+            }
+            Dial::Open(stream) => {
+                at.generation = stream.identity.clone();
+                return Ok((*stream, at));
+            }
+            Dial::Refused if at.offset > 0 => {
+                let reason = format!(
+                    "the relay refused offset {} of {}: truncated or rewritten below it while admin-con was not reading; relayed from its start",
+                    at.offset, at.generation
+                );
+                tracing::info!("{reason}");
+                at = relay::zero(&at.generation);
+                marks.push(Item::Mark {
+                    position: at.clone(),
+                    reason,
+                });
+            }
+            Dial::Refused => {
+                return Err("the trace relay refused a request from offset zero".into());
+            }
+            Dial::Closed(why) => return Err(why),
+        }
+    }
+}
+
+/// Where an opening's replay starts, by the server's word.
+#[derive(Debug, Clone)]
+enum Resume {
+    /// The position the server holds: what it acknowledged, or what this
+    /// connection sent since, which it will.
+    Ack(Position),
+    /// The server holds none: a first connection, or a server restart.
+    Backfill,
+}
+
+/// **A failed verification still moves the next opening forward**: the
+/// cursor, where the next opening's read starts, becomes the boundary this
+/// one measured, so each attempt reads onward toward the server's position
+/// instead of again from the same start, and once a boundary passes it no
+/// verification is needed. The cursor is then a measured position and not
+/// a relayed one, which is safe because the relay verifies it at the next
+/// dial, refusing it where the file changed below it.
+fn progress(shared: &mut Shared, opened: &Opened) {
+    shared.cursor = opened.boundary.clone();
+}
+
+/// **A position the server holds past the boundary is verified inside the
+/// opening, before anything is sent** (Spec 7.2): the relay is dialed at
+/// it. Where it answers in the boundary's file, the opening is caught up
+/// and the door reads that very stream. Where it refuses, the position names
+/// nothing the file still holds: a mark goes at the replay's front and the
+/// replay is a backfill to the boundary, so the file's history stays behind
+/// the boundary and the opening's `show` re-establishes the row. Anything
+/// else fails the opening, the door left closed on the backoff. Every other
+/// position is planned as it stands.
+async fn verify(socket: &Path, opened: &mut Opened, resume: &Resume) -> Result<Resume, String> {
+    let acked = match resume {
+        // An opening whose read already marked a discontinuity replays from
+        // zero of its file, per `begin`, and verifies nothing here.
+        Resume::Ack(acked)
+            if opened.marks.is_empty()
+                && acked.generation == opened.boundary.generation
+                && acked.offset > opened.boundary.offset =>
+        {
+            acked
+        }
+        other => return Ok(other.clone()),
+    };
+    // **The verification dial gets only what remains of the opening's one
+    // deadline**: where nothing remains it fails at once, a closed door on
+    // the backoff, as a dial past the deadline does.
+    match tokio::time::timeout_at(opened.until, relay::dial(socket, acked)).await {
+        Ok(Dial::Open(stream)) if stream.identity == opened.boundary.generation => {
+            opened.resumed = Some(*stream);
+            Ok(resume.clone())
+        }
+        Ok(Dial::Open(stream)) => Err(format!(
+            "the trace relay serves {}, not {}, at the acknowledged position",
+            stream.identity, opened.boundary.generation
+        )),
+        Ok(Dial::Refused) => {
+            opened.marks.push(Item::Mark {
+                position: relay::zero(&opened.boundary.generation),
+                reason: format!(
+                    "the relay refused the acknowledged offset {}: truncated or rewritten below it; the file is relayed from its start, replayed to the boundary",
+                    acked.offset
+                ),
+            });
+            Ok(Resume::Backfill)
+        }
+        Ok(Dial::Closed(why)) => Err(why),
+        Err(_) => Err(
+            "the trace relay gave no header at the acknowledged position within the opening's bound"
+                .to_owned(),
+        ),
+    }
+}
+
+/// An opening's replay behind its boundary.
+struct Replay {
+    /// Sent first, as replayed.
+    front: Vec<Item>,
+    /// Where the ring does not hold the whole span, the second read: from
+    /// where, keeping only records that start at or after the offset.
+    again: Option<(Position, u64)>,
+    /// Where the server already holds a position past the boundary, the
+    /// replay is empty and the stream resumes live from that position.
+    live_from: Option<Position>,
+}
+
+/// **The replay an opening relays behind its boundary** (Spec 7.2): from
+/// the server's acknowledged position, or after a server restart a
+/// bounded tail from the first record boundary within `backfill` bytes of
+/// the boundary, marked at its front. **An acknowledged file the relay no
+/// longer serves is a discontinuity**, marked, and the current file is
+/// relayed from its start: the relay holds only the run's file. Taken from
+/// what the opening read where that holds the span, else read again.
+fn plan(ring: Ring, boundary: &Position, resume: &Resume, backfill: u64) -> Replay {
+    match resume {
+        Resume::Backfill if ring.dropped || ring.start.offset == 0 => {
+            let mut front = Vec::new();
+            if ring.start.offset > 0 {
+                front.push(backfill_mark(ring.start.clone()));
+            }
+            front.extend(ring.items.into_iter().map(|(item, _)| item));
+            Replay {
+                front,
+                again: None,
+                live_from: None,
+            }
+        }
+        Resume::Backfill => Replay {
+            front: Vec::new(),
+            again: Some((
+                relay::zero(&boundary.generation),
+                boundary.offset.saturating_sub(backfill),
+            )),
+            live_from: None,
+        },
+        // **A position the server holds past the boundary is caught up
+        // already**: a boundary taken at its bound can stand short of what
+        // a previous connection relayed. Nothing is behind it, `caught_up`
+        // goes at once, and the stream resumes live from the server's
+        // position, which the relay verifies as any resumption.
+        Resume::Ack(acked)
+            if acked.generation == boundary.generation && acked.offset > boundary.offset =>
+        {
+            Replay {
+                front: Vec::new(),
+                again: None,
+                live_from: Some(acked.clone()),
+            }
+        }
+        Resume::Ack(acked) if acked.generation == boundary.generation => match ring.after(acked) {
+            Some(front) => Replay {
+                front,
+                again: None,
+                live_from: None,
+            },
+            None => Replay {
+                front: Vec::new(),
+                again: Some((acked.clone(), 0)),
+                live_from: None,
+            },
+        },
+        Resume::Ack(acked) => {
+            let zero = relay::zero(&boundary.generation);
+            let mark = Item::Mark {
+                position: zero.clone(),
+                reason: format!(
+                    "the acknowledged file ({}) was replaced, and its tail past {} is not readable through the relay, which serves only the current file; the new file is relayed from its start",
+                    acked.generation, acked.offset
+                ),
             };
-        if !shrunk && !rewritten {
-            return Ok(None);
+            match ring.after(&zero) {
+                Some(items) => Replay {
+                    front: std::iter::once(mark).chain(items).collect(),
+                    again: None,
+                    live_from: None,
+                },
+                None => Replay {
+                    front: vec![mark],
+                    again: Some((zero, 0)),
+                    live_from: None,
+                },
+            }
         }
-        let at = self.offset;
-        self.restart();
-        let reason = if shrunk {
-            format!("the file was truncated below offset {at}; relayed from its start")
-        } else {
-            format!(
-                "the file was truncated or rewritten below offset {at}: the record before it no longer matches its digest; relayed from its start"
-            )
-        };
-        Ok(Some(Item::Mark {
-            position: self.position(),
-            reason,
-        }))
+    }
+}
+
+/// An opening's second read: its boundary, and where a backfill keeps from.
+struct Target {
+    boundary: Position,
+    keep_from: u64,
+    /// No record kept yet, so a backfill's mark is still owed.
+    first: bool,
+}
+
+/// What one read of the door came to, in the order it is sent.
+#[derive(Default)]
+struct Step {
+    /// Behind the opening's boundary, sent as replayed.
+    replayed: Vec<Item>,
+    /// The replay reached its boundary or ended: `caught_up` follows.
+    caught_up: bool,
+    /// After any `caught_up`, sent live.
+    live: Vec<Item>,
+    /// The door closed; a closing frame follows.
+    closed: bool,
+}
+
+/// **The trace door as one connection holds it** (Spec 7.2): open while
+/// admin-con holds the relay's stream, closed while no relay answers, which
+/// is the normal state while the agent is unloaded. A stream that ends with
+/// the door open is redialed from its position at the next read, so a
+/// relay that dropped admin-con while it was not reading, during a verb,
+/// costs nothing: the position is verified and the stream resumes.
+struct Door {
+    socket: PathBuf,
+    backoff: Backoff,
+    open: bool,
+    /// The stream, while the door is open; none with the door open is a
+    /// redial owed from `at`.
+    stream: Option<relay::Stream>,
+    /// The stream's position: after the last record read from it.
+    at: Position,
+    /// During an opening's second read, its boundary.
+    target: Option<Target>,
+    /// The newest heartbeat's time, for the drain.
+    heartbeat: Option<u64>,
+    /// A redialed stream that has carried nothing yet: one that ends so is
+    /// a relay that admits and drops at once, taken as a closed door on the
+    /// backoff rather than redialed without pause.
+    fresh: bool,
+    /// Openings failed since the last success, for the backoff.
+    failures: u32,
+    next_try: tokio::time::Instant,
+}
+
+impl Door {
+    fn closed(socket: PathBuf, backoff: Backoff, at: Position) -> Self {
+        Self {
+            socket,
+            backoff,
+            open: false,
+            stream: None,
+            at,
+            target: None,
+            heartbeat: None,
+            fresh: false,
+            failures: 0,
+            next_try: tokio::time::Instant::now(),
+        }
     }
 
-    /// Switch to what replaced the held file, once its tail is read.
-    /// `None` where what stood at the sample is gone again by the open, so
-    /// the next step samples afresh.
-    fn switch_to(&mut self, change: AtPath) -> anyhow::Result<Option<Item>> {
-        match change {
-            AtPath::File(_) => {
-                let Some(held) = open_trace(&self.path)? else {
-                    return Ok(None);
+    /// The door closed: the next opening is tried at once where a new
+    /// file stands behind the relay, else on the backoff.
+    fn close(&mut self, at_once: bool) {
+        self.open = false;
+        self.stream = None;
+        self.target = None;
+        self.heartbeat = None;
+        self.failures = if at_once { 0 } else { self.failures.max(1) };
+        self.next_try = tokio::time::Instant::now()
+            + if at_once {
+                Duration::ZERO
+            } else {
+                self.backoff.delay(self.failures)
+            };
+    }
+
+    /// **Hold an opening**: its replay's front, sent as replayed, the marks
+    /// of what the opening's read met first, and the frames that follow. Where the ring holds the span the stream stands
+    /// at the boundary and `caught_up` follows the front; else the second
+    /// read reaches it.
+    fn begin(&mut self, opened: Opened, resume: &Resume, backfill: u64) -> Vec<Item> {
+        let Opened {
+            stream,
+            boundary,
+            ring,
+            marks,
+            resumed,
+            ..
+        } = opened;
+        // **One mark per discontinuity**: where the opening's read already
+        // marked one and started the file again from zero, the server's
+        // position stands before that same discontinuity, so the replay
+        // starts at zero of the file now served with no second mark.
+        let resume = match resume {
+            Resume::Ack(_) if !marks.is_empty() => Resume::Ack(relay::zero(&boundary.generation)),
+            other => other.clone(),
+        };
+        let replay = plan(ring, &boundary, &resume, backfill);
+        self.open = true;
+        self.failures = 0;
+        self.heartbeat = None;
+        match (replay.again, replay.live_from) {
+            // The server's position, verified by the opening: the door
+            // reads the stream that verified it, so position and stream
+            // came from one dial. Without one, a redial owed from the
+            // position; only an opening that skipped `verify` reaches that,
+            // which nothing in service does.
+            (None, Some(from)) => {
+                drop(stream);
+                self.stream = resumed;
+                self.at = from;
+                self.target = None;
+            }
+            (None, None) => {
+                self.stream = Some(stream);
+                self.at = boundary;
+                self.target = None;
+            }
+            (Some((from, keep_from)), _) => {
+                drop(stream);
+                self.stream = None;
+                self.at = from;
+                self.target = Some(Target {
+                    boundary,
+                    keep_from,
+                    first: true,
+                });
+            }
+        }
+        // The read's own marks lead, ahead of the plan's and of any
+        // second read.
+        marks.into_iter().chain(replay.front).collect()
+    }
+
+    /// **One read of the door**, cancel-safe: the stream's read keeps a
+    /// partial record for the next call, and a redial dropped mid-way
+    /// leaves the redial owed, nothing having moved.
+    async fn read(&mut self) -> Step {
+        let mut step = Step::default();
+        let Some(stream) = &mut self.stream else {
+            self.redial(&mut step).await;
+            return step;
+        };
+        let before = self.at.clone();
+        let read = stream.next().await;
+        let fresh = std::mem::take(&mut self.fresh);
+        match read {
+            Read::Record { line, digest } => {
+                let len = line.len() as u64;
+                self.at.offset += len;
+                self.at.digest = digest;
+                let item = Item::Record {
+                    position: self.at.clone(),
+                    line,
                 };
-                let why = if self.held.is_none() {
-                    "the trace file appeared; relayed from its start"
+                self.place(item, before, &mut step);
+            }
+            Read::Oversized { len, digest } => {
+                self.at.offset += len;
+                self.at.digest = digest;
+                let item = oversized(self.at.clone(), len);
+                self.place(item, before, &mut step);
+            }
+            Read::Heartbeat { wall_ms } => {
+                self.heartbeat = Some(wall_ms);
+                if let Some(target) = &self.target
+                    && self.at.offset < target.boundary.offset
+                {
+                    let reason = format!(
+                        "the file ends at {} short of the replay's boundary at {}: it was truncated or rewritten since the boundary was taken; relayed live from its start",
+                        self.at.offset, target.boundary.offset
+                    );
+                    self.restart(reason, &mut step);
+                }
+            }
+            Read::Truncated { size } => {
+                let reason = if self.target.is_some() {
+                    format!(
+                        "the file shrank to {size} bytes, below offset {}, during the replay; relayed live from its start",
+                        self.at.offset
+                    )
                 } else {
-                    "file replaced: rotation; the new file is relayed from its start"
+                    format!(
+                        "the file was truncated to {size} bytes, below offset {}; relayed from its start",
+                        self.at.offset
+                    )
                 };
-                self.switch(Some(held), why).map(Some)
+                self.restart(reason, &mut step);
             }
-            AtPath::Refused(why) => {
-                let mark = self.switch(None, why)?;
-                self.refused = Some(why);
-                Ok(Some(mark))
+            Read::Ended(why) if fresh => {
+                tracing::info!(
+                    "the trace relay ended a redialed stream before it carried anything ({why}); the door is taken as closed"
+                );
+                self.close(false);
+                step.closed = true;
             }
-            AtPath::Missing => Ok(None),
+            Read::Ended(why) => {
+                tracing::info!(
+                    "the trace relay's stream ended ({why}); redialing from {}",
+                    self.at.offset
+                );
+                self.stream = None;
+            }
         }
+        step
     }
 
-    /// Switch to `to` from its start, with a mark naming why; an
-    /// unterminated fragment left in the file switched from, or a record
-    /// past the bound still being skipped there, is named too.
-    fn switch(&mut self, to: Option<Held>, why: &str) -> anyhow::Result<Item> {
-        let from = self.skip.as_ref().map_or(self.offset, |s| s.start);
-        let left = self.held_len()?.saturating_sub(from);
-        self.reset_to(to);
-        let reason = if left > 0 {
-            format!(
-                "{why}; the file switched from ended in an unterminated fragment of {left} bytes, not relayed"
-            )
-        } else {
-            why.to_owned()
-        };
-        Ok(Item::Mark {
-            position: self.position(),
+    /// **Truncation and rewrite are marked, and nothing is smoothed** (Spec
+    /// 7.2): the file is relayed from its start, live, any replay ended.
+    fn restart(&mut self, reason: String, step: &mut Step) {
+        let zero = relay::zero(&self.at.generation);
+        if self.target.take().is_some() {
+            step.caught_up = true;
+        }
+        step.live.push(Item::Mark {
+            position: zero.clone(),
             reason,
-        })
+        });
+        self.at = zero;
+        self.stream = None;
     }
 
-    /// **Read complete records from the position, at most `budget` bytes and
-    /// never past `until`**, each a record boundary (Spec 7.2): a record
-    /// still unterminated is left for a later read. A record past
-    /// `RECORD_BOUND` is skipped through its delimiter, budget by budget,
-    /// and marked with its real digest. Answers whether the position moved.
-    fn read(&mut self, until: Option<u64>, budget: usize) -> anyhow::Result<(Vec<Item>, bool)> {
-        let Some(held) = &self.held else {
-            return Ok((Vec::new(), false));
+    /// One item read: behind the opening's boundary as replayed, else live.
+    fn place(&mut self, item: Item, before: Position, step: &mut Step) {
+        let Some(target) = &mut self.target else {
+            step.live.push(item);
+            return;
         };
-        let len = held.file.metadata()?.len();
-        let end = until.map_or(len, |u| u.min(len));
-        let mut items = Vec::new();
-        if end <= self.offset {
-            return Ok((items, false));
+        let end = self.at.offset;
+        if end > target.boundary.offset {
+            // **The boundary no longer ends a record**: the file was
+            // rewritten since it was taken, so what follows is live.
+            step.replayed.push(Item::Mark {
+                reason: format!(
+                    "the bytes from {} to the replay's boundary at {} no longer end a record: the file was rewritten since the boundary was taken; relayed live from here",
+                    before.offset, target.boundary.offset
+                ),
+                position: before,
+            });
+            self.target = None;
+            step.caught_up = true;
+            step.live.push(item);
+            return;
         }
-        let span = if self.skip.is_some() {
-            budget
-        } else {
-            budget.max(RECORD_BOUND + 1)
-        };
-        let want = ((end - self.offset) as usize).min(span);
-        let mut buf = vec![0u8; want];
-        held.file.read_exact_at(&mut buf, self.offset)?;
-        let from = self.offset;
-        let mut consumed = 0usize;
-        while consumed < buf.len() {
-            let rest = &buf[consumed..];
-            let newline = rest.iter().position(|&b| b == b'\n');
-            if let Some(skip) = &mut self.skip {
-                match newline {
-                    Some(i) => {
-                        skip.take(&rest[..=i]);
-                        self.offset += i as u64 + 1;
-                        consumed += i + 1;
-                        self.digest = digest_of(&skip.tail);
-                        let start = skip.start;
-                        self.skip = None;
-                        items.push(Item::Mark {
-                            position: self.position(),
-                            reason: format!(
-                                "a record at offset {start} of {} bytes passed the {RECORD_BOUND} byte bound and was not relayed",
-                                self.offset - start
-                            ),
-                        });
-                        continue;
-                    }
-                    None => {
-                        skip.take(rest);
-                        self.offset += rest.len() as u64;
-                        break;
-                    }
-                }
+        if before.offset >= target.keep_from {
+            if std::mem::take(&mut target.first) && target.keep_from > 0 {
+                step.replayed.push(backfill_mark(before));
             }
-            match newline {
-                Some(i) => {
-                    let line = &rest[..=i];
-                    let start = self.offset;
-                    self.offset += line.len() as u64;
-                    consumed += line.len();
-                    self.digest = digest_of(line);
-                    if line.len() > RECORD_BOUND {
-                        items.push(Item::Mark {
-                            position: self.position(),
-                            reason: format!(
-                                "a record at offset {start} of {} bytes passed the {RECORD_BOUND} byte bound and was not relayed",
-                                line.len()
-                            ),
-                        });
-                        continue;
-                    }
-                    items.push(Item::Record {
-                        position: self.position(),
-                        line: line.to_vec(),
-                    });
-                    if consumed >= budget {
-                        break;
-                    }
+            step.replayed.push(item);
+        }
+        if end < target.boundary.offset {
+            return;
+        }
+        // **The boundary is checked by its digest before `caught_up`**: a
+        // file rewritten in place and regrown past the boundary keeps its
+        // identity and hides in its length, and what was replayed of it is
+        // not what the boundary named.
+        if self.at.digest != target.boundary.digest {
+            let reason = format!(
+                "the record before the replay's boundary at {end} no longer matches its digest: the file was truncated or rewritten since the boundary was taken, so what was replayed to it is not what the boundary named; relayed live from its start"
+            );
+            self.restart(reason, step);
+            return;
+        }
+        if target.first && target.keep_from > 0 {
+            step.replayed.push(backfill_mark(self.at.clone()));
+        }
+        self.target = None;
+        step.caught_up = true;
+    }
+
+    /// **The redial owed by an ended stream**, from the position: the same
+    /// file resumes; a refused position, the file truncated or rewritten
+    /// below it while admin-con was not reading, is marked and read from
+    /// its start; and a relay that serves another file, or none, closed
+    /// the door, so the next opening is an admission of the trace.
+    async fn redial(&mut self, step: &mut Step) {
+        match relay::dial(&self.socket, &self.at).await {
+            Dial::Open(stream) if stream.identity == self.at.generation => {
+                self.stream = Some(*stream);
+                self.fresh = true;
+            }
+            Dial::Open(stream) => {
+                tracing::info!(
+                    "the trace relay now serves {}, not {}: a new run; the door is taken as closed and opened again",
+                    stream.identity,
+                    self.at.generation
+                );
+                self.close(true);
+                step.closed = true;
+            }
+            Dial::Refused if self.at.offset > 0 => {
+                let mark = Item::Mark {
+                    position: relay::zero(&self.at.generation),
+                    reason: format!(
+                        "the relay refused offset {}: the file was truncated or rewritten below it while admin-con was not reading; relayed from its start",
+                        self.at.offset
+                    ),
+                };
+                if self.target.is_some() {
+                    step.replayed.push(mark);
+                } else {
+                    step.live.push(mark);
                 }
-                None => {
-                    // No delimiter in what was read: an unterminated
-                    // record, left for a later read, unless it is already
-                    // past the bound, in which case it is skipped.
-                    if rest.len() > RECORD_BOUND {
-                        let mut skip = Skip {
-                            start: self.offset,
-                            tail: Vec::new(),
-                        };
-                        skip.take(rest);
-                        self.skip = Some(skip);
-                        self.offset += rest.len() as u64;
-                    }
-                    break;
-                }
+                self.at = relay::zero(&self.at.generation);
+            }
+            Dial::Refused => {
+                tracing::error!(
+                    "the trace relay refused a request from offset zero; the door is taken as closed"
+                );
+                self.close(false);
+                step.closed = true;
+            }
+            Dial::Closed(why) => {
+                tracing::info!("the trace door closed: {why}");
+                self.close(false);
+                step.closed = true;
             }
         }
-        Ok((items, self.offset != from))
     }
 }
 
@@ -854,83 +1071,109 @@ fn mark_event(seq: u64, reason: String) -> TraceEvent {
     }
 }
 
-/// The events and marks a step sends, as frames. **A record is measured as
-/// the frame that carries it** and replaced by a mark where that frame
-/// would pass the link's line bound: re-encoding can grow a record past
-/// its raw length (a NUL becomes six bytes, a quote two, an invalid byte
-/// three), so `RECORD_BOUND` on the raw bytes alone does not keep a frame
-/// under `LINE_BOUND`.
-fn frames_of(items: Vec<Item>, replayed: bool, seq: &mut u64) -> Vec<FromClient> {
+/// **What waits to be sent**: an item read from the door, made a frame only
+/// as it goes, so a replay held in memory costs its records' bytes and
+/// never their parsed events; or a frame of admin-con's own.
+enum Out {
+    Item { item: Item, replayed: bool },
+    Frame(FromClient),
+}
+
+fn outs(items: Vec<Item>, replayed: bool) -> impl Iterator<Item = Out> {
     items
         .into_iter()
-        .filter_map(|item| {
-            *seq += 1;
-            match item {
-                Item::Record { position, line } => {
-                    if line.iter().all(|b| b.is_ascii_whitespace()) {
-                        return None;
-                    }
-                    let event = match std::str::from_utf8(&line) {
-                        Ok(text) => parse_line(*seq, text.trim_end()),
-                        Err(e) => TraceEvent {
-                            seq: *seq,
-                            mark: Some(format!("record is not UTF-8: {e}")),
-                            run: None,
-                            turn: None,
-                            kind: None,
-                            raw: serde_json::Value::String(
-                                String::from_utf8_lossy(&line).trim_end().to_owned(),
-                            ),
-                        },
-                    };
-                    let frame = FromClient::Event {
-                        position,
-                        replayed,
-                        event,
-                    };
-                    let encoded = serde_json::to_vec(&frame).map_or(usize::MAX, |v| v.len());
-                    if encoded <= LINE_BOUND {
-                        return Some(frame);
-                    }
-                    let FromClient::Event { position, .. } = frame else {
-                        unreachable!("built as an event above")
-                    };
-                    let at = position.offset - line.len() as u64;
-                    Some(FromClient::Event {
-                        position,
-                        replayed,
-                        event: mark_event(
-                            *seq,
-                            format!(
-                                "a record at offset {at} of {} bytes encodes to a frame of {encoded} bytes, past the {LINE_BOUND} byte line bound, and was not relayed",
-                                line.len()
-                            ),
-                        ),
-                    })
-                }
-                Item::Mark { position, reason } => Some(FromClient::Event {
-                    position,
-                    replayed,
-                    event: mark_event(*seq, reason),
-                }),
+        .map(move |item| Out::Item { item, replayed })
+}
+
+/// One item as the frame that carries it, none for a blank record. **A
+/// record is measured as the frame that carries it** and replaced by a mark
+/// where that frame would pass the link's line bound: re-encoding can grow
+/// a record past its raw length (a NUL becomes six bytes, a quote two, an
+/// invalid byte three), so `RECORD_BOUND` on the raw bytes alone does not
+/// keep a frame under `LINE_BOUND`.
+fn frame_of(item: Item, replayed: bool, seq: &mut u64) -> Option<FromClient> {
+    *seq += 1;
+    match item {
+        Item::Record { position, line } => {
+            if line.iter().all(|b| b.is_ascii_whitespace()) {
+                return None;
             }
-        })
-        .collect()
+            let event = match std::str::from_utf8(&line) {
+                Ok(text) => parse_line(*seq, text.trim_end()),
+                Err(e) => TraceEvent {
+                    seq: *seq,
+                    mark: Some(format!("record is not UTF-8: {e}")),
+                    run: None,
+                    turn: None,
+                    kind: None,
+                    raw: serde_json::Value::String(
+                        String::from_utf8_lossy(&line).trim_end().to_owned(),
+                    ),
+                },
+            };
+            let frame = FromClient::Event {
+                position,
+                replayed,
+                event,
+            };
+            let encoded = serde_json::to_vec(&frame).map_or(usize::MAX, |v| v.len());
+            if encoded <= LINE_BOUND {
+                return Some(frame);
+            }
+            let FromClient::Event { position, .. } = frame else {
+                unreachable!("built as an event above")
+            };
+            let at = position.offset - line.len() as u64;
+            Some(FromClient::Event {
+                position,
+                replayed,
+                event: mark_event(
+                    *seq,
+                    format!(
+                        "a record at offset {at} of {} bytes encodes to a frame of {encoded} bytes, past the {LINE_BOUND} byte line bound, and was not relayed",
+                        line.len()
+                    ),
+                ),
+            })
+        }
+        Item::Mark { position, reason } => Some(FromClient::Event {
+            position,
+            replayed,
+            event: mark_event(*seq, reason),
+        }),
+    }
 }
 
-/// What one attempt prepared before its hello: the boundary the hello
-/// names and the ceiling it declares.
+/// An out as its frame, none for a blank record.
+fn frame_out(out: Out, seq: &mut u64) -> Option<FromClient> {
+    match out {
+        Out::Item { item, replayed } => frame_of(item, replayed, seq),
+        Out::Frame(frame) => Some(frame),
+    }
+}
+
+/// What one attempt prepared before its hello: the ceiling it declares,
+/// and the opening of the door it reports, none where the door is closed.
 struct Prepared {
-    boundary: Position,
     ceiling: BTreeSet<String>,
+    opened: Option<Opened>,
+    /// When the hello left for the server: the server connection's time
+    /// from here is not the opening's.
+    measured: tokio::time::Instant,
 }
 
-/// State shared between the hello and the serve of one attempt.
+/// State shared between the hellos and the serves of the process.
 struct Shared {
-    tailer: Tailer,
     prepared: Option<Prepared>,
     /// The next event's sequence number for the server's window.
     seq: u64,
+    /// **The last position sent**, on any connection: where the next
+    /// opening's read starts, so a living admin-con reads only what is new.
+    /// Offset zero of no file at the process's start.
+    cursor: Position,
+    /// Where this connection's next opening replays from: the server's
+    /// acknowledged position at the hello, then the last position sent.
+    resume: Resume,
 }
 
 /// Run admin-con until `shutdown` is set: the client loop of `client::run`
@@ -946,13 +1189,14 @@ pub async fn run<I: Invoker>(
 ) -> anyhow::Result<()> {
     let link = Link::new(cfg.link.clone())?;
     let shared = Arc::new(tokio::sync::Mutex::new(Shared {
-        tailer: Tailer::new(cfg.trace_file.clone(), cfg.scan_delay),
         prepared: None,
         seq: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0)
             * 1_000_000,
+        cursor: relay::zero(""),
+        resume: Resume::Backfill,
     }));
     let reload = || {
         let path = source.as_ref()?;
@@ -970,13 +1214,19 @@ pub async fn run<I: Invoker>(
     let slot = Arc::new(Slot::new());
     let opts = ServeOptions {
         agent: cfg.link.agent.clone(),
+        socket: cfg.trace_socket.clone(),
+        backoff,
         backfill: cfg.backfill_bytes,
-        poll: cfg.poll,
+        boundary_bound: cfg.boundary_bound,
+        drain_bound: cfg.drain_bound,
         verb_bound: cfg.verb_bound,
         stop_grace: cfg.stop_grace,
         slot: slot.clone(),
     };
     let grants_bound = cfg.grants_bound;
+    let socket = cfg.trace_socket.clone();
+    let backfill = cfg.backfill_bytes;
+    let boundary_bound = cfg.boundary_bound;
     // The stop's grace runs from the moment the stop is asked, whatever
     // the link is doing then.
     let stop_asked = {
@@ -992,6 +1242,7 @@ pub async fn run<I: Invoker>(
             let agent = link.agent.clone();
             let shared = hello_shared.clone();
             let invoker = hello_invoker.clone();
+            let socket = socket.clone();
             async move {
                 // **The ceiling is exactly what `grants` answers** (Spec 8);
                 // an ask that fails declares nothing rather than guessing.
@@ -1015,20 +1266,31 @@ pub async fn run<I: Invoker>(
                             BTreeSet::new()
                         }
                     };
+                // **The hello reports the door, and an open door's boundary**
+                // (Spec 7.2): an opening taken now, before any verb of this
+                // connection, its boundary the position at the relay's first
+                // heartbeat. A door that does not open is reported closed,
+                // with no boundary, and redialed on the backoff.
                 let mut shared = shared.lock().await;
-                let boundary = shared
-                    .tailer
-                    .current_tail()
-                    .await
-                    .map_err(|e| format!("reading the trace file's tail: {e:#}"))?;
+                let from = shared.cursor.clone();
+                let opened = match measure(&socket, &from, backfill, boundary_bound).await {
+                    Ok(opened) => Some(opened),
+                    Err(why) => {
+                        tracing::info!("the trace door is closed at the hello: {why}");
+                        None
+                    }
+                };
+                let tail = opened.as_ref().map(|o| o.boundary.clone());
                 shared.prepared = Some(Prepared {
-                    boundary: boundary.clone(),
                     ceiling: ceiling.clone(),
+                    opened,
+                    measured: tokio::time::Instant::now(),
                 });
                 Ok(FromClient::Hello {
                     agent,
                     plane: Plane::Admin,
-                    tail: Some(boundary),
+                    door: Some(tail.is_some()),
+                    tail,
                     ceiling: Some(ceiling.into_iter().collect()),
                 })
             }
@@ -1151,8 +1413,13 @@ async fn orderly_stop<I: Invoker>(
 #[derive(Clone)]
 struct ServeOptions {
     agent: String,
+    /// The trace relay's socket.
+    socket: PathBuf,
+    /// The door's redial, the connector's own backoff.
+    backoff: Backoff,
     backfill: u64,
-    poll: Duration,
+    boundary_bound: Duration,
+    drain_bound: Duration,
     verb_bound: Duration,
     stop_grace: Duration,
     slot: Arc<Slot>,
@@ -1212,12 +1479,15 @@ impl Ask {
 /// The asks waiting their turn.
 struct Asks {
     waiting: VecDeque<Ask>,
+    /// The ids the server reported landed, for the hold to read.
+    landed: Vec<u64>,
 }
 
 impl Asks {
     fn new() -> Self {
         Self {
             waiting: VecDeque::new(),
+            landed: Vec::new(),
         }
     }
 
@@ -1286,229 +1556,140 @@ async fn serve<I: Invoker>(
     ended
 }
 
-/// Send frames in order, bounded per frame by the connection's cadence.
-async fn send_all(conn: &Connection, frames: Vec<FromClient>) -> Result<(), Ended> {
-    for frame in frames {
-        conn.send(frame).await.map_err(Ended::Lost)?;
+/// What one read of the door sends, in order: what is behind the boundary
+/// as replayed, `caught_up` where the replay ended, what is live, and the
+/// closing where the door closed.
+fn step_outs(step: Step) -> Vec<Out> {
+    let mut sent: Vec<Out> = outs(step.replayed, true).collect();
+    if step.caught_up {
+        sent.push(Out::Frame(FromClient::CaughtUp));
+    }
+    sent.extend(outs(step.live, false));
+    if step.closed {
+        sent.push(Out::Frame(FromClient::Door {
+            open: false,
+            wall_ms: now_ms(),
+            tail: None,
+        }));
+    }
+    sent
+}
+
+/// **What a sent frame moves**: an event's position becomes the last
+/// position sent, where the next opening's read starts and this
+/// connection's next opening replays from, since the server will hold it.
+fn sent(shared: &mut Shared, frame: &FromClient) {
+    if let FromClient::Event { position, .. } = frame {
+        shared.cursor = position.clone();
+        shared.resume = Resume::Ack(position.clone());
+    }
+}
+
+/// Send in order, each frame moving what it moves.
+async fn send_outs(conn: &Connection, shared: &mut Shared, outs: Vec<Out>) -> Result<(), Ended> {
+    for out in outs {
+        let Some(frame) = frame_out(out, &mut shared.seq) else {
+            continue;
+        };
+        conn.send(frame.clone()).await.map_err(Ended::Lost)?;
+        sent(shared, &frame);
     }
     Ok(())
 }
 
-/// Where the replay starts, and the marks in front of it, from the hello's
-/// answer (Spec 7.2). **The one place `previous` is cleared**: a hello
-/// attempt that fails before its answer leaves the replaced generation
-/// held for the next.
-async fn resume(
-    tailer: &mut Tailer,
-    acknowledged: Option<&Position>,
-    boundary: &Position,
-    backfill: u64,
-) -> anyhow::Result<Vec<Item>> {
-    let mut marks = Vec::new();
-    tailer.skip = None;
-    match acknowledged {
-        // **A server that restarted answers with no position**: a bounded
-        // tail of the file is relayed, a mark at the front saying what was
-        // not.
-        None => {
-            let start = boundary.offset.saturating_sub(backfill);
-            let Some(held) = &tailer.held else {
-                tailer.reset_to(None);
-                tailer.previous = None;
-                return Ok(front(tailer, marks));
-            };
-            // **The first record boundary at or after the start, found at
-            // any distance** in bounded chunks: a start inside a record
-            // longer than the bound is carried through that record to its
-            // delimiter, never to the boundary, so the complete records
-            // after it are relayed and the record itself is marked. Off
-            // the connection's task, since it may cross a record of any
-            // length.
-            let aligned = {
-                let file = held.file.try_clone()?;
-                let end = boundary.offset;
-                off_task(tailer.scan_delay, move |scan| {
-                    first_boundary(&file, start, end, scan)
-                })
-                .await?
-            };
-            tailer.offset = aligned;
-            tailer.digest = digest_before(&held.file, aligned)?.unwrap_or_default();
-            if aligned > 0 {
-                marks.push(Item::Mark {
-                    position: tailer.position(),
-                    reason: format!(
-                        "the server holds no acknowledged position (a first connection, or a server restart): backfill starts {aligned} bytes into the file, and the bytes before it were not relayed"
-                    ),
-                });
-            }
-            if aligned - start > RECORD_BOUND as u64 {
-                marks.push(Item::Mark {
-                    position: tailer.position(),
-                    reason: format!(
-                        "the backfill's start at {start} fell inside a record past the {RECORD_BOUND} byte bound, ending at {aligned}; it was not relayed"
-                    ),
-                });
-            }
-        }
-        Some(acked) if acked.generation == tailer.generation() => {
-            let ok = match &tailer.held {
-                Some(held) => {
-                    acked.offset <= boundary.offset
-                        && digest_before(&held.file, acked.offset)?.as_deref()
-                            == Some(acked.digest.as_str())
+/// **An opening of the door on the live connection** (Spec 7.2), taken only
+/// while no invocation is in flight: the read to the boundary, raced
+/// against the connection, whose asks queue meanwhile, and the stop. An
+/// opening that cannot be taken leaves the door closed on the backoff.
+/// Answers the frames that report it and replay behind it, none where the
+/// door stayed closed.
+async fn take_opening(
+    conn: &mut Connection,
+    door: &mut Door,
+    shared: &mut Shared,
+    queue: &mut Asks,
+    ceiling: &BTreeSet<String>,
+    opts: &ServeOptions,
+    shutdown: &mut watch::Receiver<bool>,
+) -> Result<Option<Vec<Out>>, Ended> {
+    let from = shared.cursor.clone();
+    let read = measure(&opts.socket, &from, opts.backfill, opts.boundary_bound);
+    tokio::pin!(read);
+    let measured = loop {
+        tokio::select! {
+            measured = &mut read => break measured,
+            incoming = conn.recv() => {
+                if let Some(end) = handle(incoming, conn, queue, ceiling, &opts.agent).await {
+                    return Err(end);
                 }
-                None => acked.offset == 0,
-            };
-            if ok {
-                tailer.offset = acked.offset;
-                tailer.digest = acked.digest.clone();
-            } else {
-                tailer.restart();
-                marks.push(Item::Mark {
-                    position: tailer.position(),
-                    reason: format!(
-                        "the file was truncated or rewritten below the acknowledged position {}; relayed from its start",
-                        acked.offset
-                    ),
-                });
+            }
+            _ = shutdown.changed() => {
+                decline_waiting(conn, queue).await;
+                return Err(Ended::Shutdown);
             }
         }
-        Some(acked) => {
-            // The acknowledged generation is still held: its tail past the
-            // acknowledged position is relayed first, then the new file.
-            if let Some(previous) = tailer.previous.take()
-                && previous.generation == acked.generation
-                && digest_before(&previous.file, acked.offset)?.as_deref()
-                    == Some(acked.digest.as_str())
-            {
-                tailer.pending = Some(tailer.held.take());
-                tailer.held = Some(previous);
-                tailer.offset = acked.offset;
-                tailer.digest = acked.digest.clone();
-                return Ok(front(tailer, marks));
+    };
+    let opened = match measured {
+        Ok(opened) => opened,
+        Err(why) => {
+            door.failures = door.failures.saturating_add(1);
+            door.next_try = tokio::time::Instant::now() + door.backoff.delay(door.failures);
+            tracing::debug!("{}: the trace door stays closed: {why}", opts.agent);
+            return Ok(None);
+        }
+    };
+    tracing::info!(
+        "{}: the trace door opened at {}:{}",
+        opts.agent,
+        opened.boundary.generation,
+        opened.boundary.offset
+    );
+    let mut opened = opened;
+    // The verification races the connection as the read did: asks queue
+    // meanwhile, and the stop is heard.
+    let verified = {
+        let check = verify(&opts.socket, &mut opened, &shared.resume);
+        tokio::pin!(check);
+        loop {
+            tokio::select! {
+                verified = &mut check => break verified,
+                incoming = conn.recv() => {
+                    if let Some(end) = handle(incoming, conn, queue, ceiling, &opts.agent).await {
+                        return Err(end);
+                    }
+                }
+                _ = shutdown.changed() => {
+                    decline_waiting(conn, queue).await;
+                    return Err(Ended::Shutdown);
+                }
             }
-            tailer.restart();
-            marks.push(Item::Mark {
-                position: tailer.position(),
-                reason: if acked.generation == ABSENT {
-                    "the trace file appeared while the link was down; relayed from its start"
-                        .to_owned()
-                } else {
-                    format!(
-                        "the acknowledged file ({}) was replaced while the link was down, and admin-con no longer holds its tail past {}; the new file is relayed from its start",
-                        acked.generation, acked.offset
-                    )
-                },
-            });
         }
-    }
-    tailer.previous = None;
-    Ok(front(tailer, marks))
-}
-
-/// The resume's marks, then the hello's notes, at the resume point.
-fn front(tailer: &mut Tailer, mut marks: Vec<Item>) -> Vec<Item> {
-    for reason in std::mem::take(&mut tailer.notes) {
-        marks.push(Item::Mark {
-            position: tailer.position(),
-            reason,
-        });
-    }
-    marks
-}
-
-/// Where the replay stands after one of its steps, with what to send.
-enum Replay {
-    Going(Vec<Item>),
-    /// Finished: what to send before `caught_up`.
-    Done(Vec<Item>),
-}
-
-/// **The replay's end is a fact about the file, never about a step's
-/// yield** (Spec 7.2): it is finished only where the tailer is in the
-/// boundary's generation at or past the boundary's offset, or where that
-/// file shrank below the boundary, which is marked and relayed live from
-/// its start. A step that sent nothing (a record past the bound being
-/// skipped, a frame replaced by a mark) is not the end.
-fn replay_state(tailer: &mut Tailer, boundary: &Position, moved: bool) -> anyhow::Result<Replay> {
-    let mut items = Vec::new();
-    let mut moved = moved;
-    if tailer.generation() != boundary.generation {
-        // **The previous generation's tail is relayed through its end**,
-        // then the current file from its start, marked; its end is a read
-        // that moved nothing.
-        if moved {
-            return Ok(Replay::Going(items));
+    };
+    let resume = match verified {
+        Ok(resume) => resume,
+        Err(why) => {
+            progress(shared, &opened);
+            door.failures = door.failures.saturating_add(1);
+            door.next_try = tokio::time::Instant::now() + door.backoff.delay(door.failures);
+            tracing::info!(
+                "{}: the opening failed at the acknowledged position: {why}",
+                opts.agent
+            );
+            return Ok(None);
         }
-        let Some(current) = tailer.pending.take() else {
-            // Nothing waits behind this generation, so nothing remains to
-            // reach the boundary through; never spun on.
-            return Ok(Replay::Done(items));
-        };
-        items.push(tailer.switch(
-            current,
-            "file replaced: rotation; the new file is relayed from its start",
-        )?);
-        if tailer.generation() != boundary.generation {
-            return Ok(Replay::Done(items));
-        }
-        moved = true;
+    };
+    let boundary = opened.boundary.clone();
+    let front = door.begin(opened, &resume, opts.backfill);
+    let mut sent = vec![Out::Frame(FromClient::Door {
+        open: true,
+        wall_ms: now_ms(),
+        tail: Some(boundary),
+    })];
+    sent.extend(outs(front, true));
+    if door.target.is_none() {
+        sent.push(Out::Frame(FromClient::CaughtUp));
     }
-    if tailer.held_len()? < boundary.offset {
-        let at = tailer.offset;
-        tailer.restart();
-        items.push(Item::Mark {
-            position: tailer.position(),
-            reason: format!(
-                "the file shrank below the replay's boundary at {} while it was replayed from {at}; relayed live from its start",
-                boundary.offset
-            ),
-        });
-        return Ok(Replay::Done(items));
-    }
-    if tailer.offset >= boundary.offset || !moved {
-        // **The boundary is checked by its digest before `caught_up`**: a
-        // copy and truncate regrown past the boundary between the hello and
-        // the replay's end keeps the file's identity and hides in its
-        // length, and what the replay read of it is the new content
-        // labelled replayed, which never lands. A mismatch means the file
-        // was rewritten after the hello, so its content is post-hello: it
-        // is marked and relayed live from its start.
-        let same = match &tailer.held {
-            Some(held) => {
-                digest_before(&held.file, boundary.offset)?.as_deref()
-                    == Some(boundary.digest.as_str())
-            }
-            None => true,
-        };
-        if !same {
-            let at = tailer.offset;
-            tailer.restart();
-            items.push(Item::Mark {
-                position: tailer.position(),
-                reason: format!(
-                    "the record before the replay's boundary at {} no longer matches its digest: the file was truncated or rewritten since the hello, so what was replayed to {at} is not what the hello named; relayed live from its start",
-                    boundary.offset
-                ),
-            });
-            return Ok(Replay::Done(items));
-        }
-        if tailer.offset >= boundary.offset {
-            return Ok(Replay::Done(items));
-        }
-        // The boundary still ends the record the hello named, and the
-        // bytes from here to it end none: rewritten in place before it.
-        items.push(Item::Mark {
-            position: tailer.position(),
-            reason: format!(
-                "the bytes from {} to the replay's boundary at {} no longer end a record: the file was rewritten since the hello; relayed live from here",
-                tailer.offset, boundary.offset
-            ),
-        });
-        return Ok(Replay::Done(items));
-    }
-    Ok(Replay::Going(items))
+    Ok(Some(sent))
 }
 
 async fn relay<I: Invoker>(
@@ -1519,55 +1700,105 @@ async fn relay<I: Invoker>(
     shutdown: &mut watch::Receiver<bool>,
 ) -> Ended {
     let Some(prepared) = shared.prepared.take() else {
-        return Ended::Lost("the attempt prepared no boundary".to_owned());
+        return Ended::Lost("the attempt prepared no hello".to_owned());
     };
-    let Prepared { boundary, ceiling } = prepared;
-    let lost = |e: anyhow::Error| Ended::Lost(format!("reading the trace file: {e:#}"));
-    // The tailer is at the boundary's generation, or at the previous one
-    // with the boundary's waiting behind it: `current_tail` opened or kept
-    // it. A generation replaced since is caught by the live reads.
-    let acknowledged = conn.acknowledged.clone();
-    let front = match resume(
-        &mut shared.tailer,
-        acknowledged.as_ref(),
-        &boundary,
-        opts.backfill,
-    )
-    .await
-    {
-        Ok(marks) => marks,
-        Err(e) => return lost(e),
+    let Prepared {
+        ceiling,
+        mut opened,
+        measured,
+    } = prepared;
+    // **The server connection's time is not the opening's**: the hello's
+    // opening was measured before the handshake and the hello, and its
+    // deadline moves forward by what they took, so the reserve the
+    // verification gets is what the measurement left it. Only this path
+    // needs it: a later opening runs on a live connection, with no
+    // handshake between its measurement and its verification.
+    if let Some(opened) = &mut opened {
+        opened.until += measured.elapsed();
+    }
+    // **Where this connection's openings replay from** (Spec 7.2): the
+    // server's acknowledged position, or a backfill where it holds none.
+    shared.resume = match conn.acknowledged.clone() {
+        Some(acknowledged) => Resume::Ack(acknowledged),
+        None => Resume::Backfill,
     };
-    let mut seq = shared.seq;
-    let mut replaying = true;
+    let mut door = Door::closed(opts.socket.clone(), opts.backoff, shared.cursor.clone());
     // **The replay's frames wait here and go out one at a time**, the
     // connection read and any ask served between each (Spec 7.2), so an ask
     // waits behind at most one frame and never behind a whole step, which
     // on a slow link could outlast the admission `show`'s deadline. The
     // frame that ends the replay is the last one queued.
-    let mut outbox: VecDeque<FromClient> = frames_of(front, true, &mut seq).into();
+    let mut outbox: VecDeque<Out> = VecDeque::new();
+    // **A closed door's hello has no replay**: the server takes `caught_up`
+    // as sent, and the door is redialed on the backoff.
+    let mut replaying = false;
+    // **The hello's verification runs beside the connection**: the server's
+    // admission `show` and its deadline start at admission, so the
+    // connection is read meanwhile and that `show` is served under the
+    // replay's rule, the boundary being measured already; ordinary asks
+    // wait for the replay as ever. The task ends with the connection.
+    let mut verifying: Option<Verifying> = None;
+    match opened {
+        Some(mut opened) => {
+            let socket = opts.socket.clone();
+            let resume = shared.resume.clone();
+            verifying = Some(Verifying(tokio::spawn(async move {
+                let verified = verify(&socket, &mut opened, &resume).await;
+                (opened, verified)
+            })));
+            replaying = true;
+        }
+        None => door.close(false),
+    }
     let mut queue = Asks::new();
     let mut in_flight = futures::stream::FuturesUnordered::new();
     // Whether a waiting ask's hold behind a detached process was logged.
     let mut held_logged = false;
-    let mut tick = tokio::time::interval(opts.poll);
-    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // **An opening on the live connection serves its own `show` first,
+    // and holds every ordinary ask until that `show` is landed** (Spec
+    // 7.2), **at the hello as at every opening**, since the hello is an
+    // admission and its `show` is owed whatever the door's state: where the
+    // ceiling grants `show`, ordinary asks wait from the hello or the
+    // opening until **the server reports that `show` landed**. A local send
+    // of the answer is not that: the frame is only queued, and the listener
+    // may still fail to land it and close `store_unavailable`, so a release
+    // there would be a clock in disguise. **The hold runs on no clock of
+    // admin-con's**: the server always asks after a door frame where the
+    // ceiling grants `show`, and if it does not, or the `show` faults,
+    // answers anything but a state, or does not land, no `landed` comes and
+    // its own deadline or refusal closes the connection, which ends the
+    // hold.
+    let mut opening_show = owes_show(&ceiling);
+    // The `show` taken under the hold, whose landing releases it.
+    let mut hold_show: Option<u64> = None;
     loop {
-        shared.seq = seq;
         if *shutdown.borrow_and_update() {
             decline_waiting(conn, &mut queue).await;
             return Ended::Shutdown;
         }
+        // Only the held ask's landing releases the hold; any other is
+        // ignored.
+        for id in queue.landed.drain(..) {
+            if hold_show == Some(id) {
+                hold_show = None;
+                opening_show = false;
+            }
+        }
+        // Only a `show` the server asked is served while this holds.
+        let restricted = replaying || opening_show;
         // **A verb, one at a time, its answer placed at the invocation**
-        // (Spec 7.2): drain the file to its tail, invoke with the tailer
-        // paused, emit the answer, then resume reading or replaying. A second ask waits
-        // its turn in arrival order; `VERBS_IN_FLIGHT` is the rule's one
-        // number.
+        // (Spec 7.2): drain the door to the relay's heartbeat, invoke with
+        // the door unread, emit the answer, then read on. A second ask
+        // waits its turn in arrival order; `VERBS_IN_FLIGHT` is the rule's
+        // one number.
         while in_flight.len() < VERBS_IN_FLIGHT
-            && queue.servable(replaying)
+            && queue.servable(restricted)
             && let Ok(permit) = opts.slot.permit.clone().try_acquire_owned()
-            && let Some(ask) = queue.next(replaying)
+            && let Some(ask) = queue.next(restricted)
         {
+            if opening_show && hold_show.is_none() && ask.served_during_the_replay() {
+                hold_show = Some(ask.id);
+            }
             // **During the replay only a `show` the server asked is served,
             // at once and with no drain** (Spec 7.2): the admission's held
             // behind a long backfill would miss its deadline. Its snapshot
@@ -1576,36 +1807,31 @@ async fn relay<I: Invoker>(
             // so the row may briefly read older than the snapshot but
             // converges to it.
             // Every other ask waits for `caught_up` and takes the drain: a
-            // record appended after the hello is live and merely unread,
+            // record appended after the boundary is live and merely unread,
             // and an ordinary verb answered ahead of it would invert around
             // a person's load or stop.
             //
             // **A verb counts as started only once its invocation begins**
             // (Spec 7.2): one taken from the queue and still draining is
             // answered `not_started` at a stop, so the drain races the stop.
-            // Dropping the drain is safe: it gives up between whole frames,
-            // since the connection's writer takes a frame whole or not at
-            // all, and a tailer left ahead of what was sent is reset by the
-            // next connection's resume, which starts from the server's
-            // acknowledged position.
-            if !replaying {
+            // Dropping the drain is safe: the door's read is cancel-safe and
+            // the connection's writer takes a frame whole or not at all.
+            if !restricted {
                 let stopped = tokio::select! {
                     biased;
                     _ = shutdown.changed() => true,
-                    drained = drain(conn, &mut shared.tailer, &mut seq) => match drained {
+                    drained = drain(conn, &mut door, shared, opts.drain_bound) => match drained {
                         Ok(()) => false,
                         Err(end) => return end,
                     },
                 };
                 if stopped || *shutdown.borrow() {
-                    shared.seq = seq;
                     drop(permit);
                     decline(conn, &ask).await;
                     decline_waiting(conn, &mut queue).await;
                     return Ended::Shutdown;
                 }
             }
-            shared.seq = seq;
             let agent = opts.agent.clone();
             let bound = opts.verb_bound;
             let stop = shutdown.clone();
@@ -1652,7 +1878,7 @@ async fn relay<I: Invoker>(
         // is logged once, with that verb's name**: on a fresh connection it
         // can be the admission's `show`, and an operator reading admissions
         // that keep closing `admission_incomplete` reads why here.
-        let held = in_flight.is_empty() && queue.servable(replaying) && !opts.slot.free();
+        let held = in_flight.is_empty() && queue.servable(restricted) && !opts.slot.free();
         if held && !held_logged {
             let running = opts.slot.running.lock().unwrap().clone();
             tracing::warn!(
@@ -1664,7 +1890,7 @@ async fn relay<I: Invoker>(
         held_logged = held;
         if !in_flight.is_empty() {
             // The connection is still read, so asks queue and a refusal is
-            // seen; the file is not, so nothing written during the
+            // seen; the door is not, so nothing written during the
             // invocation is emitted ahead of its answer.
             tokio::select! {
                 Some((id, outcome)) = in_flight.next() => {
@@ -1712,45 +1938,129 @@ async fn relay<I: Invoker>(
             if queue.servable(replaying) && opts.slot.free() {
                 continue;
             }
-            if let Some(frame) = outbox.pop_front() {
-                let ends_the_replay = matches!(frame, FromClient::CaughtUp);
-                if let Err(why) = conn.send(frame).await {
+            // The hello's verification, its connection read meanwhile.
+            if let Some(pending) = &mut verifying {
+                tokio::select! {
+                    verified = &mut pending.0 => {
+                        verifying = None;
+                        match verified {
+                            Ok((opened, Ok(resume))) => {
+                                let front = door.begin(opened, &resume, opts.backfill);
+                                outbox.extend(outs(front, true));
+                                if door.target.is_none() {
+                                    outbox.push_back(Out::Frame(FromClient::CaughtUp));
+                                }
+                            }
+                            // The hello reported the door open; it closes
+                            // before anything is behind it.
+                            failed => {
+                                let why = match failed {
+                                    Ok((opened, Err(why))) => {
+                                        progress(shared, &opened);
+                                        why
+                                    }
+                                    Err(e) => format!("the verification's task ended: {e}"),
+                                    Ok((_, Ok(_))) => unreachable!("matched above"),
+                                };
+                                tracing::info!(
+                                    "{}: the opening failed at the acknowledged position: {why}",
+                                    opts.agent
+                                );
+                                door.close(false);
+                                outbox.push_back(Out::Frame(FromClient::Door {
+                                    open: false,
+                                    wall_ms: now_ms(),
+                                    tail: None,
+                                }));
+                            }
+                        }
+                    }
+                    incoming = conn.recv() => {
+                        if let Some(end) = handle(incoming, conn, &mut queue, &ceiling, &opts.agent).await {
+                            return end;
+                        }
+                    }
+                    _ = shutdown.changed() => {
+                        decline_waiting(conn, &mut queue).await;
+                        return Ended::Shutdown;
+                    }
+                }
+                continue;
+            }
+            if let Some(out) = outbox.pop_front() {
+                let Some(frame) = frame_out(out, &mut shared.seq) else {
+                    continue;
+                };
+                let ends_the_replay = matches!(
+                    frame,
+                    FromClient::CaughtUp | FromClient::Door { open: false, .. }
+                );
+                if let Err(why) = conn.send(frame.clone()).await {
                     return Ended::Lost(why);
                 }
+                sent(shared, &frame);
                 if ends_the_replay {
                     replaying = false;
                 }
                 continue;
             }
-            let until =
-                (shared.tailer.generation() == boundary.generation).then_some(boundary.offset);
-            let (items, moved) = match shared.tailer.read(until, READ_BUDGET) {
-                Ok(read) => read,
-                Err(e) => return lost(e),
-            };
-            outbox.extend(frames_of(items, true, &mut seq));
-            let (items, done) = match replay_state(&mut shared.tailer, &boundary, moved) {
-                Ok(Replay::Going(items)) => (items, false),
-                Ok(Replay::Done(items)) => (items, true),
-                Err(e) => return lost(e),
-            };
-            outbox.extend(frames_of(items, true, &mut seq));
-            if done {
-                outbox.push_back(FromClient::CaughtUp);
+            // **The opening's second read**, where what the opening read
+            // did not hold the span: the door is read toward its boundary,
+            // the connection and the stop still heard.
+            tokio::select! {
+                step = door.read() => outbox.extend(step_outs(step)),
+                incoming = conn.recv() => {
+                    if let Some(end) = handle(incoming, conn, &mut queue, &ceiling, &opts.agent).await {
+                        return end;
+                    }
+                }
+                _ = shutdown.changed() => {
+                    decline_waiting(conn, &mut queue).await;
+                    return Ended::Shutdown;
+                }
             }
             continue;
         }
-        // **Live**: wait for the poll, an ask, shutdown, or the slot freed
-        // by a timed-out verb's process ending while an ask waits for it.
+        // Anything queued past the replay's end is live and goes out first.
+        if !outbox.is_empty() {
+            let queued: Vec<Out> = outbox.drain(..).collect();
+            if let Err(end) = send_outs(conn, shared, queued).await {
+                return end;
+            }
+            continue;
+        }
+        // **Live**: the door, an ask, the stop, the slot freed by a
+        // timed-out verb's process ending while an ask or an opening waits
+        // for it, or the door's next opening, taken only while nothing is
+        // in flight or waiting to start.
+        // **No new opening while an opening's hold stands**: the hold
+        // resolves first, its `show` answered or the connection ended, so a
+        // `show` from an earlier opening never clears a later one's hold.
+        let opening_due =
+            !door.open && !opening_show && opts.slot.free() && !queue.servable(restricted);
+        let next_try = door.next_try;
         tokio::select! {
             _ = shutdown.changed() => {
                 decline_waiting(conn, &mut queue).await;
                 return Ended::Shutdown;
             }
-            () = opts.slot.freed(), if queue.servable(replaying) && !opts.slot.free() => {}
-            _ = tick.tick() => {
-                if let Err(end) = live_step(conn, &mut shared.tailer, &mut seq).await {
+            // The slot freed by a timed-out verb's process ending wakes an
+            // ask waiting for it, and a closed door's opening owed after it.
+            () = opts.slot.freed(), if !opts.slot.free() && (queue.servable(restricted) || !door.open) => {}
+            step = door.read(), if door.open => {
+                if let Err(end) = send_outs(conn, shared, step_outs(step)).await {
                     return end;
+                }
+            }
+            () = tokio::time::sleep_until(next_try), if opening_due => {
+                match take_opening(conn, &mut door, shared, &mut queue, &ceiling, opts, shutdown).await {
+                    Ok(Some(queued)) => {
+                        outbox.extend(queued);
+                        replaying = true;
+                        opening_show = owes_show(&ceiling);
+                    }
+                    Ok(None) => {}
+                    Err(end) => return end,
                 }
             }
             incoming = conn.recv() => {
@@ -1760,6 +2070,24 @@ async fn relay<I: Invoker>(
             }
         }
     }
+}
+
+/// The hello's verification, a task the connection's loop waits on beside
+/// its reads; aborted where the connection ends first.
+struct Verifying(tokio::task::JoinHandle<(Opened, Result<Resume, String>)>);
+
+impl Drop for Verifying {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// **Whether an admission or an opening owes a `show`, and so holds
+/// ordinary asks until the server reports it landed**: where the ceiling
+/// grants it. The one place the hold is decided, at the hello and at every
+/// opening.
+fn owes_show(ceiling: &BTreeSet<String>) -> bool {
+    ceiling.contains("show")
 }
 
 /// How an invocation ended: it ran, answering admin's object or passing
@@ -1832,92 +2160,44 @@ fn not_started(id: u64, verb: &str) -> FromClient {
     }
 }
 
-/// One live read; answers whether it moved the position. A truncation is
-/// marked and read from the start. **What replaces the held file is
-/// sampled before the read, and the switch waits for a read that moved
-/// nothing**, so a replacement landing between the read and the switch is
-/// never acted on before the held file's tail is read: the next step
-/// samples it, reads the old file again, and switches only once that read
-/// finds nothing more.
-async fn live_step(conn: &Connection, tailer: &mut Tailer, seq: &mut u64) -> Result<bool, Ended> {
-    let lost = |e: anyhow::Error| Ended::Lost(format!("reading the trace file: {e:#}"));
-    let replacement = tailer.replacement().map_err(|e| lost(e.into()))?;
-    let mut items = Vec::new();
-    if let Some(mark) = tailer.truncated().map_err(|e| lost(e.into()))? {
-        items.push(mark);
-    }
-    let (read, moved) = tailer.read(None, READ_BUDGET).map_err(lost)?;
-    items.extend(read);
-    if !moved
-        && let Some(change) = replacement
-        && let Some(mark) = tailer.switch_to(change).map_err(lost)?
-    {
-        items.push(mark);
-    }
-    send_all(conn, frames_of(items, false, seq)).await?;
-    Ok(moved)
-}
-
-/// **The drain before a verb** (Spec 7.2): every complete record up to the
-/// file's tail is emitted ahead of the answer, so an unread older event
-/// cannot follow a newer answer. Bounded by the backlog, which is the
-/// tailer's lag and not the file.
-async fn drain(conn: &Connection, tailer: &mut Tailer, seq: &mut u64) -> Result<(), Ended> {
-    // **The tail is recorded first and the drain runs to it**, so a file
-    // written continuously cannot hold the verb forever. A live step reads
-    // whole records up to its budget, so its last may carry the drain past
-    // the target: those records were in the file at the read and go out
-    // ahead of the answer too. A record appended after that read is read
-    // after the answer; it was written before the snapshot, so the
-    // snapshot already reflects it, and applying it after the answer
-    // leaves the row at the same state.
-    //
-    // **A switch inside the drain records the new file's tail and drains
-    // to it too**: records already in the replacing file were written
-    // before the invocation as surely as the old file's tail was, so they
-    // go out ahead of the answer. Each switch needs a replacement the
-    // agent made, so the drain stays bounded by what was written before.
-    async fn tail(tailer: &Tailer) -> Result<u64, Ended> {
-        match &tailer.held {
-            Some(held) => tail_of_off_task(&held.file, tailer.scan_delay)
-                .await
-                .map(|(tail, _)| tail)
-                .map_err(|e| Ended::Lost(format!("reading the trace file: {e:#}"))),
-            None => Ok(0),
-        }
-    }
-    //
-    // **Whenever the held file restarts during the drain, by rotation,
-    // truncation or rewrite, the drain retargets to that file's current
-    // tail before deciding it is complete**: the target recorded first
-    // named the file as it stood, and a restart reads from 0 a file whose
-    // complete records may run past it.
-    let mut restarts = tailer.restarts;
-    let mut target = tail(tailer).await?;
-    loop {
-        let moved = live_step(conn, tailer, seq).await?;
-        if tailer.restarts != restarts {
-            restarts = tailer.restarts;
-            target = tail(tailer).await?;
-            continue;
-        }
-        if !moved || tailer.offset >= target {
-            // **The drain ends only where no replacement is pending**: a
-            // switch waits for a read that moves nothing, so a held file
-            // whose last read moved reaches its target with the new file
-            // still unread. The next step reads it out and switches, and
-            // the new file's tail becomes the target.
-            if moved
-                && tailer
-                    .replacement()
-                    .map_err(|e| Ended::Lost(format!("reading the trace file: {e:#}")))?
-                    .is_some()
-            {
-                continue;
-            }
+/// **The drain before a verb** (Spec 7.2): every record the file held when
+/// the drain began is emitted ahead of the answer, so an unread older event
+/// cannot follow a newer answer. **The measure is the relay's heartbeat**,
+/// this act's election while the relay names no length
+/// (`toddwbucy/WeaverAgent#88`): a heartbeat dated at or after the drain's
+/// start says everything written before it was sent, so the door is read
+/// until one comes. A heartbeat already in flight, dated before, says
+/// nothing of what was written since. **Where none comes within `bound`**,
+/// as under a writer that never idles, the verb is invoked anyway: what is
+/// unread then is read after the answer and ordered behind it. The
+/// inversion that matters, an unload written before a `show`'s snapshot and
+/// relayed after its answer, cannot pass through this gap, since an unload
+/// holds the box's invocation lock for its whole run and a `show` meeting
+/// it answers `InTransition`, which claims no state; a turn's event ordered
+/// behind the answer is a transient the next event corrects. With the door
+/// closed there is nothing to drain.
+async fn drain(
+    conn: &Connection,
+    door: &mut Door,
+    shared: &mut Shared,
+    bound: Duration,
+) -> Result<(), Ended> {
+    let since = now_ms();
+    let until = tokio::time::Instant::now() + bound;
+    while door.open {
+        // The door's read is cancel-safe, so the bound drops nothing.
+        let Ok(step) = tokio::time::timeout_at(until, door.read()).await else {
+            tracing::warn!(
+                "no heartbeat from the trace relay within {bound:?} of the drain's start; the verb is invoked with what was read"
+            );
+            return Ok(());
+        };
+        send_outs(conn, shared, step_outs(step)).await?;
+        if door.heartbeat.is_some_and(|at| at >= since) {
             return Ok(());
         }
     }
+    Ok(())
 }
 
 /// Read whatever the server has sent without waiting, during the replay.
@@ -1949,6 +2229,10 @@ async fn handle(
 ) -> Option<Ended> {
     match incoming {
         Incoming::Frame(ToClient::Ack { .. }) => None,
+        Incoming::Frame(ToClient::Landed { id }) => {
+            queue.landed.push(id);
+            None
+        }
         Incoming::Frame(ToClient::Verb {
             id,
             verb,
@@ -1972,7 +2256,19 @@ async fn handle(
                         }
                     ),
                 })
-            } else if queue.waiting.len() >= VERB_QUEUE {
+            } else if !(verb == "show" && principal == Principal::Server)
+                && queue
+                    .waiting
+                    .iter()
+                    .filter(|ask| !ask.served_during_the_replay())
+                    .count()
+                    >= VERB_QUEUE
+            {
+                // **The bound is on ordinary asks**: a `show` the server
+                // asked is never answered `busy`, since it is what completes
+                // an admission or an opening and the server asks at most one
+                // for each, so the reserve is that one observation ask and
+                // never a second queue.
                 Some(VerbFault {
                     kind: VerbFault::BUSY.into(),
                     message: format!("admin-con holds {VERB_QUEUE} asks waiting, its bound"),

@@ -720,6 +720,57 @@ impl FakeServer {
         LineReader<tokio::io::ReadHalf<ServerStream>>,
         tokio::io::WriteHalf<ServerStream>,
     ) {
+        self.admit_answering(cadence_secs, None, receive_buffer)
+            .await
+    }
+
+    /// As `admit_answering`, the answer naming a server position and sent
+    /// only after `delay`: a slow server's hello.
+    pub(super) async fn admit_late(
+        &self,
+        cadence_secs: u64,
+        acknowledged: Option<super::frames::Position>,
+        delay: Duration,
+    ) -> (
+        LineReader<tokio::io::ReadHalf<ServerStream>>,
+        tokio::io::WriteHalf<ServerStream>,
+    ) {
+        self.admit_full(cadence_secs, None, None, acknowledged, delay)
+            .await
+    }
+
+    /// As `admit_with`, naming the silence bound the answer carries, four
+    /// cadences where none is given.
+    pub(super) async fn admit_answering(
+        &self,
+        cadence_secs: u64,
+        silence_secs: Option<u64>,
+        receive_buffer: Option<usize>,
+    ) -> (
+        LineReader<tokio::io::ReadHalf<ServerStream>>,
+        tokio::io::WriteHalf<ServerStream>,
+    ) {
+        self.admit_full(
+            cadence_secs,
+            silence_secs,
+            receive_buffer,
+            None,
+            Duration::ZERO,
+        )
+        .await
+    }
+
+    async fn admit_full(
+        &self,
+        cadence_secs: u64,
+        silence_secs: Option<u64>,
+        receive_buffer: Option<usize>,
+        acknowledged: Option<super::frames::Position>,
+        delay: Duration,
+    ) -> (
+        LineReader<tokio::io::ReadHalf<ServerStream>>,
+        tokio::io::WriteHalf<ServerStream>,
+    ) {
         let acceptor = tokio_rustls::TlsAcceptor::from(self.authority.server_tls().unwrap());
         let (tcp, _) = self.listener.accept().await.unwrap();
         if let Some(bytes) = receive_buffer {
@@ -749,9 +800,11 @@ impl FakeServer {
             }
             other => panic!("expected the hello, got {other:?}"),
         }
+        tokio::time::sleep(delay).await;
         let mut answer = serde_json::to_vec(&ToClient::HelloAnswer {
             cadence_secs,
-            acknowledged: None,
+            silence_secs: silence_secs.unwrap_or(cadence_secs.saturating_mul(4)),
+            acknowledged,
         })
         .unwrap();
         answer.push(b'\n');
@@ -792,6 +845,7 @@ async fn a_server_line_past_the_bound_ends_the_connection() {
                 plane: Plane::Gate,
                 tail: None,
                 ceiling: None,
+                door: None,
             })
             .await
         else {
@@ -1195,6 +1249,7 @@ async fn a_hello_answer_naming_an_absurd_cadence_is_a_protocol_fault() {
             plane: Plane::Gate,
             tail: None,
             ceiling: None,
+            door: None,
         })
     );
     match attempt {

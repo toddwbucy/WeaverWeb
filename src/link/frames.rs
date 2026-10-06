@@ -122,10 +122,11 @@ impl std::str::FromStr for Plane {
     }
 }
 
-/// The acknowledged position of Spec 7.2: a generation admin-con derives
-/// from the trace file's durable identity, the byte offset within the file
-/// at a record boundary, and the digest of the last acknowledged line. The
-/// server holds it for the life of its process and persists nothing.
+/// The acknowledged position of Spec 7.2, in the relay's terms: the file's
+/// identity as the relay's header names it (device, inode and birth time),
+/// the byte offset within the file at a record boundary, and the sha256 hex
+/// of the whole record ending there, empty at offset zero. The server holds
+/// it for the life of its process and persists nothing.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Position {
     pub generation: String,
@@ -204,13 +205,19 @@ pub struct TurnFault {
 pub enum FromClient {
     /// The roster: the agent's name and the plane, a check against the
     /// certificate's binding and never a source (Spec 8). On the admin
-    /// plane the file position admin-con reports as its tail, which fixes
-    /// the replay boundary (Spec 7.2).
+    /// plane the trace door's state, and where it is open the position
+    /// admin-con took as the opening's boundary, which fixes the replay's
+    /// end (Spec 7.2); a closed door carries none.
     Hello {
         agent: String,
         plane: Plane,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tail: Option<Position>,
+        /// **On the admin plane, the trace door's state** (Spec 7.2, 2.12):
+        /// open where admin-con reached the relay, closed where it did not.
+        /// Absent on the gate plane.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        door: Option<bool>,
         /// **On the admin plane, the ceiling** (Spec 8): exactly the verbs
         /// admin-con's invoker `grants`, the lines the box's sudo rules
         /// grant its user. Absent on the gate plane, which declares none.
@@ -243,6 +250,17 @@ pub enum FromClient {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<VerbFault>,
     },
+    /// **The trace door's state changed on the live connection** (Spec
+    /// 7.2, 2.12), dated by admin-con. **An opening is an admission of the
+    /// trace**: it carries the boundary admin-con took, events until the
+    /// next `caught_up` are the opening's replay, and the server asks
+    /// `show` where the ceiling grants it. A closing carries none.
+    Door {
+        open: bool,
+        wall_ms: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tail: Option<Position>,
+    },
     /// One trace event from admin-con with its position and whether it
     /// was relayed from behind the file's tail (Spec 7.2).
     Event {
@@ -256,11 +274,15 @@ pub enum FromClient {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "svc", rename_all = "snake_case")]
 pub enum ToClient {
-    /// The send cadence, the silence bound divided by four (Spec 8), and
+    /// The send cadence, the silence bound divided by four (Spec 8), **the
+    /// silence bound itself**, which the connector checks the cadence
+    /// against (no opening's hold is timed by it: the hold runs on no clock
+    /// of the connector's), and
     /// on the admin plane the acknowledged position this server process
     /// holds, or none after a restart (Spec 7.2).
     HelloAnswer {
         cadence_secs: u64,
+        silence_secs: u64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         acknowledged: Option<Position>,
     },
@@ -277,6 +299,15 @@ pub enum ToClient {
     /// The position the server has landed through.
     Ack {
         position: Position,
+    },
+    /// **The server landed the observation of a `show` it asked itself**,
+    /// at an admission or at an opening (Spec 7.2): sent only after the
+    /// store took it, so a `show` whose landing fails, stalls or carries no
+    /// state gets none and the connection closes instead. admin-con's hold
+    /// on ordinary asks ends here and nowhere else but the connection's
+    /// end.
+    Landed {
+        id: u64,
     },
     /// Typed, before the connection closes.
     Refusal {
@@ -348,6 +379,7 @@ mod shape {
                 digest: "d".into(),
             }),
             ceiling: Some(vec!["show".to_owned()]),
+            door: Some(true),
         };
         let line = serde_json::to_string(&hello).unwrap();
         assert!(line.starts_with("{\"svc\":\"hello\""), "{line}");
@@ -363,10 +395,19 @@ mod shape {
 
         let answer = ToClient::HelloAnswer {
             cadence_secs: 15,
+            silence_secs: 60,
             acknowledged: None,
         };
         let line = serde_json::to_string(&answer).unwrap();
-        assert_eq!(line, "{\"svc\":\"hello_answer\",\"cadence_secs\":15}");
+        assert_eq!(
+            line,
+            "{\"svc\":\"hello_answer\",\"cadence_secs\":15,\"silence_secs\":60}"
+        );
+        // A cadence with no bound is not an answer.
+        assert!(
+            serde_json::from_str::<ToClient>("{\"svc\":\"hello_answer\",\"cadence_secs\":15}")
+                .is_err()
+        );
 
         let refusal = ToClient::Refusal {
             reason: Refusal::NotLive,

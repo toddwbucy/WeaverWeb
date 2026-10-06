@@ -176,18 +176,25 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
   tests (`link::client_tests`) run it in-process against a fake gate and the real listener;
   no test reaches an agent.
 - **admin-con** reads the file `register` wrote plus two required box facts with no default,
-  `trace_file` (the trace it tails) and `weaver_admin` (the absolute path the box's rule
-  names), and optional `backfill_bytes` (1 MiB, at most 256 MiB, the tail relayed after a
-  server restart), `verb_bound_secs` (960, set above the box's load bound) and
-  `stop_grace_secs` (1080, the load bound, the unload bound and a margin). Same trust rule as
-  gate-con's. It relays the trace with replay and marked discontinuities, and runs verbs
+  `trace_socket` (the agent's trace relay, absolute) and `weaver_admin` (the absolute path
+  the box's rule names), and optional `backfill_bytes` (1 MiB, at most 256 MiB, the tail
+  relayed after a server restart and what an opening holds to replay without reading again),
+  `verb_bound_secs` (960, set above the box's load bound) and `stop_grace_secs` (1080, the
+  load bound, the unload bound and a margin). Same trust rule as gate-con's. It reads the
+  trace through the relay (`link::relay`: one request line, the header's identity, the
+  whole-record digest), reports the trace door in its hello and in `door` frames, takes every
+  opening as an admission of the trace (boundary at the relay's first heartbeat, replay,
+  `show`, `caught_up`; only while no invocation is in flight), drains to a heartbeat before a
+  verb, relays with replay and marked discontinuities, and runs verbs
   through `link::sudo_invoker`, the repository's one privileged invocation: `sudo -n
   <weaver_admin> <verb> <agent>`, the hello's ceiling from `sudo -n -l` on each line, stdin
   null, the child in its own session, never killed, and holding admin-con's one invocation
   slot across reconnections until it is reaped. An orderly stop waits for that child within
-  the grace, then unloads the agent where the ceiling grants `unload`. The trace relay's
-  socket replaces `trace_file` in act 9b (#17). Its tests (`link::admin_con_tests`) run it
-  against a temporary trace file, the real listener and a fake invoker, and
+  the grace, then unloads the agent where the ceiling grants `unload`. A writer that never
+  idles gives the relay no heartbeat, so an opening takes its boundary at 30 s and a drain
+  invokes at 10 s (`BOUNDARY_BOUND`, `DRAIN_BOUND`; `toddwbucy/WeaverAgent#88`). Its tests (`link::admin_con_tests`) run it against a fake
+  relay (`link::fake_relay`) serving a temporary trace file, the real listener and a fake
+  invoker, and
   `link::sudo_invoker_tests` against a fake `sudo` generated at test time and first on the
   child's `PATH` (a test build refuses to run without it); no test reaches an agent or a real
   `sudo`.
@@ -228,16 +235,15 @@ connectors build against (`frames.rs`). The seed's one dialed link, `wire.rs` an
 `src/bin/gate-con.rs` over `link::gate_con`, relaying through `adapters/gate.rs`, on the
 shared client half `link::client` (dial, verify, hello, heartbeat, bounded reads and writes,
 the reconnect policy of Spec 8). **admin-con landed on 2026-10-02** (act 6):
-`src/bin/admin-con.rs` over `link::admin_con`: the tailer (the generation from the file's
-identity, the digest before each offset, rotation and truncation marked, a bounded backfill),
-the replay and `caught_up`, and the verb plane, one verb at a time with its answer placed at the
-invocation, behind an `Invoker`. **The sudo invoker landed in act 9a** (#17):
-`link::sudo_invoker`, the process-wide slot and the orderly stop's `unload`; the relay
-client is act 9b. The listener holds each connection's ceiling, asks `show` only where it is
-granted, and records the ceiling and the load state's source on the row (migration `0011`),
-the tuple's own source (`0012`, since a turn moves the state and not the tuple), and the
-run's constituents from `show` beside the trace door's columns 9b writes (`0013`); `0010`
-through `0012` are frozen. `traceview.rs` keeps the rings, the listener's live window; its seed
+`src/bin/admin-con.rs` over `link::admin_con`: the replay and `caught_up`, and the verb
+plane, one verb at a time with its answer placed at the invocation, behind an `Invoker`.
+**The sudo invoker landed in act 9a** (#17): `link::sudo_invoker`, the process-wide slot and
+the orderly stop's `unload`. **The relay client replaced the file tailer in act 9b**
+(#17): `link::relay`, the door and its openings. The listener holds each connection's
+ceiling, asks `show` only where it is granted and at every opening of the door, and records
+the ceiling and the load state's source on the row (migration `0011`), the tuple's own source
+(`0012`, since a turn moves the state and not the tuple), and the run's constituents from
+`show` and the trace door's state (`0013`); `0010` through `0013` are frozen. `traceview.rs` keeps the rings, the listener's live window; its seed
 tailer and `lifecycle.rs` (which ran the verbs through sudo) left the tree.
 
 **Still leaves: `web/`**, the legacy `/admin` routes, already answering 503, and

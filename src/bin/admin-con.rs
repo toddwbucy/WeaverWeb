@@ -1,8 +1,9 @@
 //! admin-con: the management plane's connector, beside the agent as its own
 //! service user (Spec sections 7.2 and 8). Reads its config (what
 //! `weaver-web register` wrote, plus the box facts the install adds),
-//! connects to the server over the link, relays the agent's trace with
-//! replay and marked discontinuities, and answers verb asks through its
+//! connects to the server over the link, relays the agent's trace, read
+//! through the relay's door, with replay and marked discontinuities, and
+//! answers verb asks through its
 //! sudo invoker, the one privileged invocation in this crate: the fixed
 //! `weaver-admin <verb> <agent>` lines the box's sudo rule grants, with
 //! nothing from the link in the command. On an orderly stop it unloads its
@@ -24,7 +25,7 @@ use weaver_web::link::sudo_invoker::SudoInvoker;
 )]
 struct Args {
     /// Path to admin-con's TOML config: the file `weaver-web register`
-    /// wrote, with `trace_file` and `weaver_admin` added at install.
+    /// wrote, with `trace_socket` and `weaver_admin` added at install.
     #[arg(long)]
     config: PathBuf,
 }
@@ -43,7 +44,7 @@ async fn main() -> anyhow::Result<()> {
     let cfg = AdminConConfig::load(&args.config)?;
     let invoker = SudoInvoker::new(&cfg.weaver_admin, &cfg.link.agent)?;
     tracing::info!(
-        "admin-con for {} tailing its trace file, server {}, verbs through its invoker of {}",
+        "admin-con for {} reading its trace through the relay, server {}, verbs through its invoker of {}",
         cfg.link.agent,
         cfg.link.server,
         cfg.weaver_admin.display()

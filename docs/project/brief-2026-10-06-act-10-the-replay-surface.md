@@ -1,0 +1,179 @@
+# Brief: act 10, the Replay surface (Open a trace), in three pull requests
+
+Version: v0.1, 2026-10-06. From the planning seat (`Thinkpad-WeaverWeb-Planner`) for the
+executor. The operator chose this act on 2026-10-06, after act 9 closed #17. It is the
+first thing a researcher sees: a landed run rendered as a replay, which the handoff of
+2026-09-30 put first ("render the deposits first: a trace and its state store as a
+replay, before any live view") and the design of 2026-09-30 drew as the `Main` artboard,
+"Open a trace (HeroBench Replay)". The PRD calls the surface **Open a trace** (section
+3.4) and the Spec serves it with reads 1, 2 and 3 of section 4. This brief uses that
+name; "the Replay surface" is the operator's name for the same thing.
+
+**Three pull requests, in order**, each its own act: 10a lands the design, 10b lands the
+ingest the surface reads from, 10c lands the surface. 10b exists because nothing writes
+a run or a position to the store today outside tests: the analysis ingest of Spec 3.1
+is unbuilt (issue #2, W6), and a surface over an empty store proves nothing.
+
+Run the five-class checklist on every code change (two copies of one fact, ambiguous
+commit, multi-file state not atomic, filesystem trust, unbounded or unjoined) and name
+the classes in each PR body. Every perturbation is shown to fail with its guard removed.
+No box path, host name, uid or posture enters the repository.
+
+## Read first
+
+- PRD section 3.4 (Open a trace) and 3.6; Spec sections 2.1, 2.2, 3.1 (the ingest), 4
+  (reads 1 to 3 and 5), 6 (the surfaces, the absence rule), 9 (the ingest's two rows).
+- `weaver-analysis-web-contract`, in the WeaverAgent checkout under
+  `docs/crates/contracts/`: sections 2.1 (the series), 2.2 (the summary), 3 (what the
+  emitter owes, the position conversion), 4 (what the reader owes), 7 (absent members are
+  omitted, the sentinel crosses as the empty string). The WeaverAnalysis checkout holds a
+  duplicate; which copy is authoritative is unruled, so read both and name any drift.
+- WeaverAnalysis `src/main.rs`, `run_signals` and `render_point`, and `src/signals.rs`:
+  the `signals` command's output is the emitter's half of the contract as it stands.
+- The design: branch `origin/claude/loving-feynman-dwwr1u`, `docs/design/README.md` and
+  `canvas/Main.dc.html` (light and dark). The surface is built to it, with the
+  departures named below.
+- `src/surfaces/record.rs` and its templates: the one surface that exists, the pattern
+  for routes, askama, the instrument stylesheet and the absence words.
+
+## 10a: the design lands (docs)
+
+Branch from `main`, draft PR, `docs:`. Bring the design branch's fourteen files under
+`docs/design/` onto `main` as the record they are, with three changes:
+1. The README's section "The ruling the Agents board draws" describes the 2026-09-30
+   state of the connectors (web-con, `src/bin/weaver-web-connector.rs`, `wire.rs`, plain
+   TCP). Keep it as the dated record it is and add one paragraph under it: superseded by
+   acts 1 to 9 (PRs #3 to #21, 2026-10-01 to 2026-10-06), which built what it asked for
+   and more; the Spec's sections 7 and 8 and CLAUDE.md are the text; the design's
+   drawing of Agents stands.
+2. The Agents artboards' sample data names two real boxes of the operator's. Replace
+   them with neutral sample names (the design README already says every value on the
+   boards is sample data), in both light and dark files and `canvas.json` if it carries
+   them.
+3. The README's table: say that `Main` is Open a trace, the operator's "Replay
+   surface", and that act 10 builds it; the other five are future acts.
+No Spec change. The PR body names the canvas URL as the working copy, per the README.
+
+## 10b: the ingest (code), closes #2
+
+Branch from `main` after 10a, draft PR, `code:`, `Closes #2`.
+
+**What it is.** `weaver-web ingest <path | ->`: reads one `weaver-analysis signals`
+emission, which is one summary object on the first line (`positions`, `with_entropy`,
+`with_surprisal`, `generations[]`, each generation a `GenerationSummary` per contract
+2.2) and then one point per line (contract 2.1: `turn?`, `ordinal`, `token`,
+`entropy?`, `surprisal?`, absent members omitted), and lands one run and its positions
+in the store per Spec 3.1. Answer one JSON object on stdout with the exit status
+agreeing, as the register verbs do: the run identity, the positions written, the
+generations, what was absent.
+
+**The rules, all in Spec 3.1 and the contract; the brief only points:**
+- The run identity keys every row and crosses on every generation; generations that
+  disagree on run, session, digest or weights hash are a defect the ingest refuses by
+  name, never a run with two of either.
+- The position is derived at ingest: `(R - O - 1) + j` from the generation's resident
+  count at close, its output count and the point's ordinal; stored, never recomputed.
+  A generation whose resident count is absent gives positions the surface shows as
+  absent (see the migration below).
+- Writes are idempotent on the (run, turn, position) key; bulk per generation, never per
+  point; **the run row is written first and closed last**, carrying a status a surface
+  can read. There is no status column today: migration `0014` adds `ingest_status`
+  (`partial` while writing, `whole` at the close, `refused` with the reason where the
+  ingest gave up after the row), so a partially ingested run is visibly partial.
+  `0013` is frozen.
+- The run row's members land from the summary as Spec 3.1 names them: the record
+  identity from the weights hash (the sentinel crosses as the empty string and the
+  column holds it, per the 2026-09-xx relaxation of the not-the-sentinel constraint, so
+  check `0006` before writing), the session, the digest (absent where the run was not
+  whole), the prefix length, the effective sampling as seed and sampler, the field
+  depth, the device model, the code identity as the engine, the parent from the
+  lineage's `built_from` (WeaverAgent #58 is merged; a lineage without it is a
+  continuation and names no parent; never `through`), and the verdict where one
+  crossed. The verdict has no column; store it in the run row only if a column exists,
+  else name it absent and leave the column to the act that lands its kind, per Spec 2.2.
+- The parting position is derived at ingest for a branch whose parent is in the store,
+  absent where the paths never part or the parent is not held.
+- **The token's surface text is not on the wire** (contract 2.1: detokenizing is the
+  reader's, and this crate holds no tokenizer). `position.token_text` is `NOT NULL`
+  today. Migration `0014` makes it nullable; the ingest writes it absent; the surface
+  shows the identifier and the word `absent` for the text, per section 6. An interface
+  question is filed on WeaverAnalysis asking for the text on the wire (cite it by number
+  in the PR body; the planner gives it to you). Nothing in this act fakes text from an
+  identifier.
+- Absent members stay absent (never null-as-zero): entropy where the generation did not
+  measure it, surprisal where the election did not stand, per contract 7 and Spec 6.
+
+**Tests.** Against a vendored emission fixture under `tests/fixtures/`, produced once
+by running WeaverAnalysis's `signals` on its own `tests/fixtures/diagnostic-certified.ndjson`
+(and one more record if it has one with a branch), with a note naming the WeaverAnalysis
+commit the fixture came from, as the harness does for its derived fixture. No test runs
+the WeaverAnalysis binary. Perturbations, each shown to fail: replay the fixture twice and
+the position count doubles (Spec 9's idempotence row, now enforced); alter the summary's
+counts after ingest and reread, and the stored position changes (the position row);
+drop the close and the run reads `whole` while short; write a null for an omitted
+entropy and the surface draws a floor; let two generations disagree on the digest and
+one run lands with two. Spec 9: the two ingest rows move from "perturbation" to named
+instruments; add rows for the status and the disagreement refusal. CLAUDE.md: the
+verb, the fixture's provenance note, and the migration.
+
+## 10c: Open a trace (code)
+
+Branch from `main` after 10b, draft PR, `code:`.
+
+**Route and shape.** `/trace/{run}` under `surfaces::routes()`, state `Store` alone,
+one module `src/surfaces/trace.rs` with its templates, the Record surface the pattern.
+Record's rows link to it. Built to the `Main` artboard, light and dark, with the
+design's foundations (Plex Sans and Mono, the one action color, amber entropy and
+teal surprisal, absence as a dashed pill carrying its word, no gradients, no icons).
+- **The tuple strip** (read 3): the run's tuple as Record shows it, the status from
+  10b, the session and the digest with `absent` where the record was not whole.
+- **The turns**: one block per turn key in landing order, the token identifiers in
+  order with `absent` for the text, the turn's generation summary (perplexity where
+  held, the two counts). The interview toggle of the design is drawn disabled with
+  `not served`.
+- **The timeline** (read 2): an inline SVG, server-rendered, over the whole run's
+  positions: the entropy series always, the surprisal series where any point carries
+  one, and a hatched span where its election did not stand (contract 4: an absence is
+  plotted as an absence, never a zero). Against an absolute bar in bits, the caller's,
+  defaulting to the contract's figure; the series-relative rule is not drawn. A spike
+  resolves to its position: clicking a point in the SVG navigates to the position
+  panel (htmx swap), which is the PRD's "a spike that resolves to a token is an
+  instrument".
+- **The position** (read 1): one position's alternatives and their mass where the
+  record carried them, else `absent`; the realized token marked; links to the previous
+  and next position so the operator "walks upstream".
+- **The map and the fog toggle** are HeroBench's and not served: drawn as the design's
+  `not served` pill, nothing more.
+- **Theme**: the auto/light/dark control, persisted on the session row per the design;
+  the session table has no such column, so `0014` (10b's migration, or a `0015` if 10b
+  merged first) adds `theme TEXT` with a check on its three values, written by one
+  small handler that is the surface's own argument, never through the store's recorded
+  half. A page never flashes the wrong theme: the server renders the persisted value.
+- **Absence**: every absent member renders its word per Spec 6, never a blank, never a
+  zero. The four words are the design's: `absent`, `no run`, `not served`,
+  `uncomputable`.
+
+**Tests.** Against the 10b fixture in a scratch database: the page renders every turn
+and position of the run; the timeline carries exactly the points with entropy and the
+hatched span covers exactly the surprisal-less prefix (perturbation: draw a zero and the
+test fails); a position's panel shows `absent` where no alternatives crossed; the theme
+round-trips through the session row and the first render carries it. Spec 9: a row for
+"an absent member renders its word and never a zero", now enforced, and a row for the
+timeline's absence. Spec 6: Open a trace is served, by reads 1 to 3; PRD 3.4's figure
+stands.
+
+## Out of scope
+
+- Live, Agents, Matrix, Experiments, Models: the other artboards, future acts.
+- The alternatives emission (`weaver-analysis field`) and the lens: read 1 renders
+  what the ingest holds, which today is nothing; `absent` is the truth.
+- Token text: the WeaverAnalysis question.
+- IAM and the install.
+
+## Acceptance, each PR
+
+The gates: `cargo build --locked`, `cargo test --locked` with `DATABASE_URL` set and
+every DB-backed test running, `cargo clippy --all-targets --locked -- -D warnings`,
+`cargo fmt --check`. ASCII only, absolute dates, superseded text removed. PR body with
+`Implements:` lines per Spec section, the checklist's classes, and the perturbation
+table. Check visibility before pushing.

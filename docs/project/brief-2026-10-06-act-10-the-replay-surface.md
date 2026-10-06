@@ -168,6 +168,16 @@ where they differ.** The section's original text stands below and these govern i
    equal-replay rule completes such a `writing` branch, resolution included.
    Perturbation: kill the ingest after the points and before the resolution, and the
    branch reads `writing`; without the ordering it reads `whole` unlinked.
+28. Branches resolve in dependency order; this refines ruling 27. Within one emission,
+   the resolution pass orders the branches topologically over `parent_reference`,
+   parents before children, so a child's walk always sees a parent that has already
+   closed in this ingest where that parent is in the emission; a chain of any depth
+   resolves bottom-up in one pass, and the result never depends on the order of runs in
+   the emission. A reference cycle, or a run naming itself, is a defect refused by name
+   for the runs in the cycle (`refused` written by this ingest, since their rows are
+   still `writing`), the rest of the emission landing. Perturbation: a three-run
+   emission listed child, branch-parent, root; without the ordering the child closes
+   with its parting unknown, with it every link is set and every walk runs.
 
 **Three pull requests, in order**, each its own act: 10a lands the design, 10b lands the
 ingest the surface reads from, 10c lands the surface. 10b exists because nothing writes

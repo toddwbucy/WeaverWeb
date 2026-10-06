@@ -63,6 +63,14 @@ where they differ.** The section's original text stands below and these govern i
    reproduced its parent on an incomplete walk. Spec 4's read-three and read-five
    bullets and its sentence reading a null parting position as reproduction are revised
    in 10b with 2.2 and 3.1; 10c inherits the words.
+12. The run's status reaches the existing read and surface in 10b. `ingest_status` is
+   carried by the run tuple type and reads three and five, and Record renders it on
+   every row: `whole` plainly; `writing`, `short` and `refused` as a marked badge
+   carrying the word and, for `short` and `refused`, the reason beside it or on hover.
+   So a run whose ingest stopped after its row was written never looks like a completed
+   run on the one surface that exists before 10c. Spec 4's read-three and read-five
+   bullets name the member with ruling 11's lineage members; 10c inherits it in the
+   tuple strip.
 
 **Three pull requests, in order**, each its own act: 10a lands the design, 10b lands the
 ingest the surface reads from, 10c lands the surface. 10b exists because nothing writes

@@ -198,6 +198,17 @@ where they differ.** The section's original text stands below and these govern i
    stop between the two refusals; without the fix A reads `refused` and B `writing`,
    with it both read `writing`, and the next ingest reports both refused in its answer
    and leaves them so.
+31. Two whole paths of unequal length part at the first position only the longer holds;
+   this refines ruling 21. Where both paths are whole and the walk finds no differing
+   position through the shorter path, the result is a known null only where the lengths
+   are equal. Where one path is a strict prefix of the other, the paths are provably
+   unequal, and the walk records a known parting at the first position the longer path
+   holds and the shorter does not, whichever of the two is longer. Where the emission
+   carries the turn's terminator as a point, the walk finds it as an ordinary
+   difference and this rule never fires; the rule covers the emitter that does not.
+   Perturbation: a child identical to its whole parent but one position shorter;
+   without the rule the row reads never parted, with it the parting is known at the
+   parent's last position.
 
 **Three pull requests, in order**, each its own act: 10a lands the design, 10b lands the
 ingest the surface reads from, 10c lands the surface. 10b exists because nothing writes

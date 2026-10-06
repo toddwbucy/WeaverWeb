@@ -37,6 +37,21 @@ where they differ.** The section's original text stands below and these govern i
    is held and is absent otherwise; the surface shows the reference with `absent` for
    the link. Resolving the reference when the parent lands later is owed to a later act.
    Spec 2.2's lineage bullet gains the member in 10b.
+9. The parting position is derived only against a whole parent. A parent held but
+   `writing`, `short` or `refused` may have an incomplete token path, and Spec 4 reads
+   an absent parting position as the arm having reproduced its parent, so the ingest
+   walks the two paths only where the parent's status is `whole`. `0014` adds
+   `parting_known BOOLEAN NOT NULL DEFAULT false`, true where the walk ran (the position
+   set, or null meaning the paths never parted) and false where it did not. The surface
+   renders a known null as `absent` and an unknown as a fifth absence word, `unknown`, a
+   member not yet derivable; Spec 6's absence rule and the design README's vocabulary
+   note gain the word in 10c. Deriving later, when the parent becomes whole, is owed
+   with ruling 8's resolution.
+10. Spec 3.1 is revised in 10b, not only 2.2. Its paragraph that has a branch's parent
+   already in the store becomes: the ingest walks the paths where the parent is held and
+   whole; otherwise it stores the parent's reference, leaves `parent_run_id` unset and
+   the parting position unknown, and the resolution is owed to a later act. Section 9's
+   parting row follows.
 
 **Three pull requests, in order**, each its own act: 10a lands the design, 10b lands the
 ingest the surface reads from, 10c lands the surface. 10b exists because nothing writes

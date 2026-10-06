@@ -609,6 +609,45 @@ async fn the_trace_door_and_its_boundary_agree() {
     closed.expect_refusal(Refusal::Malformed).await;
 }
 
+/// **A door frame the row no longer takes closes the connection**: the
+/// row names another admin connection (a rotation or revocation committed
+/// whose notification has not yet closed this socket, staged here by moving
+/// the row's incarnation), so the door's landing finds nothing to write.
+/// The connection is refused `not_live` at once, and nothing it carries
+/// after writes the row.
+#[tokio::test]
+async fn a_door_frame_the_row_no_longer_takes_closes_the_connection() {
+    let Some(lab) = Lab::open().await else { return };
+    let karl = lab.register("karl").await;
+    let mut admin = lab.admit(&karl, Plane::Admin).await;
+    sqlx::query("UPDATE agent SET admin_incarnation = admin_incarnation + 1 WHERE agent_id = $1")
+        .bind(karl.id.as_str())
+        .execute(&lab.store.pool)
+        .await
+        .unwrap();
+    admin
+        .send(FromClient::Door {
+            open: false,
+            wall_ms: 1_790_000_000_000,
+            tail: None,
+        })
+        .await;
+    // A live load right behind it: a connection the row retired must not
+    // land it.
+    admin
+        .try_send(FromClient::Event {
+            position: position(200),
+            replayed: false,
+            event: trace_event(1, "load", json!({"declaration": "sha-1"})),
+        })
+        .await;
+    admin.expect_refusal(Refusal::NotLive).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let row = lab.agent(&karl.id).await;
+    assert_eq!(row.trace_door, Some(true), "{row:?}");
+    assert_eq!(row.load_state, None, "{row:?}");
+}
+
 /// **At most one row per box and name holds live credentials**, at the
 /// schema, and re-registering a live pair retires the previous row. The
 /// name is immutable at the schema too.

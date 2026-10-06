@@ -1656,10 +1656,27 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                     .await
                     {
                         Bounded::Done(Ok(true)) => {}
-                        Bounded::Done(Ok(false)) => tracing::warn!(
-                            "{}: the door's state was not landed: the row names another connection",
-                            agent.agent_id
-                        ),
+                        // **The row names another connection**: a rotation,
+                        // revocation or replacement committed and its
+                        // notification has not closed this socket yet. That
+                        // is definitive, so this connection closes now, as a
+                        // credential no longer live, before anything more it
+                        // carries can write the row.
+                        Bounded::Done(Ok(false)) => {
+                            tracing::warn!(
+                                "{}: the door's state was not landed: the row names another connection, closed",
+                                agent.agent_id
+                            );
+                            send(
+                                &tx,
+                                ToClient::Refusal {
+                                    reason: Refusal::NotLive,
+                                },
+                            )
+                            .await;
+                            reason = "the row names another connection";
+                            break;
+                        }
                         Bounded::Done(Err(_)) | Bounded::TimedOut => {
                             tracing::error!(
                                 "{}: the door's state could not be landed, closing the connection",

@@ -120,6 +120,14 @@ where they differ.** The section's original text stands below and these govern i
    true, since that value was computed, and every other row keeps the false default, a
    pre-existing null parting being unknown rather than never parted, the honest reading
    of a column that did not yet say which.
+21. "Never parted" needs both paths whole; this refines ruling 9. The walk runs where the
+   parent is `whole`, and a divergence it finds inside the child's retained positions is
+   known whatever the child's status, the paths provably having parted there. A walk
+   that finds no divergence yields a known null only where the child is `whole` too; a
+   `short` child whose retained prefix matches its parent keeps `parting_known` false,
+   since its missing span may diverge, and the surface shows `unknown`. Deriving later,
+   if the child is ever completed, is owed with ruling 8's resolution. Spec 3.1 and
+   section 9's parting row say so.
 
 **Three pull requests, in order**, each its own act: 10a lands the design, 10b lands the
 ingest the surface reads from, 10c lands the surface. 10b exists because nothing writes

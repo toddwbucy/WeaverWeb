@@ -1535,6 +1535,65 @@ async fn an_ack_never_blocks_the_servers_read() {
     }
 }
 
+/// **The `landed` frame is delivered or the connection closes** (Spec 8):
+/// an admin-con that stops reading fills the server's write path with acks
+/// while the admission's `show` is outstanding, then answers it and keeps
+/// its heartbeats coming. The `landed` cannot be delivered, and the server
+/// closes the connection at the bound rather than dropping the frame and
+/// leaving admin-con holding every ordinary verb on a live connection.
+#[tokio::test]
+async fn an_undeliverable_landed_closes_the_connection() {
+    let Some(lab) = Lab::open_with(Duration::from_secs(8)).await else {
+        return;
+    };
+    let karl = lab.register("karl").await;
+    let mut admin = lab.admit(&karl, Plane::Admin).await;
+    // Each ack names a long generation, so a few thousand outrun every
+    // buffer between the server's queue and this reader.
+    let generation = "g".repeat(4096);
+    let events = 5_000u64;
+    for n in 1..=events {
+        admin
+            .send(FromClient::Event {
+                position: position_in(&generation, 100 + n),
+                replayed: false,
+                event: trace_event(n, "turn", json!({})),
+            })
+            .await;
+    }
+    let until = tokio::time::Instant::now() + Duration::from_secs(30);
+    while lab.listener.acknowledged(&karl.id).map(|p| p.offset) != Some(100 + events) {
+        assert!(
+            tokio::time::Instant::now() < until,
+            "never acknowledged through the last: {:?}",
+            lab.listener.acknowledged(&karl.id)
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    admin
+        .send(FromClient::Verb {
+            id: 1,
+            outcome: Some(show_answer("karl", "idle", None)),
+            error: None,
+        })
+        .await;
+    lab.wait_for(&karl.id, "the show landed", |a| {
+        a.state_source.as_deref() == Some("show")
+    })
+    .await;
+    // Heartbeats keep the read side alive for three bounds; only the
+    // undeliverable frame can close it.
+    let until = tokio::time::Instant::now() + Duration::from_secs(24);
+    while lab.listener.connected(&karl.id, Plane::Admin) {
+        assert!(
+            tokio::time::Instant::now() < until,
+            "the connection stayed up with the landing undelivered"
+        );
+        admin.try_send(FromClient::Heartbeat).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+}
+
 /// **A load or unload event carries admin's date**, the trace's own
 /// `wall_ms`, and not the receipt's (Spec 2.12).
 #[tokio::test]

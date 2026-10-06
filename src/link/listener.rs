@@ -1587,8 +1587,23 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                             admission_show = None;
                             // **The server's acceptance is the one signal**
                             // that ends admin-con's hold (Spec 7.2): sent
-                            // only once the store took the observation.
-                            send(&tx, ToClient::Landed { id }).await;
+                            // only once the store took the observation, and
+                            // **delivered or the connection closes**, as an
+                            // ask is. Dropped on a full write path, it would
+                            // leave admin-con holding every ordinary verb for
+                            // the connection's life; closed, the hold ends
+                            // with it and the reconnect admits again.
+                            if let Err(why) =
+                                enqueue(&tx, ToClient::Landed { id }, inner.silence, &mut close_rx)
+                                    .await
+                            {
+                                tracing::warn!(
+                                    "{}: the show's landing could not be reported ({why}), closed so admin-con's hold ends with the connection",
+                                    agent.agent_id
+                                );
+                                reason = why;
+                                break;
+                            }
                         } else {
                             tracing::warn!(
                                 "{}: the admission's show answered without a usable observation ({}), closed so the reconnect asks again",

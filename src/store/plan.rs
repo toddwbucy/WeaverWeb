@@ -285,8 +285,8 @@ mod tests {
     /// plan would be counted as though this read returned it.
     async fn a_plan(s: &Store, tag: &str) -> PlanId {
         sqlx::query(
-            "INSERT INTO run (run_id, record_identity, sampler, boundary_set) \
-             VALUES ($1, 'PLAN-REC', '{}', '[]')",
+            "INSERT INTO run (run_id, record_identity, sampler, boundary_set, ingest_status) \
+             VALUES ($1, 'PLAN-REC', '{}', '[]', 'whole')",
         )
         .bind(tag)
         .execute(&s.pool)

@@ -130,10 +130,35 @@ pub struct Row {
     /// The record's session, kept as an option so the view decides absence
     /// from the member rather than from a word it compares against.
     pub session: Option<String>,
+    /// The parent as the record names it, held or not.
     pub parent: Option<String>,
+    /// Whether the store holds that parent, so the reference is a link; an
+    /// unheld parent's link renders as absent.
+    pub parent_linked: bool,
     pub branch_position: Option<i32>,
-    pub parting_position: Option<i32>,
+    /// The parting position as the walk left it, in three states a reader
+    /// must tell apart: never a null read as the arm having reproduced its
+    /// parent when the walk never ran.
+    pub parting: Parting,
+    /// The ingest's status, and its reason beside `short` and `refused`.
+    /// `whole` renders plainly; the three others as a marked badge, so a run
+    /// whose ingest stopped after its row was written never reads as a
+    /// completed one.
+    pub status: String,
+    pub status_reason: Option<String>,
     pub ingested_at: String,
+}
+
+/// A branch's parting position as Record draws it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Parting {
+    /// The walk ran and the paths part here.
+    At(i32),
+    /// The walk ran and the paths never part: the member is absent by the
+    /// Spec's own meaning, and the surface says `absent`.
+    Never,
+    /// The walk did not run: a member not yet derivable, `unknown`.
+    Unknown,
 }
 
 /// The word a surface uses where the record carried nothing. **It is a word
@@ -201,9 +226,16 @@ impl From<RunTuple> for Row {
             engine: engine_libraries(t.engine.as_ref()),
             seed: absent_or(t.seed.as_deref()),
             session: t.record_session,
-            parent: t.parent_run.map(|p| p.0),
+            parent: t.parent_reference,
+            parent_linked: t.parent_run.is_some(),
             branch_position: t.branch_position,
-            parting_position: t.parting_position,
+            parting: match (t.parting_known, t.parting_position) {
+                (true, Some(p)) => Parting::At(p),
+                (true, None) => Parting::Never,
+                (false, _) => Parting::Unknown,
+            },
+            status: t.ingest_status,
+            status_reason: t.ingest_reason,
             // **Not `to_rfc3339`**: that spells the offset `+00:00`, and a
             // query string decodes `+` as a space, so the cursor this
             // surface hands out would never parse when it came back. `Z` is
@@ -421,9 +453,9 @@ mod tests {
         let run = format!("{tag}-a");
         sqlx::query(
             "INSERT INTO run (run_id, record_identity, sampler, boundary_set, \
-             record_session, device, engine) \
+             record_session, device, engine, ingest_status) \
              VALUES ($1, 'SURF-REC', '{}', '[]', $2, 'rtx-a6000', \
-             '{\"cutlass\": \"3.5\"}')",
+             '{\"cutlass\": \"3.5\"}', 'whole')",
         )
         .bind(&run)
         .bind(&tag)
@@ -452,8 +484,8 @@ mod tests {
         // page's one null, so blanking the device changed nothing here.
         // A second run, alike but for the members it did not carry.
         sqlx::query(
-            "INSERT INTO run (run_id, record_identity, sampler, boundary_set, record_session) \
-             VALUES ($1, 'SURF-REC', '{}', '[]', $2)",
+            "INSERT INTO run (run_id, record_identity, sampler, boundary_set, record_session, \
+             ingest_status) VALUES ($1, 'SURF-REC', '{}', '[]', $2, 'whole')",
         )
         .bind(format!("{tag}-b"))
         .bind(&tag)
@@ -566,5 +598,173 @@ mod tests {
         let uri = format!("/record?after_at={spelled}&after_run=any");
         let (status, _) = ask(&store, &uri, Some(&bearer)).await;
         assert_eq!(status, StatusCode::OK, "and reads back as a cursor: {uri}");
+    }
+
+    /// **A branch's lineage and a run's ingest status are drawn in the words
+    /// that keep them apart** (the brief's rulings 11 and 12): a parent the
+    /// store does not hold is its reference with the link `absent`; a
+    /// parting the walk found is its position, one it found never to come
+    /// is `absent`, and one the walk never derived is `unknown`, so no
+    /// branch reads as having reproduced its parent on a walk that did not
+    /// run; and `writing`, `short` and `refused` are marked badges carrying
+    /// the word and, for the last two, the reason.
+    #[tokio::test]
+    async fn record_draws_lineage_and_status_in_their_words() {
+        let Some(store) = crate::store::read::tests::store().await else {
+            return;
+        };
+        let bearer = a_session(&store, "todd", "user").await;
+        let tag = format!(
+            "lin-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let seed = |run: String,
+                    parent: Option<String>,
+                    reference: Option<String>,
+                    parting: Option<i32>,
+                    known: bool,
+                    status: &'static str,
+                    reason: Option<&'static str>| {
+            let store = store.clone();
+            let tag = tag.clone();
+            async move {
+                sqlx::query(
+                    "INSERT INTO run (run_id, record_identity, sampler, boundary_set, record_session, \
+                     parent_run_id, parent_reference, parting_position, parting_known, ingest_status, \
+                     ingest_reason) VALUES ($1, 'SURF-LIN', '{}', '[]', $2, $3, $4, $5, $6, $7, $8)",
+                )
+                .bind(run)
+                .bind(&tag)
+                .bind(parent)
+                .bind(reference)
+                .bind(parting)
+                .bind(known)
+                .bind(status)
+                .bind(reason)
+                .execute(&store.pool)
+                .await
+                .unwrap();
+            }
+        };
+        let parent = format!("{tag}-parent");
+        let held = Some(parent.clone());
+        seed(parent.clone(), None, None, None, false, "whole", None).await;
+        seed(
+            format!("{tag}-never"),
+            held.clone(),
+            held.clone(),
+            None,
+            true,
+            "whole",
+            None,
+        )
+        .await;
+        seed(
+            format!("{tag}-at"),
+            held.clone(),
+            held.clone(),
+            Some(42),
+            true,
+            "whole",
+            None,
+        )
+        .await;
+        seed(
+            format!("{tag}-unwalked"),
+            held.clone(),
+            held.clone(),
+            None,
+            false,
+            "whole",
+            None,
+        )
+        .await;
+        seed(
+            format!("{tag}-unheld"),
+            None,
+            Some(format!("{tag}-elsewhere")),
+            None,
+            false,
+            "whole",
+            None,
+        )
+        .await;
+        seed(
+            format!("{tag}-writing"),
+            None,
+            None,
+            None,
+            false,
+            "writing",
+            None,
+        )
+        .await;
+        seed(
+            format!("{tag}-short"),
+            None,
+            None,
+            None,
+            false,
+            "short",
+            Some("points not landed: generation 0 (turn t-1): no resident count"),
+        )
+        .await;
+        seed(
+            format!("{tag}-refused"),
+            None,
+            None,
+            None,
+            false,
+            "refused",
+            Some("a reference cycle among the emission's branches"),
+        )
+        .await;
+
+        let (status, html) = ask(
+            &store,
+            &format!("/record?chip=session&of={tag}"),
+            Some(&bearer),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let row = |name: &str| {
+            let run = format!("{tag}-{name}<");
+            html.split("<tr>")
+                .find(|r| r.contains(&run))
+                .unwrap_or_else(|| panic!("no row for {name}: {html:.400}"))
+                .to_owned()
+        };
+        assert!(
+            row("never").contains("parting <span class=\"absent\">absent</span> (never parted)")
+        );
+        assert!(row("at").contains("parted at 42"));
+        let unwalked = row("unwalked");
+        assert!(
+            unwalked.contains("parting <span class=\"absent\">unknown</span>")
+                && !unwalked.contains("never parted"),
+            "a walk that never ran is unknown, never reproduction: {unwalked}"
+        );
+        let unheld = row("unheld");
+        assert!(
+            unheld.contains("its link <span class=\"absent\">absent</span>")
+                && unheld.contains(&format!("{tag}-elsewhere"))
+                && unheld.contains("parting <span class=\"absent\">unknown</span>"),
+            "{unheld}"
+        );
+        assert!(row("writing").contains("<span class=\"status writing\""));
+        let short = row("short");
+        assert!(
+            short.contains("<span class=\"status short\"")
+                && short.contains("generation 0 (turn t-1): no resident count"),
+            "{short}"
+        );
+        assert!(row("refused").contains("a reference cycle"));
+        assert!(
+            !row("parent").contains("class=\"status"),
+            "whole is drawn plainly"
+        );
     }
 }

@@ -215,6 +215,16 @@ Each row carries:
 - the ranked alternatives with their probability mass
 - the raw residual where the capture holds one
 
+**A position the analysis ingest lands carries the identifier, the entropy and the
+surprisal, and nothing else**, as of act 10b. The surface text is absent, since
+`weaver-analysis-web-contract` section 2.1 carries the token's identifier and not its
+text, detokenizing being the reader's and this crate holding no tokenizer; whether the
+emitter should carry it is `toddwbucy/WeaverAnalysis#10`, and nothing here fakes a text
+from an identifier. The alternatives and the rank are `model.field`'s and never cross
+that seam (contract section 6), so such a position holds neither. The entropy crosses
+"or absent" (contract section 2.1) and is absent where the generation did not measure
+it, never zero. Migration 0014 made the four columns nullable for these reasons.
+
 **`realized` is a rank and not a token.** It names which rank the draw
 landed on, so a row carries `realized` as the record spells it and the drawn
 token resolved beside it, and neither is presented as the other.
@@ -277,11 +287,19 @@ Everything identifying the conditions lives in the run's own row:
   as the load event records them at that load, per `toddwbucy/WeaverAgent#1` and `#58`,
   so two runs under different state-management settings are never one condition
 - the parent run reference and branch position, where the run is a branch,
-  **which are lineage and stand outside tuple equality**
+  **which are lineage and stand outside tuple equality**. **The parent is held
+  twice**, as of act 10b: the reference, the lineage's `built_from.run` as the record
+  names it, written for every branch whether or not this store holds that run; and the
+  link to that run's row, set only where the store holds it. A branch whose parent is
+  not held still lands, carrying its reference and no link, and resolving the link when
+  the parent lands in a later ingest is owed to a later act
 - **the parting position** where the run is a branch, the first at which its
   token path left its parent's, derived at ingest per section 3.1 and
   absent where the paths never part, which is also lineage and also outside
-  the compound
+  the compound, **beside whether the walk that derives it ran**: a null parting
+  position means the paths never parted only where it did, and is unknown where it
+  did not, a parent not held or not whole, a child not whole, a tape with no
+  coordinate (section 3.1)
 - **the emission's signature**, a set of shingles over the emitted text
   derived once at ingest, **which is a property of the result and stands
   outside tuple equality with lineage**, per section 5.4
@@ -757,6 +775,7 @@ secondary     (run, surprisal)
 artifact      run (record_identity)
 family        run (record_session)
 lineage       run (parent_run_id)
+reference     run (parent_reference)
 ingest order  run (ingested_at DESC, run_id DESC)
 plan roots    plan (parent_run_id)
 ref roots     ref (run_id)
@@ -784,6 +803,9 @@ the ingest order - and this list named one of the four until 2026-09-11.** The a
 index has stood since the first migration and was missing here. The lineage index is
 new: a foreign key constrains and does not index, so a branch's siblings were a
 sequential scan under a clause that called them an index hit.
+**Read five's parent chip reads the reference index as of act 10b**, since a branch
+names its parent whether or not the store holds it and the link is set only where it
+does; the lineage index stays for the link.
 The ingest order is new and **carries the run's identity beside the clock because the
 clock is not a total order**: `ingested_at` defaults to the transaction's, so every run
 of one ingest shares a value and a page keyed on it alone drops the rest of a tie. Found
@@ -1496,6 +1518,32 @@ from: weaver-web
 to: web-every-verb-asked-is-audited
 ```
 
+### 2.14 The generation
+
+**One row per generation the analysis seam summarized, keyed by the run and its landing
+order**, as of act 10b: the turn key where the record carries one, the perplexity where
+the record holds one, the resident count at the generation's close and the count of its
+output tokens (`weaver-analysis-web-contract` section 2.2), and the seed the generation
+drew from. **The summary's members have no other home**: section 3.1 lands a
+generation's summary even where its points cannot land, and a surface reads a turn's
+perplexity and counts from it. **It is keyed by order and not by turn**, because a turn
+key is text and sorts wrong ("t-10" before "t-2"), and one turn may hold more than one
+generation. **The generation's seed is here and not on the run**: the SPU derives it
+per generation from the declared seed (contract section 2.2), so every run of more than
+one generation disagrees on it by construction, and the run's seed is the declared one.
+The two counts are what section 3.1 derived each position from, kept as the record
+spelled them; **no read recomputes a position from them**, since the position is stored.
+
+```graph
+node: web-generation-summary-lands
+kind: assertion
+tag: perturbation
+
+edge: asserts
+from: weaver-web
+to: web-generation-summary-lands
+```
+
 ## 3. The write path
 
 **Seven writers, and each owns its tables, one table being owned at the member by two
@@ -1569,20 +1617,40 @@ rival to it**, which is also why section 2.6 stores a query rather than its
 result: a stored result would be a second truth about positions the trace
 already fixed.
 
-**And this crate's ingest of that seam has not run.** The emission is
-chartered and its shape is contracted, and no deposit in the record was
-produced by consuming it into a store. **The act that builds the ingest is
-integrating rather than consuming something proven, and the producer it
-integrates against is `weaver-analysis`**, which is worth naming because a
-first consumer that goes looking for faults in the wrong crate spends the
-difference. That is a fact about the schedule and not a defect.
+**The ingest is built as of act 10b, 2026-10-06** (issue #2): `weaver-web ingest
+<path | ->` reads one `weaver-analysis signals` emission, one summary line and then one
+point per line, and lands every run it carries. **It integrates rather than consuming
+something proven, and the producer it integrates against is `weaver-analysis`**, which
+is worth naming because a first consumer that goes looking for faults in the wrong crate
+spends the difference. Its tests read emissions vendored once from that crate's own
+fixtures, and none runs its binary. **One gap is the emitter's**: section 2.3 of the
+contract has the record's opening kind and bracket outcome ride beside both streams, and
+the `signals` emission carries neither, the emitter refusing an uncertified diagnostic
+record itself, so section 5's gate is held upstream (`toddwbucy/WeaverAnalysis#11`).
 
-- Writes are **bulk per turn or per window**, never per token.
-- Writes are **idempotent on the run, turn and position key**, so a replayed
-  or partially failed ingest cannot produce two truths about one position.
-- **The run row is written first and closed last**, carrying a status a
-  surface can read, so a partially ingested run is visibly partial rather
-  than quietly short.
+- Writes are **bulk per generation**, never per token: one transaction lands a
+  generation's summary and its points.
+- Writes are **idempotent on the run, turn and position key, and a key replayed with a
+  different payload is a refusal**, so a replayed or partially failed ingest cannot
+  produce two truths about one position. A replay is compared with what is stored, key
+  by key, before anything is written: equal is a no-op that counts as written, and a
+  `writing` row whose every key is equal is completed. **A refusal on replay is the
+  answer's and never the row's**: the stored row, its status and its reason stand, and
+  `refused` is written only by the ingest that created the row.
+- **The run row is written first and closed last**, carrying a status a surface can
+  read and, beside two of its values, the reason: `writing` while the ingest holds it
+  open, `whole`, `short` where some generation's points could not be addressed (naming
+  which generation and why), and `refused` where the ingest that created the row gave
+  up on it. **`writing` and `short` are the two partials**, so a partially ingested run
+  is visibly partial rather than quietly short.
+- **Every run an emission carries lands as its own row with its own status**, and the
+  ingest refuses only disagreement within a run. A run refused before its row would
+  exist (its generations disagreeing, no effective sampling, no weights hash, a position
+  it cannot form, one key named twice with two payloads) gets no row, and its refusal
+  is the answer's. **The answer is one object per run**: its identity, its status and
+  reason, the positions and generations landed, and the members absent; the exit status
+  is 0 where every run is `whole` or `short`, and 1 where any run or the emission itself
+  is refused, the object still listing what landed.
 
 ```graph
 node: web-ingest-is-idempotent-on-the-key
@@ -1620,10 +1688,32 @@ from: weaver-web
 to: web-position-is-stored-at-ingest
 ```
 
-**The parting position is derived here too, and only for a branch.** A run
-carrying a parent reference has its parent already in the store, so the
-ingest walks the two token paths once and stores the first position they
-differ at, or stores nothing where they never part. **Deriving it here is
+**The parting position is derived here too, and only for a branch.** The ingest
+stores the branch's parent reference always, sets the link where the parent is held
+whatever its status, and **walks the two token paths only where the parent is also
+whole**; otherwise it leaves the parting position unknown, and resolving it when the
+parent lands later or becomes whole is owed to a later act. **A branch closes only
+after its resolution**: once every run of the emission has landed, each branch's link,
+its walk and its move to `whole` or `short` are one transaction, parents before
+children over the references, so a chain of any depth resolves in one ingest whatever
+the emission's order, and an ingest that dies first leaves the branch `writing`. **A
+reference cycle among the emission's branches is refused by name**: each run names at
+most one parent, so cycles are vertex-disjoint and one cycle is one strongly connected
+component, whose rows this ingest created move to `refused` in one transaction.
+
+**The walk compares on the position coordinate and nothing else, from the child's first
+landed position upward.** A branch is a new run whose turn keys restart, its first
+point sitting at its seated prefix, which holds the parent's tape through the cut, so
+the two paths share positions and not turn keys or point indexes. The parent's
+positions below the child's first are the restored prefix and outside the window.
+Within it, a position both hold with different tokens is a parting, known where no
+child generation before it was skipped, since a skipped span may hold an earlier
+difference. A position only one path holds is a parting where both are whole, whichever
+is longer. No difference through both is "never parted" only where both are whole.
+**A tape whose positions do not strictly increase in generation order gives no
+coordinate**, and the walk derives nothing. Every other case leaves the parting
+unknown, which the row records beside it, so a null is never read as reproduction on a
+walk that did not run. **Deriving it here is
 what makes section 4's fourth read a read.** A comparison of two token paths
 is a walk whatever else it is called, and a walk at the read is the thing
 section 2.7 refuses: doing it once at the ingest costs one pass over a run
@@ -1659,14 +1749,12 @@ position**: it would name a place in the parent's tape the number does not mean.
 the parent reference alone and leaving the branch position to the row that authored the
 branch.
 
-**The lineage's shape moves with `toddwbucy/WeaverAgent#58`, and this ingest's change is
-owed until it merges.** Per WeaverAgent's answer to question 1 on
-`toddwbucy/WeaverAgent#59`, once #58 lands the parent is read from the lineage's
-`built_from` only, and a lineage without it is a continuation of its run and names no
-parent. **A restore from a save point is a new run, and its turn keys restart at 1**,
+**The lineage's shape moved with `toddwbucy/WeaverAgent#58`, and this ingest reads it.**
+Per WeaverAgent's answer to question 1 on `toddwbucy/WeaverAgent#59`, the parent is read
+from the lineage's `built_from` only, its `run`, and a lineage without it is a
+continuation of its run and names no parent. **A restore from a save point is a new run, and its turn keys restart at 1**,
 per the operator's ruling of 2026-10-02 on the same issue, so `weaver-gate-world-contract`
-does not move and the turn keys of section 2.1 hold. The rules above stand until the act
-that meets #58 rewrites them.
+does not move and the turn keys of section 2.1 hold.
 
 **The boundary set is written empty**, per section 2.2, which is a fact about every run
 this ingest can meet rather than a default standing in for one. **Precision is written
@@ -1722,12 +1810,15 @@ to: web-prefix-length-is-landed-and-never-derived
 ```
 
 **A generation whose closing count the record does not carry has no
-position, and its points do not land, though its summary entry does.** The
-count is absent rather than derived where no `model.output` reported one, so
-the address section 2.1 requires cannot be formed, and this crate stores
-nothing it cannot address rather than storing rows under an invented key.
-The run's row carries the status, so a run short of a generation is visibly
-partial by the rule above rather than quietly short. **This is
+position, and its points do not land, though its summary entry does**, in
+section 2.14's row. The count is absent rather than derived where no
+`model.output` reported one, so the address section 2.1 requires cannot be
+formed, and this crate stores nothing it cannot address rather than storing
+rows under an invented key. **A generation with no turn key is the same case**:
+the turn is part of the key and the contract makes it optional on a point, so
+its points do not land and nothing invents a turn. The run closes `short`,
+naming each such generation and why, so a run short of a generation is
+visibly partial by the rule above rather than quietly short. **This is
 absent-not-empty at the write path**: the same discipline that forbids
 drawing a missing surprisal as zero forbids addressing a position that was
 never established.
@@ -1886,7 +1977,11 @@ Six queries, and the schema of section 2 exists to make each an index hit.
    than re-derived.
 2. **A contiguous range of positions** carrying the emitted token, surprisal
    and entropy. This is the timeline and the transcript.
-3. **The run's tuple.** This is the label on every reading taken from it.
+3. **The run's tuple.** This is the label on every reading taken from it. **It carries
+   the ingest's status and its reason**, per section 3.1, so a run whose ingest stopped
+   after its row was written never reads as a completed one, and **the lineage as
+   section 2.2 holds it**: the parent's reference, the link where the store holds that
+   parent, and whether the walk that derives the parting position ran.
 4. **One staged experiment's value set, each value with its run where one
    exists.** The unit of this read is the **value and not the run**, because
    section 5.4 has an arm that never ran keep its place in the set, and a
@@ -1911,7 +2006,9 @@ Six queries, and the schema of section 2 exists to make each an index hit.
    and **its parting position where it has one**, the first at which its
    token path left its parent's, derived once at ingest per section 3.1 and
    stored beside the branch position. **An arm whose path never parted
-   carries none**, which the read returns as the absence it is. All three
+   carries none**, which the read returns as the absence it is, **and only where the
+   walk ran**: beside a walk that did not run, section 3.1's unknown, the null says
+   nothing. All three
    are index hits: the arms by their parent reference, and the other two by
    their own columns.
 
@@ -1926,8 +2023,10 @@ signature is not needed.** Same weights and same window mean the arms are
 comparable byte for byte, so the parting position section 3.1 stored says
 everything the arm was authored to ask.
 
-**An arm with no parting position is the strongest reading the set can
-return, not a missing one.** It means the arm moved a value and reproduced
+**An arm whose walk ran and found no parting is the strongest reading the set can
+return, not a missing one.** An arm whose walk did not run is not this reading: its
+parting is unknown, section 6's word for a member not yet derivable, and never read as
+reproduction. It means the arm moved a value and reproduced
 its parent anyway, which for a per-generation sweep is the finding rather
 than the absence of one, and the charter's own control arm is why: a branch
 that changes nothing draws what its parent drew, so an arm that changed
@@ -1949,7 +2048,9 @@ models wrote different essays.
 
    **The filters are four and section 2.7 indexes each.** The record identity for the
    runs admitted under one, the record's session for a session's family, the parent
-   reference for a branch's siblings, and the ingest's order for the newest first. **Two
+   reference for a branch's siblings, and the ingest's order for the newest first. **The
+   parent filter is on the reference a branch names, held or not**, as of act 10b, and
+   each row carries the ingest's status and reason and the lineage read three names. **Two
    of those indexes did not exist until this act** and section 2.7 named only one of the
    two that did, which is the state a claim of an index hit would have been false
    against. **A filter this document does not index is not a chip this crate offers**,
@@ -2313,11 +2414,19 @@ that passes an ordinal where a position is expected reads a different token
 and says
 nothing about it.
 
-**Absence renders as absence.** Entropy rides every generation
-unconditionally, and surprisal rides only where its election stands. A
-surface that plots an absent surprisal as zero is lying about the election,
-so where the election did not stand the surface says so rather than drawing
-a floor.
+**Absence renders as absence.** Entropy rides every generation the record
+measured, crossing absent where it did not, and surprisal rides only where its
+election stands. A surface that plots an absent surprisal or entropy as zero is
+lying about the record, so where a series holds no value the surface says so
+rather than drawing a floor.
+
+**The words are five, and each says which absence it is.** `absent`: the record
+did not carry the member. `no run`: a staged value that never produced a run.
+`not served`: a seam with no party yet. `uncomputable`: the SPU's identity
+sentinel. **`unknown`**, as of act 10b: a member not yet derivable, which is a
+parting position whose walk did not run; it is not `absent`, since a parting the
+walk found never to come is `absent` by section 2.2's own meaning, and a reader
+told `absent` there would read an arm that reproduced its parent.
 
 **The rule is every member's and not surprisal's alone.** A member the record
 did not carry renders as absent and never as a zero, a blank cell or an empty
@@ -3513,7 +3622,7 @@ missing while it was relaying.
 | claim | instrument |
 |---|---|
 | a position is addressed by run, turn and position | compile-pin on the key type |
-| ingest is idempotent on that key | perturbation: replay one window twice |
+| ingest is idempotent on that key, and a key replayed with a different payload is a refusal that changes nothing stored | perturbation in `src/store/ingest_tests.rs`: drop the replay's comparison, and a replay with one point's token changed reads `whole` over the stored row instead of being refused naming the key |
 | nothing is computed at read time except where the query is recorded | review, over the four reads the crate served, the fifth joining them with Record and the sixth with the plan |
 | a recorded query names every run it addressed | perturbation: drop one, the row refuses |
 | an incomplete shard set joins to nothing | perturbation: drop one file the index names, the join returns none |
@@ -3522,7 +3631,7 @@ missing while it was relaying.
 | an absent forced mark is unknown and never unforced | perturbation: default an absent mark to unforced, an unmarked run ingests as a sampled one |
 | a member the record did not carry renders as absent | perturbation: render an absent member as an empty cell, a device no deposit sent is indistinguishable from one the record sent empty |
 | an absent surprisal renders as absent | perturbation: zero-fill, the view is wrong |
-| the position is stored at ingest | perturbation: after ingest, alter the summary's counts and reread, the stored position is unchanged |
+| the position is stored at ingest | perturbation in `src/store/ingest_tests.rs`: store the ordinal as the position, and the first generation's first point is not at 60 (73 - 12 - 1); the summary's counts altered after the ingest move no stored position |
 | an uncertified diagnostic record is not drawn | perturbation: drop the outcome check, an unknown run renders |
 | no surface writes a position or a run | compile-fail: a doctest constructing a recorded-table writer from an authoring path does not compile |
 | an authored edit against a stale version refuses | perturbation: drop the version check, the second edit silently wins |
@@ -3535,7 +3644,12 @@ missing while it was relaying.
 | a session carries a claimed name and never a proof | review, over the open path: nothing between the posted name and the row tests it, which is the posture section 6 defers and not a defect |
 | the sentinel joins to nothing | perturbation: register the empty string as an identity, a run whose hash failed joins to an artifact it never named |
 | the record's session and digest are absent where unsent | perturbation: fill an absent digest from the landed rows, a row from a record cut short vouches for bytes nobody drained |
-| the record's session and digest agree across a run | perturbation: land a run whose generations name two sessions, the row holds two truths about which record it came from |
+| the record's session and digest agree across a run | perturbation in `src/store/ingest_tests.rs`: take the first generation's session, or its digest, and a run whose generations name two lands with one of them; the run is refused before a row instead |
+| a generation's summary lands, and its points only where they can be addressed | perturbation in `src/store/ingest_tests.rs`: close a run whose generations carry no resident count `whole`, and it reads as completed; give a turnless point a turn, and it lands under a key nobody recorded |
+| a run's ingest status is written first and read by every surface | perturbation: create the row `whole` rather than `writing`, and an ingest stopped by the test-only step hook after the points leaves a branch reading `whole` and unlinked; draw every row's status as `whole` on Record, and a `writing`, `short` or `refused` run reads as completed |
+| an absent entropy lands absent | perturbation in `src/store/ingest_tests.rs`: write an omitted entropy as zero, and the position reads a floor |
+| the parting position is derived only where it is provable, and recorded as unknown otherwise | perturbation in `src/store/ingest_tests.rs`, each guard: walk a parent that is held but not whole, drop the monotone guard, read a position only the parent holds as never parted, take a difference after a skipped span as known, read no difference in a short child as never parted, set the link for a parent not held, close a branch with the non-branches (the same-emission parent lands unlinked), resolve in the emission's order rather than parents first; and on Record, draw an unwalked parting as never parted, or an unheld parent as linked |
+| a reference cycle is refused in one transaction, and only on rows the ingest created | perturbation in `src/store/ingest_tests.rs`, the test-only step hook stopping inside the cycle's transaction: commit the refusals row by row, and one row reads `refused` beside one `writing`; persist the refusal on a replayed row, and a row this ingest did not create changes status |
 | a chip filters only on a column section 2.7 indexes | review, over Record's filters: a chip on an unindexed column is a sequential scan the surface offers as though it were cheap |
 | the run list is paged and records nothing | perturbation: page on the ingest's clock alone, a tie larger than the page drops its remainder, and record a query row per page, section 2.6 fills with a list nobody reruns |
 | the seated prefix's length is landed and never derived | perturbation: derive it here from the two counts, every row reads the first draw's position as the prefix and every whole-run arm branches one input too late |
@@ -3568,7 +3682,11 @@ missing while it was relaying.
 act that lands it states what removal makes it fail and confirms it does.
 
 **A row marked owed has no instrument and is not counted as enforced.** Four
-stand so marked as of 2026-10-05. The batch's order is owed because section
+stand so marked as of 2026-10-06. The ingest act of 2026-10-06 (act 10b) moved
+the idempotence and the stored-position rows from a perturbation described to
+one shown, named instruments for the agreement row, and added five rows (the
+generation's summary, the ingest status, the absent entropy, the parting
+position, the cycle), each guard shown to fail with its guard removed. The batch's order is owed because section
 2.11 describes its table and no migration builds it. Three rows of the role
 shape ruled on 2026-10-02 are owed to the IAM act: the principal check, the
 writer's check for persons, roles and grants, and the audit record. The

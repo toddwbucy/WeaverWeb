@@ -12,7 +12,11 @@
 //! `docs/project/inventory-weaver-web-code.md` records the rest of the crate
 //! as written to the retired text.
 
+pub mod emission;
 pub mod experiment;
+pub mod ingest;
+#[cfg(test)]
+mod ingest_tests;
 pub mod key;
 pub mod plan;
 pub mod read;

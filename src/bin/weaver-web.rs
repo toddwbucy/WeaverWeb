@@ -70,6 +70,12 @@ enum Command {
     },
     /// The register as it stands, presence derived on each row.
     Agents,
+    /// Land one `weaver-analysis signals` emission in the store (Spec 3.1):
+    /// its runs, their generations and their positions.
+    Ingest {
+        /// The emission's file, or `-` for stdin.
+        source: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -96,6 +102,15 @@ async fn main() -> anyhow::Result<()> {
     let cfg = Arc::new(ServerConfig::load(&args.config)?);
     match args.command.unwrap_or(Command::Serve) {
         Command::Serve => serve(cfg).await,
+        Command::Ingest { source } => {
+            let answer = ingest(&cfg, &source).await;
+            println!("{}", serde_json::to_string_pretty(&answer.value)?);
+            if answer.ok {
+                Ok(())
+            } else {
+                std::process::exit(1)
+            }
+        }
         command => {
             let answer = run_verb(&cfg, command).await;
             println!("{}", serde_json::to_string_pretty(&answer.value)?);
@@ -110,7 +125,7 @@ async fn main() -> anyhow::Result<()> {
 
 async fn run_verb(cfg: &ServerConfig, command: Command) -> verbs::Answer {
     match command {
-        Command::Serve => unreachable!("serve is not a verb"),
+        Command::Serve | Command::Ingest { .. } => unreachable!("not a register verb"),
         Command::Authority {
             verb: AuthorityVerb::Init { san },
         } => verbs::authority_init(cfg, &san),
@@ -167,6 +182,28 @@ async fn run_verb(cfg: &ServerConfig, command: Command) -> verbs::Answer {
                 ok: false,
             },
         },
+    }
+}
+
+/// **The ingest verb**: one emission read from a file or stdin and landed,
+/// one JSON object on stdout, the exit status agreeing. The file is the
+/// operator's own input and is only read.
+async fn ingest(cfg: &ServerConfig, source: &std::path::Path) -> store::ingest::IngestAnswer {
+    let refused = |error: String| store::ingest::IngestAnswer {
+        ok: false,
+        value: serde_json::json!({ "verb": "ingest", "ok": false, "error": error, "runs": [] }),
+    };
+    let store = match store::Store::connect(&cfg.database).await {
+        Ok(store) => store,
+        Err(e) => return refused(format!("{e:#}")),
+    };
+    if source == std::path::Path::new("-") {
+        store.ingest(std::io::stdin().lock()).await
+    } else {
+        match std::fs::File::open(source) {
+            Ok(file) => store.ingest(std::io::BufReader::new(file)).await,
+            Err(e) => refused(format!("{} does not open: {e}", source.display())),
+        }
     }
 }
 

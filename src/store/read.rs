@@ -25,16 +25,21 @@ use super::key::{PositionKey, RunId, TurnId};
 pub struct Alternatives {
     pub key: PositionKey,
     pub token_id: i64,
-    pub token_text: String,
-    /// Rides every generation unconditionally, per section 6.
-    pub entropy: f64,
+    /// The token's surface text, absent where the seam that landed the
+    /// position carried none: the analysis seam never does, detokenizing
+    /// being the reader's (toddwbucy/WeaverAnalysis#10).
+    pub token_text: Option<String>,
+    /// Absent where the generation did not measure it, and never zero.
+    pub entropy: Option<f64>,
     /// Rides only where its election stands. Absent is absent and never zero.
     pub surprisal: Option<f64>,
     /// The ranked candidates with their mass, at the depth the declaration's
-    /// field election kept.
-    pub alternatives: serde_json::Value,
-    /// A rank and not a token, per section 2.1.
-    pub realized: i32,
+    /// field election kept. Absent where the position landed from a seam
+    /// that does not carry the field, which the analysis seam does not.
+    pub alternatives: Option<serde_json::Value>,
+    /// A rank and not a token, per section 2.1, absent with the
+    /// alternatives.
+    pub realized: Option<i32>,
     pub residual: Option<Vec<u8>>,
 }
 
@@ -44,8 +49,8 @@ pub struct Alternatives {
 pub struct PositionPoint {
     pub position: i32,
     pub token_id: i64,
-    pub token_text: String,
-    pub entropy: f64,
+    pub token_text: Option<String>,
+    pub entropy: Option<f64>,
     pub surprisal: Option<f64>,
 }
 
@@ -94,6 +99,20 @@ pub struct RunTuple {
     /// section 10's open election.
     pub signature: Option<serde_json::Value>,
     pub ingested_at: DateTime<Utc>,
+    /// The ingest's status, section 3.1: `writing` while the ingest holds
+    /// the row open, `whole`, `short` where some generation's points could
+    /// not be addressed, `refused`. `writing` and `short` are the two
+    /// partials, and a surface never shows either as a completed run.
+    pub ingest_status: String,
+    /// The reason beside `short` and `refused`, `None` beside the other two.
+    pub ingest_reason: Option<String>,
+    /// The parent as the record names it, held or not. `parent_run` is the
+    /// resolved link, set only where the store holds that parent.
+    pub parent_reference: Option<String>,
+    /// Whether the walk of section 3.1 ran: where it did, a `None` parting
+    /// position means the paths never parted; where it did not, the parting
+    /// position is unknown.
+    pub parting_known: bool,
 }
 
 /// The fifth read's statements, one per shape it can take.
@@ -117,9 +136,9 @@ const SELECT_BY_SESSION: &str = "SELECT * FROM run_tuple WHERE record_session = 
      ORDER BY ingested_at DESC, run_id DESC LIMIT $2";
 const SELECT_BY_SESSION_AFTER: &str = "SELECT * FROM run_tuple WHERE record_session = $1 \
      AND (ingested_at, run_id) < ($2, $3) ORDER BY ingested_at DESC, run_id DESC LIMIT $4";
-const SELECT_BY_PARENT: &str = "SELECT * FROM run_tuple WHERE parent_run_id = $1 \
+const SELECT_BY_PARENT: &str = "SELECT * FROM run_tuple WHERE parent_reference = $1 \
      ORDER BY ingested_at DESC, run_id DESC LIMIT $2";
-const SELECT_BY_PARENT_AFTER: &str = "SELECT * FROM run_tuple WHERE parent_run_id = $1 \
+const SELECT_BY_PARENT_AFTER: &str = "SELECT * FROM run_tuple WHERE parent_reference = $1 \
      AND (ingested_at, run_id) < ($2, $3) ORDER BY ingested_at DESC, run_id DESC LIMIT $4";
 
 /// A chip, per `weaver-web-Spec` section 4's fifth read: a filter the
@@ -135,7 +154,9 @@ pub enum Chip {
     RecordIdentity(String),
     /// A session's family, per section 2.7's family index.
     Session(String),
-    /// A parent's branches, per section 2.7's lineage index.
+    /// A parent's branches, per section 2.7's lineage index: every run
+    /// naming it as its parent, held or not, so the chip filters on the
+    /// reference a branch names rather than on the resolved link.
     Branches(RunId),
 }
 
@@ -484,6 +505,10 @@ fn run_tuple_from_row(r: sqlx::postgres::PgRow) -> RunTuple {
         prefix_length: r.get("prefix_length"),
         signature: r.get("signature"),
         ingested_at: r.get("ingested_at"),
+        ingest_status: r.get("ingest_status"),
+        ingest_reason: r.get("ingest_reason"),
+        parent_reference: r.get("parent_reference"),
+        parting_known: r.get("parting_known"),
     }
 }
 
@@ -511,11 +536,15 @@ pub(crate) mod tests {
     async fn seed_run(s: &Store, run_id: &str, parent: Option<&str>, parting: Option<i32>) {
         sqlx::query(
             "INSERT INTO run (run_id, record_identity, seed, sampler, device, \
-             engine, boundary_set, parent_run_id, branch_position, parting_position, signature) \
-             VALUES ($1, 'REC', 14458752852352082704, '{}', 'cuda:0', '{}', '[]', $2, $3, $4, $5) \
+             engine, boundary_set, parent_run_id, parent_reference, branch_position, \
+             parting_position, parting_known, signature, ingest_status) \
+             VALUES ($1, 'REC', 14458752852352082704, '{}', 'cuda:0', '{}', '[]', $2, $2, $3, $4, \
+             $4 IS NOT NULL, $5, 'whole') \
              ON CONFLICT (run_id) DO UPDATE SET parent_run_id = EXCLUDED.parent_run_id, \
+             parent_reference = EXCLUDED.parent_reference, \
              branch_position = EXCLUDED.branch_position, \
-             parting_position = EXCLUDED.parting_position, signature = EXCLUDED.signature",
+             parting_position = EXCLUDED.parting_position, \
+             parting_known = EXCLUDED.parting_known, signature = EXCLUDED.signature",
         )
         .bind(run_id)
         .bind(parent)
@@ -551,7 +580,7 @@ pub(crate) mod tests {
             .unwrap()
             .expect("the row stands");
         assert_eq!(got.token_id, 19026);
-        assert_eq!(got.realized, 0);
+        assert_eq!(got.realized, Some(0));
         // Absent-not-empty: surprisal rode no election here and reads as None, never as zero.
         assert_eq!(got.surprisal, None);
 
@@ -585,7 +614,7 @@ pub(crate) mod tests {
             pts.iter().map(|p| p.position).collect::<Vec<_>>(),
             vec![201, 202, 203]
         );
-        assert_eq!(pts[0].entropy, 0.6);
+        assert_eq!(pts[0].entropy, Some(0.6));
     }
 
     #[tokio::test]
@@ -663,8 +692,8 @@ pub(crate) mod tests {
         let digest = "a".repeat(64);
         sqlx::query(
             "INSERT INTO run (run_id, record_identity, sampler, device, engine, \
-             boundary_set, record_session, record_digest) \
-             VALUES ('r-named', 'REC', '{}', 'cuda:0', '{}', '[]', 'sess-1', $1) \
+             boundary_set, record_session, record_digest, ingest_status) \
+             VALUES ('r-named', 'REC', '{}', 'cuda:0', '{}', '[]', 'sess-1', $1, 'whole') \
              ON CONFLICT (run_id) DO NOTHING",
         )
         .bind(&digest)
@@ -709,9 +738,9 @@ pub(crate) mod tests {
         // which is section 2.2's "absent for neither half where one is
         // missing".
         sqlx::query(
-            "INSERT INTO run (run_id, record_identity, sampler, boundary_set, engine) \
+            "INSERT INTO run (run_id, record_identity, sampler, boundary_set, engine, ingest_status) \
              VALUES ('r-no-deposit', 'REC', '{}', '[]', \
-             '{\"organ_binaries\": {\"weaver-spu\": \"ab\"}}') \
+             '{\"organ_binaries\": {\"weaver-spu\": \"ab\"}}', 'whole') \
              ON CONFLICT (run_id) DO NOTHING",
         )
         .execute(&s.pool)
@@ -734,8 +763,8 @@ pub(crate) mod tests {
         // The schema refuses a digest that is not sha256 hex.
         let refused = sqlx::query(
             "INSERT INTO run (run_id, record_identity, sampler, device, engine, \
-             boundary_set, record_digest) \
-             VALUES ('r-bad-digest', 'REC', '{}', 'cuda:0', '{}', '[]', 'not-hex')",
+             boundary_set, record_digest, ingest_status) \
+             VALUES ('r-bad-digest', 'REC', '{}', 'cuda:0', '{}', '[]', 'not-hex', 'whole')",
         )
         .execute(&s.pool)
         .await;
@@ -784,8 +813,8 @@ pub(crate) mod tests {
         let mut tx = s.pool.begin().await.unwrap();
         for suffix in ["a", "b", "c", "d", "e"] {
             sqlx::query(
-                "INSERT INTO run (run_id, record_identity, sampler, boundary_set, record_session) \
-                 VALUES ($1, 'TIE', '{}', '[]', $2)",
+                "INSERT INTO run (run_id, record_identity, sampler, boundary_set, record_session, \
+                 ingest_status) VALUES ($1, 'TIE', '{}', '[]', $2, 'whole')",
             )
             .bind(format!("{tag}-{suffix}"))
             .bind(&tag)

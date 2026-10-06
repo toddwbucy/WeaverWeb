@@ -1,0 +1,7 @@
+{"positions":6,"with_entropy":6,"with_surprisal":6,"generations":[{"turn":"t-1","perplexity":1.6131527,"output_count":3,"weights_hash":"56f2bf9e6d248e1ab1c54ec2e6ed21687f1ed2b6b4c2fea91e5c0de0c5598279","run":"2026-09-01T14:06:58.645Z-karl-11d2735470f06979","session":"s-karl-1"},{"turn":"t-2","perplexity":2.2086716,"output_count":3,"weights_hash":"56f2bf9e6d248e1ab1c54ec2e6ed21687f1ed2b6b4c2fea91e5c0de0c5598279","run":"2026-09-01T14:06:58.645Z-karl-11d2735470f06979","session":"s-karl-1"}]}
+{"entropy":1.7843577861785889,"ordinal":0,"surprisal":0.6211564540863037,"token":9707,"turn":"t-1"}
+{"entropy":0.30716538429260254,"ordinal":1,"surprisal":0.0627235695719719,"token":11,"turn":"t-1"}
+{"entropy":2.344388246536255,"ordinal":2,"surprisal":2.5195486545562744,"token":847,"turn":"t-1"}
+{"entropy":3.655311107635498,"ordinal":0,"surprisal":2.7137198448181152,"token":21338,"turn":"t-2"}
+{"entropy":0.6683431267738342,"ordinal":1,"surprisal":2.6724233627319336,"token":7542,"turn":"t-2"}
+{"entropy":2.9259190559387207,"ordinal":2,"surprisal":4.103383541107178,"token":25,"turn":"t-2"}

@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Foundations and IA</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#F6F5F1;color:#17181A;font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:14px;line-height:1.45}
+a{color:#1D5C86}a:hover{color:#123E5C}
+button{font:inherit;cursor:pointer}
+.mono{font-family:'IBM Plex Mono',ui-monospace,monospace}
+.absent{font-family:'IBM Plex Mono',ui-monospace,monospace;color:#5B5E66;border:1px dashed #8A8D95;border-radius:3px;padding:0 6px;font-size:12px}
+.pill{display:inline-block;border:1px solid #D9D7CF;border-radius:999px;padding:2px 10px;font-size:12px;background:#FFFFFF;color:#17181A}
+th{font-weight:500;color:#5B5E66;font-size:12px;text-align:left;padding:8px 10px;border-bottom:1px solid #D9D7CF}
+td{padding:8px 10px;border-bottom:1px solid #ECEAE3;vertical-align:top;font-size:13px}
+</style>
+</helmet>
+<div style="min-height: 100vh; display: flex; flex-direction: column; padding: 28px 32px; box-sizing: border-box; gap: 20px; max-width: 1440px; margin: 0 auto; width: 100%">
+
+  <div style="display: flex; flex-direction: column; gap: 4px">
+    <h1 style="margin: 0; font-size: 24px; font-weight: 600">Foundations and information architecture</h1>
+    <p style="margin: 0; color: #5B5E66">One look for every surface: a research instrument, dense and quiet, where identifiers are monospace and absence is a word, never a blank.</p>
+  </div>
+
+  <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px">
+
+    <section style="display: flex; flex-direction: column; gap: 12px; padding: 16px; background: #FFFFFF; border: 1px solid #D9D7CF; border-radius: 6px">
+      <h2 style="margin: 0; font-size: 14px; font-weight: 600">Color</h2>
+      <div style="display: flex; flex-direction: column; gap: 6px; font-size: 12px">
+        <div style="display: flex; align-items: center; gap: 10px"><span style="width: 36px; height: 24px; background: #F6F5F1; border: 1px solid #D9D7CF; border-radius: 3px"></span><span class="mono">#F6F5F1</span><span style="color: #5B5E66">ground</span></div>
+        <div style="display: flex; align-items: center; gap: 10px"><span style="width: 36px; height: 24px; background: #FFFFFF; border: 1px solid #D9D7CF; border-radius: 3px"></span><span class="mono">#FFFFFF</span><span style="color: #5B5E66">panel</span></div>
+        <div style="display: flex; align-items: center; gap: 10px"><span style="width: 36px; height: 24px; background: #17181A; border-radius: 3px"></span><span class="mono">#17181A</span><span style="color: #5B5E66">ink</span></div>
+        <div style="display: flex; align-items: center; gap: 10px"><span style="width: 36px; height: 24px; background: #5B5E66; border-radius: 3px"></span><span class="mono">#5B5E66</span><span style="color: #5B5E66">muted, 6.0:1 on ground</span></div>
+        <div style="display: flex; align-items: center; gap: 10px"><span style="width: 36px; height: 24px; background: #1D5C86; border-radius: 3px"></span><span class="mono">#1D5C86</span><span style="color: #5B5E66">action, links, surprisal</span></div>
+        <div style="display: flex; align-items: center; gap: 10px"><span style="width: 36px; height: 24px; background: #9A5B00; border-radius: 3px"></span><span class="mono">#9A5B00</span><span style="color: #5B5E66">entropy, quiesced</span></div>
+        <div style="display: flex; align-items: center; gap: 10px"><span style="width: 36px; height: 24px; background: #2E6B3A; border-radius: 3px"></span><span class="mono">#2E6B3A</span><span style="color: #5B5E66">pass, certified</span></div>
+        <div style="display: flex; align-items: center; gap: 10px"><span style="width: 36px; height: 24px; background: #A33A2A; border-radius: 3px"></span><span class="mono">#A33A2A</span><span style="color: #5B5E66">fail, uncertified</span></div>
+        <div style="display: flex; align-items: center; gap: 10px"><span style="width: 36px; height: 24px; background: #F3EFFA; border: 1px solid #B9A9DB; border-radius: 3px"></span><span class="mono">#F3EFFA</span><span style="color: #5B5E66">interview tint (interrupt-authored events)</span></div>
+      </div>
+      <p style="margin: 0; font-size: 12px; color: #5B5E66">The two series colors differ in lightness as well as hue. Pass and fail never rely on green versus red alone: each carries its word.</p>
+    </section>
+
+    <section style="display: flex; flex-direction: column; gap: 12px; padding: 16px; background: #FFFFFF; border: 1px solid #D9D7CF; border-radius: 6px">
+      <h2 style="margin: 0; font-size: 14px; font-weight: 600">Type and vocabulary</h2>
+      <div style="font-size: 24px; font-weight: 600">IBM Plex Sans 24 / 600, a surface title</div>
+      <div style="font-size: 14px">IBM Plex Sans 14 / 400, body and table cells</div>
+      <div style="font-size: 12px; color: #5B5E66">12 / 400 muted, labels and provenance lines</div>
+      <div class="mono" style="font-size: 14px">IBM Plex Mono 14, run ids, tokens, positions, tuple values</div>
+      <h3 style="margin: 8px 0 0; font-size: 12px; font-weight: 600; color: #5B5E66">Absence vocabulary (Spec section 6)</h3>
+      <div style="display: flex; flex-direction: column; gap: 6px; font-size: 13px">
+        <div style="display: flex; gap: 10px; align-items: center"><span class="absent">absent</span><span style="color: #5B5E66">the record did not carry this member</span></div>
+        <div style="display: flex; gap: 10px; align-items: center"><span class="absent">no run</span><span style="color: #5B5E66">a staged value that never produced a run</span></div>
+        <div style="display: flex; gap: 10px; align-items: center"><span class="absent">not served</span><span style="color: #5B5E66">a seam that has no party yet (classifier, full map)</span></div>
+        <div style="display: flex; gap: 10px; align-items: center"><span class="absent">uncomputable</span><span style="color: #5B5E66">the SPU's identity sentinel, drawn as what it is</span></div>
+        <div style="display: flex; gap: 10px; align-items: center"><span class="pill" style="border-color: #B58A3A; color: #6E4E0A">stub</span><span style="color: #5B5E66">a connector answered by its stub, shown in the header on every surface</span></div>
+      </div>
+      <p style="margin: 0; font-size: 12px; color: #5B5E66">A zero, a blank cell and an empty string are values. None of them ever stands in for an absence.</p>
+    </section>
+
+    <section style="display: flex; flex-direction: column; gap: 12px; padding: 16px; background: #FFFFFF; border: 1px solid #D9D7CF; border-radius: 6px">
+      <h2 style="margin: 0; font-size: 14px; font-weight: 600">Controls</h2>
+      <div style="display: flex; gap: 8px; flex-wrap: wrap">
+        <button type="button" style="height: 36px; padding: 0 14px; border: 1px solid #1D5C86; border-radius: 4px; background: #1D5C86; color: #FFFFFF">primary</button>
+        <button type="button" style="height: 36px; padding: 0 14px; border: 1px solid #1D5C86; border-radius: 4px; background: #FFFFFF; color: #1D5C86">secondary</button>
+        <button type="button" disabled aria-disabled="true" style="height: 36px; padding: 0 14px; border: 1px solid #B9B7AF; border-radius: 4px; background: #F6F5F1; color: #5B5E66">does not apply</button>
+      </div>
+      <div style="display: flex; gap: 8px; align-items: center">
+        <button type="button" aria-pressed="true" style="height: 32px; padding: 0 12px; border: 1px solid #1D5C86; border-radius: 4px 0 0 4px; background: #1D5C86; color: #FFFFFF">in</button>
+        <button type="button" aria-pressed="false" style="height: 32px; padding: 0 12px; margin-left: -8px; border: 1px solid #1D5C86; border-radius: 0 4px 4px 0; background: #FFFFFF; color: #1D5C86">out</button>
+        <span style="font-size: 12px; color: #5B5E66">segmented toggle, one election at a time</span>
+      </div>
+      <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap">
+        <span class="pill" style="border-color: #1D5C86; color: #1D5C86; background: #F0F5F9">session: hb-2026-09-30 <span style="margin-left: 6px">&times;</span></span>
+        <span style="font-size: 12px; color: #5B5E66">a chip is a query clause; clearing widens in place</span>
+      </div>
+      <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap">
+        <span class="pill" style="border-color: #2E6B3A; color: #2E6B3A">diagnostic &middot; certified</span>
+        <span class="pill" style="border-color: #A33A2A; color: #A33A2A">diagnostic &middot; uncertified</span>
+        <span class="pill">serving &middot; no bracket</span>
+      </div>
+      <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap">
+        <span class="pill" style="border-color: #9A5B00; color: #6E4E0A; background: #FBF3E4">quiesced</span>
+        <span class="pill" style="border-color: #2E6B3A; color: #2E6B3A">running</span>
+        <span class="pill">unloaded</span>
+        <span style="font-size: 12px; color: #5B5E66">agent state, from admin-con</span>
+      </div>
+      <p style="margin: 0; font-size: 12px; color: #5B5E66">Every control is a real button, link, input or label. Targets are 32 px or taller, 36 px where the action changes the agent.</p>
+    </section>
+  </div>
+
+  <section style="display: flex; flex-direction: column; gap: 10px; padding: 16px; background: #FFFFFF; border: 1px solid #D9D7CF; border-radius: 6px">
+    <div style="display: flex; align-items: baseline; gap: 16px">
+      <h2 style="margin: 0; font-size: 14px; font-weight: 600">Surfaces, in the order the HeroBench view needs them</h2>
+      <span style="font-size: 12px; color: #5B5E66">three inputs and no others: gate through web-con, admin through admin-con, weaver-analysis into the store</span>
+    </div>
+    <table style="width: 100%; border-collapse: collapse">
+      <thead><tr><th style="width: 120px">surface</th><th>what it shows</th><th style="width: 260px">reads</th><th style="width: 260px">reaches</th><th style="width: 120px">status</th></tr></thead>
+      <tbody>
+        <tr><td style="font-weight: 600">Record</td><td>Every run and branch with its tuple; the entry to everything else.</td><td>store, read 5</td><td>nothing</td><td><span class="pill" style="border-color: #2E6B3A; color: #2E6B3A">carried</span></td></tr>
+        <tr><td style="font-weight: 600">Open a trace</td><td>A landed run as a replay: map, turns, position, timeline, interview in or out.</td><td>store, reads 1 to 3</td><td>nothing</td><td><span class="pill" style="border-color: #1D5C86; color: #1D5C86">first to build</span></td></tr>
+        <tr><td style="font-weight: 600">Live</td><td>An agent playing now: state, verbs, turns as they land, the interview.</td><td>store for the tuple</td><td>admin-con (verbs, state, capability), web-con (interrupt), the drained trace stream</td><td><span class="pill" style="border-color: #B58A3A; color: #6E4E0A">waits on Specs</span></td></tr>
+        <tr><td style="font-weight: 600">Experiments</td><td>The list of staged and registered experiments.</td><td>store, read owed</td><td>nothing</td><td><span class="pill">carried</span></td></tr>
+        <tr><td style="font-weight: 600">Stage</td><td>Author a plan from a parent: arms, sweep values, refs; then read the trials back.</td><td>store, read 4</td><td>the runner's queue, as a write it drains</td><td><span class="pill">carried</span></td></tr>
+        <tr><td style="font-weight: 600">Matrix</td><td>One parent's arms side by side: parting position, outcome, exemplar tags.</td><td>store, reads 4 and 6</td><td>nothing</td><td><span class="pill">sketched</span></td></tr>
+        <tr><td style="font-weight: 600">Agents</td><td>Loaded agents and their lifecycle.</td><td>store for declarations</td><td>admin-con</td><td><span class="pill" style="border-color: #B58A3A; color: #6E4E0A">waits on Specs</span></td></tr>
+        <tr><td style="font-weight: 600">Models</td><td>Imported artifacts, the one authoring surface off the path.</td><td>store, artifact rows</td><td>nothing</td><td><span class="pill">carried</span></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1000}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

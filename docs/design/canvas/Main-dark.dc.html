@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>HeroBench Replay (dark)</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#141519;color:#E8E6E0;font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:14px;line-height:1.45}
+a{color:#7FB0D6}a:hover{color:#A9CCE8}
+button{font:inherit;cursor:pointer}
+.mono{font-family:'IBM Plex Mono',ui-monospace,monospace}
+.absent{font-family:'IBM Plex Mono',ui-monospace,monospace;color:#A3A6AE;border:1px dashed #6E727C;border-radius:3px;padding:0 6px;font-size:12px}
+.pill{display:inline-block;border:1px solid #2E313A;border-radius:999px;padding:2px 10px;font-size:12px;background:#1C1E24;color:#E8E6E0}
+.nav a{color:#E8E6E0;text-decoration:none;padding:6px 2px}
+.nav a[aria-current]{border-bottom:2px solid #7FB0D6;font-weight:600}
+</style>
+</helmet>
+<div style="min-height: 100vh; display: flex; flex-direction: column">
+
+<header style="display: flex; align-items: center; gap: 28px; padding: 0 32px; height: 52px; background: #1C1E24; border-bottom: 1px solid #2E313A">
+  <a href="Record-dark.dc.html" style="font-weight: 600; letter-spacing: 0.02em; text-decoration: none; color: #E8E6E0">weaver-web</a>
+  <nav class="nav" aria-label="Surfaces" style="display: flex; gap: 22px; font-size: 14px">
+    <a href="Record-dark.dc.html">Record</a>
+    <a href="Main-dark.dc.html" aria-current="page">Open a trace</a>
+    <a href="Live-dark.dc.html">Live</a>
+    <a href="Matrix-dark.dc.html">Experiments</a>
+    <a href="Matrix-dark.dc.html">Stage</a>
+    <a href="Agents-dark.dc.html">Agents</a>
+    <a href="Record-dark.dc.html">Models</a>
+  </nav>
+  <div style="margin-left: auto; display: flex; align-items: center; gap: 10px; font-size: 12px; color: #A3A6AE">
+    <span class="pill">todd &middot; operator &middot; claimed, not proven</span>
+    <span class="pill" style="border-color: #B58A3A; color: #E0A24A">web-con: stub</span>
+    <span class="pill" style="border-color: #B58A3A; color: #E0A24A">admin-con: stub</span>
+    <span role="group" aria-label="Theme" style="display: inline-flex; margin-left: 6px"><button type="button" aria-pressed="false" style="height: 28px; padding: 0 10px; border: 1px solid #2E313A; border-radius: 4px 0 0 4px; background: #1C1E24; color: #E8E6E0; font-size: 12px">auto</button><button type="button" aria-pressed="false" style="height: 28px; padding: 0 10px; margin-left: -1px; border: 1px solid #2E313A; background: #1C1E24; color: #E8E6E0; font-size: 12px">light</button><button type="button" aria-pressed="true" style="height: 28px; padding: 0 10px; margin-left: -1px; border: 1px solid #7FB0D6; border-radius: 0 4px 4px 0; background: #7FB0D6; color: #141519; font-size: 12px">dark</button></span>
+  </div>
+</header>
+
+<main style="flex-grow: 1; display: flex; flex-direction: column; gap: 16px; padding: 20px 32px 28px; max-width: 1440px; box-sizing: border-box; width: 100%; margin: 0 auto">
+
+  <div style="display: flex; flex-direction: column; gap: 6px">
+    <p style="margin: 0; font-size: 12px; color: #A3A6AE"><a href="Record-dark.dc.html">Record</a> &rsaquo; run <span class="mono">hb-0930-017</span></p>
+    <div style="display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap">
+      <h1 style="margin: 0; font-size: 24px; font-weight: 600">Replay: rusty on HeroBench task 17, the flooded mine</h1>
+      <span class="pill" style="border-color: #7CC08A; color: #7CC08A">diagnostic record &middot; certified</span>
+      <span class="pill">score 3 of 5 &middot; 41 turns &middot; 14m 02s</span>
+    </div>
+    <dl style="display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 12px; margin: 6px 0 0; padding: 12px 16px; background: #1C1E24; border: 1px solid #2E313A; border-radius: 6px; font-size: 12px">
+      <div><dt style="color: #A3A6AE">device</dt><dd class="mono" style="margin: 0">cuda:0</dd></div>
+      <div><dt style="color: #A3A6AE">engine</dt><dd class="mono" style="margin: 0">weaver-spu 0.9.2</dd></div>
+      <div><dt style="color: #A3A6AE">seed</dt><dd style="margin: 0"><span class="absent">absent</span></dd></div>
+      <div><dt style="color: #A3A6AE">session</dt><dd class="mono" style="margin: 0"><a href="Record-dark.dc.html">hb-2026-09-30</a></dd></div>
+      <div><dt style="color: #A3A6AE">lineage</dt><dd class="mono" style="margin: 0">parent hb-0929-041 @ turn 9</dd></div>
+      <div><dt style="color: #A3A6AE">record identity</dt><dd class="mono" style="margin: 0">sha256:7f3a...c91e</dd></div>
+      <div><dt style="color: #A3A6AE">ingested</dt><dd class="mono" style="margin: 0">2026-09-30 11:42</dd></div>
+    </dl>
+  </div>
+
+  <div style="display: flex; align-items: center; gap: 24px; flex-wrap: wrap; padding: 10px 16px; background: #1C1E24; border: 1px solid #2E313A; border-radius: 6px">
+    <div style="display: flex; align-items: center; gap: 8px">
+      <span style="font-size: 12px; color: #A3A6AE">Interview</span>
+      <button type="button" onClick="{{ interviewIn }}" aria-pressed="{{ interview }}" style="height: 32px; padding: 0 12px; border: 1px solid #7FB0D6; border-radius: 4px 0 0 4px; background: {{ inBg }}; color: {{ inFg }}">in</button>
+      <button type="button" onClick="{{ interviewOut }}" aria-pressed="{{ notInterview }}" style="height: 32px; padding: 0 12px; margin-left: -8px; border: 1px solid #7FB0D6; border-radius: 0 4px 4px 0; background: {{ outBg }}; color: {{ outFg }}">out</button>
+      <span style="font-size: 12px; color: #A3A6AE">excludes by interrupt identifier on every event</span>
+    </div>
+    <div style="display: flex; align-items: center; gap: 8px">
+      <span style="font-size: 12px; color: #A3A6AE">Map</span>
+      <button type="button" onClick="{{ fogOn }}" aria-pressed="{{ fog }}" style="height: 32px; padding: 0 12px; border: 1px solid #7FB0D6; border-radius: 4px 0 0 4px; background: {{ fogBg }}; color: {{ fogFg }}">agent-visible</button>
+      <button type="button" disabled aria-disabled="true" style="height: 32px; padding: 0 12px; margin-left: -8px; border: 1px solid #4A4E58; border-radius: 0 4px 4px 0; background: #141519; color: #A3A6AE">full map</button>
+      <span style="font-size: 12px; color: #A3A6AE">full map has no data path yet (rewind sketch, section 6)</span>
+    </div>
+    <div style="display: flex; align-items: center; gap: 8px; margin-left: auto">
+      <span style="font-size: 12px; color: #A3A6AE">Classifier labels</span>
+      <span class="absent">not served</span>
+    </div>
+  </div>
+
+  <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px">
+
+    <section aria-labelledby="map-h" style="display: flex; flex-direction: column; gap: 10px; padding: 16px; background: #1C1E24; border: 1px solid #2E313A; border-radius: 6px">
+      <div style="display: flex; align-items: baseline; justify-content: space-between">
+        <h2 id="map-h" style="margin: 0; font-size: 14px; font-weight: 600">Map at turn 12</h2>
+        <span style="font-size: 12px; color: #A3A6AE">derived from the game dump on the task's user turn</span>
+      </div>
+      <div style="display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 2px; aspect-ratio: 1 / 1">
+        <sc-for list="{{ cells }}" as="c" hint-placeholder-count="144">
+          <div title="{{ c.label }}" style="background: {{ c.fill }}; border-radius: 2px; display: flex; align-items: center; justify-content: center; font-size: 10px; color: {{ c.fg }}">{{ c.glyph }}</div>
+        </sc-for>
+      </div>
+      <div style="display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: #A3A6AE">
+        <span><span style="display: inline-block; width: 10px; height: 10px; background: #7FB0D6; border-radius: 2px; vertical-align: -1px"></span> agent</span>
+        <span><span style="display: inline-block; width: 10px; height: 10px; background: #3A4B5A; border-radius: 2px; vertical-align: -1px"></span> seen floor</span>
+        <span><span style="display: inline-block; width: 10px; height: 10px; background: #8A909C; border-radius: 2px; vertical-align: -1px"></span> wall</span>
+        <span><span style="display: inline-block; width: 10px; height: 10px; background: #E0A24A; border-radius: 2px; vertical-align: -1px"></span> water</span>
+        <span><span style="display: inline-block; width: 10px; height: 10px; background: #22252C; border: 1px dashed #4A4E58; border-radius: 2px; vertical-align: -1px"></span> fog</span>
+      </div>
+    </section>
+
+    <section aria-labelledby="tr-h" style="display: flex; flex-direction: column; gap: 10px; padding: 16px; background: #1C1E24; border: 1px solid #2E313A; border-radius: 6px">
+      <div style="display: flex; align-items: baseline; justify-content: space-between">
+        <h2 id="tr-h" style="margin: 0; font-size: 14px; font-weight: 600">Turns</h2>
+        <span style="font-size: 12px; color: #A3A6AE">{{ shownCount }} shown of 41</span>
+      </div>
+      <ol style="list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 520px; overflow: auto">
+        <sc-for list="{{ turns }}" as="t" hint-placeholder-count="6">
+          <li style="display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border-radius: 4px; border: 1px solid {{ t.border }}; background: {{ t.bg }}">
+            <div style="display: flex; gap: 8px; align-items: baseline; font-size: 12px; color: #A3A6AE">
+              <span class="mono">turn {{ t.n }}</span>
+              <span>{{ t.who }}</span>
+              <sc-if value="{{ t.interrupt }}" hint-placeholder-val="{{ false }}">
+                <span class="mono" style="color: #B8A8E6">interrupt {{ t.interruptId }}</span>
+              </sc-if>
+              <span style="margin-left: auto">label: <span class="absent">absent</span></span>
+            </div>
+            <div style="font-size: 13px">{{ t.text }}</div>
+            <sc-if value="{{ t.score }}" hint-placeholder-val="{{ false }}">
+              <div class="mono" style="font-size: 12px; color: #7CC08A">score event: +1 (task 17, criterion: pump restarted)</div>
+            </sc-if>
+          </li>
+        </sc-for>
+      </ol>
+    </section>
+
+    <section aria-labelledby="pos-h" style="display: flex; flex-direction: column; gap: 10px; padding: 16px; background: #1C1E24; border: 1px solid #2E313A; border-radius: 6px">
+      <div style="display: flex; align-items: baseline; justify-content: space-between">
+        <h2 id="pos-h" style="margin: 0; font-size: 14px; font-weight: 600">Position</h2>
+        <span class="mono" style="font-size: 12px; color: #A3A6AE">turn 12 &middot; ordinal 38 &middot; position 1,207</span>
+      </div>
+      <p style="margin: 0; font-size: 12px; color: #A3A6AE">The timeline is drawn on ordinals. This click was converted once to a position and addresses the field at resident length 1,207.</p>
+      <div style="display: flex; gap: 12px; padding: 10px 12px; background: #141519; border-radius: 4px">
+        <div style="flex-grow: 1"><div style="font-size: 12px; color: #A3A6AE">emitted token</div><div class="mono" style="font-size: 16px">&quot; north&quot;</div></div>
+        <div><div style="font-size: 12px; color: #A3A6AE">entropy</div><div class="mono" style="font-size: 16px; color: #E0A24A">2.41</div></div>
+        <div><div style="font-size: 12px; color: #A3A6AE">surprisal</div><div class="mono" style="font-size: 16px; color: #7FB0D6">1.08</div></div>
+      </div>
+      <h3 style="margin: 4px 0 0; font-size: 12px; font-weight: 600; color: #A3A6AE">Alternatives at this position (read 1)</h3>
+      <table style="border-collapse: collapse; font-size: 13px">
+        <thead><tr style="text-align: left; color: #A3A6AE; font-size: 12px"><th style="padding: 4px 0; font-weight: 500">token</th><th style="padding: 4px 0; font-weight: 500">p</th><th style="padding: 4px 0; font-weight: 500; width: 45%">share</th></tr></thead>
+        <tbody>
+          <sc-for list="{{ alts }}" as="a" hint-placeholder-count="5">
+            <tr>
+              <td class="mono" style="padding: 4px 0; border-top: 1px solid #262930">{{ a.tok }}</td>
+              <td class="mono" style="padding: 4px 8px 4px 0; border-top: 1px solid #262930">{{ a.p }}</td>
+              <td style="padding: 4px 0; border-top: 1px solid #262930"><div style="height: 8px; border-radius: 2px; background: {{ a.bar }}; width: {{ a.w }}"></div></td>
+            </tr>
+          </sc-for>
+        </tbody>
+      </table>
+      <div style="display: flex; gap: 8px; margin-top: auto">
+        <a href="Matrix-dark.dc.html" style="display: inline-flex; align-items: center; height: 36px; padding: 0 14px; border: 1px solid #7FB0D6; border-radius: 4px; background: #7FB0D6; color: #141519; text-decoration: none">Stage arms from here</a>
+        <a href="Live-dark.dc.html" style="display: inline-flex; align-items: center; height: 36px; padding: 0 14px; border: 1px solid #7FB0D6; border-radius: 4px; background: #1C1E24; color: #7FB0D6; text-decoration: none">Branch a live run at turn 12</a>
+      </div>
+    </section>
+  </div>
+
+  <section aria-labelledby="tl-h" style="display: flex; flex-direction: column; gap: 10px; padding: 16px; background: #1C1E24; border: 1px solid #2E313A; border-radius: 6px">
+    <div style="display: flex; align-items: baseline; gap: 16px">
+      <h2 id="tl-h" style="margin: 0; font-size: 14px; font-weight: 600">Timeline: per-position series, turns 1 to 41</h2>
+      <span style="font-size: 12px; color: #E0A24A">entropy (rides every generation)</span>
+      <span style="font-size: 12px; color: #7FB0D6">surprisal (only where its election stood)</span>
+      <span style="margin-left: auto; font-size: 12px; color: #A3A6AE">drag to scrub &middot; click a bar to address its position</span>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 4px">
+      <div style="display: flex; align-items: flex-end; gap: 2px; height: 120px; border-bottom: 1px solid #2E313A">
+        <sc-for list="{{ bars }}" as="b" hint-placeholder-count="41">
+          <div style="flex-grow: 1; display: flex; align-items: flex-end; gap: 1px; height: 100%">
+            <div title="turn {{ b.n }} entropy {{ b.e }}" style="flex-grow: 1; height: {{ b.eh }}; background: #8A5A16; border-top: 2px solid #E0A24A"></div>
+            <sc-if value="{{ b.hasS }}" hint-placeholder-val="{{ true }}">
+              <div title="turn {{ b.n }} surprisal {{ b.s }}" style="flex-grow: 1; height: {{ b.sh }}; background: #3E6A8C; border-top: 2px solid #7FB0D6"></div>
+            </sc-if>
+            <sc-if value="{{ b.noS }}" hint-placeholder-val="{{ false }}">
+              <div title="turn {{ b.n }} surprisal absent" style="flex-grow: 1; height: 100%; border: 1px dashed #4A4E58; box-sizing: border-box; background: repeating-linear-gradient(135deg, #1C1E24 0 4px, #262930 4px 6px)"></div>
+            </sc-if>
+          </div>
+        </sc-for>
+      </div>
+      <div style="display: flex; justify-content: space-between; font-size: 11px; color: #A3A6AE" class="mono"><span>turn 1</span><span>turn 9 (branch)</span><span>turn 12 (addressed)</span><span>turn 27 (interview)</span><span>turn 41</span></div>
+      <p style="margin: 4px 0 0; font-size: 12px; color: #A3A6AE">Turns 1 to 8 are the parent's prefix, replayed under the diagnostic binding with no surprisal election: drawn as absent, never as zero.</p>
+    </div>
+  </section>
+
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1180}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { interview: true, fog: true };
+  }
+  renderVals() {
+    const interview = this.state.interview;
+    const fog = this.state.fog;
+    const on = { bg: '#7FB0D6', fg: '#141519' };
+    const off = { bg: '#1C1E24', fg: '#7FB0D6' };
+    const W = 12;
+    const walls = new Set([0,1,2,3,4,5,6,7,8,9,10,11,12,23,24,35,36,47,48,59,60,71,72,83,84,95,96,107,108,119,120,131,132,133,134,135,136,137,138,139,140,141,142,143,27,28,29,30,51,52,53,75,76,77,78,79]);
+    const water = new Set([88,89,90,100,101,102,103,113,114,115]);
+    const agent = 65;
+    const seen = new Set([37,38,39,40,41,49,50,54,61,62,63,64,66,67,68,73,74,80,85,86,87,97,98,99,110,111]);
+    const cells = [];
+    for (let i = 0; i < W * W; i++) {
+      const isWall = walls.has(i), isWater = water.has(i);
+      const visible = !fog || seen.has(i) || i === agent || (fog && (Math.abs((i % W) - (agent % W)) <= 2 && Math.abs(Math.floor(i / W) - Math.floor(agent / W)) <= 2));
+      let fill = '#22252C', fg = '#A3A6AE', glyph = '', label = 'fog';
+      if (i === agent) { fill = '#7FB0D6'; fg = '#141519'; glyph = 'A'; label = 'agent'; }
+      else if (visible && isWall) { fill = '#8A909C'; label = 'wall'; }
+      else if (visible && isWater) { fill = '#E0A24A'; label = 'water'; }
+      else if (visible) { fill = '#3A4B5A'; label = 'floor'; }
+      cells.push({ fill, fg, glyph, label });
+    }
+    const allTurns = [
+      { n: 9,  who: 'user (task)', text: 'Game dump: you stand at the mine mouth. Water is rising in the east gallery. Find the pump and restart it.', border: '#2E313A', bg: '#1C1E24' },
+      { n: 10, who: 'rusty', text: 'The gallery slopes east. I will move north first to read the sign on the wall.', border: '#2E313A', bg: '#1C1E24' },
+      { n: 11, who: 'environment', text: 'You move north. A sign reads: PUMP ROOM, LOWER LEVEL. Water laps at your boots.', border: '#2E313A', bg: '#1C1E24' },
+      { n: 12, who: 'rusty', text: 'Go north through the pump-room door and look for the valve wheel.', border: '#7FB0D6', bg: '#1F2A35', addressed: true },
+      { n: 27, who: 'researcher (interview)', text: 'Why did you leave the east gallery before checking the water level?', border: '#6B5CA5', bg: '#2A2440', interrupt: true, interruptId: 'iq-3c8' },
+      { n: 28, who: 'rusty (quiesced)', text: 'The sign named the pump room and the water was rising, so I judged the level was not worth a turn.', border: '#6B5CA5', bg: '#2A2440', interrupt: true, interruptId: 'iq-3c8' },
+      { n: 33, who: 'environment', text: 'You turn the valve wheel. The pump coughs, then runs.', border: '#2E313A', bg: '#1C1E24', score: true },
+    ];
+    const turns = interview ? allTurns : allTurns.filter((t) => !t.interrupt);
+    const alts = [
+      { tok: '" north"', p: '0.61', w: '61%', bar: '#7FB0D6' },
+      { tok: '" east"',  p: '0.19', w: '19%', bar: '#3E6A8C' },
+      { tok: '" back"',  p: '0.09', w: '9%',  bar: '#3E6A8C' },
+      { tok: '" down"',  p: '0.06', w: '6%',  bar: '#3E6A8C' },
+      { tok: '" wait"',  p: '0.03', w: '3%',  bar: '#3E6A8C' },
+    ];
+    const ent = [2.1,1.8,2.4,1.6,2.9,2.2,1.9,2.6,3.4,2.0,2.3,2.4,1.7,1.5,2.8,3.1,2.2,1.9,1.4,2.6,2.0,2.7,3.0,2.1,1.8,2.5,3.6,3.2,2.0,1.7,2.3,2.9,1.2,1.6,2.1,2.4,1.9,2.2,2.6,1.8,1.5];
+    const sur = [null,null,null,null,null,null,null,null,1.9,0.8,1.2,1.08,0.6,0.5,1.7,2.3,1.1,0.9,0.4,1.5,0.9,1.6,2.1,1.0,0.7,1.3,2.8,2.4,0.9,0.6,1.2,1.9,0.3,0.7,1.0,1.3,0.8,1.1,1.6,0.9,0.5];
+    const bars = ent.map((e, i) => ({
+      n: i + 1, e: e.toFixed(2), eh: Math.round((e / 4) * 100) + '%',
+      hasS: sur[i] !== null, noS: sur[i] === null,
+      s: sur[i] === null ? 'absent' : sur[i].toFixed(2), sh: sur[i] === null ? '0%' : Math.round((sur[i] / 4) * 100) + '%',
+    }));
+    return {
+      interview, notInterview: !interview, fog,
+      inBg: interview ? on.bg : off.bg, inFg: interview ? on.fg : off.fg,
+      outBg: interview ? off.bg : on.bg, outFg: interview ? off.fg : on.fg,
+      fogBg: on.bg, fogFg: on.fg,
+      interviewIn: () => this.setState({ interview: true }),
+      interviewOut: () => this.setState({ interview: false }),
+      fogOn: () => this.setState({ fog: true }),
+      cells, turns, shownCount: turns.length, alts, bars,
+    };
+  }
+}
+</script>
+</body>
+</html>

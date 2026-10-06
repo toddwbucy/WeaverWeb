@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ablation Matrix</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#F6F5F1;color:#17181A;font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:14px;line-height:1.45}
+a{color:#1D5C86}a:hover{color:#123E5C}
+button{font:inherit;cursor:pointer}
+.mono{font-family:'IBM Plex Mono',ui-monospace,monospace}
+.absent{font-family:'IBM Plex Mono',ui-monospace,monospace;color:#5B5E66;border:1px dashed #8A8D95;border-radius:3px;padding:0 6px;font-size:12px}
+.pill{display:inline-block;border:1px solid #D9D7CF;border-radius:999px;padding:2px 10px;font-size:12px;background:#FFFFFF;color:#17181A}
+.nav a{color:#17181A;text-decoration:none;padding:6px 2px}
+.nav a[aria-current]{border-bottom:2px solid #1D5C86;font-weight:600}
+th{font-weight:500;color:#5B5E66;font-size:12px;text-align:left;padding:10px 12px;border-bottom:1px solid #D9D7CF;vertical-align:top}
+td{padding:10px 12px;border-bottom:1px solid #ECEAE3;vertical-align:top;font-size:13px}
+</style>
+</helmet>
+<div style="min-height: 100vh; display: flex; flex-direction: column">
+
+<header style="display: flex; align-items: center; gap: 28px; padding: 0 32px; height: 52px; background: #FFFFFF; border-bottom: 1px solid #D9D7CF">
+  <a href="Record.dc.html" style="font-weight: 600; letter-spacing: 0.02em; text-decoration: none; color: #17181A">weaver-web</a>
+  <nav class="nav" aria-label="Surfaces" style="display: flex; gap: 22px; font-size: 14px">
+    <a href="Record.dc.html">Record</a>
+    <a href="Main.dc.html">Open a trace</a>
+    <a href="Live.dc.html">Live</a>
+    <a href="Matrix.dc.html" aria-current="page">Experiments</a>
+    <a href="Matrix.dc.html">Stage</a>
+    <a href="Agents.dc.html">Agents</a>
+    <a href="Record.dc.html">Models</a>
+  </nav>
+  <div style="margin-left: auto; display: flex; align-items: center; gap: 10px; font-size: 12px; color: #5B5E66">
+    <span class="pill">todd &middot; operator &middot; claimed, not proven</span>
+    <span class="pill" style="border-color: #B58A3A; color: #6E4E0A">web-con: stub</span>
+    <span class="pill" style="border-color: #B58A3A; color: #6E4E0A">admin-con: stub</span>
+    <span role="group" aria-label="Theme" style="display: inline-flex; margin-left: 6px"><button type="button" aria-pressed="false" style="height: 28px; padding: 0 10px; border: 1px solid #D9D7CF; border-radius: 4px 0 0 4px; background: #FFFFFF; color: #17181A; font-size: 12px">auto</button><button type="button" aria-pressed="true" style="height: 28px; padding: 0 10px; margin-left: -1px; border: 1px solid #1D5C86; background: #1D5C86; color: #FFFFFF; font-size: 12px">light</button><button type="button" aria-pressed="false" style="height: 28px; padding: 0 10px; margin-left: -1px; border: 1px solid #D9D7CF; border-radius: 0 4px 4px 0; background: #FFFFFF; color: #17181A; font-size: 12px">dark</button></span>
+  </div>
+</header>
+
+<main style="flex-grow: 1; display: flex; flex-direction: column; gap: 16px; padding: 20px 32px 28px; max-width: 1440px; box-sizing: border-box; width: 100%; margin: 0 auto">
+
+  <div style="display: flex; flex-direction: column; gap: 6px">
+    <p style="margin: 0; font-size: 12px; color: #5B5E66"><a href="Record.dc.html">Record</a> &rsaquo; <a href="Main.dc.html">hb-0930-016</a> &rsaquo; experiment <span class="mono">exp-0930-a</span></p>
+    <div style="display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap">
+      <h1 style="margin: 0; font-size: 24px; font-weight: 600">Matrix: what hb-0930-016's success depended on</h1>
+      <span class="pill" style="border-color: #2E6B3A; color: #2E6B3A">registered &middot; immutable</span>
+      <span class="pill">parent scored 5 of 5 &middot; 8 values &middot; 6 ran</span>
+      <span style="margin-left: auto; font-size: 12px; color: #5B5E66">read 4: the unit is the value, not the run</span>
+    </div>
+  </div>
+
+  <div style="display: flex; gap: 16px; align-items: stretch">
+    <div style="flex-grow: 1; background: #FFFFFF; border: 1px solid #D9D7CF; border-radius: 6px; overflow: hidden">
+      <table style="width: 100%; border-collapse: collapse">
+        <thead>
+          <tr>
+            <th style="width: 200px">member</th>
+            <th style="background: #F0F5F9"><div style="font-weight: 600; color: #17181A">parent</div><div class="mono">hb-0930-016</div></th>
+            <sc-for list="{{ arms }}" as="a" hint-placeholder-count="4">
+              <th><div style="font-weight: 600; color: #17181A">{{ a.name }}</div><div class="mono">{{ a.run }}</div></th>
+            </sc-for>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td style="color: #5B5E66">sampler.temperature</td>
+            <td class="mono" style="background: #F0F5F9">0.7</td>
+            <td class="mono">0.7</td>
+            <td class="mono" style="color: #9A5B00; font-weight: 500">0.2</td>
+            <td class="mono" style="color: #9A5B00; font-weight: 500">1.1</td>
+            <td class="mono">0.7</td>
+          </tr>
+          <tr>
+            <td style="color: #5B5E66">window.resident</td>
+            <td class="mono" style="background: #F0F5F9">4096</td>
+            <td class="mono" style="color: #9A5B00; font-weight: 500">2048</td>
+            <td class="mono">4096</td>
+            <td class="mono">4096</td>
+            <td class="mono">4096</td>
+          </tr>
+          <tr>
+            <td style="color: #5B5E66">seed</td>
+            <td class="mono" style="background: #F0F5F9">20260930</td>
+            <td class="mono">20260930</td>
+            <td class="mono">20260930</td>
+            <td class="mono">20260930</td>
+            <td class="mono">20260930</td>
+          </tr>
+          <tr>
+            <td style="color: #5B5E66">swept value</td>
+            <td style="background: #F0F5F9"><span class="absent">n/a: parent</span></td>
+            <td class="mono">2048</td>
+            <td class="mono">0.2</td>
+            <td class="mono">1.1</td>
+            <td><span class="absent">absent: this arm frees nothing</span></td>
+          </tr>
+          <tr>
+            <td style="color: #5B5E66">parting position</td>
+            <td style="background: #F0F5F9"><span class="absent">n/a: parent</span></td>
+            <td class="mono">position 1,412 (turn 14)</td>
+            <td class="mono">position 388 (turn 4)</td>
+            <td><span class="absent">no run</span></td>
+            <td class="mono" style="color: #2E6B3A">never parted</td>
+          </tr>
+          <tr>
+            <td style="color: #5B5E66">outcome</td>
+            <td style="background: #F0F5F9"><span class="pill" style="border-color: #2E6B3A; color: #2E6B3A">pass 5 / 5</span></td>
+            <td><span class="pill" style="border-color: #2E6B3A; color: #2E6B3A">pass 4 / 5</span></td>
+            <td><span class="pill" style="border-color: #A33A2A; color: #A33A2A">fail 2 / 5</span></td>
+            <td><span class="absent">no run: arm kept its place</span></td>
+            <td><span class="pill" style="border-color: #2E6B3A; color: #2E6B3A">pass 5 / 5</span></td>
+          </tr>
+          <tr>
+            <td style="color: #5B5E66">exemplar</td>
+            <td style="background: #F0F5F9"><label style="display: inline-flex; gap: 6px; align-items: center"><input type="checkbox" checked> tag</label></td>
+            <td><label style="display: inline-flex; gap: 6px; align-items: center"><input type="checkbox"> tag</label></td>
+            <td><label style="display: inline-flex; gap: 6px; align-items: center"><input type="checkbox" disabled> tag</label></td>
+            <td><span class="absent">no run</span></td>
+            <td><label style="display: inline-flex; gap: 6px; align-items: center"><input type="checkbox" checked> tag</label></td>
+          </tr>
+          <tr>
+            <td style="color: #5B5E66">open</td>
+            <td style="background: #F0F5F9"><a href="Main.dc.html">replay</a></td>
+            <td><a href="Main.dc.html">replay</a> &middot; <a href="Main.dc.html">diff to parent</a></td>
+            <td><a href="Main.dc.html">replay</a> &middot; <a href="Main.dc.html">diff to parent</a></td>
+            <td><span style="color: #5B5E66">queued for the runner</span></td>
+            <td><a href="Main.dc.html">replay</a></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <aside aria-labelledby="rd-h" style="width: 320px; flex-shrink: 0; display: flex; flex-direction: column; gap: 12px; padding: 16px; background: #FFFFFF; border: 1px solid #D9D7CF; border-radius: 6px">
+      <h2 id="rd-h" style="margin: 0; font-size: 14px; font-weight: 600">Reading</h2>
+      <p style="margin: 0; font-size: 13px">The strongest reading here is <strong>never parted</strong>: the fourth arm moved two members, freed none, and reproduced its parent byte for byte. The window sweep parted late and still passed. Temperature 0.2 parted at turn 4 and failed.</p>
+      <p style="margin: 0; font-size: 13px">Temperature 1.1 has not run. Its column stays because the frozen set records the absence.</p>
+      <h3 style="margin: 4px 0 0; font-size: 12px; font-weight: 600; color: #5B5E66">Similarity to parent (recorded query, 2.6)</h3>
+      <div style="display: flex; flex-direction: column; gap: 6px">
+        <sc-for list="{{ sims }}" as="s" hint-placeholder-count="4">
+          <div style="display: flex; align-items: center; gap: 8px; font-size: 12px">
+            <span class="mono" style="width: 110px">{{ s.name }}</span>
+            <sc-if value="{{ s.has }}" hint-placeholder-val="{{ true }}">
+              <div style="flex-grow: 1; height: 8px; background: #ECEAE3; border-radius: 2px"><div style="height: 8px; width: {{ s.w }}; background: #1D5C86; border-radius: 2px"></div></div>
+              <span class="mono" style="width: 40px; text-align: right">{{ s.v }}</span>
+            </sc-if>
+            <sc-if value="{{ s.none }}" hint-placeholder-val="{{ false }}">
+              <span class="absent">no run</span>
+            </sc-if>
+          </div>
+        </sc-for>
+      </div>
+      <div style="margin-top: auto; display: flex; flex-direction: column; gap: 8px">
+        <a href="Matrix.dc.html" style="display: inline-flex; align-items: center; justify-content: center; height: 40px; border: 1px solid #1D5C86; border-radius: 4px; background: #1D5C86; color: #FFFFFF; text-decoration: none">Stage a new plan from this parent</a>
+        <a href="Matrix.dc.html" style="display: inline-flex; align-items: center; justify-content: center; height: 40px; border: 1px solid #1D5C86; border-radius: 4px; background: #FFFFFF; color: #1D5C86; text-decoration: none">Export tagged exemplars</a>
+      </div>
+    </aside>
+  </div>
+
+  <div style="display: flex; gap: 12px; padding: 12px 16px; background: #FFFFFF; border: 1px solid #D9D7CF; border-radius: 6px; font-size: 12px; color: #5B5E66; align-items: baseline">
+    <span style="font-weight: 600; color: #17181A">Not a commit graph, not a merge, not a judge of quality, not a ledger</span>
+    <span>The columns are the arms of one parent, a handful side by side. Outcome is a binary predicate the task supplies. No run has two parents.</span>
+  </div>
+
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1000}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const arms = [
+      { name: 'window 2048', run: 'hb-0930-016-a1' },
+      { name: 'temp 0.2', run: 'hb-0930-016-a2' },
+      { name: 'temp 1.1', run: 'no run' },
+      { name: 'temp + window, held', run: 'hb-0930-016-a4' },
+    ];
+    const sims = [
+      { name: 'a1 window', has: true, none: false, w: '82%', v: '0.82' },
+      { name: 'a2 temp 0.2', has: true, none: false, w: '31%', v: '0.31' },
+      { name: 'a3 temp 1.1', has: false, none: true },
+      { name: 'a4 held', has: true, none: false, w: '100%', v: '1.00' },
+    ];
+    return { arms, sims };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Record (dark)</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#141519;color:#E8E6E0;font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:14px;line-height:1.45}
+a{color:#7FB0D6}a:hover{color:#A9CCE8}
+button{font:inherit;cursor:pointer}
+.mono{font-family:'IBM Plex Mono',ui-monospace,monospace}
+.absent{font-family:'IBM Plex Mono',ui-monospace,monospace;color:#A3A6AE;border:1px dashed #6E727C;border-radius:3px;padding:0 6px;font-size:12px}
+.pill{display:inline-block;border:1px solid #2E313A;border-radius:999px;padding:2px 10px;font-size:12px;background:#1C1E24;color:#E8E6E0}
+.nav a{color:#E8E6E0;text-decoration:none;padding:6px 2px}
+.nav a[aria-current]{border-bottom:2px solid #7FB0D6;font-weight:600}
+th{font-weight:500;color:#A3A6AE;font-size:12px;text-align:left;padding:8px 10px;border-bottom:1px solid #2E313A;white-space:nowrap}
+td{padding:8px 10px;border-bottom:1px solid #262930;vertical-align:top;font-size:13px}
+tr:hover td{background:#141519}
+</style>
+</helmet>
+<div style="min-height: 100vh; display: flex; flex-direction: column">
+
+<header style="display: flex; align-items: center; gap: 28px; padding: 0 32px; height: 52px; background: #1C1E24; border-bottom: 1px solid #2E313A">
+  <a href="Record-dark.dc.html" style="font-weight: 600; letter-spacing: 0.02em; text-decoration: none; color: #E8E6E0">weaver-web</a>
+  <nav class="nav" aria-label="Surfaces" style="display: flex; gap: 22px; font-size: 14px">
+    <a href="Record-dark.dc.html" aria-current="page">Record</a>
+    <a href="Main-dark.dc.html">Open a trace</a>
+    <a href="Live-dark.dc.html">Live</a>
+    <a href="Matrix-dark.dc.html">Experiments</a>
+    <a href="Matrix-dark.dc.html">Stage</a>
+    <a href="Agents-dark.dc.html">Agents</a>
+    <a href="Record-dark.dc.html">Models</a>
+  </nav>
+  <div style="margin-left: auto; display: flex; align-items: center; gap: 10px; font-size: 12px; color: #A3A6AE">
+    <span class="pill">todd &middot; operator &middot; claimed, not proven</span>
+    <span class="pill" style="border-color: #B58A3A; color: #E0A24A">web-con: stub</span>
+    <span class="pill" style="border-color: #B58A3A; color: #E0A24A">admin-con: stub</span>
+    <span role="group" aria-label="Theme" style="display: inline-flex; margin-left: 6px"><button type="button" aria-pressed="false" style="height: 28px; padding: 0 10px; border: 1px solid #2E313A; border-radius: 4px 0 0 4px; background: #1C1E24; color: #E8E6E0; font-size: 12px">auto</button><button type="button" aria-pressed="false" style="height: 28px; padding: 0 10px; margin-left: -1px; border: 1px solid #2E313A; background: #1C1E24; color: #E8E6E0; font-size: 12px">light</button><button type="button" aria-pressed="true" style="height: 28px; padding: 0 10px; margin-left: -1px; border: 1px solid #7FB0D6; border-radius: 0 4px 4px 0; background: #7FB0D6; color: #141519; font-size: 12px">dark</button></span>
+  </div>
+</header>
+
+<main style="flex-grow: 1; display: flex; flex-direction: column; gap: 16px; padding: 20px 32px 28px; max-width: 1440px; box-sizing: border-box; width: 100%; margin: 0 auto">
+
+  <div style="display: flex; flex-direction: column; gap: 6px">
+    <h1 style="margin: 0; font-size: 24px; font-weight: 600">Record</h1>
+    <p style="margin: 0; color: #A3A6AE">Every run and branch the store holds, with the tuple that produced it. Landed by weaver-analysis; nothing here is written by a surface.</p>
+  </div>
+
+  <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 16px; background: #1C1E24; border: 1px solid #2E313A; border-radius: 6px">
+    <span style="font-size: 12px; color: #A3A6AE">Chips</span>
+    <span class="pill" style="border-color: #7FB0D6; color: #7FB0D6; background: #1F2A35">session: hb-2026-09-30 <a href="Record-dark.dc.html" aria-label="clear session chip" style="text-decoration: none; margin-left: 6px">&times;</a></span>
+    <span class="pill" style="border-color: #7FB0D6; color: #7FB0D6; background: #1F2A35">record: diagnostic <a href="Record-dark.dc.html" aria-label="clear record chip" style="text-decoration: none; margin-left: 6px">&times;</a></span>
+    <a href="Record-dark.dc.html" class="pill" style="text-decoration: none; color: #A3A6AE">clear all</a>
+    <span style="font-size: 12px; color: #A3A6AE">A chip is a clause. Clearing one widens this list in place; no surface exists only as a pre-applied chip.</span>
+    <label for="rec-q" style="margin-left: auto; font-size: 12px; color: #A3A6AE">Add a chip</label>
+    <input id="rec-q" type="text" placeholder="device, engine, seed, session, artifact, parent" style="font: inherit; height: 32px; padding: 0 10px; border: 1px solid #2E313A; border-radius: 4px; width: 320px">
+  </div>
+
+  <div style="display: flex; align-items: baseline; gap: 16px; font-size: 12px; color: #A3A6AE">
+    <span class="mono">52 runs answer &middot; 50 single-task, 2 multi-run</span>
+    <span>sorted by ingested, newest first</span>
+    <span style="margin-left: auto">a run's row opens its replay; the actions stage arms or compare a branch to its parent</span>
+  </div>
+
+  <div style="background: #1C1E24; border: 1px solid #2E313A; border-radius: 6px; overflow: hidden">
+    <table style="width: 100%; border-collapse: collapse">
+      <thead>
+        <tr>
+          <th>run</th><th>agent</th><th>record identity</th><th>bracket</th><th>device</th><th>engine</th><th>seed</th><th>session</th><th>lineage</th><th>score</th><th>ingested</th><th>actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        <sc-for list="{{ rows }}" as="r" hint-placeholder-count="10">
+          <tr>
+            <td class="mono"><a href="Main-dark.dc.html">{{ r.run }}</a></td>
+            <td>{{ r.agent }}</td>
+            <td class="mono">
+              <sc-if value="{{ r.identity }}" hint-placeholder-val="{{ true }}"><a href="Record-dark.dc.html">{{ r.identity }}</a></sc-if>
+              <sc-if value="{{ r.identitySentinel }}" hint-placeholder-val="{{ false }}"><span class="absent">uncomputable (SPU sentinel)</span></sc-if>
+            </td>
+            <td><span class="pill" style="border-color: {{ r.bracketColor }}; color: {{ r.bracketColor }}">{{ r.bracket }}</span></td>
+            <td class="mono">{{ r.device }}</td>
+            <td class="mono">
+              <sc-if value="{{ r.engine }}" hint-placeholder-val="{{ true }}">{{ r.engine }}</sc-if>
+              <sc-if value="{{ r.noEngine }}" hint-placeholder-val="{{ false }}"><span class="absent">absent</span></sc-if>
+            </td>
+            <td class="mono">
+              <sc-if value="{{ r.seed }}" hint-placeholder-val="{{ true }}">{{ r.seed }}</sc-if>
+              <sc-if value="{{ r.noSeed }}" hint-placeholder-val="{{ false }}"><span class="absent">absent</span></sc-if>
+            </td>
+            <td class="mono"><a href="Record-dark.dc.html">{{ r.session }}</a></td>
+            <td class="mono">
+              <sc-if value="{{ r.parent }}" hint-placeholder-val="{{ false }}">branch of {{ r.parent }} @ {{ r.at }}</sc-if>
+              <sc-if value="{{ r.root }}" hint-placeholder-val="{{ true }}">root</sc-if>
+            </td>
+            <td class="mono">{{ r.score }}</td>
+            <td class="mono">{{ r.ingested }}</td>
+            <td style="white-space: nowrap">
+              <a href="Main-dark.dc.html">replay</a> &middot; <a href="Matrix-dark.dc.html">stage arms</a>
+            </td>
+          </tr>
+        </sc-for>
+      </tbody>
+    </table>
+    <div style="display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; font-size: 12px; color: #A3A6AE; border-top: 1px solid #2E313A">
+      <span>rows 1 to 10 of 52</span>
+      <div style="display: flex; gap: 8px">
+        <button type="button" disabled aria-disabled="true" style="height: 32px; padding: 0 12px; border: 1px solid #4A4E58; border-radius: 4px; background: #141519; color: #A3A6AE">newer</button>
+        <button type="button" style="height: 32px; padding: 0 12px; border: 1px solid #7FB0D6; border-radius: 4px; background: #1C1E24; color: #7FB0D6">older</button>
+      </div>
+    </div>
+  </div>
+
+  <div style="display: flex; gap: 12px; padding: 12px 16px; background: #1C1E24; border: 1px solid #2E313A; border-radius: 6px; font-size: 12px; color: #A3A6AE; align-items: baseline">
+    <span style="font-weight: 600; color: #E8E6E0">Reading the row</span>
+    <span>A serving record carries no bracket. A diagnostic record carries one, and an uncertified diagnostic replay is not drawn at all: its row stays, its replay link says why.</span>
+  </div>
+
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1180}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const mk = (o) => Object.assign({
+      identity: 'sha256:7f3a...c91e', identitySentinel: false, bracket: 'diagnostic, certified', bracketColor: '#7CC08A',
+      device: 'cuda:0', engine: 'weaver-spu 0.9.2', noEngine: false, seed: '', noSeed: true, session: 'hb-2026-09-30', parent: '', at: '', root: true, score: '', ingested: '2026-09-30 11:42',
+    }, o);
+    const rows = [
+      mk({ run: 'hb-0930-017', agent: 'rusty', score: '3 / 5', seed: '', noSeed: true, parent: 'hb-0929-041', at: 'turn 9', root: false }),
+      mk({ run: 'hb-0930-016', agent: 'rusty', score: '5 / 5', seed: '20260930', noSeed: false, ingested: '2026-09-30 11:40' }),
+      mk({ run: 'hb-0930-015', agent: 'pyra', score: '1 / 5', seed: '20260930', noSeed: false, ingested: '2026-09-30 11:37' }),
+      mk({ run: 'hb-0930-014', agent: 'pyra', score: '0 / 5', bracket: 'diagnostic, uncertified', bracketColor: '#E08A7A', ingested: '2026-09-30 11:31' }),
+      mk({ run: 'hb-0930-013', agent: 'rusty', score: '4 / 5', identity: '', identitySentinel: true, ingested: '2026-09-30 11:29' }),
+      mk({ run: 'hb-0930-012', agent: 'rusty', score: '2 / 5', engine: '', noEngine: true, ingested: '2026-09-30 11:24' }),
+      mk({ run: 'hb-0930-011', agent: 'pyra', score: '3 / 5', ingested: '2026-09-30 11:20' }),
+      mk({ run: 'hb-0930-010', agent: 'rusty', score: '5 / 5', seed: '20260930', noSeed: false, ingested: '2026-09-30 11:16' }),
+      mk({ run: 'hb-0930-multi-02', agent: 'rusty', score: '37 / 50', ingested: '2026-09-30 10:58' }),
+      mk({ run: 'hb-0930-multi-01', agent: 'pyra', score: '29 / 50', ingested: '2026-09-30 10:12' }),
+    ];
+    return { rows };
+  }
+}
+</script>
+</body>
+</html>

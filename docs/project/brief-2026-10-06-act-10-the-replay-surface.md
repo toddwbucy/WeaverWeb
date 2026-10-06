@@ -194,7 +194,8 @@ where they differ.** The section's original text stands below and these govern i
    leaves them all `writing` and never one `refused` beside one `writing` that no replay
    could converge. Perturbation: a new A -> B -> A cycle with ruling 27's hook set to
    stop between the two refusals; without the fix A reads `refused` and B `writing`,
-   with it both read `writing` and the next ingest refuses both.
+   with it both read `writing`, and the next ingest reports both refused in its answer
+   and leaves them so.
 
 **Three pull requests, in order**, each its own act: 10a lands the design, 10b lands the
 ingest the surface reads from, 10c lands the surface. 10b exists because nothing writes

@@ -3070,3 +3070,105 @@ async fn a_new_file_at_offset_zero_is_marked() {
     assert!(first.contains("the relay serves"), "{:?}", marks(&events));
     con.stop().await;
 }
+
+/// **The opening's hold runs from the door frame's delivery to the socket**:
+/// a fake server on a two-second cadence stops reading while three large
+/// live records fill the socket, and the door closes and opens again
+/// meanwhile, so the opening's frame waits in the writer's queue. The
+/// server reads again, takes the door frame, asks a person's slow
+/// `validate`, and asks the opening's `show` four and three quarter
+/// cadences after the frame arrived. Timed from the frame's queueing the hold would
+/// have ended first; timed from its delivery the `show` is served first.
+#[tokio::test]
+async fn the_openings_hold_runs_from_the_door_frames_delivery() {
+    let server = FakeServer::start().await;
+    let mut trace = Trace::new();
+    let invoker = FakeInvoker::new(&["show", "validate"], "idle");
+    invoker.slow("validate", Duration::from_secs(6));
+    let cfg = AdminConConfig {
+        link: server.link(Plane::Admin),
+        trace_socket: trace.socket.clone(),
+        weaver_admin: PathBuf::from(NO_WEAVER_ADMIN),
+        backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
+        verb_bound: admin_con::VERB_BOUND,
+        stop_grace: GRACE,
+        grants_bound: Duration::from_secs(super::client::HELLO_SECS),
+        boundary_bound: admin_con::BOUNDARY_BOUND,
+        drain_bound: admin_con::DRAIN_BOUND,
+    };
+    let con = Running::start(cfg, invoker.clone());
+    let (mut reader, mut write) = server.admit_with(2, Some(256 * 1024)).await;
+    let next = async |reader: &mut super::frames::LineReader<_>, wait: Duration| loop {
+        match tokio::time::timeout(wait, reader.next()).await {
+            Err(_) => return None,
+            Ok(Line::Frame(line)) => match serde_json::from_str::<FromClient>(&line).unwrap() {
+                FromClient::Heartbeat => continue,
+                frame => return Some(frame),
+            },
+            Ok(other) => panic!("the connection ended: {other:?}"),
+        }
+    };
+    let ask = |id: u64, verb: &str, principal: Principal| {
+        let mut line = serde_json::to_vec(&ToClient::Verb {
+            id,
+            verb: verb.into(),
+            principal,
+        })
+        .unwrap();
+        line.push(b'\n');
+        line
+    };
+    // The hello's door was open: its replay ends at once.
+    match next(&mut reader, SOON).await {
+        Some(FromClient::CaughtUp) => {}
+        other => panic!("expected caught_up, got {other:?}"),
+    }
+
+    // The server stops reading. Large live records fill the socket, and the
+    // door closes and opens again behind them.
+    let stalled = tokio::time::Instant::now();
+    let pad = "x".repeat(300 * 1024);
+    for n in 1..=3u64 {
+        trace.append_raw(
+            format!(
+                "{}\n",
+                json!({"kind": "turn", "payload": {"n": n, "pad": pad}})
+            )
+            .as_bytes(),
+        );
+    }
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    trace.relay.stop().await;
+    // Long enough for the redial to find no relay, so the door closes.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    trace.relay.start();
+    tokio::time::sleep_until(stalled + Duration::from_millis(1500)).await;
+
+    // The server reads again, through to the opening's door frame.
+    let arrived = loop {
+        match next(&mut reader, SOON).await {
+            Some(FromClient::Door { open: true, .. }) => break tokio::time::Instant::now(),
+            Some(_) => {}
+            None => panic!("the door never opened again"),
+        }
+    };
+    let person = Principal::Person { name: "ada".into() };
+    write.write_all(&ask(2, "validate", person)).await.unwrap();
+    tokio::time::sleep_until(arrived + Duration::from_millis(9_500)).await;
+    write
+        .write_all(&ask(1, "show", Principal::Server))
+        .await
+        .unwrap();
+    let mut answered = Vec::new();
+    while answered.len() < 2 {
+        match next(&mut reader, SOON * 3).await {
+            Some(FromClient::Verb { id, .. }) => answered.push(id),
+            Some(_) => {}
+            None => panic!("the answers never came: {answered:?}"),
+        }
+    }
+    assert_eq!(answered, [1, 2], "the opening's show was served first");
+    drop(reader);
+    drop(write);
+    con.stop().await;
+}

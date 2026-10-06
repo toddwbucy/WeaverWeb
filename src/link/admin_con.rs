@@ -1735,12 +1735,28 @@ async fn relay<I: Invoker>(
     // from the frame's receipt: the silence bound, the cadence's four, and
     // one cadence more for the `show`'s delivery, so the hold outlasts the
     // listener's deadline and a server that never asks still cannot hold
-    // the queue. `Unsent` until the frame has gone.
+    // the queue. `Unsent` until the frame has gone, **gone meaning written
+    // to the socket**: a frame queued behind others has not reached the
+    // server, so the door frame is sent tracked and the clock starts when
+    // the writer reports it written.
     let mut opening_show: Option<Hold> = None;
+    let mut door_delivered: Option<tokio::sync::oneshot::Receiver<()>> = None;
     loop {
         if *shutdown.borrow_and_update() {
             decline_waiting(conn, &mut queue).await;
             return Ended::Shutdown;
+        }
+        if let Some(delivered) = &mut door_delivered {
+            match delivered.try_recv() {
+                Ok(()) => {
+                    door_delivered = None;
+                    start_hold(&mut opening_show, conn.cadence);
+                }
+                Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {}
+                // The writer ended: the connection is ending, and no hold
+                // matters.
+                Err(tokio::sync::oneshot::error::TryRecvError::Closed) => door_delivered = None,
+            }
         }
         if matches!(opening_show, Some(Hold::Until(until)) if tokio::time::Instant::now() >= until)
         {
@@ -1912,16 +1928,17 @@ async fn relay<I: Invoker>(
                     frame,
                     FromClient::CaughtUp | FromClient::Door { open: false, .. }
                 );
-                if let Err(why) = conn.send(frame.clone()).await {
-                    return Ended::Lost(why);
-                }
-                sent(shared, &frame);
                 if matches!(frame, FromClient::Door { open: true, .. })
                     && matches!(opening_show, Some(Hold::Unsent))
                 {
-                    opening_show =
-                        Some(Hold::Until(tokio::time::Instant::now() + conn.cadence * 5));
+                    match conn.send_tracked(frame.clone()).await {
+                        Ok(delivered) => door_delivered = Some(delivered),
+                        Err(why) => return Ended::Lost(why),
+                    }
+                } else if let Err(why) = conn.send(frame.clone()).await {
+                    return Ended::Lost(why);
                 }
+                sent(shared, &frame);
                 if ends_the_replay {
                     replaying = false;
                 }
@@ -1974,6 +1991,13 @@ async fn relay<I: Invoker>(
             // The slot freed by a timed-out verb's process ending wakes an
             // ask waiting for it, and a closed door's opening owed after it.
             () = opts.slot.freed(), if !opts.slot.free() && (queue.servable(restricted) || !door.open) => {}
+            // The door frame written: the opening's hold starts its clock.
+            delivered = async { door_delivered.as_mut().expect("guarded").await }, if door_delivered.is_some() => {
+                door_delivered = None;
+                if delivered.is_ok() {
+                    start_hold(&mut opening_show, conn.cadence);
+                }
+            }
             // The opening's hold ends at its bound even with nothing else
             // to wake the loop.
             () = tokio::time::sleep_until(show_until.unwrap_or(next_try)), if show_until.is_some() => {}
@@ -2004,12 +2028,21 @@ async fn relay<I: Invoker>(
     }
 }
 
+/// Start an unclocked hold's clock: the silence bound, four cadences, and
+/// one more for the `show`'s delivery.
+fn start_hold(hold: &mut Option<Hold>, cadence: Duration) {
+    if matches!(hold, Some(Hold::Unsent)) {
+        *hold = Some(Hold::Until(tokio::time::Instant::now() + cadence * 5));
+    }
+}
+
 /// An opening's hold on ordinary asks, until its `show` is taken.
 #[derive(Debug, Clone, Copy)]
 enum Hold {
-    /// The door frame has not gone yet; the clock has not started.
+    /// The door frame has not been written to the socket yet; the clock has
+    /// not started.
     Unsent,
-    /// The frame went; the hold ends here at the latest.
+    /// The frame was written; the hold ends here at the latest.
     Until(tokio::time::Instant),
 }
 

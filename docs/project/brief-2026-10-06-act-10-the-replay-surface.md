@@ -190,7 +190,9 @@ where they differ.** The section's original text stands below and these govern i
    persisted `refused`.
 30. A cycle's refusals are persisted in one transaction; this refines ruling 29. The rows
    of one detected cycle that this ingest created move to `refused` together, in a
-   single transaction with the reason naming the cycle, so an ingest that dies part-way
+   single transaction with the reason naming the cycle. Each run names at most one
+   parent, so cycles are vertex-disjoint and one cycle is one strongly connected
+   component. So an ingest that dies part-way
    leaves them all `writing` and never one `refused` beside one `writing` that no replay
    could converge. Perturbation: a new A -> B -> A cycle with ruling 27's hook set to
    stop between the two refusals; without the fix A reads `refused` and B `writing`,

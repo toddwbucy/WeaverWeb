@@ -251,7 +251,17 @@ impl Running {
         what: &str,
         cond: impl Fn(&LinkStatus) -> bool,
     ) -> LinkStatus {
-        let reached = tokio::time::timeout(SOON, self.status.wait_for(|s| cond(s)))
+        self.wait_for(SOON, what, cond).await
+    }
+
+    /// As `wait`, for up to `bound`.
+    pub(super) async fn wait_for(
+        &mut self,
+        bound: Duration,
+        what: &str,
+        cond: impl Fn(&LinkStatus) -> bool,
+    ) -> LinkStatus {
+        let reached = tokio::time::timeout(bound, self.status.wait_for(|s| cond(s)))
             .await
             .ok()
             .and_then(|r| r.ok().map(|s| s.clone()));
@@ -3323,5 +3333,49 @@ async fn a_hello_answered_late_still_leaves_the_verification_its_reserve() {
     );
     drop(reader);
     drop(write);
+    con.stop().await;
+}
+
+/// **The hello's verification runs beside the connection**: the server
+/// asks its admission `show` at once, with the silence bound as its
+/// deadline, while admin-con verifies a server position past a boundary
+/// taken at its bound and the relay holds that dial's header longer than
+/// the bound. The `show` is served meanwhile, the admission completes, and
+/// the connection is never closed `admission_incomplete`.
+#[tokio::test]
+async fn the_hellos_verification_runs_beside_the_admissions_show() {
+    use std::sync::atomic::Ordering;
+    let Some(lab) = Lab::open_with(Duration::from_secs(4)).await else {
+        return;
+    };
+    let trace = Trace::new();
+    let (id, path, _out) = acknowledged_long_trace(&lab, &trace, 6 * 1024 * 1024).await;
+    // The opening reads a chunk every 300 ms through its 15 s read, short
+    // of the server's position; the relay then holds the verification's
+    // header for 5 s, past the 4 s bound.
+    trace
+        .relay
+        .counts
+        .chunk_pause_ms
+        .store(300, Ordering::SeqCst);
+    trace
+        .relay
+        .counts
+        .resume_header_delay_ms
+        .store(5_000, Ordering::SeqCst);
+    let invoker = FakeInvoker::new(&["show"], "idle");
+    let mut cfg = config(&path);
+    cfg.boundary_bound = Duration::from_secs(20);
+    let mut con = Running::start(cfg, invoker.clone());
+    con.wait_for(Duration::from_secs(25), "admitted again", |s| s.admitted)
+        .await;
+    lab.wait_for(&id, "the admission's show", |a| {
+        a.state_source.as_deref() == Some("show")
+    })
+    .await;
+    tokio::time::sleep(Duration::from_secs(6)).await;
+    let status = con.status();
+    assert_eq!(status.admissions, 1, "{status:?}");
+    assert_eq!(status.last_refusal, None, "{status:?}");
     con.stop().await;
 }

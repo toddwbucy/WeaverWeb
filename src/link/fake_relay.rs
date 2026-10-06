@@ -61,6 +61,9 @@ pub(super) struct Counts {
     /// Milliseconds the relay waits before each header, as one verifying a
     /// position after a long record does.
     pub(super) header_delay_ms: std::sync::atomic::AtomicU64,
+    /// As `header_delay_ms`, for requests past offset zero only: a relay
+    /// slow to verify a position, its reads from zero answered at once.
+    pub(super) resume_header_delay_ms: std::sync::atomic::AtomicU64,
     /// Milliseconds the relay pauses after each chunk of the file: a relay
     /// slower than an opening's bound over a long trace.
     pub(super) chunk_pause_ms: std::sync::atomic::AtomicU64,
@@ -232,7 +235,10 @@ async fn serve(
         counts.refused.fetch_add(1, Ordering::Relaxed);
         return;
     }
-    let delay = counts.header_delay_ms.load(Ordering::SeqCst);
+    let mut delay = counts.header_delay_ms.load(Ordering::SeqCst);
+    if offset > 0 {
+        delay += counts.resume_header_delay_ms.load(Ordering::SeqCst);
+    }
     tokio::time::sleep(Duration::from_millis(delay)).await;
     let meta = file.metadata().unwrap();
     let mut header = serde_json::json!({"device": meta.dev(), "inode": meta.ino()});

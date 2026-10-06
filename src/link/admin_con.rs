@@ -1642,7 +1642,27 @@ async fn take_opening(
         opened.boundary.offset
     );
     let mut opened = opened;
-    let resume = match verify(&opts.socket, &mut opened, &shared.resume).await {
+    // The verification races the connection as the read did: asks queue
+    // meanwhile, and the stop is heard.
+    let verified = {
+        let check = verify(&opts.socket, &mut opened, &shared.resume);
+        tokio::pin!(check);
+        loop {
+            tokio::select! {
+                verified = &mut check => break verified,
+                incoming = conn.recv() => {
+                    if let Some(end) = handle(incoming, conn, queue, ceiling, &opts.agent).await {
+                        return Err(end);
+                    }
+                }
+                _ = shutdown.changed() => {
+                    decline_waiting(conn, queue).await;
+                    return Err(Ended::Shutdown);
+                }
+            }
+        }
+    };
+    let resume = match verified {
         Ok(resume) => resume,
         Err(why) => {
             progress(shared, &opened);
@@ -1709,32 +1729,20 @@ async fn relay<I: Invoker>(
     // **A closed door's hello has no replay**: the server takes `caught_up`
     // as sent, and the door is redialed on the backoff.
     let mut replaying = false;
+    // **The hello's verification runs beside the connection**: the server's
+    // admission `show` and its deadline start at admission, so the
+    // connection is read meanwhile and that `show` is served under the
+    // replay's rule, the boundary being measured already; ordinary asks
+    // wait for the replay as ever. The task ends with the connection.
+    let mut verifying: Option<Verifying> = None;
     match opened {
         Some(mut opened) => {
-            match verify(&opts.socket, &mut opened, &shared.resume).await {
-                Ok(resume) => {
-                    let front = door.begin(opened, &resume, opts.backfill);
-                    outbox.extend(outs(front, true));
-                    if door.target.is_none() {
-                        outbox.push_back(Out::Frame(FromClient::CaughtUp));
-                    }
-                }
-                // The hello reported the door open; it closes before
-                // anything is behind it.
-                Err(why) => {
-                    tracing::info!(
-                        "{}: the opening failed at the acknowledged position: {why}",
-                        opts.agent
-                    );
-                    progress(shared, &opened);
-                    door.close(false);
-                    outbox.push_back(Out::Frame(FromClient::Door {
-                        open: false,
-                        wall_ms: now_ms(),
-                        tail: None,
-                    }));
-                }
-            }
+            let socket = opts.socket.clone();
+            let resume = shared.resume.clone();
+            verifying = Some(Verifying(tokio::spawn(async move {
+                let verified = verify(&socket, &mut opened, &resume).await;
+                (opened, verified)
+            })));
             replaying = true;
         }
         None => door.close(false),
@@ -1938,6 +1946,55 @@ async fn relay<I: Invoker>(
             if queue.servable(replaying) && opts.slot.free() {
                 continue;
             }
+            // The hello's verification, its connection read meanwhile.
+            if let Some(pending) = &mut verifying {
+                tokio::select! {
+                    verified = &mut pending.0 => {
+                        verifying = None;
+                        match verified {
+                            Ok((opened, Ok(resume))) => {
+                                let front = door.begin(opened, &resume, opts.backfill);
+                                outbox.extend(outs(front, true));
+                                if door.target.is_none() {
+                                    outbox.push_back(Out::Frame(FromClient::CaughtUp));
+                                }
+                            }
+                            // The hello reported the door open; it closes
+                            // before anything is behind it.
+                            failed => {
+                                let why = match failed {
+                                    Ok((opened, Err(why))) => {
+                                        progress(shared, &opened);
+                                        why
+                                    }
+                                    Err(e) => format!("the verification's task ended: {e}"),
+                                    Ok((_, Ok(_))) => unreachable!("matched above"),
+                                };
+                                tracing::info!(
+                                    "{}: the opening failed at the acknowledged position: {why}",
+                                    opts.agent
+                                );
+                                door.close(false);
+                                outbox.push_back(Out::Frame(FromClient::Door {
+                                    open: false,
+                                    wall_ms: now_ms(),
+                                    tail: None,
+                                }));
+                            }
+                        }
+                    }
+                    incoming = conn.recv() => {
+                        if let Some(end) = handle(incoming, conn, &mut queue, &ceiling, &opts.agent).await {
+                            return end;
+                        }
+                    }
+                    _ = shutdown.changed() => {
+                        decline_waiting(conn, &mut queue).await;
+                        return Ended::Shutdown;
+                    }
+                }
+                continue;
+            }
             if let Some(out) = outbox.pop_front() {
                 let Some(frame) = frame_out(out, &mut shared.seq) else {
                     continue;
@@ -2043,6 +2100,16 @@ async fn relay<I: Invoker>(
                 }
             }
         }
+    }
+}
+
+/// The hello's verification, a task the connection's loop waits on beside
+/// its reads; aborted where the connection ends first.
+struct Verifying(tokio::task::JoinHandle<(Opened, Result<Resume, String>)>);
+
+impl Drop for Verifying {
+    fn drop(&mut self) {
+        self.0.abort();
     }
 }
 

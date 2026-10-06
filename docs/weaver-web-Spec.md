@@ -1634,7 +1634,10 @@ record itself, so section 5's gate is held upstream (`toddwbucy/WeaverAnalysis#1
   inserted**, so two ingests of one run serialize on that lock and the second reads
   what the first wrote; an ingest that meets the row another created between its read
   and its insert is a replay of it, compared and completed like any other, and never a
-  refusal for having lost the race.
+  refusal for having lost the race. **An ingest that finds its run closed by another
+  compares the stored run whole before it answers**, so a difference in a generation it
+  had not yet reached is refused in its answer, the stored row untouched, rather than
+  reported as the other's success.
 - **The reader is bounded, and these are its bounds.** The emission is held in memory
   whole, since a run is planned whole before any row is written. A line runs at most
   16 MiB; a summary announces at most four million positions (`POSITIONS_BOUND`, an
@@ -1719,7 +1722,13 @@ replayed or a row it does not name: each open branch's reference chain is follow
 through held rows until it ends or returns. Each run names at most one parent, so
 cycles are vertex-disjoint and one cycle is one strongly connected component, whose
 rows this ingest created move to `refused` in one transaction; every other run on it is
-reported refused in the answer with the status the store keeps.
+reported refused in the answer with the status the store keeps. **The scan is rechecked
+under the resolution's locks**, since a concurrent ingest may create a run naming this
+branch after the scan: with the branch's row locked for update and its parent for share,
+the chain is followed from the parent through held rows, each locked for share as it is
+read, and where it returns to the branch the branch is refused by name in that
+transaction instead of closing. Two branches naming each other lock in opposite orders,
+and the resolution the store aborts for the deadlock is retried once the other commits.
 
 **The walk compares on the position coordinate and nothing else, from the child's first
 landed position upward.** A branch is a new run whose turn keys restart, its first
@@ -3669,9 +3678,9 @@ missing while it was relaying.
 | a run's ingest status is written first and read by every surface | perturbation: create the row `whole` rather than `writing`, and an ingest stopped by the test-only step hook after the points leaves a branch reading `whole` and unlinked; draw every row's status as `whole` on Record, and a `writing`, `short` or `refused` run reads as completed |
 | an absent entropy lands absent | perturbation in `src/store/ingest_tests.rs`: write an omitted entropy as zero, and the position reads a floor |
 | the ingest's reader is bounded | perturbation in `src/store/emission.rs`: read on past the announced count, and an endless stream is read to the byte bound rather than stopped at its first extra point; drop the positions bound, and a summary announcing past it is read; drop the byte bound, and a stream of blank lines is read whole; sum the output counts unchecked, and two counts past `u64` wrap to a sum that passes |
-| an ingest that loses the race to create a run replays it | perturbation in `src/store/ingest_tests.rs`, a test-only race option landing a second ingest between the read and the insert: refuse on the unique conflict, and the run reads refused in the answer of an ingest whose emission the store already holds equal |
+| an ingest that loses the race to create a run replays it, and one that finds its run closed by another compares it | perturbation in `src/store/ingest_tests.rs`, a test-only race option landing a second ingest at a named point: refuse on the unique conflict, and the run reads refused in the answer of an ingest whose emission the store already holds equal; answer a run another ingest closed without comparing it, and an ingest whose second generation differs from the one the other wrote reports `whole` |
 | the parting position is derived only where it is provable, and recorded as unknown otherwise | perturbation in `src/store/ingest_tests.rs`, each guard: walk a parent that is held but not whole, drop the monotone guard, read a position only the parent holds as never parted, take a difference after a skipped span as known, read no difference in a short child as never parted, set the link for a parent not held, close a branch with the non-branches (the same-emission parent lands unlinked), resolve in the emission's order rather than parents first; and on Record, draw an unwalked parting as never parted, or an unheld parent as linked |
-| a reference cycle is refused in one transaction, and only on rows the ingest created | perturbation in `src/store/ingest_tests.rs`, the test-only step hook stopping inside the cycle's transaction: commit the refusals row by row, and one row reads `refused` beside one `writing`; persist the refusal on a replayed row, and a row this ingest did not create changes status; seek cycles among the open branches alone, and a branch closing a cycle through a replayed closed run, or through a stored row the emission does not name, lands `whole` |
+| a reference cycle is refused in one transaction, and only on rows the ingest created | perturbation in `src/store/ingest_tests.rs`, the test-only step hook stopping inside the cycle's transaction: commit the refusals row by row, and one row reads `refused` beside one `writing`; persist the refusal on a replayed row, and a row this ingest did not create changes status; seek cycles among the open branches alone, and a branch closing a cycle through a replayed closed run, or through a stored row the emission does not name, lands `whole`; drop the recheck under the resolution's locks, and of two concurrent ingests creating opposite references, the one whose scan ran first lands `whole` on a cycle |
 | a chip filters only on a column section 2.7 indexes | review, over Record's filters: a chip on an unindexed column is a sequential scan the surface offers as though it were cheap |
 | the run list is paged and records nothing | perturbation: page on the ingest's clock alone, a tie larger than the page drops its remainder, and record a query row per page, section 2.6 fills with a list nobody reruns |
 | the seated prefix's length is landed and never derived | perturbation: derive it here from the two counts, every row reads the first draw's position as the prefix and every whole-run arm branches one input too late |

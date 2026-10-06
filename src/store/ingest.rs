@@ -50,12 +50,24 @@ pub enum Step {
 pub struct Options {
     #[cfg(test)]
     pub stop_at: Option<Step>,
-    /// **A second ingest landed between this one's read of a run and its
-    /// insert of that run's row**, as a concurrent ingest of the same
-    /// emission would: the race of two ingests of one unseen run, staged
-    /// where no clock could stage it.
+    /// **A second ingest landed whole at a named point of this one**, as a
+    /// concurrent ingest would land there: the races of two ingests,
+    /// staged where no clock could stage them.
     #[cfg(test)]
-    pub race: Option<Emission>,
+    pub race: Option<(Race, Emission)>,
+}
+
+/// Where a test's race lands its second ingest.
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Race {
+    /// Between this ingest's read of a run and its insert of the row.
+    BeforeCreate,
+    /// After the first generation of a run this ingest created is filled,
+    /// before the next.
+    AfterFirstFill,
+    /// After the cycle scan, before the branches resolve.
+    BeforeResolve,
 }
 
 /// How one run came out, which the answer reports.
@@ -245,9 +257,7 @@ impl Store {
             let mut created = false;
             if stored.is_none() {
                 #[cfg(test)]
-                if let Some(race) = &options.race {
-                    Box::pin(self.ingest_with(Ok(race.clone()), &Options::default())).await;
-                }
+                self.race(options, Race::BeforeCreate).await;
                 match self.create(&run, &plan).await {
                     Ok(()) => created = true,
                     // **Another ingest created the row since it was read**:
@@ -308,7 +318,12 @@ impl Store {
                 vec![None]
             };
             let mut settled = None;
-            for scope in scopes {
+            for (index, scope) in scopes.into_iter().enumerate() {
+                #[cfg(test)]
+                if index == 1 {
+                    self.race(options, Race::AfterFirstFill).await;
+                }
+                let _ = index;
                 match self.fill(&run, &plan, scope).await.map_err(store_error)? {
                     Fill::Done => {}
                     Fill::Closed => {
@@ -323,10 +338,12 @@ impl Store {
             }
             match settled {
                 None => {}
-                // Another ingest closed the row meanwhile: answer with what
-                // the store holds.
+                // **Another ingest closed the row meanwhile**: compared whole
+                // before this one answers, so a difference in a generation
+                // this one had not reached is refused rather than reported
+                // as the other's success.
                 Some(None) => {
-                    self.answer_from_store(&run, &mut outcome)
+                    self.settle_closed(&run, &plan, &mut outcome)
                         .await
                         .map_err(store_error)?;
                     outcomes.push(outcome);
@@ -352,7 +369,7 @@ impl Store {
                     outcome.reason = reason;
                 } else {
                     // Another ingest of the run closed it first.
-                    self.answer_from_store(&run, &mut outcome)
+                    self.settle_closed(&run, &plan, &mut outcome)
                         .await
                         .map_err(store_error)?;
                 }
@@ -512,15 +529,20 @@ impl Store {
         };
         let mut order: Vec<&Open> = open.iter().filter(|o| !in_cycle.contains(&o.run)).collect();
         order.sort_by_key(|o| depth(&o.run));
+        #[cfg(test)]
+        self.race(options, Race::BeforeResolve).await;
         for o in order {
-            let Some(resolved) = self.resolve(o).await.map_err(store_error)? else {
+            let Some(resolved) = self.resolve_retrying(o).await.map_err(store_error)? else {
                 // Another ingest of the run resolved and closed it first.
-                self.answer_from_store(&o.run, &mut outcomes[o.outcome])
+                self.settle_closed(&o.run, &o.plan, &mut outcomes[o.outcome])
                     .await
                     .map_err(store_error)?;
                 continue;
             };
             let outcome = &mut outcomes[o.outcome];
+            if let Some(stored) = resolved.stored {
+                outcome.stored = Some(stored);
+            }
             outcome.status = resolved.status.into();
             outcome.reason = resolved.reason;
             outcome.parent_linked = resolved.linked;
@@ -736,16 +758,57 @@ impl Store {
         Ok(Fill::Done)
     }
 
-    /// The outcome of a run another ingest closed: what the store holds.
-    async fn answer_from_store(
+    /// **The outcome of a run another ingest closed**: the stored run
+    /// compared whole against this one's plan, as any replay is. Equal
+    /// answers with what the store holds; different is refused in the
+    /// answer with the first difference named, the stored row untouched
+    /// (ruling 17).
+    async fn settle_closed(
         &self,
         run: &str,
+        plan: &RunPlan,
         outcome: &mut RunOutcome,
     ) -> Result<(), sqlx::Error> {
-        if let Some(stored) = self.stored(run).await? {
-            answer_stored(outcome, &stored);
+        let Some(stored) = self.stored(run).await? else {
+            return Ok(());
+        };
+        match compare(plan, &stored) {
+            Ok(()) => answer_stored(outcome, &stored),
+            Err(why) => {
+                outcome.status = "refused".into();
+                outcome.reason = Some(why);
+                outcome.stored = Some(stored.status);
+            }
         }
         Ok(())
+    }
+
+    /// The test's race, where it names `at`.
+    #[cfg(test)]
+    async fn race(&self, options: &Options, at: Race) {
+        if let Some((race, emission)) = &options.race
+            && *race == at
+        {
+            Box::pin(self.ingest_with(Ok(emission.clone()), &Options::default())).await;
+        }
+    }
+
+    /// `resolve`, retried where the store broke a deadlock against another
+    /// ingest's resolution: two branches naming each other lock each other's
+    /// rows in opposite orders, and the one the store aborts resolves again
+    /// once the other has committed.
+    async fn resolve_retrying(&self, open: &Open) -> Result<Option<Resolved>, sqlx::Error> {
+        let mut tries = 0;
+        loop {
+            match self.resolve(open).await {
+                Err(sqlx::Error::Database(d))
+                    if tries < 3 && matches!(d.code().as_deref(), Some("40P01" | "40001")) =>
+                {
+                    tries += 1;
+                }
+                other => return other,
+            }
+        }
     }
 
     /// **One branch, resolved and closed in one transaction**: the link
@@ -768,6 +831,62 @@ impl Store {
                 .fetch_optional(&mut *tx)
                 .await?;
         let linked = parent_status.is_some();
+        // **The cycle, rechecked under this transaction's locks**: a
+        // concurrent ingest may have created the parent, or a run on its
+        // chain, naming this branch after this ingest's cycle scan ran. The
+        // chain is followed from the parent through held rows, each locked
+        // for share as it is read; where it returns to this branch, the
+        // branch is refused by name rather than closed on a cycle.
+        if linked {
+            let mut chain = vec![open.run.clone(), parent.to_owned()];
+            let mut seen: HashSet<String> = chain.iter().cloned().collect();
+            let mut at = parent.to_owned();
+            loop {
+                let next: Option<Option<String>> = sqlx::query_scalar(
+                    "SELECT parent_reference FROM run WHERE run_id = $1 FOR SHARE",
+                )
+                .bind(&at)
+                .fetch_optional(&mut *tx)
+                .await?;
+                let Some(Some(next)) = next else { break };
+                if next == open.run {
+                    let reason =
+                        format!("a reference cycle: {} -> {}", chain.join(" -> "), open.run);
+                    if !open.created {
+                        // Not this ingest's row: the refusal is the answer's
+                        // alone (ruling 29).
+                        return Ok(Some(Resolved {
+                            status: "refused",
+                            reason: Some(reason),
+                            linked: false,
+                            parting: Parting::Unknown,
+                            stored: Some("writing".into()),
+                        }));
+                    }
+                    sqlx::query(
+                        "UPDATE run SET ingest_status = 'refused', ingest_reason = $2 \
+                         WHERE run_id = $1 AND ingest_status = 'writing'",
+                    )
+                    .bind(&open.run)
+                    .bind(&reason)
+                    .execute(&mut *tx)
+                    .await?;
+                    tx.commit().await?;
+                    return Ok(Some(Resolved {
+                        status: "refused",
+                        reason: Some(reason),
+                        linked: false,
+                        parting: Parting::Unknown,
+                        stored: None,
+                    }));
+                }
+                if !seen.insert(next.clone()) {
+                    break;
+                }
+                chain.push(next.clone());
+                at = next;
+            }
+        }
         let parting = if parent_status.as_deref() == Some("whole") {
             match parent_path(&mut tx, parent).await? {
                 Some(parent_path) => walk(&open.plan, &parent_path),
@@ -795,6 +914,7 @@ impl Store {
             reason,
             linked,
             parting,
+            stored: None,
         }))
     }
 }
@@ -804,6 +924,8 @@ struct Resolved {
     reason: Option<String>,
     linked: bool,
     parting: Parting,
+    /// The stored status, where the answer's status is not the store's.
+    stored: Option<String>,
 }
 
 /// Lock the run's row inside `tx`: whether it still reads `writing`. Two

@@ -14,7 +14,7 @@ use sqlx::Row;
 
 use super::Store;
 use super::emission::Emission;
-use super::ingest::{Options, Step};
+use super::ingest::{Options, Race, Step};
 use super::key::{RunId, TurnId};
 use super::read::tests::store;
 
@@ -942,7 +942,10 @@ async fn an_ingest_that_loses_the_race_to_create_a_run_replays_it() {
         .ingest_with(
             Emission::read(w.text().as_bytes()),
             &Options {
-                race: Some(Emission::read(w.text().as_bytes()).unwrap()),
+                race: Some((
+                    Race::BeforeCreate,
+                    Emission::read(w.text().as_bytes()).unwrap(),
+                )),
                 ..Options::default()
             },
         )
@@ -953,4 +956,75 @@ async fn an_ingest_that_loses_the_race_to_create_a_run_replays_it() {
     assert_eq!(answer["runs"][0]["replayed"], json!(true));
     assert_eq!(landed(&s, &w.run()).await.unwrap().status, "whole");
     assert_eq!(count(&s, "position", &w.run()).await, 455);
+}
+
+/// **A run another ingest closed is compared whole before this one
+/// answers** (Codex pass three on PR #23): two ingests of one unseen run
+/// whose payloads differ in the second generation. This one creates the row
+/// and fills the first generation; the test-only race lands the other, which
+/// replays the `writing` row, fills the second generation with its own
+/// payload and closes it. This one then meets the closed row and is refused
+/// naming the first difference, the stored row untouched.
+#[tokio::test]
+async fn a_run_closed_by_another_ingest_is_compared_before_its_answer() {
+    let Some(s) = store().await else { return };
+    let w = Wire::of(CERTIFIED).tagged(&tag("closed-under"));
+    let mut other = w.clone();
+    let held = other.points[100]["token"].as_i64().unwrap();
+    other.points[100]["token"] = json!(held + 1);
+    let answer = s
+        .ingest_with(
+            Emission::read(w.text().as_bytes()),
+            &Options {
+                race: Some((
+                    Race::AfterFirstFill,
+                    Emission::read(other.text().as_bytes()).unwrap(),
+                )),
+                ..Options::default()
+            },
+        )
+        .await
+        .value;
+    assert_eq!(answer["runs"][0]["status"], json!("refused"), "{answer}");
+    assert_eq!(answer["runs"][0]["stored"], json!("whole"));
+    let why = answer["runs"][0]["reason"].as_str().unwrap();
+    assert!(why.contains("turn t-2 position 204"), "{why}");
+    assert_eq!(landed(&s, &w.run()).await.unwrap().status, "whole");
+}
+
+/// **A cycle two concurrent ingests close is refused on both sides**
+/// (Codex pass three on PR #23): this ingest creates A naming B and scans
+/// for cycles while B is absent; the test-only race lands an ingest of B
+/// naming A, which refuses B. This one's resolution of A rechecks the chain
+/// under its locks, meets B naming A, and refuses A rather than closing it
+/// on a cycle.
+#[tokio::test]
+async fn a_cycle_two_concurrent_ingests_close_is_refused_on_both_sides() {
+    let Some(s) = store().await else { return };
+    let t = tag("cycle-concurrent");
+    let a = Wire::of(CERTIFIED)
+        .renamed(&format!("a#{t}"))
+        .branch_of(&format!("b#{t}"));
+    let b = Wire::of(CERTIFIED)
+        .renamed(&format!("b#{t}"))
+        .branch_of(&format!("a#{t}"));
+    let answer = s
+        .ingest_with(
+            Emission::read(a.text().as_bytes()),
+            &Options {
+                race: Some((
+                    Race::BeforeResolve,
+                    Emission::read(b.text().as_bytes()).unwrap(),
+                )),
+                ..Options::default()
+            },
+        )
+        .await
+        .value;
+    assert_eq!(answer["runs"][0]["status"], json!("refused"), "{answer}");
+    for run in [a.run(), b.run()] {
+        let row = landed(&s, &run).await.unwrap();
+        assert_eq!(row.status, "refused", "{run}: {row:?}");
+        assert!(row.reason.unwrap().contains("reference cycle"));
+    }
 }

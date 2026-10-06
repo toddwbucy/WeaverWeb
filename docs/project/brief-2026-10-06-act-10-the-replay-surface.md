@@ -90,6 +90,21 @@ where they differ.** The section's original text stands below and these govern i
    three-value check, so every session before the migration is backfilled by the default
    and every session inserted without the member reads `auto`; the first render always
    carries a value.
+16. A point with no turn key does not land. `position.turn` is part of the key and the
+   contract makes `turn` optional on a point, so a point whose turn is omitted is skipped
+   like a point whose generation has no resident count, and the run reads `short` with
+   the reason naming the generation and "no turn key"; the generation's summary still
+   lands. Nothing invents a turn. This makes explicit what ruling 4's "or no turn key"
+   implied.
+17. A conflicting replay never changes a stored run, and amends ruling 14 where they
+   differ. Where a replayed key differs from the stored payload, the refusal is reported
+   in the command's answer for that run (exit 1 per ruling 7) and nothing in the store
+   changes: not the row, not the status, not the reason. A run that was `whole` stays
+   `whole`; a run left `writing` by an interrupted ingest completes to `whole` only on a
+   replay whose every key is equal, and a differing replay leaves it `writing` with the
+   refusal in the answer alone. The `refused` status is written only by the ingest that
+   created the row, for a refusal met before the row was closed. Spec 3.1's bullet says
+   a refusal on replay is the answer's and never the row's.
 
 **Three pull requests, in order**, each its own act: 10a lands the design, 10b lands the
 ingest the surface reads from, 10c lands the surface. 10b exists because nothing writes

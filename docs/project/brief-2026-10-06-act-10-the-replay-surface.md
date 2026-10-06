@@ -71,6 +71,25 @@ where they differ.** The section's original text stands below and these govern i
    run on the one surface that exists before 10c. Spec 4's read-three and read-five
    bullets name the member with ruling 11's lineage members; 10c inherits it in the
    tuple strip.
+13. The reason is persisted beside the status. `0014` adds `ingest_reason TEXT`, null for
+   `whole` and `writing`, the reason for `short` (naming the generation and why) and for
+   `refused`. The run tuple type and reads three and five carry it, and Record's badge
+   renders it from the store, since the ingest's answer object is gone once the process
+   exits.
+14. Idempotence is equality, never silence. A replayed key (the run, a generation, or a
+   run, turn and position) is compared with the stored payload: equal is a no-op and
+   counts as written; different is refused by name, the run marked `refused` with a
+   reason naming the first key that differed and the stored row untouched. Never
+   `ON CONFLICT DO NOTHING` reporting success over stale data, and never an update that
+   rewrites a recorded result. The replay test gains the perturbation: replay with one
+   point's token changed, and without the check the run reads `whole` over the old row
+   or the row is rewritten; with it the run is refused and the row stands. Spec 3.1's
+   idempotence bullet reads "idempotent on the key, and a key replayed with a different
+   payload is a refusal", and Spec 9's row follows.
+15. The session's theme defaults. `theme TEXT NOT NULL DEFAULT 'auto'` with the
+   three-value check, so every session before the migration is backfilled by the default
+   and every session inserted without the member reads `auto`; the first render always
+   carries a value.
 
 **Three pull requests, in order**, each its own act: 10a lands the design, 10b lands the
 ingest the surface reads from, 10c lands the surface. 10b exists because nothing writes

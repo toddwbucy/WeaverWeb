@@ -143,6 +143,16 @@ where they differ.** The section's original text stands below and these govern i
    ingest, stays owed to a later act as ruling 8 says. Perturbation: a two-run emission
    listing the child first; without the second pass the child lands unlinked, with it
    the link is set and the parting known.
+24. `0014` backfills `parent_reference`. Every existing branch has its parent resolved,
+   so the migration sets `parent_reference = parent_run_id` where `parent_run_id` is not
+   null before read five moves to the new column, and no branch leaves its parent's chip
+   or loses its reference at the upgrade.
+25. `ingest_status` is not null, backfilled `whole`, with no default. The migration adds
+   the column, sets every existing run to `whole` (the old schema had no partial state,
+   so every row it holds was written whole), then makes it `NOT NULL` with no default,
+   so an insert that forgets the status fails rather than reading as any word. The
+   ingest writes `writing` explicitly at the row's creation, and the test seeders write
+   a status. `ingest_reason` stays nullable.
 
 **Three pull requests, in order**, each its own act: 10a lands the design, 10b lands the
 ingest the surface reads from, 10c lands the surface. 10b exists because nothing writes

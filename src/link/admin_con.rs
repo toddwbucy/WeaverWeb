@@ -521,17 +521,26 @@ async fn connect(
     let mut at = from.clone();
     loop {
         match relay::dial(socket, &at).await {
-            Dial::Open(stream) if at.offset > 0 && stream.identity != at.generation => {
+            // **Another file than the position names is a replacement at
+            // any offset**, zero included: only the empty generation, the
+            // position before any header was read, names no file. A request
+            // from zero already reads the new file from its start, so its
+            // stream is kept; one past zero is dialed again from zero.
+            Dial::Open(stream) if !at.generation.is_empty() && stream.identity != at.generation => {
                 let reason = format!(
                     "the relay serves {}, not {} where admin-con last read; the new file is relayed from its start",
                     stream.identity, at.generation
                 );
                 tracing::info!("{reason}");
+                let from_zero = at.offset == 0;
                 at = relay::zero(&stream.identity);
                 marks.push(Item::Mark {
                     position: at.clone(),
                     reason,
                 });
+                if from_zero {
+                    return Ok((*stream, at));
+                }
             }
             Dial::Open(stream) => {
                 at.generation = stream.identity.clone();

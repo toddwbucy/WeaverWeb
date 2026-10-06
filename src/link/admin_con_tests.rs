@@ -3024,3 +3024,49 @@ async fn the_openings_hold_runs_from_the_door_frames_send() {
     drop(write);
     con.stop().await;
 }
+
+/// **A new file is marked at a position standing at offset zero**: a live
+/// truncation leaves admin-con's position at zero of the file, the link
+/// drops and the server restarts holding no position, and meanwhile the
+/// file is rotated and a new run's relay serves it before any record is
+/// read. The header names a file the position does not, so the window's
+/// first event is the replaced-file mark.
+#[tokio::test]
+async fn a_new_file_at_offset_zero_is_marked() {
+    let Some(mut lab) = Lab::open().await else {
+        return;
+    };
+    let mut trace = Trace::new();
+    for n in 1..=3 {
+        trace.append(n, "turn");
+    }
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
+    let mut con = Running::start(config(&path), Arc::new(NoVerbs));
+    con.wait("admitted", |s| s.admitted).await;
+    wait_window(&lab, &id, "the first three", |e| ns(e) == [1, 2, 3]).await;
+    std::fs::write(&trace.path, "").unwrap();
+    wait_window(&lab, &id, "the truncation's mark", |e| {
+        marks(e).iter().any(|m| m.contains("was truncated to"))
+    })
+    .await;
+    restart_after(&mut lab, &mut con, async || {
+        std::fs::rename(&trace.path, trace.path.with_extension("1")).unwrap();
+        std::fs::write(&trace.path, "").unwrap();
+        for n in 7..=9 {
+            trace.append(n, "turn");
+        }
+        trace.relay.restart().await;
+    })
+    .await;
+    con.wait("admitted again", |s| s.admitted && s.admissions >= 2)
+        .await;
+    wait_window(&lab, &id, "the new file", |e| ns(e) == [7, 8, 9]).await;
+    let events = window(&lab, &id);
+    let first = events
+        .first()
+        .and_then(|e| e.mark.clone())
+        .unwrap_or_default();
+    assert!(first.contains("the relay serves"), "{:?}", marks(&events));
+    con.stop().await;
+}

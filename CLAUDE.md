@@ -210,11 +210,13 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
   `POSITIONS_BOUND` (four million) positions, no point past the announced count, and at most
   `EMISSION_BOUND` (1 GiB) in all, the emission being held in memory whole. Two ingests of one
   run serialize on the run row's lock, the loser of the creation race replaying the winner's row;
-  a run another ingest closed is compared whole before the answer, and a branch's resolution
+  a run another ingest closed is compared whole before the answer, a run closes only over exactly
+  what its closing ingest planned (compared under the close's lock), and a branch's resolution
   rechecks the reference cycle under its locks.
   `src/store/emission.rs` reads and plans, `src/store/ingest.rs` writes; a test-only step hook
   (`ingest::Step`) stops it at the two seams the kill perturbations need, and a test-only race option (`ingest::Race`) lands a second ingest at a named point (before a
-  row's creation, after its first generation, before the branches resolve). Its tests read the
+  row's creation, after its first generation, before a close, before the branches resolve), its
+  ingest stopping where `race_stop` names. Its tests read the
   emissions vendored under `tests/fixtures/signals/`, made once by WeaverAnalysis `12a7243`'s
   `signals` command on its own fixtures (the README there names each command), beside one
   hand-made branch emission labelled as such; no test runs the WeaverAnalysis binary. The

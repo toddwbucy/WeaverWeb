@@ -24,7 +24,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use sqlx::{Postgres, Row, Transaction};
+use sqlx::{PgConnection, Postgres, Row, Transaction};
 
 use super::Store;
 use super::emission::{Emission, GenerationRow, PositionRow, RunMembers, RunPlan, Unreadable};
@@ -42,6 +42,9 @@ pub enum Step {
     /// After one cycle row's refusal is written inside the cycle's
     /// transaction, before the next row's and before the commit.
     AfterCycleRow,
+    /// After a run's generations are filled, before a run that is not a
+    /// branch closes: an ingest that has written and not yet closed.
+    AfterFill,
 }
 
 /// The ingest's options: a test's stop and a test's race, and nothing in a
@@ -55,6 +58,9 @@ pub struct Options {
     /// staged where no clock could stage them.
     #[cfg(test)]
     pub race: Option<(Race, Emission)>,
+    /// Where the race's ingest stops, as one still running would stand.
+    #[cfg(test)]
+    pub race_stop: Option<Step>,
 }
 
 /// Where a test's race lands its second ingest.
@@ -68,6 +74,8 @@ pub enum Race {
     AfterFirstFill,
     /// After the cycle scan, before the branches resolve.
     BeforeResolve,
+    /// After a run's generations are filled, before it closes.
+    BeforeClose,
 }
 
 /// How one run came out, which the answer reports.
@@ -280,7 +288,7 @@ impl Store {
                     outcomes.push(outcome);
                     continue;
                 };
-                if let Err(why) = compare(&plan, &stored) {
+                if let Err(why) = compare(&plan, &stored, false) {
                     // **A conflicting replay changes nothing stored**
                     // (ruling 17): the refusal is the answer's alone.
                     outcome.status = "refused".into();
@@ -357,21 +365,36 @@ impl Store {
                     continue;
                 }
             }
+            #[cfg(test)]
+            if options.stop_at == Some(Step::AfterFill) {
+                return Err("stopped by the test's hook after the fill".into());
+            }
             if plan.members.parent_reference.is_none() {
                 // **A run that is not a branch closes as soon as its points
-                // are written** (ruling 27).
-                let (status, reason) = plan.closing();
-                if close(&self.pool, &run, status, reason.as_deref())
+                // are written** (ruling 27), and only where what is stored
+                // is what it planned.
+                #[cfg(test)]
+                self.race(options, Race::BeforeClose).await;
+                match self
+                    .close_compared(&run, &plan)
                     .await
                     .map_err(store_error)?
                 {
-                    outcome.status = status.into();
-                    outcome.reason = reason;
-                } else {
+                    Close::Closed(status, reason) => {
+                        outcome.status = status.into();
+                        outcome.reason = reason;
+                    }
                     // Another ingest of the run closed it first.
-                    self.settle_closed(&run, &plan, &mut outcome)
-                        .await
-                        .map_err(store_error)?;
+                    Close::NotOpen => {
+                        self.settle_closed(&run, &plan, &mut outcome)
+                            .await
+                            .map_err(store_error)?;
+                    }
+                    Close::Differs(why) => {
+                        outcome.status = "refused".into();
+                        outcome.reason = Some(why);
+                        outcome.stored = Some("writing".into());
+                    }
                 }
                 outcomes.push(outcome);
             } else {
@@ -569,6 +592,47 @@ impl Store {
 
     /// What the store holds for `run`, or `None` where it holds no row.
     async fn stored(&self, run: &str) -> Result<Option<Stored>, sqlx::Error> {
+        let mut conn = self.pool.acquire().await?;
+        stored_on(&mut conn, run).await
+    }
+
+    /// **A run that is not a branch, closed under its row's lock and only
+    /// where the stored run is exactly what this ingest planned.** The
+    /// comparison and the status move under one lock, so an ingest whose
+    /// plan holds less than another wrote meanwhile never closes the run
+    /// over generations its emission never carried: it is refused in the
+    /// answer and the row is left `writing` for the ingest whose plan
+    /// matches it.
+    async fn close_compared(&self, run: &str, plan: &RunPlan) -> Result<Close, sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        if !lock(&mut tx, run).await? {
+            return Ok(Close::NotOpen);
+        }
+        let Some(stored) = stored_on(&mut tx, run).await? else {
+            return Ok(Close::NotOpen);
+        };
+        if let Err(why) = compare(plan, &stored, true) {
+            return Ok(Close::Differs(why));
+        }
+        let (status, reason) = plan.closing();
+        sqlx::query(
+            "UPDATE run SET ingest_status = $2, ingest_reason = $3 \
+             WHERE run_id = $1 AND ingest_status = 'writing'",
+        )
+        .bind(run)
+        .bind(status)
+        .bind(&reason)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(Close::Closed(status, reason))
+    }
+}
+
+/// What the store holds for `run` over one connection, a transaction's
+/// included, or `None` where it holds no row.
+async fn stored_on(conn: &mut PgConnection, run: &str) -> Result<Option<Stored>, sqlx::Error> {
+    {
         let Some(row) = sqlx::query(
             "SELECT record_identity, seed::text AS seed, sampler, device, engine, field_depth, \
              record_session, record_digest, prefix_length, parent_reference, ingest_status, \
@@ -576,7 +640,7 @@ impl Store {
              FROM run WHERE run_id = $1",
         )
         .bind(run)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *conn)
         .await?
         else {
             return Ok(None);
@@ -603,7 +667,7 @@ impl Store {
              FROM generation WHERE run_id = $1 ORDER BY seq",
         )
         .bind(run)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *conn)
         .await?
         .into_iter()
         .map(|r| GenerationRow {
@@ -621,7 +685,7 @@ impl Store {
              FROM position WHERE run_id = $1",
         )
         .bind(run)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *conn)
         .await?
         .into_iter()
         .map(|r| {
@@ -652,7 +716,9 @@ impl Store {
             positions,
         }))
     }
+}
 
+impl Store {
     /// **The run's row, first and `writing`** (Spec 3.1). The boundary set
     /// is written empty, a fact about every run this ingest can meet (Spec
     /// 2.2).
@@ -772,7 +838,7 @@ impl Store {
         let Some(stored) = self.stored(run).await? else {
             return Ok(());
         };
-        match compare(plan, &stored) {
+        match compare(plan, &stored, false) {
             Ok(()) => answer_stored(outcome, &stored),
             Err(why) => {
                 outcome.status = "refused".into();
@@ -789,7 +855,11 @@ impl Store {
         if let Some((race, emission)) = &options.race
             && *race == at
         {
-            Box::pin(self.ingest_with(Ok(emission.clone()), &Options::default())).await;
+            let options = Options {
+                stop_at: options.race_stop,
+                ..Options::default()
+            };
+            Box::pin(self.ingest_with(Ok(emission.clone()), &options)).await;
         }
     }
 
@@ -824,6 +894,20 @@ impl Store {
         let mut tx = self.pool.begin().await?;
         if !lock(&mut tx, &open.run).await? {
             return Ok(None);
+        }
+        // **The branch closes only over exactly what it planned**, compared
+        // under the same lock as its close, as `close_compared` does for a
+        // run that is not a branch.
+        if let Some(stored) = stored_on(&mut tx, &open.run).await?
+            && let Err(why) = compare(&open.plan, &stored, true)
+        {
+            return Ok(Some(Resolved {
+                status: "refused",
+                reason: Some(why),
+                linked: false,
+                parting: Parting::Unknown,
+                stored: Some("writing".into()),
+            }));
         }
         let parent_status: Option<String> =
             sqlx::query_scalar("SELECT ingest_status FROM run WHERE run_id = $1 FOR SHARE")
@@ -938,6 +1022,15 @@ async fn lock(tx: &mut Transaction<'_, Postgres>, run: &str) -> Result<bool, sql
             .fetch_optional(&mut **tx)
             .await?;
     Ok(status.as_deref() == Some("writing"))
+}
+
+/// How a compared close ended.
+enum Close {
+    Closed(&'static str, Option<String>),
+    /// The row no longer reads `writing`: another ingest closed it.
+    NotOpen,
+    /// What is stored is not exactly what this ingest planned.
+    Differs(String),
 }
 
 /// How a fill ended.
@@ -1073,30 +1166,12 @@ async fn insert_points(
     Ok(())
 }
 
-async fn close(
-    pool: &sqlx::PgPool,
-    run: &str,
-    status: &str,
-    reason: Option<&str>,
-) -> Result<bool, sqlx::Error> {
-    let closed = sqlx::query(
-        "UPDATE run SET ingest_status = $2, ingest_reason = $3 \
-         WHERE run_id = $1 AND ingest_status = 'writing'",
-    )
-    .bind(run)
-    .bind(status)
-    .bind(reason)
-    .execute(pool)
-    .await?;
-    Ok(closed.rows_affected() == 1)
-}
-
 /// **A replay compared against what is stored**, key by key, before
 /// anything is written (rulings 14 and 17). Every stored key must be one the
 /// emission names with an equal payload; a closed run must hold exactly
 /// what the emission names, and a `writing` one may hold less. The first
 /// difference is named.
-fn compare(plan: &RunPlan, stored: &Stored) -> Result<(), String> {
+fn compare(plan: &RunPlan, stored: &Stored, whole: bool) -> Result<(), String> {
     let refused = |what: String| {
         format!("a replay that differs from the stored run, which stands unchanged: {what}")
     };
@@ -1127,7 +1202,7 @@ fn compare(plan: &RunPlan, stored: &Stored) -> Result<(), String> {
             }
         }
     }
-    if stored.status != "writing"
+    if (whole || stored.status != "writing")
         && (stored.generations.len() != plan.generations.len()
             || stored.positions.len() != planned.len())
     {

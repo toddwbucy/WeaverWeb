@@ -1028,3 +1028,85 @@ async fn a_cycle_two_concurrent_ingests_close_is_refused_on_both_sides() {
         assert!(row.reason.unwrap().contains("reference cycle"));
     }
 }
+
+/// The certified emission cut to its first generation and its points: an
+/// emission whose plan is a strict prefix of the whole one.
+fn first_generation_of(w: &Wire) -> Wire {
+    let mut short = w.clone();
+    short.summary["generations"]
+        .as_array_mut()
+        .unwrap()
+        .truncate(1);
+    short.points.truncate(12);
+    short
+}
+
+/// **An ingest closes a run only over exactly what it planned** (Codex
+/// pass four on PR #23): this ingest carries the run's first generation
+/// only; the test-only race lands an ingest of the whole run, which writes
+/// the second generation and stops before its own close, between this
+/// one's fill and its close. This one is refused naming the difference and
+/// leaves the row `writing`, and the whole ingest, replayed, closes it.
+#[tokio::test]
+async fn a_shorter_ingest_never_closes_a_run_holding_more() {
+    let Some(s) = store().await else { return };
+    let whole = Wire::of(CERTIFIED).tagged(&tag("prefix"));
+    let short = first_generation_of(&whole);
+    let answer = s
+        .ingest_with(
+            Emission::read(short.text().as_bytes()),
+            &Options {
+                race: Some((
+                    Race::BeforeClose,
+                    Emission::read(whole.text().as_bytes()).unwrap(),
+                )),
+                race_stop: Some(Step::AfterFill),
+                ..Options::default()
+            },
+        )
+        .await
+        .value;
+    assert_eq!(answer["runs"][0]["status"], json!("refused"), "{answer}");
+    assert_eq!(answer["runs"][0]["stored"], json!("writing"));
+    assert!(
+        answer["runs"][0]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("generation 1 differs"),
+        "{answer}"
+    );
+    assert_eq!(landed(&s, &whole.run()).await.unwrap().status, "writing");
+    assert_eq!(ingest(&s, &whole).await["ok"], json!(true));
+    assert_eq!(landed(&s, &whole.run()).await.unwrap().status, "whole");
+}
+
+/// **A branch closes only over exactly what it planned**, the same race
+/// against a branch's close inside its resolution: both emissions name a
+/// parent the store does not hold, so each stays open until it resolves.
+#[tokio::test]
+async fn a_shorter_branch_never_closes_a_run_holding_more() {
+    let Some(s) = store().await else { return };
+    let t = tag("prefix-branch");
+    let whole = Wire::of(CERTIFIED)
+        .renamed(&format!("child#{t}"))
+        .branch_of(&format!("elsewhere#{t}"));
+    let short = first_generation_of(&whole);
+    let answer = s
+        .ingest_with(
+            Emission::read(short.text().as_bytes()),
+            &Options {
+                race: Some((
+                    Race::BeforeResolve,
+                    Emission::read(whole.text().as_bytes()).unwrap(),
+                )),
+                race_stop: Some(Step::AfterPoints),
+                ..Options::default()
+            },
+        )
+        .await
+        .value;
+    assert_eq!(answer["runs"][0]["status"], json!("refused"), "{answer}");
+    assert_eq!(landed(&s, &whole.run()).await.unwrap().status, "writing");
+    assert_eq!(ingest(&s, &whole).await["ok"], json!(true));
+    assert_eq!(landed(&s, &whole.run()).await.unwrap().status, "whole");
+}

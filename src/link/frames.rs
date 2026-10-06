@@ -275,8 +275,9 @@ pub enum FromClient {
 #[serde(tag = "svc", rename_all = "snake_case")]
 pub enum ToClient {
     /// The send cadence, the silence bound divided by four (Spec 8), **the
-    /// silence bound itself**, so a connector timing against the server's
-    /// deadline reads it rather than rebuilding it from the quotient, and
+    /// silence bound itself**, which the connector checks the cadence
+    /// against (no opening's hold is timed by it: the hold runs on no clock
+    /// of the connector's), and
     /// on the admin plane the acknowledged position this server process
     /// holds, or none after a restart (Spec 7.2).
     HelloAnswer {

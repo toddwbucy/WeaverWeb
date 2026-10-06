@@ -27,7 +27,7 @@ use std::path::Path;
 use std::time::Duration;
 use tokio::io::{AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
-use tokio::sync::{mpsc, oneshot, watch};
+use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 use tokio_rustls::TlsConnector;
 use tokio_rustls::client::TlsStream;
@@ -329,20 +329,13 @@ impl Link {
                     ));
                 }
                 let cadence = Duration::from_secs(cadence_secs);
-                let silence = Duration::from_secs(silence_secs);
                 if let Err(e) = keepalive(fd, cadence) {
                     tracing::warn!("TCP keepalive could not be set on the link: {e}");
                 }
                 if let Err(e) = bound_unsent(fd) {
                     tracing::warn!("the link's unsent bound could not be set: {e}");
                 }
-                Connect::Admitted(Connection::start(
-                    reader,
-                    write,
-                    cadence,
-                    silence,
-                    acknowledged,
-                ))
+                Connect::Admitted(Connection::start(reader, write, cadence, acknowledged))
             }
             ToClient::Refusal { reason } => Connect::Refused(reason),
             other => Connect::Failed(format!(
@@ -437,16 +430,11 @@ pub struct Connection {
     /// The cadence the hello's answer named: the heartbeat's period and
     /// every write's bound.
     pub cadence: Duration,
-    /// The server's silence bound, as the hello's answer named it: the
-    /// deadline the server holds for what it awaits from this connector.
-    pub silence: Duration,
     /// On the admin plane, the position this server process acknowledged
     /// (Spec 7.2); none on the gate plane.
     pub acknowledged: Option<Position>,
     reader: Reader,
-    /// Each frame with, where the sender asked, the signal that it was
-    /// written to the socket.
-    tx: Option<mpsc::Sender<(FromClient, Option<oneshot::Sender<()>>)>>,
+    tx: Option<mpsc::Sender<FromClient>>,
     /// Why the write path ended, once it has.
     failed: watch::Receiver<Option<String>>,
     writer: Option<JoinHandle<()>>,
@@ -466,17 +454,16 @@ impl Connection {
         reader: Reader,
         mut write: Writer,
         cadence: Duration,
-        silence: Duration,
         acknowledged: Option<Position>,
     ) -> Self {
-        let (tx, mut rx) = mpsc::channel::<(FromClient, Option<oneshot::Sender<()>>)>(WRITE_QUEUE);
+        let (tx, mut rx) = mpsc::channel::<FromClient>(WRITE_QUEUE);
         let (failed_tx, failed) = watch::channel(None);
         let fail = failed_tx.clone();
         // **Every write is held to the cadence.** One that does not
         // complete within it is the server gone or no longer taking bytes,
         // and the connection ends for that reason.
         let writer = tokio::spawn(async move {
-            while let Some((frame, delivered)) = rx.recv().await {
+            while let Some(frame) = rx.recv().await {
                 let Ok(mut line) = serde_json::to_vec(&frame) else {
                     continue;
                 };
@@ -487,13 +474,7 @@ impl Connection {
                 })
                 .await;
                 match wrote {
-                    // Written and flushed to the socket: a tracked send is
-                    // told so now, and only now.
-                    Ok(Ok(())) => {
-                        if let Some(delivered) = delivered {
-                            let _ = delivered.send(());
-                        }
-                    }
+                    Ok(Ok(())) => {}
                     Ok(Err(e)) => {
                         fail.send_replace(Some(format!("writing to the server: {e}")));
                         return;
@@ -514,8 +495,7 @@ impl Connection {
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {
                 tick.tick().await;
-                match tokio::time::timeout(cadence, beat.send((FromClient::Heartbeat, None))).await
-                {
+                match tokio::time::timeout(cadence, beat.send(FromClient::Heartbeat)).await {
                     Ok(Ok(())) => {}
                     // The writer ended and said why.
                     Ok(Err(_)) => return,
@@ -530,7 +510,6 @@ impl Connection {
         });
         Self {
             cadence,
-            silence,
             acknowledged,
             reader,
             tx: Some(tx),
@@ -567,32 +546,12 @@ impl Connection {
         }
     }
 
-    /// Queue a frame for the server, bounded by the cadence. **Queued is
-    /// not delivered**: the frame waits behind those ahead of it in the
-    /// writer's queue; a sender that needs the moment it reached the
-    /// socket uses `send_tracked`.
+    /// Queue a frame for the server, bounded by the cadence.
     pub async fn send(&self, frame: FromClient) -> Result<(), String> {
-        self.queue(frame, None).await
-    }
-
-    /// **Queue a frame and learn when it was written to the socket**: the
-    /// receiver fires once the writer has written and flushed it, and is
-    /// dropped unfired where the writer ends first.
-    pub async fn send_tracked(&self, frame: FromClient) -> Result<oneshot::Receiver<()>, String> {
-        let (delivered, receiver) = oneshot::channel();
-        self.queue(frame, Some(delivered)).await?;
-        Ok(receiver)
-    }
-
-    async fn queue(
-        &self,
-        frame: FromClient,
-        delivered: Option<oneshot::Sender<()>>,
-    ) -> Result<(), String> {
         let Some(tx) = &self.tx else {
             return Err("the connection is closing".to_owned());
         };
-        match tokio::time::timeout(self.cadence, tx.send((frame, delivered))).await {
+        match tokio::time::timeout(self.cadence, tx.send(frame)).await {
             Ok(Ok(())) => Ok(()),
             Ok(Err(_)) => Err(self.lost()),
             Err(_) => Err(format!(

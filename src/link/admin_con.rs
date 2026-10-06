@@ -1751,49 +1751,27 @@ async fn relay<I: Invoker>(
     let mut in_flight = futures::stream::FuturesUnordered::new();
     // Whether a waiting ask's hold behind a detached process was logged.
     let mut held_logged = false;
-    // **An opening on the live connection serves its own `show` first**
-    // (Spec 7.2): until the server's `show` asked at the opening is taken
-    // into the slot, ordinary asks wait as they do behind the replay, so a
-    // person's verb queued at the opening cannot hold that `show` past the
-    // opening's deadline. **Its clock runs from the door frame's send**,
-    // not the opening's measurement, as the listener's own deadline runs
-    // from the frame's receipt: the server's silence bound, as its hello's
-    // answer named it, and one cadence more for the `show`'s delivery, so
-    // the hold outlasts the
-    // listener's deadline and a server that never asks still cannot hold
-    // the queue. `Unsent` until the frame has gone, **gone meaning written
-    // to the socket**: a frame queued behind others has not reached the
-    // server, so the door frame is sent tracked and the clock starts when
-    // the writer reports it written.
-    let mut opening_show: Option<Hold> = None;
-    let mut door_delivered: Option<tokio::sync::oneshot::Receiver<()>> = None;
+    // **An opening on the live connection serves its own `show` first,
+    // and holds every ordinary ask until that `show` is answered** (Spec
+    // 7.2): where the ceiling grants `show`, ordinary asks wait from the
+    // opening until the `show` the server asks has been answered with a
+    // `state` answer and that answer sent. **The hold runs on no clock of
+    // admin-con's**: the server always asks after a door frame where the
+    // ceiling grants `show`, and if it does not, or the `show` faults or
+    // answers anything but a state, its own admission deadline closes the
+    // connection, which ends the hold. That deadline is the only clock, and
+    // it is the right one, since no deadline admin-con computes can be
+    // proven to outlast it.
+    let mut opening_show = false;
+    // The `show` taken under the hold, whose answer may release it.
+    let mut hold_show: Option<u64> = None;
     loop {
         if *shutdown.borrow_and_update() {
             decline_waiting(conn, &mut queue).await;
             return Ended::Shutdown;
         }
-        if let Some(delivered) = &mut door_delivered {
-            match delivered.try_recv() {
-                Ok(()) => {
-                    door_delivered = None;
-                    start_hold(&mut opening_show, conn);
-                }
-                Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {}
-                // The writer ended: the connection is ending, and no hold
-                // matters.
-                Err(tokio::sync::oneshot::error::TryRecvError::Closed) => door_delivered = None,
-            }
-        }
-        if matches!(opening_show, Some(Hold::Until(until)) if tokio::time::Instant::now() >= until)
-        {
-            tracing::warn!(
-                "{}: the opening's show was not asked within the silence bound; ordinary asks are served",
-                opts.agent
-            );
-            opening_show = None;
-        }
         // Only a `show` the server asked is served while this holds.
-        let restricted = replaying || opening_show.is_some();
+        let restricted = replaying || opening_show;
         // **A verb, one at a time, its answer placed at the invocation**
         // (Spec 7.2): drain the door to the relay's heartbeat, invoke with
         // the door unread, emit the answer, then read on. A second ask
@@ -1804,8 +1782,8 @@ async fn relay<I: Invoker>(
             && let Ok(permit) = opts.slot.permit.clone().try_acquire_owned()
             && let Some(ask) = queue.next(restricted)
         {
-            if ask.served_during_the_replay() {
-                opening_show = None;
+            if opening_show && ask.served_during_the_replay() {
+                hold_show = Some(ask.id);
             }
             // **During the replay only a `show` the server asked is served,
             // at once and with no drain** (Spec 7.2): the admission's held
@@ -1902,8 +1880,18 @@ async fn relay<I: Invoker>(
             // invocation is emitted ahead of its answer.
             tokio::select! {
                 Some((id, outcome)) = in_flight.next() => {
+                    let releases = hold_show == Some(id) && answered_a_state(&outcome);
                     if let Err(why) = conn.send(answer(id, outcome, opts.verb_bound)).await {
                         return Ended::Lost(why);
+                    }
+                    // The opening's `show` answered with a state and sent:
+                    // the hold ends. Answered otherwise, the hold stands
+                    // until the server closes the connection.
+                    if hold_show == Some(id) {
+                        hold_show = None;
+                        if releases {
+                            opening_show = false;
+                        }
                     }
                 }
                 incoming = conn.recv() => {
@@ -2003,14 +1991,7 @@ async fn relay<I: Invoker>(
                     frame,
                     FromClient::CaughtUp | FromClient::Door { open: false, .. }
                 );
-                if matches!(frame, FromClient::Door { open: true, .. })
-                    && matches!(opening_show, Some(Hold::Unsent))
-                {
-                    match conn.send_tracked(frame.clone()).await {
-                        Ok(delivered) => door_delivered = Some(delivered),
-                        Err(why) => return Ended::Lost(why),
-                    }
-                } else if let Err(why) = conn.send(frame.clone()).await {
+                if let Err(why) = conn.send(frame.clone()).await {
                     return Ended::Lost(why);
                 }
                 sent(shared, &frame);
@@ -2049,15 +2030,11 @@ async fn relay<I: Invoker>(
         // for it, or the door's next opening, taken only while nothing is
         // in flight or waiting to start.
         // **No new opening while an opening's hold stands**: the hold
-        // resolves first, its `show` served or its bound passed, so a
+        // resolves first, its `show` answered or the connection ended, so a
         // `show` from an earlier opening never clears a later one's hold.
         let opening_due =
-            !door.open && opening_show.is_none() && opts.slot.free() && !queue.servable(restricted);
+            !door.open && !opening_show && opts.slot.free() && !queue.servable(restricted);
         let next_try = door.next_try;
-        let show_until = match opening_show {
-            Some(Hold::Until(until)) => Some(until),
-            _ => None,
-        };
         tokio::select! {
             _ = shutdown.changed() => {
                 decline_waiting(conn, &mut queue).await;
@@ -2066,16 +2043,6 @@ async fn relay<I: Invoker>(
             // The slot freed by a timed-out verb's process ending wakes an
             // ask waiting for it, and a closed door's opening owed after it.
             () = opts.slot.freed(), if !opts.slot.free() && (queue.servable(restricted) || !door.open) => {}
-            // The door frame written: the opening's hold starts its clock.
-            delivered = async { door_delivered.as_mut().expect("guarded").await }, if door_delivered.is_some() => {
-                door_delivered = None;
-                if delivered.is_ok() {
-                    start_hold(&mut opening_show, conn);
-                }
-            }
-            // The opening's hold ends at its bound even with nothing else
-            // to wake the loop.
-            () = tokio::time::sleep_until(show_until.unwrap_or(next_try)), if show_until.is_some() => {}
             step = door.read(), if door.open => {
                 if let Err(end) = send_outs(conn, shared, step_outs(step)).await {
                     return end;
@@ -2087,7 +2054,7 @@ async fn relay<I: Invoker>(
                         outbox.extend(queued);
                         replaying = true;
                         if ceiling.contains("show") {
-                            opening_show = Some(Hold::Unsent);
+                            opening_show = true;
                         }
                     }
                     Ok(None) => {}
@@ -2113,26 +2080,19 @@ impl Drop for Verifying {
     }
 }
 
-/// Start an unclocked hold's clock: **the server's own silence bound**, as
-/// its hello's answer named it, and one cadence more for the `show`'s
-/// delivery, so the hold covers the server's deadline for that `show`
-/// whatever the bound's quotient.
-fn start_hold(hold: &mut Option<Hold>, conn: &Connection) {
-    if matches!(hold, Some(Hold::Unsent)) {
-        *hold = Some(Hold::Until(
-            tokio::time::Instant::now() + conn.silence + conn.cadence,
-        ));
-    }
-}
-
-/// An opening's hold on ordinary asks, until its `show` is taken.
-#[derive(Debug, Clone, Copy)]
-enum Hold {
-    /// The door frame has not been written to the socket yet; the clock has
-    /// not started.
-    Unsent,
-    /// The frame was written; the hold ends here at the latest.
-    Until(tokio::time::Instant),
+/// Whether an invocation answered with a `state` answer, the one that ends
+/// an opening's hold.
+fn answered_a_state(invocation: &Invocation) -> bool {
+    matches!(
+        invocation,
+        Invocation::Ran(Some(Ok(outcome)))
+            if outcome
+                .answer
+                .as_ref()
+                .and_then(|a| a.get("kind"))
+                .and_then(|k| k.as_str())
+                == Some("state")
+    )
 }
 
 /// How an invocation ended: it ran, answering admin's object or passing

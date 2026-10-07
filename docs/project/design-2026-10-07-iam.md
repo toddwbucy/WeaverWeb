@@ -116,16 +116,20 @@ these:
   slash or an explicit `:443` would make every request fail the comparison. Refusing
   rather than stripping keeps the config and the comparison one fact;
 - an `rp_id` that is an IP address, or empty;
-- an `origin` that is not `https://`, unless its host is `localhost`, the one plain origin
-  a browser treats as secure, which tests and a developer's machine use;
+- an `origin` whose scheme is not `https`, unless it is exactly `http` on the host
+  `localhost`, the one plain origin a browser treats as secure, which tests and a
+  developer's machine use; any other scheme, or `http` on any other host, is refused;
 - an `origin` whose host is neither the `rp_id` nor a subdomain of it;
 - an `https` origin on a listener with no certificate and key configured;
 - a certificate and key that do not load or do not pair;
 - **a certificate not valid for the origin's host**, verified as rustls verifies a server
   name, by webpki's name check against the certificate's subject alternative names, so a
-  browser reaching the origin would not refuse the name. **Its expiry is not checked at
-  start**: validity in time changes while the server runs, and an expired certificate is
-  the browser's to refuse.
+  browser reaching the origin would not refuse the name;
+- **a certificate not yet valid, or already expired, against the clock at start**, its
+  validity period being in the file. **Nothing is promised about expiry while the server
+  runs**: a certificate that expires later is the browser's to refuse. The server logs a
+  warning at start where the certificate expires within 14 days, one line that gives the
+  operator a renewal's notice at no cost.
 
 Each refusal names the key and what is wrong, as the authority's absence does today.
 
@@ -375,16 +379,20 @@ its own person or by the host reset.
 - its identity;
 - when;
 - **the principal**: the person, the server or the host;
-- **how the principal was authenticated**: a session, an enrollment token, or the host's
-  access;
+- **how the principal was authenticated**: `session` or `enrollment token` for a person,
+  `server` for the server acting on its own behalf (the admission's `show`), and `host`
+  for access to the server's host. Each value belongs to exactly one principal, so a
+  record's principal and its method can never disagree;
 - the host's `--author` claim where the host acts;
 - the target's kind and identity;
 - the action;
 - for a second record, the first record it answers and the outcome; for a refusal, the
   refusal.
 
-**It is append-only in the store**: a trigger refuses every `UPDATE` and `DELETE` on the
-table, so this crate's processes cannot rewrite it whatever path they take. The two-record
+**It is append-only in the store**: a row trigger refuses every `UPDATE` and `DELETE` on
+the table, and a statement trigger `BEFORE TRUNCATE` refuses a truncate, which no row
+trigger sees, so this crate's processes can neither rewrite it nor empty it whatever path
+they take. The table's owner can drop the triggers, which section 5 puts out of scope. The two-record
 rule is Spec 2.13's, unchanged: a first record before the act, and the outcome as a second
 record naming the first. **It never holds** a passkey, a public key, a challenge, a
 bearer, an enrollment token or its digest, or a turn's text. It lands in PR 2, since the

@@ -191,9 +191,10 @@ It holds no secret of a person: a passkey's stored half is a public key.
 | **A compromised agent box** | Nothing new here: the connectors are mutually authenticated and the box's sudo rule is the third gate (Spec 8) | Out of IAM's scope |
 
 **Out of scope, named so it is not left unsaid**: denial of service; a malicious browser
-or extension; the server's host; the box; recovering an audit that someone with the store
-rewrote (append-only is enforced in the store against this crate's processes, not against
-the host's database owner).
+or extension; the server's host; the box; **a compromised server process**, which holds
+the store's owner rights while the server connects as the audit table's owner and can drop
+the audit's triggers (section 10 says what the triggers guard and what would close this);
+and recovering an audit that someone with the store's owner rights rewrote.
 
 ## 6. The session
 
@@ -425,8 +426,13 @@ its own person or by the host reset.
 
 **It is append-only in the store**: a row trigger refuses every `UPDATE` and `DELETE` on
 the table, and a statement trigger `BEFORE TRUNCATE` refuses a truncate, which no row
-trigger sees, so this crate's processes can neither rewrite it nor empty it whatever path
-they take. The table's owner can drop the triggers, which section 5 puts out of scope. The two-record
+trigger sees. **What the triggers guard is this crate's code paths**: no statement this
+crate issues, the server's or a host command's, can update, delete or truncate an audit
+record. They do not guard against a process that deliberately drops them with the
+owner's rights, which is a compromised server, out of the threat model as the host is
+(section 5). **The hardening that would close it** is a migration role owning the table
+while the server connects as a role holding only `INSERT` and `SELECT` on it; that is a
+change to how the store is provisioned, an operator decision outside this act. The two-record
 rule is Spec 2.13's, unchanged: a first record before the act, and the outcome as a second
 record naming the first. **It never holds** a passkey, a public key, a challenge, a
 bearer, an enrollment token or its digest, or a turn's text. It lands in PR 2, since the

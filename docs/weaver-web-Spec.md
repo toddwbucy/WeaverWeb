@@ -1551,9 +1551,12 @@ it decides are stated here and in section 2.8, and the reasons are there.
   acting on its own behalf, access to the host for the host, each method
   belonging to one principal alone), its target and its action, and when.
   **The records are rows of a table of their own that store triggers keep
-  append-only**, refusing every update, delete and truncate whatever path a
-  process takes; the table's owner dropping the triggers is outside the
-  threat model. For
+  append-only against this crate's code paths**: no statement this crate
+  issues, the server's or a host command's, can update, delete or truncate a
+  record. A process that drops the triggers with the table owner's rights is
+  a compromised server, outside the threat model as the host is; a migration
+  role owning the table, the server connecting with `INSERT` alone, would
+  close it, and is the operator's provisioning decision outside act 11. For
   a verb asked of an agent, or a turn placed with it, the target is the
   agent and the action the verb or `turn`;
   for a write to a person row, a role or a grant the target is the row's
@@ -3699,7 +3702,7 @@ missing while it was relaying.
 | a passkey is added only after a fresh assertion, and a person's last is never removed | perturbation, **owed**: add a passkey on a session alone, and a stolen cookie gains access that outlasts it; let a person remove their last passkey, and they are locked out with only the host to recover them. Lands with act 11's passkey pull request |
 | an enrollment token is single-use, expiring, bound to one person holding no passkey, and stored as a digest | perturbation, **owed**: redeem a token twice, past its expiry, or on a row that holds a passkey, and each lands a credential; store the token in the clear, and a read of the person table is a set of usable tokens; have the host reset issue its token before clearing the passkeys, and a token is issued for a row that holds one. Lands with act 11's persons pull request |
 | every bearer the server issues is 32 bytes of the operating system's cryptographic randomness | perturbation, **owed**: draw an enrollment token from a counter, and the next token is guessed from the last; draw a session bearer or a ceremony identity from the time, and the same. Lands with act 11's persons and passkey pull requests |
-| the audit table is append-only in the store | perturbation, **owed**: drop the row trigger, and an update rewrites a record or a delete removes one; drop the truncate trigger, and a truncate empties the audit. Lands with act 11's persons pull request |
+| no statement this crate issues can rewrite, remove or truncate an audit record | perturbation, **owed**: drop the row trigger, and an update rewrites a record or a delete removes one; drop the truncate trigger, and a truncate empties the audit. The triggers guard this crate's code paths, not a process dropping them with the owner's rights, which section 2.13 puts outside the threat model. Lands with act 11's persons pull request |
 | the admin role grants no action on any agent | perturbation, **owed**: let the server-wide admin grant authorize a verb, and an admin holding no grant on an agent asks `stop` of it. Lands with act 11's authorization pull request |
 | reading an agent takes a grant on it | perturbation, **owed**: drop the grant check on a read, and a person holding no grant on an agent reads its trace window and its load state; give the admin's register view the door and the load state, and an admin with no grant reads an agent's state. Lands with act 11's authorization pull request |
 | an open live view ends within its bound of what ended its session or grant | perturbation, **owed**: drop the stream's re-check, disable a person whose live view is open, and the view keeps receiving the trace; remove the grant instead, and the same. Lands with act 11's authorization pull request |

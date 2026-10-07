@@ -523,13 +523,11 @@ pub(crate) mod tests {
     use crate::store::Registered;
     use serde_json::json;
 
-    /// **The one guard for tests that would crowd the shared scratch
-    /// store**: the link's tests, which serialize among themselves because a
-    /// listener's start resets every row's link state, and the ingest's heavy
-    /// tests, the bound sweep and the many-waiter test, whose tens of
-    /// thousands of transactions would slow every bound asserted beside them.
-    /// A bound asserted against a shared server means something only where
-    /// the server is not shared with these; every other test stays parallel.
+    /// **One guard for the tests that must not share the scratch store**: the
+    /// link's tests, which serialize among themselves because a listener's
+    /// start resets every row's link state, and the ingest's two heavy tests,
+    /// the bound sweep and the many-waiter test, held off the link's
+    /// store-bound tests. Every other test stays parallel.
     pub(crate) fn exclusive() -> &'static tokio::sync::Mutex<()> {
         static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
         LOCK.get_or_init(|| tokio::sync::Mutex::new(()))

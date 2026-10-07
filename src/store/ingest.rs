@@ -98,6 +98,9 @@ pub struct Options {
     pub stop_at: Option<Step>,
     #[cfg(test)]
     pub hold: Option<Hold>,
+    /// Counts the parent tapes the walk loads from the store.
+    #[cfg(test)]
+    pub parent_loads: Option<std::sync::Arc<std::sync::atomic::AtomicUsize>>,
 }
 
 /// How one run came out, which the answer reports.
@@ -661,10 +664,16 @@ impl Store {
         // The ends of chains this ingest's resolutions have followed, so a
         // long chain is followed once and not once per branch on it.
         let mut tails: HashMap<String, Option<String>> = HashMap::new();
+        // **One parent's tape at a time**, held while its branches resolve:
+        // the order puts siblings next to one another, so the tape is loaded
+        // once per parent and dropped when the next parent's begins. One and
+        // not a map of them, since a map would hold every parent's tape at
+        // once, and a parent's tape may run to millions of positions.
+        let mut tape: Option<ParentTape> = None;
         for run in order.iter().filter(|r| !in_cycle.contains(r.as_str())) {
             let o = by_run[run.as_str()];
             let resolved = self
-                .resolve_retrying(o, &mut tails)
+                .resolve_retrying(o, &mut tails, &mut tape, options)
                 .await
                 .map_err(store_error)?;
             let outcome = &mut outcomes[o.outcome];
@@ -787,10 +796,12 @@ impl Store {
         &self,
         open: &Open,
         tails: &mut HashMap<String, Option<String>>,
+        tape: &mut Option<ParentTape>,
+        options: &Options,
     ) -> Result<Resolved, sqlx::Error> {
         let mut tries = 0;
         loop {
-            match self.resolve(open, tails).await {
+            match self.resolve(open, tails, tape, options).await {
                 Err(sqlx::Error::Database(d))
                     if tries < 3 && matches!(d.code().as_deref(), Some("40P01" | "40001")) =>
                 {
@@ -808,7 +819,10 @@ impl Store {
         &self,
         open: &Open,
         tails: &mut HashMap<String, Option<String>>,
+        tape: &mut Option<ParentTape>,
+        options: &Options,
     ) -> Result<Resolved, sqlx::Error> {
+        let _ = options;
         let parent = open
             .plan
             .members
@@ -913,9 +927,21 @@ impl Store {
                 tails.insert(run, end.clone());
             }
         }
-        let parting = if parent_status.as_deref() == Some("whole") {
-            match parent_path(&mut tx, parent).await? {
-                Some(parent_path) => walk(&open.plan, &parent_path),
+        // A child with no points has nothing to compare, and the walk would
+        // answer unknown without the parent's tape, so none is loaded.
+        let parting = if parent_status.as_deref() == Some("whole") && !open.plan.points.is_empty() {
+            if tape.as_ref().is_none_or(|t| t.parent != parent) {
+                #[cfg(test)]
+                if let Some(loads) = &options.parent_loads {
+                    loads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                }
+                *tape = Some(ParentTape {
+                    parent: parent.to_owned(),
+                    path: parent_path(&mut tx, parent).await?,
+                });
+            }
+            match tape.as_ref().and_then(|t| t.path.as_ref()) {
+                Some(parent_path) => walk(&open.plan, parent_path),
                 None => Parting::Unknown,
             }
         } else {
@@ -951,6 +977,15 @@ impl Store {
 /// the reason's size never grows with the cycle's.
 fn cycle_reason(length: usize, least: &str, parent: &str) -> String {
     format!("a reference cycle of {length} runs through {least}, this run naming {parent}")
+}
+
+/// A whole parent's tape as the walk compares against it, or `None` where
+/// the store cannot rebuild it, held for the branches of that one parent.
+/// The parent is whole and locked for the ingest's length, so its tape does
+/// not move while held.
+struct ParentTape {
+    parent: String,
+    path: Option<Vec<(i32, i64)>>,
 }
 
 struct Resolved {
@@ -1055,7 +1090,8 @@ fn compare(plan: &RunPlan, stored: &Stored) -> Result<(), String> {
 /// The cycles are the ones an open branch is on; a cycle no open branch is
 /// on was in the store before the ingest and is not its to refuse. The order
 /// holds every open branch not on a cycle, parents before children over the
-/// references among them, the emission's order kept between equals.
+/// references among them, and within one depth the siblings of one parent
+/// next to one another, so the resolution holds one parent's tape at a time.
 pub(crate) fn plan_resolution(
     open: &[String],
     references: &HashMap<String, Option<String>>,
@@ -1131,7 +1167,14 @@ pub(crate) fn plan_resolution(
         .filter(|r| !in_cycle.contains(r.as_str()))
         .cloned()
         .collect();
-    order.sort_by_key(|r| depth[r.as_str()]);
+    // Parents before children, and within one depth, siblings of one parent
+    // next to one another, which the order is free to do: the resolution
+    // then holds one parent's tape at a time.
+    order.sort_by(|a, b| {
+        depth[a.as_str()]
+            .cmp(&depth[b.as_str()])
+            .then_with(|| references.get(a).cmp(&references.get(b)))
+    });
     (cycles, order)
 }
 

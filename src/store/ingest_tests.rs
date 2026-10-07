@@ -1881,3 +1881,50 @@ async fn an_unnamed_cycle_member_carries_no_plans_members() {
     );
     assert!(named.get("positions").is_some());
 }
+
+/// **A parent's tape is loaded once for all its branches** (Codex pass
+/// sixteen on PR #23): two whole parents, P and Q, and five branches listed
+/// interleaved, P's and Q's alternating. The order puts each parent's
+/// branches together and the resolution holds one parent's tape at a time,
+/// so the store is asked for a tape twice, not five times, and every walk
+/// still runs.
+#[tokio::test]
+async fn a_parents_tape_is_loaded_once_for_its_branches() {
+    let Some(s) = store().await else { return };
+    let t = tag("one-tape");
+    let p = Wire::of(SERVING).tagged(&t);
+    let q = Wire::of(CERTIFIED).renamed(&format!("q#{t}"));
+    assert_eq!(ingest(&s, &p).await["ok"], json!(true));
+    assert_eq!(ingest(&s, &q).await["ok"], json!(true));
+    let parents = [p.run(), q.run()];
+    let mut branches = Wire::of(CERTIFIED)
+        .renamed(&format!("b0#{t}"))
+        .branch_of(&parents[0]);
+    for i in 1..5 {
+        branches = branches.then(
+            Wire::of(CERTIFIED)
+                .renamed(&format!("b{i}#{t}"))
+                .branch_of(&parents[i % 2]),
+        );
+    }
+    let loads = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let answer = s
+        .ingest_with(
+            Emission::read(branches.text().as_bytes()),
+            &Options {
+                parent_loads: Some(loads.clone()),
+                ..Options::default()
+            },
+        )
+        .await
+        .value;
+    assert_eq!(answer["ok"], json!(true), "{answer}");
+    for r in answer["runs"].as_array().unwrap() {
+        assert_eq!(r["parting_known"], json!(true), "every walk runs: {r}");
+    }
+    assert_eq!(
+        loads.load(std::sync::atomic::Ordering::SeqCst),
+        2,
+        "one load per parent"
+    );
+}

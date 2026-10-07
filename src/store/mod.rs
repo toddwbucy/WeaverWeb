@@ -20,6 +20,7 @@ mod ingest_tests;
 pub mod key;
 pub mod plan;
 pub mod read;
+pub mod rows;
 
 pub use experiment::{Arm, Experiment, ExperimentState, Registered, StagedExperiment, Sweep};
 pub use key::{AgentId, ArmId, PlanId, PositionKey, RunId, TurnId};

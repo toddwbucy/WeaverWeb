@@ -14,7 +14,7 @@ use sqlx::Row;
 
 use super::Store;
 use super::emission::Emission;
-use super::ingest::{Options, Race, Step};
+use super::ingest::{Hold, HoldAt, Options, Step};
 use super::key::{RunId, TurnId};
 use super::read::tests::store;
 
@@ -945,188 +945,6 @@ async fn an_equal_replay_answers_with_what_the_store_holds() {
     assert_eq!(out["parting_position"], json!(204), "{again}");
 }
 
-/// **An ingest that loses the race to create a run replays it** (Codex pass
-/// two on PR #23): a second ingest of the same emission lands between this
-/// one's read of the run and its insert of the row, by the test-only race
-/// option. This one meets the row on its insert, compares and answers the
-/// run's stored outcome, rather than refusing for having lost a race.
-#[tokio::test]
-async fn an_ingest_that_loses_the_race_to_create_a_run_replays_it() {
-    let Some(s) = store().await else { return };
-    let w = Wire::of(CERTIFIED).tagged(&tag("race"));
-    let answer = s
-        .ingest_with(
-            Emission::read(w.text().as_bytes()),
-            &Options {
-                race: Some((
-                    Race::BeforeCreate,
-                    Emission::read(w.text().as_bytes()).unwrap(),
-                )),
-                ..Options::default()
-            },
-        )
-        .await
-        .value;
-    assert_eq!(answer["ok"], json!(true), "{answer}");
-    assert_eq!(answer["runs"][0]["status"], json!("whole"));
-    assert_eq!(answer["runs"][0]["replayed"], json!(true));
-    assert_eq!(landed(&s, &w.run()).await.unwrap().status, "whole");
-    assert_eq!(count(&s, "position", &w.run()).await, 455);
-}
-
-/// **A run another ingest closed is compared whole before this one
-/// answers** (Codex pass three on PR #23): two ingests of one unseen run
-/// whose payloads differ in the second generation. This one creates the row
-/// and fills the first generation; the test-only race lands the other, which
-/// replays the `writing` row, fills the second generation with its own
-/// payload and closes it. This one then meets the closed row and is refused
-/// naming the first difference, the stored row untouched.
-#[tokio::test]
-async fn a_run_closed_by_another_ingest_is_compared_before_its_answer() {
-    let Some(s) = store().await else { return };
-    let w = Wire::of(CERTIFIED).tagged(&tag("closed-under"));
-    let mut other = w.clone();
-    let held = other.points[100]["token"].as_i64().unwrap();
-    other.points[100]["token"] = json!(held + 1);
-    let answer = s
-        .ingest_with(
-            Emission::read(w.text().as_bytes()),
-            &Options {
-                race: Some((
-                    Race::AfterFirstFill,
-                    Emission::read(other.text().as_bytes()).unwrap(),
-                )),
-                ..Options::default()
-            },
-        )
-        .await
-        .value;
-    assert_eq!(answer["runs"][0]["status"], json!("refused"), "{answer}");
-    assert_eq!(answer["runs"][0]["stored"], json!("whole"));
-    let why = answer["runs"][0]["reason"].as_str().unwrap();
-    assert!(why.contains("turn t-2 position 204"), "{why}");
-    assert_eq!(landed(&s, &w.run()).await.unwrap().status, "whole");
-}
-
-/// **A cycle two concurrent ingests close is refused on both sides**
-/// (Codex pass three on PR #23): this ingest creates A naming B and scans
-/// for cycles while B is absent; the test-only race lands an ingest of B
-/// naming A, which refuses B. This one's resolution of A rechecks the chain
-/// under its locks, meets B naming A, and refuses A rather than closing it
-/// on a cycle.
-#[tokio::test]
-async fn a_cycle_two_concurrent_ingests_close_is_refused_on_both_sides() {
-    let Some(s) = store().await else { return };
-    let t = tag("cycle-concurrent");
-    let a = Wire::of(CERTIFIED)
-        .renamed(&format!("a#{t}"))
-        .branch_of(&format!("b#{t}"));
-    let b = Wire::of(CERTIFIED)
-        .renamed(&format!("b#{t}"))
-        .branch_of(&format!("a#{t}"));
-    let answer = s
-        .ingest_with(
-            Emission::read(a.text().as_bytes()),
-            &Options {
-                race: Some((
-                    Race::BeforeResolve,
-                    Emission::read(b.text().as_bytes()).unwrap(),
-                )),
-                ..Options::default()
-            },
-        )
-        .await
-        .value;
-    assert_eq!(answer["runs"][0]["status"], json!("refused"), "{answer}");
-    for run in [a.run(), b.run()] {
-        let row = landed(&s, &run).await.unwrap();
-        assert_eq!(row.status, "refused", "{run}: {row:?}");
-        assert!(row.reason.unwrap().contains("reference cycle"));
-    }
-}
-
-/// The certified emission cut to its first generation and its points: an
-/// emission whose plan is a strict prefix of the whole one.
-fn first_generation_of(w: &Wire) -> Wire {
-    let mut short = w.clone();
-    short.summary["generations"]
-        .as_array_mut()
-        .unwrap()
-        .truncate(1);
-    short.points.truncate(12);
-    short
-}
-
-/// **An ingest closes a run only over exactly what it planned** (Codex
-/// pass four on PR #23): this ingest carries the run's first generation
-/// only; the test-only race lands an ingest of the whole run, which writes
-/// the second generation and stops before its own close, between this
-/// one's fill and its close. This one is refused naming the difference and
-/// leaves the row `writing`, and the whole ingest, replayed, closes it.
-#[tokio::test]
-async fn a_shorter_ingest_never_closes_a_run_holding_more() {
-    let Some(s) = store().await else { return };
-    let whole = Wire::of(CERTIFIED).tagged(&tag("prefix"));
-    let short = first_generation_of(&whole);
-    let answer = s
-        .ingest_with(
-            Emission::read(short.text().as_bytes()),
-            &Options {
-                race: Some((
-                    Race::BeforeClose,
-                    Emission::read(whole.text().as_bytes()).unwrap(),
-                )),
-                race_stop: Some(Step::AfterFill),
-                ..Options::default()
-            },
-        )
-        .await
-        .value;
-    assert_eq!(answer["runs"][0]["status"], json!("refused"), "{answer}");
-    assert_eq!(answer["runs"][0]["stored"], json!("writing"));
-    assert!(
-        answer["runs"][0]["reason"]
-            .as_str()
-            .unwrap()
-            .contains("generation 1 differs"),
-        "{answer}"
-    );
-    assert_eq!(landed(&s, &whole.run()).await.unwrap().status, "writing");
-    assert_eq!(ingest(&s, &whole).await["ok"], json!(true));
-    assert_eq!(landed(&s, &whole.run()).await.unwrap().status, "whole");
-}
-
-/// **A branch closes only over exactly what it planned**, the same race
-/// against a branch's close inside its resolution: both emissions name a
-/// parent the store does not hold, so each stays open until it resolves.
-#[tokio::test]
-async fn a_shorter_branch_never_closes_a_run_holding_more() {
-    let Some(s) = store().await else { return };
-    let t = tag("prefix-branch");
-    let whole = Wire::of(CERTIFIED)
-        .renamed(&format!("child#{t}"))
-        .branch_of(&format!("elsewhere#{t}"));
-    let short = first_generation_of(&whole);
-    let answer = s
-        .ingest_with(
-            Emission::read(short.text().as_bytes()),
-            &Options {
-                race: Some((
-                    Race::BeforeResolve,
-                    Emission::read(whole.text().as_bytes()).unwrap(),
-                )),
-                race_stop: Some(Step::AfterPoints),
-                ..Options::default()
-            },
-        )
-        .await
-        .value;
-    assert_eq!(answer["runs"][0]["status"], json!("refused"), "{answer}");
-    assert_eq!(landed(&s, &whole.run()).await.unwrap().status, "writing");
-    assert_eq!(ingest(&s, &whole).await["ok"], json!(true));
-    assert_eq!(landed(&s, &whole.run()).await.unwrap().status, "whole");
-}
-
 /// One defect, planted in an emission by editing it.
 type Plant = Box<dyn Fn(&mut Wire)>;
 
@@ -1303,52 +1121,6 @@ fn the_cycle_scan_and_the_order_are_linear() {
     assert!(took < std::time::Duration::from_secs(2), "took {took:?}");
 }
 
-/// An emission of one run of `n` minimal generations, one point each, on
-/// one turn, positions 0 to `n - 1`: built here, no record carries one.
-fn minimal_generations(run: &str, n: usize) -> Wire {
-    let sampling = Wire::of(CERTIFIED).summary["generations"][0]["effective_sampling"].clone();
-    let generations: Vec<Value> = (0..n)
-        .map(|i| {
-            json!({
-                "turn": "t-1", "resident": i + 2, "output_count": 1,
-                "weights_hash": "ab", "run": run, "session": "s-minimal",
-                "effective_sampling": sampling,
-            })
-        })
-        .collect();
-    let points: Vec<Value> = (0..n)
-        .map(|i| json!({"turn": "t-1", "ordinal": 0, "token": i, "entropy": 1.0}))
-        .collect();
-    Wire {
-        summary: json!({"positions": n, "with_entropy": n, "with_surprisal": 0, "generations": generations}),
-        points,
-    }
-}
-
-/// **A generation's fill costs its own size and never the run's** (Codex
-/// pass seven on PR #23): a bound test and not a failing one. A run of
-/// twenty thousand minimal generations, one transaction each, lands within
-/// the bound below; a fill that read every stored generation and scanned
-/// the whole plan for its own does not.
-#[tokio::test]
-async fn a_run_of_many_generations_lands_within_its_bound() {
-    let Some(s) = store().await else { return };
-    let w = minimal_generations(&format!("many#{}", tag("many")), 20_000);
-    let started = std::time::Instant::now();
-    let answer = ingest(&s, &w).await;
-    let took = started.elapsed();
-    assert_eq!(
-        answer["runs"][0]["status"],
-        json!("whole"),
-        "{}",
-        answer["error"]
-    );
-    assert_eq!(count(&s, "generation", &w.run()).await, 20_000);
-    // About eleven seconds on the box this was written on, scoped; the
-    // bound leaves five times that for a slower one.
-    assert!(took < std::time::Duration::from_secs(60), "took {took:?}");
-}
-
 /// **A tape that repeats a coordinate gives the walk nothing to compare
 /// on** (Codex pass seven on PR #23): a branch whose second generation,
 /// moved onto the first's turn, starts at the first's last position with
@@ -1393,78 +1165,440 @@ async fn a_tape_that_repeats_a_coordinate_derives_no_parting() {
     );
 }
 
-/// **A cycle's refusal never reports a row another ingest closed as
-/// refused** (Codex pass eight on PR #23): this ingest lands A naming B,
-/// then the test-only race lands an ingest of A alone, which finds B
-/// absent and closes A `whole`; this ingest then lands B naming A and its
-/// scan finds the cycle. Its refusal does not take on A, which is settled
-/// against the store and reported `whole`, and B is refused.
+/// **A replay compares every run column the ingest writes, the constant
+/// ones included** (Codex pass nine on PR #23): a stored run whose boundary
+/// set is not the empty set the ingest writes, replayed equal in everything
+/// else, is refused naming the member, the stored row untouched.
 #[tokio::test]
-async fn a_cycle_row_another_ingest_closed_is_reported_as_stored() {
+async fn a_replay_compares_the_boundary_set_it_writes() {
     let Some(s) = store().await else { return };
-    let t = tag("cycle-closed-under");
+    let w = Wire::of(CERTIFIED).tagged(&tag("boundary"));
+    assert_eq!(ingest(&s, &w).await["ok"], json!(true));
+    sqlx::query("UPDATE run SET boundary_set = '[\"loopback\"]'::jsonb WHERE run_id = $1")
+        .bind(w.run())
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    let answer = ingest(&s, &w).await;
+    assert_eq!(answer["runs"][0]["status"], json!("refused"), "{answer}");
+    assert!(
+        answer["runs"][0]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("boundary_set"),
+        "{answer}"
+    );
+    let held: Value = sqlx::query_scalar("SELECT boundary_set FROM run WHERE run_id = $1")
+        .bind(w.run())
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    assert_eq!(held, json!(["loopback"]), "the stored row stands");
+}
+
+/// Two `Notify`s for a test's hold on an ingest.
+fn hold() -> Hold {
+    Hold {
+        at: HoldAt::AfterLocks,
+        locked: std::sync::Arc::new(tokio::sync::Notify::new()),
+        release: std::sync::Arc::new(tokio::sync::Notify::new()),
+    }
+}
+
+/// An ingest of `w` spawned on its own task, under `options`.
+fn spawn_ingest(s: &Store, w: &Wire, options: Options) -> tokio::task::JoinHandle<Value> {
+    let (s, text) = (s.clone(), w.text());
+    tokio::spawn(async move {
+        s.ingest_with(Emission::read(text.as_bytes()), &options)
+            .await
+            .value
+    })
+}
+
+/// **One ingest writes a run at a time; the rest wait and replay** (Spec
+/// 3.1, the operator's ruling of 2026-10-06 on PR #23): an ingest holds the
+/// run's lock and is held there by the test; a second ingest of the same run
+/// waits for it, writing nothing, and once the first finishes meets the run
+/// whole and replays it.
+#[tokio::test]
+async fn a_second_ingest_of_a_run_waits_and_replays() {
+    let Some(s) = store().await else { return };
+    let w = Wire::of(CERTIFIED).tagged(&tag("waits"));
+    let first_hold = hold();
+    let first = spawn_ingest(
+        &s,
+        &w,
+        Options {
+            hold: Some(first_hold.clone()),
+            ..Options::default()
+        },
+    );
+    first_hold.locked.notified().await;
+    let second = spawn_ingest(&s, &w, Options::default());
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    assert!(
+        !second.is_finished(),
+        "the second ingest waits for the run's lock"
+    );
+    assert_eq!(
+        landed(&s, &w.run()).await,
+        None,
+        "nothing is written meanwhile"
+    );
+    first_hold.release.notify_one();
+    let (first, second) = (first.await.unwrap(), second.await.unwrap());
+    assert_eq!(first["runs"][0]["status"], json!("whole"), "{first}");
+    assert_eq!(first["runs"][0]["replayed"], json!(false));
+    assert_eq!(second["runs"][0]["status"], json!("whole"), "{second}");
+    assert_eq!(
+        second["runs"][0]["replayed"],
+        json!(true),
+        "the second replays"
+    );
+    assert_eq!(count(&s, "position", &w.run()).await, 455);
+}
+
+/// **Two concurrent ingests creating opposite references never both land
+/// whole**: one lands A naming B and is held on its locks; the other, of B
+/// naming A, shares them and waits; the first lands A with B absent, and the
+/// second then finds the cycle through A and refuses B.
+#[tokio::test]
+async fn concurrent_opposite_references_never_both_land_whole() {
+    let Some(s) = store().await else { return };
+    let t = tag("opposite");
     let a = Wire::of(CERTIFIED)
         .renamed(&format!("a#{t}"))
         .branch_of(&format!("b#{t}"));
     let b = Wire::of(CERTIFIED)
         .renamed(&format!("b#{t}"))
         .branch_of(&format!("a#{t}"));
-    let answer = s
-        .ingest_with(
-            Emission::read(a.clone().then(b.clone()).text().as_bytes()),
-            &Options {
-                race: Some((
-                    Race::BetweenRuns,
-                    Emission::read(a.text().as_bytes()).unwrap(),
-                )),
-                ..Options::default()
-            },
-        )
-        .await
-        .value;
-    assert_eq!(answer["runs"][0]["status"], json!("whole"), "{answer}");
-    assert_eq!(answer["runs"][0]["stored"], json!("whole"));
-    assert_eq!(answer["runs"][1]["status"], json!("refused"), "{answer}");
-    assert_eq!(landed(&s, &a.run()).await.unwrap().status, "whole");
-    assert_eq!(landed(&s, &b.run()).await.unwrap().status, "refused");
+    let first_hold = hold();
+    let first = spawn_ingest(
+        &s,
+        &a,
+        Options {
+            hold: Some(first_hold.clone()),
+            ..Options::default()
+        },
+    );
+    first_hold.locked.notified().await;
+    let second = spawn_ingest(&s, &b, Options::default());
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    first_hold.release.notify_one();
+    let (_, second) = (first.await.unwrap(), second.await.unwrap());
+    let (a, b) = (
+        landed(&s, &a.run()).await.unwrap(),
+        landed(&s, &b.run()).await.unwrap(),
+    );
+    assert!(
+        !(a.status == "whole" && b.status == "whole"),
+        "both landed whole on a cycle: {a:?} {b:?}"
+    );
+    assert_eq!(b.status, "refused", "{second}");
 }
 
-/// **A generation with no points reads none** (Codex pass eight on PR
-/// #23): a bound test and not a failing one. One generation of twenty
-/// thousand points followed by five thousand that drew none lands within
-/// the bound; an empty generation's fill that read every position of the
-/// run would read the large one's twenty thousand five thousand times.
-#[tokio::test]
-async fn a_large_generation_before_many_empty_ones_lands_within_its_bound() {
-    let Some(s) = store().await else { return };
-    let run = format!("empty-spans#{}", tag("empty-spans"));
-    let sampling = Wire::of(CERTIFIED).summary["generations"][0]["effective_sampling"].clone();
-    let entry = |output: usize| {
-        json!({
-            "turn": "t-1", "resident": 20_001, "output_count": output,
-            "weights_hash": "ab", "run": run, "session": "s-minimal",
-            "effective_sampling": sampling,
-        })
+/// **The replay compares every column the insert writes**, the three rows
+/// each defined once in `rows.rs`: the insert's column list is the row's
+/// declaration (beside the identity and the status), the loader selects
+/// every declared member, and the comparison names every declared member on
+/// which two rows differ.
+#[test]
+fn the_replay_compares_every_column_the_insert_writes() {
+    use super::rows::{
+        Column, GenerationRow, INSERT_GENERATION, INSERT_POSITIONS, INSERT_RUN, PositionRow,
+        RunMembers, SELECT_GENERATIONS, SELECT_POSITIONS, SELECT_RUN,
     };
-    let generations: Vec<Value> = std::iter::once(entry(20_000))
-        .chain((0..5_000).map(|_| entry(0)))
-        .collect();
-    let points: Vec<Value> = (0..20_000)
-        .map(|i| json!({"turn": "t-1", "ordinal": i, "token": i, "entropy": 1.0}))
-        .collect();
-    let w = Wire {
-        summary: json!({"positions": 20_000, "with_entropy": 20_000, "with_surprisal": 0, "generations": generations}),
-        points,
+    let inserted = |sql: &str| -> Vec<String> {
+        let open = sql.find('(').unwrap();
+        let close = sql[open..].find(')').unwrap() + open;
+        sql[open + 1..close]
+            .split(", ")
+            .map(str::to_owned)
+            .collect()
     };
-    let started = std::time::Instant::now();
-    let answer = ingest(&s, &w).await;
-    let took = started.elapsed();
+    let declared =
+        |columns: &[Column]| -> Vec<String> { columns.iter().map(|c| c.name.to_owned()).collect() };
+    let with = |head: &[&str], middle: Vec<String>, tail: &[&str]| -> Vec<String> {
+        head.iter()
+            .map(|s| s.to_string())
+            .chain(middle)
+            .chain(tail.iter().map(|s| s.to_string()))
+            .collect()
+    };
     assert_eq!(
-        answer["runs"][0]["status"],
-        json!("whole"),
-        "{}",
-        answer["error"]
+        inserted(&INSERT_RUN),
+        with(
+            &["run_id"],
+            declared(RunMembers::COLUMNS),
+            &["ingest_status"]
+        )
     );
-    assert_eq!(count(&s, "generation", &run).await, 5_001);
-    assert!(took < std::time::Duration::from_secs(60), "took {took:?}");
+    assert_eq!(
+        inserted(&INSERT_GENERATION),
+        with(&["run_id"], declared(GenerationRow::COLUMNS), &[])
+    );
+    assert_eq!(
+        inserted(&INSERT_POSITIONS),
+        with(&["run_id"], declared(PositionRow::COLUMNS), &[])
+    );
+    for (select, columns) in [
+        (&*SELECT_RUN, RunMembers::COLUMNS),
+        (&*SELECT_GENERATIONS, GenerationRow::COLUMNS),
+        (&*SELECT_POSITIONS, PositionRow::COLUMNS),
+    ] {
+        for c in columns {
+            assert!(select.contains(c.select), "{} unread: {select}", c.name);
+        }
+    }
+    let a = RunMembers {
+        record_identity: "a".into(),
+        seed: Some("1".into()),
+        sampler: json!({"a": 1}),
+        device: Some("a".into()),
+        engine: Some(json!({"a": 1})),
+        field_depth: Some(1),
+        record_session: Some("a".into()),
+        record_digest: Some("a".into()),
+        prefix_length: Some(1),
+        parent_reference: Some("a".into()),
+        boundary_set: json!([]),
+    };
+    let b = RunMembers {
+        record_identity: "b".into(),
+        seed: Some("2".into()),
+        sampler: json!({"b": 2}),
+        device: Some("b".into()),
+        engine: Some(json!({"b": 2})),
+        field_depth: Some(2),
+        record_session: Some("b".into()),
+        record_digest: Some("b".into()),
+        prefix_length: Some(2),
+        parent_reference: Some("b".into()),
+        boundary_set: json!(["b"]),
+    };
+    assert_eq!(
+        a.differing(&b),
+        declared(RunMembers::COLUMNS),
+        "every declared member is compared"
+    );
+}
+
+/// **No column of a landed run is written outside the declaration**: after
+/// an ingest, every column the run row holds a value in is a declared member
+/// or the ingest's bookkeeping, so the replay's comparison, which covers the
+/// members, covers every column the ingest writes.
+#[tokio::test]
+async fn every_column_an_ingest_writes_is_a_declared_member() {
+    let Some(s) = store().await else { return };
+    let w = Wire::of(SERVING).tagged(&tag("columns"));
+    assert_eq!(ingest(&s, &w).await["ok"], json!(true));
+    let row: Value = sqlx::query_scalar("SELECT to_jsonb(run) FROM run WHERE run_id = $1")
+        .bind(w.run())
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    let members: Vec<&str> = super::rows::RunMembers::COLUMNS
+        .iter()
+        .map(|c| c.name)
+        .collect();
+    let bookkeeping = [
+        "run_id",
+        "ingest_status",
+        "ingest_reason",
+        "parent_run_id",
+        "parting_position",
+        "parting_known",
+        "ingested_at",
+    ];
+    for (column, value) in row.as_object().unwrap() {
+        if value.is_null() || (column == "parting_known" && *value == json!(false)) {
+            continue;
+        }
+        assert!(
+            members.contains(&column.as_str()) || bookkeeping.contains(&column.as_str()),
+            "the ingest wrote {column} outside the declaration"
+        );
+    }
+}
+
+/// One synthetic run: its identity, its parent, and its generations'
+/// output counts.
+type SyntheticRun = (String, Option<String>, Vec<usize>);
+
+/// An emission of synthetic runs, each `(run, parent, output counts)`, its
+/// positions rising from zero in each run and its tokens the positions: no
+/// record carries one, and the sweep below needs sizes no fixture has.
+fn synthetic(runs: &[SyntheticRun]) -> Wire {
+    let sampling = Wire::of(CERTIFIED).summary["generations"][0]["effective_sampling"].clone();
+    let mut generations = Vec::new();
+    let mut points = Vec::new();
+    for (run, parent, counts) in runs {
+        let mut floor = 0usize;
+        for &count in counts {
+            let mut entry = json!({
+                "turn": "t-1", "resident": floor + count + 1, "output_count": count,
+                "weights_hash": "ab", "run": run, "session": "s-sweep",
+                "effective_sampling": sampling,
+            });
+            if let Some(parent) = parent {
+                entry["lineage"] = json!({
+                    "save_point": "0", "run": parent, "sequence": 1, "turn": 1,
+                    "operator_supplied": false,
+                    "built_from": {"parent": "s-sweep", "run": parent, "through": 1},
+                });
+            }
+            generations.push(entry);
+            for j in 0..count {
+                points
+                    .push(json!({"turn": "t-1", "ordinal": j, "token": floor + j, "entropy": 1.0}));
+            }
+            floor += count;
+        }
+    }
+    Wire {
+        summary: json!({"positions": points.len(), "with_entropy": points.len(),
+            "with_surprisal": 0, "generations": generations}),
+        points,
+    }
+}
+
+/// **Every loop that reads or writes the store per item stays within one
+/// bound** (the sweep the operator asked for on PR #23): a bound test and
+/// not a failing one. Each row is a large synthetic input to one such loop,
+/// and each lands within sixty seconds in a debug build; the last four
+/// passes' quadratic forms each took minutes on its row. The pure scan and
+/// order are held apart by `the_cycle_scan_and_the_order_are_linear`.
+#[tokio::test]
+async fn every_per_item_loop_lands_within_one_bound() {
+    let Some(s) = store().await else { return };
+    let t = tag("sweep");
+    let id = |name: &str, i: usize| format!("{name}-{i}#{t}");
+    let chain = 1_000;
+    let cases: Vec<(&str, Vec<SyntheticRun>, &str)> = vec![
+        (
+            "many runs",
+            (0..2_000).map(|i| (id("runs", i), None, vec![1])).collect(),
+            "whole",
+        ),
+        (
+            "a long chain, child first",
+            (0..chain)
+                .rev()
+                .map(|i| (id("chain", i), (i > 0).then(|| id("chain", i - 1)), vec![1]))
+                .collect(),
+            "whole",
+        ),
+        (
+            "many generations",
+            vec![(id("generations", 0), None, vec![1; 20_000])],
+            "whole",
+        ),
+        (
+            "many points in one generation",
+            vec![(id("points", 0), None, vec![100_000])],
+            "whole",
+        ),
+        (
+            "many empty generations behind a large one",
+            vec![(id("empty", 0), None, {
+                let mut counts = vec![20_000];
+                counts.extend(std::iter::repeat_n(0, 5_000));
+                counts
+            })],
+            "whole",
+        ),
+        (
+            "many branches on one parent",
+            std::iter::once((id("fan", 0), None, vec![1]))
+                .chain((1..2_000).map(|i| (id("fan", i), Some(id("fan", 0)), vec![1])))
+                .collect(),
+            "whole",
+        ),
+        (
+            "a long cycle",
+            (0..chain)
+                .map(|i| (id("cycle", i), Some(id("cycle", (i + 1) % chain)), vec![1]))
+                .collect(),
+            "refused",
+        ),
+    ];
+    for (name, runs, expected) in cases {
+        let w = synthetic(&runs);
+        let started = std::time::Instant::now();
+        let answer = ingest(&s, &w).await;
+        let took = started.elapsed();
+        let landed = answer["runs"].as_array().unwrap();
+        assert_eq!(landed.len(), runs.len(), "{name}: {}", answer["error"]);
+        assert!(
+            landed.iter().all(|r| r["status"] == json!(expected)),
+            "{name}: not every run {expected}: {}",
+            answer["error"]
+        );
+        assert!(
+            took < std::time::Duration::from_secs(60),
+            "{name} took {took:?}"
+        );
+    }
+}
+
+/// **A cycle closed by ingests that share no lock is refused at the
+/// resolution**: the recheck under the run locks, which the cycle scan cannot
+/// stand in for where two ingests' runs are disjoint. B naming C and D naming
+/// A land first, each `whole` with its parent absent. An ingest of A naming B
+/// is held after its scan, which found C absent; an ingest of C naming D,
+/// sharing none of its locks, lands meanwhile and refuses C on the cycle its
+/// own scan finds. A's resolution then follows B, C and D back to A and
+/// refuses A rather than closing it `whole` on the cycle. The run identities
+/// are tagged until A's and B's locks share no bucket with C's and D's, so
+/// the two ingests cannot wait on each other.
+#[tokio::test]
+async fn a_cycle_closed_by_ingests_sharing_no_lock_is_refused_at_resolution() {
+    let Some(s) = store().await else { return };
+    let ids = loop {
+        let t = tag("disjoint");
+        let ids: Vec<String> = ["a", "b", "c", "d"]
+            .iter()
+            .map(|n| format!("{n}#{t}"))
+            .collect();
+        let buckets: Vec<i32> =
+            sqlx::query_scalar("SELECT hashtext(r) & 1023 FROM unnest($1::text[]) AS r")
+                .bind(&ids)
+                .fetch_all(&s.pool)
+                .await
+                .unwrap();
+        if buckets[0] != buckets[2]
+            && buckets[0] != buckets[3]
+            && buckets[1] != buckets[2]
+            && buckets[1] != buckets[3]
+        {
+            break ids;
+        }
+    };
+    let run =
+        |i: usize, parent: usize| Wire::of(CERTIFIED).renamed(&ids[i]).branch_of(&ids[parent]);
+    assert_eq!(ingest(&s, &run(1, 2)).await["ok"], json!(true));
+    assert_eq!(ingest(&s, &run(3, 0)).await["ok"], json!(true));
+    let held = Hold {
+        at: HoldAt::BeforeResolve,
+        ..hold()
+    };
+    let first = spawn_ingest(
+        &s,
+        &run(0, 1),
+        Options {
+            hold: Some(held.clone()),
+            ..Options::default()
+        },
+    );
+    held.locked.notified().await;
+    let c = tokio::time::timeout(std::time::Duration::from_secs(30), ingest(&s, &run(2, 3)))
+        .await
+        .expect("the two ingests share no lock");
+    assert_eq!(c["runs"][0]["status"], json!("refused"), "{c}");
+    held.release.notify_one();
+    let a = first.await.unwrap();
+    assert_eq!(a["runs"][0]["status"], json!("refused"), "{a}");
+    let row = landed(&s, &ids[0]).await.unwrap();
+    assert_eq!(row.status, "refused", "A is not closed whole on the cycle");
+    assert!(row.reason.unwrap().contains("reference cycle"));
 }

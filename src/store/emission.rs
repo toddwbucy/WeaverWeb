@@ -20,6 +20,8 @@ use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
 use std::io::BufRead;
 
+pub use super::rows::{GenerationRow, KEY_BOUND, PositionRow, RunMembers};
+
 /// The longest line read, in bytes, summary or point. A point is a few
 /// dozen bytes; the summary grows with the generations it lists, and a
 /// record of thousands of generations stays far under this. A line past it
@@ -34,14 +36,6 @@ pub const LINE_BOUND: usize = 16 * 1024 * 1024;
 /// any trace this repository's fixtures hold, and the deposits that might
 /// hold a larger one are not in this repository. A later act may raise it.
 pub const POSITIONS_BOUND: usize = 4_000_000;
-
-/// **The longest key a run may carry, in bytes**: its identity, its parent
-/// reference, its record identity, its session and every turn key are keyed
-/// or indexed in the store, and PostgreSQL refuses a btree entry past about a
-/// third of a page, some 2.7 KB, at the insert, which would fail the whole
-/// ingest. This bound sits well under that limit and far over any key a
-/// record carries.
-pub const KEY_BOUND: usize = 1024;
 
 /// **The most bytes an emission may carry**, every line counted. At the
 /// emitter's few dozen bytes a point, `POSITIONS_BOUND` points sit well
@@ -280,47 +274,6 @@ impl Emission {
     }
 }
 
-/// The run row's members, as the ingest writes them and as a replay
-/// compares them. Each `None` is a member the record did not carry.
-#[derive(Debug, Clone, PartialEq)]
-pub struct RunMembers {
-    pub record_identity: String,
-    /// The declared seed, as text, since the record spells it unsigned.
-    pub seed: Option<String>,
-    /// The effective sampling's declared members, `generation_seed` removed.
-    pub sampler: serde_json::Value,
-    pub device: Option<String>,
-    pub engine: Option<serde_json::Value>,
-    pub field_depth: Option<i32>,
-    pub record_session: Option<String>,
-    pub record_digest: Option<String>,
-    pub prefix_length: Option<i32>,
-    /// The lineage's `built_from.run`, the parent as the record names it.
-    pub parent_reference: Option<String>,
-}
-
-/// One generation's row.
-#[derive(Debug, Clone, PartialEq)]
-pub struct GenerationRow {
-    pub seq: i32,
-    pub turn: Option<String>,
-    pub perplexity: Option<f64>,
-    pub resident: Option<i32>,
-    pub output_count: i32,
-    pub generation_seed: Option<String>,
-}
-
-/// One position's row as this seam can fill it: the text, the alternatives
-/// and the rank never cross it, so they are absent on every row it writes.
-#[derive(Debug, Clone, PartialEq)]
-pub struct PositionRow {
-    pub turn: String,
-    pub position: i32,
-    pub token_id: i64,
-    pub entropy: Option<f64>,
-    pub surprisal: Option<f64>,
-}
-
 /// A generation whose points cannot be addressed, and why.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Skipped {
@@ -367,42 +320,6 @@ fn agreed<T: PartialEq + Clone>(
     Ok(first)
 }
 
-/// A text member refused where it holds a NUL byte, which PostgreSQL
-/// refuses in `TEXT`.
-fn no_nul(name: &str, text: &str) -> Result<(), String> {
-    if text.contains('\0') {
-        return Err(format!(
-            "the run's {name} holds a NUL byte, which the store refuses"
-        ));
-    }
-    Ok(())
-}
-
-/// A keyed or indexed text member refused past `KEY_BOUND` bytes.
-fn no_longer(name: &str, key: &str) -> Result<(), String> {
-    if key.len() > KEY_BOUND {
-        return Err(format!(
-            "the run's {name} runs {} bytes, past the {KEY_BOUND} a key may carry",
-            key.len()
-        ));
-    }
-    Ok(())
-}
-
-/// A JSON member refused where any key or string in it holds a NUL byte,
-/// which PostgreSQL refuses in `JSONB`.
-fn no_nul_in(name: &str, json: &serde_json::Value) -> Result<(), String> {
-    match json {
-        serde_json::Value::String(s) => no_nul(name, s),
-        serde_json::Value::Array(items) => items.iter().try_for_each(|v| no_nul_in(name, v)),
-        serde_json::Value::Object(map) => map.iter().try_for_each(|(k, v)| {
-            no_nul(name, k)?;
-            no_nul_in(name, v)
-        }),
-        _ => Ok(()),
-    }
-}
-
 /// The effective sampling's declared members: the per-generation derived
 /// seed removed, since every run of more than one generation disagrees on
 /// it by construction (contract 2.2).
@@ -424,36 +341,11 @@ fn unsigned_text(value: Option<&serde_json::Value>) -> Result<Option<String>, ()
 
 impl RunPlan {
     fn of(run: &str, entries: &[&(GenerationEntry, Vec<WirePoint>)]) -> Result<Self, String> {
-        // **Every constraint the schema holds a run, generation or position
-        // row to is checked here, before a row exists**, so the store
-        // refusing an insert is never how a malformed run is found: that
-        // would fail the whole ingest and drop every later run's outcome
-        // where it should refuse one run by name. The schema's rules, and
-        // where each is met:
-        // - no text column or JSON string holds a NUL byte, which PostgreSQL
-        //   refuses in `TEXT` and `JSONB`: checked below on the run's
-        //   identity, every text member and every JSON member;
-        // - `record_digest` is 64 lowercase hex characters (migration 0003):
-        //   checked below;
-        // - `record_identity` and `sampler` are present (0001): refused
-        //   below where absent;
-        // - `seed` and `generation_seed` fit `NUMERIC(20,0)`: read as `u64`,
-        //   whose every value fits;
-        // - `field_depth`, `prefix_length`, `resident`, `output_count` and
-        //   `position` fit `INTEGER` and are not negative (0001, 0004,
-        //   0014): read unsigned and converted checked;
-        // - `token_id` fits `BIGINT`: converted checked;
-        // - `turn` is present on a position and its key is unique: a
-        //   turnless generation lands no point, and a key named twice is
-        //   refused below unless both payloads agree;
-        // - the status and its reason, the link and the reference, and the
-        //   parting and its knowledge go together (0014): written by the
-        //   ingest only in the pairs the checks allow;
-        // - every keyed or indexed text member (the run's identity, its
-        //   parent reference, its record identity, its session, every turn
-        //   key) fits a btree entry: bounded at `KEY_BOUND` below.
-        no_nul("run identity", run)?;
-        no_longer("run identity", run)?;
+        // **Every rule the schema holds a row to is met while planning**,
+        // by each row's `validate` beside its definition in `rows.rs`, and by
+        // the conversions below, every integer read unsigned and converted
+        // checked; a key named twice is refused below unless both payloads
+        // agree, and a turnless generation lands no point.
         // **Agreement, member by member, before anything is formed**: a run
         // whose generations disagree is a defect the reader names, never a
         // run with two of anything (contract 2.2). Presence counts: an entry
@@ -512,52 +404,6 @@ impl RunPlan {
             i32::try_from(n)
                 .map_err(|_| format!("the run's {what} ({n}) is past the column's range"))
         };
-        // The record digest's shape (migration 0003), and no NUL in any
-        // text or JSON member the row would carry.
-        if let Some(digest) = &digest
-            && !(digest.len() == 64
-                && digest
-                    .bytes()
-                    .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
-        {
-            return Err(format!(
-                "the run's digest is not sha256 as lowercase hex (64 characters): {digest:?}"
-            ));
-        }
-        for (name, text) in [
-            ("weights hash", Some(record_identity.as_str())),
-            ("session", session.as_deref()),
-            ("digest", digest.as_deref()),
-            ("device model", device.as_deref()),
-            ("parent reference", parent_reference.as_deref()),
-        ] {
-            if let Some(text) = text {
-                no_nul(name, text)?;
-            }
-        }
-        for (name, json) in [
-            ("effective sampling", Some(&sampler)),
-            ("code identity", engine.as_ref()),
-        ] {
-            if let Some(json) = json {
-                no_nul_in(name, json)?;
-            }
-        }
-        for (entry, _) in entries.iter().map(|e| (&e.0, &e.1)) {
-            if let Some(turn) = &entry.turn {
-                no_nul("turn key", turn)?;
-                no_longer("turn key", turn)?;
-            }
-        }
-        for (name, key) in [
-            ("record identity", Some(record_identity.as_str())),
-            ("session", session.as_deref()),
-            ("parent reference", parent_reference.as_deref()),
-        ] {
-            if let Some(key) = key {
-                no_longer(name, key)?;
-            }
-        }
         let members = RunMembers {
             record_identity,
             seed,
@@ -571,7 +417,9 @@ impl RunPlan {
                 .map(|p| to_i32(p, "seated prefix's length"))
                 .transpose()?,
             parent_reference,
+            boundary_set: serde_json::json!([]),
         };
+        members.validate(run)?;
 
         let mut generations = Vec::with_capacity(entries.len());
         let mut points: Vec<(i32, PositionRow)> = Vec::new();
@@ -589,7 +437,7 @@ impl RunPlan {
             .map_err(|()| {
                 format!("generation {seq}'s generation seed is not an unsigned integer")
             })?;
-            generations.push(GenerationRow {
+            let generation = GenerationRow {
                 seq,
                 turn: entry.turn.clone(),
                 perplexity: entry.perplexity,
@@ -599,7 +447,9 @@ impl RunPlan {
                     .transpose()?,
                 output_count: to_i32(entry.output_count, "output count")?,
                 generation_seed,
-            });
+            };
+            generation.validate()?;
+            generations.push(generation);
             // **A generation whose points cannot be addressed lands its
             // summary and not its points** (Spec 3.1): no resident count, no
             // position; no turn key, no key. Nothing invents either.

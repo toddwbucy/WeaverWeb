@@ -211,17 +211,16 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
   The reader's bounds (Spec 3.1): a line at most 16 MiB, a summary announcing at most
   `POSITIONS_BOUND` (four million) positions, no point past the announced count, and at most
   `EMISSION_BOUND` (1 GiB) in all, the emission being held in memory whole, and every keyed text
-  member at most `KEY_BOUND` (1024 bytes). The cycle scan and the resolution order are linear
-  (`ingest::plan_resolution`), and a generation's fill reads its own generation alone, each held
-  to a bound test. Two ingests of one
-  run serialize on the run row's lock, the loser of the creation race replaying the winner's row;
-  a run another ingest closed is compared whole before the answer, a run closes only over exactly
-  what its closing ingest planned (compared under the close's lock), and a branch's resolution
-  rechecks the reference cycle under its locks.
-  `src/store/emission.rs` reads and plans, `src/store/ingest.rs` writes; a test-only step hook
-  (`ingest::Step`) stops it at the two seams the kill perturbations need, and a test-only race option (`ingest::Race`) lands a second ingest at a named point (before a
-  row's creation, after its first generation, before a close, before the branches resolve), its
-  ingest stopping where `race_stop` names. Its tests read the
+  member at most `KEY_BOUND` (1024 bytes). **One ingest writes a run at a time; the rest wait
+  and replay**: an ingest takes session-level advisory locks on every run it writes or resolves
+  against (hashed into 1024 buckets, taken in order) before anything else and holds them to its
+  end. The cycle scan and the resolution order are linear (`ingest::plan_resolution`), and a
+  bound sweep holds every per-item store loop to one bound.
+  `src/store/emission.rs` reads and plans, `src/store/rows.rs` declares the run, generation and
+  position rows once (the insert, the loader and the replay's comparison derive from it), and
+  `src/store/ingest.rs` writes; a test-only step hook (`ingest::Step`) stops it at the two seams
+  the kill perturbations need, and a test-only hold (`ingest::Hold`) keeps an ingest on its locks
+  so the lock's test can start a second. Its tests read the
   emissions vendored under `tests/fixtures/signals/`, made once by WeaverAnalysis `12a7243`'s
   `signals` command on its own fixtures (the README there names each command), beside one
   hand-made branch emission labelled as such; no test runs the WeaverAnalysis binary. The

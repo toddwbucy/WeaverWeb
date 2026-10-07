@@ -2117,3 +2117,200 @@ async fn a_stored_chain_is_read_in_one_statement_per_walk() {
         "the scan's one statement and the recheck's one"
     );
 }
+
+/// Whether `held`'s lock buckets and `other`'s share none, so an ingest of
+/// `other` never waits on one of `held` the test is holding.
+async fn buckets_apart(s: &Store, held: &[String], other: &[String]) -> bool {
+    let buckets = |names: &[String]| {
+        sqlx::query_scalar::<_, i32>("SELECT hashtext(r) & 1023 FROM unnest($1::text[]) AS r")
+            .bind(names.to_vec())
+            .fetch_all(&s.pool)
+    };
+    let held: std::collections::HashSet<i32> = buckets(held).await.unwrap().into_iter().collect();
+    buckets(other)
+        .await
+        .unwrap()
+        .into_iter()
+        .all(|b| !held.contains(&b))
+}
+
+/// Run identities `names` under a tag whose lock buckets keep the runs at
+/// `held` apart from the rest.
+async fn apart_names<const N: usize>(
+    s: &Store,
+    base: &str,
+    names: [&str; N],
+    held: &[usize],
+) -> [String; N] {
+    for k in 0.. {
+        let t = tag(&format!("{base}-{k}"));
+        let runs = names.map(|n| format!("{n}#{t}"));
+        let side = |inside: bool| -> Vec<String> {
+            runs.iter()
+                .enumerate()
+                .filter(|(i, _)| held.contains(i) == inside)
+                .map(|(_, r)| r.clone())
+                .collect()
+        };
+        let (inside, rest) = (side(true), side(false));
+        if buckets_apart(s, &inside, &rest).await {
+            return runs;
+        }
+    }
+    unreachable!()
+}
+
+/// The outcome the answer gives `run`.
+fn outcome<'a>(answer: &'a Value, run: &str) -> &'a Value {
+    answer["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["run"] == json!(run))
+        .unwrap_or_else(|| panic!("no outcome for {run}: {answer}"))
+}
+
+/// **A walk reads again an absent end it reaches through what an earlier
+/// walk kept** (Codex pass nineteen on PR #23): X and A both name B, stored
+/// naming C, which is absent, and D is stored naming A. X's walk ends at C;
+/// held after X's resolution, a disjoint ingest lands C naming D. A's walk
+/// reaches C through what X's walk kept, reads it again, and A is refused
+/// on A, B, C, D.
+#[tokio::test]
+async fn a_walk_reads_again_an_absent_end_it_jumped_to() {
+    let Some(s) = store().await else { return };
+    let [x, a, b, c, d] =
+        apart_names(&s, "absent-end", ["x", "a", "b", "c", "d"], &[0, 1, 2]).await;
+    assert_eq!(
+        ingest(&s, &synthetic(&[(b.clone(), Some(c.clone()), vec![1])])).await["ok"],
+        json!(true)
+    );
+    assert_eq!(
+        ingest(&s, &synthetic(&[(d.clone(), Some(a.clone()), vec![1])])).await["ok"],
+        json!(true)
+    );
+    let held = Hold {
+        at: HoldAt::AfterFirstResolution,
+        ..hold()
+    };
+    let first = spawn_ingest(
+        &s,
+        &synthetic(&[
+            (x.clone(), Some(b.clone()), vec![1]),
+            (a.clone(), Some(b.clone()), vec![1]),
+        ]),
+        Options {
+            hold: Some(held.clone()),
+            ..Options::default()
+        },
+    );
+    held.locked.notified().await;
+    ingest(&s, &synthetic(&[(c.clone(), Some(d.clone()), vec![1])])).await;
+    held.release.notify_one();
+    let answer = first.await.unwrap();
+    assert_eq!(outcome(&answer, &x)["status"], json!("whole"), "{answer}");
+    let least = [&a, &b, &c, &d].into_iter().min().unwrap();
+    assert_eq!(
+        outcome(&answer, &a)["reason"],
+        json!(format!(
+            "a reference cycle of 4 runs through {least}, this run naming {b}"
+        )),
+        "{answer}"
+    );
+    assert_eq!(landed(&s, &a).await.unwrap().status, "refused");
+}
+
+/// The stored chain the two tests below share: Z names W and W names A,
+/// whose parent P names Q, absent; and an emission of Y naming Z, then A
+/// naming P, Y resolving first.
+async fn chain_behind_a_sibling(s: &Store, base: &str) -> [String; 6] {
+    // Z and P sorted so, Y's parent before A's.
+    let runs = apart_names(s, base, ["y", "k1", "w", "a", "k2", "q"], &[0, 1, 3, 4]).await;
+    let [_, z, w, a, p, q] = runs.clone();
+    let stored = synthetic(&[
+        (z, Some(w.clone()), vec![1]),
+        (w, Some(a), vec![1]),
+        (p, Some(q), vec![1]),
+    ]);
+    assert_eq!(ingest(s, &stored).await["ok"], json!(true));
+    runs
+}
+
+/// **A cycle closed behind a jump is refused with its count** (Codex pass
+/// nineteen on PR #23): Y's walk steps Z, W, A and P to Q, absent, and keeps
+/// them as reaching Q. Held after Y's resolution, a disjoint ingest lands Q
+/// naming W, closing A, P, Q, W. A's walk jumps from P to Q, reads it grown,
+/// and begins again on a cleared cache, so A is refused as a cycle of four
+/// rather than jumping over itself from W.
+#[tokio::test]
+async fn a_cycle_closed_behind_a_jump_is_refused_with_its_count() {
+    let Some(s) = store().await else { return };
+    let [y, z, w, a, p, q] = chain_behind_a_sibling(&s, "behind-jump").await;
+    let held = Hold {
+        at: HoldAt::AfterFirstResolution,
+        ..hold()
+    };
+    let first = spawn_ingest(
+        &s,
+        &synthetic(&[
+            (y.clone(), Some(z.clone()), vec![1]),
+            (a.clone(), Some(p.clone()), vec![1]),
+        ]),
+        Options {
+            hold: Some(held.clone()),
+            ..Options::default()
+        },
+    );
+    held.locked.notified().await;
+    ingest(&s, &synthetic(&[(q.clone(), Some(w.clone()), vec![1])])).await;
+    held.release.notify_one();
+    let answer = first.await.unwrap();
+    assert_eq!(outcome(&answer, &y)["status"], json!("whole"), "{answer}");
+    let least = [&a, &p, &q, &w].into_iter().min().unwrap();
+    assert_eq!(
+        outcome(&answer, &a)["reason"],
+        json!(format!(
+            "a reference cycle of 4 runs through {least}, this run naming {p}"
+        )),
+        "{answer}"
+    );
+}
+
+/// **A cycle a sibling walked round refuses its member** (Codex pass
+/// nineteen on PR #23): the same chain, Q landing naming W before the
+/// resolution. Y's walk steps round A, P, Q, W and keeps it as a cycle,
+/// with Z leading into it; A's walk meets the kept cycle at P, finds itself
+/// on it, and is refused with its count.
+#[tokio::test]
+async fn a_cycle_a_sibling_walked_round_refuses_its_member() {
+    let Some(s) = store().await else { return };
+    let [y, z, w, a, p, q] = chain_behind_a_sibling(&s, "walked-round").await;
+    let held = Hold {
+        at: HoldAt::BeforeResolve,
+        ..hold()
+    };
+    let first = spawn_ingest(
+        &s,
+        &synthetic(&[
+            (y.clone(), Some(z.clone()), vec![1]),
+            (a.clone(), Some(p.clone()), vec![1]),
+        ]),
+        Options {
+            hold: Some(held.clone()),
+            ..Options::default()
+        },
+    );
+    held.locked.notified().await;
+    ingest(&s, &synthetic(&[(q.clone(), Some(w.clone()), vec![1])])).await;
+    held.release.notify_one();
+    let answer = first.await.unwrap();
+    assert_eq!(outcome(&answer, &y)["status"], json!("whole"), "{answer}");
+    let least = [&a, &p, &q, &w].into_iter().min().unwrap();
+    assert_eq!(
+        outcome(&answer, &a)["reason"],
+        json!(format!(
+            "a reference cycle of 4 runs through {least}, this run naming {p}"
+        )),
+        "{answer}"
+    );
+}

@@ -79,6 +79,8 @@ pub enum HoldAt {
     /// After the references are read and the cycles found, before the
     /// cycles' refusals.
     BeforeCycles,
+    /// After the first branch's resolution commits, before the next's.
+    AfterFirstResolution,
 }
 
 #[cfg(test)]
@@ -718,7 +720,7 @@ impl Store {
         let by_run: HashMap<&str, &Open> = open.iter().map(|o| (o.run.as_str(), o)).collect();
         // The ends of chains this ingest's resolutions have followed, so a
         // long chain is followed once and not once per branch on it.
-        let mut tails: HashMap<String, Option<String>> = HashMap::new();
+        let mut tails: HashMap<String, Tail> = HashMap::new();
         // Every held run's parent reference this ingest has read, the scan's
         // first: a reference never changes once written, so a held run's is
         // known for the ingest's length, and the recheck reads the store
@@ -730,6 +732,8 @@ impl Store {
         // not a map of them, since a map would hold every parent's tape at
         // once, and a parent's tape may run to millions of positions.
         let mut tape: Option<ParentTape> = None;
+        #[cfg(test)]
+        let mut resolved_one = false;
         for run in order.iter().filter(|r| !in_cycle.contains(r.as_str())) {
             let o = by_run[run.as_str()];
             locks.check().await?;
@@ -745,6 +749,11 @@ impl Store {
             landed.parent_linked = resolved.linked;
             landed.parting_known = resolved.parting.is_known();
             landed.parting_position = resolved.parting.position();
+            #[cfg(test)]
+            if !resolved_one {
+                resolved_one = true;
+                options.hold(HoldAt::AfterFirstResolution).await;
+            }
         }
         Ok(())
     }
@@ -878,7 +887,7 @@ impl Store {
     async fn resolve_retrying(
         &self,
         open: &Open,
-        tails: &mut HashMap<String, Option<String>>,
+        tails: &mut HashMap<String, Tail>,
         links: &mut HashMap<String, Option<String>>,
         tape: &mut Option<ParentTape>,
         options: &Options,
@@ -902,7 +911,7 @@ impl Store {
     async fn resolve(
         &self,
         open: &Open,
-        tails: &mut HashMap<String, Option<String>>,
+        tails: &mut HashMap<String, Tail>,
         links: &mut HashMap<String, Option<String>>,
         tape: &mut Option<ParentTape>,
         options: &Options,
@@ -931,103 +940,170 @@ impl Store {
         // ingest resolved.
         //
         // **References never change once written**, so where a resolution
-        // earlier in this ingest followed a chain, its end is remembered:
-        // `None` where it ended at a run naming no parent or joined a cycle
-        // elsewhere, which no new row can change, and the run it ended at,
-        // not then held, otherwise, which is where this walk goes on. A long
-        // chain is so followed once and not once per branch on it. **The
-        // store is read only at a run not held when last read** (`links`),
-        // in one statement and once per walk at most, since a held run's
-        // reference is already known; that run is where a row another
-        // ingest created since can stand.
+        // earlier in this ingest followed a chain, where it went is
+        // remembered (`Tail`), and a long chain is so followed once and not
+        // once per branch on it. **The store is read only at a run not held
+        // when last read** (`links`), in one statement and once per walk at
+        // most, since a held run's reference is already known; that run is
+        // where a row another ingest created since can stand, so a chain's
+        // absent end is never remembered as its own and every walk reaching
+        // it reads it again. **Where that read finds the chain grown**, what
+        // was remembered may hide the new row's cycle behind a jump, so it is
+        // all forgotten and the walk begins again from the parent: a jump
+        // therefore only ever ends a walk, and every refusal is counted from
+        // steps taken or from a cycle remembered whole, its count exact.
+        let mut refusal: Option<String> = None;
         if linked {
-            // The cycle's length and least member, counted as the walk goes,
-            // which is all its reason names.
-            let mut length = 2;
-            let mut least = open.run.as_str().min(parent).to_owned();
-            let mut seen: HashSet<String> = [open.run.clone(), parent.to_owned()].into();
-            let mut visited: Vec<String> = Vec::new();
             let mut read = false;
-            let mut at = parent.to_owned();
-            let end: Option<String> = loop {
-                let next: Option<Option<String>> = match tails.get(&at) {
-                    // Followed before: go on from where that walk ended.
-                    Some(None) => break None,
-                    Some(Some(absent)) => Some(Some(absent.clone())),
-                    None => {
+            'walk: loop {
+                // The cycle's length and least member, counted as the walk
+                // goes, which is all its reason names.
+                let mut length = 2;
+                let mut least = open.run.as_str().min(parent).to_owned();
+                let mut seen: HashSet<String> = [open.run.clone(), parent.to_owned()].into();
+                // The held runs this walk stepped through, in order.
+                let mut path: Vec<String> = Vec::new();
+                let mut at = parent.to_owned();
+                let end: WalkEnd = loop {
+                    match tails.get(&at) {
+                        Some(Tail::Ended) => break WalkEnd::Ended,
+                        // Followed before to an end not then held, which this
+                        // walk reads again below.
+                        Some(Tail::Reaches(end)) => {
+                            at = end.clone();
+                            continue;
+                        }
+                        Some(Tail::Cycle(cycle)) => {
+                            if cycle.members.contains(&open.run) {
+                                refusal =
+                                    Some(cycle_reason(cycle.members.len(), &cycle.least, parent));
+                            }
+                            // Either way the chain goes nowhere else.
+                            break WalkEnd::Ended;
+                        }
+                        None => {}
+                    }
+                    if !links.contains_key(&at) {
                         // Not held when last read: every held run it now
                         // reaches, in one statement, once per walk; a run
-                        // that statement did not return was not held when
-                        // it ran, which is as late as this walk can know.
-                        if !links.contains_key(&at) && !read {
+                        // that statement did not return was not held when it
+                        // ran, which is as late as this walk can know.
+                        if !read {
                             read = true;
                             #[cfg(test)]
                             options.count_walk();
-                            for row in sqlx::query(REACHABLE)
+                            let rows = sqlx::query(REACHABLE)
                                 .bind(std::slice::from_ref(&at))
                                 .fetch_all(&mut *tx)
-                                .await?
-                            {
+                                .await?;
+                            let grown = !rows.is_empty();
+                            for row in rows {
                                 links
                                     .entry(row.get("run_id"))
                                     .or_insert(row.get("parent_reference"));
                             }
+                            // **The restart is bounded**: a walk reads at most
+                            // once and the flag stays spent across the
+                            // restart, so it restarts at most once, and the
+                            // second pass reads nothing. The clear is bounded
+                            // by the writer: only another ingest's write grows
+                            // a chain under this resolution, so the rebuild is
+                            // bounded by that ingest's writes, not this
+                            // emission.
+                            if grown {
+                                tails.clear();
+                                continue 'walk;
+                            }
                         }
-                        visited.push(at.clone());
-                        links.get(&at).cloned()
+                        break WalkEnd::Reaches(at);
                     }
+                    path.push(at.clone());
+                    let Some(next) = links[&at].clone() else {
+                        // Names no parent: the chain ends for good.
+                        break WalkEnd::Ended;
+                    };
+                    if next == open.run {
+                        refusal = Some(cycle_reason(length, &least, parent));
+                        break WalkEnd::Ended;
+                    }
+                    if !seen.insert(next.clone()) {
+                        // Joined a cycle this branch is not on, at `next`.
+                        break WalkEnd::Cycle(next);
+                    }
+                    length += 1;
+                    if next < least {
+                        least = next.clone();
+                    }
+                    at = next;
                 };
-                let next = match next {
-                    // Not held: the chain ends at `at`, which may be created
-                    // later naming something.
-                    None => break Some(at.clone()),
-                    // Names no parent: the chain ends for good.
-                    Some(None) => break None,
-                    Some(Some(next)) => next,
-                };
-                if next == open.run {
-                    let reason = cycle_reason(length, &least, parent);
-                    if !open.created {
-                        // Not this ingest's row: the refusal is the answer's
-                        // alone (ruling 29).
-                        return Ok(Resolved {
-                            status: "refused",
-                            reason: Some(reason),
-                            linked: false,
-                            parting: Parting::Unknown,
-                            stored: Some("writing".into()),
+                if refusal.is_some() {
+                    // A refusal ends the walk, and what it stepped through is
+                    // not kept: a chain through this branch is its own.
+                    break 'walk;
+                }
+                match end {
+                    WalkEnd::Ended => {
+                        for run in path {
+                            tails.insert(run, Tail::Ended);
+                        }
+                    }
+                    WalkEnd::Reaches(end) => {
+                        for run in path {
+                            tails.insert(run, Tail::Reaches(end.clone()));
+                        }
+                    }
+                    WalkEnd::Cycle(entry) => {
+                        // The path's runs from the cycle's entry on are the
+                        // cycle, every one stepped through, and those before
+                        // it lead into a cycle they are not on.
+                        let from = path
+                            .iter()
+                            .position(|r| *r == entry)
+                            .expect("a repeated run was stepped through");
+                        let on: Vec<String> = path.split_off(from);
+                        let cycle = std::sync::Arc::new(CycleSeen {
+                            least: on.iter().min().cloned().unwrap_or_default(),
+                            members: on.iter().cloned().collect(),
                         });
+                        for run in path {
+                            tails.insert(run, Tail::Ended);
+                        }
+                        for run in on {
+                            tails.insert(run, Tail::Cycle(cycle.clone()));
+                        }
                     }
-                    sqlx::query(
-                        "UPDATE run SET ingest_status = 'refused', ingest_reason = $2 \
-                         WHERE run_id = $1 AND ingest_status = 'writing'",
-                    )
-                    .bind(&open.run)
-                    .bind(&reason)
-                    .execute(&mut *tx)
-                    .await?;
-                    tx.commit().await?;
-                    return Ok(Resolved {
-                        status: "refused",
-                        reason: Some(reason),
-                        linked: false,
-                        parting: Parting::Unknown,
-                        stored: None,
-                    });
                 }
-                if !seen.insert(next.clone()) {
-                    // Joined a cycle this branch is not on.
-                    break None;
-                }
-                length += 1;
-                if next < least {
-                    least = next.clone();
-                }
-                at = next;
-            };
-            for run in visited {
-                tails.insert(run, end.clone());
+                break 'walk;
             }
+        }
+        if let Some(reason) = refusal {
+            if !open.created {
+                // Not this ingest's row: the refusal is the answer's alone
+                // (ruling 29).
+                return Ok(Resolved {
+                    status: "refused",
+                    reason: Some(reason),
+                    linked: false,
+                    parting: Parting::Unknown,
+                    stored: Some("writing".into()),
+                });
+            }
+            sqlx::query(
+                "UPDATE run SET ingest_status = 'refused', ingest_reason = $2 \
+                 WHERE run_id = $1 AND ingest_status = 'writing'",
+            )
+            .bind(&open.run)
+            .bind(&reason)
+            .execute(&mut *tx)
+            .await?;
+            tx.commit().await?;
+            return Ok(Resolved {
+                status: "refused",
+                reason: Some(reason),
+                linked: false,
+                parting: Parting::Unknown,
+                stored: None,
+            });
         }
         // A child with no points has nothing to compare, and the walk would
         // answer unknown without the parent's tape, so none is loaded.
@@ -1071,6 +1147,40 @@ impl Store {
             stored: None,
         })
     }
+}
+
+/// **Where a resolution's recheck last followed a held run's chain**, kept
+/// for the ingest's length, a reference never changing once written.
+#[derive(Debug, Clone)]
+enum Tail {
+    /// To a run naming no parent, or into a cycle this run is not on: the
+    /// chain can go nowhere else.
+    Ended,
+    /// To this run, not held when read, which may since be created: the
+    /// next walk to reach it reads it again.
+    Reaches(String),
+    /// Around this cycle, which the run is on.
+    Cycle(std::sync::Arc<CycleSeen>),
+}
+
+/// A cycle a recheck stepped all the way round, kept whole so a later walk
+/// meeting it counts it exactly. **Its members are a set**, one shared by
+/// every member's entry, since each sibling meeting the cycle asks whether
+/// its own run is on it: a lookup per walk, where a scan would cost the
+/// cycle's length each time and a long cycle met by many siblings would
+/// cost their product.
+#[derive(Debug)]
+struct CycleSeen {
+    members: HashSet<String>,
+    least: String,
+}
+
+/// How one walk of the recheck ended.
+enum WalkEnd {
+    Ended,
+    Reaches(String),
+    /// At a run already stepped through: a cycle, entered there.
+    Cycle(String),
 }
 
 /// **Every held run reachable from `$1` along parent references**, with its

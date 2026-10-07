@@ -173,7 +173,9 @@ pub struct Landed {
     /// The positions and generations the store holds for the run as this
     /// ingest left it: what it wrote, or, for a run it found already
     /// written equal, what is stored. Never the plan's counts where they
-    /// did not land.
+    /// did not land. For a run whose target moved, the store's at the
+    /// answer, which may include another ingest's writes, since this ingest
+    /// can no longer tell its own from theirs.
     pub positions: usize,
     pub generations: usize,
     pub absent: Vec<String>,
@@ -1047,17 +1049,28 @@ impl Store {
     }
 
     /// **A run whose target moved under its write**, answered refused with
-    /// the store's status for it, and the emission's other runs going on.
+    /// the store's status and counts for it, in one statement, and the
+    /// emission's other runs going on. Where no row stands, as at a creation
+    /// whose competitor has not committed, both counts are 0 and no status
+    /// is reported.
     async fn moved(&self, mut outcome: RunOutcome) -> Result<RunOutcome, sqlx::Error> {
-        outcome.stored = sqlx::query_scalar("SELECT ingest_status FROM run WHERE run_id = $1")
-            .bind(&outcome.run)
-            .fetch_optional(&self.pool)
-            .await?;
+        let held = sqlx::query(
+            "SELECT ingest_status, \
+             (SELECT count(*) FROM position p WHERE p.run_id = r.run_id) AS positions, \
+             (SELECT count(*) FROM generation g WHERE g.run_id = r.run_id) AS generations \
+             FROM run r WHERE r.run_id = $1",
+        )
+        .bind(&outcome.run)
+        .fetch_optional(&self.pool)
+        .await?;
         outcome.status = "refused".into();
         outcome.reason = Some(MOVED.into());
+        outcome.stored = held.as_ref().map(|r| r.get("ingest_status"));
+        let count = |name: &str| held.as_ref().map_or(0, |r| r.get::<i64, _>(name) as usize);
+        let (positions, generations) = (count("positions"), count("generations"));
         let landed = outcome.landed_mut();
-        landed.positions = 0;
-        landed.generations = 0;
+        landed.positions = positions;
+        landed.generations = generations;
         Ok(outcome)
     }
 

@@ -2494,6 +2494,17 @@ async fn a_lost_lock_before_the_close(w: Wire) {
         )
     );
     assert_eq!(first["runs"][0]["stored"], json!("whole"));
+    assert_eq!(
+        (
+            first["runs"][0]["positions"].clone(),
+            first["runs"][0]["generations"].clone()
+        ),
+        (
+            json!(count(&s, "position", &w.run()).await),
+            json!(count(&s, "generation", &w.run()).await)
+        ),
+        "the counts are the store's: {first}"
+    );
 }
 
 #[tokio::test]

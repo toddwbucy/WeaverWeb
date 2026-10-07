@@ -2547,3 +2547,47 @@ async fn a_resolution_that_finds_its_row_moved_is_answered() {
     );
     assert!(row.parting_known, "and walked it: {row:?}");
 }
+
+/// **A replayed branch refused on a cycle reports the status the store
+/// holds** (Codex pass twenty-three on PR #23): A is left `writing` by a
+/// stopped ingest, naming P, absent. A second ingest of A is held before
+/// its resolution and its lock session terminated; a third closes A
+/// `whole`, and P lands naming A. Released, the second's walk finds the
+/// cycle, and since A is not its row, the refusal is the answer's alone,
+/// reporting the row as another ingest left it, read under the write's
+/// lock, not as `writing`.
+#[tokio::test]
+async fn a_replayed_branch_refused_on_a_cycle_reports_the_stored_status() {
+    let Some(s) = store().await else { return };
+    let t = tag("replayed-cycle");
+    let (a, p) = (format!("a#{t}"), format!("p#{t}"));
+    let w = Wire::of(CERTIFIED).renamed(&a).branch_of(&p);
+    ingest_stopping(&s, &w, Step::AfterPoints).await;
+    assert_eq!(landed(&s, &a).await.unwrap().status, "writing");
+    let held = Hold {
+        at: HoldAt::BeforeClosing,
+        ..hold()
+    };
+    let second = spawn_ingest(
+        &s,
+        &w,
+        Options {
+            hold: Some(held.clone()),
+            ..Options::default()
+        },
+    );
+    held.locked.notified().await;
+    terminate_lock_session(&s, &a).await;
+    let third = ingest(&s, &w).await;
+    assert_eq!(third["runs"][0]["status"], json!("whole"), "{third}");
+    ingest(&s, &Wire::of(CERTIFIED).renamed(&p).branch_of(&a)).await;
+    held.release.notify_one();
+    let answer = second.await.unwrap();
+    assert_eq!(answer["runs"][0]["status"], json!("refused"), "{answer}");
+    assert_eq!(answer["runs"][0]["stored"], json!("whole"), "{answer}");
+    assert_eq!(
+        landed(&s, &a).await.unwrap().status,
+        "whole",
+        "nothing written"
+    );
+}

@@ -575,7 +575,9 @@ impl Store {
                 Some(stored) => {
                     if let Err(why) = compare(&plan, stored) {
                         // **A conflicting replay changes nothing stored**
-                        // (ruling 17): the refusal is the answer's alone.
+                        // (ruling 17): the refusal is the answer's alone, and
+                        // the status it reports is the one this compare read,
+                        // since nothing is written that could move it.
                         outcome.status = "refused".into();
                         outcome.reason = Some(why);
                         outcome.stored = Some(stored.status.clone());
@@ -1299,13 +1301,25 @@ impl Store {
         if let Some(reason) = refusal {
             if !open.created {
                 // Not this ingest's row: the refusal is the answer's alone
-                // (ruling 29).
+                // (ruling 29), and the status it reports is read here,
+                // under the write transaction's lock: still `writing`, as
+                // now; moved, where this ingest's session was lost and
+                // another closed it, answered by `moved`.
+                let stored: Option<String> =
+                    sqlx::query_scalar("SELECT ingest_status FROM run WHERE run_id = $1")
+                        .bind(&open.run)
+                        .fetch_optional(&mut *tx)
+                        .await?;
+                if stored.as_deref() != Some("writing") {
+                    drop(tx);
+                    return Ok(Resolved::moved());
+                }
                 return Ok(Resolved {
                     status: "refused",
                     reason: Some(reason),
                     linked: false,
                     parting: Parting::Unknown,
-                    stored: Some("writing".into()),
+                    stored,
                     moved: false,
                 });
             }

@@ -1555,8 +1555,9 @@ it decides are stated here and in section 2.8, and the reasons are there.
   issues, the server's or a host command's, can update, delete or truncate a
   record. A process that drops the triggers with the table owner's rights is
   a compromised server, outside the threat model as the host is; a migration
-  role owning the table, the server connecting with `INSERT` alone, would
-  close it, and is the operator's provisioning decision outside act 11. For
+  role owning the table, the server connecting with `INSERT` and `SELECT` on
+  it and never `UPDATE`, `DELETE` or `TRUNCATE`, would close it, and is the
+  operator's provisioning decision outside act 11. For
   a verb asked of an agent, or a turn placed with it, the target is the
   agent and the action the verb or `turn`;
   for a write to a person row, a role or a grant the target is the row's

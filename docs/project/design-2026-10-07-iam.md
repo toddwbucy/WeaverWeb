@@ -431,7 +431,9 @@ crate issues, the server's or a host command's, can update, delete or truncate a
 record. They do not guard against a process that deliberately drops them with the
 owner's rights, which is a compromised server, out of the threat model as the host is
 (section 5). **The hardening that would close it** is a migration role owning the table
-while the server connects as a role holding only `INSERT` and `SELECT` on it; that is a
+while the server connects as a role holding only `INSERT` and `SELECT` on it, never
+`UPDATE`, `DELETE` or `TRUNCATE`, since it writes records and reads them (an admin's view,
+and an outcome naming its first); that is a
 change to how the store is provisioned, an operator decision outside this act. The two-record
 rule is Spec 2.13's, unchanged: a first record before the act, and the outcome as a second
 record naming the first. **It never holds** a passkey, a public key, a challenge, a

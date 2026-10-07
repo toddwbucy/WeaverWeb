@@ -1561,7 +1561,10 @@ async fn an_undeliverable_landed_closes_the_connection() {
             })
             .await;
     }
-    let until = tokio::time::Instant::now() + Duration::from_secs(30);
+    // The landing is the store's and this test asserts the later close, so
+    // the wait has the ingest sweep's headroom: a scratch database shared
+    // with the ingest's heavy tests lands these more slowly.
+    let until = tokio::time::Instant::now() + Duration::from_secs(60);
     while lab.listener.acknowledged(&karl.id).map(|p| p.offset) != Some(100 + events) {
         assert!(
             tokio::time::Instant::now() < until,

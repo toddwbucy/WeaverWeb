@@ -1748,3 +1748,26 @@ async fn a_cycle_row_owned_elsewhere_is_reported_as_of_the_refusal() {
         .unwrap_or_else(|| panic!("Z is reported on the cycle: {x}"));
     assert_eq!(reported["stored"], json!("refused"), "{x}");
 }
+
+/// **A generation with no drawn tokens owes no points and leaves the run
+/// whole** (Codex pass twelve on PR #23): `diagnostic-certified` with a third
+/// generation that drew nothing and carries neither a turn key nor a resident
+/// count. Its summary lands; nothing it owed failed to, so the run is
+/// `whole` with no reason.
+#[tokio::test]
+async fn an_empty_generation_leaves_the_run_whole() {
+    let Some(s) = store().await else { return };
+    let mut w = Wire::of(CERTIFIED).tagged(&tag("empty-generation"));
+    let mut empty = w.summary["generations"][1].clone();
+    let object = empty.as_object_mut().unwrap();
+    object.remove("turn");
+    object.remove("resident");
+    object.remove("perplexity");
+    empty["output_count"] = json!(0);
+    w.summary["generations"].as_array_mut().unwrap().push(empty);
+    let answer = ingest(&s, &w).await;
+    assert_eq!(answer["runs"][0]["status"], json!("whole"), "{answer}");
+    let row = landed(&s, &w.run()).await.unwrap();
+    assert_eq!((row.status.as_str(), row.reason), ("whole", None));
+    assert_eq!(count(&s, "generation", &w.run()).await, 3);
+}

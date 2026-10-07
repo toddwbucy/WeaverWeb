@@ -450,6 +450,13 @@ impl RunPlan {
             };
             generation.validate()?;
             generations.push(generation);
+            // **A generation with no drawn tokens owes no points**: it lands
+            // its summary and is neither addressed nor skipped, so it leaves
+            // the run whole whatever its resident count or turn key, a run
+            // being short only where a point it owed did not land.
+            if entry.output_count == 0 {
+                continue;
+            }
             // **A generation whose points cannot be addressed lands its
             // summary and not its points** (Spec 3.1): no resident count, no
             // position; no turn key, no key. Nothing invents either.

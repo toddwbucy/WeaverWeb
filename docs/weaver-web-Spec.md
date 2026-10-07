@@ -1868,7 +1868,9 @@ section 2.14's row. The count is absent rather than derived where no
 formed, and this crate stores nothing it cannot address rather than storing
 rows under an invented key. **A generation with no turn key is the same case**:
 the turn is part of the key and the contract makes it optional on a point, so
-its points do not land and nothing invents a turn. The run closes `short`,
+its points do not land and nothing invents a turn. **A generation with no drawn tokens owes no
+points**, and so neither: it lands its summary and leaves the run whole, a run
+being short only where a point it owed did not land. The run closes `short`,
 naming each such generation and why, so a run short of a generation is
 visibly partial by the rule above rather than quietly short. **This is
 absent-not-empty at the write path**: the same discipline that forbids
@@ -3697,7 +3699,7 @@ missing while it was relaying.
 | the sentinel joins to nothing | perturbation: register the empty string as an identity, a run whose hash failed joins to an artifact it never named |
 | the record's session and digest are absent where unsent | perturbation: fill an absent digest from the landed rows, a row from a record cut short vouches for bytes nobody drained |
 | the record's session and digest agree across a run | perturbation in `src/store/ingest_tests.rs`: take the first generation's session, or its digest, and a run whose generations name two lands with one of them; the run is refused before a row instead |
-| a generation's summary lands, and its points only where they can be addressed | perturbation in `src/store/ingest_tests.rs`: close a run whose generations carry no resident count `whole`, and it reads as completed; give a turnless point a turn, and it lands under a key nobody recorded |
+| a generation's summary lands, and its points only where they can be addressed | perturbation in `src/store/ingest_tests.rs`: close a run whose generations carry no resident count `whole`, and it reads as completed; give a turnless point a turn, and it lands under a key nobody recorded; hold a generation with no drawn tokens to the addressability check, and a run with nothing unlanded reads `short` |
 | a run's ingest status is written first and read by every surface | perturbation: create the row `whole` rather than `writing`, and an ingest stopped by the test-only step hook after the points leaves a branch reading `whole` and unlinked; draw every row's status as `whole` on Record, and a `writing`, `short` or `refused` run reads as completed |
 | an absent entropy lands absent | perturbation in `src/store/ingest_tests.rs`: write an omitted entropy as zero, and the position reads a floor |
 | a member the schema refuses is refused while planning, and the answer's counts are what landed | perturbation in `src/store/ingest_tests.rs`: leave the digest's shape, a NUL byte or a key's length to the store, and the run planted with it fails the whole ingest at its insert, the good run after it never landing; report the plan's counts on a refusal, and a refused replay reports 455 positions it never wrote |

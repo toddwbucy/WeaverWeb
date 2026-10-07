@@ -1362,6 +1362,12 @@ fn the_replay_compares_every_column_the_insert_writes() {
         prefix_length: Some(1),
         parent_reference: Some("a".into()),
         boundary_set: json!([]),
+        task_source: None,
+        task_identity: None,
+        forced_position: None,
+        forced_token: None,
+        branch_position: None,
+        signature: None,
     };
     let b = RunMembers {
         record_identity: "b".into(),
@@ -1375,6 +1381,12 @@ fn the_replay_compares_every_column_the_insert_writes() {
         prefix_length: Some(2),
         parent_reference: Some("b".into()),
         boundary_set: json!(["b"]),
+        task_source: Some("b".into()),
+        task_identity: Some("b".into()),
+        forced_position: Some(1),
+        forced_token: Some("b".into()),
+        branch_position: Some(1),
+        signature: Some(json!({"b": 1})),
     };
     assert_eq!(
         a.differing(&b),
@@ -2313,4 +2325,189 @@ async fn a_cycle_a_sibling_walked_round_refuses_its_member() {
         )),
         "{answer}"
     );
+}
+
+/// **Every column of `run` is a declared member or the ingest's
+/// bookkeeping** (Codex pass twenty on PR #23), read from the schema, so a
+/// column added to the table and not to `RunMembers` fails here rather than
+/// passing every replay unread.
+#[tokio::test]
+async fn every_run_column_is_declared_or_bookkeeping() {
+    let Some(s) = store().await else { return };
+    let bookkeeping = [
+        "run_id",
+        "ingest_status",
+        "ingest_reason",
+        "parent_run_id",
+        "parting_position",
+        "parting_known",
+        "ingested_at",
+    ];
+    let mut columns: Vec<String> = sqlx::query_scalar(
+        "SELECT column_name::text FROM information_schema.columns \
+         WHERE table_schema = current_schema() AND table_name = 'run'",
+    )
+    .fetch_all(&s.pool)
+    .await
+    .unwrap();
+    columns.retain(|c| !bookkeeping.contains(&c.as_str()));
+    columns.sort();
+    let mut declared: Vec<String> = super::rows::RunMembers::COLUMNS
+        .iter()
+        .map(|c| c.name.to_owned())
+        .collect();
+    declared.sort();
+    assert_eq!(columns, declared);
+}
+
+/// **A stored member this seam never fills differs from every emission**
+/// (Codex pass twenty on PR #23): a run landed whole and then given a
+/// signature, as another writer would, is refused as a differing replay
+/// naming the signature, and stands unchanged.
+#[tokio::test]
+async fn a_member_another_writer_filled_refuses_the_replay() {
+    let Some(s) = store().await else { return };
+    let w = Wire::of(SERVING).tagged(&tag("filled-member"));
+    assert_eq!(ingest(&s, &w).await["ok"], json!(true));
+    sqlx::query("UPDATE run SET signature = '{\"shingles\": [1]}'::jsonb WHERE run_id = $1")
+        .bind(w.run())
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    let answer = ingest(&s, &w).await;
+    assert_eq!(answer["runs"][0]["status"], json!("refused"), "{answer}");
+    assert!(
+        answer["runs"][0]["reason"]
+            .as_str()
+            .is_some_and(|r| r.contains("signature")),
+        "{answer}"
+    );
+    assert_eq!(answer["runs"][0]["stored"], json!("whole"));
+}
+
+/// Terminate the session holding `run`'s lock, as a server or a dropped
+/// socket would.
+async fn terminate_lock_session(s: &Store, run: &str) {
+    let terminated: bool = sqlx::query_scalar(
+        "SELECT pg_terminate_backend(pid) FROM pg_locks WHERE locktype = 'advisory' \
+         AND classid::bigint = $1 AND objid::bigint = (hashtext($2) & 1023) \
+         AND objsubid = 2 AND granted",
+    )
+    .bind(i64::from(super::ingest::LOCK_CLASS))
+    .bind(run)
+    .fetch_one(&s.pool)
+    .await
+    .unwrap();
+    assert!(terminated);
+}
+
+/// **A write whose session lock was lost inside it never interleaves with
+/// another's** (Codex pass twenty on PR #23): the first ingest of a run is
+/// held inside a write transaction at `at`, written and locked, and its
+/// lock session is terminated there. A second ingest of the run takes the
+/// session lock, plans the same write and waits on the transaction's own
+/// lock; released, the first commits and stops at its next check, and the
+/// second finds its target written, answering the run refused by name with
+/// no store failure. A third completes it.
+async fn a_lost_lock_inside_a_write(base: &str, at: HoldAt) {
+    let Some(s) = store().await else { return };
+    let w = Wire::of(CERTIFIED).tagged(&tag(base));
+    let held = Hold { at, ..hold() };
+    let first = spawn_ingest(
+        &s,
+        &w,
+        Options {
+            hold: Some(held.clone()),
+            ..Options::default()
+        },
+    );
+    held.locked.notified().await;
+    terminate_lock_session(&s, &w.run()).await;
+    let second = spawn_ingest(&s, &w, Options::default());
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    assert!(
+        !second.is_finished(),
+        "the second waits on the write's lock"
+    );
+    held.release.notify_one();
+    let (first, second) = (first.await.unwrap(), second.await.unwrap());
+    assert!(
+        first["error"]
+            .as_str()
+            .is_some_and(|e| e.starts_with("the run locks were lost")),
+        "{first}"
+    );
+    assert_eq!(second.get("error"), None, "no store failure: {second}");
+    assert_eq!(second["runs"][0]["status"], json!("refused"), "{second}");
+    assert_eq!(
+        second["runs"][0]["reason"],
+        json!(
+            "another ingest wrote this run while this one's locks were lost; a replay compares it"
+        )
+    );
+    assert_eq!(second["runs"][0]["stored"], json!("writing"));
+    let third = ingest(&s, &w).await;
+    assert_eq!(third["runs"][0]["status"], json!("whole"), "{third}");
+}
+
+#[tokio::test]
+async fn a_lost_lock_inside_the_creation_is_answered() {
+    a_lost_lock_inside_a_write("lost-in-create", HoldAt::BeforeCreateCommit).await;
+}
+
+#[tokio::test]
+async fn a_lost_lock_inside_a_generations_points_is_answered() {
+    a_lost_lock_inside_a_write("lost-in-points", HoldAt::BeforeFirstPointsCommit).await;
+}
+
+/// **A close that finds its row moved is answered, not claimed** (Codex
+/// pass twenty on PR #23): the first ingest is held after its lock check,
+/// before the run's close or resolution, and its lock session is
+/// terminated there. A second ingest of the run completes and closes it;
+/// released, the first's close finds no `writing` row and answers the run
+/// refused by name with the stored status.
+async fn a_lost_lock_before_the_close(w: Wire) {
+    let Some(s) = store().await else { return };
+    let held = Hold {
+        at: HoldAt::BeforeClosing,
+        ..hold()
+    };
+    let first = spawn_ingest(
+        &s,
+        &w,
+        Options {
+            hold: Some(held.clone()),
+            ..Options::default()
+        },
+    );
+    held.locked.notified().await;
+    terminate_lock_session(&s, &w.run()).await;
+    let second = ingest(&s, &w).await;
+    assert_eq!(second["runs"][0]["status"], json!("whole"), "{second}");
+    held.release.notify_one();
+    let first = first.await.unwrap();
+    assert_eq!(first["runs"][0]["status"], json!("refused"), "{first}");
+    assert_eq!(
+        first["runs"][0]["reason"],
+        json!(
+            "another ingest wrote this run while this one's locks were lost; a replay compares it"
+        )
+    );
+    assert_eq!(first["runs"][0]["stored"], json!("whole"));
+}
+
+#[tokio::test]
+async fn a_close_that_finds_its_row_moved_is_answered() {
+    a_lost_lock_before_the_close(Wire::of(CERTIFIED).tagged(&tag("moved-close"))).await;
+}
+
+#[tokio::test]
+async fn a_resolution_that_finds_its_row_moved_is_answered() {
+    let t = tag("moved-resolution");
+    a_lost_lock_before_the_close(
+        Wire::of(CERTIFIED)
+            .renamed(&format!("branch#{t}"))
+            .branch_of(&format!("absent#{t}")),
+    )
+    .await;
 }

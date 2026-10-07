@@ -418,6 +418,12 @@ impl RunPlan {
                 .transpose()?,
             parent_reference,
             boundary_set: serde_json::json!([]),
+            task_source: None,
+            task_identity: None,
+            forced_position: None,
+            forced_token: None,
+            branch_position: None,
+            signature: None,
         };
         members.validate(run)?;
 

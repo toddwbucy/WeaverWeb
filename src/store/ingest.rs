@@ -81,6 +81,14 @@ pub enum HoldAt {
     BeforeCycles,
     /// After the first branch's resolution commits, before the next's.
     AfterFirstResolution,
+    /// Inside the run's creation, written and locked, before its commit.
+    BeforeCreateCommit,
+    /// Inside generation 0's points, written and locked, before their
+    /// commit.
+    BeforeFirstPointsCommit,
+    /// After the lock check before a run's close or resolution, before its
+    /// transaction begins.
+    BeforeClosing,
 }
 
 #[cfg(test)]
@@ -298,6 +306,74 @@ pub(crate) const LOCK_CLASS: i32 = 0x5754_4931;
 /// The number of buckets a run's identity hashes into, the second key.
 const LOCK_BUCKETS: i32 = 1024;
 
+/// **The advisory-lock class of a write transaction's own lock**, the first
+/// key, a second class beside `LOCK_CLASS`. Not the same class: the write
+/// transaction runs on a pool connection, a session other than the
+/// ingest's own lock session, and an advisory lock on one key held by
+/// another session conflicts, so under `LOCK_CLASS` the ingest would wait
+/// on itself forever.
+pub(crate) const WRITE_CLASS: i32 = 0x5754_4932;
+
+/// **The answer of a run whose target moved under a write**: its write
+/// transaction found the run, a generation's points or the row's status
+/// already written by another ingest, which only happens where this one's
+/// session lock was lost between its check and the transaction.
+const MOVED: &str =
+    "another ingest wrote this run while this one's locks were lost; a replay compares it";
+
+/// **A write transaction's own lock on its runs' buckets**, taken first in
+/// the transaction and held to its commit, in ascending order like the
+/// session's. The session lock serializes ingests; this one serializes
+/// their write transactions where a session was lost, so the target each
+/// transaction verifies after it cannot move before its commit.
+async fn lock_for_write(
+    tx: &mut Transaction<'_, Postgres>,
+    runs: &[&str],
+) -> Result<(), sqlx::Error> {
+    if let [run] = runs {
+        sqlx::query("SELECT pg_advisory_xact_lock($1, hashtext($2) & $3)")
+            .bind(WRITE_CLASS)
+            .bind(run)
+            .bind(LOCK_BUCKETS - 1)
+            .execute(&mut **tx)
+            .await?;
+        return Ok(());
+    }
+    let buckets: Vec<i32> = sqlx::query_scalar(
+        "SELECT DISTINCT hashtext(r) & $2 FROM unnest($1::text[]) AS r ORDER BY 1",
+    )
+    .bind(runs)
+    .bind(LOCK_BUCKETS - 1)
+    .fetch_all(&mut **tx)
+    .await?;
+    for bucket in buckets {
+        sqlx::query("SELECT pg_advisory_xact_lock($1, $2)")
+            .bind(WRITE_CLASS)
+            .bind(bucket)
+            .execute(&mut **tx)
+            .await?;
+    }
+    Ok(())
+}
+
+/// Whether the store holds the point at `key`: the first of a generation's
+/// points to write, which stand all or none, so one key tells whether the
+/// generation was written.
+async fn point_held(
+    tx: &mut Transaction<'_, Postgres>,
+    run: &str,
+    key: &PositionRow,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM position WHERE run_id = $1 AND turn = $2 AND position = $3)",
+    )
+    .bind(run)
+    .bind(&key.turn)
+    .bind(key.position)
+    .fetch_one(&mut **tx)
+    .await
+}
+
 /// **The runs an ingest writes, locked for its whole length.**
 ///
 /// The lock is **session-level, on a connection of its own that this guard
@@ -333,13 +409,13 @@ const LOCK_BUCKETS: i32 = 1024;
 /// the pool's options. A termination or a dropped socket ends it all the
 /// same, so the ingest verifies the session before each write transaction
 /// (`check`) and stops where it is gone, naming the lost locks and leaving
-/// every row it began `writing` for a later replay to complete. **The
-/// window that remains**: a session ended between a check and the commit
-/// of the transaction after it is not seen until the next check, which is
-/// one generation's points at most, and a second ingest meeting the row
-/// meanwhile refuses or completes it by the exact-shape comparison. Nothing
-/// short of holding the lock in the writing transaction closes that window,
-/// and that is the design this one replaced.
+/// every row it began `writing` for a later replay to complete. **A session
+/// ended between a check and the commit after it** is closed by the write
+/// transaction itself: each takes a transaction lock of its own class
+/// (`lock_for_write`) and verifies its target before writing, so an ingest
+/// whose session was lost never interleaves with another's writes, and the
+/// one that finds its target moved stops that run with a named answer
+/// (`MOVED`).
 struct RunLocks {
     held: PgConnection,
 }
@@ -469,10 +545,17 @@ impl Store {
             match &stored {
                 None => {
                     locks.check().await?;
-                    self.create(&run, &plan).await.map_err(store_error)?;
+                    let mut wrote = self
+                        .create(&run, &plan, options)
+                        .await
+                        .map_err(store_error)?;
                     for seq in 0..plan.generations.len() {
+                        if !wrote {
+                            break;
+                        }
                         locks.check().await?;
-                        self.write_points(&run, &plan, seq)
+                        wrote = self
+                            .write_points(&run, &plan, seq, options)
                             .await
                             .map_err(store_error)?;
                         #[cfg(test)]
@@ -481,6 +564,10 @@ impl Store {
                                 "stopped by the test's hook after generation {seq}'s points"
                             ));
                         }
+                    }
+                    if !wrote {
+                        outcomes.push(self.moved(outcome).await.map_err(store_error)?);
+                        continue;
                     }
                 }
                 Some(stored) => {
@@ -510,8 +597,13 @@ impl Store {
                         continue;
                     }
                     // A `writing` row whose every key is equal is completed.
-                    self.complete(&run, &plan, stored, &mut locks, options)
-                        .await?;
+                    if !self
+                        .complete(&run, &plan, stored, &mut locks, options)
+                        .await?
+                    {
+                        outcomes.push(self.moved(outcome).await.map_err(store_error)?);
+                        continue;
+                    }
                 }
             }
             outcome.landed_mut().generations = plan.generations.len();
@@ -521,16 +613,31 @@ impl Store {
                 // are written** (ruling 27).
                 let (status, reason) = plan.closing();
                 locks.check().await?;
-                sqlx::query(
+                #[cfg(test)]
+                options.hold(HoldAt::BeforeClosing).await;
+                let mut tx = self.pool.begin().await.map_err(store_error)?;
+                lock_for_write(&mut tx, &[&run])
+                    .await
+                    .map_err(store_error)?;
+                let closed = sqlx::query(
                     "UPDATE run SET ingest_status = $2, ingest_reason = $3 \
                      WHERE run_id = $1 AND ingest_status = 'writing'",
                 )
                 .bind(&run)
                 .bind(status)
                 .bind(&reason)
-                .execute(&self.pool)
+                .execute(&mut *tx)
                 .await
-                .map_err(store_error)?;
+                .map_err(store_error)?
+                .rows_affected();
+                // The close requires `writing`; a row another ingest closed
+                // meanwhile is answered, not claimed.
+                if closed != 1 {
+                    drop(tx);
+                    outcomes.push(self.moved(outcome).await.map_err(store_error)?);
+                    continue;
+                }
+                tx.commit().await.map_err(store_error)?;
                 outcome.status = status.into();
                 outcome.reason = reason;
                 outcomes.push(outcome);
@@ -643,8 +750,13 @@ impl Store {
             // rows this ingest created (ruling 29).
             locks.check().await?;
             let mut tx = self.pool.begin().await.map_err(store_error)?;
+            let mine: Vec<&str> = created.iter().copied().collect();
+            lock_for_write(&mut tx, &mine).await.map_err(store_error)?;
+            // Rows another ingest moved meanwhile, answered with what they
+            // hold rather than claimed.
+            let mut moved: HashSet<&str> = HashSet::new();
             for run in cycle.iter().filter(|r| created.contains(r.as_str())) {
-                sqlx::query(
+                let refused = sqlx::query(
                     "UPDATE run SET ingest_status = 'refused', ingest_reason = $2 \
                      WHERE run_id = $1 AND ingest_status = 'writing'",
                 )
@@ -652,7 +764,11 @@ impl Store {
                 .bind(reason_for(run))
                 .execute(&mut *tx)
                 .await
-                .map_err(store_error)?;
+                .map_err(store_error)?
+                .rows_affected();
+                if refused != 1 {
+                    moved.insert(run.as_str());
+                }
                 #[cfg(test)]
                 if options.stop_at == Some(Step::AfterCycleRow) {
                     drop(tx);
@@ -666,7 +782,7 @@ impl Store {
             // changing once written; only the status can, and it is read here.
             let others: Vec<&String> = cycle
                 .iter()
-                .filter(|r| !created.contains(r.as_str()))
+                .filter(|r| !created.contains(r.as_str()) || moved.contains(r.as_str()))
                 .collect();
             let statuses: HashMap<String, String> =
                 sqlx::query("SELECT run_id, ingest_status FROM run WHERE run_id = ANY($1)")
@@ -699,7 +815,10 @@ impl Store {
                     outcome.status = "refused".into();
                     outcome.reason = Some(reason_for(run));
                 }
-                if !created.contains(run.as_str()) {
+                if moved.contains(run.as_str()) {
+                    outcome.reason = Some(MOVED.into());
+                }
+                if !created.contains(run.as_str()) || moved.contains(run.as_str()) {
                     outcome.stored = Some(
                         statuses
                             .get(run)
@@ -737,6 +856,8 @@ impl Store {
         for run in order.iter().filter(|r| !in_cycle.contains(r.as_str())) {
             let o = by_run[run.as_str()];
             locks.check().await?;
+            #[cfg(test)]
+            options.hold(HoldAt::BeforeClosing).await;
             let resolved = self
                 .resolve_retrying(o, &mut tails, &mut links, &mut tape, options)
                 .await
@@ -808,8 +929,23 @@ impl Store {
     /// left `writing` holds the whole shape a later emission must equal
     /// before its points are completed. One statement for the generations,
     /// bounded by the summary line's `LINE_BOUND`.
-    async fn create(&self, run: &str, plan: &RunPlan) -> Result<(), sqlx::Error> {
+    async fn create(
+        &self,
+        run: &str,
+        plan: &RunPlan,
+        options: &Options,
+    ) -> Result<bool, sqlx::Error> {
+        let _ = options;
         let mut tx = self.pool.begin().await?;
+        lock_for_write(&mut tx, &[run]).await?;
+        // The target: no row yet, as the read before planned.
+        let held: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM run WHERE run_id = $1)")
+            .bind(run)
+            .fetch_one(&mut *tx)
+            .await?;
+        if held {
+            return Ok(false);
+        }
         plan.members
             .bind(sqlx::query(INSERT_RUN.as_str()).bind(run))
             .execute(&mut *tx)
@@ -823,30 +959,51 @@ impl Store {
             .execute(&mut *tx)
             .await?;
         }
-        tx.commit().await
+        #[cfg(test)]
+        options.hold(HoldAt::BeforeCreateCommit).await;
+        tx.commit().await?;
+        Ok(true)
     }
 
     /// **One generation's points, in one transaction**: bulk per generation
-    /// and never per point (Spec 3.1), reading nothing, since no other
-    /// ingest writes the run while this one holds its lock. A generation's
-    /// points are therefore all stored or none.
-    async fn write_points(&self, run: &str, plan: &RunPlan, seq: usize) -> Result<(), sqlx::Error> {
+    /// and never per point (Spec 3.1), so a generation's points are stored
+    /// all or none. The transaction's own lock taken, the target verified:
+    /// none of the generation's points stored yet. `false` where it moved.
+    async fn write_points(
+        &self,
+        run: &str,
+        plan: &RunPlan,
+        seq: usize,
+        options: &Options,
+    ) -> Result<bool, sqlx::Error> {
+        let _ = options;
         let points: Vec<&PositionRow> = plan.points[plan.spans[seq].clone()]
             .iter()
             .map(|(_, p)| p)
             .collect();
         if points.is_empty() {
-            return Ok(());
+            return Ok(true);
         }
         let mut tx = self.pool.begin().await?;
+        lock_for_write(&mut tx, &[run]).await?;
+        if point_held(&mut tx, run, points[0]).await? {
+            return Ok(false);
+        }
         insert_points(&mut tx, run, &points).await?;
-        tx.commit().await
+        #[cfg(test)]
+        if seq == 0 {
+            options.hold(HoldAt::BeforeFirstPointsCommit).await;
+        }
+        tx.commit().await?;
+        Ok(true)
     }
 
     /// **A replayed `writing` row, completed**, every stored key and every
     /// generation having compared equal: the points of each generation the
     /// store lacks, one generation per transaction as creation writes them,
-    /// so a completion is never a larger statement than a creation.
+    /// so a completion is never a larger statement than a creation. Each
+    /// transaction locked and its target verified as creation's are;
+    /// `false` where it moved.
     async fn complete(
         &self,
         run: &str,
@@ -854,7 +1011,7 @@ impl Store {
         stored: &Stored,
         locks: &mut RunLocks,
         options: &Options,
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
         let _ = options;
         let store_error = |e: sqlx::Error| format!("the store failed: {e}");
         for (seq, span) in plan.spans.iter().enumerate() {
@@ -867,6 +1024,13 @@ impl Store {
             if !missing.is_empty() {
                 locks.check().await?;
                 let mut tx = self.pool.begin().await.map_err(store_error)?;
+                lock_for_write(&mut tx, &[run]).await.map_err(store_error)?;
+                if point_held(&mut tx, run, missing[0])
+                    .await
+                    .map_err(store_error)?
+                {
+                    return Ok(false);
+                }
                 insert_points(&mut tx, run, &missing)
                     .await
                     .map_err(store_error)?;
@@ -879,7 +1043,22 @@ impl Store {
                 ));
             }
         }
-        Ok(())
+        Ok(true)
+    }
+
+    /// **A run whose target moved under its write**, answered refused with
+    /// the store's status for it, and the emission's other runs going on.
+    async fn moved(&self, mut outcome: RunOutcome) -> Result<RunOutcome, sqlx::Error> {
+        outcome.stored = sqlx::query_scalar("SELECT ingest_status FROM run WHERE run_id = $1")
+            .bind(&outcome.run)
+            .fetch_optional(&self.pool)
+            .await?;
+        outcome.status = "refused".into();
+        outcome.reason = Some(MOVED.into());
+        let landed = outcome.landed_mut();
+        landed.positions = 0;
+        landed.generations = 0;
+        Ok(outcome)
     }
 
     /// `resolve`, retried where the store broke a deadlock: a net, since the
@@ -924,6 +1103,7 @@ impl Store {
             .as_deref()
             .expect("only branches resolve");
         let mut tx = self.pool.begin().await?;
+        lock_for_write(&mut tx, &[&open.run]).await?;
         let parent_status: Option<String> =
             sqlx::query_scalar("SELECT ingest_status FROM run WHERE run_id = $1 FOR SHARE")
                 .bind(parent)
@@ -1088,14 +1268,18 @@ impl Store {
                     stored: Some("writing".into()),
                 });
             }
-            sqlx::query(
+            let refused = sqlx::query(
                 "UPDATE run SET ingest_status = 'refused', ingest_reason = $2 \
                  WHERE run_id = $1 AND ingest_status = 'writing'",
             )
             .bind(&open.run)
             .bind(&reason)
             .execute(&mut *tx)
-            .await?;
+            .await?
+            .rows_affected();
+            if refused != 1 {
+                return moved_resolution(tx, &open.run).await;
+            }
             tx.commit().await?;
             return Ok(Resolved {
                 status: "refused",
@@ -1126,7 +1310,7 @@ impl Store {
             Parting::Unknown
         };
         let (status, reason) = open.plan.closing();
-        sqlx::query(
+        let closed = sqlx::query(
             "UPDATE run SET parent_run_id = $2, parting_position = $3, parting_known = $4, \
              ingest_status = $5, ingest_reason = $6 WHERE run_id = $1 AND ingest_status = 'writing'",
         )
@@ -1137,7 +1321,13 @@ impl Store {
         .bind(status)
         .bind(&reason)
         .execute(&mut *tx)
-        .await?;
+        .await?
+        .rows_affected();
+        // The close requires `writing`; a row another ingest closed
+        // meanwhile is answered, not claimed.
+        if closed != 1 {
+            return moved_resolution(tx, &open.run).await;
+        }
         tx.commit().await?;
         Ok(Resolved {
             status,
@@ -1147,6 +1337,27 @@ impl Store {
             stored: None,
         })
     }
+}
+
+/// **A branch whose row moved under its resolution**: refused in the answer
+/// alone with the status the store holds, its transaction rolled back.
+async fn moved_resolution(
+    mut tx: Transaction<'_, Postgres>,
+    run: &str,
+) -> Result<Resolved, sqlx::Error> {
+    let stored: Option<String> =
+        sqlx::query_scalar("SELECT ingest_status FROM run WHERE run_id = $1")
+            .bind(run)
+            .fetch_optional(&mut *tx)
+            .await?;
+    drop(tx);
+    Ok(Resolved {
+        status: "refused",
+        reason: Some(MOVED.into()),
+        linked: false,
+        parting: Parting::Unknown,
+        stored,
+    })
 }
 
 /// **Where a resolution's recheck last followed a held run's chain**, kept

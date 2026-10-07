@@ -123,9 +123,12 @@ row! {
     /// **The run row's members, the whole row the ingest writes**, constants
     /// included: as the planner forms them, the insert writes them, the
     /// loader reads them and a replay compares them. Each `None` is a member
-    /// the record did not carry. The row's bookkeeping, its status and
-    /// reason, its link and its parting, is the ingest's own and not a
-    /// member: written by the close and the resolution, read, never compared.
+    /// the record did not carry, or one this seam never fills and writes
+    /// empty. The row's bookkeeping, its status and reason, its link, its
+    /// parting and its landing time, is the ingest's own and not a member:
+    /// written by the store, the close and the resolution, never compared.
+    /// Every other column of `run` is a member, which a test reads from the
+    /// schema.
     pub struct RunMembers {
         record_identity: String => "record_identity", insert "$", select "record_identity", array "text[]";
         /// The declared seed, as text, since the record spells it unsigned.
@@ -144,6 +147,17 @@ row! {
         /// this ingest can meet (Spec 2.2), and a member a replay compares
         /// like any other.
         boundary_set: serde_json::Value => "boundary_set", insert "$", select "boundary_set", array "jsonb[]";
+        /// **The members this seam never fills, written empty** (Spec 2.2):
+        /// the task's source and identity, the forced position and token, the
+        /// branch position the authoring path writes, and the signature,
+        /// shingles over a text that does not cross. A stored row holding
+        /// one is another writer's, and differs from every emission.
+        task_source: Option<String> => "task_source", insert "$", select "task_source", array "text[]";
+        task_identity: Option<String> => "task_identity", insert "$", select "task_identity", array "text[]";
+        forced_position: Option<i32> => "forced_position", insert "$", select "forced_position", array "int4[]";
+        forced_token: Option<String> => "forced_token", insert "$", select "forced_token", array "text[]";
+        branch_position: Option<i32> => "branch_position", insert "$", select "branch_position", array "int4[]";
+        signature: Option<serde_json::Value> => "signature", insert "$", select "signature", array "jsonb[]";
     }
 }
 

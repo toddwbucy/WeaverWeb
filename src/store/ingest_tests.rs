@@ -2591,3 +2591,41 @@ async fn a_replayed_branch_refused_on_a_cycle_reports_the_stored_status() {
         "nothing written"
     );
 }
+
+/// **A conflicting replay of a `writing` row reports the status at its
+/// answer** (Codex pass twenty-four on PR #23): a run is left `writing`
+/// after generation 0, and a replay differing in one token is held after
+/// its compare refused it, its lock session terminated. A third ingest of
+/// the run as stored completes and closes it. Released, the refusal reports
+/// the row `whole`, read again under the write lock, not the `writing` its
+/// compare read.
+#[tokio::test]
+async fn a_conflicting_replay_of_a_writing_row_reports_the_status_at_its_answer() {
+    let Some(s) = store().await else { return };
+    let run = tag("conflict-writing");
+    let w = synthetic(&[(run.clone(), None, vec![3, 4])]);
+    ingest_stopping(&s, &w, Step::AfterGeneration(0)).await;
+    assert_eq!(landed(&s, &run).await.unwrap().status, "writing");
+    let mut differing = w.clone();
+    differing.points[0]["token"] = json!(999);
+    let held = Hold {
+        at: HoldAt::AfterRefusedCompare,
+        ..hold()
+    };
+    let second = spawn_ingest(
+        &s,
+        &differing,
+        Options {
+            hold: Some(held.clone()),
+            ..Options::default()
+        },
+    );
+    held.locked.notified().await;
+    terminate_lock_session(&s, &run).await;
+    let third = ingest(&s, &w).await;
+    assert_eq!(third["runs"][0]["status"], json!("whole"), "{third}");
+    held.release.notify_one();
+    let answer = second.await.unwrap();
+    assert_eq!(answer["runs"][0]["status"], json!("refused"), "{answer}");
+    assert_eq!(answer["runs"][0]["stored"], json!("whole"), "{answer}");
+}

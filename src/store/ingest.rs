@@ -89,6 +89,8 @@ pub enum HoldAt {
     /// After the lock check before a run's close or resolution, before its
     /// transaction begins.
     BeforeClosing,
+    /// After a replay's comparison refused it, before its answer.
+    AfterRefusedCompare,
 }
 
 #[cfg(test)]
@@ -328,6 +330,12 @@ const MOVED: &str =
 /// session's. The session lock serializes ingests; this one serializes
 /// their write transactions where a session was lost, so the target each
 /// transaction verifies after it cannot move before its commit.
+///
+/// **It is also how an answer reads a status honestly.** A closed status
+/// never moves, since every update requires `writing`, so a status read as
+/// closed is honest whenever it was read; a status read as `writing` is
+/// honest only where read under this lock at the answer, since another
+/// ingest whose session took over may be completing the row.
 async fn lock_for_write(
     tx: &mut Transaction<'_, Postgres>,
     runs: &[&str],
@@ -575,12 +583,20 @@ impl Store {
                 Some(stored) => {
                     if let Err(why) = compare(&plan, stored) {
                         // **A conflicting replay changes nothing stored**
-                        // (ruling 17): the refusal is the answer's alone, and
-                        // the status it reports is the one this compare read,
-                        // since nothing is written that could move it.
+                        // (ruling 17): the refusal is the answer's alone. A
+                        // closed status the compare read never moves; a
+                        // `writing` one may have, where this ingest's session
+                        // was lost and another completed the row, so it is
+                        // read again under the write lock at the answer.
+                        #[cfg(test)]
+                        options.hold(HoldAt::AfterRefusedCompare).await;
                         outcome.status = "refused".into();
                         outcome.reason = Some(why);
-                        outcome.stored = Some(stored.status.clone());
+                        outcome.stored = if stored.status == "writing" {
+                            self.status_at_answer(&run).await.map_err(store_error)?
+                        } else {
+                            Some(stored.status.clone())
+                        };
                         outcomes.push(outcome);
                         continue;
                     }
@@ -754,8 +770,12 @@ impl Store {
             // rows this ingest created (ruling 29).
             locks.check().await?;
             let mut tx = self.pool.begin().await.map_err(store_error)?;
-            let mine: Vec<&str> = created.iter().copied().collect();
-            lock_for_write(&mut tx, &mine).await.map_err(store_error)?;
+            // Every member's bucket, its own rows to write and the others to
+            // read their statuses under the lock (`lock_for_write`).
+            let members: Vec<&str> = cycle.iter().map(String::as_str).collect();
+            lock_for_write(&mut tx, &members)
+                .await
+                .map_err(store_error)?;
             // Rows another ingest moved meanwhile, answered with what they
             // hold rather than claimed.
             let mut moved: HashSet<&str> = HashSet::new();
@@ -1065,6 +1085,20 @@ impl Store {
         Ok(true)
     }
 
+    /// **A run's status read under its write lock**, for an answer that
+    /// would otherwise report a `writing` it read earlier; `None` where no
+    /// row stands.
+    async fn status_at_answer(&self, run: &str) -> Result<Option<String>, sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        lock_for_write(&mut tx, &[run]).await?;
+        let status = sqlx::query_scalar("SELECT ingest_status FROM run WHERE run_id = $1")
+            .bind(run)
+            .fetch_optional(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(status)
+    }
+
     /// **A run whose target moved under its write**, answered refused, the
     /// emission's other runs going on. **Every member of the answer that
     /// describes the stored row is read from the store here**, in one
@@ -1076,6 +1110,10 @@ impl Store {
     /// known, and no status is reported. Serves the creation, the points,
     /// the close, the resolution and the cycle's refusal alike.
     async fn moved(&self, mut outcome: RunOutcome) -> Result<RunOutcome, sqlx::Error> {
+        // Under the write lock, so a `writing` status is honest at the
+        // answer (`lock_for_write`).
+        let mut tx = self.pool.begin().await?;
+        lock_for_write(&mut tx, &[&outcome.run]).await?;
         let held = sqlx::query(
             "SELECT ingest_status, parent_run_id IS NOT NULL AS linked, parting_known, \
              parting_position, \
@@ -1084,8 +1122,9 @@ impl Store {
              FROM run r WHERE r.run_id = $1",
         )
         .bind(&outcome.run)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *tx)
         .await?;
+        tx.commit().await?;
         outcome.status = "refused".into();
         outcome.reason = Some(MOVED.into());
         outcome.stored = held.as_ref().map(|r| r.get("ingest_status"));

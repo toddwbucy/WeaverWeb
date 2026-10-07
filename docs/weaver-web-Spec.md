@@ -887,8 +887,9 @@ section 6) on 2026-10-07:
   accurate to a minute
 - **the cookie is `__Host-weaver_session`**, `Secure`, `HttpOnly`,
   `SameSite=Strict` and `Path=/` with no `Domain`, the prefix making a
-  browser refuse it otherwise; the bearer is random and stored as its digest
-  under the rule above
+  browser refuse it otherwise; the bearer is drawn under section 2.13's rule
+  for every bearer the server issues and stored as its digest under the rule
+  above
 - **it ends at an hour idle and twelve hours open**, both the server's config
   with those defaults, an open live view counting as use; at sign-out; and
   when its person is disabled, the passkey it was opened with is removed, or
@@ -1358,8 +1359,11 @@ it decides are stated here and in section 2.8, and the reasons are there.
   returned one not greater than the stored one authorizes nothing, opening
   no session and adding no passkey, and is audited as a possible cloned
   credential, the passkey staying enrolled so a clone cannot lock its owner
-  out; the counter is persisted after every assertion, in the transaction
-  that commits what it authorizes, by an update that only raises it; and
+  out; the counter is persisted after every assertion, **in a transaction of
+  its own that commits before the authorized action's begins**, by an update
+  that only raises it, an update that moves no row refusing the assertion,
+  and an action that then fails leaving the counter raised, since the
+  authenticator did advance; and
   where both are zero, as synced passkeys report, there is nothing to
   compare. **A person may hold
   several passkeys**: adding one takes a fresh assertion with a passkey the
@@ -1377,7 +1381,10 @@ it decides are stated here and in section 2.8, and the reasons are there.
   single-use, expiring token bound to one person row, **and only for a
   person row with no authentication material**: redemption refuses if
   material has appeared on the row since, so a token can never replace a
-  credential, which would let an admin take a person over. **A lost passkey
+  credential, which would let an admin take a person over. **Every bearer the
+  server issues, the session bearer, the enrollment token and the ceremony
+  identity alike, is 32 bytes from the operating system's cryptographic
+  random source**, never derived from a counter, a time or a row identity. **A lost passkey
   is recovered by another passkey the person holds, or by the host reset**:
   a host command that, in one write under the exclusion below, clears the
   person's passkeys, closes their sessions and issues an enrollment token,
@@ -1534,9 +1541,10 @@ it decides are stated here and in section 2.8, and the reasons are there.
 - **The audit record, append-only**: every record names its principal, the
   person, the server or the host, how that principal was authenticated (a
   session, an enrollment token or a passkey assertion for a person, the last
-  marking a sign-in whose signature verified, the session's opening or a
-  refusal of its counter, a sign-in whose signature failed proving no
-  principal and being audited never; `server` for the server
+  marking any assertion whose signature verified, whatever ceremony asked
+  for it, the session's opening and a counter's refusal among them, an
+  assertion whose signature failed proving no principal and being audited
+  never; `server` for the server
   acting on its own behalf, access to the host for the host, each method
   belonging to one principal alone), its target and its action, and when.
   **The records are rows of a table of their own that store triggers keep
@@ -3683,10 +3691,11 @@ missing while it was relaying.
 | the server refuses to start on the relying-party faults the design lists, and promises nothing beyond them | perturbation, **owed**: drop each start refusal of `docs/project/design-2026-10-07-iam.md` section 3 in turn, start with that fault, and the server listens with passkeys no browser will use, or serves a plain origin other than `localhost`; drop the serialized-origin refusal, configure the origin with a trailing slash or an explicit default port, and every state-changing request fails the `Origin` comparison; drop the certificate's name check, configure a certificate for another host, and every browser refuses the listener; drop the validity check, configure an expired certificate, and the server listens on one every browser refuses; let a scheme other than `https` through, or `http` off `localhost`, and the server listens on an origin where no ceremony can run. A fault the list does not name, a public suffix or a certificate unfit for server authentication among them, is not this row's: the browser's failure at the first connection or ceremony shows it. Lands with act 11's TLS and passkey pull requests |
 | a person's name is unique in its canonical form | perturbation, **owed**: compare names as given, and a second person enrolls `ada` beside `Ada`, so name-first sign-in finds two; drop the check at rename, and a rename lands a name another person's form already holds. Lands with act 11's persons pull request |
 | a credential ID belongs to one passkey of one person | perturbation, **owed**: drop the unique constraint, and a registration returning a credential ID another person holds lands a second passkey row for it, so one credential signs in as either person. Lands with act 11's passkey pull request |
-| a signature counter that did not rise refuses the assertion, any assertion, and the counter is persisted raised | perturbation, **owed**: take the library's `CredentialPossibleCompromise` as a success, roll a device-bound passkey's counter back, and a session opens, and the same at the fresh assertion before adding a passkey, and a passkey is added on a cloned credential's word; drop the persisting of the counter, and a clone replaying an old counter passes against the first value ever stored; drop the raise-only condition, and of two concurrent assertions, a sign-in's or an addition's, the second writes the counter back down; persist the counter at sign-in alone, and the addition's assertion leaves it stale; audit a sign-in whose signature failed, and a stream of bad assertions fills the audit. Lands with act 11's passkey pull request |
+| a signature counter that did not rise refuses the assertion, any assertion, and the counter is persisted raised | perturbation, **owed**: take the library's `CredentialPossibleCompromise` as a success, roll a device-bound passkey's counter back, and a session opens, and the same at the fresh assertion before adding a passkey, and a passkey is added on a cloned credential's word; drop the persisting of the counter, and a clone replaying an old counter passes against the first value ever stored; drop the raise-only condition, and of two concurrent assertions, a sign-in's or an addition's, the second writes the counter back down; persist the counter at sign-in alone, and the addition's assertion leaves it stale; put the update back in the action's transaction, fail the addition, and the counter rolls back with it, stale; audit a sign-in whose signature failed, and a stream of bad assertions fills the audit. Lands with act 11's passkey pull request |
 | a session carries an authenticated person, ends where its person or its passkey does, and its cookie is neither readable by script nor carried by another site | perturbation, **owed**: drop `HttpOnly`, `Secure`, `SameSite=Strict` or the `__Host-` prefix, and the cookie's test finds the attribute gone; drop the `Origin` check, and a POST from another origin changes state; drop the idle or the absolute expiry, and a session past it still authorizes; drop the check of the passkey a session was opened with, remove that passkey, and the session still authorizes. Lands with act 11's passkey pull request |
 | a passkey is added only after a fresh assertion, and a person's last is never removed | perturbation, **owed**: add a passkey on a session alone, and a stolen cookie gains access that outlasts it; let a person remove their last passkey, and they are locked out with only the host to recover them. Lands with act 11's passkey pull request |
 | an enrollment token is single-use, expiring, bound to one person holding no passkey, and stored as a digest | perturbation, **owed**: redeem a token twice, past its expiry, or on a row that holds a passkey, and each lands a credential; store the token in the clear, and a read of the person table is a set of usable tokens; have the host reset issue its token before clearing the passkeys, and a token is issued for a row that holds one. Lands with act 11's persons pull request |
+| every bearer the server issues is 32 bytes of the operating system's cryptographic randomness | perturbation, **owed**: draw an enrollment token from a counter, and the next token is guessed from the last; draw a session bearer or a ceremony identity from the time, and the same. Lands with act 11's persons and passkey pull requests |
 | the audit table is append-only in the store | perturbation, **owed**: drop the row trigger, and an update rewrites a record or a delete removes one; drop the truncate trigger, and a truncate empties the audit. Lands with act 11's persons pull request |
 | the admin role grants no action on any agent | perturbation, **owed**: let the server-wide admin grant authorize a verb, and an admin holding no grant on an agent asks `stop` of it. Lands with act 11's authorization pull request |
 | reading an agent takes a grant on it | perturbation, **owed**: drop the grant check on a read, and a person holding no grant on an agent reads its trace window and its load state; give the admin's register view the door and the load state, and an admin with no grant reads an agent's state. Lands with act 11's authorization pull request |
@@ -3701,14 +3710,15 @@ missing while it was relaying.
 act that lands it states what removal makes it fail and confirms it does.
 
 **A row marked owed has no instrument and is not counted as enforced.**
-Eighteen stand so marked as of 2026-10-07. The batch's order is owed because
+Nineteen stand so marked as of 2026-10-07. The batch's order is owed because
 section 2.11 describes its table and no migration builds it. Three rows of
 the role shape ruled on 2026-10-02 are owed to the IAM act: the principal
 check, the writer's check for persons, roles and grants, and the audit
-record. **Fourteen are owed to act 11's code pull requests**, from its design
+record. **Fifteen are owed to act 11's code pull requests**, from its design
 of 2026-10-07: passkey-only sign-in, the start refusals, the unique name, the
 credential ID, the signature counter, the session, the fresh assertion and
-the last passkey, the enrollment token, the append-only audit table, the
+the last passkey, the enrollment token, the bearers' randomness, the
+append-only audit table, the
 admin's lack of agent actions, read access, the live view's bound, the
 ceremony cap, and the WebAuthn library's place in the server binary alone.
 The row that a session carries a claimed name is not owed but retires with

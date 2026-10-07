@@ -200,7 +200,14 @@ the host's database owner).
 **The cookie** is `__Host-weaver_session`. The `__Host-` prefix makes the browser refuse
 it unless it is `Secure`, has `Path=/` and has no `Domain`, so no subdomain can set or read
 it. Its attributes are `Secure`, `HttpOnly`, `SameSite=Strict` and `Path=/`. The bearer is
-random, 32 bytes, and stored only as its digest (Spec 2.8's rule, unchanged).
+drawn under the rule below and stored only as its digest (Spec 2.8's rule, unchanged).
+
+**Every bearer the server issues is 32 bytes from the operating system's cryptographic
+random source**: the session bearer, the enrollment token and the ceremony identity
+alike, and any bearer a later pull request adds. It is never derived from a counter, a
+time or a row identity, so holding one bearer tells nothing of another. The source is read
+through `getrandom`, already in this crate's tree at two versions through `rand`; taking it
+as a direct dependency, or reading it through `rand`'s `OsRng`, is PR 2's to measure.
 
 **Its row** carries the person and the passkey it was opened with, beside the digest, when
 it opened, when it was last used and when it closed. **The last-used time is written at
@@ -257,12 +264,15 @@ check after the signature). What the library leaves to this crate is the stored 
 **it holds for every assertion the server verifies**, whatever ceremony asked for it: the
 sign-in, the fresh assertion that authorizes adding a passkey (section 7), and any
 assertion a later pull request adds, none of which needs a sentence of its own:
-- **the counter is persisted after every assertion that returned one**, in the transaction
-  that commits what the assertion authorizes (a session's opening, a passkey's addition),
-  by an update that only raises it (`WHERE` the stored counter is below the returned one).
-  Two concurrent assertions with one passkey both pass the library's check against the
-  value they loaded; the second update then affects no row, and that assertion is refused
-  as the library would have refused it, so the comparison is never against a stale value;
+- **the counter is persisted after every assertion that returned one, in a transaction of
+  its own that commits before the authorized action's transaction begins** (a session's
+  opening, a passkey's addition), by an update that only raises it (`WHERE` the stored
+  counter is below the returned one). Two concurrent assertions with one passkey both
+  pass the library's check against the value they loaded; the second update then moves
+  no row, and that assertion is refused as the library would have refused it, so the
+  comparison is never against a stale value. **An action that then fails leaves the
+  counter raised**, which is right: the authenticator did advance, and a counter rolled
+  back with a failed action would let the same assertion's counter be replayed;
 - **a `CredentialPossibleCompromise` refusal is audited as a possible cloned credential**,
   its principal the passkey's person and its method `passkey assertion`, since the
   signature verified and only the counter failed; what the assertion would have
@@ -321,9 +331,10 @@ This settles Spec 10's "What an author names".
 - **A person enrolls more passkeys while signed in**, each after a fresh assertion with a
   passkey they already hold, taken within the same ceremony. A stolen session cookie
   therefore cannot add a passkey. The assertion falls under section 6's counter rule like
-  every assertion: its counter is raised in the transaction that adds the passkey, and a
-  counter refusal is audited as at sign-in and adds nothing. A person may remove any of their passkeys but the last;
-  removing one ends every session opened with it.
+  every assertion: its counter is raised in a transaction of its own before the addition
+  begins, and a counter refusal is audited as at sign-in and adds nothing. A person may
+  remove any of their passkeys but the last; removing one ends every session opened with
+  it.
 - **The host reset** is a host command. In one write, under the identity exclusion, it
   clears the person's passkeys, closes their sessions and issues an enrollment token, and
   the command prints the token once. The token goes to a row that by then holds no
@@ -394,12 +405,13 @@ its own person or by the host reset.
   `server` for the server acting on its own behalf (the admission's `show`), and `host`
   for access to the server's host. Each value belongs to exactly one principal, so a
   record's principal and its method can never disagree. **`passkey assertion` marks the
-  records of a sign-in whose signature verified**: the successful one, audited as the
-  session's opening, since a person's authority begins there and the record names the
-  passkey it began with; and the one the counter refused (section 6), whose principal is
-  the passkey's person because the signature proved them. **A sign-in whose signature
-  failed is not audited**: it proves no principal, and auditing it would let anyone fill
-  the audit with requests;
+  records of any assertion whose signature verified, whatever ceremony asked for it**,
+  under section 6's every-assertion rule: a sign-in, audited as the session's opening,
+  since a person's authority begins there and the record names the passkey it began
+  with; the fresh assertion before a passkey's addition; and any assertion the counter
+  refused, whose principal is the passkey's person because the signature proved them.
+  **An assertion whose signature failed is not audited**: it proves no principal, and
+  auditing it would let anyone fill the audit with requests;
 - the host's `--author` claim where the host acts;
 - the target's kind and identity;
 - the action;

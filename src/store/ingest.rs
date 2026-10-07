@@ -758,31 +758,53 @@ impl Store {
         if !lock(&mut tx, run).await? {
             return Ok(Fill::Closed);
         }
-        let generations: Vec<&GenerationRow> = plan
-            .generations
-            .iter()
-            .filter(|g| scope.is_none_or(|seq| g.seq == seq))
+        // **A scoped fill reads and compares its own generation alone**, by
+        // the plan's index and the generation's key, so a run of many
+        // generations costs each fill its own size and never the run's
+        // (Spec 3.1); the whole run is read only for a replay's completion.
+        let generations: Vec<&GenerationRow> = match scope {
+            Some(seq) => vec![&plan.generations[seq as usize]],
+            None => plan.generations.iter().collect(),
+        };
+        // Two statements and not one with a null test on the scope: a
+        // generic plan for `$2 IS NULL OR seq = $2` cannot use the key, and
+        // would read every generation of the run, which is the cost this
+        // scoping removes (the reason `read.rs` gives for its chips).
+        let held_rows = match scope {
+            Some(seq) => {
+                sqlx::query(
+                    "SELECT seq, turn, perplexity, resident, output_count, generation_seed::text AS generation_seed \
+                     FROM generation WHERE run_id = $1 AND seq = $2",
+                )
+                .bind(run)
+                .bind(seq)
+                .fetch_all(&mut *tx)
+                .await?
+            }
+            None => {
+                sqlx::query(
+                    "SELECT seq, turn, perplexity, resident, output_count, generation_seed::text AS generation_seed \
+                     FROM generation WHERE run_id = $1",
+                )
+                .bind(run)
+                .fetch_all(&mut *tx)
+                .await?
+            }
+        };
+        let held: HashMap<i32, GenerationRow> = held_rows
+            .into_iter()
+            .map(|r| {
+                let g = GenerationRow {
+                    seq: r.get("seq"),
+                    turn: r.get("turn"),
+                    perplexity: r.get("perplexity"),
+                    resident: r.get("resident"),
+                    output_count: r.get("output_count"),
+                    generation_seed: r.get("generation_seed"),
+                };
+                (g.seq, g)
+            })
             .collect();
-        let held: HashMap<i32, GenerationRow> = sqlx::query(
-            "SELECT seq, turn, perplexity, resident, output_count, generation_seed::text AS generation_seed \
-             FROM generation WHERE run_id = $1",
-        )
-        .bind(run)
-        .fetch_all(&mut *tx)
-        .await?
-        .into_iter()
-        .map(|r| {
-            let g = GenerationRow {
-                seq: r.get("seq"),
-                turn: r.get("turn"),
-                perplexity: r.get("perplexity"),
-                resident: r.get("resident"),
-                output_count: r.get("output_count"),
-                generation_seed: r.get("generation_seed"),
-            };
-            (g.seq, g)
-        })
-        .collect();
         let mut inserted = 0;
         for g in &generations {
             match held.get(&g.seq) {
@@ -799,12 +821,13 @@ impl Store {
                 }
             }
         }
-        let points: Vec<&PositionRow> = plan
-            .points
-            .iter()
-            .filter(|(seq, _)| scope.is_none_or(|s| *seq == s))
-            .map(|(_, p)| p)
-            .collect();
+        let points: Vec<&PositionRow> = match scope {
+            Some(seq) => plan.points[plan.spans[seq as usize].clone()]
+                .iter()
+                .map(|(_, p)| p)
+                .collect(),
+            None => plan.points.iter().map(|(_, p)| p).collect(),
+        };
         let stored = stored_positions(&mut tx, run, &points).await?;
         let mut missing = Vec::new();
         for p in points {
@@ -1447,6 +1470,11 @@ async fn parent_path(
 /// whole too, whichever path is longer (ruling 31). No difference through
 /// both is a known null only where the child is whole (ruling 21).
 pub fn walk(child: &RunPlan, parent: &[(i32, i64)]) -> Parting {
+    // A tape that revisited a coordinate, folded to one row per key, has
+    // none to compare on, as a tape whose positions fall does not.
+    if child.repeated {
+        return Parting::Unknown;
+    }
     if !increasing(child.points.iter().map(|(_, p)| p.position))
         || !increasing(parent.iter().map(|(p, _)| *p))
     {

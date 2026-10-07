@@ -1302,3 +1302,93 @@ fn the_cycle_scan_and_the_order_are_linear() {
     let took = started.elapsed();
     assert!(took < std::time::Duration::from_secs(2), "took {took:?}");
 }
+
+/// An emission of one run of `n` minimal generations, one point each, on
+/// one turn, positions 0 to `n - 1`: built here, no record carries one.
+fn minimal_generations(run: &str, n: usize) -> Wire {
+    let sampling = Wire::of(CERTIFIED).summary["generations"][0]["effective_sampling"].clone();
+    let generations: Vec<Value> = (0..n)
+        .map(|i| {
+            json!({
+                "turn": "t-1", "resident": i + 2, "output_count": 1,
+                "weights_hash": "ab", "run": run, "session": "s-minimal",
+                "effective_sampling": sampling,
+            })
+        })
+        .collect();
+    let points: Vec<Value> = (0..n)
+        .map(|i| json!({"turn": "t-1", "ordinal": 0, "token": i, "entropy": 1.0}))
+        .collect();
+    Wire {
+        summary: json!({"positions": n, "with_entropy": n, "with_surprisal": 0, "generations": generations}),
+        points,
+    }
+}
+
+/// **A generation's fill costs its own size and never the run's** (Codex
+/// pass seven on PR #23): a bound test and not a failing one. A run of
+/// twenty thousand minimal generations, one transaction each, lands within
+/// the bound below; a fill that read every stored generation and scanned
+/// the whole plan for its own does not.
+#[tokio::test]
+async fn a_run_of_many_generations_lands_within_its_bound() {
+    let Some(s) = store().await else { return };
+    let w = minimal_generations(&format!("many#{}", tag("many")), 20_000);
+    let started = std::time::Instant::now();
+    let answer = ingest(&s, &w).await;
+    let took = started.elapsed();
+    assert_eq!(
+        answer["runs"][0]["status"],
+        json!("whole"),
+        "{}",
+        answer["error"]
+    );
+    assert_eq!(count(&s, "generation", &w.run()).await, 20_000);
+    // About eleven seconds on the box this was written on, scoped; the
+    // bound leaves five times that for a slower one.
+    assert!(took < std::time::Duration::from_secs(60), "took {took:?}");
+}
+
+/// **A tape that repeats a coordinate gives the walk nothing to compare
+/// on** (Codex pass seven on PR #23): a branch whose second generation,
+/// moved onto the first's turn, starts at the first's last position with
+/// the same token, the repeat folded to one stored row. Against a whole
+/// parent the walk would otherwise find a parting; the plan records the
+/// repeat and the parting stays unknown. Built from the hand-made branch
+/// fixture.
+#[tokio::test]
+async fn a_tape_that_repeats_a_coordinate_derives_no_parting() {
+    let Some(s) = store().await else { return };
+    let t = tag("repeat");
+    let parent = Wire::of(SERVING).tagged(&t);
+    assert_eq!(ingest(&s, &parent).await["ok"], json!(true));
+    let mut child = Wire::of(HAND_MADE_BRANCH)
+        .tagged(&t)
+        .renamed(&format!("child#{t}"));
+    // The second generation onto the first's turn, its floor at 71, the
+    // first generation's last position.
+    child.summary["generations"][1]["turn"] = json!("t-1");
+    child.summary["generations"][1]["resident"] = json!(71 + 443 + 1);
+    for p in child.points.iter_mut().skip(12) {
+        p["turn"] = json!("t-1");
+    }
+    let last = child.points[11].clone();
+    child.points[12]["token"] = last["token"].clone();
+    child.points[12]["entropy"] = last["entropy"].clone();
+    let answer = ingest(&s, &child).await;
+    assert_eq!(answer["ok"], json!(true), "{answer}");
+    let row = landed(&s, &child.run()).await.unwrap();
+    assert_eq!(
+        (row.status.as_str(), row.parent_run_id.clone()),
+        ("whole", Some(parent.run()))
+    );
+    assert!(
+        !row.parting_known,
+        "a repeated coordinate derives nothing: {row:?}"
+    );
+    assert_eq!(
+        count(&s, "position", &child.run()).await,
+        454,
+        "one row per key"
+    );
+}

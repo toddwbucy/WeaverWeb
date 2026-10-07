@@ -337,9 +337,17 @@ pub struct RunPlan {
     pub members: RunMembers,
     pub generations: Vec<GenerationRow>,
     pub points: Vec<(i32, PositionRow)>,
+    /// Each generation's points as a span of `points`, by order, so a
+    /// generation's fill reads its own and never scans the run's.
+    pub spans: Vec<std::ops::Range<usize>>,
     pub skipped: Vec<Skipped>,
     /// A verdict crossed, which has no column until its kind lands (Spec 2.2).
     pub verdict_crossed: bool,
+    /// **The tape repeated a coordinate**: a key two generations named with
+    /// one payload, folded to one stored row. The stored rows keep one per
+    /// key, and the tape is still one that revisited a position, which the
+    /// walk reads as a tape with no coordinate.
+    pub repeated: bool,
 }
 
 /// A member every entry of one run must agree on, with its name.
@@ -569,6 +577,7 @@ impl RunPlan {
         let mut points: Vec<(i32, PositionRow)> = Vec::new();
         let mut skipped = Vec::new();
         let mut keys: BTreeMap<(String, i32), PositionRow> = BTreeMap::new();
+        let mut repeated = false;
         for (seq, (entry, own)) in entries.iter().map(|e| (&e.0, &e.1)).enumerate() {
             let seq = seq as i32;
             let generation_seed = unsigned_text(
@@ -636,7 +645,10 @@ impl RunPlan {
                 // once where the two agree and refuses the run where they
                 // do not.
                 match keys.get(&(turn.clone(), position)) {
-                    Some(held) if *held == row => continue,
+                    Some(held) if *held == row => {
+                        repeated = true;
+                        continue;
+                    }
                     Some(_) => {
                         return Err(format!(
                             "the run names turn {turn} position {position} twice with two payloads"
@@ -649,12 +661,23 @@ impl RunPlan {
                 points.push((seq, row));
             }
         }
+        let mut spans = vec![0..0; generations.len()];
+        let mut at = 0;
+        while at < points.len() {
+            let (seq, start) = (points[at].0, at);
+            while at < points.len() && points[at].0 == seq {
+                at += 1;
+            }
+            spans[seq as usize] = start..at;
+        }
         Ok(Self {
             members,
             generations,
             points,
+            spans,
             skipped,
             verdict_crossed: verdicts == 1,
+            repeated,
         })
     }
 

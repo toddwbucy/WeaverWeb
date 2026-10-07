@@ -212,7 +212,8 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
   `POSITIONS_BOUND` (four million) positions, no point past the announced count, and at most
   `EMISSION_BOUND` (1 GiB) in all, the emission being held in memory whole, and every keyed text
   member at most `KEY_BOUND` (1024 bytes). The cycle scan and the resolution order are linear
-  (`ingest::plan_resolution`, held to a bound test). Two ingests of one
+  (`ingest::plan_resolution`), and a generation's fill reads its own generation alone, each held
+  to a bound test. Two ingests of one
   run serialize on the run row's lock, the loser of the creation race replaying the winner's row;
   a run another ingest closed is compared whole before the answer, a run closes only over exactly
   what its closing ingest planned (compared under the close's lock), and a branch's resolution

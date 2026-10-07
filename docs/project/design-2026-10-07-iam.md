@@ -291,6 +291,9 @@ assertion a later pull request adds, none of which needs a sentence of its own:
 **Ceremony state.** A ceremony's challenge and state stay in the server's memory, keyed by
 a ceremony identity, for at most five minutes, and are used once. A restart drops the
 ceremonies in flight, and the person begins again. Nothing of a ceremony is stored.
+**The same table holds the one-time add grant** of section 7, which binds an
+authentication ceremony to the registration ceremony after it: it expires within the
+same five minutes, is used once, and counts toward the cap below.
 **The ceremonies in flight are capped at 64**, and a new one beyond the cap is refused
 until one completes or expires. Name-first sign-in starts a ceremony for any posted name,
 before anyone is authenticated, so without a cap an unauthenticated client could fill the
@@ -332,10 +335,21 @@ This settles Spec 10's "What an author names".
   ("You MUST assert that the registered `CredentialID` has not previously been registered
   to any other account").
 - **A person enrolls more passkeys while signed in**, each after a fresh assertion with a
-  passkey they already hold, taken within the same ceremony. A stolen session cookie
-  therefore cannot add a passkey. The assertion falls under section 6's counter rule like
-  every assertion: its counter is raised in a transaction of its own before the addition
-  begins, and a counter refusal is audited as at sign-in and adds nothing. A person may
+  passkey they already hold. A stolen session cookie therefore cannot add a passkey.
+  **Adding is two ceremonies, bound by a one-time add grant**:
+  - first an authentication ceremony (`navigator.credentials.get`) with a passkey the
+    person holds. Its assertion falls under section 6's counter rule like every assertion,
+    its counter raised in a transaction of its own, and a counter refusal is audited as at
+    sign-in and grants nothing;
+  - the verified assertion yields **a one-time add grant**, held in the server's ceremony
+    table, **bound to that session and that person**, expiring within the ceremony window
+    of five minutes and counting toward the cap of 64;
+  - then a registration ceremony (`navigator.credentials.create`), which **requires and
+    consumes the grant at its start**. So the grant serves exactly one registration, from
+    the session that earned it, and a parallel session, the person's own included, cannot
+    use it;
+  - **a registration that fails consumes the grant too**, a credential ID already held
+    among the causes, and the person begins again with a fresh assertion. A person may
   remove any of their passkeys but the last; removing one ends every session opened with
   it, at that session's next use.
 - **The host reset** is a host command. In one write, under the identity exclusion, it

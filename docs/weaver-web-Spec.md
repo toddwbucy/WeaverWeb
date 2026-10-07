@@ -911,7 +911,9 @@ request replaces it.
 
 **A session is not an authored row and takes no version.** Section 3.2's
 ordering rule answers two engineers editing one declaration, and nobody edits
-a session: it is opened once, closed once, and read in between. **Nor is it a
+a session: its one writer, the surface, opens it once and closes it once, and
+between the two writes only its last-used time, at most once a minute under
+section 3's writer model, which no two writers can race. **Nor is it a
 recorded row**, carrying no run and no position, which is why it stands here
 after the indexes rather than in either half.
 
@@ -1367,8 +1369,14 @@ it decides are stated here and in section 2.8, and the reasons are there.
   where both are zero, as synced passkeys report, there is nothing to
   compare. **A person may hold
   several passkeys**: adding one takes a fresh assertion with a passkey the
-  person already holds, in the same ceremony, so a session alone never adds
-  one, and a person removes any of their own but the last. **The person row is authored
+  person already holds, so a session alone never adds one. **The assertion
+  and the registration are two ceremonies, bound by a one-time add grant**:
+  the verified assertion yields a grant held with the ceremonies, bound to
+  that session and that person, expiring within the ceremony's five minutes
+  and counting toward its cap, and the registration requires and consumes it
+  at its start, a failed registration consuming it too, so one assertion
+  serves one registration from the session that made it. A person removes
+  any of their own passkeys but the last. **The person row is authored
   through section 3.2, and its writes split three ways**: enrolling,
   disabling or renaming a person is written by a holder of the server-wide
   admin grant; the bootstrap person, the first admin, is written by the host
@@ -3700,7 +3708,7 @@ missing while it was relaying.
 | a credential ID belongs to one passkey of one person | perturbation, **owed**: drop the unique constraint, and a registration returning a credential ID another person holds lands a second passkey row for it, so one credential signs in as either person. Lands with act 11's passkey pull request |
 | a signature counter that did not rise refuses the assertion, any assertion, and the counter is persisted raised | perturbation, **owed**: take the library's `CredentialPossibleCompromise` as a success, roll a device-bound passkey's counter back, and a session opens, and the same at the fresh assertion before adding a passkey, and a passkey is added on a cloned credential's word; drop the persisting of the counter, and a clone replaying an old counter passes against the first value ever stored; drop the raise-only condition, and of two concurrent assertions, a sign-in's or an addition's, the second writes the counter back down; persist the counter at sign-in alone, and the addition's assertion leaves it stale; put the update back in the action's transaction, fail the addition, and the counter rolls back with it, stale; audit a sign-in whose signature failed, and a stream of bad assertions fills the audit. Lands with act 11's passkey pull request |
 | a session carries an authenticated person, ends where its person or its passkey does, and its cookie is neither readable by script nor carried by another site | perturbation, **owed**: drop `HttpOnly`, `Secure`, `SameSite=Strict` or the `__Host-` prefix, and the cookie's test finds the attribute gone; drop the `Origin` check, and a POST from another origin changes state; drop the idle or the absolute expiry, and a session past it still authorizes; drop the check of the passkey a session was opened with, remove that passkey, and the session still authorizes. Lands with act 11's passkey pull request |
-| a passkey is added only after a fresh assertion, and a person's last is never removed | perturbation, **owed**: add a passkey on a session alone, and a stolen cookie gains access that outlasts it; let a person remove their last passkey, and they are locked out with only the host to recover them. Lands with act 11's passkey pull request |
+| a passkey is added only after a fresh assertion, and a person's last is never removed | perturbation, **owed**: add a passkey on a session alone, and a stolen cookie gains access that outlasts it; let a registration use an add grant another session earned, and a parallel session adds a passkey on someone else's assertion; leave the grant unconsumed at the registration's start, and one assertion adds two passkeys; let a person remove their last passkey, and they are locked out with only the host to recover them. Lands with act 11's passkey pull request |
 | an enrollment token is single-use, expiring, bound to one person holding no passkey, and stored as a digest | perturbation, **owed**: redeem a token twice, past its expiry, or on a row that holds a passkey, and each lands a credential; store the token in the clear, and a read of the person table is a set of usable tokens; have the host reset issue its token before clearing the passkeys, and a token is issued for a row that holds one. Lands with act 11's persons pull request |
 | every bearer the server issues is 32 bytes of the operating system's cryptographic randomness | perturbation, **owed**: draw an enrollment token from a counter, and the next token is guessed from the last; draw a session bearer or a ceremony identity from the time, and the same. Lands with act 11's persons and passkey pull requests |
 | no statement this crate issues can rewrite, remove or truncate an audit record | perturbation, **owed**: drop the row trigger, and an update rewrites a record or a delete removes one; drop the truncate trigger, and a truncate empties the audit. The triggers guard this crate's code paths, not a process dropping them with the owner's rights, which section 2.13 puts outside the threat model. Lands with act 11's persons pull request |

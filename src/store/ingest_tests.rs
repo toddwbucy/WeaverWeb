@@ -1993,3 +1993,127 @@ async fn a_completion_lands_one_generation_at_a_time() {
     assert_eq!(answer["runs"][0]["status"], json!("whole"), "{answer}");
     assert_eq!(count(&s, "position", &run).await, 12);
 }
+
+/// **The lock's session outlives a server's idle timeout** (Codex pass
+/// eighteen on PR #23): the store's lock options carry
+/// `idle_session_timeout = 1s`, standing in for a server that sets it. An
+/// ingest held on its locks for three seconds still holds them, so a second
+/// ingest of the run waits and writes nothing, then replays.
+#[tokio::test]
+async fn the_lock_session_outlives_an_idle_timeout() {
+    let Some(s) = store().await else { return };
+    let mut idle = s.clone();
+    idle.connect = s.connect.clone().options([("idle_session_timeout", "1s")]);
+    let w = Wire::of(CERTIFIED).tagged(&tag("idle-timeout"));
+    let first_hold = hold();
+    let first = spawn_ingest(
+        &idle,
+        &w,
+        Options {
+            hold: Some(first_hold.clone()),
+            ..Options::default()
+        },
+    );
+    first_hold.locked.notified().await;
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    let second = spawn_ingest(&idle, &w, Options::default());
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    assert!(
+        !second.is_finished(),
+        "the second ingest still waits for the run's lock"
+    );
+    assert_eq!(
+        landed(&s, &w.run()).await,
+        None,
+        "nothing is written meanwhile"
+    );
+    first_hold.release.notify_one();
+    let (first, second) = (first.await.unwrap(), second.await.unwrap());
+    assert_eq!(first["runs"][0]["status"], json!("whole"), "{first}");
+    assert_eq!(second["runs"][0]["replayed"], json!(true), "{second}");
+}
+
+/// **An ingest whose locks are lost writes nothing further** (Codex pass
+/// eighteen on PR #23): the lock's session is terminated while the ingest is
+/// held on its locks, and the ingest answers the lost locks without writing
+/// the run.
+#[tokio::test]
+async fn an_ingest_whose_locks_are_lost_writes_nothing_further() {
+    let Some(s) = store().await else { return };
+    let w = Wire::of(CERTIFIED).tagged(&tag("locks-lost"));
+    let first_hold = hold();
+    let first = spawn_ingest(
+        &s,
+        &w,
+        Options {
+            hold: Some(first_hold.clone()),
+            ..Options::default()
+        },
+    );
+    first_hold.locked.notified().await;
+    let terminated: bool = sqlx::query_scalar(
+        "SELECT pg_terminate_backend(pid) FROM pg_locks WHERE locktype = 'advisory' \
+         AND classid::bigint = $1 AND objid::bigint = (hashtext($2) & 1023) \
+         AND objsubid = 2 AND granted",
+    )
+    .bind(i64::from(super::ingest::LOCK_CLASS))
+    .bind(w.run())
+    .fetch_one(&s.pool)
+    .await
+    .unwrap();
+    assert!(terminated);
+    first_hold.release.notify_one();
+    let answer = first.await.unwrap();
+    assert_eq!(answer["ok"], json!(false), "{answer}");
+    assert!(
+        answer["error"]
+            .as_str()
+            .is_some_and(|e| e.starts_with("the run locks were lost")),
+        "{answer}"
+    );
+    assert_eq!(landed(&s, &w.run()).await, None, "nothing written after");
+}
+
+/// **A stored chain is read in one statement per walk** (the planner's
+/// ruling on PR #23, after Codex pass eighteen): a chain of a thousand runs
+/// stored by one ingest, its root naming a run never held, and a branch of
+/// its last run landed by another. The scan reads the chain in one
+/// statement and the resolution's recheck the absent root in one more; a
+/// walk reading one link per statement reads a thousand.
+#[tokio::test]
+async fn a_stored_chain_is_read_in_one_statement_per_walk() {
+    let Some(s) = store().await else { return };
+    let t = tag("stored-chain");
+    let name = |i: usize| format!("c{i}#{t}");
+    let chain: Vec<SyntheticRun> = (0..1000)
+        .map(|i| {
+            let parent = if i == 0 {
+                format!("root#{t}")
+            } else {
+                name(i - 1)
+            };
+            (name(i), Some(parent), vec![1])
+        })
+        .collect();
+    let stored = ingest(&s, &synthetic(&chain)).await;
+    assert_eq!(stored["ok"], json!(true));
+    let reads = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let branch = synthetic(&[(format!("b#{t}"), Some(name(999)), vec![1])]);
+    let answer = s
+        .ingest_with(
+            Emission::read(branch.text().as_bytes()),
+            &Options {
+                walk_reads: Some(reads.clone()),
+                ..Options::default()
+            },
+        )
+        .await
+        .value;
+    assert_eq!(answer["runs"][0]["status"], json!("whole"), "{answer}");
+    assert_eq!(answer["runs"][0]["parent_linked"], json!(true));
+    assert_eq!(
+        reads.load(std::sync::atomic::Ordering::SeqCst),
+        2,
+        "the scan's one statement and the recheck's one"
+    );
+}

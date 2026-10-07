@@ -1638,7 +1638,16 @@ record itself, so section 5's gate is held upstream (`toddwbucy/WeaverAnalysis#1
   lock's owner writes with; the waiters' only bound is the connections the database
   server admits, which the box sets; each run's identity hashes into one
   of 1024 buckets, taken in ascending order, so two ingests over overlapping runs never
-  deadlock and one ingest holds a bounded number of locks.
+  deadlock and one ingest holds a bounded number of locks. **The session's end is the
+  locks' end, so the ingest keeps it alive and watches it**: the session opts out of
+  `idle_session_timeout` at its own startup, never through the pool's options, and the
+  ingest verifies it before each write transaction, stopping where it is gone with "the
+  run locks were lost" and leaving every row it began `writing` for a later replay to
+  complete. **The window that remains**: a session ended between a check and the commit
+  of the transaction after it is not seen until the next check, one generation's points
+  at most, and a second ingest meeting the row meanwhile refuses or completes it by the
+  exact-shape comparison. Nothing short of holding the lock in the writing transaction
+  closes it, and that is the design this one replaced.
 - **The run's row lands with the plan's skeleton**: one transaction writes the row
   `writing` and every generation's summary, in one statement bounded by the summary
   line's 16 MiB, so a row an ingest leaves `writing` holds the whole shape of the run it
@@ -1760,11 +1769,13 @@ a run naming this branch after the scan: the chain is followed from the parent t
 held rows, and where it returns to the branch the branch is refused by name in that
 transaction instead of closing; of two such ingests, the later to resolve sees every row
 the cycle needs. **The scan and the order are linear in the runs and
-references**: the held references reachable from the emission's are read in batches, one
-per step of the chains; the scan's return check is a lookup in its path's index and a
+references**: the held references reachable from the emission's are read in one
+recursive statement, however long the chains; the scan's return check is a lookup in its path's index and a
 walk stops where an earlier one settled; each depth is computed once; and the recheck
 remembers where each chain it followed ended, a reference never changing once written,
-so a long chain is followed once and not once per branch on it. **A parent's tape is
+so a long chain is followed once and not once per branch on it. The recheck reads the
+store only where it meets a run that was not held when last read, in one recursive
+statement and once per walk at most, every held run's reference being known already. **A parent's tape is
 read once for all its branches**: within a depth the order puts one parent's branches
 next to one another, and the resolution holds that one parent's tape while they walk,
 dropping it when the next parent's begins, one at a time since a parent's tape may run
@@ -3731,7 +3742,8 @@ missing while it was relaying.
 | every loop that reads or writes the store per item stays within one bound | **bound sweep** in `src/store/ingest_tests.rs`, not a failing test: many runs, a long chain listed child first, many generations, many points in one generation, many empty generations behind a large one, many branches on one parent and a long cycle each land within sixty seconds in a debug build (nine at most where it was written); the earlier passes' quadratic forms each took minutes on their rows. A per-item scan in memory, with no store round trip, is outside its reach: scanning the plan for a generation's points adds about ten seconds and passes. The sweep also holds every reason it answers under twice `KEY_BOUND` and a constant: join a cycle's members into its reason, and the long cycle's reasons grow past it |
 | the cycle scan and the resolution order are linear in the runs and references | **bound test** in `src/store/ingest_tests.rs`, not a failing one: a chain of fifty thousand branches and the same chain closed into one cycle are scanned and ordered within two seconds in a debug build; search the path for the return, and it takes about thirteen seconds, and re-walk each depth per branch, and it passes five minutes |
 | the ingest's reader is bounded | perturbation in `src/store/emission.rs`: read on past the announced count, and an endless stream is read to the byte bound rather than stopped at its first extra point; drop the positions bound, and a summary announcing past it is read; drop the byte bound, and a stream of blank lines is read whole; sum the output counts unchecked, and two counts past `u64` wrap to a sum that passes |
-| one ingest writes a run at a time, and the rest wait and replay | perturbation in `src/store/ingest_tests.rs`, a test-only hold keeping an ingest on its locks: take no lock, and a second ingest of the run writes it first instead of waiting, the held one then failing at its insert |
+| one ingest writes a run at a time, and the rest wait and replay | perturbation in `src/store/ingest_tests.rs`, a test-only hold keeping an ingest on its locks: take no lock, and a second ingest of the run writes it first instead of waiting, the held one then failing at its insert; drop the lock session's opt-out from `idle_session_timeout`, the store's lock options carrying one second in a server's stead, and a second ingest after three seconds' hold enters instead of waiting; drop the check before each write transaction, terminate the lock's session during the hold, and the ingest writes the run on through the pool where it should answer the lost locks and write nothing |
+| each chain walk reads the store in one statement | perturbation in `src/store/ingest_tests.rs`, a test-only counter of the walks' statements: a stored chain of a thousand runs and a branch of its last reads in two, the scan's and the recheck's; restore the scan's read of one step per statement, or the recheck's of one link per statement, and it reads 1,002 |
 | a replay compares every column the ingest writes | the rows are each declared once in `src/store/rows.rs`, the insert, the loader and the comparison derived from the declaration; perturbation: cut the insert's columns short of the declaration, and the column-list test fails; write a column outside the declaration, and the landed-row test finds it; read the boundary set back as a constant, and a stored run holding another set replays equal |
 | the parting position is derived only where it is provable, and recorded as unknown otherwise | perturbation in `src/store/ingest_tests.rs`, each guard: walk a parent that is held but not whole, drop the monotone guard, read a position only the parent holds as never parted, take a difference after a skipped span as known, read no difference in a short child as never parted, set the link for a parent not held, close a branch with the non-branches (the same-emission parent lands unlinked), resolve in the emission's order rather than parents first, load a parent's tape for every branch rather than once per parent (a test-only counter reads five loads for two parents where it should read two), hold an empty generation of a whole parent to its addressing (the parent's tape is withheld and the parting reads unknown), fold a repeated coordinate without recording it (a branch whose second generation revisits its first's last position derives a parting); and on Record, draw an unwalked parting as never parted, or an unheld parent as linked |
 | a reference cycle is refused in one transaction, and only on rows the ingest created | perturbation in `src/store/ingest_tests.rs`, the test-only step hook stopping inside the cycle's transaction: commit the refusals row by row, and one row reads `refused` beside one `writing`; persist the refusal on a replayed row, and a row this ingest did not create changes status; answer a stored row the walk reaches for a run the first pass refused on a second object, and that run answers twice; give a cycle member the emission did not name a plan's defaults, and its answer claims positions and generations no plan established; report an unowned cycle row's status from the read before the refusal, and a row its owner refused meanwhile reads `writing`; drop the recheck at the resolution, and of ingests whose runs share no lock, held at the resolution by a test-only hold, one closes `whole` on the cycle the other's scan refused; seek cycles among the open branches alone, and a branch closing a cycle through a replayed closed run, or through a stored row the emission does not name, lands `whole`; drop the recheck under the resolution's locks, and of two concurrent ingests creating opposite references, the one whose scan ran first lands `whole` on a cycle |

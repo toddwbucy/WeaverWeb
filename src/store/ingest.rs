@@ -83,6 +83,13 @@ pub enum HoldAt {
 
 #[cfg(test)]
 impl Options {
+    /// One statement read by a chain walk, counted where a test asks.
+    fn count_walk(&self) {
+        if let Some(reads) = &self.walk_reads {
+            reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
     /// Whether the test's step hook stops the ingest after `seq`'s points.
     fn stops_after(&self, seq: usize) -> bool {
         self.stop_at == Some(Step::AfterGeneration(seq as i32))
@@ -109,6 +116,9 @@ pub struct Options {
     /// Counts the parent tapes the walk loads from the store.
     #[cfg(test)]
     pub parent_loads: Option<std::sync::Arc<std::sync::atomic::AtomicUsize>>,
+    /// Counts the statements the two chain walks read the store with.
+    #[cfg(test)]
+    pub walk_reads: Option<std::sync::Arc<std::sync::atomic::AtomicUsize>>,
 }
 
 /// How one run came out, which the answer reports.
@@ -281,7 +291,7 @@ struct Open {
 /// The advisory locks' class, the first of the two keys, so they share no
 /// key with any other advisory lock in the store (the listener's single
 /// lock takes the one-key form, a separate space).
-const LOCK_CLASS: i32 = 0x5754_4931;
+pub(crate) const LOCK_CLASS: i32 = 0x5754_4931;
 
 /// The number of buckets a run's identity hashes into, the second key.
 const LOCK_BUCKETS: i32 = 1024;
@@ -313,13 +323,31 @@ const LOCK_BUCKETS: i32 = 1024;
 /// taken in ascending order**, every ingest taking all of its own before
 /// writing anything, so two ingests over overlapping runs never deadlock:
 /// the later waits for the earlier whole.
+///
+/// **The session's end is the locks' end, so the ingest keeps it alive and
+/// watches it.** The session sits idle while the ingest writes through the
+/// pool, and a server whose `idle_session_timeout` is set would end it, so
+/// the session opts out of that timeout at its own startup, never through
+/// the pool's options. A termination or a dropped socket ends it all the
+/// same, so the ingest verifies the session before each write transaction
+/// (`check`) and stops where it is gone, naming the lost locks and leaving
+/// every row it began `writing` for a later replay to complete. **The
+/// window that remains**: a session ended between a check and the commit
+/// of the transaction after it is not seen until the next check, which is
+/// one generation's points at most, and a second ingest meeting the row
+/// meanwhile refuses or completes it by the exact-shape comparison. Nothing
+/// short of holding the lock in the writing transaction closes that window,
+/// and that is the design this one replaced.
 struct RunLocks {
-    _held: PgConnection,
+    held: PgConnection,
 }
 
 impl RunLocks {
     async fn take(connect: &PgConnectOptions, runs: &[&str]) -> Result<Self, sqlx::Error> {
-        let mut held = PgConnection::connect_with(connect).await?;
+        // Appended last, so it stands over any setting the connection
+        // string carries.
+        let connect = connect.clone().options([("idle_session_timeout", "0")]);
+        let mut held = PgConnection::connect_with(&connect).await?;
         let buckets: Vec<i32> = sqlx::query_scalar(
             "SELECT DISTINCT hashtext(r) & $2 FROM unnest($1::text[]) AS r ORDER BY 1",
         )
@@ -334,7 +362,18 @@ impl RunLocks {
                 .execute(&mut held)
                 .await?;
         }
-        Ok(Self { _held: held })
+        Ok(Self { held })
+    }
+
+    /// **The locks, verified held**: the session still answers, and a live
+    /// session holds every lock it took. Called before each write
+    /// transaction.
+    async fn check(&mut self) -> Result<(), String> {
+        sqlx::query("SELECT 1")
+            .execute(&mut self.held)
+            .await
+            .map(|_| ())
+            .map_err(|e| format!("the run locks were lost: {e}"))
     }
 }
 
@@ -402,7 +441,7 @@ impl Store {
                 }
             }
         }
-        let _locks = RunLocks::take(&self.connect, &touched)
+        let mut locks = RunLocks::take(&self.connect, &touched)
             .await
             .map_err(store_error)?;
         #[cfg(test)]
@@ -427,8 +466,10 @@ impl Store {
             let mut outcome = RunOutcome::landed(&run, &plan, !created);
             match &stored {
                 None => {
+                    locks.check().await?;
                     self.create(&run, &plan).await.map_err(store_error)?;
                     for seq in 0..plan.generations.len() {
+                        locks.check().await?;
                         self.write_points(&run, &plan, seq)
                             .await
                             .map_err(store_error)?;
@@ -467,7 +508,8 @@ impl Store {
                         continue;
                     }
                     // A `writing` row whose every key is equal is completed.
-                    self.complete(&run, &plan, stored, options).await?;
+                    self.complete(&run, &plan, stored, &mut locks, options)
+                        .await?;
                 }
             }
             outcome.landed_mut().generations = plan.generations.len();
@@ -476,6 +518,7 @@ impl Store {
                 // **A run that is not a branch closes as soon as its points
                 // are written** (ruling 27).
                 let (status, reason) = plan.closing();
+                locks.check().await?;
                 sqlx::query(
                     "UPDATE run SET ingest_status = $2, ingest_reason = $3 \
                      WHERE run_id = $1 AND ingest_status = 'writing'",
@@ -518,9 +561,9 @@ impl Store {
         // this ingest would close runs through an open branch**, and may
         // close through any run the store holds: a closed run the emission
         // replayed, or a row the emission does not name at all. So the held
-        // references reachable from the emission's are read first, one batch
-        // per step of the chains, and the scan then runs over them in memory,
-        // linear in the runs and references (Spec 3.1).
+        // references reachable from the emission's are read first, in one
+        // statement however long the chains, and the scan then runs over
+        // them in memory, linear in the runs and references (Spec 3.1).
         // **One outcome per run**: every run the first pass answered, by its
         // identity, so a stored row the walk below reaches for a run the
         // emission named answers on that run's one outcome and never on a
@@ -534,8 +577,10 @@ impl Store {
             .iter()
             .map(|(run, n)| (run.clone(), n.parent.clone()))
             .collect();
-        let mut asked: HashSet<String> = HashSet::new();
-        let mut frontier: Vec<String> = references
+        // **One statement for every held run the references reach**
+        // (`REACHABLE`), from the parents the emission's runs name and do not
+        // carry; a run the emission names keeps its own entry.
+        let starts: Vec<String> = references
             .values()
             .flatten()
             .filter(|r| !references.contains_key(*r))
@@ -543,33 +588,30 @@ impl Store {
             .collect::<HashSet<_>>()
             .into_iter()
             .collect();
-        while !frontier.is_empty() {
-            asked.extend(frontier.iter().cloned());
-            let held = sqlx::query(
-                "SELECT run_id, parent_reference, ingest_status FROM run WHERE run_id = ANY($1)",
-            )
-            .bind(&frontier)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(store_error)?;
-            let mut next = HashSet::new();
+        if !starts.is_empty() {
+            #[cfg(test)]
+            options.count_walk();
+            let held = sqlx::query(REACHABLE)
+                .bind(&starts)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(store_error)?;
             for row in held {
                 let run: String = row.get("run_id");
-                let parent: Option<String> = row.get("parent_reference");
-                if let Some(parent) = &parent
-                    && !references.contains_key(parent)
-                    && !asked.contains(parent)
-                {
-                    next.insert(parent.clone());
+                if references.contains_key(&run) {
+                    continue;
                 }
-                named.entry(run.clone()).or_insert(Named {
-                    parent: parent.clone(),
-                    status: row.get("ingest_status"),
-                    outcome: answered.get(&run).copied(),
-                });
+                let parent: Option<String> = row.get("parent_reference");
+                named.insert(
+                    run.clone(),
+                    Named {
+                        parent: parent.clone(),
+                        status: row.get("ingest_status"),
+                        outcome: answered.get(&run).copied(),
+                    },
+                );
                 references.insert(run, parent);
             }
-            frontier = next.into_iter().collect();
         }
         let open_runs: Vec<String> = open.iter().map(|o| o.run.clone()).collect();
         let (cycles, order) = plan_resolution(&open_runs, &references);
@@ -597,6 +639,7 @@ impl Store {
                 .collect();
             // **One transaction per cycle** (ruling 30), persisted only on the
             // rows this ingest created (ruling 29).
+            locks.check().await?;
             let mut tx = self.pool.begin().await.map_err(store_error)?;
             for run in cycle.iter().filter(|r| created.contains(r.as_str())) {
                 sqlx::query(
@@ -676,6 +719,11 @@ impl Store {
         // The ends of chains this ingest's resolutions have followed, so a
         // long chain is followed once and not once per branch on it.
         let mut tails: HashMap<String, Option<String>> = HashMap::new();
+        // Every held run's parent reference this ingest has read, the scan's
+        // first: a reference never changes once written, so a held run's is
+        // known for the ingest's length, and the recheck reads the store
+        // only where it meets a run that was not held when last read.
+        let mut links = references;
         // **One parent's tape at a time**, held while its branches resolve:
         // the order puts siblings next to one another, so the tape is loaded
         // once per parent and dropped when the next parent's begins. One and
@@ -684,8 +732,9 @@ impl Store {
         let mut tape: Option<ParentTape> = None;
         for run in order.iter().filter(|r| !in_cycle.contains(r.as_str())) {
             let o = by_run[run.as_str()];
+            locks.check().await?;
             let resolved = self
-                .resolve_retrying(o, &mut tails, &mut tape, options)
+                .resolve_retrying(o, &mut tails, &mut links, &mut tape, options)
                 .await
                 .map_err(store_error)?;
             let outcome = &mut outcomes[o.outcome];
@@ -794,6 +843,7 @@ impl Store {
         run: &str,
         plan: &RunPlan,
         stored: &Stored,
+        locks: &mut RunLocks,
         options: &Options,
     ) -> Result<(), String> {
         let _ = options;
@@ -806,6 +856,7 @@ impl Store {
                 .filter(|p| !stored.positions.contains_key(&(p.turn.clone(), p.position)))
                 .collect();
             if !missing.is_empty() {
+                locks.check().await?;
                 let mut tx = self.pool.begin().await.map_err(store_error)?;
                 insert_points(&mut tx, run, &missing)
                     .await
@@ -828,12 +879,13 @@ impl Store {
         &self,
         open: &Open,
         tails: &mut HashMap<String, Option<String>>,
+        links: &mut HashMap<String, Option<String>>,
         tape: &mut Option<ParentTape>,
         options: &Options,
     ) -> Result<Resolved, sqlx::Error> {
         let mut tries = 0;
         loop {
-            match self.resolve(open, tails, tape, options).await {
+            match self.resolve(open, tails, links, tape, options).await {
                 Err(sqlx::Error::Database(d))
                     if tries < 3 && matches!(d.code().as_deref(), Some("40P01" | "40001")) =>
                 {
@@ -851,6 +903,7 @@ impl Store {
         &self,
         open: &Open,
         tails: &mut HashMap<String, Option<String>>,
+        links: &mut HashMap<String, Option<String>>,
         tape: &mut Option<ParentTape>,
         options: &Options,
     ) -> Result<Resolved, sqlx::Error> {
@@ -882,7 +935,11 @@ impl Store {
         // `None` where it ended at a run naming no parent or joined a cycle
         // elsewhere, which no new row can change, and the run it ended at,
         // not then held, otherwise, which is where this walk goes on. A long
-        // chain is so followed once and not once per branch on it.
+        // chain is so followed once and not once per branch on it. **The
+        // store is read only at a run not held when last read** (`links`),
+        // in one statement and once per walk at most, since a held run's
+        // reference is already known; that run is where a row another
+        // ingest created since can stand.
         if linked {
             // The cycle's length and least member, counted as the walk goes,
             // which is all its reason names.
@@ -890,6 +947,7 @@ impl Store {
             let mut least = open.run.as_str().min(parent).to_owned();
             let mut seen: HashSet<String> = [open.run.clone(), parent.to_owned()].into();
             let mut visited: Vec<String> = Vec::new();
+            let mut read = false;
             let mut at = parent.to_owned();
             let end: Option<String> = loop {
                 let next: Option<Option<String>> = match tails.get(&at) {
@@ -897,14 +955,26 @@ impl Store {
                     Some(None) => break None,
                     Some(Some(absent)) => Some(Some(absent.clone())),
                     None => {
-                        let next = sqlx::query_scalar(
-                            "SELECT parent_reference FROM run WHERE run_id = $1",
-                        )
-                        .bind(&at)
-                        .fetch_optional(&mut *tx)
-                        .await?;
+                        // Not held when last read: every held run it now
+                        // reaches, in one statement, once per walk; a run
+                        // that statement did not return was not held when
+                        // it ran, which is as late as this walk can know.
+                        if !links.contains_key(&at) && !read {
+                            read = true;
+                            #[cfg(test)]
+                            options.count_walk();
+                            for row in sqlx::query(REACHABLE)
+                                .bind(std::slice::from_ref(&at))
+                                .fetch_all(&mut *tx)
+                                .await?
+                            {
+                                links
+                                    .entry(row.get("run_id"))
+                                    .or_insert(row.get("parent_reference"));
+                            }
+                        }
                         visited.push(at.clone());
-                        next
+                        links.get(&at).cloned()
                     }
                 };
                 let next = match next {
@@ -1002,6 +1072,19 @@ impl Store {
         })
     }
 }
+
+/// **Every held run reachable from `$1` along parent references**, with its
+/// reference and status, in one statement: the chain walks' one read, so a
+/// stored chain of any length costs one round trip and not one per link.
+/// `UNION` is the cycle's guard: a run's row is one tuple within the
+/// statement's snapshot, so a cycle returns to a row already found, which is
+/// discarded, and the recursion ends. Each held run is read at most once.
+const REACHABLE: &str = "WITH RECURSIVE reach (run_id, parent_reference, ingest_status) AS ( \
+     SELECT run_id, parent_reference, ingest_status FROM run WHERE run_id = ANY($1) \
+     UNION \
+     SELECT r.run_id, r.parent_reference, r.ingest_status \
+     FROM run r JOIN reach ON r.run_id = reach.parent_reference) \
+     SELECT run_id, parent_reference, ingest_status FROM reach";
 
 /// **A cycle's refusal reason for one row**: the cycle's length, its least
 /// member, by which every row of one cycle groups, and the row's own parent.

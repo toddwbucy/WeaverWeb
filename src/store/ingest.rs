@@ -562,7 +562,18 @@ impl Store {
         #[cfg(test)]
         options.hold(HoldAt::BeforeCycles).await;
         for cycle in &cycles {
-            let named_cycle = format!("a reference cycle: {} -> {}", cycle.join(" -> "), cycle[0]);
+            // **Each row's reason is bounded by construction**: the cycle's
+            // length, its least member and the row's own parent, two
+            // identities and a count, whatever the cycle's size; the whole
+            // cycle is the parent references the store already holds.
+            let least = cycle.iter().min().map(String::as_str).unwrap_or_default();
+            let reason_for = |run: &str| {
+                let parent = references
+                    .get(run)
+                    .and_then(|p| p.as_deref())
+                    .unwrap_or_default();
+                cycle_reason(cycle.len(), least, parent)
+            };
             let on_cycle: HashSet<&str> = cycle.iter().map(String::as_str).collect();
             let created: HashSet<&str> = open
                 .iter()
@@ -578,7 +589,7 @@ impl Store {
                      WHERE run_id = $1 AND ingest_status = 'writing'",
                 )
                 .bind(run)
-                .bind(&named_cycle)
+                .bind(reason_for(run))
                 .execute(&mut *tx)
                 .await
                 .map_err(store_error)?;
@@ -617,7 +628,7 @@ impl Store {
                     None => {
                         outcomes.push(RunOutcome::unnamed(
                             run,
-                            named_cycle.clone(),
+                            reason_for(run),
                             held.parent.clone(),
                         ));
                         outcomes.len() - 1
@@ -626,7 +637,7 @@ impl Store {
                 let outcome = &mut outcomes[index];
                 if outcome.status != "refused" {
                     outcome.status = "refused".into();
-                    outcome.reason = Some(named_cycle.clone());
+                    outcome.reason = Some(reason_for(run));
                 }
                 if !created.contains(run.as_str()) {
                     outcome.stored = Some(
@@ -827,8 +838,11 @@ impl Store {
         // not then held, otherwise, which is where this walk goes on. A long
         // chain is so followed once and not once per branch on it.
         if linked {
-            let mut chain = vec![open.run.clone(), parent.to_owned()];
-            let mut seen: HashSet<String> = chain.iter().cloned().collect();
+            // The cycle's length and least member, counted as the walk goes,
+            // which is all its reason names.
+            let mut length = 2;
+            let mut least = open.run.as_str().min(parent).to_owned();
+            let mut seen: HashSet<String> = [open.run.clone(), parent.to_owned()].into();
             let mut visited: Vec<String> = Vec::new();
             let mut at = parent.to_owned();
             let end: Option<String> = loop {
@@ -856,8 +870,7 @@ impl Store {
                     Some(Some(next)) => next,
                 };
                 if next == open.run {
-                    let reason =
-                        format!("a reference cycle: {} -> {}", chain.join(" -> "), open.run);
+                    let reason = cycle_reason(length, &least, parent);
                     if !open.created {
                         // Not this ingest's row: the refusal is the answer's
                         // alone (ruling 29).
@@ -890,7 +903,10 @@ impl Store {
                     // Joined a cycle this branch is not on.
                     break None;
                 }
-                chain.push(next.clone());
+                length += 1;
+                if next < least {
+                    least = next.clone();
+                }
                 at = next;
             };
             for run in visited {
@@ -927,6 +943,14 @@ impl Store {
             stored: None,
         })
     }
+}
+
+/// **A cycle's refusal reason for one row**: the cycle's length, its least
+/// member, by which every row of one cycle groups, and the row's own parent.
+/// Two identities and a count, each identity at most `KEY_BOUND` bytes, so
+/// the reason's size never grows with the cycle's.
+fn cycle_reason(length: usize, least: &str, parent: &str) -> String {
+    format!("a reference cycle of {length} runs through {least}, this run naming {parent}")
 }
 
 struct Resolved {

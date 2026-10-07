@@ -1541,6 +1541,20 @@ async fn every_per_item_loop_lands_within_one_bound() {
             took < std::time::Duration::from_secs(60),
             "{name} took {took:?}"
         );
+        // **A reason's size never grows with the input** (Codex pass
+        // fifteen): a cycle's reason names two identities and a count, so
+        // every reason here, the long cycle's included, stays under one
+        // bound however many runs the cycle has.
+        let bound = 2 * super::rows::KEY_BOUND + 100;
+        for r in landed {
+            if let Some(reason) = r["reason"].as_str() {
+                assert!(
+                    reason.len() <= bound,
+                    "{name}: a reason of {} bytes, past {bound}",
+                    reason.len()
+                );
+            }
+        }
     }
 }
 

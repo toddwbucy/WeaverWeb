@@ -185,7 +185,7 @@ It holds no secret of a person: a passkey's stored half is a public key.
 | **Someone on the network** between a browser and the server | No credential, cookie or trace crosses in the clear once TLS stands (PR 3); a passkey assertion is bound to the origin and the challenge, so a captured one replays nowhere | Availability: flooding the listener is out of scope |
 | **A phishing page** | A passkey answers only its relying party's origin, so a look-alike site cannot collect a usable assertion | A person who installs a malicious extension in their own browser |
 | **A stolen session cookie** | The cookie is `HttpOnly`, so page script cannot read it; `Secure`, so it never crosses plain http; and `SameSite=Strict` with an `Origin` check, so another site cannot ride it. It expires idle and absolutely. **It cannot add a passkey**: adding one takes a fresh assertion with an existing passkey (section 7), so a thief cannot make the access outlast the session. Disable and sign-out end it at its next use, and an open live view within 15 seconds (section 6) | A thief holding the cookie can act as the person until the session ends, within the person's grants |
-| **A lost or stolen device** | A passkey needs user verification (the device's unlock) at every ceremony; the person removes that passkey from another one, or an admin disables the person, or the host resets them (section 7); each ends every session opened with the passkey | A device whose unlock the thief also holds is the person, until one of the above |
+| **A lost or stolen device** | A passkey needs user verification (the device's unlock) at every ceremony; the person removes that passkey from another one, or an admin disables the person, or the host resets them (section 7); each ends every session opened with the passkey at its next use, and an open live view within 15 seconds | A device whose unlock the thief also holds is the person, until one of the above |
 | **A malicious or compromised admin** | An admin cannot take a person over: no admin reset, and an enrollment token only for a person with no passkey. An admin cannot widen their own grants, edit a role they hold, or remove the last admin. Every admin write is audited before it lands | An admin can grant another person anything, disable people, rewrite the roles they do not hold, and register or revoke connectors. **Two colluding admins can grant each other anything.** That is the admin role as ruled, and the audit is the remedy |
 | **A compromised server host** | Nothing. The host holds the store, the authority and the host commands, which write any grant by design | Out of scope: the host is trusted, as the connectors' link already assumes |
 | **A compromised agent box** | Nothing new here: the connectors are mutually authenticated and the box's sudo rule is the third gate (Spec 8) | Out of IAM's scope |
@@ -227,9 +227,11 @@ still holds.
 - the idle or absolute expiry;
 - disabling its person, seen at the next use as Spec 2.13 already says;
 - removing the passkey it was opened with;
-- the host reset of its person.
+- the host reset of its person, by clearing the passkey the session was opened with.
 
-Each is checked at every use, so no end needs a write to every session.
+Each is checked at every use, so no end needs a write to every session, and **nothing but
+the surface writes a session**: a disable, a passkey's removal and the host reset each
+change the person or the passkey, and the session sees it at its next use.
 
 **Sign-in is name-first.** The person gives their name; the server answers with a
 challenge for that person's passkeys (`start_passkey_authentication`); the browser
@@ -334,10 +336,13 @@ This settles Spec 10's "What an author names".
   every assertion: its counter is raised in a transaction of its own before the addition
   begins, and a counter refusal is audited as at sign-in and adds nothing. A person may
   remove any of their passkeys but the last; removing one ends every session opened with
-  it.
+  it, at that session's next use.
 - **The host reset** is a host command. In one write, under the identity exclusion, it
-  clears the person's passkeys, closes their sessions and issues an enrollment token, and
-  the command prints the token once. The token goes to a row that by then holds no
+  clears the person's passkeys and issues an enrollment token, and the command prints the
+  token once. **It writes no session**: the session table is the surface's alone (Spec
+  section 3), and every session opened with a cleared passkey ends at its next use by
+  section 6's rule that a session ends where its passkey is removed, an open live view at
+  its next 15-second re-check. The token goes to a row that by then holds no
   passkey, so Spec 2.13's rule that no token is issued for a row with a credential stands
   unchanged. It is audited as the host's.
 - **No admin reset.** It would let an admin take a person over, issuing a token to a

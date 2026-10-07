@@ -1387,8 +1387,11 @@ it decides are stated here and in section 2.8, and the reasons are there.
   random source**, never derived from a counter, a time or a row identity. **A lost passkey
   is recovered by another passkey the person holds, or by the host reset**:
   a host command that, in one write under the exclusion below, clears the
-  person's passkeys, closes their sessions and issues an enrollment token,
-  so the token still goes to a row with no credential. **There is no admin
+  person's passkeys and issues an enrollment token, so the token still goes
+  to a row with no credential. **It writes no session**, the session being
+  the surface's alone under section 3: each session opened with a cleared
+  passkey ends at its next use, as one whose passkey is removed does, and an
+  open live view at its next 15-second re-check. **There is no admin
   reset**, which would be the takeover this rule exists to prevent, so no
   token is ever issued for a row that holds a passkey. It is held on that
   person row, only as a digest beside its expiry, under section 2.8's rule, and it is consumed by that person's first

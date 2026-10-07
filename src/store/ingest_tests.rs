@@ -2505,6 +2505,20 @@ async fn a_lost_lock_before_the_close(w: Wire) {
         ),
         "the counts are the store's: {first}"
     );
+    let row = landed(&s, &w.run()).await.unwrap();
+    assert_eq!(
+        (
+            first["runs"][0]["parent_linked"].clone(),
+            first["runs"][0]["parting_known"].clone(),
+            first["runs"][0].get("parting_position").cloned(),
+        ),
+        (
+            json!(row.parent_run_id.is_some()),
+            json!(row.parting_known),
+            row.parting_position.map(|p| json!(p)),
+        ),
+        "the link and the parting are the store's: {first}"
+    );
 }
 
 #[tokio::test]
@@ -2512,13 +2526,24 @@ async fn a_close_that_finds_its_row_moved_is_answered() {
     a_lost_lock_before_the_close(Wire::of(CERTIFIED).tagged(&tag("moved-close"))).await;
 }
 
+/// The branch's parent is held and whole, so the competitor's resolution
+/// links it and walks it, and the answer must carry that link and parting.
 #[tokio::test]
 async fn a_resolution_that_finds_its_row_moved_is_answered() {
+    let Some(s) = store().await else { return };
     let t = tag("moved-resolution");
-    a_lost_lock_before_the_close(
-        Wire::of(CERTIFIED)
-            .renamed(&format!("branch#{t}"))
-            .branch_of(&format!("absent#{t}")),
-    )
-    .await;
+    let parent = Wire::of(SERVING).tagged(&t);
+    assert_eq!(
+        ingest(&s, &parent).await["runs"][0]["status"],
+        json!("whole")
+    );
+    let child = Wire::of(HAND_MADE_BRANCH).tagged(&t);
+    a_lost_lock_before_the_close(child.clone()).await;
+    let row = landed(&s, &child.run()).await.unwrap();
+    assert_eq!(
+        row.parent_run_id,
+        Some(parent.run()),
+        "the competitor linked it"
+    );
+    assert!(row.parting_known, "and walked it: {row:?}");
 }

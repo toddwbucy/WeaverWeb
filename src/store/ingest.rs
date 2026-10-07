@@ -784,7 +784,7 @@ impl Store {
             // changing once written; only the status can, and it is read here.
             let others: Vec<&String> = cycle
                 .iter()
-                .filter(|r| !created.contains(r.as_str()) || moved.contains(r.as_str()))
+                .filter(|r| !created.contains(r.as_str()))
                 .collect();
             let statuses: HashMap<String, String> =
                 sqlx::query("SELECT run_id, ingest_status FROM run WHERE run_id = ANY($1)")
@@ -798,7 +798,9 @@ impl Store {
             tx.commit().await.map_err(store_error)?;
             // Every other run on the cycle is reported refused in the answer
             // with the status the store keeps for it; a run the first pass
-            // already refused keeps its own reason.
+            // already refused keeps its own reason. A row of its own that
+            // another ingest moved meanwhile is answered by `moved`.
+            let mut moved_at: Vec<usize> = Vec::new();
             for run in cycle {
                 let held = &named[run];
                 let index = match held.outcome {
@@ -818,9 +820,9 @@ impl Store {
                     outcome.reason = Some(reason_for(run));
                 }
                 if moved.contains(run.as_str()) {
-                    outcome.reason = Some(MOVED.into());
+                    moved_at.push(index);
                 }
-                if !created.contains(run.as_str()) || moved.contains(run.as_str()) {
+                if !created.contains(run.as_str()) {
                     outcome.stored = Some(
                         statuses
                             .get(run)
@@ -828,6 +830,12 @@ impl Store {
                             .unwrap_or_else(|| held.status.clone()),
                     );
                 }
+            }
+            for index in moved_at {
+                outcomes[index] = self
+                    .moved(outcomes[index].clone())
+                    .await
+                    .map_err(store_error)?;
             }
         }
 
@@ -864,6 +872,13 @@ impl Store {
                 .resolve_retrying(o, &mut tails, &mut links, &mut tape, options)
                 .await
                 .map_err(store_error)?;
+            if resolved.moved {
+                outcomes[o.outcome] = self
+                    .moved(outcomes[o.outcome].clone())
+                    .await
+                    .map_err(store_error)?;
+                continue;
+            }
             let outcome = &mut outcomes[o.outcome];
             outcome.status = resolved.status.into();
             outcome.reason = resolved.reason;
@@ -1048,14 +1063,20 @@ impl Store {
         Ok(true)
     }
 
-    /// **A run whose target moved under its write**, answered refused with
-    /// the store's status and counts for it, in one statement, and the
-    /// emission's other runs going on. Where no row stands, as at a creation
-    /// whose competitor has not committed, both counts are 0 and no status
-    /// is reported.
+    /// **A run whose target moved under its write**, answered refused, the
+    /// emission's other runs going on. **Every member of the answer that
+    /// describes the stored row is read from the store here**, in one
+    /// statement: the status, the counts, the link and the parting, which
+    /// may include another ingest's writes, since this ingest can no longer
+    /// tell its own from theirs. Every member that describes the emission's
+    /// plan stays the plan's. Where no row stands, as at a creation whose
+    /// competitor has not committed, the counts are 0, nothing is linked or
+    /// known, and no status is reported. Serves the creation, the points,
+    /// the close, the resolution and the cycle's refusal alike.
     async fn moved(&self, mut outcome: RunOutcome) -> Result<RunOutcome, sqlx::Error> {
         let held = sqlx::query(
-            "SELECT ingest_status, \
+            "SELECT ingest_status, parent_run_id IS NOT NULL AS linked, parting_known, \
+             parting_position, \
              (SELECT count(*) FROM position p WHERE p.run_id = r.run_id) AS positions, \
              (SELECT count(*) FROM generation g WHERE g.run_id = r.run_id) AS generations \
              FROM run r WHERE r.run_id = $1",
@@ -1067,10 +1088,16 @@ impl Store {
         outcome.reason = Some(MOVED.into());
         outcome.stored = held.as_ref().map(|r| r.get("ingest_status"));
         let count = |name: &str| held.as_ref().map_or(0, |r| r.get::<i64, _>(name) as usize);
+        let flag = |name: &str| held.as_ref().is_some_and(|r| r.get::<bool, _>(name));
         let (positions, generations) = (count("positions"), count("generations"));
+        let (linked, known) = (flag("linked"), flag("parting_known"));
+        let position: Option<i32> = held.as_ref().and_then(|r| r.get("parting_position"));
         let landed = outcome.landed_mut();
         landed.positions = positions;
         landed.generations = generations;
+        landed.parent_linked = linked;
+        landed.parting_known = known;
+        landed.parting_position = position;
         Ok(outcome)
     }
 
@@ -1279,6 +1306,7 @@ impl Store {
                     linked: false,
                     parting: Parting::Unknown,
                     stored: Some("writing".into()),
+                    moved: false,
                 });
             }
             let refused = sqlx::query(
@@ -1291,7 +1319,8 @@ impl Store {
             .await?
             .rows_affected();
             if refused != 1 {
-                return moved_resolution(tx, &open.run).await;
+                drop(tx);
+                return Ok(Resolved::moved());
             }
             tx.commit().await?;
             return Ok(Resolved {
@@ -1300,6 +1329,7 @@ impl Store {
                 linked: false,
                 parting: Parting::Unknown,
                 stored: None,
+                moved: false,
             });
         }
         // A child with no points has nothing to compare, and the walk would
@@ -1339,7 +1369,8 @@ impl Store {
         // The close requires `writing`; a row another ingest closed
         // meanwhile is answered, not claimed.
         if closed != 1 {
-            return moved_resolution(tx, &open.run).await;
+            drop(tx);
+            return Ok(Resolved::moved());
         }
         tx.commit().await?;
         Ok(Resolved {
@@ -1348,29 +1379,9 @@ impl Store {
             linked,
             parting,
             stored: None,
+            moved: false,
         })
     }
-}
-
-/// **A branch whose row moved under its resolution**: refused in the answer
-/// alone with the status the store holds, its transaction rolled back.
-async fn moved_resolution(
-    mut tx: Transaction<'_, Postgres>,
-    run: &str,
-) -> Result<Resolved, sqlx::Error> {
-    let stored: Option<String> =
-        sqlx::query_scalar("SELECT ingest_status FROM run WHERE run_id = $1")
-            .bind(run)
-            .fetch_optional(&mut *tx)
-            .await?;
-    drop(tx);
-    Ok(Resolved {
-        status: "refused",
-        reason: Some(MOVED.into()),
-        linked: false,
-        parting: Parting::Unknown,
-        stored,
-    })
 }
 
 /// **Where a resolution's recheck last followed a held run's chain**, kept
@@ -1444,6 +1455,22 @@ struct Resolved {
     parting: Parting,
     /// The stored status, where the answer's status is not the store's.
     stored: Option<String>,
+    /// The row moved under the resolution: the answer is `moved`'s, read
+    /// from the store, and nothing else here holds.
+    moved: bool,
+}
+
+impl Resolved {
+    fn moved() -> Self {
+        Self {
+            status: "refused",
+            reason: None,
+            linked: false,
+            parting: Parting::Unknown,
+            stored: None,
+            moved: true,
+        }
+    }
 }
 
 /// An outcome answering with what the store holds for the run.

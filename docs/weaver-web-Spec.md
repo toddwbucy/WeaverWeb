@@ -893,7 +893,11 @@ section 6) on 2026-10-07:
   the host resets its person, each seen at the session's next use
 - **sign-in is name-first**: the person gives their name and answers a
   challenge for their own passkeys, the challenge held in the server's memory
-  for at most five minutes and used once
+  for at most five minutes and used once, **with at most 64 ceremonies in
+  flight**, a new one beyond that refused, since a ceremony starts before
+  anyone is authenticated and an unbounded map would be a crash
+- **an open live view is re-checked every 15 seconds** and closes when its
+  session or its person's grant on the agent has ended, per section 2.13
 - **every request that changes state carries an `Origin` equal to the
   configured origin** or is refused before its handler, beside
   `SameSite=Strict`
@@ -1383,9 +1387,11 @@ it decides are stated here and in section 2.8, and the reasons are there.
 - **The host, the other principal that is not a person**, for the writes an
   operator makes by command on the server's host: the bootstrap's three
   writes, the bootstrap person row, its admin grant below and its enrollment
-  token; the host reset above; **any grant**, which is how a server's only
-  admin comes to hold a role on an agent, a person never writing a grant on
-  themselves; and the register verbs while they stay host commands. It asks no
+  token; the host reset above; **any grant, and any per-agent role's
+  verbs**, which is how a server's only admin comes to hold a role on an
+  agent and can still change what a role they hold carries, a person never
+  writing a grant on themselves or a role they hold; and the register verbs
+  while they stay host commands. It asks no
   verb of an agent and never places a turn. It is
   authorized by access to the store and the authority's directory and not by
   this section's grants, since it is how the first grant comes to exist. Its
@@ -1413,7 +1419,16 @@ it decides are stated here and in section 2.8, and the reasons are there.
   operator per agent" is read as one role of each kind per agent, held by any
   number of people**; that reading is the operator's to confirm, and the
   other, at most one holder of each, would add a uniqueness rule to the grant
-  and move nothing else. **Per-agent roles and every grant are authored rows** under
+  and move nothing else. **Reading is not a verb, and reading an agent takes
+  a grant on it**: any grant on an agent, `observer` or `operator`, permits
+  reading everything the server holds of that agent (its register row, its
+  presence, its ceiling and door, its load state and the run it names, and
+  its live trace window), `show` staying the verb that asks the agent
+  afresh; a person with no grant on an agent sees nothing of it, not even
+  its name. **The admin sees the register for the connections it governs**,
+  each agent's name, presence and credentials' state, and not its door, its
+  load state or its trace, which are the agent's and take a grant like
+  anyone else's. **Per-agent roles and every grant are authored rows** under
   section 3.2, carrying the author member and the version, so two concurrent
   edits of one grant refuse on the stale version rather than one silently
   winning. **The server-wide admin role is fixed by the store and is the one
@@ -1484,6 +1499,11 @@ it decides are stated here and in section 2.8, and the reasons are there.
   server's host rather than by grants, so it holds no grant that a
   concurrent identity write could take away. **The check is the server's and never a surface's**: a surface may
   hide what a person cannot do, and hiding is presentation and not the gate.
+  **A read of an agent is checked the same way**, against a grant on it, at
+  the read. **An open live view is one request**, so it re-checks its
+  session and its person's grant on its agent every 15 seconds and closes at
+  the first check that finds either ended, a disable, a removed passkey or
+  grant, or the session's expiry, the twelve-hour limit included.
 - **The audit record, append-only**: every record names its principal, the
   person, the server or the host, how that principal was authenticated (a
   session, an enrollment token, or access to the host), its target and its
@@ -3629,6 +3649,9 @@ missing while it was relaying.
 | an enrollment token is single-use, expiring, bound to one person holding no passkey, and stored as a digest | perturbation, **owed**: redeem a token twice, past its expiry, or on a row that holds a passkey, and each lands a credential; store the token in the clear, and a read of the person table is a set of usable tokens; have the host reset issue its token before clearing the passkeys, and a token is issued for a row that holds one. Lands with act 11's persons pull request |
 | the audit table is append-only in the store | perturbation, **owed**: drop the trigger, and an update rewrites a record. Lands with act 11's persons pull request |
 | the admin role grants no action on any agent | perturbation, **owed**: let the server-wide admin grant authorize a verb, and an admin holding no grant on an agent asks `stop` of it. Lands with act 11's authorization pull request |
+| reading an agent takes a grant on it | perturbation, **owed**: drop the grant check on a read, and a person holding no grant on an agent reads its trace window and its load state; give the admin's register view the door and the load state, and an admin with no grant reads an agent's state. Lands with act 11's authorization pull request |
+| an open live view ends within its bound of what ended its session or grant | perturbation, **owed**: drop the stream's re-check, disable a person whose live view is open, and the view keeps receiving the trace; remove the grant instead, and the same. Lands with act 11's authorization pull request |
+| the ceremonies in flight are bounded | perturbation, **owed**: drop the cap, start ceremonies for posted names past it, and the map grows with every unauthenticated request. Lands with act 11's passkey pull request |
 | the WebAuthn library links into the server binary alone | measurement, **owed**: `ldd` on gate-con and admin-con shows no `libcrypto`, the library being carried by a cargo feature the server binary alone requires. Lands with act 11's passkey pull request |
 | the admission's `show` is required only where the ceiling grants it | perturbation: ask `show` at every admission, and an agent whose ceiling grants no `show` is closed `admission_incomplete` at every reconnection and never stays admitted; skip it where it is granted, and the row reads the last process's state as current |
 | the ceiling declared in the hello is exactly what the box's sudo rules grant | perturbation, against a fake `sudo` generated at test time in `src/link/sudo_invoker_tests.rs`: answer `grants` from anything but each verb's own `sudo -n -l` line, and a verb the rule refuses is declared, or one it grants is not |

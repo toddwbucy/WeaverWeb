@@ -4,7 +4,7 @@ Version: v0.1, 2026-10-07. The design Spec section 2.13 requires before any code
 IAM act, written to the brief `brief-2026-10-07-act-11-iam-pr1-the-design.md` beside this
 note. The Spec states each rule this note decides and cites this note for the reasons, the
 measurements and the threat model, which it does not repeat. Nothing here is code; every
-mechanism named is for the pull request the plan in section 11 assigns it to.
+mechanism named is for the pull request the plan in section 12 assigns it to.
 
 ## 1. What the operator ruled, 2026-10-07
 
@@ -30,7 +30,7 @@ mechanism named is for the pull request the plan in section 11 assigns it to.
      If the operator means at most one holder of each, the grant gains a uniqueness rule
      and nothing else in this design moves.
 3. **Code acts in small pull requests, one concern each.** This act is the first under that
-   rule; section 11 is its plan.
+   rule; section 12 is its plan.
 
 ## 2. The WebAuthn library
 
@@ -156,7 +156,7 @@ It holds no secret of a person: a passkey's stored half is a public key.
 |---|---|---|
 | **Someone on the network** between a browser and the server | No credential, cookie or trace crosses in the clear once TLS stands (PR 3); a passkey assertion is bound to the origin and the challenge, so a captured one replays nowhere | Availability: flooding the listener is out of scope |
 | **A phishing page** | A passkey answers only its relying party's origin, so a look-alike site cannot collect a usable assertion | A person who installs a malicious extension in their own browser |
-| **A stolen session cookie** | The cookie is `HttpOnly`, so page script cannot read it; `Secure`, so it never crosses plain http; and `SameSite=Strict` with an `Origin` check, so another site cannot ride it. It expires idle and absolutely. **It cannot add a passkey**: adding one takes a fresh assertion with an existing passkey (section 7), so a thief cannot make the access outlast the session. Disable and sign-out end it at its next use | A thief holding the cookie can act as the person until the session ends, within the person's grants |
+| **A stolen session cookie** | The cookie is `HttpOnly`, so page script cannot read it; `Secure`, so it never crosses plain http; and `SameSite=Strict` with an `Origin` check, so another site cannot ride it. It expires idle and absolutely. **It cannot add a passkey**: adding one takes a fresh assertion with an existing passkey (section 7), so a thief cannot make the access outlast the session. Disable and sign-out end it at its next use, and an open live view within 15 seconds (section 6) | A thief holding the cookie can act as the person until the session ends, within the person's grants |
 | **A lost or stolen device** | A passkey needs user verification (the device's unlock) at every ceremony; the person removes that passkey from another one, or an admin disables the person, or the host resets them (section 7); each ends every session opened with the passkey | A device whose unlock the thief also holds is the person, until one of the above |
 | **A malicious or compromised admin** | An admin cannot take a person over: no admin reset, and an enrollment token only for a person with no passkey. An admin cannot widen their own grants, edit a role they hold, or remove the last admin. Every admin write is audited before it lands | An admin can grant another person anything, disable people, rewrite the roles they do not hold, and register or revoke connectors. **Two colluding admins can grant each other anything.** That is the admin role as ruled, and the audit is the remedy |
 | **A compromised server host** | Nothing. The host holds the store, the authority and the host commands, which write any grant by design | Out of scope: the host is trusted, as the connectors' link already assumes |
@@ -203,6 +203,21 @@ answers; the server verifies, updates the passkey's counter and opens the sessio
 **Ceremony state.** A ceremony's challenge and state stay in the server's memory, keyed by
 a ceremony identity, for at most five minutes, and are used once. A restart drops the
 ceremonies in flight, and the person begins again. Nothing of a ceremony is stored.
+**The ceremonies in flight are capped at 64**, and a new one beyond the cap is refused
+until one completes or expires. Name-first sign-in starts a ceremony for any posted name,
+before anyone is authenticated, so without a cap an unauthenticated client could fill the
+map until the process fails. The figure is a handful of people, each with a ceremony or two
+in flight, and a wide margin; a ceremony's state is under a kilobyte, so the cap holds the
+map to tens of kilobytes whatever a client sends. Denial of service stays out of scope
+(section 5): a client filling the cap delays sign-in for five minutes and crashes nothing.
+
+**An open live view is one request**, so "checked at every use" would never check it
+again. **A stream re-checks its session and its person's grant on its agent every 15
+seconds**, and closes at the first check that finds either ended: the session closed,
+expired (the twelve-hour limit included) or its passkey removed, the person disabled, or
+the grant removed. A timer and not each event: a trace can carry many events a second and
+a quiet agent none, and the check should cost the same either way, one indexed read per
+stream per 15 seconds, with what was revoked visible for at most 15 seconds after.
 
 **Cross-site requests.** `SameSite=Strict` keeps the cookie off every request another
 site starts. Every request that changes state (every POST, htmx's included) must also
@@ -251,7 +266,35 @@ grant whose grantee is themselves, granting or removing, and never writes a role
 they hold a grant of on any agent. Both are checked under the identity exclusion, as 2.13
 already requires.
 
-## 9. The audit record, the exclusion, and what is out
+**The host writes roles too**, for the same reason. A lone admin who holds `operator` on
+any agent, by the host's grant, can never edit the `operator` role, since they hold a
+grant of it. The host command that writes grants therefore writes a role's verbs as well,
+so a server with one admin can still change what its roles carry, and no surface edits a
+role its author holds.
+
+## 9. Read access
+
+**The roles are verb sets, and reading is not a verb.** So the design says which grant
+lets a person see an agent at all: its register row, its presence, its ceiling and door,
+its load state, and its live trace window.
+
+- **Any grant on an agent, `observer` or `operator`, permits reading everything the server
+  holds of that agent**: the register's row, the presence, the ceiling and the door, the
+  load state and the run it names, and the live trace window. `show` stays the verb that
+  asks the agent afresh; reading what the server already holds asks nothing of the agent
+  and needs no verb.
+- **A person with no grant on an agent sees nothing of it**: not its name, not its
+  presence. A list of agents shows the ones the person holds a grant on.
+- **The admin sees the register for the connections it governs**: each agent's name, its
+  presence (connected or not, per plane), and its credentials' state (issued, revoked,
+  rotated). **The door and the load state are not in the admin's view, and neither is the
+  trace**: those are the agent's, not the connection's, and an admin who wants them holds
+  a grant on the agent like anyone else, written by another admin or by the host.
+- **The check is the server's**, at the read, under the same rule as an ask: the person
+  enabled, the session live, the grant standing. An open live view re-checks it every 15
+  seconds (section 6).
+
+## 10. The audit record, the exclusion, and what is out
 
 **The audit table** is `audit`, one row per record:
 - its identity;
@@ -291,7 +334,7 @@ closes every race between them.
 - mail or any notification;
 - anything on an agent's box: its users, its sudo rules and its trace are WeaverAgent's.
 
-## 10. Spec 10's elections
+## 11. Spec 10's elections
 
 - **How people authenticate to this server** closes: passkeys only, per section 1.
 - **The role vocabulary** closes: `observer` and `operator` per agent, the seeded verb sets
@@ -300,7 +343,7 @@ closes every race between them.
   role the admin may write, which needs no election.
 - **What an author names** closes, per section 6.
 
-## 11. The pull request plan
+## 12. The pull request plan
 
 Each later pull request gets its own brief after the one before it merges. **The order is
 the brief's, kept**, and each is one concern:
@@ -308,21 +351,22 @@ the brief's, kept**, and each is one concern:
 1. **This one**: the design.
 2. **Persons, the bootstrap and enrollment tokens**: the migration (persons, passkeys,
    tokens, sessions' new columns, the audit table and its trigger); the host commands, which
-   are bootstrap, issue a token, the host reset of section 7 and the host grant of
-   section 8; and their audit. No browser work. The host grant needs the grant table, so
+   are bootstrap, issue a token, the host reset of section 7, and the host's grants and
+   role writes of section 8; and their audit. No browser work. The host grant needs the grant table, so
    PR 2 carries the role and grant tables with the seeded roles, and PR 5 adds the admin's
    writes to them.
 3. **TLS on the browser's listener**, with section 3's start refusals that concern the
    certificate.
 4. **Passkey enrollment and sign-in**: the ceremonies, the vendored module, the session
-   carrying the person, sign-out, the `Origin` check, the remaining start refusals of
-   section 3, and the `ldd` measurement of section 2. The claimed-name session retires
+   carrying the person, sign-out, the `Origin` check, the cap on ceremonies in flight,
+   the remaining start refusals of section 3, and the `ldd` measurement of section 2. The claimed-name session retires
    here.
 5. **Roles and grants**: the admin's writes, the identity exclusion, the last-admin and
    self-change rules, their audit.
 6. **Server-side authorization**: every verb and turn checked against the person's grants
    and the connection's ceiling before a frame leaves, the shared hold, and the audit of
-   every ask.
+   every ask; and read access (section 9), every read of an agent checked against a grant
+   on it and every open live view re-checked every 15 seconds.
 
 **One change from the brief's plan**: the role and grant tables move into PR 2. The host
 grant of section 8 is a host command, and that pull request carries the host commands. PR

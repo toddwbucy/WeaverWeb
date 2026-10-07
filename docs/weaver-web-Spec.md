@@ -1639,9 +1639,12 @@ record itself, so section 5's gate is held upstream (`toddwbucy/WeaverAnalysis#1
   server admits, which the box sets; each run's identity hashes into one
   of 1024 buckets, taken in ascending order, so two ingests over overlapping runs never
   deadlock and one ingest holds a bounded number of locks.
-- Writes are **bulk per generation**, never per token: one transaction lands a
-  generation's summary and its points, reading nothing, the lock leaving no other
-  writer to read for.
+- **The run's row lands with the plan's skeleton**: one transaction writes the row
+  `writing` and every generation's summary, in one statement bounded by the summary
+  line's 16 MiB, so a row an ingest leaves `writing` holds the whole shape of the run it
+  began. The points then land **bulk per generation**, never per token: one transaction
+  per generation, reading nothing, the lock leaving no other writer to read for, so a
+  generation's points are stored all or none.
 - **The reader is bounded, and these are its bounds.** The emission is held in memory
   whole, since a run is planned whole before any row is written. A line runs at most
   16 MiB; a summary announces at most four million positions (`POSITIONS_BOUND`, an
@@ -1659,7 +1662,14 @@ record itself, so section 5's gate is held upstream (`toddwbucy/WeaverAnalysis#1
   produce two truths about one position. A replay is compared with what is stored, key
   by key and over every run column the ingest writes, the boundary set it writes empty
   included, before anything is written: equal is a no-op that counts as written, and a
-  `writing` row whose every key is equal is completed. **A refusal on replay is the
+  `writing` row whose every key is equal is completed. Every row holds exactly its
+  emission's generations, a `writing` one included, so a replay naming a different
+  generation, fewer or more is refused. **That is all a row can verify**: a `writing`
+  row's missing points are completed from an emission whose members and every
+  generation equal its own, the tokens of a generation that never landed being
+  unknowable to it, and a run carrying a record digest is pinned further by the digest.
+  A completion writes the missing points one generation per transaction, as creation
+  writes them, so recovery is never a larger statement than creation. **A refusal on replay is the
   answer's and never the row's**: the stored row, its status and its reason stand, and
   `refused` is written only by the ingest that created the row.
 - **The run row is written first and closed last**, carrying a status a surface can
@@ -3714,6 +3724,8 @@ missing while it was relaying.
 | the record's session and digest agree across a run | perturbation in `src/store/ingest_tests.rs`: take the first generation's session, or its digest, and a run whose generations name two lands with one of them; the run is refused before a row instead |
 | a generation's summary lands, and its points only where they can be addressed | perturbation in `src/store/ingest_tests.rs`: close a run whose generations carry no resident count `whole`, and it reads as completed; give a turnless point a turn, and it lands under a key nobody recorded; hold a generation with no drawn tokens to the addressability check, and a run with nothing unlanded reads `short` |
 | a run's ingest status is written first and read by every surface | perturbation: create the row `whole` rather than `writing`, and an ingest stopped by the test-only step hook after the points leaves a branch reading `whole` and unlinked; draw every row's status as `whole` on Record, and a `writing`, `short` or `refused` run reads as completed |
+| a `writing` row holds its run's whole shape, and only an emission of that shape completes it | perturbation in `src/store/ingest_tests.rs`, a run the test-only step hook stops after generation 0's points: land the generations' summaries with their points and compare a `writing` row's generations as a prefix, and a replay naming a different generation 1 completes it `whole`; land the summaries with their points alone, and a replay naming one generation completes it `whole`; compare a `writing` row's generations as a prefix alone, and a replay naming a third completes it `whole` |
+| a completion writes one generation's points per transaction, as creation does | perturbation in `src/store/ingest_tests.rs`: complete in one transaction, and a completion the step hook stops after generation 1's points leaves generation 1's unwritten where it should stand |
 | an absent entropy lands absent | perturbation in `src/store/ingest_tests.rs`: write an omitted entropy as zero, and the position reads a floor |
 | a member the schema refuses is refused while planning, and the answer's counts are what landed | perturbation in `src/store/ingest_tests.rs`: leave the digest's shape, a NUL byte or a key's length to the store, and the run planted with it fails the whole ingest at its insert, the good run after it never landing; report the plan's counts on a refusal, and a refused replay reports 455 positions it never wrote |
 | every loop that reads or writes the store per item stays within one bound | **bound sweep** in `src/store/ingest_tests.rs`, not a failing test: many runs, a long chain listed child first, many generations, many points in one generation, many empty generations behind a large one, many branches on one parent and a long cycle each land within sixty seconds in a debug build (nine at most where it was written); the earlier passes' quadratic forms each took minutes on their rows. A per-item scan in memory, with no store round trip, is outside its reach: scanning the plan for a generation's points adds about ten seconds and passes. The sweep also holds every reason it answers under twice `KEY_BOUND` and a constant: join a cycle's members into its reason, and the long cycle's reasons grow past it |

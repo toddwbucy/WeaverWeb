@@ -189,14 +189,30 @@ pub static SELECT_RUN: LazyLock<String> = LazyLock::new(|| {
     )
 });
 
-/// A generation's insert.
-pub static INSERT_GENERATION: LazyLock<String> = LazyLock::new(|| {
+/// **Many rows in one statement**, one array per column over `UNNEST`, each
+/// column written through its own insert form.
+fn bulk_insert(table: &str, columns: &[Column]) -> String {
+    let arrays: Vec<String> = columns
+        .iter()
+        .enumerate()
+        .map(|(i, c)| format!("${}::{}", i + 2, c.array))
+        .collect();
+    let values: Vec<String> = columns
+        .iter()
+        .map(|c| c.insert.replace('$', &format!("u.{}", c.name)))
+        .collect();
     format!(
-        "INSERT INTO generation (run_id, {}) VALUES ($1, {})",
-        names(GenerationRow::COLUMNS),
-        placeholders(GenerationRow::COLUMNS, 2)
+        "INSERT INTO {table} (run_id, {}) SELECT $1, {} FROM UNNEST({}) AS u({})",
+        names(columns),
+        values.join(", "),
+        arrays.join(", "),
+        names(columns)
     )
-});
+}
+
+/// A run's generations, every one in one statement.
+pub static INSERT_GENERATIONS: LazyLock<String> =
+    LazyLock::new(|| bulk_insert("generation", GenerationRow::COLUMNS));
 
 /// A run's generations, in order.
 pub static SELECT_GENERATIONS: LazyLock<String> = LazyLock::new(|| {
@@ -206,19 +222,9 @@ pub static SELECT_GENERATIONS: LazyLock<String> = LazyLock::new(|| {
     )
 });
 
-/// Many positions in one statement, one array per column over `UNNEST`.
-pub static INSERT_POSITIONS: LazyLock<String> = LazyLock::new(|| {
-    let arrays: Vec<String> = PositionRow::COLUMNS
-        .iter()
-        .enumerate()
-        .map(|(i, c)| format!("${}::{}", i + 2, c.array))
-        .collect();
-    format!(
-        "INSERT INTO position (run_id, {}) SELECT $1, * FROM UNNEST({})",
-        names(PositionRow::COLUMNS),
-        arrays.join(", ")
-    )
-});
+/// Many positions in one statement.
+pub static INSERT_POSITIONS: LazyLock<String> =
+    LazyLock::new(|| bulk_insert("position", PositionRow::COLUMNS));
 
 /// A run's positions, with whether the members this seam never fills are in
 /// fact empty, so a row another writer filled reads as different.

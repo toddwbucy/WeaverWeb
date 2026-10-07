@@ -1305,7 +1305,7 @@ async fn concurrent_opposite_references_never_both_land_whole() {
 #[test]
 fn the_replay_compares_every_column_the_insert_writes() {
     use super::rows::{
-        Column, GenerationRow, INSERT_GENERATION, INSERT_POSITIONS, INSERT_RUN, PositionRow,
+        Column, GenerationRow, INSERT_GENERATIONS, INSERT_POSITIONS, INSERT_RUN, PositionRow,
         RunMembers, SELECT_GENERATIONS, SELECT_POSITIONS, SELECT_RUN,
     };
     let inserted = |sql: &str| -> Vec<String> {
@@ -1334,7 +1334,7 @@ fn the_replay_compares_every_column_the_insert_writes() {
         )
     );
     assert_eq!(
-        inserted(&INSERT_GENERATION),
+        inserted(&INSERT_GENERATIONS),
         with(&["run_id"], declared(GenerationRow::COLUMNS), &[])
     );
     assert_eq!(
@@ -1927,4 +1927,69 @@ async fn a_parents_tape_is_loaded_once_for_its_branches() {
         2,
         "one load per parent"
     );
+}
+
+/// **A `writing` row is completed only by an emission of its own shape**
+/// (Codex pass seventeen on PR #23): the row lands with every generation's
+/// summary, so a run the test's step hook stops after generation 0's points
+/// holds its whole skeleton, and a replay naming a different generation 1,
+/// fewer generations or more is refused with the row left `writing` and
+/// its one generation's points.
+#[tokio::test]
+async fn a_writing_row_is_completed_only_by_its_own_shape() {
+    let Some(s) = store().await else { return };
+    for (case, replay) in [
+        ("different", vec![3, 5]),
+        ("fewer", vec![3]),
+        ("more", vec![3, 4, 5]),
+    ] {
+        let run = tag(&format!("shape-{case}"));
+        let stopped = ingest_stopping(
+            &s,
+            &synthetic(&[(run.clone(), None, vec![3, 4])]),
+            Step::AfterGeneration(0),
+        )
+        .await;
+        assert_eq!(stopped["ok"], json!(false), "{stopped}");
+        assert_eq!(count(&s, "position", &run).await, 3);
+        let answer = ingest(&s, &synthetic(&[(run.clone(), None, replay)])).await;
+        assert_eq!(
+            answer["runs"][0]["status"],
+            json!("refused"),
+            "{case}: {answer}"
+        );
+        assert_eq!(answer["runs"][0]["stored"], json!("writing"), "{case}");
+        let row = landed(&s, &run).await.unwrap();
+        assert_eq!(
+            (row.status.as_str(), row.reason),
+            ("writing", None),
+            "{case}"
+        );
+        assert_eq!(count(&s, "position", &run).await, 3, "{case}");
+    }
+}
+
+/// **A completion writes one generation per transaction, as creation does**
+/// (Codex pass seventeen on PR #23): a run of three generations stopped
+/// after generation 0's points, then completed by an ingest the hook stops
+/// after generation 1's, holds generations 0 and 1's points and not 2's;
+/// the next ingest completes it whole.
+#[tokio::test]
+async fn a_completion_lands_one_generation_at_a_time() {
+    let Some(s) = store().await else { return };
+    let run = tag("completion");
+    let w = synthetic(&[(run.clone(), None, vec![3, 4, 5])]);
+    ingest_stopping(&s, &w, Step::AfterGeneration(0)).await;
+    assert_eq!(count(&s, "position", &run).await, 3);
+    let stopped = ingest_stopping(&s, &w, Step::AfterGeneration(1)).await;
+    assert_eq!(stopped["ok"], json!(false), "{stopped}");
+    assert_eq!(
+        count(&s, "position", &run).await,
+        7,
+        "generation 1's points stand, generation 2's do not"
+    );
+    assert_eq!(landed(&s, &run).await.unwrap().status, "writing");
+    let answer = ingest(&s, &w).await;
+    assert_eq!(answer["runs"][0]["status"], json!("whole"), "{answer}");
+    assert_eq!(count(&s, "position", &run).await, 12);
 }

@@ -36,7 +36,7 @@ use sqlx::{Connection, PgConnection, Postgres, Row, Transaction};
 use super::Store;
 use super::emission::{Emission, RunPlan, Unreadable};
 use super::rows::{
-    GenerationRow, INSERT_GENERATION, INSERT_POSITIONS, INSERT_RUN, PositionRow, RunMembers,
+    GenerationRow, INSERT_GENERATIONS, INSERT_POSITIONS, INSERT_RUN, PositionRow, RunMembers,
     SELECT_GENERATIONS, SELECT_POSITIONS, SELECT_RUN,
 };
 
@@ -53,6 +53,9 @@ pub enum Step {
     /// After one cycle row's refusal is written inside the cycle's
     /// transaction, before the next row's and before the commit.
     AfterCycleRow,
+    /// After the points of the generation of this order are written, by
+    /// the run's creation or its completion, before the next generation's.
+    AfterGeneration(i32),
 }
 
 /// **A test's hold on an ingest at a named point**: it says so on `locked`
@@ -80,6 +83,11 @@ pub enum HoldAt {
 
 #[cfg(test)]
 impl Options {
+    /// Whether the test's step hook stops the ingest after `seq`'s points.
+    fn stops_after(&self, seq: usize) -> bool {
+        self.stop_at == Some(Step::AfterGeneration(seq as i32))
+    }
+
     async fn hold(&self, at: HoldAt) {
         if let Some(hold) = &self.hold
             && hold.at == at
@@ -420,10 +428,16 @@ impl Store {
             match &stored {
                 None => {
                     self.create(&run, &plan).await.map_err(store_error)?;
-                    for generation in &plan.generations {
-                        self.write_generation(&run, &plan, generation.seq)
+                    for seq in 0..plan.generations.len() {
+                        self.write_points(&run, &plan, seq)
                             .await
                             .map_err(store_error)?;
+                        #[cfg(test)]
+                        if options.stops_after(seq) {
+                            return Err(format!(
+                                "stopped by the test's hook after generation {seq}'s points"
+                            ));
+                        }
                     }
                 }
                 Some(stored) => {
@@ -453,9 +467,7 @@ impl Store {
                         continue;
                     }
                     // A `writing` row whose every key is equal is completed.
-                    self.complete(&run, &plan, stored)
-                        .await
-                        .map_err(store_error)?;
+                    self.complete(&run, &plan, stored, options).await?;
                 }
             }
             outcome.landed_mut().generations = plan.generations.len();
@@ -732,62 +744,82 @@ impl Store {
         }))
     }
 
-    /// **The run's row, first and `writing`** (Spec 3.1), every member as
-    /// `RunMembers` declares it.
+    /// **The run's row, first and `writing`, with the plan's skeleton**
+    /// (Spec 3.1): every member as `RunMembers` declares it and every
+    /// generation's summary row, in one transaction, so a row the process
+    /// left `writing` holds the whole shape a later emission must equal
+    /// before its points are completed. One statement for the generations,
+    /// bounded by the summary line's `LINE_BOUND`.
     async fn create(&self, run: &str, plan: &RunPlan) -> Result<(), sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
         plan.members
             .bind(sqlx::query(INSERT_RUN.as_str()).bind(run))
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
-
-    /// **One generation and its points, in one transaction**: bulk per
-    /// generation and never per point (Spec 3.1), reading nothing, since no
-    /// other ingest writes the run while this one holds its lock.
-    async fn write_generation(
-        &self,
-        run: &str,
-        plan: &RunPlan,
-        seq: i32,
-    ) -> Result<(), sqlx::Error> {
-        let mut tx = self.pool.begin().await?;
-        plan.generations[seq as usize]
-            .bind(sqlx::query(INSERT_GENERATION.as_str()).bind(run))
             .execute(&mut *tx)
             .await?;
-        let points: Vec<&PositionRow> = plan.points[plan.spans[seq as usize].clone()]
+        let generations: Vec<&GenerationRow> = plan.generations.iter().collect();
+        if !generations.is_empty() {
+            GenerationRow::bind_arrays(
+                &generations,
+                sqlx::query(INSERT_GENERATIONS.as_str()).bind(run),
+            )
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await
+    }
+
+    /// **One generation's points, in one transaction**: bulk per generation
+    /// and never per point (Spec 3.1), reading nothing, since no other
+    /// ingest writes the run while this one holds its lock. A generation's
+    /// points are therefore all stored or none.
+    async fn write_points(&self, run: &str, plan: &RunPlan, seq: usize) -> Result<(), sqlx::Error> {
+        let points: Vec<&PositionRow> = plan.points[plan.spans[seq].clone()]
             .iter()
             .map(|(_, p)| p)
             .collect();
+        if points.is_empty() {
+            return Ok(());
+        }
+        let mut tx = self.pool.begin().await?;
         insert_points(&mut tx, run, &points).await?;
         tx.commit().await
     }
 
-    /// **A replayed `writing` row, completed**: the generations and points
-    /// it lacks, in one transaction, every stored key having compared equal.
+    /// **A replayed `writing` row, completed**, every stored key and every
+    /// generation having compared equal: the points of each generation the
+    /// store lacks, one generation per transaction as creation writes them,
+    /// so a completion is never a larger statement than a creation.
     async fn complete(
         &self,
         run: &str,
         plan: &RunPlan,
         stored: &Stored,
-    ) -> Result<(), sqlx::Error> {
-        let mut tx = self.pool.begin().await?;
-        let held: HashSet<i32> = stored.generations.iter().map(|g| g.seq).collect();
-        for generation in plan.generations.iter().filter(|g| !held.contains(&g.seq)) {
-            generation
-                .bind(sqlx::query(INSERT_GENERATION.as_str()).bind(run))
-                .execute(&mut *tx)
-                .await?;
+        options: &Options,
+    ) -> Result<(), String> {
+        let _ = options;
+        let store_error = |e: sqlx::Error| format!("the store failed: {e}");
+        for (seq, span) in plan.spans.iter().enumerate() {
+            let _ = seq;
+            let missing: Vec<&PositionRow> = plan.points[span.clone()]
+                .iter()
+                .map(|(_, p)| p)
+                .filter(|p| !stored.positions.contains_key(&(p.turn.clone(), p.position)))
+                .collect();
+            if !missing.is_empty() {
+                let mut tx = self.pool.begin().await.map_err(store_error)?;
+                insert_points(&mut tx, run, &missing)
+                    .await
+                    .map_err(store_error)?;
+                tx.commit().await.map_err(store_error)?;
+            }
+            #[cfg(test)]
+            if options.stops_after(seq) {
+                return Err(format!(
+                    "stopped by the test's hook after generation {seq}'s points"
+                ));
+            }
         }
-        let missing: Vec<&PositionRow> = plan
-            .points
-            .iter()
-            .map(|(_, p)| p)
-            .filter(|p| !stored.positions.contains_key(&(p.turn.clone(), p.position)))
-            .collect();
-        insert_points(&mut tx, run, &missing).await?;
-        tx.commit().await
+        Ok(())
     }
 
     /// `resolve`, retried where the store broke a deadlock: a net, since the
@@ -1030,9 +1062,10 @@ async fn insert_points(
 /// written (rulings 14 and 17): every member `RunMembers` declares, which is
 /// every column the ingest writes; every stored generation against the
 /// plan's of its order; every stored position against the plan's of its key,
-/// the members this seam never fills required empty. A closed run must hold
-/// exactly what the emission names, and a `writing` one may hold less. The
-/// first difference is named.
+/// the members this seam never fills required empty. **Every run holds
+/// exactly the emission's generations**, since they land with its row; a
+/// closed run holds exactly its points too, and a `writing` one may lack
+/// whole generations' points. The first difference is named.
 fn compare(plan: &RunPlan, stored: &Stored) -> Result<(), String> {
     let refused = |what: String| {
         format!("a replay that differs from the stored run, which stands unchanged: {what}")
@@ -1066,9 +1099,8 @@ fn compare(plan: &RunPlan, stored: &Stored) -> Result<(), String> {
             }
         }
     }
-    if stored.status != "writing"
-        && (stored.generations.len() != plan.generations.len()
-            || stored.positions.len() != planned.len())
+    if stored.generations.len() != plan.generations.len()
+        || (stored.status != "writing" && stored.positions.len() != planned.len())
     {
         return Err(refused(format!(
             "the stored run holds {} generations and {} positions, the emission {} and {}",

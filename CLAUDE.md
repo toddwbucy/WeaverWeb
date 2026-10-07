@@ -145,11 +145,12 @@ cargo run -- --config <config.toml> register <box> <name> --out <dir>   # two cl
 cargo run -- --config <config.toml> revoke <ag-id|box/name> <gate|admin>
 cargo run -- --config <config.toml> rotate <ag-id|box/name> --out <dir>
 cargo run -- --config <config.toml> agents                          # the register, presence derived
+cargo run -- --config <config.toml> ingest <emission | ->           # land one `weaver-analysis signals` emission
 cargo run --bin gate-con -- --config <gate-con.toml>                # the data plane's connector, on the agent's box
 cargo run --bin admin-con -- --config <admin-con.toml>              # the management plane's connector, on the agent's box
 ```
 
-- **DB-backed unit tests** (`store::read`, `store::plan`, `surfaces::record`, `link::tests`,
+- **DB-backed unit tests** (`store::read`, `store::plan`, `store::ingest_tests`, `surfaces::record`, `link::tests`,
   `link::client_tests`, `link::admin_con_tests`)
   connect to the database in `DATABASE_URL` and run the migrations. The link's tests run one at
   a time, since a listener's start resets every row's link state, which is the claim. Without that variable they print
@@ -198,6 +199,33 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
   `link::sudo_invoker_tests` against a fake `sudo` generated at test time and first on the
   child's `PATH` (a test build refuses to run without it); no test reaches an agent or a real
   `sudo`.
+- **The ingest** (`weaver-web ingest <path | ->`, Spec 3.1, act 10b) reads one
+  `weaver-analysis signals` emission and lands each run it carries: the row first, `writing`,
+  then each generation's summary (the `generation` table) and its points in one transaction,
+  then the close, `whole` or `short`; a branch closes only after its resolution (the link where
+  the parent is held, the walk where it is also whole), parents first. A replay is compared key
+  by key: equal is a no-op, different is refused in the answer and changes nothing stored. It
+  answers one JSON object listing every run, exit 1 where any run or the emission is refused;
+  every constraint the schema holds a row to is checked while planning (`RunPlan::of` lists them),
+  so a malformed run is refused alone and never fails the ingest at an insert.
+  The reader's bounds (Spec 3.1): a line at most 16 MiB, a summary announcing at most
+  `POSITIONS_BOUND` (four million) positions, no point past the announced count, and at most
+  `EMISSION_BOUND` (1 GiB) in all, the emission being held in memory whole, and every keyed text
+  member at most `KEY_BOUND` (1024 bytes). **One ingest writes a run at a time; the rest wait
+  and replay**: an ingest takes session-level advisory locks on every run it writes or resolves
+  against (hashed into 1024 buckets, taken in order) before anything else and holds them to its
+  end. The cycle scan and the resolution order are linear (`ingest::plan_resolution`), and a
+  bound sweep holds every per-item store loop to one bound.
+  `src/store/emission.rs` reads and plans, `src/store/rows.rs` declares the run, generation and
+  position rows once (the insert, the loader and the replay's comparison derive from it), and
+  `src/store/ingest.rs` writes; a test-only step hook (`ingest::Step`) stops it at the two seams
+  the kill perturbations need, and a test-only hold (`ingest::Hold`) keeps an ingest on its locks
+  so the lock's test can start a second. Its tests read the
+  emissions vendored under `tests/fixtures/signals/`, made once by WeaverAnalysis `12a7243`'s
+  `signals` command on its own fixtures (the README there names each command), beside one
+  hand-made branch emission labelled as such; no test runs the WeaverAnalysis binary. The
+  surface text, the alternatives and the rank never cross that seam and land absent
+  (`toddwbucy/WeaverAnalysis#10`).
 - **Register verbs** answer one JSON object on stdout with the exit status agreeing, the shape
   `weaver-admin` uses. `revoke` closes a live connection in a running server through the
   store's notification channel; nothing else links the verb's process to the server's.
@@ -243,7 +271,11 @@ the orderly stop's `unload`. **The relay client replaced the file tailer in act 
 ceiling, asks `show` only where it is granted and at every opening of the door, and records
 the ceiling and the load state's source on the row (migration `0011`), the tuple's own source
 (`0012`, since a turn moves the state and not the tuple), and the run's constituents from
-`show` and the trace door's state (`0013`); `0010` through `0013` are frozen. `traceview.rs` keeps the rings, the listener's live window; its seed
+`show` and the trace door's state (`0013`); `0010` through `0013` are frozen. **Migration
+`0014`** (act 10b) is the ingest's: the run's `ingest_status` and `ingest_reason`, the
+`parent_reference` beside the resolved `parent_run_id`, `parting_known`, the `generation`
+table, and the four position members the analysis seam does not carry made nullable.
+`traceview.rs` keeps the rings, the listener's live window; its seed
 tailer and `lifecycle.rs` (which ran the verbs through sudo) left the tree.
 
 **Still leaves: `web/`**, the legacy `/admin` routes, already answering 503, and

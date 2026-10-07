@@ -44,9 +44,12 @@ the HeroBench deposits of 2026-09-29 and 2026-09-30. None is a reading from the 
   outline pill carrying one of four words: `absent` (the record did not carry the
   member), `no run` (a staged value that never produced a run), `not served` (a seam
   with no party yet, today the classifier's labels and the full map), `uncomputable`
-  (the SPU's identity sentinel). A stub-answered connector shows as a `stub` badge in
-  the header of every surface. Surprisal on a prefix where its election did not stand
-  is drawn as a hatched column, not a zero bar.
+  (the SPU's identity sentinel). A fifth word joined on 2026-10-06 with act 10b,
+  `unknown` (a member not yet derivable, today a branch's parting position where the
+  walk did not run), drawn the same way; the boards predate it and do not show it.
+  A stub-answered connector shows as a `stub` badge in the header of every surface.
+  Surprisal on a prefix where its election did not stand is drawn as a hatched column,
+  not a zero bar.
 - **Dark mode, both ways.** The header of every surface carries an auto / light / dark
   control. Auto follows the browser's `prefers-color-scheme`; light or dark is an
   override persisted on the session row, so a page never flashes the wrong theme on

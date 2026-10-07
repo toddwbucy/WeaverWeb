@@ -28,7 +28,7 @@
 <table class="record">
   <thead>
     <tr>
-      <th>run</th><th>record identity</th><th>device</th><th>engine</th>
+      <th>run</th><th>ingest</th><th>record identity</th><th>device</th><th>engine</th>
       <th>seed</th><th>session</th><th>lineage</th><th>ingested</th>
     </tr>
   </thead>
@@ -36,6 +36,14 @@
   {% for r in rows %}
     <tr>
       <td class="mono">{{ r.run }}</td>
+      <td>
+        {%- if r.status == "whole" -%}
+        whole
+        {%- else -%}
+        <span class="status {{ r.status }}"{% match r.status_reason %}{% when Some with (why) %} title="{{ why }}"{% when None %}{% endmatch %}>{{ r.status }}</span>
+        {%- match r.status_reason %}{% when Some with (why) %} <span class="status-why">{{ why }}</span>{% when None %}{% endmatch -%}
+        {%- endif -%}
+      </td>
       <td class="mono">
         {%- match r.record_identity_key -%}
         {%- when Some with (key) -%}
@@ -58,9 +66,17 @@
       <td>
         {%- match r.parent -%}
         {%- when Some with (p) -%}
+        {%- if r.parent_linked -%}
         branch of <a href="/record?chip=branches&amp;of={{ p|urlencode }}">{{ p }}</a>&rsquo;s arms
+        {%- else -%}
+        branch of <span class="mono">{{ p }}</span>, its link <span class="absent">absent</span> (the store does not hold it)
+        {%- endif -%}
         {%- match r.branch_position %}{% when Some with (b) %}, at {{ b }}{% when None %}{% endmatch -%}
-        {%- match r.parting_position %}{% when Some with (v) %}, parted {{ v }}{% when None %}, never parted{% endmatch -%}
+        {%- match r.parting -%}
+        {%- when Parting::At with (v) %}, parted at {{ v }}
+        {%- when Parting::Never %}, parting <span class="absent">absent</span> (never parted)
+        {%- when Parting::Unknown %}, parting <span class="absent">unknown</span>
+        {%- endmatch -%}
         {%- when None -%}
         no parent. <a href="/record?chip=branches&amp;of={{ r.run|urlencode }}">its arms</a>
         {%- endmatch -%}

@@ -58,3 +58,16 @@ table.record tr:last-child td { border-bottom: 0; }
 .empty { color: var(--dim); padding: 2rem 0; }
 .more { margin-top: 1rem; }
 .more a { font-family: var(--mono); font-size: .86rem; }
+
+/* Absence is a word, never a blank: a dashed outline pill carrying it, per
+ * Spec section 6 and the design of 2026-09-30. */
+.absent { font-family: var(--mono); font-size: .78rem; color: var(--dim);
+  border: 1px dashed var(--faint); border-radius: 3px; padding: 0 .4rem; }
+
+/* An ingest that is not whole is a status, so it takes hue: amber for the
+ * two partials, red for a refusal. Each carries its word. */
+.status { font-family: var(--mono); font-size: .78rem; padding: .05rem .5rem;
+  border-radius: 999px; border: 1px solid currentColor; }
+.status.writing, .status.short { color: #c98a1c; }
+.status.refused { color: #c94a3a; }
+.status-why { display: block; color: var(--faint); font-size: .78rem; margin-top: .2rem; }

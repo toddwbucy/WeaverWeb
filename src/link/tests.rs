@@ -18,7 +18,6 @@ use crate::store::{AgentId, Store};
 use crate::traceview::TraceEvent;
 use serde_json::json;
 use std::net::SocketAddr;
-use std::sync::OnceLock;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
@@ -32,9 +31,11 @@ pub(super) const SOON: Duration = Duration::from_secs(5);
 /// staging and not the row the config belongs to.
 const PLACEHOLDER_ID: &str = "ag-0000000000000000";
 
+/// The link's tests serialize among themselves, a listener's start resetting
+/// every row's link state, and against the ingest's heavy tests, through the
+/// store's one exclusive guard.
 pub(super) fn serial() -> &'static tokio::sync::Mutex<()> {
-    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+    crate::store::read::tests::exclusive()
 }
 
 pub(super) async fn store() -> Option<Store> {
@@ -1548,10 +1549,15 @@ async fn an_undeliverable_landed_closes_the_connection() {
     };
     let karl = lab.register("karl").await;
     let mut admin = lab.admit(&karl, Plane::Admin).await;
-    // Each ack names a long generation, so a few thousand outrun every
-    // buffer between the server's queue and this reader.
-    let generation = "g".repeat(4096);
-    let events = 5_000u64;
+    // Few and large acks, so the landing is short and its bound has margin:
+    // each ack names a 128 KiB generation and a digest as long again, about
+    // 256 KiB, and 400 of them are about 100 MB, twice what lies between the
+    // server's write queue and this unread reader (a 64-frame queue of about
+    // 16 MB, a send buffer autotuning to at most 4 MB and a receive buffer to
+    // at most 32 MB on the box this was measured on). The ring keeps only the
+    // event and the acknowledged map one position, so none of it is held.
+    let generation = "g".repeat(128 * 1024);
+    let events = 400u64;
     for n in 1..=events {
         admin
             .send(FromClient::Event {
@@ -1561,12 +1567,17 @@ async fn an_undeliverable_landed_closes_the_connection() {
             })
             .await;
     }
-    let until = tokio::time::Instant::now() + Duration::from_secs(30);
+    // **The 30 s bound holds by that margin, not by the store's guard**:
+    // alone, the last ack lands about 50 ms after the last send, measured
+    // three times on the box this was written on.
+    let landing = tokio::time::Instant::now();
+    let until = landing + Duration::from_secs(30);
     while lab.listener.acknowledged(&karl.id).map(|p| p.offset) != Some(100 + events) {
         assert!(
             tokio::time::Instant::now() < until,
-            "never acknowledged through the last: {:?}",
-            lab.listener.acknowledged(&karl.id)
+            "never acknowledged through the last after {:?}: offset {:?}",
+            landing.elapsed(),
+            lab.listener.acknowledged(&karl.id).map(|p| p.offset)
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }

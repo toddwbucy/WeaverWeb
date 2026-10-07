@@ -253,16 +253,20 @@ computes the form is PR 2's to measure.
 rise: its builder sets `require_valid_counter_value`, and where the returned counter or
 the stored one is nonzero, a returned counter not greater than the stored one fails the
 ceremony with `CredentialPossibleCompromise` (`webauthn-rs-core` 0.5.5, `core.rs`, the
-check after the signature). What the library leaves to this crate is the stored half:
-- **the counter is persisted after every sign-in that returned one**, in the transaction
-  that opens the session, by an update that only raises it (`WHERE` the stored counter is
-  below the returned one). Two concurrent sign-ins with one passkey both pass the
-  library's check against the value they loaded; the second update then affects no row,
-  and that sign-in is refused as the library would have refused it, so the comparison is
-  never against a stale value;
+check after the signature). What the library leaves to this crate is the stored half, and
+**it holds for every assertion the server verifies**, whatever ceremony asked for it: the
+sign-in, the fresh assertion that authorizes adding a passkey (section 7), and any
+assertion a later pull request adds, none of which needs a sentence of its own:
+- **the counter is persisted after every assertion that returned one**, in the transaction
+  that commits what the assertion authorizes (a session's opening, a passkey's addition),
+  by an update that only raises it (`WHERE` the stored counter is below the returned one).
+  Two concurrent assertions with one passkey both pass the library's check against the
+  value they loaded; the second update then affects no row, and that assertion is refused
+  as the library would have refused it, so the comparison is never against a stale value;
 - **a `CredentialPossibleCompromise` refusal is audited as a possible cloned credential**,
   its principal the passkey's person and its method `passkey assertion`, since the
-  signature verified and only the counter failed; no session opens;
+  signature verified and only the counter failed; what the assertion would have
+  authorized does not proceed: no session opens, no passkey is added;
 - **the passkey is not disabled automatically**: an attacker replaying a clone could then
   lock its owner out at will. The person removes it, an admin disables the person, or the
   host resets them;
@@ -316,7 +320,9 @@ This settles Spec 10's "What an author names".
   to any other account").
 - **A person enrolls more passkeys while signed in**, each after a fresh assertion with a
   passkey they already hold, taken within the same ceremony. A stolen session cookie
-  therefore cannot add a passkey. A person may remove any of their passkeys but the last;
+  therefore cannot add a passkey. The assertion falls under section 6's counter rule like
+  every assertion: its counter is raised in the transaction that adds the passkey, and a
+  counter refusal is audited as at sign-in and adds nothing. A person may remove any of their passkeys but the last;
   removing one ends every session opened with it.
 - **The host reset** is a host command. In one write, under the identity exclusion, it
   clears the person's passkeys, closes their sessions and issues an enrollment token, and

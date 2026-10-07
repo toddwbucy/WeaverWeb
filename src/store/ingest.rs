@@ -76,6 +76,8 @@ pub enum Race {
     BeforeResolve,
     /// After a run's generations are filled, before it closes.
     BeforeClose,
+    /// After the emission's first run is landed, before its second.
+    BetweenRuns,
 }
 
 /// How one run came out, which the answer reports.
@@ -259,7 +261,12 @@ impl Store {
         // first pass, with its parent reference: the open ones and the
         // closed ones replayed equal, which a cycle may run through.
         let mut named: HashMap<String, Named> = HashMap::new();
-        for (run, planned) in emission.plan() {
+        for (index, (run, planned)) in emission.plan().into_iter().enumerate() {
+            #[cfg(test)]
+            if index == 1 {
+                self.race(options, Race::BetweenRuns).await;
+            }
+            let _ = index;
             let plan = match planned {
                 Ok(plan) => plan,
                 Err(why) => {
@@ -500,8 +507,12 @@ impl Store {
             // **One transaction per cycle** (ruling 30), persisted only on the
             // rows this ingest created (ruling 29).
             let mut tx = self.pool.begin().await.map_err(store_error)?;
+            // A row another ingest closed since the scan is not this
+            // refusal's: the update does not take, and the run is settled
+            // like any row closed under this ingest.
+            let mut not_taken: Vec<&Open> = Vec::new();
             for row in &created {
-                sqlx::query(
+                let took = sqlx::query(
                     "UPDATE run SET ingest_status = 'refused', ingest_reason = $2 \
                      WHERE run_id = $1 AND ingest_status = 'writing'",
                 )
@@ -509,7 +520,12 @@ impl Store {
                 .bind(&named_cycle)
                 .execute(&mut *tx)
                 .await
-                .map_err(store_error)?;
+                .map_err(store_error)?
+                .rows_affected()
+                    == 1;
+                if !took {
+                    not_taken.push(row);
+                }
                 #[cfg(test)]
                 if options.stop_at == Some(Step::AfterCycleRow) {
                     drop(tx);
@@ -517,9 +533,20 @@ impl Store {
                 }
             }
             tx.commit().await.map_err(store_error)?;
+            let mut settled: HashSet<&str> = HashSet::new();
+            for row in not_taken {
+                let outcome = &mut outcomes[row.outcome];
+                self.settle_closed(&row.run, &row.plan, outcome)
+                    .await
+                    .map_err(store_error)?;
+                if outcome.stored.is_none() {
+                    outcome.stored = Some(outcome.status.clone());
+                }
+                settled.insert(row.run.as_str());
+            }
             // Every other run on the cycle is reported refused in the answer
             // with the status the store keeps for it.
-            for run in cycle {
+            for run in cycle.iter().filter(|r| !settled.contains(r.as_str())) {
                 let created = created_runs.contains(run.as_str());
                 let held = &named[run];
                 let index = match held.outcome {
@@ -1125,6 +1152,12 @@ async fn stored_positions(
     run: &str,
     points: &[&PositionRow],
 ) -> Result<HashMap<(String, i32), StoredPosition>, sqlx::Error> {
+    // **No points, no read**: a generation that drew nothing, was skipped or
+    // folded whole asks after none, and the unfiltered read below is the
+    // whole run's, a replay's completion and nothing else.
+    if points.is_empty() {
+        return Ok(HashMap::new());
+    }
     let one_turn = points
         .first()
         .map(|p| p.turn.as_str())

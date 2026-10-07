@@ -1392,3 +1392,79 @@ async fn a_tape_that_repeats_a_coordinate_derives_no_parting() {
         "one row per key"
     );
 }
+
+/// **A cycle's refusal never reports a row another ingest closed as
+/// refused** (Codex pass eight on PR #23): this ingest lands A naming B,
+/// then the test-only race lands an ingest of A alone, which finds B
+/// absent and closes A `whole`; this ingest then lands B naming A and its
+/// scan finds the cycle. Its refusal does not take on A, which is settled
+/// against the store and reported `whole`, and B is refused.
+#[tokio::test]
+async fn a_cycle_row_another_ingest_closed_is_reported_as_stored() {
+    let Some(s) = store().await else { return };
+    let t = tag("cycle-closed-under");
+    let a = Wire::of(CERTIFIED)
+        .renamed(&format!("a#{t}"))
+        .branch_of(&format!("b#{t}"));
+    let b = Wire::of(CERTIFIED)
+        .renamed(&format!("b#{t}"))
+        .branch_of(&format!("a#{t}"));
+    let answer = s
+        .ingest_with(
+            Emission::read(a.clone().then(b.clone()).text().as_bytes()),
+            &Options {
+                race: Some((
+                    Race::BetweenRuns,
+                    Emission::read(a.text().as_bytes()).unwrap(),
+                )),
+                ..Options::default()
+            },
+        )
+        .await
+        .value;
+    assert_eq!(answer["runs"][0]["status"], json!("whole"), "{answer}");
+    assert_eq!(answer["runs"][0]["stored"], json!("whole"));
+    assert_eq!(answer["runs"][1]["status"], json!("refused"), "{answer}");
+    assert_eq!(landed(&s, &a.run()).await.unwrap().status, "whole");
+    assert_eq!(landed(&s, &b.run()).await.unwrap().status, "refused");
+}
+
+/// **A generation with no points reads none** (Codex pass eight on PR
+/// #23): a bound test and not a failing one. One generation of twenty
+/// thousand points followed by five thousand that drew none lands within
+/// the bound; an empty generation's fill that read every position of the
+/// run would read the large one's twenty thousand five thousand times.
+#[tokio::test]
+async fn a_large_generation_before_many_empty_ones_lands_within_its_bound() {
+    let Some(s) = store().await else { return };
+    let run = format!("empty-spans#{}", tag("empty-spans"));
+    let sampling = Wire::of(CERTIFIED).summary["generations"][0]["effective_sampling"].clone();
+    let entry = |output: usize| {
+        json!({
+            "turn": "t-1", "resident": 20_001, "output_count": output,
+            "weights_hash": "ab", "run": run, "session": "s-minimal",
+            "effective_sampling": sampling,
+        })
+    };
+    let generations: Vec<Value> = std::iter::once(entry(20_000))
+        .chain((0..5_000).map(|_| entry(0)))
+        .collect();
+    let points: Vec<Value> = (0..20_000)
+        .map(|i| json!({"turn": "t-1", "ordinal": i, "token": i, "entropy": 1.0}))
+        .collect();
+    let w = Wire {
+        summary: json!({"positions": 20_000, "with_entropy": 20_000, "with_surprisal": 0, "generations": generations}),
+        points,
+    };
+    let started = std::time::Instant::now();
+    let answer = ingest(&s, &w).await;
+    let took = started.elapsed();
+    assert_eq!(
+        answer["runs"][0]["status"],
+        json!("whole"),
+        "{}",
+        answer["error"]
+    );
+    assert_eq!(count(&s, "generation", &run).await, 5_001);
+    assert!(took < std::time::Duration::from_secs(60), "took {took:?}");
+}

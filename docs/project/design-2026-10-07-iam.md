@@ -1,0 +1,329 @@
+# Design: identity and access on WeaverWeb (act 11)
+
+Version: v0.1, 2026-10-07. The design Spec section 2.13 requires before any code of the
+IAM act, written to the brief `brief-2026-10-07-act-11-iam-pr1-the-design.md` beside this
+note. The Spec states each rule this note decides and cites this note for the reasons, the
+measurements and the threat model, which it does not repeat. Nothing here is code; every
+mechanism named is for the pull request the plan in section 11 assigns it to.
+
+## 1. What the operator ruled, 2026-10-07
+
+1. **Sign-in is by passkeys (WebAuthn), and only by passkeys.** No password, no second
+   factor, no external identity provider.
+2. **The roles.** In the operator's words: "one observer per agent, one operator per agent,
+   admin on the weaverweb server side is about controlling the multiple admin-con
+   connections, the who and how of accessing as well as the what of individual agent
+   lifecycle management." Read onto Spec 2.13:
+   - `observer` and `operator` are roles scoped to one agent, and a grant binds a person to
+     one of them on one agent.
+   - `admin` is the server-wide role 2.13 already fixes. It governs the connections (the
+     register verbs and the register's view of who is connected), the who and how
+     (persons, enrollment, passkeys, disabling, grants), and the what (the per-agent roles
+     are rows the admin writes, so the admin decides which verbs each carries, within the
+     vocabulary of Spec 7.2 plus `turn`).
+   - Seeded, and the admin may edit them: `observer` carries `show`; `operator` carries
+     `show`, `validate`, `load`, `unload`, `stop` and `turn`.
+   - The admin role grants no action on any agent by itself; acting on an agent takes a
+     per-agent grant.
+   - **The reading the operator confirms at review**: "one observer per agent, one operator
+     per agent" is read as one role of each kind per agent, held by any number of people.
+     If the operator means at most one holder of each, the grant gains a uniqueness rule
+     and nothing else in this design moves.
+3. **Code acts in small pull requests, one concern each.** This act is the first under that
+   rule; section 11 is its plan.
+
+## 2. The WebAuthn library
+
+**Criteria** (the brief's): maintained; server-side registration and authentication
+ceremonies; discoverable credentials (passkeys); attestation `none` accepted; and the
+dependency weight against this crate's tree, which is rustls-only today (`rustls` and
+`tokio-rustls` on `ring`, no C library beyond the platform's own).
+
+**Measured on 2026-10-07**, each candidate resolved alone in a scratch crate outside the
+repository, `cargo tree -e normal`, and its crate names compared with the 199 crates of
+this crate's own normal tree at `96dd2fa`, this crate included. A candidate's count
+excludes the scratch crate:
+
+| Candidate | Crates | Not already in this tree | Native library | Releases |
+|---|---|---|---|---|
+| `webauthn-rs` 0.5.5 | 92 | 30 | **OpenSSL** (`openssl` 0.10.81, `openssl-sys` 0.9.117) | kanidm project; about 7.5 million downloads; 0.5.5 released 2026-04-30 |
+| `webauthn-rs` 0.6.1-dev | 154 | 80 | none (RustCrypto through `crypto-glue`: `p256`, `p384`, `p521`, `rsa`, and also `argon2`, `scrypt`, `aes-gcm`) | a pre-release, 2026-04-30 |
+| `webauthn_rp` 0.3.0 | 87 | 34 | none (RustCrypto: `p256`, `p384`, `ed25519-dalek`, `rsa`) | one maintainer on a personal git host; about 31,000 downloads; last release 2025-04-03 |
+
+**What each supports.** All three have server-side registration and authentication, accept
+attestation `none` (`AttestationConveyancePreference::None` in `webauthn-rs`;
+`AttestationFormat::None` in `webauthn_rp`), and support discoverable credentials. In
+`webauthn-rs` 0.5 the passkey ceremonies (`start_passkey_registration`,
+`start_passkey_authentication`) are stable, and **the discoverable, name-free sign-in
+(`start_discoverable_authentication`) sits behind the `conditional-ui` feature**, which the
+crate groups under `preview-features`.
+
+**What OpenSSL costs.** A probe binary on `webauthn-rs` 0.5.5 built here in 6.5 s in
+release and links `libcrypto.so.3` dynamically (`ldd`), found through `pkg-config`.
+So:
+- **the build** needs OpenSSL's headers and `pkg-config` on the build machine;
+- **the install** needs `libcrypto` 3 on the server's host;
+- `openssl-sys` offers a `vendored` feature that builds OpenSSL from source and links it
+  statically, which needs a C compiler and Perl at build time instead.
+
+**Recommendation: `webauthn-rs` 0.5**, the server binary alone carrying it.
+- It is the maintained, widely used one, written by an identity-management project, and its
+  API is built around passkeys. The ceremonies are security-critical verification code, and
+  for them a large user base and an active maintainer weigh more than a pure-Rust tree.
+- The cost is OpenSSL on the server's host. **The connectors must not carry it**: gate-con
+  and admin-con run on agent boxes, where a new shared library is a provisioning change.
+  PR 4 enables the library through a cargo feature that only the server binary requires
+  (`required-features`), and shows with `ldd` that neither connector links `libcrypto`.
+  **That is a measurement this pull request cannot take without code**, so it is owed by
+  PR 4 and named there.
+- Sign-in is name-first (section 6), using the stable passkey ceremonies, so no preview
+  feature is needed.
+- `webauthn-rs` 0.6 drops OpenSSL. When it is released stable, moving to it removes the C
+  library at the price of a heavier tree (80 new crates against 30). That is a later
+  measurement, not this act's.
+- **If the operator rules out a C library on the server**, the alternative is `webauthn_rp`.
+  It is pure Rust and adds 34 crates, but rests on one maintainer and has had no release
+  since 2025-04-03.
+
+## 3. The relying party and the secure context
+
+WebAuthn runs only in a secure context. WebAuthn Level 2 (W3C Recommendation, 2021-04-08)
+says "user agents only expose this API to callers in secure contexts", which for a web page
+means https, or the `localhost` origin a browser treats as potentially trustworthy. Its
+section 5.1.3 refuses with `SecurityError` where "effectiveDomain is not a valid domain
+string", which an IP address is not, and where the relying-party ID "is not a registrable
+domain suffix of or is equal to effectiveDomain". Sections 7.1 and 7.2 have the server
+"verify that the rpIdHash in authData is the SHA-256 hash of the RP ID". So a passkey
+cannot be used from another machine until the browser's listener serves TLS under a name.
+
+**Decided: TLS on the browser's listener lands before passkeys**, as its own pull request
+(PR 3), so passkeys are built and tested the way they will run. The charter's section 6
+already says transport encryption on the browser's listener lands with the IAM act.
+- rustls is already in the tree. The listener takes `tls_certificate` and `tls_key`, paths
+  in the server's config, never in the repository, read at start like the authority.
+- `rp_id` and `origin` are config too. No hostname, relying-party ID or origin enters the
+  repository.
+
+**What the server refuses at start**, before anything listens, where passkeys are on:
+- no `rp_id` or no `origin`;
+- an `rp_id` that is an IP address, or empty;
+- an `origin` that is not `https://`, unless its host is `localhost`, the one plain origin
+  a browser treats as secure, which tests and a developer's machine use;
+- an `origin` whose host is neither the `rp_id` nor a subdomain of it;
+- an `https` origin on a listener with no certificate and key configured;
+- a certificate and key that do not load or do not pair.
+
+Each refusal names the key and what is wrong, as the authority's absence does today.
+
+## 4. The browser half
+
+The two ceremonies call `navigator.credentials.create` and `navigator.credentials.get` in
+the page. There is no node and no SPA. **One hand-written module** does those two
+ceremonies and nothing else, vendored into the binary by `include_bytes!` as htmx is and
+served from the surfaces' asset route:
+- **Expected size**: under 4 KiB unminified. It converts base64url to and from
+  `ArrayBuffer`, fetches the server's options, calls the browser, and posts the result.
+- **What it sends**, as JSON to the server's two ceremony endpoints:
+  - registration: the credential's `id`, `rawId`, `type`, and `response.clientDataJSON`
+    and `response.attestationObject`, with `response.transports` where the browser gives
+    them;
+  - authentication: `id`, `rawId`, `type`, and `response.authenticatorData`,
+    `response.clientDataJSON`, `response.signature` and `response.userHandle`.
+  - Nothing else: no extension output, no device detail. These are the shapes the library
+    parses.
+- The page has no inline script for it, so a `Content-Security-Policy` of
+  `script-src 'self'` stays possible. Whether the surfaces adopt that header is PR 4's to
+  measure against htmx's own use.
+
+## 5. The threat model
+
+**What this server is**: one server, a handful of people, the server's host trusted. It
+holds an agent's trace as relayed, the power to ask an agent's verbs and place its turns,
+and the identity rows (persons, passkeys, roles, grants) that decide who holds that power.
+It holds no secret of a person: a passkey's stored half is a public key.
+
+**Assets**
+1. **An agent's trace**, which is read access.
+2. **The power to act on an agent**: a lifecycle verb, or a turn that prompts an agent able
+   to act on its box with its tools.
+3. **The identity rows**: persons, passkeys, roles, grants, enrollment tokens.
+4. **The audit record**, which is the one record of who asked, since nothing about a person
+   crosses to the box.
+
+**Adversaries, and what IAM promises against each**
+
+| Adversary | Promised | Not promised |
+|---|---|---|
+| **Someone on the network** between a browser and the server | No credential, cookie or trace crosses in the clear once TLS stands (PR 3); a passkey assertion is bound to the origin and the challenge, so a captured one replays nowhere | Availability: flooding the listener is out of scope |
+| **A phishing page** | A passkey answers only its relying party's origin, so a look-alike site cannot collect a usable assertion | A person who installs a malicious extension in their own browser |
+| **A stolen session cookie** | The cookie is `HttpOnly`, so page script cannot read it; `Secure`, so it never crosses plain http; and `SameSite=Strict` with an `Origin` check, so another site cannot ride it. It expires idle and absolutely. **It cannot add a passkey**: adding one takes a fresh assertion with an existing passkey (section 7), so a thief cannot make the access outlast the session. Disable and sign-out end it at its next use | A thief holding the cookie can act as the person until the session ends, within the person's grants |
+| **A lost or stolen device** | A passkey needs user verification (the device's unlock) at every ceremony; the person removes that passkey from another one, or an admin disables the person, or the host resets them (section 7); each ends every session opened with the passkey | A device whose unlock the thief also holds is the person, until one of the above |
+| **A malicious or compromised admin** | An admin cannot take a person over: no admin reset, and an enrollment token only for a person with no passkey. An admin cannot widen their own grants, edit a role they hold, or remove the last admin. Every admin write is audited before it lands | An admin can grant another person anything, disable people, rewrite the roles they do not hold, and register or revoke connectors. **Two colluding admins can grant each other anything.** That is the admin role as ruled, and the audit is the remedy |
+| **A compromised server host** | Nothing. The host holds the store, the authority and the host commands, which write any grant by design | Out of scope: the host is trusted, as the connectors' link already assumes |
+| **A compromised agent box** | Nothing new here: the connectors are mutually authenticated and the box's sudo rule is the third gate (Spec 8) | Out of IAM's scope |
+
+**Out of scope, named so it is not left unsaid**: denial of service; a malicious browser
+or extension; the server's host; the box; recovering an audit that someone with the store
+rewrote (append-only is enforced in the store against this crate's processes, not against
+the host's database owner).
+
+## 6. The session
+
+**The cookie** is `__Host-weaver_session`. The `__Host-` prefix makes the browser refuse
+it unless it is `Secure`, has `Path=/` and has no `Domain`, so no subdomain can set or read
+it. Its attributes are `Secure`, `HttpOnly`, `SameSite=Strict` and `Path=/`. The bearer is
+random, 32 bytes, and stored only as its digest (Spec 2.8's rule, unchanged).
+
+**Its row** carries the person and the passkey it was opened with, beside the digest, when
+it opened, when it was last used and when it closed.
+
+**Lifetime.** It expires after one hour idle and twelve hours absolute, both in the
+server's config with those defaults. An open live view (SSE) counts as use while it
+streams, so a person watching a run is not signed out mid-run, but the twelve-hour limit
+still holds.
+
+**What ends a session**:
+- sign-out, which closes the row;
+- the idle or absolute expiry;
+- disabling its person, seen at the next use as Spec 2.13 already says;
+- removing the passkey it was opened with;
+- the host reset of its person.
+
+Each is checked at every use, so no end needs a write to every session.
+
+**Sign-in is name-first.** The person gives their name; the server answers with a
+challenge for that person's passkeys (`start_passkey_authentication`); the browser
+answers; the server verifies, updates the passkey's counter and opens the session.
+- Name-free, discoverable sign-in needs the library's preview feature (section 2) and gains
+  nothing for a handful of people. It can follow later without a schema change, since
+  every passkey enrolled is discoverable.
+- Name-first answers whether a name exists. For a handful of named people on one server,
+  that is accepted and stated rather than hidden.
+
+**Ceremony state.** A ceremony's challenge and state stay in the server's memory, keyed by
+a ceremony identity, for at most five minutes, and are used once. A restart drops the
+ceremonies in flight, and the person begins again. Nothing of a ceremony is stored.
+
+**Cross-site requests.** `SameSite=Strict` keeps the cookie off every request another
+site starts. Every request that changes state (every POST, htmx's included) must also
+carry an `Origin` header equal to the configured `origin`, or it is refused before its
+handler; the browser sets `Origin` on every POST. Both are owed by PR 4.
+
+**Section 2.8's claimed-name session retires.** Its claimed name and its configured role
+go. The session carries the authenticated person, and Spec 3.2's author member takes its
+value from the person.
+- The member holds **the person's identity** (`pe-`) and not their name, since a person can
+  be renamed and an author must not move with them; surfaces render the current name.
+- A row written before the act keeps the claimed name it carries, which reads as a claim
+  because it resolves to no person.
+
+This settles Spec 10's "What an author names".
+
+## 7. Recovering a lost passkey
+
+**Decided: several passkeys per person, plus the host reset, and nothing else.**
+- **A person enrolls more passkeys while signed in**, each after a fresh assertion with a
+  passkey they already hold, taken within the same ceremony. A stolen session cookie
+  therefore cannot add a passkey. A person may remove any of their passkeys but the last;
+  removing one ends every session opened with it.
+- **The host reset** is a host command. In one write, under the identity exclusion, it
+  clears the person's passkeys, closes their sessions and issues an enrollment token, and
+  the command prints the token once. The token goes to a row that by then holds no
+  passkey, so Spec 2.13's rule that no token is issued for a row with a credential stands
+  unchanged. It is audited as the host's.
+- **No admin reset.** It would let an admin take a person over, issuing a token to a
+  person and enrolling it themselves, and the threat model (section 5) promises against
+  that.
+
+## 8. The lone admin's grant
+
+Spec 2.13 has no person write a grant on themselves, so on a server with one admin, that
+admin can never hold `operator` on an agent.
+
+**Decided: a host command writes any grant.**
+- The host already writes the bootstrap admin grant, and it is not a person, so the
+  self-grant rule does not reach it. No surface ever writes a grant on its own author.
+- The alternative, an exception for the only enabled admin, would put a self-grant path in
+  a surface, where a second admin's later disappearance could reopen it.
+
+**The exact self-change rule** that Spec 2.13 left to this act: a person never writes a
+grant whose grantee is themselves, granting or removing, and never writes a role that
+they hold a grant of on any agent. Both are checked under the identity exclusion, as 2.13
+already requires.
+
+## 9. The audit record, the exclusion, and what is out
+
+**The audit table** is `audit`, one row per record:
+- its identity;
+- when;
+- **the principal**: the person, the server or the host;
+- **how the principal was authenticated**: a session, an enrollment token, or the host's
+  access;
+- the host's `--author` claim where the host acts;
+- the target's kind and identity;
+- the action;
+- for a second record, the first record it answers and the outcome; for a refusal, the
+  refusal.
+
+**It is append-only in the store**: a trigger refuses every `UPDATE` and `DELETE` on the
+table, so this crate's processes cannot rewrite it whatever path they take. The two-record
+rule is Spec 2.13's, unchanged: a first record before the act, and the outcome as a second
+record naming the first. **It never holds** a passkey, a public key, a challenge, a
+bearer, an enrollment token or its digest, or a turn's text. It lands in PR 2, since the
+host's writes are its first records.
+
+**The identity exclusion** is one transaction-level advisory lock under a class of its own,
+distinct from the ingest's two:
+- identity writes take it exclusively (`pg_advisory_xact_lock`);
+- authorized acts take it shared (`pg_advisory_xact_lock_shared`), from the check to the
+  commit point Spec 2.13 names.
+
+It is store-wide and coarse, as the brief asks. Identity writes are rare, and one lock
+closes every race between them.
+
+**Out of this act**:
+- passwords and TOTP;
+- external identity providers (OIDC);
+- several servers sharing identity;
+- per-person action lists;
+- attestation verification and authenticator allow-lists (attestation `none` is accepted);
+- self-registration (a person is enrolled only by token);
+- mail or any notification;
+- anything on an agent's box: its users, its sudo rules and its trace are WeaverAgent's.
+
+## 10. Spec 10's elections
+
+- **How people authenticate to this server** closes: passkeys only, per section 1.
+- **The role vocabulary** closes: `observer` and `operator` per agent, the seeded verb sets
+  of section 1, editable by the admin, and the server-wide `admin`. The converser the Spec
+  had proposed is not among them. A role carrying `turn` without lifecycle verbs remains a
+  role the admin may write, which needs no election.
+- **What an author names** closes, per section 6.
+
+## 11. The pull request plan
+
+Each later pull request gets its own brief after the one before it merges. **The order is
+the brief's, kept**, and each is one concern:
+
+1. **This one**: the design.
+2. **Persons, the bootstrap and enrollment tokens**: the migration (persons, passkeys,
+   tokens, sessions' new columns, the audit table and its trigger); the host commands, which
+   are bootstrap, issue a token, the host reset of section 7 and the host grant of
+   section 8; and their audit. No browser work. The host grant needs the grant table, so
+   PR 2 carries the role and grant tables with the seeded roles, and PR 5 adds the admin's
+   writes to them.
+3. **TLS on the browser's listener**, with section 3's start refusals that concern the
+   certificate.
+4. **Passkey enrollment and sign-in**: the ceremonies, the vendored module, the session
+   carrying the person, sign-out, the `Origin` check, the remaining start refusals of
+   section 3, and the `ldd` measurement of section 2. The claimed-name session retires
+   here.
+5. **Roles and grants**: the admin's writes, the identity exclusion, the last-admin and
+   self-change rules, their audit.
+6. **Server-side authorization**: every verb and turn checked against the person's grants
+   and the connection's ceiling before a frame leaves, the shared hold, and the audit of
+   every ask.
+
+**One change from the brief's plan**: the role and grant tables move into PR 2. The host
+grant of section 8 is a host command, and that pull request carries the host commands. PR
+5 keeps every write a person makes through a surface.

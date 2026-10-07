@@ -106,6 +106,13 @@ already says transport encryption on the browser's listener lands with the IAM a
 
 **What the server refuses at start**, before anything listens, where passkeys are on:
 - no `rp_id` or no `origin`;
+- **an `origin` that is not a serialized origin**: scheme, host and a port, and nothing
+  else. A value with userinfo, a path (a trailing `/` included), a query or a fragment is
+  refused, and so is a scheme or host not in lower case or a port written where it is the
+  scheme's default. The value must be exactly what a browser sends in its `Origin` header,
+  since the server compares that header with it as a string (section 6), and a trailing
+  slash or an explicit `:443` would make every request fail the comparison. Refusing
+  rather than stripping keeps the config and the comparison one fact;
 - an `rp_id` that is an IP address, or empty;
 - an `origin` that is not `https://`, unless its host is `localhost`, the one plain origin
   a browser treats as secure, which tests and a developer's machine use;
@@ -200,6 +207,40 @@ answers; the server verifies, updates the passkey's counter and opens the sessio
 - Name-first answers whether a name exists. For a handful of named people on one server,
   that is accepted and stated rather than hidden.
 
+**A person's name is unique, compared in one canonical form**, since name-first sign-in
+finds the person by it. The form is Unicode's compatibility caseless form (the Unicode
+Standard, section 3.13, D146: `NFKD(casefold(NFKD(casefold(NFD(name)))))`), taken after
+trimming leading and trailing white space. So `Ada`, `ada`, `Ada` in full-width
+letters, and an accent composed or decomposed are one name, which is how a person types
+theirs on any keyboard, and a second person cannot enroll a case or width variant of it. Uniqueness is
+checked at enrollment and at rename, under the identity exclusion, and a name whose form
+another person's already has is refused; the person's name is kept as given, trimmed, and
+sign-in looks the person up by the form. **Confusables across scripts** (a Cyrillic `a`
+for a Latin one) are not folded by this form; that would take a UTS #39 skeleton, and for
+a handful of people enrolled by an admin it is out of scope, named here. Which crate
+computes the form is PR 2's to measure.
+
+**The signature counter.** `webauthn-rs` 0.5.5 already refuses a counter that did not
+rise: its builder sets `require_valid_counter_value`, and where the returned counter or
+the stored one is nonzero, a returned counter not greater than the stored one fails the
+ceremony with `CredentialPossibleCompromise` (`webauthn-rs-core` 0.5.5, `core.rs`, the
+check after the signature). What the library leaves to this crate is the stored half:
+- **the counter is persisted after every sign-in that returned one**, in the transaction
+  that opens the session, by an update that only raises it (`WHERE` the stored counter is
+  below the returned one). Two concurrent sign-ins with one passkey both pass the
+  library's check against the value they loaded; the second update then affects no row,
+  and that sign-in is refused as the library would have refused it, so the comparison is
+  never against a stale value;
+- **a `CredentialPossibleCompromise` refusal is audited as a possible cloned credential**,
+  and no session opens;
+- **the passkey is not disabled automatically**: an attacker replaying a clone could then
+  lock its owner out at will. The person removes it, an admin disables the person, or the
+  host resets them;
+- **where both counters are zero**, as synced passkeys report, there is no counter to
+  compare, and the check does not apply. Most passkeys today are synced, so this guard
+  covers device-bound authenticators and not most people's passkeys; it is stated so
+  nobody reads more into it.
+
 **Ceremony state.** A ceremony's challenge and state stay in the server's memory, keyed by
 a ceremony identity, for at most five minutes, and are used once. A restart drops the
 ceremonies in flight, and the person begins again. Nothing of a ceremony is stored.
@@ -237,6 +278,12 @@ This settles Spec 10's "What an author names".
 ## 7. Recovering a lost passkey
 
 **Decided: several passkeys per person, plus the host reset, and nothing else.**
+- **A credential ID belongs to one passkey of one person.** The passkey table holds a
+  unique constraint on the credential ID across every person, and a registration whose ID
+  is already held, by anyone, the registering person included, is refused by that
+  constraint at its insert, atomically, as `finish_passkey_registration`'s contract asks
+  ("You MUST assert that the registered `CredentialID` has not previously been registered
+  to any other account").
 - **A person enrolls more passkeys while signed in**, each after a fresh assertion with a
   passkey they already hold, taken within the same ceremony. A stolen session cookie
   therefore cannot add a passkey. A person may remove any of their passkeys but the last;
@@ -295,6 +342,12 @@ its load state, and its live trace window.
   seconds (section 6).
 
 ## 10. The audit record, the exclusion, and what is out
+
+**The passkey table** holds, per passkey: the person, the credential ID (unique across the
+table, section 7), the library's serialized passkey (the public key, its algorithm and the
+stored counter), a label the person gives, and when it was added and last used. Nothing in
+it is secret; it is authentication material under Spec 2.13 all the same, written only by
+its own person or by the host reset.
 
 **The audit table** is `audit`, one row per record:
 - its identity;

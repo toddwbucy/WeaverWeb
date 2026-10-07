@@ -105,8 +105,7 @@ already says transport encryption on the browser's listener lands with the IAM a
   repository.
 
 **What the server refuses at start**, before anything listens, where passkeys are on:
-**every fault checkable from the config and the server's own files alone**, which are
-these:
+**the faults listed here, and nothing beyond them.** The list is the promise:
 - no `rp_id` or no `origin`;
 - **an `origin` that is not a serialized origin**: scheme, host and a port, and nothing
   else. A value with userinfo, a path (a trailing `/` included), a query or a fragment is
@@ -133,12 +132,16 @@ these:
 
 Each refusal names the key and what is wrong, as the authority's absence does today.
 
-**What is not detected at start** is a relying party wrong in a way only a browser or
-external data can tell. The example is a public suffix as the relying-party ID: the Public
-Suffix List is external data that changes, and checking it would make the start depend on
-it. Such a fault shows at the first ceremony, as the browser's `SecurityError`, which the
-sign-in page reports and the server logs. The promise is bounded to what the config and
-the server's own files can show, and a browser rule beyond them is the browser's.
+**Any other fault of the configuration is not refused at start.** Two examples:
+- a public suffix as the relying-party ID, which only the Public Suffix List can tell, an
+  external list that changes;
+- a certificate unfit for server authentication: its extended key usage, its key usage,
+  its key's strength or its chain.
+
+Each shows at the first connection or ceremony as the browser's failure, a refused TLS
+handshake or the ceremony's `SecurityError`, which the server logs and the sign-in page
+reports where it can. A list that grew by one browser rule per review would never be
+complete, so the browser's rules beyond it stay the browser's to apply.
 
 ## 4. The browser half
 
@@ -258,7 +261,8 @@ check after the signature). What the library leaves to this crate is the stored 
   and that sign-in is refused as the library would have refused it, so the comparison is
   never against a stale value;
 - **a `CredentialPossibleCompromise` refusal is audited as a possible cloned credential**,
-  and no session opens;
+  its principal the passkey's person and its method `passkey assertion`, since the
+  signature verified and only the counter failed; no session opens;
 - **the passkey is not disabled automatically**: an attacker replaying a clone could then
   lock its owner out at will. The person removes it, an admin disables the person, or the
   host resets them;
@@ -379,10 +383,17 @@ its own person or by the host reset.
 - its identity;
 - when;
 - **the principal**: the person, the server or the host;
-- **how the principal was authenticated**: `session` or `enrollment token` for a person,
+- **how the principal was authenticated**: `session`, `enrollment token` or `passkey
+  assertion` for a person,
   `server` for the server acting on its own behalf (the admission's `show`), and `host`
   for access to the server's host. Each value belongs to exactly one principal, so a
-  record's principal and its method can never disagree;
+  record's principal and its method can never disagree. **`passkey assertion` marks the
+  records of a sign-in whose signature verified**: the successful one, audited as the
+  session's opening, since a person's authority begins there and the record names the
+  passkey it began with; and the one the counter refused (section 6), whose principal is
+  the passkey's person because the signature proved them. **A sign-in whose signature
+  failed is not audited**: it proves no principal, and auditing it would let anyone fill
+  the audit with requests;
 - the host's `--author` claim where the host acts;
 - the target's kind and identity;
 - the action;

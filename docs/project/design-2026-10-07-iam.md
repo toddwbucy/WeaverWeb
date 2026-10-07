@@ -105,6 +105,8 @@ already says transport encryption on the browser's listener lands with the IAM a
   repository.
 
 **What the server refuses at start**, before anything listens, where passkeys are on:
+**every fault checkable from the config and the server's own files alone**, which are
+these:
 - no `rp_id` or no `origin`;
 - **an `origin` that is not a serialized origin**: scheme, host and a port, and nothing
   else. A value with userinfo, a path (a trailing `/` included), a query or a fragment is
@@ -118,9 +120,21 @@ already says transport encryption on the browser's listener lands with the IAM a
   a browser treats as secure, which tests and a developer's machine use;
 - an `origin` whose host is neither the `rp_id` nor a subdomain of it;
 - an `https` origin on a listener with no certificate and key configured;
-- a certificate and key that do not load or do not pair.
+- a certificate and key that do not load or do not pair;
+- **a certificate not valid for the origin's host**, verified as rustls verifies a server
+  name, by webpki's name check against the certificate's subject alternative names, so a
+  browser reaching the origin would not refuse the name. **Its expiry is not checked at
+  start**: validity in time changes while the server runs, and an expired certificate is
+  the browser's to refuse.
 
 Each refusal names the key and what is wrong, as the authority's absence does today.
+
+**What is not detected at start** is a relying party wrong in a way only a browser or
+external data can tell. The example is a public suffix as the relying-party ID: the Public
+Suffix List is external data that changes, and checking it would make the start depend on
+it. Such a fault shows at the first ceremony, as the browser's `SecurityError`, which the
+sign-in page reports and the server logs. The promise is bounded to what the config and
+the server's own files can show, and a browser rule beyond them is the browser's.
 
 ## 4. The browser half
 
@@ -182,7 +196,12 @@ it. Its attributes are `Secure`, `HttpOnly`, `SameSite=Strict` and `Path=/`. The
 random, 32 bytes, and stored only as its digest (Spec 2.8's rule, unchanged).
 
 **Its row** carries the person and the passkey it was opened with, beside the digest, when
-it opened, when it was last used and when it closed.
+it opened, when it was last used and when it closed. **The last-used time is written at
+most once a minute per session**: an ordinary request refreshes it when the stored time is
+a minute old or more, and an open live view refreshes it at its 15-second re-check under
+the same rule. The writes stay bounded whatever a page polls, and the idle check reads the
+stored time, so idle expiry is accurate to a minute, which a one-hour idle limit needs no
+finer than.
 
 **Lifetime.** It expires after one hour idle and twelve hours absolute, both in the
 server's config with those defaults. An open live view (SSE) counts as use while it
@@ -202,8 +221,11 @@ Each is checked at every use, so no end needs a write to every session.
 challenge for that person's passkeys (`start_passkey_authentication`); the browser
 answers; the server verifies, updates the passkey's counter and opens the session.
 - Name-free, discoverable sign-in needs the library's preview feature (section 2) and gains
-  nothing for a handful of people. It can follow later without a schema change, since
-  every passkey enrolled is discoverable.
+  nothing for a handful of people. **Not every passkey enrolled is discoverable**: the
+  stable registration asks the authenticator for residence and does not require it, so a
+  later name-free sign-in would serve only the passkeys their authenticators made
+  discoverable, and the others would need enrolling again then. Name-first needs none of
+  it, so nothing is required now.
 - Name-first answers whether a name exists. For a handful of named people on one server,
   that is accepted and stated rather than hidden.
 

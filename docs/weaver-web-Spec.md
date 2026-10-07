@@ -882,7 +882,9 @@ section 6) on 2026-10-07:
 
 - **the row carries the person and the passkey it was opened with**, beside
   the bearer's digest, its opening, its last use and its close, and **the
-  claimed name and the configured role retire**
+  claimed name and the configured role retire**; its last use is written at
+  most once a minute, per section 3's writer model, so idle expiry is
+  accurate to a minute
 - **the cookie is `__Host-weaver_session`**, `Secure`, `HttpOnly`,
   `SameSite=Strict` and `Path=/` with no `Domain`, the prefix making a
   browser refuse it otherwise; the bearer is random and stored as its digest
@@ -1328,11 +1330,16 @@ it decides are stated here and in section 2.8, and the reasons are there.
   relying party's identity and origin coming from the server's config and
   never from the repository. **The browser's listener serves TLS before any
   passkey is enrolled**, WebAuthn running only in a secure context and a
-  relying party's identity being a domain and never an address, and the
-  server refuses to start where passkeys are on and the relying party is
-  missing, an address, inconsistent with the origin, or served without the
-  certificate and key the origin needs; the design's section 3 lists the
-  refusals. The ceremonies are the library the design's section 2 measured,
+  relying party's identity being a domain and never an address, and **the
+  server refuses to start, where passkeys are on, on every fault it can
+  check from its config and its own files alone**: the relying party
+  missing or an address, an origin that is not a serialized origin or not
+  under the relying party, a certificate and key that are missing, do not
+  load or do not pair, or a certificate not valid for the origin's host; the
+  design's section 3 lists them. A fault only a browser or external data
+  can tell, a public suffix as the relying party's identity among them, is
+  not detected at start: the first ceremony fails with the browser's
+  `SecurityError`, which the sign-in page reports and the server logs. The ceremonies are the library the design's section 2 measured,
   carried by the server binary alone, and the browser's half is one vendored
   module doing the two ceremonies and nothing else. **A person's name is
   unique among persons in one canonical form**, Unicode's compatibility
@@ -1598,8 +1605,12 @@ instrument recorded. Section 3.2's authoring path lands what the engineer author
 **The read path writes too**, one row and only one: section 4 admits an open query on
 the condition that the query is recorded, so the read that serves it writes section
 2.6's row and nothing else. That is why 2.6 belongs to neither half. **And the surface
-writes one row of its own**, section 2.8's session, at the open and at the close and
-never in between, which is the fourth and is why that table belongs to neither half
+writes one row of its own**, section 2.8's session, at the open and at the close and,
+once act 11's session stands, **its last-used time at most once a minute per session**:
+an ordinary request refreshes it when the stored time is a minute old or more, and an
+open live view at its 15-second re-check under the same rule. The writes stay bounded
+whatever a page polls, and idle expiry needs no finer grain than a minute against an
+hour's idle limit. That is the fourth writer, and why that table belongs to neither half
 either. **The fifth is queueing**, which writes section 2.11's batch and its entries and
 touches nothing else: section 5.1 has registering and queueing as two acts, and the
 second of them is the one that records an order, so it is a writer rather than a state
@@ -3657,7 +3668,7 @@ missing while it was relaying.
 | a person, role or grant written by a principal not permitted to write it is refused | perturbation, **owed**: drop the check, and a person granted only `show` writes themselves the operator role and passes the first gate; let a person write a grant on themselves, and an admin widens their own grants or the last admin removes the only admin grant; let an admin holding the observer role on an agent add `stop` to that role, and their own grant widens without a grant written; let a surface write as the host principal, and a grant lands with no admin behind it; drop the exclusion, have two admins remove each other at once, and no admin remains; disable the sole admin, or have two admins disable each other at once, and no enabled admin remains; grant a role to its editor while the edit is in flight, and the editor widens a role they hold; let a person write another person's authentication material, and they can sign in as them; reuse a consumed enrollment token, or use one past its expiry, and a second credential lands on someone else's row; disable a person holding an unredeemed token, redeem it, and a credential lands on a disabled row; issue or redeem a token for a person who already has a credential, and an admin replaces that person's credential. Lands with the IAM act |
 | every verb or turn asked and every person, role or grant written has an audit record naming its principal, and its outcome is a second record naming the first | perturbation, **owed**: write the first record after the ask instead of before, fail the store between the two, and an ask leaves with no record; update the first record with the outcome instead of appending a second, and an ask whose answer is lost reads as never answered with no trace of the rewrite; drop the refusal's record, and a refused verb leaves no trace; write a grant with the audit write dropped, and the grant lands with no record; enroll a person or add a passkey with the audit write dropped, and the write lands with no record; record the material in an authentication write's record, and a read of the audit table is a set of credentials. Lands with the IAM act |
 | a person authenticates by passkey and by nothing else | perturbation, **owed**: open a session on a posted name with no assertion, and a session opens with no proof; verify an assertion against another person's passkey, and one person signs in as another; accept a ceremony's challenge twice, and a captured assertion opens a second session. Lands with act 11's passkey pull request |
-| the server refuses to start on a relying party a browser cannot use | perturbation, **owed**: drop each start refusal of `docs/project/design-2026-10-07-iam.md` section 3 in turn, start with that fault, and the server listens with passkeys no browser will use, or serves a plain origin other than `localhost`; drop the serialized-origin refusal, configure the origin with a trailing slash or an explicit default port, and every state-changing request fails the `Origin` comparison. Lands with act 11's TLS and passkey pull requests |
+| the server refuses to start on every relying-party fault it can check from its config and its own files | perturbation, **owed**: drop each start refusal of `docs/project/design-2026-10-07-iam.md` section 3 in turn, start with that fault, and the server listens with passkeys no browser will use, or serves a plain origin other than `localhost`; drop the serialized-origin refusal, configure the origin with a trailing slash or an explicit default port, and every state-changing request fails the `Origin` comparison; drop the certificate's name check, configure a certificate for another host, and every browser refuses the listener. A fault only a browser or external data can tell, a public suffix as the relying party, is not this row's: the first ceremony's `SecurityError` shows it. Lands with act 11's TLS and passkey pull requests |
 | a person's name is unique in its canonical form | perturbation, **owed**: compare names as given, and a second person enrolls `ada` beside `Ada`, so name-first sign-in finds two; drop the check at rename, and a rename lands a name another person's form already holds. Lands with act 11's persons pull request |
 | a credential ID belongs to one passkey of one person | perturbation, **owed**: drop the unique constraint, and a registration returning a credential ID another person holds lands a second passkey row for it, so one credential signs in as either person. Lands with act 11's passkey pull request |
 | a signature counter that did not rise refuses the sign-in, and the counter is persisted raised | perturbation, **owed**: take the library's `CredentialPossibleCompromise` as a success, roll a device-bound passkey's counter back, and a session opens; drop the persisting of the counter, and a clone replaying an old counter passes against the first value ever stored; drop the raise-only condition, and of two concurrent sign-ins the second writes the counter back down. Lands with act 11's passkey pull request |
@@ -3677,11 +3688,19 @@ missing while it was relaying.
 **A watch that cannot fail is not a test.** For each perturbation above, the
 act that lands it states what removal makes it fail and confirms it does.
 
-**A row marked owed has no instrument and is not counted as enforced.** Four
-stand so marked as of 2026-10-05. The batch's order is owed because section
-2.11 describes its table and no migration builds it. Three rows of the role
-shape ruled on 2026-10-02 are owed to the IAM act: the principal check, the
-writer's check for persons, roles and grants, and the audit record. The
+**A row marked owed has no instrument and is not counted as enforced.**
+Eighteen stand so marked as of 2026-10-07. The batch's order is owed because
+section 2.11 describes its table and no migration builds it. Three rows of
+the role shape ruled on 2026-10-02 are owed to the IAM act: the principal
+check, the writer's check for persons, roles and grants, and the audit
+record. **Fourteen are owed to act 11's code pull requests**, from its design
+of 2026-10-07: passkey-only sign-in, the start refusals, the unique name, the
+credential ID, the signature counter, the session, the fresh assertion and
+the last passkey, the enrollment token, the append-only audit table, the
+admin's lack of agent actions, read access, the live view's bound, the
+ceremony cap, and the WebAuthn library's place in the server binary alone.
+The row that a session carries a claimed name is not owed but retires with
+act 11's passkey pull request. The
 act that built the relay client on 2026-10-05 re-showed the replay row
 against the relay, its three clauses for the door's opening among them,
 and the bounds under its measures, each shown to fail with its guard

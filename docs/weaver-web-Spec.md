@@ -1633,7 +1633,10 @@ record itself, so section 5's gate is held upstream (`toddwbucy/WeaverAnalysis#1
   and holds them to its end, so a second ingest of a run waits, then meets a finished
   row and takes the replay's one comparison. The locks are PostgreSQL advisory locks
   held by a session of their own, since a run's writes are several transactions and a
-  transaction's lock would end at the first commit; each run's identity hashes into one
+  transaction's lock would end at the first commit, **and that session is outside the
+  store's work pool**, so an ingest waiting on a lock holds none of the connections the
+  lock's owner writes with; the waiters' only bound is the connections the database
+  server admits, which the box sets; each run's identity hashes into one
   of 1024 buckets, taken in ascending order, so two ingests over overlapping runs never
   deadlock and one ingest holds a bounded number of locks.
 - Writes are **bulk per generation**, never per token: one transaction lands a

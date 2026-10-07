@@ -30,8 +30,8 @@
 
 use std::collections::{HashMap, HashSet};
 
-use sqlx::pool::PoolConnection;
-use sqlx::{PgPool, Postgres, Row, Transaction};
+use sqlx::postgres::PgConnectOptions;
+use sqlx::{Connection, PgConnection, Postgres, Row, Transaction};
 
 use super::Store;
 use super::emission::{Emission, RunPlan, Unreadable};
@@ -239,6 +239,15 @@ const LOCK_BUCKETS: i32 = 1024;
 /// which ends the session and so releases every lock on every path out of
 /// the ingest, an error or a test's stop included.
 ///
+/// **The session is outside the store's pool**, opened from the options
+/// the store was connected with. The pool is the ingest's work capacity,
+/// and a session taken from it would be held by every ingest waiting on a
+/// lock: as many waiters as the pool holds connections, and the lock's
+/// owner could never get one to write with. Outside it, a waiter holds no
+/// work capacity. **The only bound on waiters is then the box's own**, the
+/// connections the database server admits, which the box owns and this
+/// crate does not set.
+///
 /// **Keying.** Each run's identity is hashed by the store's own `hashtext`
 /// into one of `LOCK_BUCKETS` buckets, under `LOCK_CLASS`; two runs sharing a
 /// bucket serialize when they need not, which costs time and never
@@ -248,25 +257,24 @@ const LOCK_BUCKETS: i32 = 1024;
 /// writing anything, so two ingests over overlapping runs never deadlock:
 /// the later waits for the earlier whole.
 struct RunLocks {
-    _held: PoolConnection<Postgres>,
+    _held: PgConnection,
 }
 
 impl RunLocks {
-    async fn take(pool: &PgPool, runs: &[&str]) -> Result<Self, sqlx::Error> {
-        let mut held = pool.acquire().await?;
-        held.close_on_drop();
+    async fn take(connect: &PgConnectOptions, runs: &[&str]) -> Result<Self, sqlx::Error> {
+        let mut held = PgConnection::connect_with(connect).await?;
         let buckets: Vec<i32> = sqlx::query_scalar(
             "SELECT DISTINCT hashtext(r) & $2 FROM unnest($1::text[]) AS r ORDER BY 1",
         )
         .bind(runs)
         .bind(LOCK_BUCKETS - 1)
-        .fetch_all(&mut *held)
+        .fetch_all(&mut held)
         .await?;
         for bucket in buckets {
             sqlx::query("SELECT pg_advisory_lock($1, $2)")
                 .bind(LOCK_CLASS)
                 .bind(bucket)
-                .execute(&mut *held)
+                .execute(&mut held)
                 .await?;
         }
         Ok(Self { _held: held })
@@ -337,7 +345,7 @@ impl Store {
                 }
             }
         }
-        let _locks = RunLocks::take(&self.pool, &touched)
+        let _locks = RunLocks::take(&self.connect, &touched)
             .await
             .map_err(store_error)?;
         #[cfg(test)]

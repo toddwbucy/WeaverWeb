@@ -35,11 +35,15 @@ pub use plan::{Disposition, Entry, Plan, Registration};
 pub use read::{Alternatives, Chip, Cursor, PositionPoint, RunPage, RunTuple};
 
 use sqlx::PgPool;
-use sqlx::postgres::PgPoolOptions;
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 
 #[derive(Clone)]
 pub struct Store {
     pub pool: PgPool,
+    /// What the store was connected with, kept so a session outside the
+    /// pool can be opened: the ingest's run locks hold one, so an ingest
+    /// waiting on them holds none of the pool's work capacity.
+    pub(crate) connect: PgConnectOptions,
 }
 
 impl Store {
@@ -49,12 +53,13 @@ impl Store {
     /// running against a schema it was not written for, per the ruling at
     /// PR #499 that the schema is replaced rather than migrated.
     pub async fn connect(database_url: &str) -> anyhow::Result<Self> {
+        let connect: PgConnectOptions = database_url.parse()?;
         let pool = PgPoolOptions::new()
             .max_connections(8)
-            .connect(database_url)
+            .connect_with(connect.clone())
             .await?;
         sqlx::migrate!("./migrations").run(&pool).await?;
 
-        Ok(Self { pool })
+        Ok(Self { pool, connect })
     }
 }

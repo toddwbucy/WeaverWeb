@@ -1602,3 +1602,36 @@ async fn a_cycle_closed_by_ingests_sharing_no_lock_is_refused_at_resolution() {
     assert_eq!(row.status, "refused", "A is not closed whole on the cycle");
     assert!(row.reason.unwrap().contains("reference cycle"));
 }
+
+/// **A waiter holds no work capacity** (Codex pass ten on PR #23): more
+/// concurrent ingests of one run than the store's pool holds connections,
+/// all on one store, each waiting on the run's lock in turn, and every one
+/// answers within the sweep's bound. With the lock's session taken from the
+/// pool, the waiters would hold every connection and the lock's owner could
+/// never get one to write with.
+#[tokio::test]
+async fn more_ingests_of_a_run_than_the_pool_holds_all_answer() {
+    let Some(s) = store().await else { return };
+    let w = Wire::of(CERTIFIED).tagged(&tag("many-waiters"));
+    let waiters = s.pool.options().get_max_connections() as usize + 1;
+    let ingests: Vec<_> = (0..waiters)
+        .map(|_| spawn_ingest(&s, &w, Options::default()))
+        .collect();
+    let answers = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+        let mut answers = Vec::new();
+        for ingest in ingests {
+            answers.push(ingest.await.unwrap());
+        }
+        answers
+    })
+    .await
+    .expect("every ingest answers; none waits forever on the pool");
+    for answer in &answers {
+        assert_eq!(answer["runs"][0]["status"], json!("whole"), "{answer}");
+    }
+    let created = answers
+        .iter()
+        .filter(|a| a["runs"][0]["replayed"] == json!(false))
+        .count();
+    assert_eq!(created, 1, "one wrote the run, the rest replayed it");
+}

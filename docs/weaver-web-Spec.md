@@ -1361,13 +1361,18 @@ it decides are stated here and in section 2.8, and the reasons are there.
   returned one not greater than the stored one authorizes nothing, opening
   no session and adding no passkey, and is audited as a possible cloned
   credential, the passkey staying enrolled so a clone cannot lock its owner
-  out; the counter is persisted after every assertion, **in a transaction of
-  its own that commits before the authorized action's begins**, by an update
-  that only raises it, an update that moves no row refusing the assertion,
-  and an action that then fails leaving the counter raised, since the
-  authenticator did advance; and
-  where both are zero, as synced passkeys report, there is nothing to
-  compare. **A person may hold
+  out. **The library's whole updated credential is persisted after every
+  assertion**, the counter and the backup state and eligibility alike, **in a
+  transaction of its own that commits before the authorized action's
+  begins**, an action that then fails leaving it updated, since the
+  authenticator did advance. Where the returned counter is nonzero, the
+  update only raises it, and one that moves no row refuses the assertion, so
+  two concurrent assertions are never compared against a stale value. Where
+  it is zero, as synced passkeys report, the stored one is zero too (the
+  library refuses a zero against a nonzero), and the update is not
+  conditional on the counter: there is no counter to race, two concurrent
+  assertions of such a passkey both succeed, and the library's check is all
+  the clone detection it has. **A person may hold
   several passkeys**: adding one takes a fresh assertion with a passkey the
   person already holds, so a session alone never adds one. **The assertion
   and the registration are two ceremonies, bound by a one-time add grant**:
@@ -1386,7 +1391,8 @@ it decides are stated here and in section 2.8, and the reasons are there.
   Every one of those writes is audited as a verb is. **A person's first
   credential comes by a one-time enrollment token**, neutral to the
   mechanism: an admin, or the host principal for the bootstrap, issues a
-  single-use, expiring token bound to one person row, **and only for a
+  single-use, expiring token bound to one person row, **living 24 hours by
+  default, configurable and never more than seven days**, **and only for a
   person row with no authentication material**: redemption refuses if
   material has appeared on the row since, so a token can never replace a
   credential, which would let an admin take a person over. **Every bearer the
@@ -1643,7 +1649,9 @@ the condition that the query is recorded, so the read that serves it writes sect
 writes one row of its own**, section 2.8's session, at the open and at the close and,
 once act 11's session stands, **its last-used time at most once a minute per session**:
 an ordinary request refreshes it when the stored time is a minute old or more, and an
-open live view at its 15-second re-check under the same rule. The writes stay bounded
+open live view at its 15-second re-check under the same rule, each by one conditional
+update on the database's clock (`last_used = now()` where it is a minute old or more), so
+concurrent requests refresh it once and it never moves backwards. The writes stay bounded
 whatever a page polls, and idle expiry needs no finer grain than a minute against an
 hour's idle limit. That is the fourth writer, and why that table belongs to neither half
 either. **The fifth is queueing**, which writes section 2.11's batch and its entries and
@@ -3706,10 +3714,10 @@ missing while it was relaying.
 | the server refuses to start on the relying-party faults the design lists, and promises nothing beyond them | perturbation, **owed**: drop each start refusal of `docs/project/design-2026-10-07-iam.md` section 3 in turn, start with that fault, and the server listens with passkeys no browser will use, or serves a plain origin other than `localhost`; drop the serialized-origin refusal, configure the origin with a trailing slash or an explicit default port, and every state-changing request fails the `Origin` comparison; drop the certificate's name check, configure a certificate for another host, and every browser refuses the listener; drop the validity check, configure an expired certificate, and the server listens on one every browser refuses; let a scheme other than `https` through, or `http` off `localhost`, and the server listens on an origin where no ceremony can run. A fault the list does not name, a public suffix or a certificate unfit for server authentication among them, is not this row's: the browser's failure at the first connection or ceremony shows it. Lands with act 11's TLS and passkey pull requests |
 | a person's name is unique in its canonical form | perturbation, **owed**: compare names as given, and a second person enrolls `ada` beside `Ada`, so name-first sign-in finds two; drop the check at rename, and a rename lands a name another person's form already holds. Lands with act 11's persons pull request |
 | a credential ID belongs to one passkey of one person | perturbation, **owed**: drop the unique constraint, and a registration returning a credential ID another person holds lands a second passkey row for it, so one credential signs in as either person. Lands with act 11's passkey pull request |
-| a signature counter that did not rise refuses the assertion, any assertion, and the counter is persisted raised | perturbation, **owed**: take the library's `CredentialPossibleCompromise` as a success, roll a device-bound passkey's counter back, and a session opens, and the same at the fresh assertion before adding a passkey, and a passkey is added on a cloned credential's word; drop the persisting of the counter, and a clone replaying an old counter passes against the first value ever stored; drop the raise-only condition, and of two concurrent assertions, a sign-in's or an addition's, the second writes the counter back down; persist the counter at sign-in alone, and the addition's assertion leaves it stale; put the update back in the action's transaction, fail the addition, and the counter rolls back with it, stale; audit a sign-in whose signature failed, and a stream of bad assertions fills the audit. Lands with act 11's passkey pull request |
+| a signature counter that did not rise refuses the assertion, any assertion, and the counter is persisted raised | perturbation, **owed**: take the library's `CredentialPossibleCompromise` as a success, roll a device-bound passkey's counter back, and a session opens, and the same at the fresh assertion before adding a passkey, and a passkey is added on a cloned credential's word; drop the persisting of the counter, and a clone replaying an old counter passes against the first value ever stored; drop the raise-only condition, and of two concurrent assertions, a sign-in's or an addition's, the second writes the counter back down; persist the counter at sign-in alone, and the addition's assertion leaves it stale; put the update back in the action's transaction, fail the addition, and the counter rolls back with it, stale; audit a sign-in whose signature failed, and a stream of bad assertions fills the audit; make the update conditional on the counter where it is zero, and a synced passkey cannot sign in; persist the counter alone, and a passkey's backup state goes stale. Lands with act 11's passkey pull request |
 | a session carries an authenticated person, ends where its person or its passkey does, and its cookie is neither readable by script nor carried by another site | perturbation, **owed**: drop `HttpOnly`, `Secure`, `SameSite=Strict` or the `__Host-` prefix, and the cookie's test finds the attribute gone; drop the `Origin` check, and a POST from another origin changes state; drop the idle or the absolute expiry, and a session past it still authorizes; drop the check of the passkey a session was opened with, remove that passkey, and the session still authorizes. Lands with act 11's passkey pull request |
 | a passkey is added only after a fresh assertion, and a person's last is never removed | perturbation, **owed**: add a passkey on a session alone, and a stolen cookie gains access that outlasts it; let a registration use an add grant another session earned, and a parallel session adds a passkey on someone else's assertion; leave the grant unconsumed at the registration's start, and one assertion adds two passkeys; let a person remove their last passkey, and they are locked out with only the host to recover them. Lands with act 11's passkey pull request |
-| an enrollment token is single-use, expiring, bound to one person holding no passkey, and stored as a digest | perturbation, **owed**: redeem a token twice, past its expiry, or on a row that holds a passkey, and each lands a credential; store the token in the clear, and a read of the person table is a set of usable tokens; have the host reset issue its token before clearing the passkeys, and a token is issued for a row that holds one. Lands with act 11's persons pull request |
+| an enrollment token is single-use, expiring, bound to one person holding no passkey, and stored as a digest | perturbation, **owed**: redeem a token twice, past its lifetime, or on a row that holds a passkey, and each lands a credential; configure a lifetime past seven days, and it is taken; store the token in the clear, and a read of the person table is a set of usable tokens; have the host reset issue its token before clearing the passkeys, and a token is issued for a row that holds one. Lands with act 11's persons pull request |
 | every bearer the server issues is 32 bytes of the operating system's cryptographic randomness | perturbation, **owed**: draw an enrollment token from a counter, and the next token is guessed from the last; draw a session bearer or a ceremony identity from the time, and the same. Lands with act 11's persons and passkey pull requests |
 | no statement this crate issues can rewrite, remove or truncate an audit record | perturbation, **owed**: drop the row trigger, and an update rewrites a record or a delete removes one; drop the truncate trigger, and a truncate empties the audit. The triggers guard this crate's code paths, not a process dropping them with the owner's rights, which section 2.13 puts outside the threat model. Lands with act 11's persons pull request |
 | the admin role grants no action on any agent | perturbation, **owed**: let the server-wide admin grant authorize a verb, and an admin holding no grant on an agent asks `stop` of it. Lands with act 11's authorization pull request |

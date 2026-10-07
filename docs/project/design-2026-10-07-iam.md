@@ -214,7 +214,9 @@ as a direct dependency, or reading it through `rand`'s `OsRng`, is PR 2's to mea
 it opened, when it was last used and when it closed. **The last-used time is written at
 most once a minute per session**: an ordinary request refreshes it when the stored time is
 a minute old or more, and an open live view refreshes it at its 15-second re-check under
-the same rule. The writes stay bounded whatever a page polls, and the idle check reads the
+the same rule. **The refresh is one conditional update on the database's clock**,
+`last_used = now()` where `last_used <= now() - interval '1 minute'`, so concurrent
+requests refresh it once and it never moves backwards. The writes stay bounded whatever a page polls, and the idle check reads the
 stored time, so idle expiry is accurate to a minute, which a one-hour idle limit needs no
 finer than.
 
@@ -267,15 +269,27 @@ check after the signature). What the library leaves to this crate is the stored 
 **it holds for every assertion the server verifies**, whatever ceremony asked for it: the
 sign-in, the fresh assertion that authorizes adding a passkey (section 7), and any
 assertion a later pull request adds, none of which needs a sentence of its own:
-- **the counter is persisted after every assertion that returned one, in a transaction of
-  its own that commits before the authorized action's transaction begins** (a session's
-  opening, a passkey's addition), by an update that only raises it (`WHERE` the stored
-  counter is below the returned one). Two concurrent assertions with one passkey both
-  pass the library's check against the value they loaded; the second update then moves
-  no row, and that assertion is refused as the library would have refused it, so the
-  comparison is never against a stale value. **An action that then fails leaves the
-  counter raised**, which is right: the authenticator did advance, and a counter rolled
-  back with a failed action would let the same assertion's counter be replayed;
+- **the library's whole updated credential is persisted after every assertion**, not the
+  counter alone: `Passkey::update_credential` applied to the assertion's result (the
+  counter, the backup state and the backup eligibility) is written, the counter also in a
+  column of its own beside the serialized passkey so the update can be conditioned on it,
+  **in a transaction of its own that commits before the authorized action's transaction
+  begins** (a session's opening, a passkey's addition). So the stored passkey never goes
+  stale. The condition depends on the counter the assertion returned:
+  - **a nonzero returned counter**: the update only raises it (`WHERE` the stored counter
+    is below the returned one). Two concurrent assertions with one passkey both pass the
+    library's check against the value they loaded; the second update then moves no row,
+    and that assertion is refused as the library would have refused it, so the comparison
+    is never against a stale value;
+  - **a zero returned counter**: the library has already refused it where the stored
+    counter is nonzero, so the stored one is zero too, and **the update is not
+    conditional on the counter**: there is no counter to race. Two concurrent assertions
+    of a zero-counter passkey both succeed, since without a counter nothing distinguishes
+    them, and the library's check is all the clone detection such a passkey has. A
+    raise-only condition here would move no row and refuse every synced passkey's sign-in;
+  - **an action that then fails leaves the credential as updated**, which is right: the
+    authenticator did advance, and a counter rolled back with a failed action would let
+    the same assertion's counter be replayed;
 - **a `CredentialPossibleCompromise` refusal is audited as a possible cloned credential**,
   its principal the passkey's person and its method `passkey assertion`, since the
   signature verified and only the counter failed; what the assertion would have
@@ -339,8 +353,8 @@ This settles Spec 10's "What an author names".
   **Adding is two ceremonies, bound by a one-time add grant**:
   - first an authentication ceremony (`navigator.credentials.get`) with a passkey the
     person holds. Its assertion falls under section 6's counter rule like every assertion,
-    its counter raised in a transaction of its own, and a counter refusal is audited as at
-    sign-in and grants nothing;
+    its updated credential persisted in a transaction of its own, and a counter refusal is
+    audited as at sign-in and grants nothing;
   - the verified assertion yields **a one-time add grant**, held in the server's ceremony
     table, **bound to that session and that person**, expiring within the ceremony window
     of five minutes and counting toward the cap of 64;
@@ -352,6 +366,11 @@ This settles Spec 10's "What an author names".
     among the causes, and the person begins again with a fresh assertion. A person may
   remove any of their passkeys but the last; removing one ends every session opened with
   it, at that session's next use.
+- **An enrollment token lives 24 hours by default**, configurable and never more than seven
+  days. A day is long enough to hand a printed token to a person, and short enough that a
+  lost one dies before it is found; the cap bounds a configuration mistake, since a
+  token is a bearer that authenticates its person once. Whoever issues it, an admin or the
+  host, gets the same lifetime rule.
 - **The host reset** is a host command. In one write, under the identity exclusion, it
   clears the person's passkeys and issues an enrollment token, and the command prints the
   token once. **It writes no session**: the session table is the surface's alone (Spec

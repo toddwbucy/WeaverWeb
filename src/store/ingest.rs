@@ -73,6 +73,9 @@ pub enum HoldAt {
     AfterLocks,
     /// After the cycle scan, before the branches resolve.
     BeforeResolve,
+    /// After the references are read and the cycles found, before the
+    /// cycles' refusals.
+    BeforeCycles,
 }
 
 #[cfg(test)]
@@ -110,6 +113,10 @@ pub struct RunOutcome {
     pub replayed: bool,
     /// The status the store holds after this ingest, where it differs from
     /// `status`: a replay refused in the answer alone leaves it as it was.
+    /// **For a row this ingest did not create and refused on a cycle, it is
+    /// the status read inside the refusal's own transaction**, which that
+    /// row's own writer may move afterwards: a row owned elsewhere has no
+    /// other truth this ingest can give.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stored: Option<String>,
     /// The positions and generations the store holds for the run as this
@@ -460,6 +467,15 @@ impl Store {
         // references reachable from the emission's are read first, one batch
         // per step of the chains, and the scan then runs over them in memory,
         // linear in the runs and references (Spec 3.1).
+        // **One outcome per run**: every run the first pass answered, by its
+        // identity, so a stored row the walk below reaches for a run the
+        // emission named answers on that run's one outcome and never on a
+        // second.
+        let answered: HashMap<String, usize> = outcomes
+            .iter()
+            .enumerate()
+            .map(|(index, o)| (o.run.clone(), index))
+            .collect();
         let mut references: HashMap<String, Option<String>> = named
             .iter()
             .map(|(run, n)| (run.clone(), n.parent.clone()))
@@ -495,7 +511,7 @@ impl Store {
                 named.entry(run.clone()).or_insert(Named {
                     parent: parent.clone(),
                     status: row.get("ingest_status"),
-                    outcome: None,
+                    outcome: answered.get(&run).copied(),
                 });
                 references.insert(run, parent);
             }
@@ -504,6 +520,8 @@ impl Store {
         let open_runs: Vec<String> = open.iter().map(|o| o.run.clone()).collect();
         let (cycles, order) = plan_resolution(&open_runs, &references);
         let in_cycle: HashSet<&str> = cycles.iter().flatten().map(String::as_str).collect();
+        #[cfg(test)]
+        options.hold(HoldAt::BeforeCycles).await;
         for cycle in &cycles {
             let named_cycle = format!("a reference cycle: {} -> {}", cycle.join(" -> "), cycle[0]);
             let on_cycle: HashSet<&str> = cycle.iter().map(String::as_str).collect();
@@ -531,15 +549,34 @@ impl Store {
                     return Err("stopped by the test's hook inside a cycle's refusal".into());
                 }
             }
+            // **The other rows' statuses, read in the refusal's own
+            // transaction**: a row this ingest did not create may lie outside
+            // its locks, and its owner may have moved it since the references
+            // were read. The cycle itself cannot move, a reference never
+            // changing once written; only the status can, and it is read here.
+            let others: Vec<&String> = cycle
+                .iter()
+                .filter(|r| !created.contains(r.as_str()))
+                .collect();
+            let statuses: HashMap<String, String> =
+                sqlx::query("SELECT run_id, ingest_status FROM run WHERE run_id = ANY($1)")
+                    .bind(&others)
+                    .fetch_all(&mut *tx)
+                    .await
+                    .map_err(store_error)?
+                    .into_iter()
+                    .map(|r| (r.get("run_id"), r.get("ingest_status")))
+                    .collect();
             tx.commit().await.map_err(store_error)?;
             // Every other run on the cycle is reported refused in the answer
-            // with the status the store keeps for it.
+            // with the status the store keeps for it; a run the first pass
+            // already refused keeps its own reason.
             for run in cycle {
                 let held = &named[run];
                 let index = match held.outcome {
                     Some(index) => index,
                     None => {
-                        let mut outcome = RunOutcome::refused(run, String::new());
+                        let mut outcome = RunOutcome::refused(run, named_cycle.clone());
                         outcome.replayed = true;
                         outcome.parent_reference = held.parent.clone();
                         outcomes.push(outcome);
@@ -547,10 +584,17 @@ impl Store {
                     }
                 };
                 let outcome = &mut outcomes[index];
-                outcome.status = "refused".into();
-                outcome.reason = Some(named_cycle.clone());
+                if outcome.status != "refused" {
+                    outcome.status = "refused".into();
+                    outcome.reason = Some(named_cycle.clone());
+                }
                 if !created.contains(run.as_str()) {
-                    outcome.stored = Some(held.status.clone());
+                    outcome.stored = Some(
+                        statuses
+                            .get(run)
+                            .cloned()
+                            .unwrap_or_else(|| held.status.clone()),
+                    );
                 }
             }
         }

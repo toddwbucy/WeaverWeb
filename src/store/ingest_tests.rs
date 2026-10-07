@@ -1635,3 +1635,116 @@ async fn more_ingests_of_a_run_than_the_pool_holds_all_answer() {
         .count();
     assert_eq!(created, 1, "one wrote the run, the rest replayed it");
 }
+
+/// **A run the first pass refused answers once, though it lies on a
+/// cycle** (Codex pass eleven on PR #23): X is stored naming a Y the store
+/// does not hold; an emission replays X with one token changed, which is
+/// refused, beside a new Y naming X, which closes a cycle through X's stored
+/// row. The answer holds one object for X, refused with the replay's own
+/// reason and `stored` set, and Y is refused on the cycle.
+#[tokio::test]
+async fn a_run_refused_in_the_first_pass_answers_once_on_a_cycle() {
+    let Some(s) = store().await else { return };
+    let t = tag("refused-on-cycle");
+    let x = Wire::of(CERTIFIED)
+        .renamed(&format!("x#{t}"))
+        .branch_of(&format!("y#{t}"));
+    let y = Wire::of(CERTIFIED)
+        .renamed(&format!("y#{t}"))
+        .branch_of(&format!("x#{t}"));
+    assert_eq!(ingest(&s, &x).await["ok"], json!(true));
+    let mut changed = x.clone();
+    let held = changed.points[3]["token"].as_i64().unwrap();
+    changed.points[3]["token"] = json!(held + 1);
+    let answer = ingest(&s, &changed.then(y.clone())).await;
+    let for_x: Vec<&Value> = answer["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["run"] == json!(x.run()))
+        .collect();
+    assert_eq!(for_x.len(), 1, "one object for X: {answer}");
+    assert_eq!(for_x[0]["status"], json!("refused"));
+    assert!(
+        for_x[0]["reason"].as_str().unwrap().contains("differs"),
+        "X keeps its own reason: {answer}"
+    );
+    assert_eq!(for_x[0]["stored"], json!("whole"));
+    assert_eq!(landed(&s, &y.run()).await.unwrap().status, "refused");
+}
+
+/// **A cycle row this ingest did not create is reported with its status at
+/// the refusal**, not at the earlier read of the references (Codex pass
+/// eleven on PR #23): a cycle X, Y, Z, W, with Y and W landed first. An
+/// ingest of Z, whose locks share none with this one's, is held before its
+/// resolution with Z `writing`; this ingest of X reads the references,
+/// finds the cycle through Z and is held before its refusal; the first is
+/// released, refuses Z on the cycle its own recheck finds, and ends; this
+/// one is released and reports Z `refused`, as the store holds it at the
+/// refusal, never the `writing` it read before.
+#[tokio::test]
+async fn a_cycle_row_owned_elsewhere_is_reported_as_of_the_refusal() {
+    let Some(s) = store().await else { return };
+    let ids = loop {
+        let t = tag("moved-status");
+        let ids: Vec<String> = ["x", "y", "z", "w"]
+            .iter()
+            .map(|n| format!("{n}#{t}"))
+            .collect();
+        let buckets: Vec<i32> =
+            sqlx::query_scalar("SELECT hashtext(r) & 1023 FROM unnest($1::text[]) AS r")
+                .bind(&ids)
+                .fetch_all(&s.pool)
+                .await
+                .unwrap();
+        if [buckets[0], buckets[1]]
+            .iter()
+            .all(|b| *b != buckets[2] && *b != buckets[3])
+        {
+            break ids;
+        }
+    };
+    let run =
+        |i: usize, parent: usize| Wire::of(CERTIFIED).renamed(&ids[i]).branch_of(&ids[parent]);
+    // X names Y, Y names Z, Z names W, W names X.
+    assert_eq!(ingest(&s, &run(3, 0)).await["ok"], json!(true));
+    assert_eq!(ingest(&s, &run(1, 2)).await["ok"], json!(true));
+    let z_hold = Hold {
+        at: HoldAt::BeforeResolve,
+        ..hold()
+    };
+    let z = spawn_ingest(
+        &s,
+        &run(2, 3),
+        Options {
+            hold: Some(z_hold.clone()),
+            ..Options::default()
+        },
+    );
+    z_hold.locked.notified().await;
+    let x_hold = Hold {
+        at: HoldAt::BeforeCycles,
+        ..hold()
+    };
+    let x = spawn_ingest(
+        &s,
+        &run(0, 1),
+        Options {
+            hold: Some(x_hold.clone()),
+            ..Options::default()
+        },
+    );
+    x_hold.locked.notified().await;
+    z_hold.release.notify_one();
+    let z = z.await.unwrap();
+    assert_eq!(z["runs"][0]["status"], json!("refused"), "{z}");
+    x_hold.release.notify_one();
+    let x = x.await.unwrap();
+    let reported = x["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["run"] == json!(ids[2]))
+        .unwrap_or_else(|| panic!("Z is reported on the cycle: {x}"));
+    assert_eq!(reported["stored"], json!("refused"), "{x}");
+}

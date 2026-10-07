@@ -1810,3 +1810,60 @@ async fn an_empty_generation_in_a_parent_withholds_no_tape() {
     assert!(row.parting_known, "the parent's tape is whole: {row:?}");
     assert_eq!(row.parting_position, None, "never parted");
 }
+
+/// **A cycle member the emission did not name is answered with nothing a
+/// plan would have said** (Codex pass fourteen on PR #23): A is stored
+/// naming an absent B, and an emission carrying only B, naming A, closes
+/// the cycle through A's row. A's answer is refused with its reason, its
+/// stored status and its parent, says it was not named, and carries no
+/// positions, generations or other member of a plan, none having touched
+/// it; it was not replayed.
+#[tokio::test]
+async fn an_unnamed_cycle_member_carries_no_plans_members() {
+    let Some(s) = store().await else { return };
+    let t = tag("unnamed");
+    let a = Wire::of(CERTIFIED)
+        .renamed(&format!("a#{t}"))
+        .branch_of(&format!("b#{t}"));
+    let b = Wire::of(CERTIFIED)
+        .renamed(&format!("b#{t}"))
+        .branch_of(&format!("a#{t}"));
+    assert_eq!(ingest(&s, &a).await["ok"], json!(true));
+    let answer = ingest(&s, &b).await;
+    let reported = answer["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["run"] == json!(a.run()))
+        .unwrap_or_else(|| panic!("A is reported: {answer}"))
+        .clone();
+    assert_eq!(reported["status"], json!("refused"), "{reported}");
+    assert_eq!(reported["named"], json!(false));
+    assert_eq!(reported["replayed"], json!(false));
+    assert_eq!(reported["stored"], json!("whole"));
+    assert_eq!(reported["parent_reference"], json!(b.run()));
+    for member in [
+        "positions",
+        "generations",
+        "absent",
+        "not_stored",
+        "parent_linked",
+        "parting_known",
+    ] {
+        assert!(
+            reported.get(member).is_none(),
+            "{member} on an unnamed run: {reported}"
+        );
+    }
+    let named = answer["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["run"] == json!(b.run()))
+        .unwrap();
+    assert!(
+        named.get("named").is_none(),
+        "a named run's answer is as before"
+    );
+    assert!(named.get("positions").is_some());
+}

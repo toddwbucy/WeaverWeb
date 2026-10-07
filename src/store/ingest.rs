@@ -111,6 +111,13 @@ pub struct RunOutcome {
     pub reason: Option<String>,
     /// Whether the store held the run before this ingest.
     pub replayed: bool,
+    /// **Whether the emission named the run**, serialized only where it did
+    /// not: a run a cycle runs through that only the store holds, which this
+    /// ingest reports refused and nothing else of, since no plan of this
+    /// emission said anything about it. A named run's answer carries no
+    /// such member, as it never has.
+    #[serde(skip_serializing_if = "is_true")]
+    pub named: bool,
     /// The status the store holds after this ingest, where it differs from
     /// `status`: a replay refused in the answer alone leaves it as it was.
     /// **For a row this ingest did not create and refused on a cycle, it is
@@ -119,6 +126,19 @@ pub struct RunOutcome {
     /// other truth this ingest can give.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stored: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_reference: Option<String>,
+    /// **What this emission's plan of the run said and what of it landed**,
+    /// absent for a run the emission did not name: those members are the
+    /// plan's words, and a run no plan touched has none, so none are
+    /// defaulted for it.
+    #[serde(flatten, skip_serializing_if = "Option::is_none")]
+    pub landed: Option<Landed>,
+}
+
+/// The members of a run's answer that its plan establishes.
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct Landed {
     /// The positions and generations the store holds for the run as this
     /// ingest left it: what it wrote, or, for a run it found already
     /// written equal, what is stored. Never the plan's counts where they
@@ -128,12 +148,14 @@ pub struct RunOutcome {
     pub absent: Vec<String>,
     /// Members that crossed and have no column to land in.
     pub not_stored: Vec<&'static str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub parent_reference: Option<String>,
     pub parent_linked: bool,
     pub parting_known: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parting_position: Option<i32>,
+}
+
+fn is_true(value: &bool) -> bool {
+    *value
 }
 
 impl RunOutcome {
@@ -143,15 +165,10 @@ impl RunOutcome {
             status: "refused".into(),
             reason: Some(reason),
             replayed: false,
+            named: true,
             stored: None,
-            positions: 0,
-            generations: 0,
-            absent: Vec::new(),
-            not_stored: Vec::new(),
             parent_reference: None,
-            parent_linked: false,
-            parting_known: false,
-            parting_position: None,
+            landed: Some(Landed::default()),
         }
     }
 
@@ -161,22 +178,44 @@ impl RunOutcome {
             status: "writing".into(),
             reason: None,
             replayed,
+            named: true,
             stored: None,
+            parent_reference: plan.members.parent_reference.clone(),
             // What this ingest wrote, counted as it writes; a refusal that
             // wrote nothing reports none.
-            positions: 0,
-            generations: 0,
-            absent: plan.absent(),
-            not_stored: if plan.verdict_crossed {
-                vec!["verdict (no column until its kind lands, Spec 2.2)"]
-            } else {
-                Vec::new()
-            },
-            parent_reference: plan.members.parent_reference.clone(),
-            parent_linked: false,
-            parting_known: false,
-            parting_position: None,
+            landed: Some(Landed {
+                absent: plan.absent(),
+                not_stored: if plan.verdict_crossed {
+                    vec!["verdict (no column until its kind lands, Spec 2.2)"]
+                } else {
+                    Vec::new()
+                },
+                ..Landed::default()
+            }),
         }
+    }
+
+    /// **A run the emission did not name**, met on a cycle through the
+    /// store: refused, its reason, its parent as stored, and nothing a plan
+    /// would have said.
+    fn unnamed(run: &str, reason: String, parent: Option<String>) -> Self {
+        Self {
+            run: run.to_owned(),
+            status: "refused".into(),
+            reason: Some(reason),
+            replayed: false,
+            named: false,
+            stored: None,
+            parent_reference: parent,
+            landed: None,
+        }
+    }
+
+    /// The plan's members of a named run's answer.
+    fn landed_mut(&mut self) -> &mut Landed {
+        self.landed
+            .as_mut()
+            .expect("a run the emission named carries its plan's members")
     }
 }
 
@@ -416,8 +455,8 @@ impl Store {
                         .map_err(store_error)?;
                 }
             }
-            outcome.generations = plan.generations.len();
-            outcome.positions = plan.points.len();
+            outcome.landed_mut().generations = plan.generations.len();
+            outcome.landed_mut().positions = plan.points.len();
             if plan.members.parent_reference.is_none() {
                 // **A run that is not a branch closes as soon as its points
                 // are written** (ruling 27).
@@ -576,10 +615,11 @@ impl Store {
                 let index = match held.outcome {
                     Some(index) => index,
                     None => {
-                        let mut outcome = RunOutcome::refused(run, named_cycle.clone());
-                        outcome.replayed = true;
-                        outcome.parent_reference = held.parent.clone();
-                        outcomes.push(outcome);
+                        outcomes.push(RunOutcome::unnamed(
+                            run,
+                            named_cycle.clone(),
+                            held.parent.clone(),
+                        ));
                         outcomes.len() - 1
                     }
                 };
@@ -620,9 +660,10 @@ impl Store {
             outcome.status = resolved.status.into();
             outcome.reason = resolved.reason;
             outcome.stored = resolved.stored;
-            outcome.parent_linked = resolved.linked;
-            outcome.parting_known = resolved.parting.is_known();
-            outcome.parting_position = resolved.parting.position();
+            let landed = outcome.landed_mut();
+            landed.parent_linked = resolved.linked;
+            landed.parting_known = resolved.parting.is_known();
+            landed.parting_position = resolved.parting.position();
         }
         Ok(())
     }
@@ -899,13 +940,14 @@ struct Resolved {
 
 /// An outcome answering with what the store holds for the run.
 fn answer_stored(outcome: &mut RunOutcome, stored: &Stored) {
-    outcome.generations = stored.generations.len();
-    outcome.positions = stored.positions.len();
+    outcome.landed_mut().generations = stored.generations.len();
+    outcome.landed_mut().positions = stored.positions.len();
     outcome.status = stored.status.clone();
     outcome.reason = stored.reason.clone();
-    outcome.parent_linked = stored.linked;
-    outcome.parting_known = stored.parting_known;
-    outcome.parting_position = stored.parting_position;
+    let landed = outcome.landed_mut();
+    landed.parent_linked = stored.linked;
+    landed.parting_known = stored.parting_known;
+    landed.parting_position = stored.parting_position;
 }
 
 /// The points, in one statement over arrays, one per column as

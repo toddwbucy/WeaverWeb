@@ -1119,13 +1119,19 @@ async fn parent_path(
             .collect();
     let mut path = Vec::new();
     for g in generations {
+        // **A generation with no drawn tokens adds no position to a tape**,
+        // so it is passed over before its addressing is asked for: it may
+        // lawfully lack both, and leaves its run whole (Spec 3.1).
+        let count: i32 = g.get("output_count");
+        if count == 0 {
+            continue;
+        }
         let (Some(turn), Some(resident)) = (
             g.get::<Option<String>, _>("turn"),
             g.get::<Option<i32>, _>("resident"),
         ) else {
             return Ok(None);
         };
-        let count: i32 = g.get("output_count");
         let floor = resident - count - 1;
         for j in 0..count {
             match tokens.get(&(turn.clone(), floor + j)) {

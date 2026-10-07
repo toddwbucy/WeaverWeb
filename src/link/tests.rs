@@ -18,7 +18,6 @@ use crate::store::{AgentId, Store};
 use crate::traceview::TraceEvent;
 use serde_json::json;
 use std::net::SocketAddr;
-use std::sync::OnceLock;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
@@ -32,9 +31,11 @@ pub(super) const SOON: Duration = Duration::from_secs(5);
 /// staging and not the row the config belongs to.
 const PLACEHOLDER_ID: &str = "ag-0000000000000000";
 
+/// The link's tests serialize among themselves, a listener's start resetting
+/// every row's link state, and against the ingest's heavy tests, through the
+/// store's one exclusive guard.
 pub(super) fn serial() -> &'static tokio::sync::Mutex<()> {
-    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+    crate::store::read::tests::exclusive()
 }
 
 pub(super) async fn store() -> Option<Store> {
@@ -1561,10 +1562,11 @@ async fn an_undeliverable_landed_closes_the_connection() {
             })
             .await;
     }
-    // The landing is the store's and this test asserts the later close, so
-    // the wait has the ingest sweep's headroom: a scratch database shared
-    // with the ingest's heavy tests lands these more slowly.
-    let until = tokio::time::Instant::now() + Duration::from_secs(60);
+    // The landing is the store's: this bound holds because the store's
+    // exclusive guard (`serial`) keeps the ingest's heavy tests off the
+    // scratch server while it runs, so the server lands these at its own
+    // pace. Headroom alone narrowed the odds and did not hold it.
+    let until = tokio::time::Instant::now() + Duration::from_secs(30);
     while lab.listener.acknowledged(&karl.id).map(|p| p.offset) != Some(100 + events) {
         assert!(
             tokio::time::Instant::now() < until,

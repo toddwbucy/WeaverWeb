@@ -1471,6 +1471,9 @@ fn synthetic(runs: &[SyntheticRun]) -> Wire {
 #[tokio::test]
 async fn every_per_item_loop_lands_within_one_bound() {
     let Some(s) = store().await else { return };
+    // A bound asserted against the shared scratch server, so held alone
+    // against the link's and the other heavy tests.
+    let _exclusive = super::read::tests::exclusive().lock().await;
     let t = tag("sweep");
     let id = |name: &str, i: usize| format!("{name}-{i}#{t}");
     let chain = 1_000;
@@ -1612,6 +1615,9 @@ async fn a_cycle_closed_by_ingests_sharing_no_lock_is_refused_at_resolution() {
 #[tokio::test]
 async fn more_ingests_of_a_run_than_the_pool_holds_all_answer() {
     let Some(s) = store().await else { return };
+    // A bound asserted against the shared scratch server, so held alone
+    // against the link's and the other heavy tests.
+    let _exclusive = super::read::tests::exclusive().lock().await;
     let w = Wire::of(CERTIFIED).tagged(&tag("many-waiters"));
     let waiters = s.pool.options().get_max_connections() as usize + 1;
     let ingests: Vec<_> = (0..waiters)
@@ -1770,4 +1776,37 @@ async fn an_empty_generation_leaves_the_run_whole() {
     let row = landed(&s, &w.run()).await.unwrap();
     assert_eq!((row.status.as_str(), row.reason), ("whole", None));
     assert_eq!(count(&s, "generation", &w.run()).await, 3);
+}
+
+/// **A generation with no drawn tokens adds no position to a parent's
+/// tape** (Codex pass thirteen on PR #23): a whole parent, `serving-source`
+/// with a third generation that drew nothing and carries neither a turn key
+/// nor a resident count, and a child branching from it, the hand-made branch
+/// fixture, whose points are the parent's. The walk rebuilds the parent's
+/// tape past the empty generation, and the parting is known: never parted.
+#[tokio::test]
+async fn an_empty_generation_in_a_parent_withholds_no_tape() {
+    let Some(s) = store().await else { return };
+    let t = tag("empty-in-parent");
+    let mut parent = Wire::of(SERVING).tagged(&t);
+    let mut empty = parent.summary["generations"][1].clone();
+    let object = empty.as_object_mut().unwrap();
+    object.remove("turn");
+    object.remove("resident");
+    object.remove("perplexity");
+    empty["output_count"] = json!(0);
+    parent.summary["generations"]
+        .as_array_mut()
+        .unwrap()
+        .push(empty);
+    assert_eq!(
+        ingest(&s, &parent).await["runs"][0]["status"],
+        json!("whole")
+    );
+    let child = Wire::of(HAND_MADE_BRANCH).tagged(&t);
+    assert_eq!(ingest(&s, &child).await["ok"], json!(true));
+    let row = landed(&s, &child.run()).await.unwrap();
+    assert_eq!(row.parent_run_id, Some(parent.run()));
+    assert!(row.parting_known, "the parent's tape is whole: {row:?}");
+    assert_eq!(row.parting_position, None, "never parted");
 }

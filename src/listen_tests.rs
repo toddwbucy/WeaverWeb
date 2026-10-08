@@ -76,9 +76,10 @@ fn refused(c: &ServerConfig, now: OffsetDateTime, why: &str) {
     assert!(error.contains(why), "{error}");
 }
 
-/// **An origin is a serialized origin or is refused**, form by form:
-/// userinfo, a path, a trailing slash, a query, a fragment, a scheme or host
-/// in upper case, a default port written, and no scheme.
+/// **An origin is a serialized origin or is refused**, against the WHATWG
+/// URL Standard as `url` implements it. Each refusal names either the part
+/// a bare origin never carries, the parse's own failure, or the
+/// serialization a browser would send instead.
 #[test]
 fn every_malformed_origin_form_is_refused() {
     for (origin, why) in [
@@ -87,39 +88,62 @@ fn every_malformed_origin_form_is_refused() {
         ("https://example.test/app", "path"),
         ("https://example.test?a=1", "query"),
         ("https://example.test#top", "fragment"),
-        ("HTTPS://example.test", "scheme is not in lower case"),
-        ("https://Example.test", "host is not in lower case"),
-        ("https://example.test:443", "default port"),
-        ("http://localhost:80", "default port"),
-        ("example.test", "no scheme"),
-        ("https://[2001:db8::1", "a bracketed host is not closed"),
-        ("https://[example.test]", "not an IPv6 address"),
-        ("https://[192.0.2.1]", "not an IPv6 address"),
-        ("https://[2001:db8::1]8443", "something other than a port"),
-        ("https://[2001:DB8::1]", "host is not in lower case"),
-        ("https://[2001:db8::1]:443", "default port"),
-        ("https://example.test:1:2", "port is not a number"),
+        (
+            "HTTPS://example.test",
+            "sends it as \"https://example.test\"",
+        ),
+        (
+            "https://Example.test",
+            "sends it as \"https://example.test\"",
+        ),
+        (
+            "https://example.test:443",
+            "sends it as \"https://example.test\"",
+        ),
+        ("http://localhost:80", "sends it as \"http://localhost\""),
+        ("example.test", "does not parse as a URL"),
+        ("https://[2001:db8::1", "invalid IPv6 address"),
+        ("https://[example.test]", "invalid IPv6 address"),
+        ("https://[192.0.2.1]", "invalid IPv6 address"),
+        ("https://[2001:db8::1]8443", "invalid IPv6 address"),
+        (
+            "https://[2001:DB8::1]",
+            "sends it as \"https://[2001:db8::1]\"",
+        ),
+        (
+            "https://[2001:db8::1]:443",
+            "sends it as \"https://[2001:db8::1]\"",
+        ),
+        ("https://example.test:1:2", "invalid port number"),
         (
             "https://example.test:08443",
-            "the port is not in plain decimal",
+            "sends it as \"https://example.test:8443\"",
         ),
-        (
-            "https://example.test:+8443",
-            "the port is not in plain decimal",
-        ),
+        ("https://example.test:+8443", "invalid port number"),
         (
             "https://[2001:db8:0:0::1]",
-            "the host is not in its canonical form",
+            "sends it as \"https://[2001:db8::1]\"",
         ),
         (
             "https://[::ffff:192.0.2.1]",
-            "the host is not in its canonical form",
+            "sends it as \"https://[::ffff:c000:201]\"",
         ),
-        ("https://192.000.2.1", "ends in a number"),
-        ("https://0x7f.1", "ends in a number"),
-        ("https://ex%41mple.test", "no browser serializes in a host"),
-        ("https://b\u{fc}cher.test", "configure that form"),
-        ("https://B\u{dc}CHER.test", "configure that form"),
+        ("https://192.000.2.1", "sends it as \"https://192.0.2.1\""),
+        ("https://0x7f.1", "sends it as \"https://127.0.0.1\""),
+        ("https://example.0x", "invalid IPv4 address"),
+        ("https://example.0x1f", "invalid IPv4 address"),
+        (
+            "https://ex%41mple.test",
+            "sends it as \"https://example.test\"",
+        ),
+        (
+            "https://b\u{fc}cher.test",
+            "sends it as \"https://xn--bcher-kva.test\"",
+        ),
+        (
+            "https://B\u{dc}CHER.test",
+            "sends it as \"https://xn--bcher-kva.test\"",
+        ),
     ] {
         let error = parse_origin(origin).expect_err(origin);
         assert!(error.contains(why), "{origin}: {error}");
@@ -135,6 +159,7 @@ fn every_malformed_origin_form_is_refused() {
         "https://[::1]",
         "https://192.0.2.1:8443",
         "https://xn--bcher-kva.test",
+        "https://example.0xyz",
     ] {
         let parsed = parse_origin(origin).unwrap_or_else(|e| panic!("{origin}: {e}"));
         assert_eq!(parsed.serialized(), origin);
@@ -146,11 +171,11 @@ fn every_malformed_origin_form_is_refused() {
     );
 }
 
-/// **An IPv6 address is serialized as a browser serializes it**: the
+/// **An IPv6 address is accepted only as a browser serializes it**: the
 /// first longest run of two or more zero groups compressed, a single zero
 /// group never, lower-case hex, and no dotted IPv4 tail.
 #[test]
-fn an_ipv6_address_is_serialized_as_a_browser_serializes_it() {
+fn an_ipv6_address_is_accepted_only_as_a_browser_serializes_it() {
     for (address, serialized) in [
         ("2001:db8:0:0:0:0:0:1", "2001:db8::1"),
         ("0:0:0:0:0:0:0:1", "::1"),
@@ -163,12 +188,18 @@ fn an_ipv6_address_is_serialized_as_a_browser_serializes_it() {
         ("::ffff:192.0.2.1", "::ffff:c000:201"),
         ("::192.0.2.1", "::c000:201"),
     ] {
-        let parsed: std::net::Ipv6Addr = address.parse().unwrap();
-        assert_eq!(
-            crate::listen::ipv6_serialized(parsed),
-            serialized,
-            "{address}"
-        );
+        let origin = format!("https://[{address}]");
+        let canonical = format!("https://[{serialized}]");
+        if address == serialized {
+            parse_origin(&origin).unwrap_or_else(|e| panic!("{origin}: {e}"));
+        } else {
+            let error = parse_origin(&origin).expect_err(&origin);
+            assert!(
+                error.contains(&format!("sends it as {canonical:?}")),
+                "{origin}: {error}"
+            );
+        }
+        parse_origin(&canonical).unwrap_or_else(|e| panic!("{canonical}: {e}"));
     }
 }
 

@@ -13,7 +13,8 @@
 //! `Listener` trait (`TlsListener`); the validity period is read with
 //! `yasna`, already in the tree through rcgen, where `x509-parser` would add
 //! thirteen crates; the name check is `rustls-webpki`'s, already in the tree
-//! through rustls.
+//! through rustls; the origin is parsed and serialized by `url`, the WHATWG
+//! URL Standard, already in the tree through sqlx.
 
 use crate::config::ServerConfig;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer, ServerName};
@@ -79,175 +80,50 @@ impl Origin {
 
 /// **The configured origin, refused where it is not a serialized origin.**
 /// The value must be exactly what a browser sends in its `Origin` header,
-/// which the server compares with it as a string, so after its parts are
-/// read the origin is serialized again from them as a browser serializes
-/// one, and **the configured value must equal that serialization**: the
-/// scheme in lower case, `://`, the host in its canonical form, and `:` and
-/// the port in plain decimal only where it is not the scheme's default. A
-/// value with userinfo, a path (a trailing `/` included), a query or a
-/// fragment is refused before that, having no serialization at all.
+/// which the server compares with it as a string, so it is parsed as a
+/// browser parses a URL, by `url`, an implementation of the WHATWG URL
+/// Standard, and **the configured value must equal the parsed URL's origin
+/// in its ASCII serialization**, the browser's own algorithm. The port's
+/// spelling, the case of scheme and host, an IPv6 address's canonical form,
+/// a host a browser reads as an IPv4 address, and an internationalized
+/// name's ASCII form are all the library's, as a browser applies them. A
+/// refusal names the serialization a browser would send, and userinfo, a
+/// path (a trailing `/` included), a query or a fragment by name.
 pub fn parse_origin(origin: &str) -> Result<Origin, String> {
     let refuse = |why: &str| {
         Err(format!(
             "origin {origin:?} is not a serialized origin (scheme, host and a non-default port, nothing else): {why}"
         ))
     };
-    let Some((scheme, rest)) = origin.split_once("://") else {
-        return refuse("no scheme");
+    let url = match url::Url::parse(origin) {
+        Ok(url) => url,
+        Err(e) => return refuse(&format!("it does not parse as a URL: {e}")),
     };
-    if scheme.is_empty() {
-        return refuse("no scheme");
-    }
-    if let Some(found) = rest.find(['/', '?', '#', '@']) {
-        let what = match rest.as_bytes()[found] {
-            b'/' => "a path follows the host",
-            b'?' => "a query follows the host",
-            b'#' => "a fragment follows the host",
-            _ => "it carries userinfo",
-        };
-        return refuse(what);
-    }
-    // A browser sends an internationalized name in its IDNA ASCII form, so
-    // a Unicode host, equal to its own lower-casing, would still match no
-    // `Origin` header. Refused, not converted: no IDNA crate is linked.
-    if !rest.is_ascii() {
-        return refuse(
-            "the host is not ASCII; a browser sends an internationalized name in its ASCII (punycode, xn--) form, so configure that form",
-        );
-    }
-    // **The authority's host, then its port.** A host in brackets is an
-    // IPv6 address and runs to its `]`, so its own colons are never taken
-    // for the port's; a port follows only after the `]`. Any other host
-    // runs to the first `:`.
-    let (host, address, port) = if let Some(after) = rest.strip_prefix('[') {
-        let Some((address, tail)) = after.split_once(']') else {
-            return refuse("a bracketed host is not closed");
-        };
-        let Ok(address) = address.parse::<std::net::Ipv6Addr>() else {
-            return refuse("a bracketed host is not an IPv6 address");
-        };
-        let port = match tail {
-            "" => None,
-            tail => match tail.strip_prefix(':') {
-                Some(port) => Some(port),
-                None => return refuse("something other than a port follows the bracketed host"),
-            },
-        };
-        (&rest[..rest.len() - tail.len()], Some(address), port)
-    } else {
-        match rest.split_once(':') {
-            Some((host, port)) => (host, None, Some(port)),
-            None => (rest, None, None),
-        }
-    };
-    let port = match port {
-        Some(port) => match port.parse::<u16>() {
-            Ok(port) => Some(port),
-            Err(_) => return refuse("the port is not a number"),
-        },
-        None => None,
-    };
-    if host.is_empty() {
-        return refuse("no host");
-    }
-    let canonical_host = match address {
-        Some(address) => format!("[{}]", ipv6_serialized(address)),
-        None => {
-            // A browser refuses these in a host, or decodes `%`, so no
-            // serialized origin holds one.
-            if host
-                .bytes()
-                .any(|b| b.is_ascii_control() || b" %<>[]\\^|".contains(&b))
-            {
-                return refuse("the host holds a character no browser serializes in a host");
-            }
-            // A host whose last label is a number is an IPv4 address to a
-            // browser, serialized in dotted decimal.
-            let last = host.strip_suffix('.').unwrap_or(host);
-            let last = last.rsplit('.').next().unwrap_or(last);
-            let numeric = !last.is_empty()
-                && (last.bytes().all(|b| b.is_ascii_digit())
-                    || last.get(..2).is_some_and(|p| p.eq_ignore_ascii_case("0x")));
-            if numeric {
-                match host.parse::<std::net::Ipv4Addr>() {
-                    Ok(address) => address.to_string(),
-                    Err(_) => {
-                        return refuse(
-                            "the host ends in a number and is not an IPv4 address in dotted decimal",
-                        );
-                    }
-                }
-            } else {
-                host.to_ascii_lowercase()
-            }
-        }
-    };
-    let scheme_lower = scheme.to_ascii_lowercase();
-    let default = match scheme_lower.as_str() {
-        "https" => Some(443),
-        "http" => Some(80),
-        _ => None,
-    };
-    let parsed = Origin {
-        scheme: scheme_lower,
-        host: canonical_host,
-        port: port.filter(|port| Some(*port) != default),
-    };
-    let serialized = parsed.serialized();
+    let serialized = url.origin().ascii_serialization();
     if serialized != origin {
-        // The equality is the rule; the reason names the first part that
-        // differs, for the operator reading the refusal.
-        let why = if scheme != parsed.scheme {
-            "the scheme is not in lower case"
-        } else if host != parsed.host {
-            if host.to_ascii_lowercase() == parsed.host {
-                "the host is not in lower case"
-            } else {
-                "the host is not in its canonical form"
-            }
-        } else if port.is_some() && parsed.port.is_none() {
-            "the scheme's default port is written"
+        // The equality is the rule; the reason names a part a bare origin
+        // never carries, where there is one, for the operator.
+        let why = if !url.username().is_empty() || url.password().is_some() {
+            "it carries userinfo"
+        } else if url.query().is_some() {
+            "a query follows the host"
+        } else if url.fragment().is_some() {
+            "a fragment follows the host"
+        } else if url.path() != "/" || origin.ends_with('/') {
+            "a path follows the host"
         } else {
-            "the port is not in plain decimal"
+            "it is not as a browser serializes it"
         };
-        return refuse(&format!("{why}; a browser serializes it as {serialized:?}"));
+        return refuse(&format!("{why}; a browser sends it as {serialized:?}"));
     }
-    Ok(parsed)
-}
-
-/// **An IPv6 address as a browser serializes it** (the WHATWG URL
-/// standard's IPv6 serializer): lower-case hex groups without leading
-/// zeros, the first longest run of two or more zero groups compressed to
-/// `::`, and never a dotted IPv4 tail, which `Ipv6Addr`'s `Display` writes
-/// for a mapped or compatible address.
-pub fn ipv6_serialized(address: std::net::Ipv6Addr) -> String {
-    let groups = address.segments();
-    let (mut compress, mut longest, mut i) = (None, 1, 0);
-    while i < groups.len() {
-        let start = i;
-        while i < groups.len() && groups[i] == 0 {
-            i += 1;
-        }
-        if i - start > longest {
-            (compress, longest) = (Some(start), i - start);
-        }
-        i = i.max(start + 1);
-    }
-    let mut out = String::new();
-    let mut i = 0;
-    while i < groups.len() {
-        if Some(i) == compress {
-            out.push_str(if i == 0 { "::" } else { ":" });
-            i += longest;
-            continue;
-        }
-        out.push_str(&format!("{:x}", groups[i]));
-        if i + 1 < groups.len() {
-            out.push(':');
-        }
-        i += 1;
-    }
-    out
+    let Some(host) = url.host_str() else {
+        return refuse("no host");
+    };
+    Ok(Origin {
+        scheme: url.scheme().to_owned(),
+        host: host.to_owned(),
+        port: url.port(),
+    })
 }
 
 /// **The scheme rule**: `https`, or exactly `http` on the host `localhost`,

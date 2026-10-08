@@ -100,13 +100,16 @@ tokio-rustls = { version = "0.26", default-features = false, features = ["ring",
 rcgen = { version = "0.14", default-features = false, features = ["ring", "pem"] }
 rustls-pki-types = { version = "1", features = ["std"] }
 rustls-pemfile = "2"
-# Act 11's browser listener (src/listen.rs), both already in the tree and
+# Act 11's browser listener (src/listen.rs), all already in the tree and
 # adding no crate (measured 2026-10-08): rustls-webpki, through rustls, for
-# the certificate's name check, and yasna, through rcgen, to read the
-# certificate's validity period, where x509-parser would add thirteen crates.
+# the certificate's name check; yasna, through rcgen, to read the
+# certificate's validity period, where x509-parser would add thirteen crates;
+# and url, through sqlx-core, the WHATWG URL Standard by which the configured
+# origin is parsed and serialized as a browser does it.
 webpki = { package = "rustls-webpki", version = "0.103", default-features = false, features = ["std"] }
 yasna = { version = "0.6", features = ["time"] }
 time = "0.3"
+url = "2.5.8"
 # `O_NOFOLLOW` for the client configs' staging files (Spec 8): a staging
 # entry that is a symlink must refuse rather than be followed to a file
 # another owner can read. Already in the graph through tokio.

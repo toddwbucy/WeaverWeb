@@ -876,13 +876,44 @@ rather than left as a sentence.
 
 **Once section 2.13's authentication stands, the session carries the
 authenticated person and not a claim**, and the role this row holds today
-gives way to that person's grants on each agent. Until the act that builds
-section 2.13, this section's assertion that a session carries a claim and
-never a proof stands as written, and that act replaces it.
+gives way to that person's grants on each agent. **The session act 11
+builds**, decided by its design (`docs/project/design-2026-10-07-iam.md`
+section 6) on 2026-10-07:
+
+- **the row carries the person and the passkey it was opened with**, beside
+  the bearer's digest, its opening, its last use and its close, and **the
+  claimed name and the configured role retire**; its last use is written at
+  most once a minute, per section 3's writer model, so idle expiry is
+  accurate to a minute
+- **the cookie is `__Host-weaver_session`**, `Secure`, `HttpOnly`,
+  `SameSite=Strict` and `Path=/` with no `Domain`, the prefix making a
+  browser refuse it otherwise; the bearer is drawn under section 2.13's rule
+  for every bearer the server issues and stored as its digest under the rule
+  above
+- **it ends at an hour idle and twelve hours open**, both the server's config
+  with those defaults, an open live view counting as use; at sign-out; and
+  when its person is disabled, the passkey it was opened with is removed, or
+  the host resets its person, each seen at the session's next use
+- **sign-in is name-first**: the person gives their name and answers a
+  challenge for their own passkeys, the challenge held in the server's memory
+  for at most five minutes and used once, **with at most 64 ceremonies in
+  flight**, a new one beyond that refused, since a ceremony starts before
+  anyone is authenticated and an unbounded map would be a crash
+- **an open live view is re-checked every 15 seconds** and closes when its
+  session or its person's grant on the agent has ended, per section 2.13
+- **every request that changes state carries an `Origin` equal to the
+  configured origin** or is refused before its handler, beside
+  `SameSite=Strict`
+
+Until act 11's passkey pull request lands, this section's assertion that a
+session carries a claim and never a proof stands as written, and that pull
+request replaces it.
 
 **A session is not an authored row and takes no version.** Section 3.2's
 ordering rule answers two engineers editing one declaration, and nobody edits
-a session: it is opened once, closed once, and read in between. **Nor is it a
+a session: its one writer, the surface, opens it once and closes it once, and
+between the two writes only its last-used time, at most once a minute under
+section 3's writer model, which no two writers can race. **Nor is it a
 recorded row**, carrying no run and no position, which is why it stands here
 after the indexes rather than in either half.
 
@@ -1279,13 +1310,15 @@ an agent with tools can act on its box, so placing one needs a grant as much
 as `stop` does; it passes this section's gate and then the gate's own
 admission, per section 8. The register verbs act on the server and not on an agent, and take the path the
 last item below states. How people authenticate and what
-the roles are called are section 10's open elections, the operator's both;
-what follows stands under any answer to either, and the act that builds this
-section waits on the two. **This section charters identity and access at the
-level the store needs, and no further**: the act that builds it owes its full
-design before any code, including a threat model of the person, the session,
-enrollment and recovery, and every question of mechanism is that act's
-rather than this document's.
+the roles are called were section 10's open elections, and the operator
+closed both on 2026-10-07: **people authenticate by passkey (WebAuthn) and
+by nothing else**, and the roles are the ones the item below names. **This
+section charters identity and access at the level the store needs, and no
+further**: the act that builds it, act 11, owed its full design before any
+code, including a threat model of the person, the session, enrollment and
+recovery. That design is `docs/project/design-2026-10-07-iam.md`, which
+holds the threat model and the measurements the choices rest on; the rules
+it decides are stated here and in section 2.8, and the reasons are there.
 
 - **The person**: an identity authenticated to the server, distinct from
   section 2.8's session, which carries a claim and no proof. A person row
@@ -1294,23 +1327,87 @@ rather than this document's.
   never a secret in the clear, which is section 2.8's digest rule carried to
   the person. Once authentication stands, a session carries the
   authenticated person rather than a claimed name, and section 3.2's author
-  member takes its value from the person. **The person row is authored
+  member takes its value from the person's identity, the surfaces rendering
+  the person's current name. **The person authenticates by passkey alone**:
+  no password, no second factor and no external identity provider, the
+  relying party's identity and origin coming from the server's config and
+  never from the repository. **The browser's listener serves TLS before any
+  passkey is enrolled**, WebAuthn running only in a secure context and a
+  relying party's identity being a domain and never an address, and **the
+  server refuses to start, where passkeys are on, on the faults the design's
+  section 3 lists and on nothing beyond them**: the relying party
+  missing or an address, an origin that is not a serialized origin, not
+  `https` (bar `http` on `localhost`) or not under the relying party, a
+  certificate and key that are missing, do not load or do not pair, or a
+  certificate not valid for the origin's host or not valid at the clock at
+  start, nothing being promised about its expiry while the server runs. Any
+  other fault of the configuration, a public suffix as the relying party's
+  identity or a certificate unfit for server authentication among them,
+  shows at the first connection or ceremony as the browser's failure, which
+  the server logs. The ceremonies are the library the design's section 2 measured,
+  carried by the server binary alone, and the browser's half is one vendored
+  module doing the two ceremonies and nothing else. **A person's name is
+  unique among persons in one canonical form**, Unicode's compatibility
+  caseless form of the name trimmed of surrounding white space, since
+  sign-in finds the person by it: checked at enrollment and at rename under
+  the exclusion below, and a name whose form another person's already has is
+  refused. **A credential ID belongs to one passkey of one person**: unique
+  across every person's passkeys in the store, and a registration whose ID is
+  already held, by anyone, the registering person included, is refused
+  atomically at its insert. **A counter that did not rise refuses the
+  assertion, for every assertion the server verifies**, the sign-in, the
+  fresh assertion that authorizes adding a passkey, and any later one alike:
+  where the returned signature counter or the stored one is nonzero, a
+  returned one not greater than the stored one authorizes nothing, opening
+  no session and adding no passkey, and is audited as a possible cloned
+  credential, the passkey staying enrolled so a clone cannot lock its owner
+  out. **After every assertion the stored passkey is updated by one locked
+  read, merge and write**, in a transaction of its own that commits before
+  the authorized action's begins, an action that then fails leaving it
+  updated, since the authenticator did advance: the stored passkey is read
+  under its row's lock; where the returned counter is nonzero and not
+  greater than that fresh copy's, the assertion is refused, which is the
+  refusal of a concurrent use; otherwise the library's update of the
+  credential (its counter, backup state and backup eligibility) is applied
+  to that fresh copy and written back, always where the returned counter is
+  zero, as synced passkeys report, two concurrent assertions of such a
+  passkey both succeeding. So concurrent assertions serialize on the row,
+  each merging into the other's result, and none erases another's update. **A person may hold
+  several passkeys**: adding one takes a fresh assertion with a passkey the
+  person already holds, so a session alone never adds one. **The assertion
+  and the registration are two ceremonies, bound by a one-time add grant**:
+  the verified assertion yields a grant held with the ceremonies, bound to
+  that session and that person, expiring within the ceremony's five minutes
+  and counting toward its cap, and the registration requires and consumes it
+  at its start, a failed registration consuming it too, so one assertion
+  serves one registration from the session that made it. A person removes
+  any of their own passkeys but the last. **The person row is authored
   through section 3.2, and its writes split three ways**: enrolling,
   disabling or renaming a person is written by a holder of the server-wide
   admin grant; the bootstrap person, the first admin, is written by the host
   principal below; and a person may write only their own authentication
-  material on their own row, enrolling or rotating whatever the election of
-  section 10 picks, and never their name, their state or their grants.
+  material on their own row, enrolling or removing their own passkeys, and
+  never their name, their state or their grants.
   Every one of those writes is audited as a verb is. **A person's first
   credential comes by a one-time enrollment token**, neutral to the
   mechanism: an admin, or the host principal for the bootstrap, issues a
-  single-use, expiring token bound to one person row, **and only for a
+  single-use, expiring token bound to one person row, **living 24 hours by
+  default, configurable and never more than seven days**, **and only for a
   person row with no authentication material**: redemption refuses if
   material has appeared on the row since, so a token can never replace a
-  credential, which would let an admin take a person over. Recovering a
-  lost credential is the IAM act's to design, under the threat model the
-  scope sentence above names, and until then no token is issued for a row
-  that already has a credential. It is held on that
+  credential, which would let an admin take a person over. **Every bearer the
+  server issues, the session bearer, the enrollment token and the ceremony
+  identity alike, is 32 bytes from the operating system's cryptographic
+  random source**, never derived from a counter, a time or a row identity. **A lost passkey
+  is recovered by another passkey the person holds, or by the host reset**:
+  a host command that, in one write under the exclusion below, clears the
+  person's passkeys and issues an enrollment token, so the token still goes
+  to a row with no credential. **It writes no session**, the session being
+  the surface's alone under section 3: each session opened with a cleared
+  passkey ends at its next use, as one whose passkey is removed does, and an
+  open live view at its next 15-second re-check. **There is no admin
+  reset**, which would be the takeover this rule exists to prevent, so no
+  token is ever issued for a row that holds a passkey. It is held on that
   person row, only as a digest beside its expiry, under section 2.8's rule, and it is consumed by that person's first
   write of authentication material, which is the one write a person makes
   before they have authenticated otherwise. **A valid token authenticates the
@@ -1341,7 +1438,11 @@ rather than this document's.
 - **The host, the other principal that is not a person**, for the writes an
   operator makes by command on the server's host: the bootstrap's three
   writes, the bootstrap person row, its admin grant below and its enrollment
-  token, and the register verbs while they stay host commands. It asks no
+  token; the host reset above; **any grant, and any per-agent role's
+  verbs**, which is how a server's only admin comes to hold a role on an
+  agent and can still change what a role they hold carries, a person never
+  writing a grant on themselves or a role they hold; and the register verbs
+  while they stay host commands. It asks no
   verb of an agent and never places a turn. It is
   authorized by access to the store and the authority's directory and not by
   this section's grants, since it is how the first grant comes to exist. Its
@@ -1358,7 +1459,27 @@ rather than this document's.
   person to a role on one agent of section 2.12, or server-wide for
   registering agents with the verbs of section 8. A grant names actions only
   through its role, so there is no per-person action list to drift from the
-  vocabulary. **Per-agent roles and every grant are authored rows** under
+  vocabulary. **The roles, per the operator's ruling of 2026-10-07**: per
+  agent, `observer`, seeded with `show`, and `operator`, seeded with `show`,
+  `validate`, `load`, `unload`, `stop` and `turn`, each an authored row whose
+  verbs the admin may change within the vocabulary above; server-wide,
+  `admin`, which governs the connections (the register verbs), the who and
+  how (persons, enrollment, passkeys, disabling, grants) and the what (the
+  per-agent roles' verbs), and **grants no action on any agent by itself**,
+  acting on an agent taking a per-agent grant. **"One observer per agent, one
+  operator per agent" is read as one role of each kind per agent, held by any
+  number of people**; that reading is the operator's to confirm, and the
+  other, at most one holder of each, would add a uniqueness rule to the grant
+  and move nothing else. **Reading is not a verb, and reading an agent takes
+  a grant on it**: any grant on an agent, `observer` or `operator`, permits
+  reading everything the server holds of that agent (its register row, its
+  presence, its ceiling and door, its load state and the run it names, and
+  its live trace window), `show` staying the verb that asks the agent
+  afresh; a person with no grant on an agent sees nothing of it, not even
+  its name. **The admin sees the register for the connections it governs**,
+  each agent's name, presence and credentials' state, and not its door, its
+  load state or its trace, which are the agent's and take a grant like
+  anyone else's. **Per-agent roles and every grant are authored rows** under
   section 3.2, carrying the author member and the version, so two concurrent
   edits of one grant refuse on the stale version rather than one silently
   winning. **The server-wide admin role is fixed by the store and is the one
@@ -1374,14 +1495,15 @@ rather than this document's.
   gate. **The first admin is the bootstrap**, written by the host principal
   above, by an operator command on the server's host, authorized as the
   register verbs are today, by access to the store and the authority's
-  directory; no surface can create it. **No person writes a grant on themselves**, granting or removing, so an
+  directory; no surface can create it. **No person writes a grant whose
+  grantee is themselves**, granting or removing, so an
   admin cannot widen their own grants and the last admin cannot remove their
-  own admin grant; the exact rule is the act's to choose. **Nor does a person
+  own admin grant; a grant a lone admin needs is the host's to write. **Nor does a person
   write a role they hold a grant of on any agent**, because widening a role
   widens every grant of it, theirs included, without a grant row being
   written. **Every write to a person row, a role or a grant takes one
-  store-wide exclusion for identity and access exclusively**, a lock on a
-  single row or an advisory lock as the act chooses, held for the write's
+  store-wide exclusion for identity and access exclusively**, one
+  transaction-level advisory lock under a class of its own, held for the write's
   whole check and commit; every act a principal is authorized for takes the
   same exclusion shared, as the next item says. Such writes are rare, so serializing them all costs nothing, and it
   closes the class of race that serializing only some of them leaves open.
@@ -1428,8 +1550,28 @@ rather than this document's.
   server's host rather than by grants, so it holds no grant that a
   concurrent identity write could take away. **The check is the server's and never a surface's**: a surface may
   hide what a person cannot do, and hiding is presentation and not the gate.
+  **A read of an agent is checked the same way**, against a grant on it, at
+  the read. **An open live view is one request**, so it re-checks its
+  session and its person's grant on its agent every 15 seconds and closes at
+  the first check that finds either ended, a disable, a removed passkey or
+  grant, or the session's expiry, the twelve-hour limit included.
 - **The audit record, append-only**: every record names its principal, the
-  person, the server or the host, its target and its action, and when. For
+  person, the server or the host, how that principal was authenticated (a
+  session, an enrollment token or a passkey assertion for a person, the last
+  marking any assertion whose signature verified, whatever ceremony asked
+  for it, the session's opening and a counter's refusal among them, an
+  assertion whose signature failed proving no principal and being audited
+  never; `server` for the server
+  acting on its own behalf, access to the host for the host, each method
+  belonging to one principal alone), its target and its action, and when.
+  **The records are rows of a table of their own that store triggers keep
+  append-only against this crate's code paths**: no statement this crate
+  issues, the server's or a host command's, can update, delete or truncate a
+  record. A process that drops the triggers with the table owner's rights is
+  a compromised server, outside the threat model as the host is; a migration
+  role owning the table, the server connecting with `INSERT` and `SELECT` on
+  it and never `UPDATE`, `DELETE` or `TRUNCATE`, would close it, and is the
+  operator's provisioning decision outside act 11. For
   a verb asked of an agent, or a turn placed with it, the target is the
   agent and the action the verb or `turn`;
   for a write to a person row, a role or a grant the target is the row's
@@ -1504,8 +1646,14 @@ instrument recorded. Section 3.2's authoring path lands what the engineer author
 **The read path writes too**, one row and only one: section 4 admits an open query on
 the condition that the query is recorded, so the read that serves it writes section
 2.6's row and nothing else. That is why 2.6 belongs to neither half. **And the surface
-writes one row of its own**, section 2.8's session, at the open and at the close and
-never in between, which is the fourth and is why that table belongs to neither half
+writes one row of its own**, section 2.8's session, at the open and at the close and,
+once act 11's session stands, **its last-used time at most once a minute per session**:
+an ordinary request refreshes it when the stored time is a minute old or more, and an
+open live view at its 15-second re-check under the same rule, each by one conditional
+update on the database's clock (`last_used = now()` where it is a minute old or more), so
+concurrent requests refresh it once and it never moves backwards. The writes stay bounded
+whatever a page polls, and idle expiry needs no finer grain than a minute against an
+hour's idle limit. That is the fourth writer, and why that table belongs to neither half
 either. **The fifth is queueing**, which writes section 2.11's batch and its entries and
 touches nothing else: section 5.1 has registering and queueing as two acts, and the
 second of them is the one that records an order, so it is a writer rather than a state
@@ -1785,7 +1933,9 @@ current, the other says whether this row has moved since you read it.**
   places because the member is in one section and its source in another.
   **The identity act of the charter's section 6 changes what fills it and
   not whether it exists**, the act attaching authentication to the roles that
-  already stand rather than rearchitecting around them.
+  already stand rather than rearchitecting around them. That act is act 11,
+  whose design has the member hold the authenticated person's identity, per
+  section 10.
 
 ```graph
 node: web-authored-row-names-its-author-or-names-none
@@ -3532,7 +3682,7 @@ missing while it was relaying.
 | import computes the identity rather than accepting one | perturbation: take the operator's digest, two boxes disagree about one artifact |
 | a record identity names at most one catalog row for a file or a directory artifact, a renamed split excepted per sections 2.3 and 10 | perturbation, at the schema: drop the unique index that holds for every shape but a split, a second import of the same file or directory opens a second row and a lookup answers two where it owes one |
 | the bearer is stored as a digest and never in the clear | perturbation, at the schema: store the bearer and look up on it, a read of the session table is a set of live sessions |
-| a session carries a claimed name and never a proof | review, over the open path: nothing between the posted name and the row tests it, which is the posture section 6 defers and not a defect |
+| a session carries a claimed name and never a proof | review, over the open path: nothing between the posted name and the row tests it, which is the posture section 6 defers and not a defect. **Retires with act 11's passkey pull request**, which replaces the claim with the authenticated person, per section 2.8 |
 | the sentinel joins to nothing | perturbation: register the empty string as an identity, a run whose hash failed joins to an artifact it never named |
 | the record's session and digest are absent where unsent | perturbation: fill an absent digest from the landed rows, a row from a record cut short vouches for bytes nobody drained |
 | the record's session and digest agree across a run | perturbation: land a run whose generations name two sessions, the row holds two truths about which record it came from |
@@ -3559,7 +3709,22 @@ missing while it was relaying.
 | the server never asks a verb outside the agent's ceiling | perturbation: drop the ceiling check, ask a verb admin-con's hello did not declare, and it leaves the server; and admin-con's half, drop its typed error answer, and it reaches the invoker. **One clause is owed**: check against the row's copy, narrow the ceiling by reconnecting between the check and the enqueue, and an ask outside the new ceiling leaves. The race has no deterministic staging, and the guard is held by review: the check reads the live connection's ceiling under the live map's lock that finds the connection |
 | a verb or turn its principal may not ask is refused before an ask | perturbation, **owed**: drop the grant check, a person whose role permits `show` asks `stop`, and the ask leaves the server; let the server principal ask a lifecycle verb, and it leaves without a grant; drop the enabled check, and a disabled person's live session still asks a verb; drop the grant check on turns, and a person granted only `show` places a turn; take the check outside the exclusion, revoke between the check and the enqueue, and the ask is authorized on a revoked grant; take a register verb's check outside the exclusion, disable its admin between the check and the commit, and the register verb lands. Lands with the IAM act |
 | a person, role or grant written by a principal not permitted to write it is refused | perturbation, **owed**: drop the check, and a person granted only `show` writes themselves the operator role and passes the first gate; let a person write a grant on themselves, and an admin widens their own grants or the last admin removes the only admin grant; let an admin holding the observer role on an agent add `stop` to that role, and their own grant widens without a grant written; let a surface write as the host principal, and a grant lands with no admin behind it; drop the exclusion, have two admins remove each other at once, and no admin remains; disable the sole admin, or have two admins disable each other at once, and no enabled admin remains; grant a role to its editor while the edit is in flight, and the editor widens a role they hold; let a person write another person's authentication material, and they can sign in as them; reuse a consumed enrollment token, or use one past its expiry, and a second credential lands on someone else's row; disable a person holding an unredeemed token, redeem it, and a credential lands on a disabled row; issue or redeem a token for a person who already has a credential, and an admin replaces that person's credential. Lands with the IAM act |
-| every verb or turn asked and every person, role or grant written has an audit record naming its principal, and its outcome is a second record naming the first | perturbation, **owed**: write the first record after the ask instead of before, fail the store between the two, and an ask leaves with no record; update the first record with the outcome instead of appending a second, and an ask whose answer is lost reads as never answered with no trace of the rewrite; drop the refusal's record, and a refused verb leaves no trace; write a grant with the audit write dropped, and the grant lands with no record; enroll a person or rotate their authentication material with the audit write dropped, and the write lands with no record; record the material in an authentication write's record, and a read of the audit table is a set of credentials. Lands with the IAM act |
+| every verb or turn asked and every person, role or grant written has an audit record naming its principal, and its outcome is a second record naming the first | perturbation, **owed**: write the first record after the ask instead of before, fail the store between the two, and an ask leaves with no record; update the first record with the outcome instead of appending a second, and an ask whose answer is lost reads as never answered with no trace of the rewrite; drop the refusal's record, and a refused verb leaves no trace; write a grant with the audit write dropped, and the grant lands with no record; enroll a person or add a passkey with the audit write dropped, and the write lands with no record; record the material in an authentication write's record, and a read of the audit table is a set of credentials. Lands with the IAM act |
+| a person authenticates by passkey and by nothing else | perturbation, **owed**: open a session on a posted name with no assertion, and a session opens with no proof; verify an assertion against another person's passkey, and one person signs in as another; accept a ceremony's challenge twice, and a captured assertion opens a second session. Lands with act 11's passkey pull request |
+| the server refuses to start on the relying-party faults the design lists, and promises nothing beyond them | perturbation, **owed**: drop each start refusal of `docs/project/design-2026-10-07-iam.md` section 3 in turn, start with that fault, and the server listens with passkeys no browser will use, or serves a plain origin other than `localhost`; drop the serialized-origin refusal, configure the origin with a trailing slash or an explicit default port, and every state-changing request fails the `Origin` comparison; drop the certificate's name check, configure a certificate for another host, and every browser refuses the listener; drop the validity check, configure an expired certificate, and the server listens on one every browser refuses; let a scheme other than `https` through, or `http` off `localhost`, and the server listens on an origin where no ceremony can run. A fault the list does not name, a public suffix or a certificate unfit for server authentication among them, is not this row's: the browser's failure at the first connection or ceremony shows it. Lands with act 11's TLS and passkey pull requests |
+| a person's name is unique in its canonical form | perturbation, **owed**: compare names as given, and a second person enrolls `ada` beside `Ada`, so name-first sign-in finds two; drop the check at rename, and a rename lands a name another person's form already holds. Lands with act 11's persons pull request |
+| a credential ID belongs to one passkey of one person | perturbation, **owed**: drop the unique constraint, and a registration returning a credential ID another person holds lands a second passkey row for it, so one credential signs in as either person. Lands with act 11's passkey pull request |
+| a signature counter that did not rise refuses the assertion, any assertion, and the stored passkey is updated by a locked read, merge and write | perturbation, **owed**: take the library's `CredentialPossibleCompromise` as a success, roll a device-bound passkey's counter back, and a session opens, and the same at the fresh assertion before adding a passkey, and a passkey is added on a cloned credential's word; drop the update of the stored passkey, and a clone replaying an old counter passes against the first value ever stored; update it at sign-in alone, and the addition's assertion leaves it stale; put the update back in the action's transaction, fail the addition, and the passkey rolls back with it, stale; persist the counter alone, and a passkey's backup state goes stale; write back the copy deserialized before the ceremony without the row's lock, and a concurrent assertion erases another's backup-eligibility upgrade; compare against that pre-ceremony copy instead of the locked read, and two concurrent assertions with a nonzero counter both succeed; apply the refusal to a zero counter, and a synced passkey cannot sign in; audit a sign-in whose signature failed, and a stream of bad assertions fills the audit. Lands with act 11's passkey pull request |
+| a session carries an authenticated person, ends where its person or its passkey does, and its cookie is neither readable by script nor carried by another site | perturbation, **owed**: drop `HttpOnly`, `Secure`, `SameSite=Strict` or the `__Host-` prefix, and the cookie's test finds the attribute gone; drop the `Origin` check, and a POST from another origin changes state; drop the idle or the absolute expiry, and a session past it still authorizes; drop the check of the passkey a session was opened with, remove that passkey, and the session still authorizes. Lands with act 11's passkey pull request |
+| a passkey is added only after a fresh assertion, and a person's last is never removed | perturbation, **owed**: add a passkey on a session alone, and a stolen cookie gains access that outlasts it; let a registration use an add grant another session earned, and a parallel session adds a passkey on someone else's assertion; leave the grant unconsumed at the registration's start, and one assertion adds two passkeys; let a person remove their last passkey, and they are locked out with only the host to recover them. Lands with act 11's passkey pull request |
+| an enrollment token is single-use, expiring, bound to one person holding no passkey, and stored as a digest | perturbation, **owed**: redeem a token twice, past its lifetime, or on a row that holds a passkey, and each lands a credential; configure a lifetime past seven days, and it is taken; store the token in the clear, and a read of the person table is a set of usable tokens; have the host reset issue its token before clearing the passkeys, and a token is issued for a row that holds one. Lands with act 11's persons pull request |
+| every bearer the server issues is 32 bytes of the operating system's cryptographic randomness | perturbation, **owed**: draw an enrollment token from a counter, and the next token is guessed from the last; draw a session bearer or a ceremony identity from the time, and the same. Lands with act 11's persons and passkey pull requests |
+| no statement this crate issues can rewrite, remove or truncate an audit record | perturbation, **owed**: drop the row trigger, and an update rewrites a record or a delete removes one; drop the truncate trigger, and a truncate empties the audit. The triggers guard this crate's code paths, not a process dropping them with the owner's rights, which section 2.13 puts outside the threat model. Lands with act 11's persons pull request |
+| the admin role grants no action on any agent | perturbation, **owed**: let the server-wide admin grant authorize a verb, and an admin holding no grant on an agent asks `stop` of it. Lands with act 11's authorization pull request |
+| reading an agent takes a grant on it | perturbation, **owed**: drop the grant check on a read, and a person holding no grant on an agent reads its trace window and its load state; give the admin's register view the door and the load state, and an admin with no grant reads an agent's state. Lands with act 11's authorization pull request |
+| an open live view ends within its bound of what ended its session or grant | perturbation, **owed**: drop the stream's re-check, disable a person whose live view is open, and the view keeps receiving the trace; remove the grant instead, and the same. Lands with act 11's authorization pull request |
+| the ceremonies in flight are bounded | perturbation, **owed**: drop the cap, start ceremonies for posted names past it, and the map grows with every unauthenticated request. Lands with act 11's passkey pull request |
+| the WebAuthn library links into the server binary alone | measurement, **owed**: `ldd` on gate-con and admin-con shows no `libcrypto`, the library being carried by a cargo feature the server binary alone requires. Lands with act 11's passkey pull request |
 | the admission's `show` is required only where the ceiling grants it | perturbation: ask `show` at every admission, and an agent whose ceiling grants no `show` is closed `admission_incomplete` at every reconnection and never stays admitted; skip it where it is granted, and the row reads the last process's state as current |
 | the ceiling declared in the hello is exactly what the box's sudo rules grant | perturbation, against a fake `sudo` generated at test time in `src/link/sudo_invoker_tests.rs`: answer `grants` from anything but each verb's own `sudo -n -l` line, and a verb the rule refuses is declared, or one it grants is not |
 | no privileged invocation exists outside admin-con's sudo invoker | perturbation, two instruments. A test, `tests/no_privilege.rs`: it reads every tracked file outside `docs/`, never following a symlink, comment lines aside by each file's syntax and Markdown read in its fences only, for a privilege-escalating program named as a word, a setuid family call, a child's user or group set on a command, and a setuid or setgid mode bit, with the program's word allowed in `src/link/sudo_invoker.rs` and its test module alone; shown to fail when one of each family is planted, in Rust and in a README fence, when the program is planted in another file of the invoker's name, and when another family is planted in the invoker's own files. And the argv instrument in `src/link/sudo_invoker_tests.rs`: plant the principal's name from the ask into the command, and the line the fake records is no longer exactly `sudo -n <weaver_admin> <verb> <agent>` |
@@ -3567,11 +3732,20 @@ missing while it was relaying.
 **A watch that cannot fail is not a test.** For each perturbation above, the
 act that lands it states what removal makes it fail and confirms it does.
 
-**A row marked owed has no instrument and is not counted as enforced.** Four
-stand so marked as of 2026-10-05. The batch's order is owed because section
-2.11 describes its table and no migration builds it. Three rows of the role
-shape ruled on 2026-10-02 are owed to the IAM act: the principal check, the
-writer's check for persons, roles and grants, and the audit record. The
+**A row marked owed has no instrument and is not counted as enforced.**
+Nineteen stand so marked as of 2026-10-07. The batch's order is owed because
+section 2.11 describes its table and no migration builds it. Three rows of
+the role shape ruled on 2026-10-02 are owed to the IAM act: the principal
+check, the writer's check for persons, roles and grants, and the audit
+record. **Fifteen are owed to act 11's code pull requests**, from its design
+of 2026-10-07: passkey-only sign-in, the start refusals, the unique name, the
+credential ID, the signature counter, the session, the fresh assertion and
+the last passkey, the enrollment token, the bearers' randomness, the
+append-only audit table, the
+admin's lack of agent actions, read access, the live view's bound, the
+ceremony cap, and the WebAuthn library's place in the server binary alone.
+The row that a session carries a claimed name is not owed but retires with
+act 11's passkey pull request. The
 act that built the relay client on 2026-10-05 re-showed the replay row
 against the relay, its three clauses for the door's opening among them,
 and the bounds under its measures, each shown to fail with its guard
@@ -3643,15 +3817,13 @@ a `web-` assertion beside `weaver-admin`'s.
   stands staged on bulk-store since 2026-07-29 and in no record yet, so the
   first import of it is where the ambiguity lands, and the ruling is owed
   before that import rather than after.
-- **What an author names, which the identity act of the charter's section 6
-  settles.** Narrowed 2026-09-08: section 2.8 says the value comes from the
-  session's claimed name, so what stays open is what the act makes that name
-  mean rather than where it comes from. Section 3.2's member holds the name
-  the authoring surface had, and whether that later resolves against an
-  identity the act stands up or
-  stays a name is that act's ruling and not this document's. **The member
-  stands under either answer**, which is why the schema is not blocked on
-  the election and why the election is not blocked by the schema.
+- **What an author names, closed 2026-10-07 by act 11's design.** Once the
+  act's passkey pull request lands, section 3.2's member holds the
+  authenticated person's identity and not their name, a person being
+  renamable and an author not moving with them, and the surfaces render the
+  current name; a row written before the act keeps the claimed name it
+  carries, which reads as a claim because it resolves to no person. Per
+  `docs/project/design-2026-10-07-iam.md` section 6.
 - **The licence boundary**, carried forward 2026-09-06 from the Spec this
   one replaced, where it stood at that document's section 15 and where the
   rewrite dropped it. This crate carries `Apache-2.0` with its own `LICENSE`
@@ -3719,24 +3891,24 @@ a `web-` assertion beside `weaver-admin`'s.
   from the run's first generation and the contract's section 2.2 now
   carries it once per run, section 2.2 above holding it on the row. Per
   issue #527, found by the review of PR #526.
-- **How people authenticate to this server**, opened 2026-10-02 and the
-  operator's: passkeys (WebAuthn), local passwords with a second factor
-  (TOTP), or an external identity provider (OIDC). Section 2.13 charters the
-  person without electing the mechanism, and the act that builds it waits on
-  this answer. It is a different question from what an author names, above:
-  that one asks what the member means once a person stands, this one how a
-  person comes to stand.
-- **The role vocabulary**, opened 2026-10-02 and the operator's. Proposed,
-  per agent: an observer whose role permits `show`, which on the box is the
-  observer's sudo rule granting `show`, per `weaver-admin-operator-contract`
-  section 2; a converser
-  adding `turn` and no lifecycle verb; and an operator adding `turn`,
-  `validate`, `load`, `unload` and `stop`. Server-wide: an admin who
-  registers agents, the one role the store fixes per section 2.13. The
-  converser is this document's proposal and not the operator's. The box's
-  rules, an observer's and an operator's, carry no `turn`, the gate's own admission governing the
-  data plane on the box, per `toddwbucy/WeaverAgent#70`, so whether a grant here and a role there share one
-  vocabulary is part of the election.
+- **How people authenticate to this server, closed 2026-10-07** by the
+  operator: by passkey (WebAuthn), and by nothing else, no password, no
+  second factor and no external identity provider. Section 2.13 states the
+  rules and `docs/project/design-2026-10-07-iam.md` the mechanism, the
+  library and the threat model.
+- **The role vocabulary, closed 2026-10-07** by the operator: per agent,
+  `observer` (seeded with `show`) and `operator` (seeded with `show`,
+  `validate`, `load`, `unload`, `stop` and `turn`), authored rows whose verbs
+  the server-wide admin writes; server-wide, `admin`, which governs the
+  connections, the persons and the grants, and the per-agent roles' verbs,
+  and grants no action on any agent by itself. The converser this document
+  had proposed is not among them. **One reading is the operator's to
+  confirm**: one role of each kind per agent, held by any number of people,
+  per section 2.13. Whether a grant here and a sudo rule on the box share one
+  vocabulary was part of this election, and the answer is that they need
+  not: the box's rules carry no `turn`, the gate's own admission governing
+  the data plane, and a role here names `turn` as an action this crate's
+  gate checks.
 - **What section 7 is called, now that one of its three is not a seam**,
   opened 2026-09-16 by the act that deleted this crate's seam record to
   `weaver-admin`. The heading reads "The seams", and 7.2's admin verbs are

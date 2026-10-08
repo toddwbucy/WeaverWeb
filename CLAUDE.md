@@ -219,8 +219,9 @@ weaver-analysis's arrow lands.
   runs and positions land only by ingest. A surface that needs a seam takes it as its own
   argument rather than widening the router state.
 - `surfaces/gate.rs` is the session gate. The `weaver_session` cookie is a bearer, stored only
-  as a SHA-256 digest. It carries a claimed name and a configured role and proves nothing;
-  real identity waits on the credential model the connectors bring.
+  as a SHA-256 digest. It carries a claimed name and a configured role and proves nothing
+  until act 11 replaces it: passkeys (WebAuthn) only, the session carrying the
+  authenticated person, per `docs/project/design-2026-10-07-iam.md` and Spec 2.8 and 2.13.
 - The rendering approach is server-rendered askama templates (dirs in `askama.toml`) with htmx
   and SSE vendored into the binary via `include_bytes!`. There is no node toolchain and no
   SPA, and the browser is a display engine. This is inherited. The handoff leaves the stack to

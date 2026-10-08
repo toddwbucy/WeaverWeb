@@ -600,6 +600,36 @@ impl ConfigDir {
         Ok(Self { fd, display })
     }
 
+    /// **The agent's directory as it stands, read and never made**: `None`
+    /// where the box's directory or the agent's under it does not exist,
+    /// so a verb inspects before its first record without creating
+    /// anything. The checks are `open`'s, on what is already there.
+    pub(super) fn inspect(out: &Path, r#box: &str, name: &str) -> anyhow::Result<Option<Self>> {
+        let out = std::fs::canonicalize(out)
+            .map_err(|e| anyhow::anyhow!("resolving {}: {e}", out.display()))?;
+        let out_fd = at::open_dir(None, out.as_os_str()).map_err(|e| describe(&out, e))?;
+        let existing =
+            |parent: &std::os::fd::OwnedFd, entry: &str, display: &Path| match at::open_dir(
+                Some(parent),
+                entry,
+            ) {
+                Ok(fd) => Ok(Some(fd)),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                Err(e) => Err(describe(display, e)),
+            };
+        let box_display = out.join(r#box);
+        let Some(box_fd) = existing(&out_fd, r#box, &box_display)? else {
+            return Ok(None);
+        };
+        private(&box_fd, &box_display)?;
+        let display = box_display.join(name);
+        let Some(fd) = existing(&box_fd, name, &display)? else {
+            return Ok(None);
+        };
+        private(&fd, &display)?;
+        Ok(Some(Self { fd, display }))
+    }
+
     fn has(&self, entry: &str) -> anyhow::Result<bool> {
         at::exists(&self.fd, entry)
             .map_err(|e| anyhow::anyhow!("reading {}: {e}", self.display.join(entry).display()))
@@ -757,6 +787,20 @@ fn staged_fingerprint(content: &str) -> anyhow::Result<String> {
     Ok(fingerprint(der.as_ref()))
 }
 
+/// **What a retained staged pair calls for**, decided by reading alone.
+pub(super) enum Retained {
+    /// No staged entry stands under the agent's directory.
+    None,
+    /// A staged pair the register carries, live, for the row named: the
+    /// commit an earlier run's lost answer hid, to publish now.
+    Publish(Box<Agent>, String, String),
+    /// A staged pair this run discards before minting its own, and why: half
+    /// a pair from a run that crashed between its creates, or a pair whose
+    /// commit never landed. The discard is a mutation, so it runs after the
+    /// verb's first record (`discard_staged`).
+    Discard(&'static str),
+}
+
 /// **A retained staged pair is consumed by the retry.** A run whose commit's
 /// answer was lost and whose read-back failed too leaves its pair staged,
 /// and a retry that minted a fresh pair would be refused by the staged
@@ -767,13 +811,18 @@ fn staged_fingerprint(content: &str) -> anyhow::Result<String> {
 /// published; where it does not, the commit never landed and the pair is
 /// discarded for a fresh one. Half a pair is a run that crashed between
 /// its two creates, which reached no store; it is discarded. A staged file
-/// that is not a config refuses, since it is not this server's.
-async fn retained_pair(
+/// that is not a config refuses, since it is not this server's. **This
+/// reads and decides, and changes nothing**: a verb inspects before its
+/// first record, and the discard it may decide runs after.
+async fn inspect_retained(
     store: &Store,
-    dir: &ConfigDir,
+    dir: Option<&ConfigDir>,
     r#box: &str,
     name: &str,
-) -> anyhow::Result<Option<(Agent, String, String)>> {
+) -> anyhow::Result<Retained> {
+    let Some(dir) = dir else {
+        return Ok(Retained::None);
+    };
     let gate_staging = format!("{GATE_CONFIG}{STAGING}");
     let admin_staging = format!("{ADMIN_CONFIG}{STAGING}");
     let kind = |entry: &str| -> anyhow::Result<bool> {
@@ -790,19 +839,12 @@ async fn retained_pair(
     };
     let (gate_there, admin_there) = (kind(&gate_staging)?, kind(&admin_staging)?);
     if !gate_there && !admin_there {
-        return Ok(None);
+        return Ok(Retained::None);
     }
-    let discard = || {
-        let _ = at::unlink(&dir.fd, &gate_staging);
-        let _ = at::unlink(&dir.fd, &admin_staging);
-    };
     if gate_there != admin_there {
-        tracing::warn!(
-            "half a staged pair under {}, from a run that crashed between its creates; discarded",
-            dir.display.display()
-        );
-        discard();
-        return Ok(None);
+        return Ok(Retained::Discard(
+            "half a staged pair, from a run that crashed between its creates",
+        ));
     }
     let read = |entry: &str| -> anyhow::Result<String> {
         let content = at::read(&dir.fd, entry)
@@ -824,17 +866,20 @@ async fn retained_pair(
                 && row.gate.state == CredentialState::Live
                 && row.admin.state == CredentialState::Live =>
         {
-            Ok(Some((row, gate_fp, admin_fp)))
+            Ok(Retained::Publish(Box::new(row), gate_fp, admin_fp))
         }
-        _ => {
-            tracing::warn!(
-                "a staged pair under {} that the register does not carry, from a commit that never landed; discarded",
-                dir.display.display()
-            );
-            discard();
-            Ok(None)
-        }
+        _ => Ok(Retained::Discard(
+            "a staged pair the register does not carry, from a commit that never landed",
+        )),
     }
+}
+
+/// **The discard `inspect_retained` decided**, after the verb's first
+/// record: both staging entries unlinked, so this run stages its own.
+fn discard_staged(dir: &ConfigDir, why: &str) {
+    tracing::warn!("{why} under {}; discarded", dir.display.display());
+    let _ = at::unlink(&dir.fd, &format!("{GATE_CONFIG}{STAGING}"));
+    let _ = at::unlink(&dir.fd, &format!("{ADMIN_CONFIG}{STAGING}"));
 }
 
 /// The retained pair under the directory, as a `Staged` to publish.
@@ -1052,28 +1097,36 @@ pub async fn register(
     // Checked inside the lock: two registrations of one box and name run
     // one at a time here, so the second sees the first's published configs
     // rather than racing it to the same directory.
-    let dir = match ConfigDir::open(out, r#box, name) {
-        Ok(dir) => dir,
+    // **Read, and nothing made, before the first record**: the agent's
+    // directory as it stands, the configs that would refuse, and what a
+    // retained pair calls for. Creating the directory, discarding a stale
+    // pair and staging are mutations, and run after it.
+    let existing = match ConfigDir::inspect(out, r#box, name) {
+        Ok(existing) => existing,
         Err(e) => return refused("register", format!("{e:#}")),
     };
-    for entry in [GATE_CONFIG, ADMIN_CONFIG] {
-        match dir.has(entry) {
-            Ok(false) => {}
-            Ok(true) => {
-                return refused(
-                    "register",
-                    format!(
-                        "{} already exists and register does not overwrite a config; move it aside, or rotate the agent",
-                        dir.path(entry).display()
-                    ),
-                );
+    if let Some(dir) = &existing {
+        for entry in [GATE_CONFIG, ADMIN_CONFIG] {
+            match dir.has(entry) {
+                Ok(false) => {}
+                Ok(true) => {
+                    return refused(
+                        "register",
+                        format!(
+                            "{} already exists and register does not overwrite a config; move it aside, or rotate the agent",
+                            dir.path(entry).display()
+                        ),
+                    );
+                }
+                Err(e) => return refused("register", format!("{e:#}")),
             }
-            Err(e) => return refused("register", format!("{e:#}")),
         }
     }
-    let dir = match retained_pair(store, &dir, r#box, name).await {
-        Ok(None) => dir,
-        Ok(Some((row, gate_fp, admin_fp))) => {
+    let discard = match inspect_retained(store, existing.as_ref(), r#box, name).await {
+        Ok(Retained::None) => None,
+        Ok(Retained::Discard(why)) => Some(why),
+        Ok(Retained::Publish(row, gate_fp, admin_fp)) => {
+            let dir = existing.expect("a retained pair stands under an existing directory");
             let target = Target::Agent(row.agent_id.as_str());
             let first = match first_record(store, "register", author, target).await {
                 Ok(first) => first,
@@ -1103,6 +1156,13 @@ pub async fn register(
         Err(refusal) => return refusal,
     };
     let answer = async {
+        if let (Some(why), Some(dir)) = (discard, &existing) {
+            discard_staged(dir, why);
+        }
+        let dir = match ConfigDir::open(out, r#box, name) {
+            Ok(dir) => dir,
+            Err(e) => return refused("register", format!("{e:#}")),
+        };
         // Staged before the store commits, published after: a store failure
         // leaves no config, and the credentials are never live without one.
         let staged = match stage_pair(cfg, authority, dir, minted.as_str(), name, &gate, &admin) {
@@ -1247,14 +1307,21 @@ pub async fn rotate(
     {
         return refused("rotate", format!("{e:#}"));
     }
-    let dir = match ConfigDir::open(out, &agent.r#box, &agent.name) {
-        Ok(dir) => dir,
+    // Read, and nothing made, before the first record, as in `register`.
+    let existing = match ConfigDir::inspect(out, &agent.r#box, &agent.name) {
+        Ok(existing) => existing,
         Err(e) => return refused("rotate", format!("{e:#}")),
     };
-    let dir = match retained_pair(store, &dir, &agent.r#box, &agent.name).await {
-        Ok(None) => dir,
-        Ok(Some((row, gate_fp, admin_fp))) => {
-            let target = Target::Agent(agent.agent_id.as_str());
+    let discard = match inspect_retained(store, existing.as_ref(), &agent.r#box, &agent.name).await
+    {
+        Ok(Retained::None) => None,
+        Ok(Retained::Discard(why)) => Some(why),
+        Ok(Retained::Publish(row, gate_fp, admin_fp)) => {
+            let dir = existing.expect("a retained pair stands under an existing directory");
+            // **The row whose pair is published**, which may be a
+            // replacement of the agent the verb was asked by, as in
+            // `register`'s recovery.
+            let target = Target::Agent(row.agent_id.as_str());
             let first = match first_record(store, "rotate", author, target).await {
                 Ok(first) => first,
                 Err(refusal) => return refusal,
@@ -1271,6 +1338,13 @@ pub async fn rotate(
         Err(refusal) => return refusal,
     };
     let answer = async {
+        if let (Some(why), Some(dir)) = (discard, &existing) {
+            discard_staged(dir, why);
+        }
+        let dir = match ConfigDir::open(out, &agent.r#box, &agent.name) {
+            Ok(dir) => dir,
+            Err(e) => return refused("rotate", format!("{e:#}")),
+        };
         let (gate, admin) = match mint_pair(&agent.name, authority) {
             Ok(pair) => pair,
             Err(e) => return refused("rotate", format!("{e:#}")),

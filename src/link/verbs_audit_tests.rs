@@ -180,10 +180,9 @@ async fn a_verb_whose_first_record_cannot_be_written_does_not_act() {
             .is_err(),
         "no row was registered"
     );
-    let configs = out.path().join(&r#box).join("karl");
     assert!(
-        std::fs::read_dir(&configs).map_or(true, |mut d| d.next().is_none()),
-        "no config was written"
+        !out.path().join(&r#box).exists(),
+        "no directory was created, and so no config written"
     );
 
     // A registration that is audited, so the three verbs on a row have one.
@@ -245,5 +244,144 @@ async fn a_verb_whose_first_record_cannot_be_written_does_not_act() {
         after.admin.state,
         CredentialState::Live,
         "no credential was revoked"
+    );
+}
+
+/// A private directory, as a verb's checks require it.
+fn private_dir(path: &std::path::Path) {
+    use std::os::unix::fs::DirBuilderExt;
+    std::fs::DirBuilder::new()
+        .mode(0o700)
+        .recursive(true)
+        .create(path)
+        .unwrap();
+}
+
+/// **A refused first record leaves the agent's directory exactly as it was**
+/// (Codex on PR #25): the inspection before the first record reads and
+/// never makes or unlinks. Half a staged pair, which a verb that acts
+/// discards, stands untouched after `register` and after `rotate` whose
+/// first record was refused.
+#[tokio::test]
+async fn a_refused_first_record_leaves_the_agents_directory_as_it_was() {
+    let Some(lab) = Lab::open().await else { return };
+    let cfg = lab_config(&lab);
+    let authority = Authority::load(lab.authority.dir()).unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let r#box = format!("box-{}", uuid::Uuid::new_v4().simple());
+    let dir = out.path().join(&r#box).join("karl");
+    private_dir(&dir);
+    let half = dir.join("gate-con.toml.staging");
+    std::fs::write(&half, "a half pair a crashed run left").unwrap();
+    let listing = |dir: &std::path::Path| {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    };
+    let before = listing(&dir);
+
+    FAIL_FIRST_RECORD.with(|f| f.set(true));
+    let answer = super::verbs::register(
+        &lab.store,
+        &cfg,
+        &authority,
+        &r#box,
+        "karl",
+        out.path(),
+        Some("lab"),
+    )
+    .await;
+    assert!(!answer.ok, "{}", answer.value);
+    assert_eq!(
+        listing(&dir),
+        before,
+        "register left the directory as it was"
+    );
+
+    // An agent of the same box and name, registered elsewhere, so `rotate`
+    // has a row; its directory here still holds only the half pair.
+    let elsewhere = tempfile::tempdir().unwrap();
+    let answer = super::verbs::register(
+        &lab.store,
+        &cfg,
+        &authority,
+        &r#box,
+        "karl",
+        elsewhere.path(),
+        Some("lab"),
+    )
+    .await;
+    assert!(answer.ok, "{}", answer.value);
+    let agent = answer.value["agent"].as_str().unwrap().to_owned();
+    FAIL_FIRST_RECORD.with(|f| f.set(true));
+    let answer = super::verbs::rotate(
+        &lab.store,
+        &cfg,
+        &authority,
+        &agent,
+        out.path(),
+        Some("lab"),
+    )
+    .await;
+    assert!(!answer.ok, "{}", answer.value);
+    assert_eq!(listing(&dir), before, "rotate left the directory as it was");
+    assert!(half.exists(), "the half pair was not discarded");
+}
+
+/// **A rotation's recovery is audited on the row whose pair it publishes**
+/// (Codex on PR #25): an agent registered, then registered again from
+/// another directory, which retires the first row; the replacement's
+/// configs staged under the first directory, as a run whose answer was
+/// lost leaves them. A `rotate` asked by the retired row's identity
+/// publishes the replacement's pair, and its record names the replacement.
+#[tokio::test]
+async fn a_rotations_recovery_names_the_row_it_publishes() {
+    let Some(lab) = Lab::open().await else { return };
+    let cfg = lab_config(&lab);
+    let authority = Authority::load(lab.authority.dir()).unwrap();
+    let r#box = format!("box-{}", uuid::Uuid::new_v4().simple());
+    let register = |out: std::path::PathBuf| {
+        let (store, cfg, authority, r#box) = (
+            lab.store.clone(),
+            cfg.clone(),
+            Authority::load(lab.authority.dir()).unwrap(),
+            r#box.clone(),
+        );
+        async move {
+            let answer =
+                super::verbs::register(&store, &cfg, &authority, &r#box, "karl", &out, Some("lab"))
+                    .await;
+            assert!(answer.ok, "{}", answer.value);
+            answer.value["agent"].as_str().unwrap().to_owned()
+        }
+    };
+    let first_out = tempfile::tempdir().unwrap();
+    let retired = register(first_out.path().to_owned()).await;
+    let second_out = tempfile::tempdir().unwrap();
+    let replacement = register(second_out.path().to_owned()).await;
+    assert_ne!(retired, replacement);
+
+    let from = second_out.path().join(&r#box).join("karl");
+    let to = first_out.path().join(&r#box).join("karl");
+    for config in ["gate-con.toml", "admin-con.toml"] {
+        std::fs::copy(from.join(config), to.join(format!("{config}.staging"))).unwrap();
+    }
+    let answer = super::verbs::rotate(
+        &lab.store,
+        &cfg,
+        &authority,
+        &retired,
+        first_out.path(),
+        Some("lab"),
+    )
+    .await;
+    assert!(answer.ok, "{}", answer.value);
+    assert_eq!(answer.value["agent"], Value::String(replacement.clone()));
+    assert_eq!(
+        audited(&lab.store, &answer.value).await,
+        (host("agent", Some(&replacement), "rotate"), "ok".into())
     );
 }

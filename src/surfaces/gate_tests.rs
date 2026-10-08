@@ -465,3 +465,35 @@ async fn an_authored_row_names_its_person_and_renders_their_current_name() {
     );
     assert_eq!(s.author(None).await.unwrap(), Author::Absent);
 }
+
+/// **A session in active use stays open at the shortest idle limit**: used
+/// every 50 seconds under the 300-second floor, across eight minutes, it is
+/// served at every use and never closed. The clock is the database's, so
+/// each step moves the session's own times back 50 seconds rather than
+/// sleeping; the refresh's one-minute grain leaves its last use at most
+/// about two minutes stale, well inside the limit.
+#[tokio::test]
+async fn a_session_used_every_fifty_seconds_stays_open_at_the_idle_floor() {
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let mut p = policy();
+    p.idle = Duration::from_secs(crate::config::SESSION_IDLE_FLOOR_SECS);
+    let (bearer, ..) = open(s, "reader").await;
+    for step in 0..10 {
+        set(
+            s,
+            &bearer,
+            "opened_at = opened_at - interval '50 seconds', \
+             last_used_at = last_used_at - interval '50 seconds'",
+        )
+        .await;
+        assert!(
+            gate::at_use(s, &p, &bearer).await.unwrap().is_ok(),
+            "a use {}s on was refused",
+            (step + 1) * 50
+        );
+    }
+    assert!(!closed(s, &bearer).await, "the session stayed open");
+}

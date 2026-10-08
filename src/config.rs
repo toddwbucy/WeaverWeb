@@ -79,7 +79,8 @@ pub struct ServerConfig {
     #[serde(default)]
     pub rp_id: Option<String>,
     /// **A session ends this long after its last use** (design section 6),
-    /// in seconds: an hour by default.
+    /// in seconds: an hour by default, and never under
+    /// [`SESSION_IDLE_FLOOR_SECS`].
     #[serde(default = "default_session_idle_secs")]
     pub session_idle_secs: u64,
     /// **A session ends this long after it opened, used or not** (design
@@ -131,6 +132,12 @@ fn default_enrollment_token_hours() -> u32 {
     24
 }
 
+/// **The shortest idle limit a session may have**: its last use is written
+/// at most once a minute, so idle expiry is honoured to within a minute, and
+/// a limit of a minute or less would end a session in active use. Five
+/// minutes is several times that grain, with margin.
+pub const SESSION_IDLE_FLOOR_SECS: u64 = 300;
+
 fn default_session_idle_secs() -> u64 {
     60 * 60
 }
@@ -173,14 +180,18 @@ impl ServerConfig {
                 cfg.enrollment_token_hours
             );
         }
-        // A session that ends at once is a sign-in that serves nothing, and
-        // an idle limit past the absolute one could never be reached.
-        if cfg.session_idle_secs == 0
-            || cfg.session_absolute_secs == 0
-            || cfg.session_idle_secs > cfg.session_absolute_secs
-        {
+        // The last use is written at most once a minute, so an idle limit
+        // near that grain would end a session in active use; and an idle
+        // limit past the absolute one could never be reached.
+        if cfg.session_idle_secs < SESSION_IDLE_FLOOR_SECS {
             anyhow::bail!(
-                "session_idle_secs is {} and session_absolute_secs {}: each must be above 0, the idle limit no longer than the absolute",
+                "session_idle_secs is {}, under {SESSION_IDLE_FLOOR_SECS}: a session's last use is written at most once a minute, so idle expiry is honoured to within a minute and its limit must be several times that",
+                cfg.session_idle_secs
+            );
+        }
+        if cfg.session_idle_secs > cfg.session_absolute_secs {
+            anyhow::bail!(
+                "session_idle_secs is {} and session_absolute_secs {}: the idle limit is no longer than the absolute",
                 cfg.session_idle_secs,
                 cfg.session_absolute_secs
             );
@@ -239,8 +250,9 @@ mod tests {
     }
 
     /// **A session's limits are an hour idle and twelve hours open by
-    /// default**, each refused at zero, and an idle limit past the absolute
-    /// one is refused.
+    /// default**; an idle limit under five minutes is refused, since the
+    /// last use is written at most once a minute, and so is one past the
+    /// absolute limit.
     #[test]
     fn a_sessions_limits_default_and_refuse_what_cannot_hold() {
         let dir = tempfile::tempdir().unwrap();
@@ -254,10 +266,12 @@ mod tests {
             (3600, 43200)
         );
         for (idle, absolute, ok) in [
-            (60, 60, true),
-            (0, 60, false),
-            (60, 0, false),
-            (61, 60, false),
+            (300, 300, true),
+            (299, 43200, false),
+            (30, 43200, false),
+            (0, 43200, false),
+            (300, 0, false),
+            (301, 300, false),
         ] {
             std::fs::write(
                 &path,

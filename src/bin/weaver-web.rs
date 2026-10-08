@@ -400,6 +400,16 @@ async fn serve(cfg: Arc<ServerConfig>) -> anyhow::Result<()> {
         &authority.fingerprint()[..12]
     );
 
+    // **The browser listener's start refusals, before anything listens**
+    // (design section 3): the origin's form and scheme, and the certificate
+    // and key where configured.
+    let browser_tls = weaver_web::listen::browser_tls(&cfg, time::OffsetDateTime::now_utc())?;
+    if let Some((_, warnings)) = &browser_tls {
+        for warning in warnings {
+            tracing::warn!("{warning}");
+        }
+    }
+
     let store = store::Store::connect(&cfg.database).await?;
     tracing::info!("store connected, migrations applied");
 
@@ -426,14 +436,30 @@ async fn serve(cfg: Arc<ServerConfig>) -> anyhow::Result<()> {
     };
 
     let listener = tokio::net::TcpListener::bind(&cfg.listen).await?;
-    tracing::info!("listening on {}", cfg.listen);
+    let app = web::router(state).merge(instrument);
     // The listener halting itself (its lock session lost) ends the process,
     // so the operator's supervisor restarts it into a clean start.
     let halting = link.clone();
-    tokio::select! {
-        served = axum::serve(listener, web::router(state).merge(instrument))
-            .with_graceful_shutdown(shutdown_signal()) => served?,
-        why = halting.halted() => anyhow::bail!("the listener halted: {why}"),
+    // **With a certificate and key, TLS only**: no plain listener stands
+    // beside it.
+    match browser_tls {
+        Some((tls, _)) => {
+            tracing::info!("listening on {} with TLS", cfg.listen);
+            let listener = weaver_web::listen::TlsListener::new(listener, tls)?;
+            tokio::select! {
+                served = axum::serve(listener, app)
+                    .with_graceful_shutdown(shutdown_signal()) => served?,
+                why = halting.halted() => anyhow::bail!("the listener halted: {why}"),
+            }
+        }
+        None => {
+            tracing::info!("listening on {}", cfg.listen);
+            tokio::select! {
+                served = axum::serve(listener, app)
+                    .with_graceful_shutdown(shutdown_signal()) => served?,
+                why = halting.halted() => anyhow::bail!("the listener halted: {why}"),
+            }
+        }
     }
     drop(link);
     Ok(())

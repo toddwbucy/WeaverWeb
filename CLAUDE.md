@@ -172,8 +172,12 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
 - **Run the server:** `cargo run -- --config <config.toml>`, where the config sets `listen`,
   `link_listen`, `database` and `authority_dir`, with `silence_bound_secs` (60), `link_address`
   and `server_name` (`weaver-web`) optional (see `ServerConfig` in `src/config.rs`). The server
-  refuses to start without an authority at `authority_dir`; `authority init` makes one. Keep
-  configs, authorities and client configs out of the repository. Logging uses `RUST_LOG`,
+  refuses to start without an authority at `authority_dir`; `authority init` makes one.
+  Optional `tls_certificate` and `tls_key` (PEM paths) make the browser's listener serve TLS
+  only, no plain listener beside it; optional `origin` is the listener's serialized origin
+  (`https`, or `http` on `localhost`), and the certificate must be valid for its host. The
+  start refusals are `src/listen.rs`'s, design section 3. Keep configs, certificates, keys,
+  authorities and client configs out of the repository. Logging uses `RUST_LOG`,
   which defaults to `weaver_web=info,sqlx=warn`.
 - **gate-con** reads the file `register` wrote (`server`, `server_name`, `agent`, `agent_id`, `plane`,
   `server_certificate`, `certificate`, `key`) plus `gate_socket`, the agent's gate socket, a

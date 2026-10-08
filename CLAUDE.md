@@ -226,7 +226,8 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
   store for this. The answer names its first record under `audit`.
 - **The host's identity commands** (`src/host.rs`, over `src/store/identity.rs` and
   migration `0015`): `person bootstrap`, `person token`, `person reset`, `grant add`,
-  `grant remove` and `role set`, each audited as the host's like the register verbs and each
+  `grant remove` and `role set`, each audited as the host's like the register verbs (an
+  `--author` of a person's whole `pe-` shape refused before any record, at every host command) and each
   writing under the identity exclusion, one advisory key (`IDENTITY_LOCK_KEY`). A token is
   printed once and stored as its digest; its lifetime is the config's
   `enrollment_token_hours` (24, at most 168) or `--hours`. A person is named by `pe-` or by

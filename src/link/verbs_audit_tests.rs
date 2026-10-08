@@ -385,3 +385,118 @@ async fn a_rotations_recovery_names_the_row_it_publishes() {
         (host("agent", Some(&replacement), "rotate"), "ok".into())
     );
 }
+
+/// **A host's `--author` claim of a person's identity is refused before any
+/// record** (Spec 3.2): each register verb, asked with the author
+/// `pe-0123456789abcdef`, refuses saying an identity is never a claim, and
+/// leaves what it would have changed as it was, on the same setups as the
+/// refused first record above.
+#[tokio::test]
+async fn a_register_verb_asked_by_an_identitys_shape_does_not_act() {
+    let Some(lab) = Lab::open().await else { return };
+    let cfg = lab_config(&lab);
+    let unaudited = |answer: &super::verbs::Answer| {
+        assert!(!answer.ok, "{}", answer.value);
+        assert!(
+            answer.value["error"]
+                .as_str()
+                .is_some_and(|e| e.contains("an identity is never a claim")),
+            "{}",
+            answer.value
+        );
+    };
+
+    let fresh = tempfile::tempdir().unwrap();
+    let mut init_cfg = cfg.clone();
+    init_cfg.authority_dir = fresh.path().join("authority");
+    let answer =
+        super::verbs::authority_init(&lab.store, &init_cfg, &[], Some("pe-0123456789abcdef")).await;
+    unaudited(&answer);
+    assert!(
+        Authority::load(&init_cfg.authority_dir).is_err(),
+        "no authority was created"
+    );
+
+    let out = tempfile::tempdir().unwrap();
+    let r#box = format!("box-{}", uuid::Uuid::new_v4().simple());
+    let authority = Authority::load(lab.authority.dir()).unwrap();
+    let answer = super::verbs::register(
+        &lab.store,
+        &cfg,
+        &authority,
+        &r#box,
+        "karl",
+        out.path(),
+        Some("pe-0123456789abcdef"),
+    )
+    .await;
+    unaudited(&answer);
+    assert!(
+        lab.store
+            .resolve_agent(&format!("{}/karl", r#box))
+            .await
+            .is_err(),
+        "no row was registered"
+    );
+    assert!(
+        !out.path().join(&r#box).exists(),
+        "no directory was created, and so no config written"
+    );
+
+    // A registration that is audited, so the three verbs on a row have one.
+    let answer = super::verbs::register(
+        &lab.store,
+        &cfg,
+        &authority,
+        &r#box,
+        "karl",
+        out.path(),
+        Some("lab"),
+    )
+    .await;
+    assert!(answer.ok, "{}", answer.value);
+    let agent = answer.value["agent"].as_str().unwrap().to_owned();
+    let before = lab.store.resolve_agent(&agent).await.unwrap();
+    let answer =
+        super::verbs::revoke(&lab.store, &agent, Plane::Gate, Some("pe-0123456789abcdef")).await;
+    unaudited(&answer);
+    let after = lab.store.resolve_agent(&agent).await.unwrap();
+    assert_eq!(
+        after.gate.state,
+        CredentialState::Live,
+        "nothing was revoked"
+    );
+    let answer = super::verbs::rotate(
+        &lab.store,
+        &cfg,
+        &authority,
+        &agent,
+        out.path(),
+        Some("pe-0123456789abcdef"),
+    )
+    .await;
+    unaudited(&answer);
+    let after = lab.store.resolve_agent(&agent).await.unwrap();
+    assert_eq!(
+        (after.gate.fingerprint, after.admin.fingerprint),
+        (
+            before.gate.fingerprint.clone(),
+            before.admin.fingerprint.clone()
+        ),
+        "nothing was rotated"
+    );
+    let answer =
+        super::verbs::authority_rotate(&lab.store, &cfg, &[], Some("pe-0123456789abcdef")).await;
+    unaudited(&answer);
+    assert_eq!(
+        Authority::load(lab.authority.dir()).unwrap().fingerprint(),
+        authority.fingerprint(),
+        "the authority was not replaced"
+    );
+    let after = lab.store.resolve_agent(&agent).await.unwrap();
+    assert_eq!(
+        after.admin.state,
+        CredentialState::Live,
+        "no credential was revoked"
+    );
+}

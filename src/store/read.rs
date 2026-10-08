@@ -542,15 +542,18 @@ pub(crate) mod tests {
             .connect_with(base.clone().database(&name))
             .await
             .expect("connect to the test's database");
-        sqlx::migrate!("./migrations")
-            .run(&pool)
-            .await
-            .expect("migrate");
-        Some(Fresh {
+        // The guard before the migrations, so a migration that fails drops
+        // the database too.
+        let fresh = Fresh {
             store: Store { pool },
             name,
             base,
-        })
+        };
+        sqlx::migrate!("./migrations")
+            .run(&fresh.store.pool)
+            .await
+            .expect("migrate");
+        Some(fresh)
     }
 
     /// **The test's database is dropped when the test ends, a panic

@@ -139,8 +139,8 @@ async fn an_outcome_names_its_first_once() {
 }
 
 /// **Nothing but the audit's writer inserts into it**: every source file
-/// outside `src/store/audit.rs` and this test is read for an insert into
-/// the table, so the one call graph that writes the audit stays one.
+/// outside `src/store/audit.rs` and the test modules is read for an insert
+/// into the table, so the one call graph that writes the audit stays one.
 #[test]
 fn only_the_writer_inserts_into_the_audit() {
     fn walk(dir: &std::path::Path, found: &mut Vec<String>) {
@@ -151,8 +151,9 @@ fn only_the_writer_inserts_into_the_audit() {
             } else if path.extension().is_some_and(|e| e == "rs") {
                 let text = std::fs::read_to_string(&path).unwrap().to_lowercase();
                 let name = path.to_string_lossy().replace('\\', "/");
-                let own = name.ends_with("src/store/audit.rs")
-                    || name.ends_with("src/store/audit_tests.rs");
+                // A test module probing the table's checks inserts rows it
+                // rolls back; it is not a path the crate writes the audit by.
+                let own = name.ends_with("src/store/audit.rs") || name.ends_with("_tests.rs");
                 if !own && text.contains("insert into audit") {
                     found.push(name);
                 }

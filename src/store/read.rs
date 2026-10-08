@@ -511,8 +511,9 @@ pub(crate) mod tests {
     /// **A database of the test's own**, created beside the one
     /// `DATABASE_URL` names and migrated, for a test whose rule is
     /// store-wide (the last enabled admin) and would read the shared
-    /// store's other rows. `drop` removes it; a test that panics first
-    /// leaves a `wwt_` database behind, named so it can be found.
+    /// store's other rows. It is dropped when the test ends, a panic
+    /// included (`Drop` below); one left by a killed process is named
+    /// `wwt_...` so it can be found.
     pub(crate) struct Fresh {
         pub(crate) store: Store,
         name: String,
@@ -552,20 +553,32 @@ pub(crate) mod tests {
         })
     }
 
-    impl Fresh {
-        pub(crate) async fn drop(self) {
-            self.store.pool.close().await;
-            let admin = sqlx::PgPool::connect_with(self.base)
-                .await
-                .expect("connect");
-            sqlx::query(sqlx::AssertSqlSafe(format!(
-                "DROP DATABASE {} WITH (FORCE)",
-                self.name
-            )))
-            .execute(&admin)
-            .await
-            .expect("drop the test's database");
-            admin.close().await;
+    /// **The test's database is dropped when the test ends, a panic
+    /// included**: on a thread of its own with a runtime of its own, since a
+    /// drop cannot await, and `WITH (FORCE)` ends the pool's connections.
+    impl Drop for Fresh {
+        fn drop(&mut self) {
+            let (name, base) = (self.name.clone(), self.base.clone());
+            let dropped = std::thread::spawn(move || {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("a runtime")
+                    .block_on(async move {
+                        let admin = sqlx::PgPool::connect_with(base).await?;
+                        sqlx::query(sqlx::AssertSqlSafe(format!(
+                            "DROP DATABASE {name} WITH (FORCE)"
+                        )))
+                        .execute(&admin)
+                        .await?;
+                        admin.close().await;
+                        anyhow::Ok(())
+                    })
+            })
+            .join();
+            if !matches!(dropped, Ok(Ok(()))) {
+                eprintln!("the test's database {} was not dropped", self.name);
+            }
         }
     }
 

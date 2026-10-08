@@ -136,7 +136,6 @@ async fn every_host_identity_command_is_audited() {
         audited(s, ok(&role)).await,
         on("role", "operator", "role set")
     );
-    fresh.drop().await;
 }
 
 /// **A refused first record leaves the store as it was**: with the record
@@ -207,7 +206,6 @@ async fn a_refused_first_record_leaves_the_identity_rows_as_they_were() {
         vec!["show"],
         "no verb changed"
     );
-    fresh.drop().await;
 }
 
 /// **Names differing only by case, width or composition are one name**: a
@@ -235,7 +233,6 @@ async fn names_differing_by_case_width_or_composition_are_one() {
         2,
         "two persons and no variant"
     );
-    fresh.drop().await;
 }
 
 /// **A token is never issued for a person holding a passkey**, until the
@@ -282,7 +279,6 @@ async fn a_token_is_issued_only_for_a_person_holding_no_passkey_and_at_most_seve
             .contains("enrollment_token_lives_at_most_seven_days"),
         "the store refuses a token past seven days"
     );
-    fresh.drop().await;
 }
 
 /// **A token is kept only as its digest**, printed once in the answer: its
@@ -328,7 +324,6 @@ async fn a_token_is_kept_only_as_its_digest() {
         1,
         "one live token, the newest"
     );
-    fresh.drop().await;
 }
 
 /// **The last enabled admin's grant is never revoked**, by the host either.
@@ -345,7 +340,6 @@ async fn the_last_enabled_admins_grant_is_never_revoked() {
     );
     let ada = s.person("ada").await.unwrap().unwrap().person_id;
     assert!(s.live_grant(&ada, "admin", None).await.unwrap().is_some());
-    fresh.drop().await;
 }
 
 /// **Two removals of the last two admins leave one** (the identity
@@ -397,7 +391,6 @@ async fn two_removals_of_the_last_two_admins_leave_one() {
         1,
         "one admin remains"
     );
-    fresh.drop().await;
 }
 
 /// **A role's verbs are written within the vocabulary, and never admin's**:
@@ -432,7 +425,6 @@ async fn a_roles_verbs_stay_in_the_vocabulary_and_admins_are_never_written() {
         s.role("observer").await.unwrap().unwrap().verbs,
         vec!["show"]
     );
-    fresh.drop().await;
 }
 
 /// **A per-agent role is granted on an agent, and admin on none**: each the
@@ -454,5 +446,4 @@ async fn a_grant_names_an_agent_exactly_where_its_role_is_per_agent() {
         "server-wide",
     );
     ok(&host::grant_add(s, "ada", "observer", Some(&agent), LAB).await);
-    fresh.drop().await;
 }

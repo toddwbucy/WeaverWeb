@@ -106,7 +106,6 @@ async fn every_identity_check_refuses_its_member_missing() {
             .unwrap_or_else(|| panic!("{what} landed where {check} should refuse it"));
         assert!(error.to_string().contains(check), "{what}: {error}");
     }
-    fresh.drop().await;
 }
 
 /// **The audit's person is a person** (0015's foreign key): a record naming
@@ -129,7 +128,6 @@ async fn the_audit_names_no_person_that_is_not_one() {
         error.to_string().contains("audit_person_is_a_person"),
         "{error}"
     );
-    fresh.drop().await;
 }
 
 /// **The admin role is fixed by the store** (Spec 2.13): an update or a
@@ -152,5 +150,4 @@ async fn the_admin_role_is_fixed_by_the_store() {
             "{statement}: {error}"
         );
     }
-    fresh.drop().await;
 }

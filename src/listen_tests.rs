@@ -118,6 +118,8 @@ fn every_malformed_origin_form_is_refused() {
         ("https://192.000.2.1", "ends in a number"),
         ("https://0x7f.1", "ends in a number"),
         ("https://ex%41mple.test", "no browser serializes in a host"),
+        ("https://b\u{fc}cher.test", "configure that form"),
+        ("https://B\u{dc}CHER.test", "configure that form"),
     ] {
         let error = parse_origin(origin).expect_err(origin);
         assert!(error.contains(why), "{origin}: {error}");
@@ -132,6 +134,7 @@ fn every_malformed_origin_form_is_refused() {
         "https://[::ffff:c000:201]",
         "https://[::1]",
         "https://192.0.2.1:8443",
+        "https://xn--bcher-kva.test",
     ] {
         let parsed = parse_origin(origin).unwrap_or_else(|e| panic!("{origin}: {e}"));
         assert_eq!(parsed.serialized(), origin);
@@ -337,14 +340,16 @@ async fn serving() -> (
     serving_bounded(
         crate::listen::HANDSHAKES_IN_FLIGHT,
         crate::listen::HANDSHAKE_BOUND,
+        crate::listen::ALERT_WARNING_INTERVAL,
     )
     .await
 }
 
-/// `serving` with the handshake cap and bound given.
+/// `serving` with the handshake cap, bound and warning interval given.
 async fn serving_bounded(
     in_flight: usize,
     bound: Duration,
+    alert_interval: Duration,
 ) -> (
     tempfile::TempDir,
     std::net::SocketAddr,
@@ -359,7 +364,8 @@ async fn serving_bounded(
         .unwrap();
     let tcp = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = tcp.local_addr().unwrap();
-    let listener = crate::listen::TlsListener::bounded(tcp, tls, in_flight, bound).unwrap();
+    let listener =
+        crate::listen::TlsListener::bounded(tcp, tls, in_flight, bound, alert_interval).unwrap();
     let mut roots = rustls::RootCertStore::empty();
     roots
         .add(rustls_pki_types::CertificateDer::from(der))
@@ -449,7 +455,8 @@ async fn a_silent_client_stalls_no_other_handshake() {
 #[tokio::test]
 async fn handshakes_past_the_cap_wait_for_a_permit() {
     let (cap, bound) = (2, Duration::from_secs(2));
-    let (_dir, address, _listener, connector) = serving_bounded(cap, bound).await;
+    let (_dir, address, _listener, connector) =
+        serving_bounded(cap, bound, crate::listen::ALERT_WARNING_INTERVAL).await;
     let mut silent = Vec::new();
     for _ in 0..cap {
         silent.push(tokio::net::TcpStream::connect(address).await.unwrap());
@@ -468,4 +475,115 @@ async fn handshakes_past_the_cap_wait_for_a_permit() {
         .await
         .expect("a permit freed at a silent client's bound")
         .expect("the handshake completes");
+}
+
+/// The log lines at warn, captured on the test's own thread; the listener's
+/// tasks run there too, the test's runtime being single-threaded.
+#[derive(Clone, Default)]
+struct Captured(Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for Captured {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Captured {
+    type Writer = Captured;
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
+    }
+}
+
+impl Captured {
+    fn warnings(&self) -> Vec<String> {
+        String::from_utf8_lossy(&self.0.lock().unwrap())
+            .lines()
+            .filter(|line| line.contains("WARN"))
+            .map(str::to_owned)
+            .collect()
+    }
+
+    /// Wait up to five seconds for the warnings to number `n`.
+    async fn until(&self, n: usize) -> Vec<String> {
+        for _ in 0..100 {
+            if self.warnings().len() >= n {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        self.warnings()
+    }
+}
+
+/// A client that distrusts the listener's certificate, and so ends the
+/// handshake with a certificate alert, `unknown_ca`.
+async fn refuse_the_certificate(address: std::net::SocketAddr) {
+    let client = rustls::ClientConfig::builder_with_provider(Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .unwrap()
+    .with_root_certificates(rustls::RootCertStore::empty())
+    .with_no_client_auth();
+    let socket = tokio::net::TcpStream::connect(address).await.unwrap();
+    let name = rustls_pki_types::ServerName::try_from("localhost").unwrap();
+    let refused = tokio_rustls::TlsConnector::from(Arc::new(client))
+        .connect(name, socket)
+        .await;
+    assert!(
+        refused.is_err(),
+        "a client with no roots accepted the certificate"
+    );
+}
+
+/// **A client's certificate alert is logged at warn, at most once in the
+/// interval**: the first names the alert, a second within the interval is
+/// suppressed and counted in the next warning, and a client that does not
+/// speak TLS logs nothing at warn.
+#[tokio::test]
+async fn a_certificate_alert_is_warned_at_most_once_an_interval() {
+    use tokio::io::AsyncWriteExt;
+    let captured = Captured::default();
+    let _logging = tracing::subscriber::set_default(
+        tracing_subscriber::fmt()
+            .with_writer(captured.clone())
+            .with_max_level(tracing::Level::WARN)
+            .with_ansi(false)
+            .finish(),
+    );
+    let interval = Duration::from_secs(1);
+    let (_dir, address, _listener, _) =
+        serving_bounded(4, crate::listen::HANDSHAKE_BOUND, interval).await;
+
+    refuse_the_certificate(address).await;
+    let warned = captured.until(1).await;
+    assert_eq!(warned.len(), 1, "{warned:?}");
+    assert!(warned[0].contains("UnknownCA"), "{warned:?}");
+    assert!(warned[0].contains("0 more refusals"), "{warned:?}");
+
+    refuse_the_certificate(address).await;
+    let mut plain = tokio::net::TcpStream::connect(address).await.unwrap();
+    plain
+        .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+        .await
+        .unwrap();
+    drop(plain);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let warned = captured.warnings();
+    assert_eq!(
+        warned.len(),
+        1,
+        "a refusal within the interval, or a plain client, warned: {warned:?}"
+    );
+
+    tokio::time::sleep(interval).await;
+    refuse_the_certificate(address).await;
+    let warned = captured.until(2).await;
+    assert_eq!(warned.len(), 2, "{warned:?}");
+    assert!(warned[1].contains("1 more refusals"), "{warned:?}");
 }

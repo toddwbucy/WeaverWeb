@@ -37,6 +37,15 @@ pub const HANDSHAKE_BOUND: Duration = Duration::from_secs(10);
 /// at most `HANDSHAKE_BOUND`, then holds them again.
 pub const HANDSHAKES_IN_FLIGHT: usize = 256;
 
+/// **The shortest interval between two warnings of a refused certificate.**
+/// Design section 3 promises that a certificate fault beyond its list shows
+/// at the first connection as the browser's failure, which the server logs:
+/// a handshake a client ends with a certificate alert is logged at warn.
+/// Any unauthenticated client can send such an alert at will, so the warning
+/// is given at most once in this interval, the next one counting those
+/// suppressed, and the log is never the client's to fill.
+pub const ALERT_WARNING_INTERVAL: Duration = Duration::from_secs(60);
+
 /// **An origin as a browser serializes it** (design section 3): scheme,
 /// host and a port where it is not the scheme's default, nothing else.
 /// `host` is as the origin spells it, an IPv6 address in its brackets.
@@ -98,8 +107,13 @@ pub fn parse_origin(origin: &str) -> Result<Origin, String> {
         };
         return refuse(what);
     }
+    // A browser sends an internationalized name in its IDNA ASCII form, so
+    // a Unicode host, equal to its own lower-casing, would still match no
+    // `Origin` header. Refused, not converted: no IDNA crate is linked.
     if !rest.is_ascii() {
-        return refuse("the host is not ASCII, as a browser serializes it");
+        return refuse(
+            "the host is not ASCII; a browser sends an internationalized name in its ASCII (punycode, xn--) form, so configure that form",
+        );
     }
     // **The authority's host, then its port.** A host in brackets is an
     // IPv6 address and runs to its `]`, so its own colons are never taken
@@ -393,25 +407,81 @@ pub struct TlsListener {
     local: std::net::SocketAddr,
 }
 
+/// **The certificate alert a failed handshake received, if it was one**:
+/// the client refusing this listener's certificate, which is the operator's
+/// to fix. Any other failure, an end of stream, a timeout, a client that does
+/// not speak TLS, is a scanner's noise and is not one.
+fn certificate_alert(error: &std::io::Error) -> Option<rustls::AlertDescription> {
+    use rustls::AlertDescription as A;
+    match error.get_ref()?.downcast_ref::<rustls::Error>()? {
+        rustls::Error::AlertReceived(
+            alert @ (A::BadCertificate
+            | A::UnsupportedCertificate
+            | A::CertificateRevoked
+            | A::CertificateExpired
+            | A::CertificateUnknown
+            | A::UnknownCA),
+        ) => Some(*alert),
+        _ => None,
+    }
+}
+
+/// The warnings of refused certificates, at most one per `interval`.
+struct AlertWarnings {
+    interval: Duration,
+    last: Option<std::time::Instant>,
+    suppressed: u64,
+}
+
+impl AlertWarnings {
+    /// One refusal noted at `now`: the count suppressed since the last
+    /// warning where this one is to be warned, `None` where it is suppressed.
+    fn note(&mut self, now: std::time::Instant) -> Option<u64> {
+        match self.last {
+            Some(last) if now.duration_since(last) < self.interval => {
+                self.suppressed += 1;
+                None
+            }
+            _ => {
+                self.last = Some(now);
+                Some(std::mem::take(&mut self.suppressed))
+            }
+        }
+    }
+}
+
 impl TlsListener {
     pub fn new(
         tcp: tokio::net::TcpListener,
         tls: Arc<rustls::ServerConfig>,
     ) -> std::io::Result<Self> {
-        Self::bounded(tcp, tls, HANDSHAKES_IN_FLIGHT, HANDSHAKE_BOUND)
+        Self::bounded(
+            tcp,
+            tls,
+            HANDSHAKES_IN_FLIGHT,
+            HANDSHAKE_BOUND,
+            ALERT_WARNING_INTERVAL,
+        )
     }
 
-    /// The listener with its cap and bound given, which a test sets small.
+    /// The listener with its cap, bound and warning interval given, which a
+    /// test sets small.
     pub(crate) fn bounded(
         tcp: tokio::net::TcpListener,
         tls: Arc<rustls::ServerConfig>,
         in_flight: usize,
         bound: Duration,
+        alert_interval: Duration,
     ) -> std::io::Result<Self> {
         let local = tcp.local_addr()?;
         let acceptor = tokio_rustls::TlsAcceptor::from(tls);
         let (sender, streams) = tokio::sync::mpsc::channel(64);
         let handshakes = Arc::new(tokio::sync::Semaphore::new(in_flight));
+        let warnings = Arc::new(std::sync::Mutex::new(AlertWarnings {
+            interval: alert_interval,
+            last: None,
+            suppressed: 0,
+        }));
         tokio::spawn(async move {
             loop {
                 // The permit before the accept: past the cap, a connection
@@ -427,14 +497,28 @@ impl TlsListener {
                         continue;
                     }
                 };
-                let (acceptor, handed) = (acceptor.clone(), sender.clone());
+                let (acceptor, handed, warnings) =
+                    (acceptor.clone(), sender.clone(), warnings.clone());
                 tokio::spawn(async move {
                     let _permit = permit;
                     match tokio::time::timeout(bound, acceptor.accept(socket)).await {
                         Ok(Ok(stream)) => {
                             let _ = handed.send((stream, peer)).await;
                         }
-                        Ok(Err(e)) => tracing::debug!("a TLS handshake from {peer} failed: {e}"),
+                        Ok(Err(e)) => match certificate_alert(&e) {
+                            Some(alert) => {
+                                let warn = warnings
+                                    .lock()
+                                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                                    .note(std::time::Instant::now());
+                                if let Some(suppressed) = warn {
+                                    tracing::warn!(
+                                        "a client refused the browser's listener's certificate with the alert {alert:?} ({suppressed} more refusals since the last warning, not logged); the certificate is the operator's to fix"
+                                    );
+                                }
+                            }
+                            None => tracing::debug!("a TLS handshake from {peer} failed: {e}"),
+                        },
                         Err(_) => tracing::debug!("a TLS handshake from {peer} passed its bound"),
                     }
                 });

@@ -142,7 +142,9 @@ pub fn scheme_admits(origin: &Origin) -> Result<(), String> {
 /// listens: an `rp_id` with no `origin` or an `origin` with no `rp_id`,
 /// since a passkey needs both and neither alone serves one; an `rp_id`
 /// that is empty or an IP address, since a relying party is a domain and
-/// never an address; and an origin whose host is neither the `rp_id` nor a
+/// never an address; an `rp_id` not equal to its domain's ASCII
+/// serialization, upper case or a Unicode label among them, refused naming
+/// the form to configure; and an origin whose host is neither the `rp_id` nor a
 /// domain under it, which a browser refuses at every ceremony. Neither
 /// configured, no passkey is on, and nothing is refused here. **The list
 /// is the promise**: a public suffix as the `rp_id` is the browser's to
@@ -170,8 +172,24 @@ pub fn relying_party(cfg: &ServerConfig) -> anyhow::Result<()> {
             "rp_id {rp_id:?} is an IP address; a relying party is a domain, never an address"
         );
     }
+    // **The rp_id is refused rather than normalized**, as the origin is: it
+    // is parsed as a browser parses a host, by `url`, and must equal its
+    // domain's ASCII serialization, so the config, every comparison and
+    // what the ceremonies send the browser are one fact.
+    let canonical = match url::Host::parse(rp_id) {
+        Ok(url::Host::Domain(domain)) => domain,
+        Ok(_) => anyhow::bail!(
+            "rp_id {rp_id:?} is an IP address as a browser reads it; a relying party is a domain, never an address"
+        ),
+        Err(e) => anyhow::bail!("rp_id {rp_id:?} is not a domain: {e}"),
+    };
+    if canonical != *rp_id {
+        anyhow::bail!(
+            "rp_id {rp_id:?} is not a domain as a browser serializes it; configure it as {canonical:?}"
+        );
+    }
     let host = parse_origin(origin).map_err(anyhow::Error::msg)?.host;
-    if host != *rp_id && !host.ends_with(&format!(".{rp_id}")) {
+    if host != canonical && !host.ends_with(&format!(".{canonical}")) {
         anyhow::bail!(
             "origin's host {host} is neither rp_id {rp_id:?} nor a domain under it, so every browser would refuse its ceremonies"
         );

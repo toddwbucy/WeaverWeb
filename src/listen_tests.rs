@@ -258,6 +258,26 @@ fn the_relying_partys_faults_are_refused() {
             Some("app.weaver.test"),
             "neither",
         ),
+        (
+            Some("https://127.0.0.1"),
+            Some("0x7f.1"),
+            "is an IP address",
+        ),
+        (
+            Some("https://weaver.test"),
+            Some("Weaver.Test"),
+            "configure it as \"weaver.test\"",
+        ),
+        (
+            Some("https://xn--bcher-kva.test"),
+            Some("b\u{fc}cher.test"),
+            "configure it as \"xn--bcher-kva.test\"",
+        ),
+        (
+            Some("https://weaver.test"),
+            Some("weaver test"),
+            "is not a domain",
+        ),
     ] {
         let error = relying_party(&with_rp(origin, rp_id))
             .expect_err(&format!("{origin:?} {rp_id:?}"))
@@ -268,6 +288,8 @@ fn the_relying_partys_faults_are_refused() {
         ("https://weaver.test", "weaver.test"),
         ("https://app.weaver.test:8443", "weaver.test"),
         ("http://localhost:8080", "localhost"),
+        ("https://xn--bcher-kva.test", "xn--bcher-kva.test"),
+        ("https://app.xn--bcher-kva.test", "xn--bcher-kva.test"),
     ] {
         relying_party(&with_rp(Some(origin), Some(rp_id)))
             .unwrap_or_else(|e| panic!("{origin} {rp_id}: {e}"));

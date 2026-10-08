@@ -163,11 +163,10 @@ pub fn relying_party(cfg: &ServerConfig) -> anyhow::Result<()> {
     if rp_id.is_empty() {
         anyhow::bail!("rp_id is empty; a relying party is a domain");
     }
-    let bare = rp_id
-        .strip_prefix('[')
-        .and_then(|r| r.strip_suffix(']'))
-        .unwrap_or(rp_id);
-    if bare.parse::<std::net::IpAddr>().is_ok() {
+    // A bare IPv6 address is no host `url` parses, so it is caught here; a
+    // bracketed one, and an IPv4 address in any form, `url` reads as an
+    // address below.
+    if rp_id.parse::<std::net::IpAddr>().is_ok() {
         anyhow::bail!(
             "rp_id {rp_id:?} is an IP address; a relying party is a domain, never an address"
         );

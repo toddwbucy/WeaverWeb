@@ -138,6 +138,47 @@ pub fn scheme_admits(origin: &Origin) -> Result<(), String> {
     }
 }
 
+/// **The relying party's refusals** (design section 3), before anything
+/// listens: an `rp_id` with no `origin` or an `origin` with no `rp_id`,
+/// since a passkey needs both and neither alone serves one; an `rp_id`
+/// that is empty or an IP address, since a relying party is a domain and
+/// never an address; and an origin whose host is neither the `rp_id` nor a
+/// domain under it, which a browser refuses at every ceremony. Neither
+/// configured, no passkey is on, and nothing is refused here. **The list
+/// is the promise**: a public suffix as the `rp_id` is the browser's to
+/// refuse at the first ceremony.
+pub fn relying_party(cfg: &ServerConfig) -> anyhow::Result<()> {
+    let (rp_id, origin) = match (&cfg.rp_id, &cfg.origin) {
+        (None, None) => return Ok(()),
+        (Some(_), None) => anyhow::bail!(
+            "rp_id is configured and origin is not; a relying party needs the origin its passkeys are used on"
+        ),
+        (None, Some(_)) => anyhow::bail!(
+            "origin is configured and rp_id is not; a passkey is scoped to a relying party, so configure rp_id"
+        ),
+        (Some(rp_id), Some(origin)) => (rp_id, origin),
+    };
+    if rp_id.is_empty() {
+        anyhow::bail!("rp_id is empty; a relying party is a domain");
+    }
+    let bare = rp_id
+        .strip_prefix('[')
+        .and_then(|r| r.strip_suffix(']'))
+        .unwrap_or(rp_id);
+    if bare.parse::<std::net::IpAddr>().is_ok() {
+        anyhow::bail!(
+            "rp_id {rp_id:?} is an IP address; a relying party is a domain, never an address"
+        );
+    }
+    let host = parse_origin(origin).map_err(anyhow::Error::msg)?.host;
+    if host != *rp_id && !host.ends_with(&format!(".{rp_id}")) {
+        anyhow::bail!(
+            "origin's host {host} is neither rp_id {rp_id:?} nor a domain under it, so every browser would refuse its ceremonies"
+        );
+    }
+    Ok(())
+}
+
 /// **A certificate's validity period**, read from its DER: the
 /// TBSCertificate's `validity`, two times each a UTCTime or a
 /// GeneralizedTime (RFC 5280, section 4.1.2.5).

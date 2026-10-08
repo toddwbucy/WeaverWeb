@@ -29,6 +29,9 @@ fn cfg() -> ServerConfig {
         origin: None,
         tls_certificate: None,
         tls_key: None,
+        rp_id: None,
+        session_idle_secs: 3600,
+        session_absolute_secs: 43200,
     }
 }
 

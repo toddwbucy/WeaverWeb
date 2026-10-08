@@ -130,6 +130,18 @@ pub struct Person {
     pub enabled: bool,
 }
 
+/// **An author member, resolved** for a surface to render.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Author {
+    /// A person, by their identity, with their current name.
+    Person { person_id: String, name: String },
+    /// A name that resolves to no person: a claim written before persons
+    /// stood, which reads as a claim.
+    Claim(String),
+    /// No author could be named when the row was written.
+    Absent,
+}
+
 /// A role as the commands read it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Role {
@@ -191,6 +203,31 @@ impl Store {
     }
 
     /// The role named `name`.
+    /// **What an authored row's author member names**, as a surface renders
+    /// it (Spec 3.2, design section 6): a person's identity resolves to the
+    /// person's current name, since a person can be renamed and the member
+    /// holds the identity; a member that resolves to no person is a claim
+    /// written before persons stood, rendered as a claim; and a null names
+    /// no author.
+    pub async fn author(&self, member: Option<&str>) -> anyhow::Result<Author> {
+        let Some(member) = member else {
+            return Ok(Author::Absent);
+        };
+        if is_person_id(member)
+            && let Some(name) =
+                sqlx::query_scalar::<_, String>("SELECT name FROM person WHERE person_id = $1")
+                    .bind(member)
+                    .fetch_optional(&self.pool)
+                    .await?
+        {
+            return Ok(Author::Person {
+                person_id: member.to_owned(),
+                name,
+            });
+        }
+        Ok(Author::Claim(member.to_owned()))
+    }
+
     pub async fn role(&self, name: &str) -> anyhow::Result<Option<Role>> {
         Ok(
             sqlx::query("SELECT name, scope, verbs, version FROM role WHERE name = $1")

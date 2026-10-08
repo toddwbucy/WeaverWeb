@@ -73,6 +73,19 @@ pub struct ServerConfig {
     pub tls_certificate: Option<PathBuf>,
     #[serde(default)]
     pub tls_key: Option<PathBuf>,
+    /// **The relying party's identity** (design section 3): the domain a
+    /// passkey is scoped to, the origin's host or a domain it is under.
+    /// Configured with `origin` or not at all; checked at start.
+    #[serde(default)]
+    pub rp_id: Option<String>,
+    /// **A session ends this long after its last use** (design section 6),
+    /// in seconds: an hour by default.
+    #[serde(default = "default_session_idle_secs")]
+    pub session_idle_secs: u64,
+    /// **A session ends this long after it opened, used or not** (design
+    /// section 6), in seconds: twelve hours by default.
+    #[serde(default = "default_session_absolute_secs")]
+    pub session_absolute_secs: u64,
 }
 
 // Read by the upstream adapter once it is implemented. **No standing
@@ -118,6 +131,14 @@ fn default_enrollment_token_hours() -> u32 {
     24
 }
 
+fn default_session_idle_secs() -> u64 {
+    60 * 60
+}
+
+fn default_session_absolute_secs() -> u64 {
+    12 * 60 * 60
+}
+
 fn load_toml<T: serde::de::DeserializeOwned>(path: &Path) -> anyhow::Result<T> {
     let raw = std::fs::read_to_string(path)
         .map_err(|e| anyhow::anyhow!("reading config {}: {e}", path.display()))?;
@@ -150,6 +171,18 @@ impl ServerConfig {
             anyhow::bail!(
                 "enrollment_token_hours is {}, outside 1 to {most} (seven days)",
                 cfg.enrollment_token_hours
+            );
+        }
+        // A session that ends at once is a sign-in that serves nothing, and
+        // an idle limit past the absolute one could never be reached.
+        if cfg.session_idle_secs == 0
+            || cfg.session_absolute_secs == 0
+            || cfg.session_idle_secs > cfg.session_absolute_secs
+        {
+            anyhow::bail!(
+                "session_idle_secs is {} and session_absolute_secs {}: each must be above 0, the idle limit no longer than the absolute",
+                cfg.session_idle_secs,
+                cfg.session_absolute_secs
             );
         }
         Ok(cfg)
@@ -202,6 +235,37 @@ mod tests {
             std::fs::write(&path, format!("{base}enrollment_token_hours = {hours}\n")).unwrap();
             let loaded = ServerConfig::load(&path);
             assert_eq!(loaded.is_ok(), ok, "{hours}: {:?}", loaded.err());
+        }
+    }
+
+    /// **A session's limits are an hour idle and twelve hours open by
+    /// default**, each refused at zero, and an idle limit past the absolute
+    /// one is refused.
+    #[test]
+    fn a_sessions_limits_default_and_refuse_what_cannot_hold() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("server.toml");
+        let base =
+            "listen = \"127.0.0.1:0\"\ndatabase = \"postgres:///x\"\nauthority_dir = \"/a\"\n";
+        std::fs::write(&path, base).unwrap();
+        let loaded = ServerConfig::load(&path).unwrap();
+        assert_eq!(
+            (loaded.session_idle_secs, loaded.session_absolute_secs),
+            (3600, 43200)
+        );
+        for (idle, absolute, ok) in [
+            (60, 60, true),
+            (0, 60, false),
+            (60, 0, false),
+            (61, 60, false),
+        ] {
+            std::fs::write(
+                &path,
+                format!("{base}session_idle_secs = {idle}\nsession_absolute_secs = {absolute}\n"),
+            )
+            .unwrap();
+            let loaded = ServerConfig::load(&path);
+            assert_eq!(loaded.is_ok(), ok, "{idle}/{absolute}: {:?}", loaded.err());
         }
     }
 }

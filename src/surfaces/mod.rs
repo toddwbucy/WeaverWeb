@@ -9,12 +9,14 @@
 //! and a run land by the ingest of section 3.1 alone.
 
 pub mod gate;
+#[cfg(test)]
+pub(crate) mod gate_tests;
 pub mod record;
 
 use axum::Router;
 use axum::http::{StatusCode, header};
 use axum::response::IntoResponse;
-use axum::routing::get;
+use axum::routing::{get, post};
 
 use crate::store::Store;
 
@@ -22,10 +24,12 @@ use crate::store::Store;
 ///
 /// **The state is the store because a surface that renders what is kept
 /// reads the store and nothing else**, per Spec section 6. A surface that
-/// holds a seam takes it as its own argument rather than widening this.
-pub fn routes() -> Router<Store> {
+/// holds a seam takes it as its own argument rather than widening this:
+/// the session's policy is that argument here.
+pub fn routes(policy: gate::Policy) -> Router<Store> {
     Router::new()
-        .merge(record::routes())
+        .merge(record::routes(policy))
+        .route("/sign-out", post(gate::sign_out))
         .route("/assets/surfaces/instrument.css", get(stylesheet))
 }
 

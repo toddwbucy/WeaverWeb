@@ -75,11 +75,14 @@ enum Command {
 #[derive(Subcommand)]
 enum AuthorityVerb {
     /// Create the authority once; refuses to overwrite one that stands.
+    /// Needs the store, where its audit record is written first.
     Init {
         /// Further names or addresses the server's certificate carries,
         /// beside the config's server_name.
         #[arg(long)]
         san: Vec<String>,
+        #[arg(long)]
+        author: Option<String>,
     },
     /// Replace the authority, which revokes every credential.
     Rotate {
@@ -112,8 +115,18 @@ async fn run_verb(cfg: &ServerConfig, command: Command) -> verbs::Answer {
     match command {
         Command::Serve => unreachable!("serve is not a verb"),
         Command::Authority {
-            verb: AuthorityVerb::Init { san },
-        } => verbs::authority_init(cfg, &san),
+            verb: AuthorityVerb::Init { san, author },
+        } => match store::Store::connect(&cfg.database).await {
+            Ok(store) => verbs::authority_init(&store, cfg, &san, author.as_deref()).await,
+            Err(e) => verbs::Answer {
+                value: serde_json::json!({
+                    "verb": "authority init",
+                    "ok": false,
+                    "error": format!("the store could not be reached, so nothing was done: {e:#}"),
+                }),
+                ok: false,
+            },
+        },
         Command::Authority {
             verb: AuthorityVerb::Rotate { san, author },
         } => match store::Store::connect(&cfg.database).await {

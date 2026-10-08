@@ -1601,7 +1601,10 @@ it decides are stated here and in section 2.8, and the reasons are there.
   agent could not pass gates that need a registered agent. **Today they are
   the operator's commands on the server's host**, written as the host
   principal above and audited as its writes are, authorized by access to
-  the authority's directory and the store, per section 8. **Once this section's
+  the authority's directory and the store, per section 8: each writes its
+  first record before it acts and does not act where it cannot, and
+  `authority init` reaches the store for it, refusing before it writes
+  anything where the store cannot be reached. **Once this section's
   identity stands, a register verb asked through the server requires the
   server-wide admin grant**, is checked under the shared hold the
   server-side authorization item states, its commit point the store commit
@@ -3719,7 +3722,10 @@ missing while it was relaying.
 | a passkey is added only after a fresh assertion, and a person's last is never removed | perturbation, **owed**: add a passkey on a session alone, and a stolen cookie gains access that outlasts it; let a registration use an add grant another session earned, and a parallel session adds a passkey on someone else's assertion; leave the grant unconsumed at the registration's start, and one assertion adds two passkeys; let a person remove their last passkey, and they are locked out with only the host to recover them. Lands with act 11's passkey pull request |
 | an enrollment token is single-use, expiring, bound to one person holding no passkey, and stored as a digest | perturbation, **owed**: redeem a token twice, past its lifetime, or on a row that holds a passkey, and each lands a credential; configure a lifetime past seven days, and it is taken; store the token in the clear, and a read of the person table is a set of usable tokens; have the host reset issue its token before clearing the passkeys, and a token is issued for a row that holds one. Lands with act 11's persons pull request |
 | every bearer the server issues is 32 bytes of the operating system's cryptographic randomness | perturbation, **owed**: draw an enrollment token from a counter, and the next token is guessed from the last; draw a session bearer or a ceremony identity from the time, and the same. Lands with act 11's persons and passkey pull requests |
-| no statement this crate issues can rewrite, remove or truncate an audit record | perturbation, **owed**: drop the row trigger, and an update rewrites a record or a delete removes one; drop the truncate trigger, and a truncate empties the audit. The triggers guard this crate's code paths, not a process dropping them with the owner's rights, which section 2.13 puts outside the threat model. Lands with act 11's persons pull request |
+| no statement this crate issues can rewrite, remove or truncate an audit record | perturbation in `src/store/audit_tests.rs`, each statement in a transaction the test rolls back: drop the row trigger, and an update rewrites a record and a delete removes one; drop the truncate trigger, and a truncate empties the audit. The triggers guard this crate's code paths, not a process dropping them with the owner's rights, which section 2.13 puts outside the threat model |
+| every register verb writes its audit record before it acts, and an outcome naming it | perturbation in `src/link/verbs_audit_tests.rs`: drop any of the five verbs' first record, and with the first record refused that verb acts anyway, unaudited; write `authority init`'s first record after the act, and with it refused the authority is created without one; drop the outcome, and a verb's first record stands unanswered; let the inspection before the first record make the agent's directory, and with the first record refused a directory stands that nothing audited; discard a stale half pair during that inspection, and with the first record refused the pair is gone unaudited; name the agent a rotation was asked by instead of the row whose retained pair it publishes, and the record names a retired row. And in `src/store/audit_tests.rs`: insert into the audit from a second file, and the test reading the tree for one writer finds it; drop the index of one outcome per first record, and a first record is answered twice |
+| a record's principal and its method agree | perturbation in `src/store/audit_tests.rs`: drop the check, and a host record carrying a person's method lands |
+| every check of the audit is false, never unknown, on a missing value | perturbation in `src/store/audit_tests.rs`, one row per check with its guarded member missing, each in a transaction rolled back: drop the guard on the outcome, and an outcome record with no outcome lands and takes its first record's one outcome; drop it on an agent target's identity, and an agent target naming no row lands; drop it on a person's identity, and a person nobody can name lands |
 | the admin role grants no action on any agent | perturbation, **owed**: let the server-wide admin grant authorize a verb, and an admin holding no grant on an agent asks `stop` of it. Lands with act 11's authorization pull request |
 | reading an agent takes a grant on it | perturbation, **owed**: drop the grant check on a read, and a person holding no grant on an agent reads its trace window and its load state; give the admin's register view the door and the load state, and an admin with no grant reads an agent's state. Lands with act 11's authorization pull request |
 | an open live view ends within its bound of what ended its session or grant | perturbation, **owed**: drop the stream's re-check, disable a person whose live view is open, and the view keeps receiving the trace; remove the grant instead, and the same. Lands with act 11's authorization pull request |
@@ -3733,19 +3739,20 @@ missing while it was relaying.
 act that lands it states what removal makes it fail and confirms it does.
 
 **A row marked owed has no instrument and is not counted as enforced.**
-Nineteen stand so marked as of 2026-10-07. The batch's order is owed because
+Eighteen stand so marked as of 2026-10-07. The batch's order is owed because
 section 2.11 describes its table and no migration builds it. Three rows of
 the role shape ruled on 2026-10-02 are owed to the IAM act: the principal
 check, the writer's check for persons, roles and grants, and the audit
-record. **Fifteen are owed to act 11's code pull requests**, from its design
+record. **Fourteen are owed to act 11's code pull requests**, from its design
 of 2026-10-07: passkey-only sign-in, the start refusals, the unique name, the
 credential ID, the signature counter, the session, the fresh assertion and
 the last passkey, the enrollment token, the bearers' randomness, the
-append-only audit table, the
 admin's lack of agent actions, read access, the live view's bound, the
 ceremony cap, and the WebAuthn library's place in the server binary alone.
 The row that a session carries a claimed name is not owed but retires with
-act 11's passkey pull request. The
+act 11's passkey pull request. Act 11's audit pull request of 2026-10-07 stood
+up the append-only audit, the register verbs' records and the agreement of
+principal and method, each shown to fail with its guard removed. The
 act that built the relay client on 2026-10-05 re-showed the replay row
 against the relay, its three clauses for the door's opening among them,
 and the bounds under its measures, each shown to fail with its guard

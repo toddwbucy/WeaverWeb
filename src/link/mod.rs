@@ -39,6 +39,8 @@ mod fake_relay;
 mod sudo_invoker_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod verbs_audit_tests;
 
 pub use authority::{Authority, ClientCredential, fingerprint};
 pub use frames::{FromClient, Plane, Position, Refusal, ToClient};

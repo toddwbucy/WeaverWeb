@@ -20,6 +20,13 @@ struct Server {
 
 impl Server {
     fn spawn(database: &str) -> Self {
+        Self::spawn_with(database, database)
+    }
+
+    /// A server on `database`, its authority minted by `authority init`
+    /// against `init_with`: the one database the two differ on is the
+    /// unreachable one, where the server's own failure is what is checked.
+    fn spawn_with(database: &str, init_with: &str) -> Self {
         let http = TcpListener::bind("127.0.0.1:0").unwrap();
         let link = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = http.local_addr().unwrap();
@@ -33,9 +40,12 @@ impl Server {
             "link_listen".into(),
             link.local_addr().unwrap().to_string().into(),
         );
-        values.insert("database".into(), database.into());
+        values.insert("database".into(), init_with.into());
         // The server refuses to start without an authority (Spec 8), so
-        // the acceptance mints one first, under the scratch directory.
+        // the acceptance mints one first, under the scratch directory. Since
+        // act 11's audit, `authority init` needs the store and writes its
+        // audit record there first, so it is the one that applies the schema
+        // to the fresh store, and the server then starts on what it applied.
         let authority = directory.join("authority");
         values.insert(
             "authority_dir".into(),
@@ -53,6 +63,8 @@ impl Server {
             "authority init failed: {}",
             String::from_utf8_lossy(&init.stdout)
         );
+        values.insert("database".into(), database.into());
+        fs::write(&config, toml::to_string(&values).unwrap()).unwrap();
         let stdout = File::create(directory.join("stdout")).unwrap();
         let stderr = File::create(directory.join("stderr")).unwrap();
         drop((http, link));
@@ -207,7 +219,7 @@ async fn real_server_starts_on_current_schema() {
     assert_eq!(restarted.get("/record", Some(&token)).0, 200);
     drop(restarted);
 
-    let mut invalid = Server::spawn("postgres:///nope?host=/nonexistent");
+    let mut invalid = Server::spawn_with("postgres:///nope?host=/nonexistent", &database);
     let until = Instant::now() + Duration::from_secs(45);
     loop {
         if let Some(status) = invalid.child.try_wait().unwrap() {

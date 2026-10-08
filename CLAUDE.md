@@ -140,7 +140,7 @@ cargo test --locked                      # DB-backed tests pass by skipping with
 cargo clippy --all-targets --locked
 cargo fmt
 cargo run -- --config <config.toml>                                 # serve
-cargo run -- --config <config.toml> authority init                  # once, before any agent; refuses to overwrite
+cargo run -- --config <config.toml> authority init                  # once, before any agent; needs the store; refuses to overwrite
 cargo run -- --config <config.toml> register <box> <name> --out <dir>   # two client configs, written to <dir>
 cargo run -- --config <config.toml> revoke <ag-id|box/name> <gate|admin>
 cargo run -- --config <config.toml> rotate <ag-id|box/name> --out <dir>
@@ -149,8 +149,9 @@ cargo run --bin gate-con -- --config <gate-con.toml>                # the data p
 cargo run --bin admin-con -- --config <admin-con.toml>              # the management plane's connector, on the agent's box
 ```
 
-- **DB-backed unit tests** (`store::read`, `store::plan`, `surfaces::record`, `link::tests`,
-  `link::client_tests`, `link::admin_con_tests`)
+- **DB-backed unit tests** (`store::read`, `store::plan`, `store::audit_tests`,
+  `surfaces::record`, `link::tests`, `link::client_tests`, `link::admin_con_tests`,
+  `link::verbs_audit_tests`)
   connect to the database in `DATABASE_URL` and run the migrations. The link's tests run one at
   a time, since a listener's start resets every row's link state, which is the claim. Without that variable they print
   `skipped:` and **pass without testing anything**. To really exercise them, set
@@ -201,6 +202,10 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
 - **Register verbs** answer one JSON object on stdout with the exit status agreeing, the shape
   `weaver-admin` uses. `revoke` closes a live connection in a running server through the
   store's notification channel; nothing else links the verb's process to the server's.
+  **Each is audited as the host's** through `src/store/audit.rs`, the audit's one writer
+  (migration `0014`, append-only by trigger): a first record before it acts, an outcome
+  naming it after, and no act where the first cannot be written; `authority init` needs the
+  store for this. The answer names its first record under `audit`.
 
 ## The seed tree: what carries forward and what leaves
 

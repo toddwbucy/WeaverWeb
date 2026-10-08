@@ -22,12 +22,21 @@
 //! **No verb writes into a repository's tree.** The client configs go to
 //! the path the operator names, and the authority to the directory the
 //! server's config names.
+//!
+//! **Every verb that acts is audited as the host's** (Spec 2.13), through
+//! the store's one writer: a first record written before the verb acts,
+//! naming the host's `--author` claim, its target and the verb, and an
+//! outcome record naming it once the verb has answered. **A verb whose first
+//! record cannot be written does not act**, and answers why. Each verb's act
+//! sits in a function of its own between `first_record` and `with_outcome`,
+//! so every answer after the first record passes through the outcome.
 
 use crate::config::ServerConfig;
 use crate::link::authority::{Authority, ClientCredential, fingerprint};
 use crate::link::frames::Plane;
 use crate::link::register::{Agent, AuthorityLock, CredentialState};
 use crate::store::Store;
+use crate::store::audit::{Principal, Target};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
@@ -44,9 +53,55 @@ fn refused(verb: &str, error: impl std::fmt::Display) -> Answer {
     }
 }
 
-/// `authority init`: create the server's authority once.
-pub fn authority_init(cfg: &ServerConfig, sans: &[String]) -> Answer {
-    match Authority::init(&cfg.authority_dir, &cfg.server_name, sans) {
+/// **The first record, written before the verb acts**, or the verb's
+/// refusal where it cannot be written: a verb never acts unaudited.
+async fn first_record(
+    store: &Store,
+    verb: &str,
+    author: Option<&str>,
+    target: Target<'_>,
+) -> Result<String, Answer> {
+    store
+        .audit_first(Principal::Host { author }, target, verb)
+        .await
+        .map_err(|e| {
+            refused(
+                verb,
+                format!(
+                    "the audit's first record could not be written, so nothing was done: {e:#}"
+                ),
+            )
+        })
+}
+
+/// **The outcome record, naming the first**, once the verb has answered:
+/// `ok` or `failed`, as the answer is. The answer names the first record.
+/// An outcome that cannot be written leaves the first record standing
+/// without its second, which is how the audit shows an act whose outcome
+/// never came, and the answer says so; the act stands as it answered.
+async fn with_outcome(store: &Store, first: String, mut answer: Answer) -> Answer {
+    if let Err(e) = store.audit_outcome(&first, answer.ok).await {
+        answer.value["audit_outcome"] =
+            Value::String(format!("the outcome record could not be written: {e:#}"));
+    }
+    answer.value["audit"] = Value::String(first);
+    answer
+}
+
+/// `authority init`: create the server's authority once, audited as the
+/// host's: the store is reached first, and a store that cannot be reached
+/// or cannot take the first record refuses before anything is written.
+pub async fn authority_init(
+    store: &Store,
+    cfg: &ServerConfig,
+    sans: &[String],
+    author: Option<&str>,
+) -> Answer {
+    let first = match first_record(store, "authority init", author, Target::Authority).await {
+        Ok(first) => first,
+        Err(refusal) => return refusal,
+    };
+    let answer = match Authority::init(&cfg.authority_dir, &cfg.server_name, sans) {
         Ok(authority) => Answer {
             value: json!({
                 "verb": "authority init",
@@ -57,7 +112,8 @@ pub fn authority_init(cfg: &ServerConfig, sans: &[String]) -> Answer {
             ok: true,
         },
         Err(e) => refused("authority init", format!("{e:#}")),
-    }
+    };
+    with_outcome(store, first, answer).await
 }
 
 /// `authority rotate`: every credential revoked, then a new authority,
@@ -97,13 +153,30 @@ pub async fn authority_rotate(
             );
         }
     };
+    let first = match first_record(store, "authority rotate", author, Target::Authority).await {
+        Ok(first) => first,
+        Err(refusal) => return refusal,
+    };
+    let answer = rotate_the_authority(store, cfg, sans, author, &mut lock, &selected).await;
+    with_outcome(store, first, answer).await
+}
+
+/// `authority rotate`'s act, under the lock and after its first record.
+async fn rotate_the_authority(
+    store: &Store,
+    cfg: &ServerConfig,
+    sans: &[String],
+    author: Option<&str>,
+    lock: &mut AuthorityLock,
+    selected: &[String],
+) -> Answer {
     let retired = match Store::revoke_every_credential_on(lock.connection(), author).await {
         Ok(retired) => Some(retired),
         Err(e) => {
             // A commit's outcome is unknown until it is read back: any of
             // the selected credentials left live means the revocation did
             // not land.
-            match store.any_live_among(&selected).await {
+            match store.any_live_among(selected).await {
                 Ok(false) => None,
                 Ok(true) => {
                     return refused(
@@ -1001,8 +1074,15 @@ pub async fn register(
     let dir = match retained_pair(store, &dir, r#box, name).await {
         Ok(None) => dir,
         Ok(Some((row, gate_fp, admin_fp))) => {
-            return publish_retained("register", &mut lock, dir, &row, &gate_fp, &admin_fp, false)
-                .await;
+            let target = Target::Agent(row.agent_id.as_str());
+            let first = match first_record(store, "register", author, target).await {
+                Ok(first) => first,
+                Err(refusal) => return refusal,
+            };
+            let answer =
+                publish_retained("register", &mut lock, dir, &row, &gate_fp, &admin_fp, false)
+                    .await;
+            return with_outcome(store, first, answer).await;
         }
         Err(e) => return refused("register", format!("{e:#}")),
     };
@@ -1017,87 +1097,96 @@ pub async fn register(
         Ok(id) => id,
         Err(e) => return refused("register", format!("{e:#}")),
     };
-    // Staged before the store commits, published after: a store failure
-    // leaves no config, and the credentials are never live without one.
-    let staged = match stage_pair(cfg, authority, dir, minted.as_str(), name, &gate, &admin) {
-        Ok(s) => s,
-        Err(e) => return refused("register", format!("{e:#}")),
-    };
-    let (id, retired, note) = match Store::register_agent_on(
-        lock.connection(),
-        &minted,
-        r#box,
-        name,
-        author,
-        &gate.fingerprint,
-        &admin.fingerprint,
-        &authority.fingerprint(),
-    )
-    .await
+    let first = match first_record(store, "register", author, Target::Agent(minted.as_str())).await
     {
-        Ok((id, retired)) => (id, retired, None),
-        Err(e) => {
-            // **A commit's outcome is unknown until it is read back.** The
-            // error may have come after PostgreSQL applied the commit and
-            // before its answer arrived, in which case the register holds
-            // live fingerprints and the staged pair must be published, not
-            // discarded. The row is read on a pool connection.
-            match store.agent_by_fingerprint(&gate.fingerprint).await {
-                Ok(Some((row, _))) => (
-                    row.agent_id,
-                    Vec::new(),
-                    Some(format!(
-                        "the store's answer was lost after the commit ({e:#}); the row was read back and stands"
-                    )),
-                ),
-                Ok(None) => {
-                    staged.discard();
-                    return refused("register", format!("{e:#}"));
-                }
-                Err(read) => {
-                    return refused(
-                        "register",
-                        format!(
-                            "{e:#}; and whether the commit landed could not be read back ({read:#}), so the configs stand staged at {} and {} until the store answers; re-run then, and the staged pair is published where the register carries it and discarded where it does not",
-                            staged.gate.0.display(),
-                            staged.admin.0.display()
-                        ),
-                    );
+        Ok(first) => first,
+        Err(refusal) => return refusal,
+    };
+    let answer = async {
+        // Staged before the store commits, published after: a store failure
+        // leaves no config, and the credentials are never live without one.
+        let staged = match stage_pair(cfg, authority, dir, minted.as_str(), name, &gate, &admin) {
+            Ok(s) => s,
+            Err(e) => return refused("register", format!("{e:#}")),
+        };
+        let (id, retired, note) = match Store::register_agent_on(
+            lock.connection(),
+            &minted,
+            r#box,
+            name,
+            author,
+            &gate.fingerprint,
+            &admin.fingerprint,
+            &authority.fingerprint(),
+        )
+        .await
+        {
+            Ok((id, retired)) => (id, retired, None),
+            Err(e) => {
+                // **A commit's outcome is unknown until it is read back.** The
+                // error may have come after PostgreSQL applied the commit and
+                // before its answer arrived, in which case the register holds
+                // live fingerprints and the staged pair must be published, not
+                // discarded. The row is read on a pool connection.
+                match store.agent_by_fingerprint(&gate.fingerprint).await {
+                    Ok(Some((row, _))) => (
+                        row.agent_id,
+                        Vec::new(),
+                        Some(format!(
+                            "the store's answer was lost after the commit ({e:#}); the row was read back and stands"
+                        )),
+                    ),
+                    Ok(None) => {
+                        staged.discard();
+                        return refused("register", format!("{e:#}"));
+                    }
+                    Err(read) => {
+                        return refused(
+                            "register",
+                            format!(
+                                "{e:#}; and whether the commit landed could not be read back ({read:#}), so the configs stand staged at {} and {} until the store answers; re-run then, and the staged pair is published where the register carries it and discarded where it does not",
+                                staged.gate.0.display(),
+                                staged.admin.0.display()
+                            ),
+                        );
+                    }
                 }
             }
+        };
+        if let Err(e) = lock.ping().await {
+            return refused(
+                "register",
+                format!(
+                    "{id} is registered but its configs stand staged at {} and {}: {e:#}; rotate the agent to publish a pair",
+                    staged.gate.0.display(),
+                    staged.admin.0.display()
+                ),
+            );
         }
-    };
-    if let Err(e) = lock.ping().await {
-        return refused(
-            "register",
-            format!(
-                "{id} is registered but its configs stand staged at {} and {}: {e:#}; rotate the agent to publish a pair",
-                staged.gate.0.display(),
-                staged.admin.0.display()
+        match staged.publish(false) {
+            Ok((gate_path, admin_path)) => Answer {
+                value: json!({
+                    "verb": "register",
+                    "ok": true,
+                    "agent": id.as_str(),
+                    "box": r#box,
+                    "name": name,
+                    "gate_fingerprint": gate.fingerprint,
+                    "admin_fingerprint": admin.fingerprint,
+                    "configs": [gate_path, admin_path],
+                    "retired": retired,
+                    "note": note,
+                }),
+                ok: true,
+            },
+            Err(e) => refused(
+                "register",
+                format!("{id} is registered but its client configs could not be written: {e:#}"),
             ),
-        );
+        }
     }
-    match staged.publish(false) {
-        Ok((gate_path, admin_path)) => Answer {
-            value: json!({
-                "verb": "register",
-                "ok": true,
-                "agent": id.as_str(),
-                "box": r#box,
-                "name": name,
-                "gate_fingerprint": gate.fingerprint,
-                "admin_fingerprint": admin.fingerprint,
-                "configs": [gate_path, admin_path],
-                "retired": retired,
-                "note": note,
-            }),
-            ok: true,
-        },
-        Err(e) => refused(
-            "register",
-            format!("{id} is registered but its client configs could not be written: {e:#}"),
-        ),
-    }
+    .await;
+    with_outcome(store, first, answer).await
 }
 
 /// `revoke <agent> <plane>`: one credential's state, and its live
@@ -1107,7 +1196,12 @@ pub async fn revoke(store: &Store, spec: &str, plane: Plane, author: Option<&str
         Ok(a) => a,
         Err(e) => return refused("revoke", e),
     };
-    match store.revoke_credential(&agent, plane, author).await {
+    let target = Target::Agent(agent.agent_id.as_str());
+    let first = match first_record(store, "revoke", author, target).await {
+        Ok(first) => first,
+        Err(refusal) => return refusal,
+    };
+    let answer = match store.revoke_credential(&agent, plane, author).await {
         Ok(fingerprint) => Answer {
             value: json!({
                 "verb": "revoke",
@@ -1119,7 +1213,8 @@ pub async fn revoke(store: &Store, spec: &str, plane: Plane, author: Option<&str
             ok: true,
         },
         Err(e) => refused("revoke", format!("{e:#}")),
-    }
+    };
+    with_outcome(store, first, answer).await
 }
 
 /// `rotate <agent> --out <path>`: a fresh pair, the old pair revoked, new
@@ -1159,102 +1254,117 @@ pub async fn rotate(
     let dir = match retained_pair(store, &dir, &agent.r#box, &agent.name).await {
         Ok(None) => dir,
         Ok(Some((row, gate_fp, admin_fp))) => {
-            return publish_retained("rotate", &mut lock, dir, &row, &gate_fp, &admin_fp, true)
-                .await;
+            let target = Target::Agent(agent.agent_id.as_str());
+            let first = match first_record(store, "rotate", author, target).await {
+                Ok(first) => first,
+                Err(refusal) => return refusal,
+            };
+            let answer =
+                publish_retained("rotate", &mut lock, dir, &row, &gate_fp, &admin_fp, true).await;
+            return with_outcome(store, first, answer).await;
         }
         Err(e) => return refused("rotate", format!("{e:#}")),
     };
-    let (gate, admin) = match mint_pair(&agent.name, authority) {
-        Ok(pair) => pair,
-        Err(e) => return refused("rotate", format!("{e:#}")),
+    let target = Target::Agent(agent.agent_id.as_str());
+    let first = match first_record(store, "rotate", author, target).await {
+        Ok(first) => first,
+        Err(refusal) => return refusal,
     };
-    let staged = match stage_pair(
-        cfg,
-        authority,
-        dir,
-        agent.agent_id.as_str(),
-        &agent.name,
-        &gate,
-        &admin,
-    ) {
-        Ok(s) => s,
-        Err(e) => return refused("rotate", format!("{e:#}")),
-    };
-    let (retired, note) = match Store::rotate_credentials_on(
-        lock.connection(),
-        &agent,
-        author,
-        &gate.fingerprint,
-        &admin.fingerprint,
-        &authority.fingerprint(),
-    )
-    .await
-    {
-        Ok(r) => (r, None),
-        Err(e) => {
-            // A commit's outcome is unknown until it is read back, as in
-            // `register`: the row carrying the new fingerprint means the
-            // rotation landed.
-            match store.agent_by_fingerprint(&gate.fingerprint).await {
-                Ok(Some(_)) => (
-                    vec![
-                        agent.gate.fingerprint.clone(),
-                        agent.admin.fingerprint.clone(),
-                    ],
-                    Some(format!(
-                        "the store's answer was lost after the commit ({e:#}); the row was read back and stands"
-                    )),
-                ),
-                Ok(None) => {
-                    staged.discard();
-                    return refused("rotate", format!("{e:#}"));
-                }
-                Err(read) => {
-                    return refused(
-                        "rotate",
-                        format!(
-                            "{e:#}; and whether the commit landed could not be read back ({read:#}), so the configs stand staged at {} and {} until the store answers; re-run then, and the staged pair is published where the register carries it and discarded where it does not",
-                            staged.gate.0.display(),
-                            staged.admin.0.display()
-                        ),
-                    );
+    let answer = async {
+        let (gate, admin) = match mint_pair(&agent.name, authority) {
+            Ok(pair) => pair,
+            Err(e) => return refused("rotate", format!("{e:#}")),
+        };
+        let staged = match stage_pair(
+            cfg,
+            authority,
+            dir,
+            agent.agent_id.as_str(),
+            &agent.name,
+            &gate,
+            &admin,
+        ) {
+            Ok(s) => s,
+            Err(e) => return refused("rotate", format!("{e:#}")),
+        };
+        let (retired, note) = match Store::rotate_credentials_on(
+            lock.connection(),
+            &agent,
+            author,
+            &gate.fingerprint,
+            &admin.fingerprint,
+            &authority.fingerprint(),
+        )
+        .await
+        {
+            Ok(r) => (r, None),
+            Err(e) => {
+                // A commit's outcome is unknown until it is read back, as in
+                // `register`: the row carrying the new fingerprint means the
+                // rotation landed.
+                match store.agent_by_fingerprint(&gate.fingerprint).await {
+                    Ok(Some(_)) => (
+                        vec![
+                            agent.gate.fingerprint.clone(),
+                            agent.admin.fingerprint.clone(),
+                        ],
+                        Some(format!(
+                            "the store's answer was lost after the commit ({e:#}); the row was read back and stands"
+                        )),
+                    ),
+                    Ok(None) => {
+                        staged.discard();
+                        return refused("rotate", format!("{e:#}"));
+                    }
+                    Err(read) => {
+                        return refused(
+                            "rotate",
+                            format!(
+                                "{e:#}; and whether the commit landed could not be read back ({read:#}), so the configs stand staged at {} and {} until the store answers; re-run then, and the staged pair is published where the register carries it and discarded where it does not",
+                                staged.gate.0.display(),
+                                staged.admin.0.display()
+                            ),
+                        );
+                    }
                 }
             }
+        };
+        if let Err(e) = lock.ping().await {
+            return refused(
+                "rotate",
+                format!(
+                    "{} is rotated but its configs stand staged at {} and {}: {e:#}; re-run rotate to publish a pair",
+                    agent.agent_id,
+                    staged.gate.0.display(),
+                    staged.admin.0.display()
+                ),
+            );
         }
-    };
-    if let Err(e) = lock.ping().await {
-        return refused(
-            "rotate",
-            format!(
-                "{} is rotated but its configs stand staged at {} and {}: {e:#}; re-run rotate to publish a pair",
-                agent.agent_id,
-                staged.gate.0.display(),
-                staged.admin.0.display()
+        match staged.publish(true) {
+            Ok((gate_path, admin_path)) => Answer {
+                value: json!({
+                    "verb": "rotate",
+                    "ok": true,
+                    "agent": agent.agent_id.as_str(),
+                    "gate_fingerprint": gate.fingerprint,
+                    "admin_fingerprint": admin.fingerprint,
+                    "configs": [gate_path, admin_path],
+                    "retired": retired,
+                    "note": note,
+                }),
+                ok: true,
+            },
+            Err(e) => refused(
+                "rotate",
+                format!(
+                    "{} is rotated but its client configs could not be written: {e:#}",
+                    agent.agent_id
+                ),
             ),
-        );
+        }
     }
-    match staged.publish(true) {
-        Ok((gate_path, admin_path)) => Answer {
-            value: json!({
-                "verb": "rotate",
-                "ok": true,
-                "agent": agent.agent_id.as_str(),
-                "gate_fingerprint": gate.fingerprint,
-                "admin_fingerprint": admin.fingerprint,
-                "configs": [gate_path, admin_path],
-                "retired": retired,
-                "note": note,
-            }),
-            ok: true,
-        },
-        Err(e) => refused(
-            "rotate",
-            format!(
-                "{} is rotated but its client configs could not be written: {e:#}",
-                agent.agent_id
-            ),
-        ),
-    }
+    .await;
+    with_outcome(store, first, answer).await
 }
 
 /// `agents`: the register as it stands, presence derived on each row.

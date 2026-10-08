@@ -243,7 +243,7 @@ fn person() -> Principal {
     }
 }
 
-/// **The ceiling is exactly the lines the rules grant**: each of the five
+/// **The ceiling is exactly the lines the rules grant**: each of the eight
 /// verbs listed with `-n -l` on its exact line, a granted one answering 0.
 #[tokio::test]
 async fn the_grants_are_exactly_the_lines_the_rules_grant() {
@@ -263,6 +263,20 @@ async fn the_grants_are_exactly_the_lines_the_rules_grant() {
     // A box that grants nothing declares the empty ceiling.
     let fake = FakeSudo::new();
     assert!(fake.invoker().grants().await.unwrap().is_empty());
+}
+
+/// **The save-point verbs are listed like the rest** (WeaverAgent's A3.2,
+/// `toddwbucy/WeaverAgent#94` at `43ba391`): the ceiling reports
+/// `save-point` and `force-unload` where the rule grants them, and omits
+/// `restore` where it does not.
+#[tokio::test]
+async fn the_save_point_verbs_are_listed_like_the_rest() {
+    let fake = FakeSudo::new();
+    fake.grant(&["show", "save-point", "force-unload"]);
+    let granted = fake.invoker().grants().await.unwrap();
+    assert_eq!(granted, ["show", "save-point", "force-unload"]);
+    assert!(fake.argvs().contains(&fake.line("restore", true)));
+    fake.assert_every_line_ran_the_fake();
 }
 
 /// **A listing that hangs is never doubled**: two `grants` asked at once

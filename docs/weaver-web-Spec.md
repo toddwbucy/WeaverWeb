@@ -1485,7 +1485,10 @@ it decides are stated here and in section 2.8, and the reasons are there.
   through its role, so there is no per-person action list to drift from the
   vocabulary. **The roles, per the operator's ruling of 2026-10-07**: per
   agent, `observer`, seeded with `show`, and `operator`, seeded with `show`,
-  `validate`, `load`, `unload`, `stop` and `turn`, each an authored row whose
+  `validate`, `load`, `unload`, `stop`, `save-point`, `restore`,
+  `force-unload` and `turn`, the last three added by migration `0016` on the
+  operator's ruling of 2026-10-08 to mirror the box's operator rule (where
+  an admin had already written `operator`, it is left as written), each an authored row whose
   verbs the admin may change within the vocabulary above; server-wide,
   `admin`, which governs the connections (the register verbs), the who and
   how (persons, enrollment, passkeys, disabling, grants) and the what (the
@@ -2602,6 +2605,12 @@ to the agent runs to its end whatever becomes of its caller**, per
 one in flight when the link ends, has an unknown outcome: the server
 answers it as sent and never answered, never as not connected, and the
 agent's trace, relayed by admin-con, is where its outcome is read. **A turn
+the gate admitted just before an unload closes unanswered**: the gate drops
+every connection it serves as it is lowered, the turn recorded on the trace
+as refused, per `weaver-gate-world-contract` section 5 at `43ba391`
+(`toddwbucy/WeaverAgent#94`), and gate-con answers it as it answers any turn
+whose connection closed after it crossed, unknown, the trace again being
+where its outcome is read. **A turn
 still waiting behind gate-con's in-flight bound at its shutdown never
 reached the gate**, so gate-con answers it `not_started`, its own fault like
 `busy`, while the link still stands, and its caller knows it did not run
@@ -2620,11 +2629,18 @@ a channel. Each verb answers one JSON object, a `lifecycle-answer` or a
 `lifecycle-refusal`, per `weaver-admin-Spec` section 2. A refusal is
 admin's answer about the verb and never a load state: `no_such_agent` means
 the agent is not registered on that box, never that it is unloaded, per
-`toddwbucy/WeaverAgent#59`. Five are command lines as of 2026-10-03: `show`,
-`validate`, `load`, `unload` and `stop`, per `weaver-admin-operator-contract`
-section 2. **`save-point` and `restore` against a running agent are owed** to
-WeaverAgent's code act for `toddwbucy/WeaverAgent#58`, and no rule grants
-them until it lands. **`list` was retired by `toddwbucy/WeaverAgent#45`**,
+`toddwbucy/WeaverAgent#59`. **Eight are command lines as of 2026-10-08**, per
+`weaver-admin-operator-contract` section 2 at `43ba391`
+(`toddwbucy/WeaverAgent#94`): `show`, `validate`, `load`, `unload` and
+`stop`, and `save-point`, which takes a save point of the running agent and
+publishes it at once, `restore`, which names the save point the next load
+restores, the one the agent's declaration names and never one the caller
+chooses, and `force-unload`, the unload that completes without its leave
+save point and records the loss. **`unload` refuses `ActivityNotAtRest`**
+while a turn runs or gate traffic stands, touching nothing, and
+**`SavePointNotTaken`** where its leave save point did not publish, the run
+having ended and the next load recording the loss, per the contract's
+section 5. **`list` was retired by `toddwbucy/WeaverAgent#45`**,
 because enumerating agents is this crate's register of section 2.12 and
 weaver-admin is one agent's organ. **admin-con runs them, and it is this
 crate's binary**, the management plane's one reach, and the server asks
@@ -2639,7 +2655,11 @@ the fixed `weaver-admin <verb> <agent>` command lines for that one agent,
 with no argument the caller chooses, nothing read on standard input, and no
 login session opened for them, per `weaver-admin-operator-contract` sections
 1 and 2. An observer's rule grants `show`, and an operator's adds
-`validate`, `load`, `unload` and `stop`. **The operator's reason for the old
+`validate`, `load`, `unload`, `stop`, `save-point`, `restore` and
+`force-unload`. **The server asks none of the last three yet**: admin-con's
+ceiling reports them where the rule grants them, and the listener carries
+such a ceiling, but no surface reaches a verb before the authorization of
+section 2.13 stands. **The operator's reason for the old
 rule still holds**, that a root process parsing arguments which arrived over
 a network is where a CVE comes from, because nothing that crossed the link
 reaches the command. The server sends admin-con an abstract verb and never a
@@ -3510,9 +3530,19 @@ outlasts the grace means the `unload` is not issued, and the kill that
 follows is an unclean stop, reset at the next load. **The stop's grace is
 a member of admin-con's config**, `stop_grace_secs`, 1080 unless set: the
 box's load bound, the unload bound and a margin, timed from the stop's
-signal. The `unload`'s answer is logged, and the events it writes reach
-the server through the trace at admin-con's next connection. That `unload` is
-admin-con's one act on its own initiative. A kill is an unclean stop, whose
+signal. **The stop retries `unload` until rest**, on the operator's ruling
+of 2026-10-08: while `unload` refuses `ActivityNotAtRest`, a turn running,
+admin-con asks it again every five seconds (`REST_RETRY`, a turn's end met
+within five seconds of it, the grace holding at most 216 asks) until it
+answers otherwise or the grace passes, the clock read after each wait and
+immediately before each ask, so no ask starts at or past the grace however
+late the wait wakes, one invocation at a time; if the grace ends first, the agent is left to the
+containment and the next load records the unclean stop. **The stop never
+forces**: it runs no `force-unload`, so no state is thrown away by choice,
+and a `SavePointNotTaken` is not retried, the run having ended and the next
+load recording the loss. The `unload`'s answer is logged, and the events it
+writes reach the server through the trace at admin-con's next connection.
+That `unload` is admin-con's one act on its own initiative. A kill is an unclean stop, whose
 next load resets the agent to its latest save point.
 **The binding is a property of how the box is provisioned, and admin-con
 enforces none of it**, on the operator's ruling of 2026-10-05. admin-con is
@@ -3772,6 +3802,7 @@ missing while it was relaying.
 | the WebAuthn library links into the server binary alone | measurement, **owed**: `ldd` on gate-con and admin-con shows no `libcrypto`, the library being carried by a cargo feature the server binary alone requires. Lands with act 11's passkey pull request |
 | the admission's `show` is required only where the ceiling grants it | perturbation: ask `show` at every admission, and an agent whose ceiling grants no `show` is closed `admission_incomplete` at every reconnection and never stays admitted; skip it where it is granted, and the row reads the last process's state as current |
 | the ceiling declared in the hello is exactly what the box's sudo rules grant | perturbation, against a fake `sudo` generated at test time in `src/link/sudo_invoker_tests.rs`: answer `grants` from anything but each verb's own `sudo -n -l` line, and a verb the rule refuses is declared, or one it grants is not |
+| the orderly stop retries `unload` until rest, never past its grace and never forcing | perturbation, against a scripted invoker in `src/link/admin_con_tests.rs`: drop the retry, and an `unload` refusing `ActivityNotAtRest` twice before a clean answer is asked once; drop the deadline check, and one refusing past the grace is asked again after the stop returned; check the deadline before the wait rather than after it, and on a paused clock a wait overtaken past the deadline starts one more `unload`; retry on every refusal, and a `SavePointNotTaken` is asked again. The stop runs `unload` alone, never `force-unload`, which each test asserts |
 | no privileged invocation exists outside admin-con's sudo invoker | perturbation, two instruments. A test, `tests/no_privilege.rs`: it reads every tracked file outside `docs/`, never following a symlink, comment lines aside by each file's syntax and Markdown read in its fences only, for a privilege-escalating program named as a word, a setuid family call, a child's user or group set on a command, and a setuid or setgid mode bit, with the program's word allowed in `src/link/sudo_invoker.rs` and its test module alone; shown to fail when one of each family is planted, in Rust and in a README fence, when the program is planted in another file of the invoker's name, and when another family is planted in the invoker's own files. And the argv instrument in `src/link/sudo_invoker_tests.rs`: plant the principal's name from the ask into the command, and the line the fake records is no longer exactly `sudo -n <weaver_admin> <verb> <agent>` |
 
 **A watch that cannot fail is not a test.** For each perturbation above, the
@@ -3793,7 +3824,9 @@ The row that a session carries a claimed name is not owed but retires with
 act 11's passkey pull request. Act 11's TLS pull request of 2026-10-08 stood up
 the listener's start refusals, those of the origin and the certificate, and the
 listener that serves TLS alone, each shown to fail with its guard removed, and
-narrowed the start-refusal row to the relying party's two. Act 11's persons pull request of 2026-10-07 stood
+narrowed the start-refusal row to the relying party's two. The alignment with
+WeaverAgent's A3.2 on 2026-10-08 stood up the orderly stop's retry until rest,
+each clause shown to fail with its guard removed. Act 11's persons pull request of 2026-10-07 stood
 up the host's identity commands' records, the last admin and the exclusion, the
 roles' vocabulary and the fixed admin role, a grant's agent, the identity checks
 and the audit's person, and the issuing halves of three owed rows, which it
@@ -3953,7 +3986,8 @@ a `web-` assertion beside `weaver-admin`'s.
   library and the threat model.
 - **The role vocabulary, closed 2026-10-07** by the operator: per agent,
   `observer` (seeded with `show`) and `operator` (seeded with `show`,
-  `validate`, `load`, `unload`, `stop` and `turn`), authored rows whose verbs
+  `validate`, `load`, `unload`, `stop` and `turn`, and with `save-point`,
+  `restore` and `force-unload` since 2026-10-08, section 2.13), authored rows whose verbs
   the server-wide admin writes; server-wide, `admin`, which governs the
   connections, the persons and the grants, and the per-agent roles' verbs,
   and grants no action on any agent by itself. The converser this document

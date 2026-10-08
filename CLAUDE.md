@@ -42,8 +42,9 @@ Weaver-Web has three inputs and no others:
 
 - **gate (the data plane)** carries the work entering an agent and the answers leaving it.
   Contract: `weaver-gate-world-contract`. Reached only through **gate-con**.
-- **admin (the management plane)** carries the lifecycle verbs (`load`, `unload`, `validate`,
-  `stop`, `show`, and later `save-point` / `restore`) and the agent's trace, which lands in
+- **admin (the management plane)** carries the lifecycle verbs (`show`, `validate`, `load`,
+  `unload`, `stop`, and since WeaverAgent's A3.2 `save-point`, `restore` and `force-unload`,
+  which the server does not yet ask) and the agent's trace, which lands in
   the sink admin opens at load and is read through the relay the agent's start step
   launches. Contract: `weaver-admin-operator-contract`. Reached only through **admin-con**.
   There is no admin socket; the verbs are fixed command lines the box's sudo rule grants,
@@ -201,7 +202,9 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
   <weaver_admin> <verb> <agent>`, the hello's ceiling from `sudo -n -l` on each line, stdin
   null, the child in its own session, never killed, and holding admin-con's one invocation
   slot across reconnections until it is reaped. An orderly stop waits for that child within
-  the grace, then unloads the agent where the ceiling grants `unload`. A writer that never
+  the grace, then unloads the agent where the ceiling grants `unload`, asking again every
+  5 s (`REST_RETRY`) while it refuses `ActivityNotAtRest` until the grace runs out, and
+  never runs `force-unload`. A writer that never
   idles gives the relay no heartbeat, so an opening takes its boundary at 30 s and a drain
   invokes at 10 s (`BOUNDARY_BOUND`, `DRAIN_BOUND`; `toddwbucy/WeaverAgent#88`). Its tests (`link::admin_con_tests`) run it against a fake
   relay (`link::fake_relay`) serving a temporary trace file, the real listener and a fake

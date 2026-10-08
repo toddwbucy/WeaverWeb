@@ -520,6 +520,38 @@ async fn the_server_never_asks_a_verb_outside_the_ceiling() {
     con.stop().await;
 }
 
+/// **A ceiling naming a save-point verb is carried** (WeaverAgent's A3.2):
+/// the listener admits a hello whose ceiling names `force-unload`, the row
+/// holds it, and a verb outside it is still refused on the server, the
+/// refusal naming the whole ceiling.
+#[tokio::test]
+async fn a_ceiling_naming_force_unload_is_carried() {
+    let Some(lab) = Lab::open().await else { return };
+    let trace = Trace::new();
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
+    let invoker = FakeInvoker::new(&["show", "force-unload"], "idle");
+    let mut con = Running::start(config(&path), invoker.clone());
+    con.wait("admitted", |s| s.admitted).await;
+    let row = lab
+        .wait_for(&id, "the admission's show landed", |a| {
+            a.state_source.as_deref() == Some("show")
+        })
+        .await;
+    let mut ceiling = row.ceiling.expect("the ceiling is on the row");
+    ceiling.sort();
+    assert_eq!(ceiling, ["force-unload", "show"]);
+    match verb(&lab.listener, &id, "restore").await {
+        Err(VerbError::OutsideCeiling { mut ceiling, .. }) => {
+            ceiling.sort();
+            assert_eq!(ceiling, ["force-unload", "show"]);
+        }
+        other => panic!("expected the server's refusal, got {other:?}"),
+    }
+    assert_eq!(invoker.ran(), ["show"], "restore never reached the invoker");
+    con.stop().await;
+}
+
 /// **admin-con answers an ask outside its ceiling with a typed error, runs
 /// nothing, and keeps the connection** (Spec 8): a fake server asks `stop`
 /// of a connector whose ceiling is `show`, then asks `show`.
@@ -3709,4 +3741,202 @@ async fn an_openings_show_the_store_does_not_land_keeps_the_hold() {
         invoker.ran()
     );
     con.stop().await;
+}
+
+/// A scripted invoker for the orderly stop: grants `show` and `unload`,
+/// answers each invocation with the next answer of its script, the last
+/// repeating, and records each verb and the most invocations ever in
+/// flight at once.
+struct ScriptedStop {
+    answers: Mutex<VecDeque<serde_json::Value>>,
+    /// How long each invocation takes.
+    takes: Duration,
+    ran: Mutex<Vec<String>>,
+    in_flight: std::sync::atomic::AtomicUsize,
+    most: std::sync::atomic::AtomicUsize,
+}
+
+impl ScriptedStop {
+    fn new(answers: &[serde_json::Value]) -> Arc<Self> {
+        Arc::new(Self {
+            answers: Mutex::new(answers.iter().cloned().collect()),
+            takes: Duration::from_millis(20),
+            ran: Mutex::new(Vec::new()),
+            in_flight: Default::default(),
+            most: Default::default(),
+        })
+    }
+
+    fn ran(&self) -> Vec<String> {
+        self.ran.lock().unwrap().clone()
+    }
+}
+
+impl Invoker for ScriptedStop {
+    async fn grants(&self) -> anyhow::Result<Vec<String>> {
+        Ok(vec!["show".to_owned(), "unload".to_owned()])
+    }
+
+    async fn run(
+        &self,
+        agent: &str,
+        verb: &str,
+        _principal: &Principal,
+    ) -> Result<VerbOutcome, VerbFault> {
+        use std::sync::atomic::Ordering::SeqCst;
+        let now = self.in_flight.fetch_add(1, SeqCst) + 1;
+        self.most.fetch_max(now, SeqCst);
+        self.ran.lock().unwrap().push(verb.to_owned());
+        if !self.takes.is_zero() {
+            tokio::time::sleep(self.takes).await;
+        }
+        let answer = {
+            let mut answers = self.answers.lock().unwrap();
+            if answers.len() > 1 {
+                answers.pop_front().unwrap()
+            } else {
+                answers.front().cloned().unwrap()
+            }
+        };
+        self.in_flight.fetch_sub(1, SeqCst);
+        let refused = answer["kind"] != "state";
+        Ok(VerbOutcome {
+            verb: verb.to_owned(),
+            agent: agent.to_owned(),
+            exit_code: Some(if refused { 1 } else { 0 }),
+            answer: Some(answer),
+            raw_stdout: None,
+            stderr: None,
+        })
+    }
+}
+
+fn not_at_rest() -> serde_json::Value {
+    json!({"kind": "activity_not_at_rest"})
+}
+
+fn unloaded() -> serde_json::Value {
+    json!({"kind": "state", "state": "unloaded", "load": null})
+}
+
+/// **The orderly stop retries `unload` until rest** (Spec 8, the operator's
+/// ruling of 2026-10-08): `ActivityNotAtRest` twice and then a clean unload
+/// is three invocations, one at a time, and never a `force-unload`.
+#[tokio::test]
+async fn the_stop_retries_unload_while_a_turn_runs() {
+    let invoker = ScriptedStop::new(&[not_at_rest(), not_at_rest(), unloaded()]);
+    let slot = super::admin_con::Slot::new();
+    super::admin_con::orderly_stop(
+        invoker.clone(),
+        &slot,
+        "an-agent",
+        tokio::time::Instant::now() + Duration::from_secs(5),
+        Duration::from_secs(1),
+        Duration::from_millis(50),
+    )
+    .await;
+    assert_eq!(invoker.ran(), ["unload", "unload", "unload"]);
+    assert_eq!(invoker.most.load(std::sync::atomic::Ordering::SeqCst), 1);
+}
+
+/// **The retry ends at the stop's deadline**: an `unload` that refuses
+/// `ActivityNotAtRest` past the deadline is asked no more once the next
+/// ask would start past it, and the stop returns by the deadline.
+#[tokio::test]
+async fn the_stops_retry_ends_at_the_deadline() {
+    let invoker = ScriptedStop::new(&[not_at_rest()]);
+    let slot = super::admin_con::Slot::new();
+    let started = tokio::time::Instant::now();
+    super::admin_con::orderly_stop(
+        invoker.clone(),
+        &slot,
+        "an-agent",
+        started + Duration::from_millis(600),
+        Duration::from_secs(1),
+        Duration::from_millis(100),
+    )
+    .await;
+    assert!(
+        started.elapsed() < Duration::from_millis(900),
+        "the stop kept to its deadline: {:?}",
+        started.elapsed()
+    );
+    let asked = invoker.ran().len();
+    assert!((2..=7).contains(&asked), "{asked} asks within the grace");
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(
+        invoker.ran().len(),
+        asked,
+        "unload was asked past the deadline"
+    );
+    assert!(invoker.ran().iter().all(|verb| verb == "unload"));
+}
+
+/// **`SavePointNotTaken` is not retried**: the run has ended, and the next
+/// load records the loss.
+#[tokio::test]
+async fn a_save_point_not_taken_is_not_retried() {
+    let invoker = ScriptedStop::new(&[
+        json!({"kind": "save_point_not_taken", "missed": "published"}),
+        unloaded(),
+    ]);
+    let slot = super::admin_con::Slot::new();
+    super::admin_con::orderly_stop(
+        invoker.clone(),
+        &slot,
+        "an-agent",
+        tokio::time::Instant::now() + Duration::from_secs(5),
+        Duration::from_secs(1),
+        Duration::from_millis(50),
+    )
+    .await;
+    assert_eq!(invoker.ran(), ["unload"]);
+}
+
+/// **No `unload` starts past the deadline, however late the wait wakes**:
+/// on a paused clock, the retry's wait is overtaken by a jump past the
+/// deadline, as a runtime that wakes late would see it, and no second
+/// invocation starts; the deadline is checked after the wait, immediately
+/// before the ask.
+#[tokio::test]
+async fn a_retry_that_wakes_past_the_deadline_asks_no_more() {
+    tokio::time::pause();
+    let invoker = Arc::new(ScriptedStop {
+        takes: Duration::ZERO,
+        ..Arc::into_inner(ScriptedStop::new(&[not_at_rest()])).unwrap()
+    });
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(250);
+    let stop = tokio::spawn({
+        let invoker = invoker.clone();
+        async move {
+            let slot = super::admin_con::Slot::new();
+            super::admin_con::orderly_stop(
+                invoker,
+                &slot,
+                "an-agent",
+                deadline,
+                Duration::from_secs(1),
+                Duration::from_millis(100),
+            )
+            .await;
+        }
+    });
+    for _ in 0..20 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(
+        invoker.ran(),
+        ["unload"],
+        "the first ask ran before the wait"
+    );
+    tokio::time::advance(Duration::from_millis(300)).await;
+    stop.await.unwrap();
+    for _ in 0..20 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(
+        invoker.ran(),
+        ["unload"],
+        "an unload started past the deadline"
+    );
 }

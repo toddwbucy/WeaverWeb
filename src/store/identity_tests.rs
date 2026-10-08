@@ -151,3 +151,61 @@ async fn the_admin_role_is_fixed_by_the_store() {
         );
     }
 }
+
+/// **Migration 0016 widens the seeded `operator` role and no other**
+/// (WeaverAgent's A3.2, the operator's ruling of 2026-10-08): on a fresh
+/// store `operator` carries the three save-point verbs at version 2 and
+/// `observer` is as seeded; the migration run again over an `operator` an
+/// admin narrowed leaves it as it stands, and over 0015's seed written in
+/// another order widens it.
+#[tokio::test]
+async fn the_seeded_operator_gains_the_save_point_verbs_and_an_edited_one_is_left() {
+    const MIGRATION: &str = include_str!("../../migrations/0016_the_save_point_verbs.sql");
+    const WIDENED: [&str; 9] = [
+        "show",
+        "validate",
+        "load",
+        "unload",
+        "stop",
+        "save-point",
+        "restore",
+        "force-unload",
+        "turn",
+    ];
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let operator = s.role("operator").await.unwrap().unwrap();
+    assert_eq!(operator.verbs, WIDENED);
+    assert_eq!(operator.version, 2);
+    let observer = s.role("observer").await.unwrap().unwrap();
+    assert_eq!(observer.verbs, ["show"]);
+    assert_eq!(observer.version, 1);
+
+    sqlx::query(
+        "UPDATE role SET verbs = '{show,turn}', version = version + 1 WHERE name = 'operator'",
+    )
+    .execute(&s.pool)
+    .await
+    .unwrap();
+    sqlx::raw_sql(MIGRATION).execute(&s.pool).await.unwrap();
+    let operator = s.role("operator").await.unwrap().unwrap();
+    assert_eq!(
+        operator.verbs,
+        ["show", "turn"],
+        "an operator role an admin narrowed was left as it stands"
+    );
+    assert_eq!(operator.version, 3);
+
+    sqlx::query(
+        "UPDATE role SET verbs = '{turn,stop,unload,load,validate,show}', version = version + 1 WHERE name = 'operator'",
+    )
+    .execute(&s.pool)
+    .await
+    .unwrap();
+    sqlx::raw_sql(MIGRATION).execute(&s.pool).await.unwrap();
+    let operator = s.role("operator").await.unwrap().unwrap();
+    assert_eq!(operator.verbs, WIDENED);
+    assert_eq!(operator.version, 5);
+}

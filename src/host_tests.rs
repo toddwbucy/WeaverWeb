@@ -430,6 +430,37 @@ async fn a_roles_verbs_stay_in_the_vocabulary_and_admins_are_never_written() {
     );
 }
 
+/// **`role set` takes the save-point verbs** (WeaverAgent's A3.2), and the
+/// store's vocabulary admits them, while a word outside it is still refused
+/// by both.
+#[tokio::test]
+async fn role_set_takes_the_save_point_verbs() {
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let verbs: Vec<String> = ["show", "save-point", "restore", "force-unload"]
+        .map(str::to_owned)
+        .to_vec();
+    ok(&host::role_set(s, "observer", &verbs, LAB).await);
+    assert_eq!(s.role("observer").await.unwrap().unwrap().verbs, verbs);
+    refused(
+        &host::role_set(s, "observer", &["save_point".into()], LAB).await,
+        "not in the vocabulary",
+    );
+    let mut tx = s.pool.begin().await.unwrap();
+    let outside = sqlx::query("UPDATE role SET verbs = '{evict}' WHERE name = 'observer'")
+        .execute(&mut *tx)
+        .await;
+    tx.rollback().await.unwrap();
+    assert!(
+        outside
+            .unwrap_err()
+            .to_string()
+            .contains("role_verbs_are_the_vocabulary")
+    );
+}
+
 /// **A per-agent role is granted on an agent, and admin on none**: each the
 /// other way is refused before anything is written.
 #[tokio::test]

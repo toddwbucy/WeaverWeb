@@ -116,6 +116,9 @@ url = "2.5.8"
 libc = "0.2"
 
 [dev-dependencies]
+# A paused clock for the orderly stop's retry (`time::pause`/`advance`): a
+# feature of tokio, already in the tree, so no crate is added.
+tokio = { version = "1", features = ["test-util"] }
 # The link's tests mint an authority and client credentials under a directory
 # that is removed when the test ends, so no key is left behind (Spec 8).
 tempfile = "3"

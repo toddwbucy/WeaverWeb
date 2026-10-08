@@ -24,7 +24,17 @@ pub const IDENTITY_LOCK_KEY: i64 = i64::from_be_bytes(*b"weaverid");
 
 /// **A role's verbs are drawn from this vocabulary alone**: the verbs a box
 /// rule may grant (Spec 7.2) and `turn`.
-pub const VOCABULARY: [&str; 6] = ["show", "validate", "load", "unload", "stop", "turn"];
+pub const VOCABULARY: [&str; 9] = [
+    "show",
+    "validate",
+    "load",
+    "unload",
+    "stop",
+    "save-point",
+    "restore",
+    "force-unload",
+    "turn",
+];
 
 /// **An enrollment token's lifetime never exceeds seven days** (design
 /// section 7), refused at the config's load and at every issue.

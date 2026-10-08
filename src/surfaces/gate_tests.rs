@@ -497,3 +497,51 @@ async fn a_session_used_every_fifty_seconds_stays_open_at_the_idle_floor() {
     }
     assert!(!closed(s, &bearer).await, "the session stayed open");
 }
+
+/// **A close decided on a stale read moves nothing** (design section 6,
+/// one writer): a use reads a session as idle and is held before its
+/// close; another request's use refreshes the session meanwhile; the held
+/// use, released, closes nothing, since its close restates the idle reason,
+/// reads the session again, and serves it. The session stays open.
+#[tokio::test]
+async fn a_session_refreshed_between_a_read_and_its_close_stays_open() {
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let (bearer, ..) = open(s, "reader").await;
+    set(
+        s,
+        &bearer,
+        "opened_at = now() - interval '2 hours', last_used_at = now() - interval '61 minutes'",
+    )
+    .await;
+
+    let (read, release) = (
+        std::sync::Arc::new(tokio::sync::Notify::new()),
+        std::sync::Arc::new(tokio::sync::Notify::new()),
+    );
+    *gate::CLOSE_HOLD.lock().unwrap() =
+        Some((gate::digest(&bearer), read.clone(), release.clone()));
+    let held = tokio::spawn({
+        let (s, bearer) = (s.clone(), bearer.clone());
+        async move { gate::at_use(&s, &policy(), &bearer).await.unwrap() }
+    });
+    tokio::time::timeout(Duration::from_secs(10), read.notified())
+        .await
+        .expect("the held use read the session as idle");
+
+    // The other request's refresh, as its use writes it.
+    set(s, &bearer, "last_used_at = now()").await;
+    release.notify_one();
+
+    let answered = held.await.unwrap();
+    assert!(
+        answered.is_ok(),
+        "the refreshed session was refused on a stale read: {answered:?}"
+    );
+    assert!(
+        !closed(s, &bearer).await,
+        "the refreshed session stayed open"
+    );
+}

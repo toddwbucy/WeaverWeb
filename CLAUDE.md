@@ -180,7 +180,8 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
   optional `rp_id` is the relying party's domain, configured with `origin` or not at all, the
   origin's host or a domain it is under; `session_idle_secs` (3600) and
   `session_absolute_secs` (43200) are a session's limits, the idle one never under 300, since
-  the last use is written at most once a minute. The start refusals are
+  the last use is written at most once a minute, and the absolute never over 604800 (seven
+  days). The start refusals are
   `src/listen.rs`'s, design section 3. Keep configs, certificates, keys,
   authorities and client configs out of the repository. Logging uses `RUST_LOG`,
   which defaults to `weaver_web=info,sqlx=warn`.

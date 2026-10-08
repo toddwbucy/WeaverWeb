@@ -154,13 +154,44 @@ pub async fn session(
 /// names no session. **Each end is checked at every use**: closed, its
 /// person disabled, its passkey removed, open past the absolute limit,
 /// unused past the idle limit, in one read on the database's clock. A use
-/// that finds it ended closes it; a use that finds it serving refreshes its
-/// last use.
+/// that finds it serving refreshes its last use; one that finds it ended
+/// closes it, **the close restating its reason** so it is atomic with what
+/// it decides on. Where that close moves no row, another request refreshed
+/// or closed the session since this read, so it is read once more and
+/// served or refused on that read.
 pub(crate) async fn at_use(
     store: &Store,
     policy: &Policy,
     bearer: &str,
 ) -> anyhow::Result<Result<Session, Option<Ended>>> {
+    let digest = digest(bearer);
+    for again in [false, true] {
+        let Some((session, ended)) = read(store, policy, &digest).await? else {
+            return Ok(Err(None));
+        };
+        let Some(ended) = ended else {
+            refresh(store, session.session_id).await?;
+            return Ok(Ok(session));
+        };
+        if ended == Ended::Closed {
+            return Ok(Err(Some(Ended::Closed)));
+        }
+        #[cfg(test)]
+        hold_before_close(&digest).await;
+        if close(store, policy, session.session_id, ended).await? || again {
+            return Ok(Err(Some(ended)));
+        }
+    }
+    unreachable!("the second read returns")
+}
+
+/// One read of a session by its bearer's digest: the session, and the first
+/// end it has met, in the order [`Ended`] lists them.
+async fn read(
+    store: &Store,
+    policy: &Policy,
+    digest: &str,
+) -> anyhow::Result<Option<(Session, Option<Ended>)>> {
     let Some(row) = sqlx::query(
         "SELECT s.session_id, s.person_id, p.name, s.credential_id, \
          s.closed_at IS NOT NULL AS closed, \
@@ -172,15 +203,14 @@ pub(crate) async fn at_use(
          FROM session s JOIN person p ON p.person_id = s.person_id \
          WHERE s.bearer_digest = $1",
     )
-    .bind(digest(bearer))
+    .bind(digest)
     .bind(policy.absolute.as_secs_f64())
     .bind(policy.idle.as_secs_f64())
     .fetch_optional(&store.pool)
     .await?
     else {
-        return Ok(Err(None));
+        return Ok(None);
     };
-    let session_id: i64 = row.try_get("session_id")?;
     let ended = [
         ("closed", Ended::Closed),
         ("disabled", Ended::PersonDisabled),
@@ -195,19 +225,85 @@ pub(crate) async fn at_use(
         Err(e) => Some(Err(e)),
     })
     .transpose()?;
-    if let Some(ended) = ended {
-        if ended != Ended::Closed {
-            close(store, session_id).await?;
-        }
-        return Ok(Err(Some(ended)));
-    }
-    refresh(store, session_id).await?;
-    Ok(Ok(Session {
-        session_id,
+    let session = Session {
+        session_id: row.try_get("session_id")?,
         person_id: row.try_get("person_id")?,
         name: row.try_get("name")?,
         credential_id: row.try_get("credential_id")?,
-    }))
+    };
+    Ok(Some((session, ended)))
+}
+
+/// **A session closed for the end a read found, where that end still holds**:
+/// the reason is restated in the update's own condition, beside the session
+/// being open, so a close decided on a read that another request has since
+/// overtaken (a refresh above all) moves no row. Whether it closed the row.
+async fn close(
+    store: &Store,
+    policy: &Policy,
+    session_id: i64,
+    ended: Ended,
+) -> anyhow::Result<bool> {
+    // Each reason as its own condition, with the one limit it compares, so
+    // no statement binds a parameter it does not use.
+    let (reason, limit) = match ended {
+        Ended::Closed => return Ok(false),
+        Ended::PersonDisabled => (
+            "NOT (SELECT p.enabled FROM person p WHERE p.person_id = session.person_id)",
+            None,
+        ),
+        Ended::PasskeyRemoved => (
+            "NOT EXISTS (SELECT 1 FROM passkey k \
+             WHERE k.credential_id = session.credential_id AND k.person_id = session.person_id)",
+            None,
+        ),
+        Ended::Expired => (
+            "opened_at <= now() - make_interval(secs => $2)",
+            Some(policy.absolute),
+        ),
+        Ended::Idle => (
+            "last_used_at <= now() - make_interval(secs => $2)",
+            Some(policy.idle),
+        ),
+    };
+    let statement = format!(
+        "UPDATE session SET closed_at = now() \
+         WHERE session_id = $1 AND closed_at IS NULL AND {reason}"
+    );
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(statement)).bind(session_id);
+    if let Some(limit) = limit {
+        query = query.bind(limit.as_secs_f64());
+    }
+    let closed = query.execute(&store.pool).await?;
+    Ok(closed.rows_affected() == 1)
+}
+
+/// A hold between a use's read and its close, keyed by the bearer's digest
+/// so no other test's use takes it: the use signals `read` and waits on
+/// `release`, which lets a test act between the two.
+#[cfg(test)]
+pub(crate) type CloseHold = (
+    String,
+    std::sync::Arc<tokio::sync::Notify>,
+    std::sync::Arc<tokio::sync::Notify>,
+);
+
+#[cfg(test)]
+pub(crate) static CLOSE_HOLD: std::sync::Mutex<Option<CloseHold>> = std::sync::Mutex::new(None);
+
+#[cfg(test)]
+async fn hold_before_close(digest: &str) {
+    let hold = {
+        let mut slot = CLOSE_HOLD.lock().unwrap();
+        match slot.as_ref() {
+            Some((key, ..)) if key == digest => slot.take(),
+            _ => None,
+        }
+    };
+    if let Some((_, read, release)) = hold {
+        read.notify_one();
+        release.notified().await;
+    }
 }
 
 /// **The last-used refresh** (design section 6): one conditional update on
@@ -223,15 +319,6 @@ async fn refresh(store: &Store, session_id: i64) -> anyhow::Result<()> {
     .bind(session_id)
     .execute(&store.pool)
     .await?;
-    Ok(())
-}
-
-/// A session closed, where it is still open.
-async fn close(store: &Store, session_id: i64) -> anyhow::Result<()> {
-    sqlx::query("UPDATE session SET closed_at = now() WHERE session_id = $1 AND closed_at IS NULL")
-        .bind(session_id)
-        .execute(&store.pool)
-        .await?;
     Ok(())
 }
 

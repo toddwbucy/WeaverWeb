@@ -84,7 +84,8 @@ pub struct ServerConfig {
     #[serde(default = "default_session_idle_secs")]
     pub session_idle_secs: u64,
     /// **A session ends this long after it opened, used or not** (design
-    /// section 6), in seconds: twelve hours by default.
+    /// section 6), in seconds: twelve hours by default, and never past
+    /// [`SESSION_ABSOLUTE_MAX_SECS`].
     #[serde(default = "default_session_absolute_secs")]
     pub session_absolute_secs: u64,
 }
@@ -138,6 +139,13 @@ fn default_enrollment_token_hours() -> u32 {
 /// minutes is several times that grain, with margin.
 pub const SESSION_IDLE_FLOOR_SECS: u64 = 300;
 
+/// **The longest absolute limit a session may have**: seven days. An
+/// absolute limit longer than a week stops being one, and the bound keeps
+/// every limit an interval the database can represent, so no configured
+/// value breaks every authenticated request at its first use. The idle
+/// limit is never past the absolute one, so it is bounded too.
+pub const SESSION_ABSOLUTE_MAX_SECS: u64 = 7 * 24 * 60 * 60;
+
 fn default_session_idle_secs() -> u64 {
     60 * 60
 }
@@ -187,6 +195,12 @@ impl ServerConfig {
             anyhow::bail!(
                 "session_idle_secs is {}, under {SESSION_IDLE_FLOOR_SECS}: a session's last use is written at most once a minute, so idle expiry is honoured to within a minute and its limit must be several times that",
                 cfg.session_idle_secs
+            );
+        }
+        if cfg.session_absolute_secs > SESSION_ABSOLUTE_MAX_SECS {
+            anyhow::bail!(
+                "session_absolute_secs is {}, over {SESSION_ABSOLUTE_MAX_SECS} (seven days): an absolute limit longer than a week stops being one",
+                cfg.session_absolute_secs
             );
         }
         if cfg.session_idle_secs > cfg.session_absolute_secs {
@@ -252,7 +266,8 @@ mod tests {
     /// **A session's limits are an hour idle and twelve hours open by
     /// default**; an idle limit under five minutes is refused, since the
     /// last use is written at most once a minute, and so is one past the
-    /// absolute limit.
+    /// absolute limit; an absolute limit past seven days is refused, the
+    /// largest integer a config can hold among them.
     #[test]
     fn a_sessions_limits_default_and_refuse_what_cannot_hold() {
         let dir = tempfile::tempdir().unwrap();
@@ -272,6 +287,9 @@ mod tests {
             (0, 43200, false),
             (300, 0, false),
             (301, 300, false),
+            (300, 604800, true),
+            (300, 604801, false),
+            (300, i64::MAX as u64, false),
         ] {
             std::fs::write(
                 &path,

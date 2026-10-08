@@ -349,11 +349,11 @@ pub async fn grant_remove(
         Ok(agent) => agent,
         Err(refusal) => return refusal,
     };
-    let grant_id = match store
+    let (grant_id, version) = match store
         .live_grant(&person.person_id, role, agent.as_deref())
         .await
     {
-        Ok(Some(id)) => id,
+        Ok(Some(live)) => live,
         Ok(None) => {
             return refused(
                 VERB,
@@ -390,7 +390,13 @@ pub async fn grant_remove(
                 release.notified().await;
             }
         }
-        identity::revoke_grant(&mut tx, &grant_id, author).await?;
+        // **At the version read** (Spec 3.2). The re-check above already
+        // refuses a grant another removal revoked meanwhile, every write of a
+        // grant holding the exclusion; the version holds the authored-row
+        // rule all the same, for any write of a grant to come.
+        if !identity::revoke_grant(&mut tx, &grant_id, author, version).await? {
+            anyhow::bail!("{grant_id} was written since it was read at version {version}: a stale edit");
+        }
         tx.commit().await?;
         anyhow::Ok(())
     }
@@ -404,6 +410,11 @@ pub async fn grant_remove(
     };
     with_outcome(store, first, answer).await
 }
+
+// A test's hold on `role set`, after the role's version is read and before
+// the write, keyed by the author claim so no other test's write takes it.
+#[cfg(test)]
+pub(crate) static ROLE_SET_HOLD: std::sync::Mutex<Option<Hold>> = std::sync::Mutex::new(None);
 
 /// `role set <role> [<verb>...]`: **a per-agent role's verbs, written by the
 /// host** (design section 8), within the vocabulary of Spec 7.2 plus
@@ -431,10 +442,24 @@ pub async fn role_set(store: &Store, role: &str, verbs: &[String], author: Optio
             set.push(verb.clone());
         }
     }
-    match store.role(role).await {
-        Ok(Some(_)) => {}
+    let version = match store.role(role).await {
+        Ok(Some(read)) => read.version,
         Ok(None) => return refused(VERB, format!("no role {role}")),
         Err(e) => return refused(VERB, format!("{e:#}")),
+    };
+    #[cfg(test)]
+    {
+        let hold = {
+            let mut slot = ROLE_SET_HOLD.lock().unwrap();
+            match slot.as_ref() {
+                Some((claim, ..)) if Some(claim.as_str()) == author => slot.take(),
+                _ => None,
+            }
+        };
+        if let Some((_, read, release)) = hold {
+            read.notify_one();
+            release.notified().await;
+        }
     }
     let first = match first_record(store, VERB, author, Target::Role(role)).await {
         Ok(first) => first,
@@ -442,7 +467,13 @@ pub async fn role_set(store: &Store, role: &str, verbs: &[String], author: Optio
     };
     let answer = async {
         let mut tx = store.identity_transaction().await?;
-        identity::set_role_verbs(&mut tx, role, &set, author).await?;
+        // **At the version read** (Spec 3.2): a role another write moved since
+        // is refused as a stale edit rather than overwritten.
+        if !identity::set_role_verbs(&mut tx, role, &set, author, version).await? {
+            anyhow::bail!(
+                "{role} was written since it was read at version {version}: a stale edit"
+            );
+        }
         tx.commit().await?;
         anyhow::Ok(())
     }

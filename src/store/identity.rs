@@ -33,11 +33,27 @@ pub const TOKEN_LIFETIME_MAX_HOURS: u32 = 7 * 24;
 /// The most bytes a name may run to, the store's key bound.
 pub const NAME_BOUND: usize = 1024;
 
+/// **Whether `spec` is a person's identity**: exactly `pe-` and sixteen
+/// lowercase hex, as an agent's is read. Anything else is a name.
+pub fn is_person_id(spec: &str) -> bool {
+    spec.len() == 19
+        && spec.starts_with("pe-")
+        && spec[3..]
+            .bytes()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
 /// **A name as given, trimmed of surrounding white space**, or why it is
-/// refused: empty, past the bound, or holding a NUL, which the store
-/// refuses in text.
+/// refused: empty, past the bound, holding a NUL, which the store refuses
+/// in text, or **of an identity's own shape**, which would shadow the
+/// person whose identity it spells wherever a person is named.
 pub fn given_name(name: &str) -> Result<String, String> {
     let name = name.trim();
+    if is_person_id(name) {
+        return Err(format!(
+            "{name} is a person's identity in shape, and a name never takes one, so no name shadows an identity"
+        ));
+    }
     if name.is_empty() {
         return Err("a person's name is empty".into());
     }
@@ -110,6 +126,8 @@ pub struct Role {
     pub name: String,
     pub scope: String,
     pub verbs: Vec<String>,
+    /// The version read, which a write of the role carries (Spec 3.2).
+    pub version: i64,
 }
 
 /// The ending an issued token gives the live token it replaces.
@@ -144,7 +162,7 @@ impl Store {
     /// The person `spec` names: their identity (`pe-`), or their name in
     /// its canonical form.
     pub async fn person(&self, spec: &str) -> anyhow::Result<Option<Person>> {
-        let row = if spec.starts_with("pe-") {
+        let row = if is_person_id(spec) {
             sqlx::query("SELECT person_id, name, enabled FROM person WHERE person_id = $1")
                 .bind(spec)
                 .fetch_optional(&self.pool)
@@ -165,7 +183,7 @@ impl Store {
     /// The role named `name`.
     pub async fn role(&self, name: &str) -> anyhow::Result<Option<Role>> {
         Ok(
-            sqlx::query("SELECT name, scope, verbs FROM role WHERE name = $1")
+            sqlx::query("SELECT name, scope, verbs, version FROM role WHERE name = $1")
                 .bind(name)
                 .fetch_optional(&self.pool)
                 .await?
@@ -173,20 +191,21 @@ impl Store {
                     name: r.get("name"),
                     scope: r.get("scope"),
                     verbs: r.get("verbs"),
+                    version: r.get("version"),
                 }),
         )
     }
 
     /// The live grant binding a person to a role on an agent, or
-    /// server-wide where `agent` is `None`.
+    /// server-wide where `agent` is `None`, with its version.
     pub async fn live_grant(
         &self,
         person: &str,
         role: &str,
         agent: Option<&str>,
-    ) -> anyhow::Result<Option<String>> {
-        Ok(sqlx::query_scalar(
-            "SELECT grant_id FROM role_grant WHERE person_id = $1 AND role = $2 \
+    ) -> anyhow::Result<Option<(String, i64)>> {
+        Ok(sqlx::query_as(
+            "SELECT grant_id, version FROM role_grant WHERE person_id = $1 AND role = $2 \
              AND agent_id IS NOT DISTINCT FROM $3 AND revoked_at IS NULL",
         )
         .bind(person)
@@ -340,36 +359,47 @@ pub async fn grant_is_live(
     .await?)
 }
 
-/// Revoke a live grant: its row stands, with when it was revoked and the
-/// version moved.
+/// **Revoke a live grant, at the version read** (Spec 3.2): its row stands,
+/// with when it was revoked and the version moved. `false` where no row
+/// moved, a stale edit the caller refuses.
 pub async fn revoke_grant(
     tx: &mut Transaction<'_, Postgres>,
     grant: &str,
     author: Option<&str>,
-) -> anyhow::Result<()> {
-    sqlx::query(
+    version: i64,
+) -> anyhow::Result<bool> {
+    Ok(sqlx::query(
         "UPDATE role_grant SET revoked_at = now(), author = $2, version = version + 1 \
-         WHERE grant_id = $1 AND revoked_at IS NULL",
+         WHERE grant_id = $1 AND revoked_at IS NULL AND version = $3",
     )
     .bind(grant)
     .bind(author)
+    .bind(version)
     .execute(&mut **tx)
-    .await?;
-    Ok(())
+    .await?
+    .rows_affected()
+        == 1)
 }
 
-/// Write a role's verbs, the version moved.
+/// **Write a role's verbs, at the version read** (Spec 3.2), the version
+/// moved. `false` where no row moved, a stale edit the caller refuses.
 pub async fn set_role_verbs(
     tx: &mut Transaction<'_, Postgres>,
     role: &str,
     verbs: &[String],
     author: Option<&str>,
-) -> anyhow::Result<()> {
-    sqlx::query("UPDATE role SET verbs = $2, author = $3, version = version + 1 WHERE name = $1")
-        .bind(role)
-        .bind(verbs)
-        .bind(author)
-        .execute(&mut **tx)
-        .await?;
-    Ok(())
+    version: i64,
+) -> anyhow::Result<bool> {
+    Ok(sqlx::query(
+        "UPDATE role SET verbs = $2, author = $3, version = version + 1 \
+         WHERE name = $1 AND version = $4",
+    )
+    .bind(role)
+    .bind(verbs)
+    .bind(author)
+    .bind(version)
+    .execute(&mut **tx)
+    .await?
+    .rows_affected()
+        == 1)
 }

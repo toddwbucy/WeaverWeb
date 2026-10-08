@@ -355,7 +355,7 @@ async fn two_removals_of_the_last_two_admins_leave_one() {
     ok(&host::bootstrap(&s, &cfg(), "ada", None, LAB).await);
     ok(&host::bootstrap(&s, &cfg(), "bea", None, LAB).await);
     let ada = s.person("ada").await.unwrap().unwrap().person_id;
-    let held = s.live_grant(&ada, "admin", None).await.unwrap().unwrap();
+    let (held, _) = s.live_grant(&ada, "admin", None).await.unwrap().unwrap();
     let (locked, release) = (
         Arc::new(tokio::sync::Notify::new()),
         Arc::new(tokio::sync::Notify::new()),
@@ -446,4 +446,62 @@ async fn a_grant_names_an_agent_exactly_where_its_role_is_per_agent() {
         "server-wide",
     );
     ok(&host::grant_add(s, "ada", "observer", Some(&agent), LAB).await);
+}
+
+/// **An argument is an identity only in an identity's whole shape, and no
+/// name takes that shape** (Codex on PR #26): a person named `pe-alice` is
+/// found by that name by every command, and a name spelling a whole
+/// identity is refused, so no name shadows the person it spells.
+#[tokio::test]
+async fn a_name_never_shadows_an_identity() {
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    ok(&host::bootstrap(s, &cfg(), "pe-alice", None, LAB).await);
+    ok(&host::token(s, &cfg(), "pe-alice", None, LAB).await);
+    ok(&host::reset(s, &cfg(), "pe-alice", None, LAB).await);
+    let agent = agent(s).await;
+    ok(&host::grant_add(s, "pe-alice", "observer", Some(&agent), LAB).await);
+    refused(
+        &host::bootstrap(s, &cfg(), "pe-0123456789abcdef", None, LAB).await,
+        "identity in shape",
+    );
+}
+
+/// **A role written since it was read is refused as a stale edit** (Spec
+/// 3.2, Codex on PR #26): two writes of `operator` both read version 1, the
+/// first held after its read until the second commits; the first is then
+/// refused, its outcome failed, and the second's verbs stand.
+#[tokio::test]
+async fn a_stale_role_write_is_refused() {
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = fresh.store.clone();
+    let (read, release) = (
+        Arc::new(tokio::sync::Notify::new()),
+        Arc::new(tokio::sync::Notify::new()),
+    );
+    *host::ROLE_SET_HOLD.lock().unwrap() = Some(("held".into(), read.clone(), release.clone()));
+    let first = tokio::spawn({
+        let s = s.clone();
+        async move { host::role_set(&s, "operator", &["show".into()], Some("held")).await }
+    });
+    read.notified().await;
+    ok(&host::role_set(&s, "operator", &["show".into(), "turn".into()], LAB).await);
+    release.notify_one();
+    let first = first.await.unwrap();
+    refused(&first, "stale edit");
+    let outcome: String = sqlx::query_scalar("SELECT outcome FROM audit WHERE answers = $1")
+        .bind(first.value["audit"].as_str().unwrap())
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    assert_eq!(outcome, "failed");
+    assert_eq!(
+        s.role("operator").await.unwrap().unwrap().verbs,
+        vec!["show", "turn"],
+        "the second's verbs stand"
+    );
 }

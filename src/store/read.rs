@@ -508,6 +508,80 @@ pub(crate) mod tests {
         Some(Store::connect(&url).await.expect("connect and migrate"))
     }
 
+    /// **A database of the test's own**, created beside the one
+    /// `DATABASE_URL` names and migrated, for a test whose rule is
+    /// store-wide (the last enabled admin) and would read the shared
+    /// store's other rows. It is dropped when the test ends, a panic
+    /// included (`Drop` below); one left by a killed process is named
+    /// `wwt_...` so it can be found.
+    pub(crate) struct Fresh {
+        pub(crate) store: Store,
+        name: String,
+        base: sqlx::postgres::PgConnectOptions,
+    }
+
+    pub(crate) async fn fresh_store() -> Option<Fresh> {
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!(
+                "skipped: DATABASE_URL is not set, and a store-wide rule is tested against one"
+            );
+            return None;
+        };
+        let base: sqlx::postgres::PgConnectOptions = url.parse().expect("a database URL");
+        let name = format!("wwt_{}", &uuid::Uuid::new_v4().simple().to_string()[..16]);
+        let admin = sqlx::PgPool::connect_with(base.clone())
+            .await
+            .expect("connect");
+        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {name}")))
+            .execute(&admin)
+            .await
+            .expect("create the test's database");
+        admin.close().await;
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(8)
+            .connect_with(base.clone().database(&name))
+            .await
+            .expect("connect to the test's database");
+        sqlx::migrate!("./migrations")
+            .run(&pool)
+            .await
+            .expect("migrate");
+        Some(Fresh {
+            store: Store { pool },
+            name,
+            base,
+        })
+    }
+
+    /// **The test's database is dropped when the test ends, a panic
+    /// included**: on a thread of its own with a runtime of its own, since a
+    /// drop cannot await, and `WITH (FORCE)` ends the pool's connections.
+    impl Drop for Fresh {
+        fn drop(&mut self) {
+            let (name, base) = (self.name.clone(), self.base.clone());
+            let dropped = std::thread::spawn(move || {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("a runtime")
+                    .block_on(async move {
+                        let admin = sqlx::PgPool::connect_with(base).await?;
+                        sqlx::query(sqlx::AssertSqlSafe(format!(
+                            "DROP DATABASE {name} WITH (FORCE)"
+                        )))
+                        .execute(&admin)
+                        .await?;
+                        admin.close().await;
+                        anyhow::Ok(())
+                    })
+            })
+            .join();
+            if !matches!(dropped, Ok(Ok(()))) {
+                eprintln!("the test's database {} was not dropped", self.name);
+            }
+        }
+    }
+
     async fn seed_run(s: &Store, run_id: &str, parent: Option<&str>, parting: Option<i32>) {
         sqlx::query(
             "INSERT INTO run (run_id, record_identity, seed, sampler, device, \

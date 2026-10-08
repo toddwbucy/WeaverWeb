@@ -11,7 +11,7 @@ use std::time::Duration;
 use weaver_web::config::ServerConfig;
 use weaver_web::link::{Authority, Listener, Plane, verbs};
 use weaver_web::traceview::TraceViews;
-use weaver_web::{store, web};
+use weaver_web::{host, store, web};
 
 #[derive(Parser)]
 #[command(
@@ -70,6 +70,88 @@ enum Command {
     },
     /// The register as it stands, presence derived on each row.
     Agents,
+    /// The host's identity commands on a person (Spec 2.13).
+    Person {
+        #[command(subcommand)]
+        verb: PersonVerb,
+    },
+    /// The host's grants of a role to a person.
+    Grant {
+        #[command(subcommand)]
+        verb: GrantVerb,
+    },
+    /// The host's writes of a per-agent role's verbs.
+    Role {
+        #[command(subcommand)]
+        verb: RoleVerb,
+    },
+}
+
+#[derive(Subcommand)]
+enum PersonVerb {
+    /// A person, their server-wide admin grant and an enrollment token,
+    /// printed once.
+    Bootstrap {
+        name: String,
+        /// The token's lifetime in hours; the config's where unset, never
+        /// past seven days.
+        #[arg(long)]
+        hours: Option<u32>,
+        #[arg(long)]
+        author: Option<String>,
+    },
+    /// An enrollment token for a person holding no passkey, printed once.
+    Token {
+        /// The person as pe-<sixteen hex> or by name.
+        person: String,
+        #[arg(long)]
+        hours: Option<u32>,
+        #[arg(long)]
+        author: Option<String>,
+    },
+    /// Clear a person's passkeys and issue a token, printed once.
+    Reset {
+        person: String,
+        #[arg(long)]
+        hours: Option<u32>,
+        #[arg(long)]
+        author: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum GrantVerb {
+    /// Grant a role to a person: admin server-wide, any other on --agent.
+    Add {
+        person: String,
+        role: String,
+        /// The agent as ag-<sixteen hex> or box/name.
+        #[arg(long)]
+        agent: Option<String>,
+        #[arg(long)]
+        author: Option<String>,
+    },
+    /// Revoke a person's role; the last enabled admin's grant is refused.
+    Remove {
+        person: String,
+        role: String,
+        #[arg(long)]
+        agent: Option<String>,
+        #[arg(long)]
+        author: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum RoleVerb {
+    /// Set a per-agent role's verbs, within show, validate, load, unload,
+    /// stop and turn; admin is fixed.
+    Set {
+        role: String,
+        verbs: Vec<String>,
+        #[arg(long)]
+        author: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -180,6 +262,88 @@ async fn run_verb(cfg: &ServerConfig, command: Command) -> verbs::Answer {
                 ok: false,
             },
         },
+        Command::Person { verb } => {
+            let name = match &verb {
+                PersonVerb::Bootstrap { .. } => "person bootstrap",
+                PersonVerb::Token { .. } => "person token",
+                PersonVerb::Reset { .. } => "person reset",
+            };
+            let store = match store::Store::connect(&cfg.database).await {
+                Ok(store) => store,
+                Err(e) => return unreached(name, e),
+            };
+            match verb {
+                PersonVerb::Bootstrap {
+                    name,
+                    hours,
+                    author,
+                } => host::bootstrap(&store, cfg, &name, hours, author.as_deref()).await,
+                PersonVerb::Token {
+                    person,
+                    hours,
+                    author,
+                } => host::token(&store, cfg, &person, hours, author.as_deref()).await,
+                PersonVerb::Reset {
+                    person,
+                    hours,
+                    author,
+                } => host::reset(&store, cfg, &person, hours, author.as_deref()).await,
+            }
+        }
+        Command::Grant { verb } => {
+            let name = match &verb {
+                GrantVerb::Add { .. } => "grant add",
+                GrantVerb::Remove { .. } => "grant remove",
+            };
+            let store = match store::Store::connect(&cfg.database).await {
+                Ok(store) => store,
+                Err(e) => return unreached(name, e),
+            };
+            match verb {
+                GrantVerb::Add {
+                    person,
+                    role,
+                    agent,
+                    author,
+                } => {
+                    host::grant_add(&store, &person, &role, agent.as_deref(), author.as_deref())
+                        .await
+                }
+                GrantVerb::Remove {
+                    person,
+                    role,
+                    agent,
+                    author,
+                } => {
+                    host::grant_remove(&store, &person, &role, agent.as_deref(), author.as_deref())
+                        .await
+                }
+            }
+        }
+        Command::Role {
+            verb:
+                RoleVerb::Set {
+                    role,
+                    verbs,
+                    author,
+                },
+        } => match store::Store::connect(&cfg.database).await {
+            Ok(store) => host::role_set(&store, &role, &verbs, author.as_deref()).await,
+            Err(e) => unreached("role set", e),
+        },
+    }
+}
+
+/// A command refused because the store could not be reached, before it
+/// wrote anything.
+fn unreached(verb: &str, e: anyhow::Error) -> verbs::Answer {
+    verbs::Answer {
+        value: serde_json::json!({
+            "verb": verb,
+            "ok": false,
+            "error": format!("the store could not be reached, so nothing was done: {e:#}"),
+        }),
+        ok: false,
     }
 }
 

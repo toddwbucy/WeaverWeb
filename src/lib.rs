@@ -10,6 +10,9 @@
 pub mod adapters;
 pub mod config;
 pub mod fault;
+pub mod host;
+#[cfg(test)]
+mod host_tests;
 pub mod link;
 pub mod registry;
 pub mod store;

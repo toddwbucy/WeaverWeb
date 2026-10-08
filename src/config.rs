@@ -55,6 +55,12 @@ pub struct ServerConfig {
     pub agent_hop_budget: u32,
     #[serde(default)]
     pub providers: Vec<ProviderConfig>,
+    /// **How long an enrollment token lives**, in hours (design section 7):
+    /// 24 by default, long enough to hand a printed token to its person and
+    /// short enough that a lost one dies; refused at load at 0 or past
+    /// seven days, which bounds a configuration mistake.
+    #[serde(default = "default_enrollment_token_hours")]
+    pub enrollment_token_hours: u32,
 }
 
 // Read by the upstream adapter once it is implemented. **No standing
@@ -96,6 +102,10 @@ fn default_agent_hop_budget() -> u32 {
     8
 }
 
+fn default_enrollment_token_hours() -> u32 {
+    24
+}
+
 fn load_toml<T: serde::de::DeserializeOwned>(path: &Path) -> anyhow::Result<T> {
     let raw = std::fs::read_to_string(path)
         .map_err(|e| anyhow::anyhow!("reading config {}: {e}", path.display()))?;
@@ -121,6 +131,13 @@ impl ServerConfig {
             anyhow::bail!(
                 "silence_bound_secs is {}, over the {max} (four days) whose cadence a connector accepts",
                 cfg.silence_bound_secs
+            );
+        }
+        let most = crate::store::identity::TOKEN_LIFETIME_MAX_HOURS;
+        if cfg.enrollment_token_hours == 0 || cfg.enrollment_token_hours > most {
+            anyhow::bail!(
+                "enrollment_token_hours is {}, outside 1 to {most} (seven days)",
+                cfg.enrollment_token_hours
             );
         }
         Ok(cfg)
@@ -154,5 +171,25 @@ mod tests {
         assert!(why.contains("four days"), "{why}");
         write(3);
         assert!(ServerConfig::load(&path).is_err());
+    }
+
+    /// **An enrollment token's configured lifetime is at most seven days**,
+    /// refused at load past it or at zero; 24 hours where unset.
+    #[test]
+    fn a_token_lifetime_past_seven_days_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("server.toml");
+        let base =
+            "listen = \"127.0.0.1:0\"\ndatabase = \"postgres:///x\"\nauthority_dir = \"/a\"\n";
+        std::fs::write(&path, base).unwrap();
+        assert_eq!(
+            ServerConfig::load(&path).unwrap().enrollment_token_hours,
+            24
+        );
+        for (hours, ok) in [(168, true), (169, false), (0, false)] {
+            std::fs::write(&path, format!("{base}enrollment_token_hours = {hours}\n")).unwrap();
+            let loaded = ServerConfig::load(&path);
+            assert_eq!(loaded.is_ok(), ok, "{hours}: {:?}", loaded.err());
+        }
     }
 }

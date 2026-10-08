@@ -145,13 +145,19 @@ cargo run -- --config <config.toml> register <box> <name> --out <dir>   # two cl
 cargo run -- --config <config.toml> revoke <ag-id|box/name> <gate|admin>
 cargo run -- --config <config.toml> rotate <ag-id|box/name> --out <dir>
 cargo run -- --config <config.toml> agents                          # the register, presence derived
+cargo run -- --config <config.toml> person bootstrap <name>         # a person, their admin grant and a token, printed once
+cargo run -- --config <config.toml> person token <pe-id|name>       # a token for a person holding no passkey, printed once
+cargo run -- --config <config.toml> person reset <pe-id|name>       # clear a person's passkeys and print a token
+cargo run -- --config <config.toml> grant add <person> <role> [--agent <ag-id|box/name>]
+cargo run -- --config <config.toml> grant remove <person> <role> [--agent <ag-id|box/name>]
+cargo run -- --config <config.toml> role set <observer|operator> [<verb>...]
 cargo run --bin gate-con -- --config <gate-con.toml>                # the data plane's connector, on the agent's box
 cargo run --bin admin-con -- --config <admin-con.toml>              # the management plane's connector, on the agent's box
 ```
 
 - **DB-backed unit tests** (`store::read`, `store::plan`, `store::audit_tests`,
-  `surfaces::record`, `link::tests`, `link::client_tests`, `link::admin_con_tests`,
-  `link::verbs_audit_tests`)
+  `store::identity_tests`, `host_tests`, `surfaces::record`, `link::tests`,
+  `link::client_tests`, `link::admin_con_tests`, `link::verbs_audit_tests`)
   connect to the database in `DATABASE_URL` and run the migrations. The link's tests run one at
   a time, since a listener's start resets every row's link state, which is the claim. Without that variable they print
   `skipped:` and **pass without testing anything**. To really exercise them, set
@@ -206,6 +212,16 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
   (migration `0014`, append-only by trigger): a first record before it acts, an outcome
   naming it after, and no act where the first cannot be written; `authority init` needs the
   store for this. The answer names its first record under `audit`.
+- **The host's identity commands** (`src/host.rs`, over `src/store/identity.rs` and
+  migration `0015`): `person bootstrap`, `person token`, `person reset`, `grant add`,
+  `grant remove` and `role set`, each audited as the host's like the register verbs and each
+  writing under the identity exclusion, one advisory key (`IDENTITY_LOCK_KEY`). A token is
+  printed once and stored as its digest; its lifetime is the config's
+  `enrollment_token_hours` (24, at most 168) or `--hours`. A person is named by `pe-` or by
+  name, matched in its canonical form (Unicode's compatibility caseless match). The
+  last-admin rule binds the host. `store::identity_tests` and `host_tests` each run on a
+  database of their own (`fresh_store`, named `wwt_...`, dropped at the end), since the
+  last-admin rule is store-wide.
 
 ## The seed tree: what carries forward and what leaves
 

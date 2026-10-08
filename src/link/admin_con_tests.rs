@@ -3749,6 +3749,8 @@ async fn an_openings_show_the_store_does_not_land_keeps_the_hold() {
 /// flight at once.
 struct ScriptedStop {
     answers: Mutex<VecDeque<serde_json::Value>>,
+    /// How long each invocation takes.
+    takes: Duration,
     ran: Mutex<Vec<String>>,
     in_flight: std::sync::atomic::AtomicUsize,
     most: std::sync::atomic::AtomicUsize,
@@ -3758,6 +3760,7 @@ impl ScriptedStop {
     fn new(answers: &[serde_json::Value]) -> Arc<Self> {
         Arc::new(Self {
             answers: Mutex::new(answers.iter().cloned().collect()),
+            takes: Duration::from_millis(20),
             ran: Mutex::new(Vec::new()),
             in_flight: Default::default(),
             most: Default::default(),
@@ -3784,7 +3787,9 @@ impl Invoker for ScriptedStop {
         let now = self.in_flight.fetch_add(1, SeqCst) + 1;
         self.most.fetch_max(now, SeqCst);
         self.ran.lock().unwrap().push(verb.to_owned());
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        if !self.takes.is_zero() {
+            tokio::time::sleep(self.takes).await;
+        }
         let answer = {
             let mut answers = self.answers.lock().unwrap();
             if answers.len() > 1 {
@@ -3886,4 +3891,52 @@ async fn a_save_point_not_taken_is_not_retried() {
     )
     .await;
     assert_eq!(invoker.ran(), ["unload"]);
+}
+
+/// **No `unload` starts past the deadline, however late the wait wakes**:
+/// on a paused clock, the retry's wait is overtaken by a jump past the
+/// deadline, as a runtime that wakes late would see it, and no second
+/// invocation starts; the deadline is checked after the wait, immediately
+/// before the ask.
+#[tokio::test]
+async fn a_retry_that_wakes_past_the_deadline_asks_no_more() {
+    tokio::time::pause();
+    let invoker = Arc::new(ScriptedStop {
+        takes: Duration::ZERO,
+        ..Arc::into_inner(ScriptedStop::new(&[not_at_rest()])).unwrap()
+    });
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(250);
+    let stop = tokio::spawn({
+        let invoker = invoker.clone();
+        async move {
+            let slot = super::admin_con::Slot::new();
+            super::admin_con::orderly_stop(
+                invoker,
+                &slot,
+                "an-agent",
+                deadline,
+                Duration::from_secs(1),
+                Duration::from_millis(100),
+            )
+            .await;
+        }
+    });
+    for _ in 0..20 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(
+        invoker.ran(),
+        ["unload"],
+        "the first ask ran before the wait"
+    );
+    tokio::time::advance(Duration::from_millis(300)).await;
+    stop.await.unwrap();
+    for _ in 0..20 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(
+        invoker.ran(),
+        ["unload"],
+        "an unload started past the deadline"
+    );
 }

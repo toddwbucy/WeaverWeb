@@ -3516,8 +3516,9 @@ signal. **The stop retries `unload` until rest**, on the operator's ruling
 of 2026-10-08: while `unload` refuses `ActivityNotAtRest`, a turn running,
 admin-con asks it again every five seconds (`REST_RETRY`, a turn's end met
 within five seconds of it, the grace holding at most 216 asks) until it
-answers otherwise or the next ask would start past the grace, one
-invocation at a time; if the grace ends first, the agent is left to the
+answers otherwise or the grace passes, the clock read after each wait and
+immediately before each ask, so no ask starts at or past the grace however
+late the wait wakes, one invocation at a time; if the grace ends first, the agent is left to the
 containment and the next load records the unclean stop. **The stop never
 forces**: it runs no `force-unload`, so no state is thrown away by choice,
 and a `SavePointNotTaken` is not retried, the run having ended and the next
@@ -3782,7 +3783,7 @@ missing while it was relaying.
 | the WebAuthn library links into the server binary alone | measurement, **owed**: `ldd` on gate-con and admin-con shows no `libcrypto`, the library being carried by a cargo feature the server binary alone requires. Lands with act 11's passkey pull request |
 | the admission's `show` is required only where the ceiling grants it | perturbation: ask `show` at every admission, and an agent whose ceiling grants no `show` is closed `admission_incomplete` at every reconnection and never stays admitted; skip it where it is granted, and the row reads the last process's state as current |
 | the ceiling declared in the hello is exactly what the box's sudo rules grant | perturbation, against a fake `sudo` generated at test time in `src/link/sudo_invoker_tests.rs`: answer `grants` from anything but each verb's own `sudo -n -l` line, and a verb the rule refuses is declared, or one it grants is not |
-| the orderly stop retries `unload` until rest, never past its grace and never forcing | perturbation, against a scripted invoker in `src/link/admin_con_tests.rs`: drop the retry, and an `unload` refusing `ActivityNotAtRest` twice before a clean answer is asked once; drop the deadline check, and one refusing past the grace is asked again after the stop returned; retry on every refusal, and a `SavePointNotTaken` is asked again. The stop runs `unload` alone, never `force-unload`, which each test asserts |
+| the orderly stop retries `unload` until rest, never past its grace and never forcing | perturbation, against a scripted invoker in `src/link/admin_con_tests.rs`: drop the retry, and an `unload` refusing `ActivityNotAtRest` twice before a clean answer is asked once; drop the deadline check, and one refusing past the grace is asked again after the stop returned; check the deadline before the wait rather than after it, and on a paused clock a wait overtaken past the deadline starts one more `unload`; retry on every refusal, and a `SavePointNotTaken` is asked again. The stop runs `unload` alone, never `force-unload`, which each test asserts |
 | no privileged invocation exists outside admin-con's sudo invoker | perturbation, two instruments. A test, `tests/no_privilege.rs`: it reads every tracked file outside `docs/`, never following a symlink, comment lines aside by each file's syntax and Markdown read in its fences only, for a privilege-escalating program named as a word, a setuid family call, a child's user or group set on a command, and a setuid or setgid mode bit, with the program's word allowed in `src/link/sudo_invoker.rs` and its test module alone; shown to fail when one of each family is planted, in Rust and in a README fence, when the program is planted in another file of the invoker's name, and when another family is planted in the invoker's own files. And the argv instrument in `src/link/sudo_invoker_tests.rs`: plant the principal's name from the ask into the command, and the line the fake records is no longer exactly `sudo -n <weaver_admin> <verb> <agent>` |
 
 **A watch that cannot fail is not a test.** For each perturbation above, the

@@ -1350,7 +1350,8 @@ pub async fn run<I: Invoker>(
 /// **The stop retries `unload` until rest** (Spec 8, the operator's ruling
 /// of 2026-10-08): while `unload` refuses `ActivityNotAtRest`, a turn
 /// running, it is asked again every `rest_retry` until it answers otherwise
-/// or the next ask would start past the deadline; then the agent is left to
+/// or the deadline passes, checked after each wait and immediately before
+/// each ask, so no ask starts at or past it; then the agent is left to
 /// the containment, and the next load records the unclean stop. One
 /// invocation at a time, the slot held throughout. **The stop never forces**:
 /// it runs no `force-unload`, so no state is thrown away by choice, and a
@@ -1403,16 +1404,21 @@ pub(super) async fn orderly_stop<I: Invoker>(
             while let Ok(outcome) = &ran
                 && refused_not_at_rest(outcome)
             {
-                if tokio::time::Instant::now() + rest_retry >= deadline {
+                tracing::info!(
+                    "{agent}: unload refused ActivityNotAtRest, a turn running; asking again in {rest_retry:?}"
+                );
+                tokio::time::sleep_until(deadline.min(tokio::time::Instant::now() + rest_retry))
+                    .await;
+                // **The deadline is checked after the wait, immediately
+                // before the invocation**: a runtime that wakes late never
+                // starts an unload at or past the grace, which the stop's
+                // own timeout would only detach from.
+                if tokio::time::Instant::now() >= deadline {
                     tracing::warn!(
                         "{agent}: unload still refuses ActivityNotAtRest at the end of the stop's grace; the agent is left to the containment"
                     );
                     break;
                 }
-                tracing::info!(
-                    "{agent}: unload refused ActivityNotAtRest, a turn running; asking again in {rest_retry:?}"
-                );
-                tokio::time::sleep(rest_retry).await;
                 ran = invoker.run(&agent, "unload", &Principal::Server).await;
             }
             drop(permit);

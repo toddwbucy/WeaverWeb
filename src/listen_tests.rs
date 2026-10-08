@@ -247,6 +247,23 @@ async fn serving() -> (
     crate::listen::TlsListener,
     tokio_rustls::TlsConnector,
 ) {
+    serving_bounded(
+        crate::listen::HANDSHAKES_IN_FLIGHT,
+        crate::listen::HANDSHAKE_BOUND,
+    )
+    .await
+}
+
+/// `serving` with the handshake cap and bound given.
+async fn serving_bounded(
+    in_flight: usize,
+    bound: Duration,
+) -> (
+    tempfile::TempDir,
+    std::net::SocketAddr,
+    crate::listen::TlsListener,
+    tokio_rustls::TlsConnector,
+) {
     let now = OffsetDateTime::now_utc();
     let dir = tempfile::tempdir().unwrap();
     let (cert, key, der) = mint(&dir, "a", &["localhost"], now - days(1), now + days(90));
@@ -255,7 +272,7 @@ async fn serving() -> (
         .unwrap();
     let tcp = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = tcp.local_addr().unwrap();
-    let listener = crate::listen::TlsListener::new(tcp, tls).unwrap();
+    let listener = crate::listen::TlsListener::bounded(tcp, tls, in_flight, bound).unwrap();
     let mut roots = rustls::RootCertStore::empty();
     roots
         .add(rustls_pki_types::CertificateDer::from(der))
@@ -335,5 +352,33 @@ async fn a_silent_client_stalls_no_other_handshake() {
     tokio::time::timeout(Duration::from_secs(3), connector.connect(name, socket))
         .await
         .expect("a silent client stalled the next handshake")
+        .expect("the handshake completes");
+}
+
+/// **The handshakes in flight are capped**: with the cap held by silent
+/// clients, the next connection waits unaccepted, in the kernel's backlog,
+/// until one silent client's bound passes and frees its permit, and then
+/// completes. A bound on memory, not on availability.
+#[tokio::test]
+async fn handshakes_past_the_cap_wait_for_a_permit() {
+    let (cap, bound) = (2, Duration::from_secs(2));
+    let (_dir, address, _listener, connector) = serving_bounded(cap, bound).await;
+    let mut silent = Vec::new();
+    for _ in 0..cap {
+        silent.push(tokio::net::TcpStream::connect(address).await.unwrap());
+    }
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let socket = tokio::net::TcpStream::connect(address).await.unwrap();
+    let name = rustls_pki_types::ServerName::try_from("localhost").unwrap();
+    let mut handshake = Box::pin(connector.connect(name, socket));
+    assert!(
+        tokio::time::timeout(Duration::from_secs(1), &mut handshake)
+            .await
+            .is_err(),
+        "a connection past the cap was accepted while every permit was held"
+    );
+    tokio::time::timeout(bound * 3, handshake)
+        .await
+        .expect("a permit freed at a silent client's bound")
         .expect("the handshake completes");
 }

@@ -27,6 +27,16 @@ pub const EXPIRY_WARNING: Duration = Duration::from_secs(14 * 24 * 60 * 60);
 /// The most a TLS handshake may take before its connection is dropped.
 pub const HANDSHAKE_BOUND: Duration = Duration::from_secs(10);
 
+/// **The most TLS handshakes in flight at once.** A handful of people's
+/// browsers open a few connections each; 256 is that with a wide margin.
+/// The accepting task takes a permit before it accepts the next connection,
+/// so a connection past the cap waits in the kernel's backlog rather than as
+/// a task and TLS state in memory. This bounds memory before a byte is
+/// authenticated; it is not a defence of availability, which the design
+/// leaves out of scope: a client holding every permit delays the others by
+/// at most `HANDSHAKE_BOUND`, then holds them again.
+pub const HANDSHAKES_IN_FLIGHT: usize = 256;
+
 /// **An origin as a browser serializes it** (design section 3): scheme,
 /// host and a port where it is not the scheme's default, nothing else.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -240,10 +250,11 @@ pub fn browser_tls(
 }
 
 /// **A TLS listener for axum**: TCP accepted on one task, each handshake on
-/// a task of its own bounded by `HANDSHAKE_BOUND`, and the finished
-/// streams handed to axum in the order they complete, so a slow client
-/// never stalls the others. A connection whose handshake fails, a plain
-/// HTTP request among them, is dropped and reaches no surface.
+/// a task of its own bounded by `HANDSHAKE_BOUND`, at most
+/// `HANDSHAKES_IN_FLIGHT` of them at once, and the finished streams handed
+/// to axum in the order they complete, so a slow client never stalls the
+/// others while a permit is free. A connection whose handshake fails, a
+/// plain HTTP request among them, is dropped and reaches no surface.
 pub struct TlsListener {
     streams: tokio::sync::mpsc::Receiver<(
         tokio_rustls::server::TlsStream<tokio::net::TcpStream>,
@@ -257,11 +268,27 @@ impl TlsListener {
         tcp: tokio::net::TcpListener,
         tls: Arc<rustls::ServerConfig>,
     ) -> std::io::Result<Self> {
+        Self::bounded(tcp, tls, HANDSHAKES_IN_FLIGHT, HANDSHAKE_BOUND)
+    }
+
+    /// The listener with its cap and bound given, which a test sets small.
+    pub(crate) fn bounded(
+        tcp: tokio::net::TcpListener,
+        tls: Arc<rustls::ServerConfig>,
+        in_flight: usize,
+        bound: Duration,
+    ) -> std::io::Result<Self> {
         let local = tcp.local_addr()?;
         let acceptor = tokio_rustls::TlsAcceptor::from(tls);
         let (sender, streams) = tokio::sync::mpsc::channel(64);
+        let handshakes = Arc::new(tokio::sync::Semaphore::new(in_flight));
         tokio::spawn(async move {
             loop {
+                // The permit before the accept: past the cap, a connection
+                // waits in the kernel's backlog, not in memory.
+                let Ok(permit) = handshakes.clone().acquire_owned().await else {
+                    break;
+                };
                 let (socket, peer) = match tcp.accept().await {
                     Ok(accepted) => accepted,
                     Err(e) => {
@@ -272,7 +299,8 @@ impl TlsListener {
                 };
                 let (acceptor, handed) = (acceptor.clone(), sender.clone());
                 tokio::spawn(async move {
-                    match tokio::time::timeout(HANDSHAKE_BOUND, acceptor.accept(socket)).await {
+                    let _permit = permit;
+                    match tokio::time::timeout(bound, acceptor.accept(socket)).await {
                         Ok(Ok(stream)) => {
                             let _ = handed.send((stream, peer)).await;
                         }

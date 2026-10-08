@@ -37,23 +37,30 @@ pub(crate) async fn open(store: &Store, name: &str) -> (String, String, String) 
     .await
     .unwrap();
     let credential = format!("cred-{}", uuid::Uuid::new_v4().simple());
-    sqlx::query("INSERT INTO passkey (credential_id, person_id, credential) VALUES ($1, $2, '{}')")
-        .bind(&credential)
+    let passkey = enroll(store, &person, &credential).await;
+    let bearer = uuid::Uuid::new_v4().simple().to_string();
+    sqlx::query("INSERT INTO session (bearer_digest, person_id, passkey_id) VALUES ($1, $2, $3)")
+        .bind(gate::digest(&bearer))
         .bind(&person)
+        .bind(&passkey)
         .execute(&store.pool)
         .await
         .unwrap();
-    let bearer = uuid::Uuid::new_v4().simple().to_string();
-    sqlx::query(
-        "INSERT INTO session (bearer_digest, person_id, credential_id) VALUES ($1, $2, $3)",
-    )
-    .bind(gate::digest(&bearer))
-    .bind(&person)
-    .bind(&credential)
-    .execute(&store.pool)
-    .await
-    .unwrap();
     (bearer, person, credential)
+}
+
+/// A passkey enrolled for a person under a credential ID, directly in the
+/// store; answers the passkey's own identity.
+async fn enroll(store: &Store, person: &str, credential: &str) -> String {
+    sqlx::query_scalar(
+        "INSERT INTO passkey (credential_id, person_id, credential) VALUES ($1, $2, '{}') \
+         RETURNING passkey_id",
+    )
+    .bind(credential)
+    .bind(person)
+    .fetch_one(&store.pool)
+    .await
+    .unwrap()
 }
 
 /// The headers a browser sends with its session's cookie.
@@ -543,5 +550,47 @@ async fn a_session_refreshed_between_a_read_and_its_close_stays_open() {
     assert!(
         !closed(s, &bearer).await,
         "the refreshed session stayed open"
+    );
+}
+
+/// **A session ends with its passkey, a credential re-enrolled after a
+/// reset notwithstanding** (design section 6, Codex on #29): the session
+/// names the passkey's own identity, never reused, so the host reset's
+/// removal of the passkey, followed by enrolling the same credential ID
+/// again, leaves the old session naming a passkey that is gone, and it is
+/// refused at its next use; a session opened on the new passkey serves.
+#[tokio::test]
+async fn a_credential_re_enrolled_after_a_reset_revives_no_session() {
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let (bearer, person, credential) = open(s, "ada").await;
+    assert!(gate::at_use(s, &policy(), &bearer).await.unwrap().is_ok());
+
+    // The host reset, then the same authenticator enrolled again.
+    sqlx::query("DELETE FROM passkey WHERE person_id = $1")
+        .bind(&person)
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    let again = enroll(s, &person, &credential).await;
+
+    assert_eq!(
+        gate::at_use(s, &policy(), &bearer).await.unwrap(),
+        Err(Some(Ended::PasskeyRemoved)),
+        "a session opened before the reset revived on the re-enrolled credential"
+    );
+    let bearer = uuid::Uuid::new_v4().simple().to_string();
+    sqlx::query("INSERT INTO session (bearer_digest, person_id, passkey_id) VALUES ($1, $2, $3)")
+        .bind(gate::digest(&bearer))
+        .bind(&person)
+        .bind(&again)
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    assert!(
+        gate::at_use(s, &policy(), &bearer).await.unwrap().is_ok(),
+        "a session on the new passkey serves"
     );
 }

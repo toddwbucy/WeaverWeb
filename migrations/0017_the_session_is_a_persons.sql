@@ -7,6 +7,18 @@
 -- of 2026-10-08), so there is no row to carry and no guard is owed for one.
 --
 -- **Each CHECK is false, never unknown, on a missing value**, 0014's rule.
+
+-- **A passkey gains an identity of its own that is never reused** (Spec 2's
+-- convention, `pk-` and sixteen hex, drawn at random), beside its credential
+-- ID, which stays unique. A session names this identity and not the
+-- credential ID: a host reset deletes a person's passkeys, and re-enrolling
+-- the same authenticator brings the same credential ID back as a new row,
+-- which a session opened before the reset must not match. A new row has a
+-- new identity, so no session survives its passkey's removal.
+CREATE DOMAIN passkey_id AS TEXT CHECK (VALUE ~ '^pk-[0-9a-f]{16}$');
+ALTER TABLE passkey
+  ADD COLUMN passkey_id passkey_id NOT NULL UNIQUE DEFAULT weaver_key('pk');
+
 DROP TABLE session;
 
 CREATE TABLE session (
@@ -21,12 +33,13 @@ CREATE TABLE session (
   -- member takes (Spec 3.2).
   person_id      person_id NOT NULL REFERENCES person (person_id),
 
-  -- **The passkey it was opened with, by credential ID, and no foreign
-  -- key**: removing a passkey deletes its row (the host reset does), and a
-  -- key would refuse that or cascade into the session, while **nothing but
-  -- the surface writes a session**. The session sees the absence at its
-  -- next use and ends there.
-  credential_id  TEXT NOT NULL,
+  -- **The passkey it was opened with, by the passkey's own identity, and
+  -- no foreign key**: removing a passkey deletes its row (the host reset
+  -- does), and a key would refuse that or cascade into the session, while
+  -- **nothing but the surface writes a session**. The session sees the
+  -- absence at its next use and ends there, and a credential re-enrolled
+  -- after a reset is a new row it does not name.
+  passkey_id     passkey_id NOT NULL,
 
   opened_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
   -- Written at most once a minute, by one conditional update on the
@@ -36,8 +49,6 @@ CREATE TABLE session (
 
   CONSTRAINT session_bearer_digest_is_sha256_hex
     CHECK (bearer_digest IS NOT NULL AND bearer_digest ~ '^[0-9a-f]{64}$'),
-  CONSTRAINT session_credential_id_is_given
-    CHECK (credential_id IS NOT NULL AND credential_id <> ''),
   CONSTRAINT session_closes_after_it_opens
     CHECK (closed_at IS NULL
       OR (opened_at IS NOT NULL AND closed_at >= opened_at))

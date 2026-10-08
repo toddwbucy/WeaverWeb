@@ -227,14 +227,17 @@ async fn real_server_starts_on_current_schema() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    sqlx::query("INSERT INTO passkey (credential_id, person_id, credential) VALUES ('startup-cred', $1, '{}')")
-        .bind(&person)
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query("INSERT INTO session (bearer_digest, person_id, credential_id) VALUES ($1, $2, 'startup-cred')")
+    let passkey: String = sqlx::query_scalar(
+        "INSERT INTO passkey (credential_id, person_id, credential) VALUES ('startup-cred', $1, '{}') RETURNING passkey_id",
+    )
+    .bind(&person)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO session (bearer_digest, person_id, passkey_id) VALUES ($1, $2, $3)")
         .bind(format!("{:x}", Sha256::digest(token.as_bytes())))
         .bind(&person)
+        .bind(&passkey)
         .execute(&pool)
         .await
         .unwrap();

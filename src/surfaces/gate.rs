@@ -70,7 +70,9 @@ pub struct Session {
     pub person_id: String,
     /// The person's current name, for a page to show.
     pub name: String,
-    pub credential_id: String,
+    /// The identity of the passkey it was opened with, never reused, so a
+    /// credential re-enrolled after a reset is not this passkey.
+    pub passkey_id: String,
 }
 
 impl Session {
@@ -193,11 +195,11 @@ async fn read(
     digest: &str,
 ) -> anyhow::Result<Option<(Session, Option<Ended>)>> {
     let Some(row) = sqlx::query(
-        "SELECT s.session_id, s.person_id, p.name, s.credential_id, \
+        "SELECT s.session_id, s.person_id, p.name, s.passkey_id, \
          s.closed_at IS NOT NULL AS closed, \
          NOT p.enabled AS disabled, \
          NOT EXISTS (SELECT 1 FROM passkey k \
-           WHERE k.credential_id = s.credential_id AND k.person_id = s.person_id) AS removed, \
+           WHERE k.passkey_id = s.passkey_id AND k.person_id = s.person_id) AS removed, \
          s.opened_at <= now() - make_interval(secs => $2) AS expired, \
          s.last_used_at <= now() - make_interval(secs => $3) AS idle \
          FROM session s JOIN person p ON p.person_id = s.person_id \
@@ -229,7 +231,7 @@ async fn read(
         session_id: row.try_get("session_id")?,
         person_id: row.try_get("person_id")?,
         name: row.try_get("name")?,
-        credential_id: row.try_get("credential_id")?,
+        passkey_id: row.try_get("passkey_id")?,
     };
     Ok(Some((session, ended)))
 }
@@ -254,7 +256,7 @@ async fn close(
         ),
         Ended::PasskeyRemoved => (
             "NOT EXISTS (SELECT 1 FROM passkey k \
-             WHERE k.credential_id = session.credential_id AND k.person_id = session.person_id)",
+             WHERE k.passkey_id = session.passkey_id AND k.person_id = session.person_id)",
             None,
         ),
         Ended::Expired => (

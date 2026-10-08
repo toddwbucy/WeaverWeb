@@ -48,6 +48,15 @@ pub struct Origin {
 }
 
 impl Origin {
+    /// The origin as a browser writes it: scheme, `://`, host, and `:` and
+    /// the port where one is held.
+    pub fn serialized(&self) -> String {
+        match self.port {
+            Some(port) => format!("{}://{}:{port}", self.scheme, self.host),
+            None => format!("{}://{}", self.scheme, self.host),
+        }
+    }
+
     /// The host as a TLS server name: a domain as spelled, an IPv6
     /// address without its brackets, so the name check reads it as an
     /// address against the certificate's IP names.
@@ -59,12 +68,15 @@ impl Origin {
     }
 }
 
-/// **The configured origin, refused where it is not a serialized origin**:
-/// userinfo, a path (a trailing `/` included), a query or a fragment;
-/// a scheme or host not in lower case; a host not ASCII; a port written
-/// where it is the scheme's default. The value must be exactly what a
-/// browser sends in its `Origin` header, which the server compares with it
-/// as a string.
+/// **The configured origin, refused where it is not a serialized origin.**
+/// The value must be exactly what a browser sends in its `Origin` header,
+/// which the server compares with it as a string, so after its parts are
+/// read the origin is serialized again from them as a browser serializes
+/// one, and **the configured value must equal that serialization**: the
+/// scheme in lower case, `://`, the host in its canonical form, and `:` and
+/// the port in plain decimal only where it is not the scheme's default. A
+/// value with userinfo, a path (a trailing `/` included), a query or a
+/// fragment is refused before that, having no serialization at all.
 pub fn parse_origin(origin: &str) -> Result<Origin, String> {
     let refuse = |why: &str| {
         Err(format!(
@@ -74,8 +86,8 @@ pub fn parse_origin(origin: &str) -> Result<Origin, String> {
     let Some((scheme, rest)) = origin.split_once("://") else {
         return refuse("no scheme");
     };
-    if scheme.is_empty() || scheme != scheme.to_ascii_lowercase() {
-        return refuse("the scheme is not in lower case");
+    if scheme.is_empty() {
+        return refuse("no scheme");
     }
     if let Some(found) = rest.find(['/', '?', '#', '@']) {
         let what = match rest.as_bytes()[found] {
@@ -93,13 +105,13 @@ pub fn parse_origin(origin: &str) -> Result<Origin, String> {
     // IPv6 address and runs to its `]`, so its own colons are never taken
     // for the port's; a port follows only after the `]`. Any other host
     // runs to the first `:`.
-    let (host, port) = if let Some(after) = rest.strip_prefix('[') {
+    let (host, address, port) = if let Some(after) = rest.strip_prefix('[') {
         let Some((address, tail)) = after.split_once(']') else {
             return refuse("a bracketed host is not closed");
         };
-        if address.parse::<std::net::Ipv6Addr>().is_err() {
+        let Ok(address) = address.parse::<std::net::Ipv6Addr>() else {
             return refuse("a bracketed host is not an IPv6 address");
-        }
+        };
         let port = match tail {
             "" => None,
             tail => match tail.strip_prefix(':') {
@@ -107,11 +119,11 @@ pub fn parse_origin(origin: &str) -> Result<Origin, String> {
                 None => return refuse("something other than a port follows the bracketed host"),
             },
         };
-        (&rest[..address.len() + 2], port)
+        (&rest[..rest.len() - tail.len()], Some(address), port)
     } else {
         match rest.split_once(':') {
-            Some((host, port)) => (host, Some(port)),
-            None => (rest, None),
+            Some((host, port)) => (host, None, Some(port)),
+            None => (rest, None, None),
         }
     };
     let port = match port {
@@ -124,22 +136,104 @@ pub fn parse_origin(origin: &str) -> Result<Origin, String> {
     if host.is_empty() {
         return refuse("no host");
     }
-    if host != host.to_ascii_lowercase() {
-        return refuse("the host is not in lower case");
-    }
-    let default = match scheme {
+    let canonical_host = match address {
+        Some(address) => format!("[{}]", ipv6_serialized(address)),
+        None => {
+            // A browser refuses these in a host, or decodes `%`, so no
+            // serialized origin holds one.
+            if host
+                .bytes()
+                .any(|b| b.is_ascii_control() || b" %<>[]\\^|".contains(&b))
+            {
+                return refuse("the host holds a character no browser serializes in a host");
+            }
+            // A host whose last label is a number is an IPv4 address to a
+            // browser, serialized in dotted decimal.
+            let last = host.strip_suffix('.').unwrap_or(host);
+            let last = last.rsplit('.').next().unwrap_or(last);
+            let numeric = !last.is_empty()
+                && (last.bytes().all(|b| b.is_ascii_digit())
+                    || last.get(..2).is_some_and(|p| p.eq_ignore_ascii_case("0x")));
+            if numeric {
+                match host.parse::<std::net::Ipv4Addr>() {
+                    Ok(address) => address.to_string(),
+                    Err(_) => {
+                        return refuse(
+                            "the host ends in a number and is not an IPv4 address in dotted decimal",
+                        );
+                    }
+                }
+            } else {
+                host.to_ascii_lowercase()
+            }
+        }
+    };
+    let scheme_lower = scheme.to_ascii_lowercase();
+    let default = match scheme_lower.as_str() {
         "https" => Some(443),
         "http" => Some(80),
         _ => None,
     };
-    if port.is_some() && port == default {
-        return refuse("the scheme's default port is written");
+    let parsed = Origin {
+        scheme: scheme_lower,
+        host: canonical_host,
+        port: port.filter(|port| Some(*port) != default),
+    };
+    let serialized = parsed.serialized();
+    if serialized != origin {
+        // The equality is the rule; the reason names the first part that
+        // differs, for the operator reading the refusal.
+        let why = if scheme != parsed.scheme {
+            "the scheme is not in lower case"
+        } else if host != parsed.host {
+            if host.to_ascii_lowercase() == parsed.host {
+                "the host is not in lower case"
+            } else {
+                "the host is not in its canonical form"
+            }
+        } else if port.is_some() && parsed.port.is_none() {
+            "the scheme's default port is written"
+        } else {
+            "the port is not in plain decimal"
+        };
+        return refuse(&format!("{why}; a browser serializes it as {serialized:?}"));
     }
-    Ok(Origin {
-        scheme: scheme.to_owned(),
-        host: host.to_owned(),
-        port,
-    })
+    Ok(parsed)
+}
+
+/// **An IPv6 address as a browser serializes it** (the WHATWG URL
+/// standard's IPv6 serializer): lower-case hex groups without leading
+/// zeros, the first longest run of two or more zero groups compressed to
+/// `::`, and never a dotted IPv4 tail, which `Ipv6Addr`'s `Display` writes
+/// for a mapped or compatible address.
+pub fn ipv6_serialized(address: std::net::Ipv6Addr) -> String {
+    let groups = address.segments();
+    let (mut compress, mut longest, mut i) = (None, 1, 0);
+    while i < groups.len() {
+        let start = i;
+        while i < groups.len() && groups[i] == 0 {
+            i += 1;
+        }
+        if i - start > longest {
+            (compress, longest) = (Some(start), i - start);
+        }
+        i = i.max(start + 1);
+    }
+    let mut out = String::new();
+    let mut i = 0;
+    while i < groups.len() {
+        if Some(i) == compress {
+            out.push_str(if i == 0 { "::" } else { ":" });
+            i += longest;
+            continue;
+        }
+        out.push_str(&format!("{:x}", groups[i]));
+        if i + 1 < groups.len() {
+            out.push(':');
+        }
+        i += 1;
+    }
+    out
 }
 
 /// **The scheme rule**: `https`, or exactly `http` on the host `localhost`,

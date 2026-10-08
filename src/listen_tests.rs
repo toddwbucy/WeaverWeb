@@ -99,6 +99,25 @@ fn every_malformed_origin_form_is_refused() {
         ("https://[2001:DB8::1]", "host is not in lower case"),
         ("https://[2001:db8::1]:443", "default port"),
         ("https://example.test:1:2", "port is not a number"),
+        (
+            "https://example.test:08443",
+            "the port is not in plain decimal",
+        ),
+        (
+            "https://example.test:+8443",
+            "the port is not in plain decimal",
+        ),
+        (
+            "https://[2001:db8:0:0::1]",
+            "the host is not in its canonical form",
+        ),
+        (
+            "https://[::ffff:192.0.2.1]",
+            "the host is not in its canonical form",
+        ),
+        ("https://192.000.2.1", "ends in a number"),
+        ("https://0x7f.1", "ends in a number"),
+        ("https://ex%41mple.test", "no browser serializes in a host"),
     ] {
         let error = parse_origin(origin).expect_err(origin);
         assert!(error.contains(why), "{origin}: {error}");
@@ -110,14 +129,44 @@ fn every_malformed_origin_form_is_refused() {
         "http://localhost:8080",
         "https://[2001:db8::1]",
         "https://[2001:db8::1]:8443",
+        "https://[::ffff:c000:201]",
+        "https://[::1]",
+        "https://192.0.2.1:8443",
     ] {
-        parse_origin(origin).unwrap_or_else(|e| panic!("{origin}: {e}"));
+        let parsed = parse_origin(origin).unwrap_or_else(|e| panic!("{origin}: {e}"));
+        assert_eq!(parsed.serialized(), origin);
     }
     let ported = parse_origin("https://[2001:db8::1]:8443").unwrap();
     assert_eq!(
         (ported.host.as_str(), ported.port, ported.server_name()),
         ("[2001:db8::1]", Some(8443), "2001:db8::1")
     );
+}
+
+/// **An IPv6 address is serialized as a browser serializes it**: the
+/// first longest run of two or more zero groups compressed, a single zero
+/// group never, lower-case hex, and no dotted IPv4 tail.
+#[test]
+fn an_ipv6_address_is_serialized_as_a_browser_serializes_it() {
+    for (address, serialized) in [
+        ("2001:db8:0:0:0:0:0:1", "2001:db8::1"),
+        ("0:0:0:0:0:0:0:1", "::1"),
+        ("0:0:0:0:0:0:0:0", "::"),
+        ("1:0:0:0:0:0:0:0", "1::"),
+        ("2001:db8:0:1:1:1:1:1", "2001:db8:0:1:1:1:1:1"),
+        ("1:0:0:2:0:0:0:3", "1:0:0:2::3"),
+        ("1:0:0:2:0:0:3:4", "1::2:0:0:3:4"),
+        ("2001:DB8:00AB::1", "2001:db8:ab::1"),
+        ("::ffff:192.0.2.1", "::ffff:c000:201"),
+        ("::192.0.2.1", "::c000:201"),
+    ] {
+        let parsed: std::net::Ipv6Addr = address.parse().unwrap();
+        assert_eq!(
+            crate::listen::ipv6_serialized(parsed),
+            serialized,
+            "{address}"
+        );
+    }
 }
 
 /// **The scheme rule**: https, or exactly http on the host localhost; http

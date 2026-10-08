@@ -1344,7 +1344,25 @@ it decides are stated here and in section 2.8, and the reasons are there.
   other fault of the configuration, a public suffix as the relying party's
   identity or a certificate unfit for server authentication among them,
   shows at the first connection or ceremony as the browser's failure, which
-  the server logs. The ceremonies are the library the design's section 2 measured,
+  the server logs. **The listener's own refusals, the origin's and the
+  certificate's, hold wherever an origin or a certificate is configured**,
+  passkeys on or not: with a certificate and key the listener serves TLS
+  alone and no plain listener beside it, and without them plain HTTP, which
+  only an absent origin or `http://localhost` admits; a certificate with no
+  origin has its pair and its period checked, its name check waiting for an
+  origin. **The TLS handshakes in flight are capped at 256**, each bounded at
+  ten seconds, and a connection past the cap waits in the kernel's backlog
+  for a permit rather than in memory, so the memory held before a byte is
+  authenticated is bounded whatever a client opens; denial of service stays
+  out of scope, as with the ceremonies' cap. **A handshake a client ends
+  with a certificate alert is logged at warn**, naming the alert, being the
+  browser's refusal the design promises the server logs, and at most once a
+  minute with a count of those not logged, since any client can send one;
+  every other failed handshake is a scanner's noise, logged at debug. **The
+  origin is parsed by the WHATWG URL Standard**, as a browser parses one,
+  and must equal its origin's ASCII serialization, the browser's own
+  algorithm, so no rule of the standard is approximated by hand. HSTS and a
+  redirect from plain to TLS are not built. The ceremonies are the library the design's section 2 measured,
   carried by the server binary alone, and the browser's half is one vendored
   module doing the two ceremonies and nothing else. **A person's name is
   unique among persons in one canonical form**, Unicode's compatibility
@@ -3759,7 +3777,8 @@ missing while it was relaying.
 | every identity check is false, never unknown, on a missing value, and the audit's person is a person | perturbation in `src/store/identity_tests.rs`, one row per check with its guarded member missing, each rolled back: drop the guard on a token's ending, and a token ended with no reason lands; drop it on a person target's identity, and a person target naming no row lands; drop the audit's foreign key to the person, and a record naming no person lands. A role's missing verb needs no guard: `<@` is false, not unknown, on a NULL element, so the vocabulary check refuses it as it stands |
 | every verb or turn asked and every person, role or grant written has an audit record naming its principal, and its outcome is a second record naming the first | perturbation, **owed**: write the first record after the ask instead of before, fail the store between the two, and an ask leaves with no record; update the first record with the outcome instead of appending a second, and an ask whose answer is lost reads as never answered with no trace of the rewrite; drop the refusal's record, and a refused verb leaves no trace; write a grant with the audit write dropped, and the grant lands with no record; enroll a person or add a passkey with the audit write dropped, and the write lands with no record; record the material in an authentication write's record, and a read of the audit table is a set of credentials. Lands with the IAM act |
 | a person authenticates by passkey and by nothing else | perturbation, **owed**: open a session on a posted name with no assertion, and a session opens with no proof; verify an assertion against another person's passkey, and one person signs in as another; accept a ceremony's challenge twice, and a captured assertion opens a second session. Lands with act 11's passkey pull request |
-| the server refuses to start on the relying-party faults the design lists, and promises nothing beyond them | perturbation, **owed**: drop each start refusal of `docs/project/design-2026-10-07-iam.md` section 3 in turn, start with that fault, and the server listens with passkeys no browser will use, or serves a plain origin other than `localhost`; drop the serialized-origin refusal, configure the origin with a trailing slash or an explicit default port, and every state-changing request fails the `Origin` comparison; drop the certificate's name check, configure a certificate for another host, and every browser refuses the listener; drop the validity check, configure an expired certificate, and the server listens on one every browser refuses; let a scheme other than `https` through, or `http` off `localhost`, and the server listens on an origin where no ceremony can run. A fault the list does not name, a public suffix or a certificate unfit for server authentication among them, is not this row's: the browser's failure at the first connection or ceremony shows it. Lands with act 11's TLS and passkey pull requests |
+| the server refuses to start on the listener's faults the design lists, and promises nothing beyond them | perturbation, each start refusal of `docs/project/design-2026-10-07-iam.md` section 3 that concerns the origin and the certificate, against certificates minted at test time in `src/listen_tests.rs`: the origin parsed by `url`, the WHATWG URL Standard a browser parses by, and required to equal its origin's ASCII serialization: drop the equality, and an origin with userinfo, a path or a trailing slash, a query, a fragment, a scheme or host in upper case, a default port written, a port with a leading zero, an IPv6 address not in its canonical form, a host a browser reads as an IPv4 address written otherwise than in dotted decimal, or an internationalized name not in its ASCII form starts, each a value no browser sends, so every state-changing request would fail the `Origin` comparison; compare the Unicode serialization instead, and an internationalized name starts in its Unicode form; keep the brackets of an IPv6 host in the name check, and a certificate for that address is refused; let `http` through off `localhost`, and the server listens on an origin where no ceremony can run; drop the refusal of an `https` origin with no certificate and key, and the listener serves it in the clear; drop the pair check, and a key that does not pair with its certificate starts; drop the name check, and a certificate for another host starts against the origin; drop either half of the validity check, and an expired or a not-yet-valid certificate starts; drop the warning, and one expiring within fourteen days starts silently. And the listener itself: let the binary serve plain where a certificate and key are configured, and `tests/startup.rs` (ignored, the real binary, started with a certificate minted at test time) gets no answer over TLS and a surface's answer in the clear; take each handshake on the accepting task, and a client that connects and never speaks stalls the next client's handshake in `src/listen_tests.rs`; drop the permit taken before each accept, and with the cap held by silent clients the next connection is accepted at once rather than waiting for a silent one's bound, at a small cap and bound the test sets; the same file shows a TLS client a surface's answer and a plain request none. And the listener's log, against a log captured in `src/listen_tests.rs`: log a client's certificate alert at debug, and a browser refusing the certificate leaves the operator nothing at the default level; warn of every one, and a second alert within the interval warns again; take every failed handshake for a certificate alert, and a plain client warns. With a certificate and no origin, the pair and the period are checked and the name check waits for an origin. A fault the list does not name, a certificate unfit for server authentication among them, is not this row's: the browser's refused handshake shows it |
+| the server refuses to start on the relying party's faults the design lists | perturbation, **owed**: drop the refusal of a missing `rp_id` or `origin` where passkeys are on, and the server listens with passkeys no browser will use; drop the refusal of an `rp_id` that is empty or an IP address, or of an origin whose host is neither the `rp_id` nor under it, and every ceremony fails with the browser's `SecurityError`. A public suffix as the `rp_id` is not this row's: the browser's failure at the first ceremony shows it. Lands with act 11's passkey pull request |
 | a person's name is unique in its canonical form at enrollment | perturbation in `src/host_tests.rs` and `src/store/identity_tests.rs`: compare names as given, and a second person bootstraps as `ADA` beside `Ada`, as full-width letters, or with an accent composed where the first decomposed it, so name-first sign-in would find two |
 | a person is named by identity only in an identity's whole shape, and no name takes it | perturbation in `src/host_tests.rs`: read any `pe-` argument as an identity, and a person named `pe-alice` is not found by name; take a name of an identity's whole shape, and it lands, shadowing the person whose identity it spells |
 | the host's write of a role refuses a stale version | perturbation in `src/host_tests.rs`: drop the version from the role's update, hold one write after its read while another commits, and the held write overwrites the other's verbs. A grant's removal carries its version too; the re-check of its liveness under the exclusion already refuses a grant another removal revoked, so the version adds no instrument of its own there |
@@ -3790,20 +3809,24 @@ missing while it was relaying.
 act that lands it states what removal makes it fail and confirms it does.
 
 **A row marked owed has no instrument and is not counted as enforced.**
-Eighteen stand so marked as of 2026-10-07. The batch's order is owed because
+Eighteen stand so marked as of 2026-10-08. The batch's order is owed because
 section 2.11 describes its table and no migration builds it. Three rows of
 the role shape ruled on 2026-10-02 are owed to the IAM act: the principal
 check, the writer's check for persons, roles and grants, and the audit
 record. **Fourteen are owed to act 11's code pull requests**, from its design
-of 2026-10-07: passkey-only sign-in, the start refusals, the unique name at
+of 2026-10-07: passkey-only sign-in, the relying party's start refusals, the unique name at
 rename, the credential ID, the signature counter, the session, the fresh
 assertion and the last passkey, the enrollment token's redemption, the session
 bearer's and the ceremony identity's randomness, the
 admin's lack of agent actions, read access, the live view's bound, the
 ceremony cap, and the WebAuthn library's place in the server binary alone.
 The row that a session carries a claimed name is not owed but retires with
-act 11's passkey pull request. The alignment with WeaverAgent's A3.2 on 2026-10-08 stood up
-the orderly stop's retry until rest, each clause shown to fail with its guard removed. Act 11's persons pull request of 2026-10-07 stood
+act 11's passkey pull request. Act 11's TLS pull request of 2026-10-08 stood up
+the listener's start refusals, those of the origin and the certificate, and the
+listener that serves TLS alone, each shown to fail with its guard removed, and
+narrowed the start-refusal row to the relying party's two. The alignment with
+WeaverAgent's A3.2 on 2026-10-08 stood up the orderly stop's retry until rest,
+each clause shown to fail with its guard removed. Act 11's persons pull request of 2026-10-07 stood
 up the host's identity commands' records, the last admin and the exclusion, the
 roles' vocabulary and the fixed admin role, a grant's agent, the identity checks
 and the audit's person, and the issuing halves of three owed rows, which it

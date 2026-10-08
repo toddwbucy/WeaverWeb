@@ -14,6 +14,9 @@ pub mod host;
 #[cfg(test)]
 mod host_tests;
 pub mod link;
+pub mod listen;
+#[cfg(test)]
+mod listen_tests;
 pub mod registry;
 pub mod store;
 pub mod surfaces;

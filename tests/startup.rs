@@ -16,6 +16,8 @@ struct Server {
     child: Child,
     directory: PathBuf,
     address: SocketAddr,
+    /// The certificate a TLS server answers with, which requests trust.
+    ca: Option<PathBuf>,
 }
 
 impl Server {
@@ -27,6 +29,20 @@ impl Server {
     /// against `init_with`: the one database the two differ on is the
     /// unreachable one, where the server's own failure is what is checked.
     fn spawn_with(database: &str, init_with: &str) -> Self {
+        Self::spawn_full(database, init_with, None)
+    }
+
+    /// A server on `database` whose browser listener serves TLS with the
+    /// certificate and key given, under the origin `https://localhost:<port>`.
+    fn spawn_tls(database: &str, certificate: &std::path::Path, key: &std::path::Path) -> Self {
+        Self::spawn_full(database, database, Some((certificate, key)))
+    }
+
+    fn spawn_full(
+        database: &str,
+        init_with: &str,
+        tls: Option<(&std::path::Path, &std::path::Path)>,
+    ) -> Self {
         let http = TcpListener::bind("127.0.0.1:0").unwrap();
         let link = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = http.local_addr().unwrap();
@@ -41,6 +57,17 @@ impl Server {
             link.local_addr().unwrap().to_string().into(),
         );
         values.insert("database".into(), init_with.into());
+        if let Some((certificate, key)) = tls {
+            values.insert(
+                "tls_certificate".into(),
+                certificate.display().to_string().into(),
+            );
+            values.insert("tls_key".into(), key.display().to_string().into());
+            values.insert(
+                "origin".into(),
+                format!("https://localhost:{}", address.port()).into(),
+            );
+        }
         // The server refuses to start without an authority (Spec 8), so
         // the acceptance mints one first, under the scratch directory. Since
         // act 11's audit, `authority init` needs the store and writes its
@@ -80,6 +107,7 @@ impl Server {
             child,
             directory,
             address,
+            ca: tls.map(|(certificate, _)| certificate.to_owned()),
         }
     }
 
@@ -131,10 +159,17 @@ impl Server {
         if let Some(token) = token {
             curl.arg("--cookie").arg(format!("weaver_session={token}"));
         }
-        let output = curl
-            .arg(format!("http://{}{path}", self.address))
-            .output()
-            .unwrap();
+        let url = match &self.ca {
+            Some(ca) => {
+                let port = self.address.port();
+                curl.arg("--cacert").arg(ca);
+                curl.arg("--resolve")
+                    .arg(format!("localhost:{port}:127.0.0.1"));
+                format!("https://localhost:{port}{path}")
+            }
+            None => format!("http://{}{path}", self.address),
+        };
+        let output = curl.arg(url).output().unwrap();
         assert!(
             output.status.success(),
             "curl failed: {}",
@@ -218,6 +253,37 @@ async fn real_server_starts_on_current_schema() {
     restarted.wait_for_listen();
     assert_eq!(restarted.get("/record", Some(&token)).0, 200);
     drop(restarted);
+
+    // **A TLS start** (act 11, PR 3): a certificate minted here for
+    // localhost, never written outside this run's temporary directory; the
+    // browser listener answers over TLS and not in the clear.
+    let tls_dir = tempfile::tempdir().unwrap();
+    let key = rcgen::KeyPair::generate().unwrap();
+    let certificate = rcgen::CertificateParams::new(vec!["localhost".to_string()])
+        .unwrap()
+        .self_signed(&key)
+        .unwrap();
+    let (certificate_path, key_path) = (tls_dir.path().join("a.crt"), tls_dir.path().join("a.key"));
+    fs::write(&certificate_path, certificate.pem()).unwrap();
+    fs::write(&key_path, key.serialize_pem()).unwrap();
+    let mut tls = Server::spawn_tls(&database, &certificate_path, &key_path);
+    tls.wait_for_listen();
+    assert_eq!(
+        tls.get("/record", Some(&token)).0,
+        200,
+        "the record answers over TLS\n{}",
+        tls.logs()
+    );
+    let plain = Command::new("curl")
+        .args(["--silent", "--max-time", "5", "--noproxy", "*"])
+        .arg(format!("http://{}/record", tls.address))
+        .output()
+        .unwrap();
+    assert!(
+        !String::from_utf8_lossy(&plain.stdout).contains("startup-check"),
+        "a plain request reached a surface of the TLS listener"
+    );
+    drop(tls);
 
     let mut invalid = Server::spawn_with("postgres:///nope?host=/nonexistent", &database);
     let until = Instant::now() + Duration::from_secs(45);

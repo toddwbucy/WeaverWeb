@@ -169,3 +169,43 @@ fn only_the_writer_inserts_into_the_audit() {
         "inserts into the audit outside its writer: {found:?}"
     );
 }
+
+/// **Every check of the audit is false, never unknown, on a missing value**
+/// (Codex on PR #25): a CHECK passes when its expression is NULL, so for
+/// each check guarding a member that may be missing, the row with that
+/// member missing is inserted, in a transaction rolled back, and refused by
+/// that check by name.
+#[tokio::test]
+async fn every_check_refuses_its_member_missing() {
+    let Some(s) = store().await else { return };
+    let first = first(&s).await;
+    let cases: [(&str, &str, &str); 3] = [
+        (
+            "an outcome record with no outcome",
+            "INSERT INTO audit (principal, method, target_kind, action, answers) \
+             VALUES ('host', 'host', 'authority', 'audit test', $1)",
+            "audit_a_record_is_first_outcome_or_refusal",
+        ),
+        (
+            "an agent target with no identity",
+            "INSERT INTO audit (principal, method, target_kind, action) \
+             VALUES ('host', 'host', 'agent', 'audit test') RETURNING $1::text",
+            "audit_an_agent_target_names_its_row",
+        ),
+        (
+            "a person with no identity",
+            "INSERT INTO audit (principal, method, target_kind, action) \
+             VALUES ('person', 'session', 'authority', 'audit test') RETURNING $1::text",
+            "audit_principal_and_method_agree",
+        ),
+    ];
+    for (what, statement, check) in cases {
+        let mut tx = s.pool.begin().await.unwrap();
+        let result = sqlx::query(statement).bind(&first).execute(&mut *tx).await;
+        tx.rollback().await.unwrap();
+        let error = result
+            .err()
+            .unwrap_or_else(|| panic!("{what} landed where {check} should refuse it"));
+        assert!(error.to_string().contains(check), "{what}: {error}");
+    }
+}

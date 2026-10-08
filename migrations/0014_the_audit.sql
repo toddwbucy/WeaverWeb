@@ -15,6 +15,15 @@
 -- turn's text. A record names its target and its action, and the outcome
 -- record says whether the act succeeded, never the act's error text, which
 -- can carry a path.
+--
+-- **Each CHECK is written to be false, never unknown, on a missing value.**
+-- A CHECK passes when its expression is NULL, so a comparison on a member
+-- that may be missing is guarded by an explicit `IS NOT NULL` beside it,
+-- even where the column is declared NOT NULL today, so no CHECK leans on a
+-- nullability another migration could change. The one exception is the
+-- identity's domain, whose check passes a NULL by design: the column using
+-- it decides nullability, the primary key refusing one and `answers` being
+-- absent on a first record.
 
 -- Spec 2: a key this store generates is two letters and sixteen hex.
 CREATE DOMAIN audit_id AS TEXT CHECK (VALUE ~ '^au-[0-9a-f]{16}$');
@@ -48,20 +57,28 @@ CREATE TABLE audit (
   refusal         TEXT,
 
   CONSTRAINT audit_principal_and_method_agree CHECK (
-    (principal = 'person' AND person_id IS NOT NULL
-      AND method IN ('session', 'enrollment token', 'passkey assertion'))
-    OR (principal = 'server' AND person_id IS NULL AND method = 'server')
-    OR (principal = 'host' AND person_id IS NULL AND method = 'host')
+    principal IS NOT NULL AND method IS NOT NULL AND (
+      (principal = 'person' AND person_id IS NOT NULL
+        AND method IN ('session', 'enrollment token', 'passkey assertion'))
+      OR (principal = 'server' AND person_id IS NULL AND method = 'server')
+      OR (principal = 'host' AND person_id IS NULL AND method = 'host')
+    )
   ),
-  CONSTRAINT audit_only_the_host_claims_an_author
-    CHECK (claimed_author IS NULL OR principal = 'host'),
+  CONSTRAINT audit_only_the_host_claims_an_author CHECK (
+    claimed_author IS NULL OR (principal IS NOT NULL AND principal = 'host')
+  ),
   CONSTRAINT audit_a_record_is_first_outcome_or_refusal CHECK (
     (answers IS NULL AND outcome IS NULL AND refusal IS NULL)
-    OR (answers IS NOT NULL AND outcome IN ('ok', 'failed') AND refusal IS NULL)
+    OR (answers IS NOT NULL AND outcome IS NOT NULL
+      AND outcome IN ('ok', 'failed') AND refusal IS NULL)
     OR (answers IS NULL AND outcome IS NULL AND refusal IS NOT NULL)
   ),
-  CONSTRAINT audit_an_agent_target_names_its_row
-    CHECK (target_kind <> 'agent' OR target_id ~ '^ag-[0-9a-f]{16}$')
+  CONSTRAINT audit_an_agent_target_names_its_row CHECK (
+    target_kind IS NOT NULL AND (
+      target_kind <> 'agent'
+      OR (target_id IS NOT NULL AND target_id ~ '^ag-[0-9a-f]{16}$')
+    )
+  )
 );
 
 -- At most one outcome per first record.

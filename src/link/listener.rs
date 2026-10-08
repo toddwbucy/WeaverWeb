@@ -167,7 +167,7 @@ impl std::fmt::Display for VerbError {
 impl std::error::Error for VerbError {}
 
 /// The most verbs a ceiling may name, and the longest name: the hello is
-/// bounded like every frame's content (Spec 8, five verbs today).
+/// bounded like every frame's content (Spec 8, eight verbs today).
 const CEILING_BOUND: usize = 16;
 const VERB_NAME_BOUND: usize = 32;
 

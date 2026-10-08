@@ -35,8 +35,19 @@ use std::sync::Arc;
 use tokio::io::AsyncReadExt;
 
 /// The verbs a rule may grant, and so the only verbs this invoker builds a
-/// line for: the fixed table argv's verb member comes from (Spec 7.2).
-pub const VERBS: [&str; 5] = ["show", "validate", "load", "unload", "stop"];
+/// line for: the fixed table argv's verb member comes from (Spec 7.2). The
+/// last three are WeaverAgent's A3.2 (`toddwbucy/WeaverAgent#94` at
+/// `43ba391`), which an operator's rule grants and an observer's does not.
+pub const VERBS: [&str; 8] = [
+    "show",
+    "validate",
+    "load",
+    "unload",
+    "stop",
+    "save-point",
+    "restore",
+    "force-unload",
+];
 
 /// The most an answer may be on standard output, per the contract's
 /// section 3; one byte more is a fault.

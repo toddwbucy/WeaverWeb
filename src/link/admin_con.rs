@@ -1319,6 +1319,7 @@ pub async fn run<I: Invoker>(
         &cfg.link.agent,
         asked + cfg.stop_grace,
         grants_bound,
+        REST_RETRY,
     )
     .await;
     Ok(())
@@ -1345,12 +1346,23 @@ pub async fn run<I: Invoker>(
 /// session and never killed, runs on. Its pipes close when admin-con exits,
 /// which the contract covers: admin ignores the broken pipe, finishes, and
 /// records the outcome in its own log on the box.
-async fn orderly_stop<I: Invoker>(
+///
+/// **The stop retries `unload` until rest** (Spec 8, the operator's ruling
+/// of 2026-10-08): while `unload` refuses `ActivityNotAtRest`, a turn
+/// running, it is asked again every `rest_retry` until it answers otherwise
+/// or the next ask would start past the deadline; then the agent is left to
+/// the containment, and the next load records the unclean stop. One
+/// invocation at a time, the slot held throughout. **The stop never forces**:
+/// it runs no `force-unload`, so no state is thrown away by choice, and a
+/// `SavePointNotTaken` is not retried, the run having ended and the next
+/// load recording the loss.
+pub(super) async fn orderly_stop<I: Invoker>(
     invoker: Arc<I>,
     slot: &Slot,
     agent: &str,
     deadline: tokio::time::Instant,
     grants_bound: Duration,
+    rest_retry: Duration,
 ) {
     let permit = match tokio::time::timeout_at(deadline, slot.permit.clone().acquire_owned()).await
     {
@@ -1387,7 +1399,22 @@ async fn orderly_stop<I: Invoker>(
     let unload = tokio::spawn({
         let agent = agent.to_owned();
         async move {
-            let ran = invoker.run(&agent, "unload", &Principal::Server).await;
+            let mut ran = invoker.run(&agent, "unload", &Principal::Server).await;
+            while let Ok(outcome) = &ran
+                && refused_not_at_rest(outcome)
+            {
+                if tokio::time::Instant::now() + rest_retry >= deadline {
+                    tracing::warn!(
+                        "{agent}: unload still refuses ActivityNotAtRest at the end of the stop's grace; the agent is left to the containment"
+                    );
+                    break;
+                }
+                tracing::info!(
+                    "{agent}: unload refused ActivityNotAtRest, a turn running; asking again in {rest_retry:?}"
+                );
+                tokio::time::sleep(rest_retry).await;
+                ran = invoker.run(&agent, "unload", &Principal::Server).await;
+            }
             drop(permit);
             ran
         }
@@ -1408,6 +1435,26 @@ async fn orderly_stop<I: Invoker>(
             "{agent}: the stop's unload runs on past the stop's grace; its outcome is in the box's admin.log"
         ),
     }
+}
+
+/// **How long the orderly stop waits before asking `unload` again** while
+/// it refuses `ActivityNotAtRest`. A turn runs for seconds to minutes, so
+/// its end is met within five seconds of it, and the stop's grace (1080 s
+/// by default) holds at most 216 asks, each a refusal that touches nothing
+/// and one line in the box's `admin.log`.
+pub const REST_RETRY: Duration = Duration::from_secs(5);
+
+/// **`unload` refused because a turn runs**: exit 1 and the floor's
+/// `{"kind": "activity_not_at_rest"}`, per `weaver-admin-operator-contract`
+/// at `toddwbucy/WeaverAgent` `43ba391`.
+fn refused_not_at_rest(outcome: &VerbOutcome) -> bool {
+    outcome.exit_code == Some(1)
+        && outcome
+            .answer
+            .as_ref()
+            .and_then(|answer| answer.get("kind"))
+            .and_then(|kind| kind.as_str())
+            == Some("activity_not_at_rest")
 }
 
 #[derive(Clone)]
@@ -1432,14 +1479,14 @@ struct ServeOptions {
 /// box's own guard stands beside this one, weaver-admin's invocation lock;
 /// this slot is what keeps this crate's ordering of answers against the
 /// trace.
-struct Slot {
+pub(super) struct Slot {
     permit: Arc<tokio::sync::Semaphore>,
     /// The verb that holds the slot, for the stop's log.
     running: std::sync::Mutex<Option<String>>,
 }
 
 impl Slot {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             permit: Arc::new(tokio::sync::Semaphore::new(1)),
             running: std::sync::Mutex::new(None),

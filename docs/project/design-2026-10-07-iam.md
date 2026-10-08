@@ -22,7 +22,10 @@ mechanism named is for the pull request the plan in section 12 assigns it to.
      are rows the admin writes, so the admin decides which verbs each carries, within the
      vocabulary of Spec 7.2 plus `turn`).
    - Seeded, and the admin may edit them: `observer` carries `show`; `operator` carries
-     `show`, `validate`, `load`, `unload`, `stop` and `turn`.
+     `show`, `validate`, `load`, `unload`, `stop`, `save-point`, `restore`, `force-unload`
+     and `turn`, the three save-point verbs added on the operator's ruling of 2026-10-08
+     (WeaverAgent's A3.2, `toddwbucy/WeaverAgent#94`) by migration `0016`, mirroring the
+     box's operator rule.
    - The admin role grants no action on any agent by itself; acting on an agent takes a
      per-agent grant.
    - **The reading the operator confirms at review**: "one observer per agent, one operator

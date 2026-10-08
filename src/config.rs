@@ -61,6 +61,18 @@ pub struct ServerConfig {
     /// seven days, which bounds a configuration mistake.
     #[serde(default = "default_enrollment_token_hours")]
     pub enrollment_token_hours: u32,
+    /// **The listener's name on the web** (design section 3): the origin a
+    /// browser serializes for it, `https://` and the host, or exactly
+    /// `http://localhost` for a plain listener. Optional until the passkey
+    /// pull request; checked at start where given.
+    #[serde(default)]
+    pub origin: Option<String>,
+    /// The browser listener's certificate chain and key, PEM, read at start
+    /// as the authority is; with both, the listener serves TLS only.
+    #[serde(default)]
+    pub tls_certificate: Option<PathBuf>,
+    #[serde(default)]
+    pub tls_key: Option<PathBuf>,
 }
 
 // Read by the upstream adapter once it is implemented. **No standing

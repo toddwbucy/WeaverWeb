@@ -26,6 +26,9 @@ fn cfg() -> ServerConfig {
         agent_hop_budget: 8,
         providers: Vec::new(),
         enrollment_token_hours: 24,
+        origin: None,
+        tls_certificate: None,
+        tls_key: None,
     }
 }
 

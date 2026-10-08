@@ -92,6 +92,13 @@ fn every_malformed_origin_form_is_refused() {
         ("https://example.test:443", "default port"),
         ("http://localhost:80", "default port"),
         ("example.test", "no scheme"),
+        ("https://[2001:db8::1", "a bracketed host is not closed"),
+        ("https://[example.test]", "not an IPv6 address"),
+        ("https://[192.0.2.1]", "not an IPv6 address"),
+        ("https://[2001:db8::1]8443", "something other than a port"),
+        ("https://[2001:DB8::1]", "host is not in lower case"),
+        ("https://[2001:db8::1]:443", "default port"),
+        ("https://example.test:1:2", "port is not a number"),
     ] {
         let error = parse_origin(origin).expect_err(origin);
         assert!(error.contains(why), "{origin}: {error}");
@@ -101,9 +108,16 @@ fn every_malformed_origin_form_is_refused() {
         "https://example.test:8443",
         "http://localhost",
         "http://localhost:8080",
+        "https://[2001:db8::1]",
+        "https://[2001:db8::1]:8443",
     ] {
         parse_origin(origin).unwrap_or_else(|e| panic!("{origin}: {e}"));
     }
+    let ported = parse_origin("https://[2001:db8::1]:8443").unwrap();
+    assert_eq!(
+        (ported.host.as_str(), ported.port, ported.server_name()),
+        ("[2001:db8::1]", Some(8443), "2001:db8::1")
+    );
 }
 
 /// **The scheme rule**: https, or exactly http on the host localhost; http
@@ -184,8 +198,32 @@ fn a_certificate_for_another_name_is_refused() {
             .is_some()
     );
     assert!(
-        browser_tls(&with(None, pair), now).unwrap().is_some(),
+        browser_tls(&with(None, pair.clone()), now)
+            .unwrap()
+            .is_some(),
         "no origin, no name check"
+    );
+
+    // An IPv6 origin is checked as an address against the IP names.
+    let (cert, key, _) = mint(&dir, "ip", &["2001:db8::1"], now - days(1), now + days(90));
+    let ip = Some((cert, key));
+    for origin in ["https://[2001:db8::1]", "https://[2001:db8::1]:8443"] {
+        assert!(
+            browser_tls(&with(Some(origin), ip.clone()), now)
+                .unwrap()
+                .is_some(),
+            "{origin}"
+        );
+    }
+    refused(
+        &with(Some("https://[2001:db8::2]"), ip),
+        now,
+        "not valid for the origin's host",
+    );
+    refused(
+        &with(Some("https://[2001:db8::1]"), pair),
+        now,
+        "not valid for the origin's host",
     );
 }
 

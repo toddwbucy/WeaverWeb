@@ -39,11 +39,24 @@ pub const HANDSHAKES_IN_FLIGHT: usize = 256;
 
 /// **An origin as a browser serializes it** (design section 3): scheme,
 /// host and a port where it is not the scheme's default, nothing else.
+/// `host` is as the origin spells it, an IPv6 address in its brackets.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Origin {
     pub scheme: String,
     pub host: String,
     pub port: Option<u16>,
+}
+
+impl Origin {
+    /// The host as a TLS server name: a domain as spelled, an IPv6
+    /// address without its brackets, so the name check reads it as an
+    /// address against the certificate's IP names.
+    pub fn server_name(&self) -> &str {
+        self.host
+            .strip_prefix('[')
+            .and_then(|host| host.strip_suffix(']'))
+            .unwrap_or(&self.host)
+    }
 }
 
 /// **The configured origin, refused where it is not a serialized origin**:
@@ -76,14 +89,37 @@ pub fn parse_origin(origin: &str) -> Result<Origin, String> {
     if !rest.is_ascii() {
         return refuse("the host is not ASCII, as a browser serializes it");
     }
-    let (host, port) = match rest.rsplit_once(':') {
-        Some((host, port)) if !host.ends_with(']') || rest.starts_with('[') => {
-            let Ok(port) = port.parse::<u16>() else {
-                return refuse("the port is not a number");
-            };
-            (host, Some(port))
+    // **The authority's host, then its port.** A host in brackets is an
+    // IPv6 address and runs to its `]`, so its own colons are never taken
+    // for the port's; a port follows only after the `]`. Any other host
+    // runs to the first `:`.
+    let (host, port) = if let Some(after) = rest.strip_prefix('[') {
+        let Some((address, tail)) = after.split_once(']') else {
+            return refuse("a bracketed host is not closed");
+        };
+        if address.parse::<std::net::Ipv6Addr>().is_err() {
+            return refuse("a bracketed host is not an IPv6 address");
         }
-        _ => (rest, None),
+        let port = match tail {
+            "" => None,
+            tail => match tail.strip_prefix(':') {
+                Some(port) => Some(port),
+                None => return refuse("something other than a port follows the bracketed host"),
+            },
+        };
+        (&rest[..address.len() + 2], port)
+    } else {
+        match rest.split_once(':') {
+            Some((host, port)) => (host, Some(port)),
+            None => (rest, None),
+        }
+    };
+    let port = match port {
+        Some(port) => match port.parse::<u16>() {
+            Ok(port) => Some(port),
+            Err(_) => return refuse("the port is not a number"),
+        },
+        None => None,
     };
     if host.is_empty() {
         return refuse("no host");
@@ -220,7 +256,7 @@ pub fn browser_tls(
     // **The name check waits for an origin**: without one there is no name
     // the listener answers under to check the certificate against.
     if let Some(origin) = &origin {
-        let name = ServerName::try_from(origin.host.clone()).map_err(|e| {
+        let name = ServerName::try_from(origin.server_name().to_owned()).map_err(|e| {
             anyhow::anyhow!("origin's host {} is not a server name: {e}", origin.host)
         })?;
         let cert = webpki::EndEntityCert::try_from(&leaf).map_err(|e| {

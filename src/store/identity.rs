@@ -1,0 +1,375 @@
+//! **The identity rows and the identity exclusion** (Spec 2.13,
+//! `docs/project/design-2026-10-07-iam.md` sections 6 to 10): persons,
+//! their enrollment tokens and passkeys, the roles and the grants, as the
+//! host's identity commands write them (`src/host.rs`).
+//!
+//! **Every identity write runs under the identity exclusion**: one
+//! transaction-level advisory lock on a key of its own, taken exclusively by
+//! each write before it reads what it checks, so two writes never interleave
+//! and a rule counted under it, the last enabled admin above all, cannot be
+//! raced. The shared form, which every authorized act takes, is the
+//! authorization pull request's.
+//!
+//! **No secret is stored**: a token is printed once and kept as its digest.
+
+use crate::store::Store;
+use caseless::Caseless;
+use sha2::{Digest, Sha256};
+use sqlx::{Postgres, Row, Transaction};
+use unicode_normalization::UnicodeNormalization;
+
+/// The identity exclusion's advisory key, beside the listener's and the
+/// authority's: one key for every identity write in the store.
+pub const IDENTITY_LOCK_KEY: i64 = i64::from_be_bytes(*b"weaverid");
+
+/// **A role's verbs are drawn from this vocabulary alone**: the verbs a box
+/// rule may grant (Spec 7.2) and `turn`.
+pub const VOCABULARY: [&str; 6] = ["show", "validate", "load", "unload", "stop", "turn"];
+
+/// **An enrollment token's lifetime never exceeds seven days** (design
+/// section 7), refused at the config's load and at every issue.
+pub const TOKEN_LIFETIME_MAX_HOURS: u32 = 7 * 24;
+
+/// The most bytes a name may run to, the store's key bound.
+pub const NAME_BOUND: usize = 1024;
+
+/// **A name as given, trimmed of surrounding white space**, or why it is
+/// refused: empty, past the bound, or holding a NUL, which the store
+/// refuses in text.
+pub fn given_name(name: &str) -> Result<String, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("a person's name is empty".into());
+    }
+    if name.len() > NAME_BOUND {
+        return Err(format!(
+            "a person's name runs past {NAME_BOUND} bytes ({})",
+            name.len()
+        ));
+    }
+    if name.contains('\0') {
+        return Err("a person's name holds a NUL byte, which the store refuses".into());
+    }
+    Ok(name.to_owned())
+}
+
+/// **A name's canonical form** (design section 6): Unicode's compatibility
+/// caseless form of the Unicode Standard section 3.13, D146,
+/// `NFKD(casefold(NFKD(casefold(NFD(name)))))`, with the full case folding,
+/// on the name trimmed of surrounding white space. Two names are one where
+/// their forms are equal, so a case, width or composition variant of a name
+/// is the same name.
+pub fn name_key(name: &str) -> String {
+    name.trim()
+        .chars()
+        .nfd()
+        .default_case_fold()
+        .nfkd()
+        .default_case_fold()
+        .nfkd()
+        .collect()
+}
+
+/// **A bearer the server issues**: 32 bytes from the operating system's
+/// cryptographic random source (design section 6), never derived from a
+/// counter, a time or a row's identity.
+pub fn bearer() -> [u8; 32] {
+    let mut bytes = [0u8; 32];
+    getrandom::fill(&mut bytes).expect("the operating system's random source answers");
+    bytes
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// A bearer's digest, the one form the store keeps.
+pub fn digest(bearer: &str) -> String {
+    hex(&Sha256::digest(bearer.as_bytes()))
+}
+
+/// **An enrollment token as issued**: its value, printed once and never
+/// stored, and when it expires.
+#[derive(Debug, Clone)]
+pub struct IssuedToken {
+    pub value: String,
+    pub expires_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// A person as the commands read them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Person {
+    pub person_id: String,
+    pub name: String,
+    pub enabled: bool,
+}
+
+/// A role as the commands read it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Role {
+    pub name: String,
+    pub scope: String,
+    pub verbs: Vec<String>,
+}
+
+/// The ending an issued token gives the live token it replaces.
+#[derive(Debug, Clone, Copy)]
+pub enum Supersedes {
+    /// A newer token issued for the person.
+    Issue,
+    /// The host reset.
+    Reset,
+}
+
+impl Store {
+    /// **A transaction holding the identity exclusion**, exclusively, until
+    /// it commits or rolls back.
+    pub async fn identity_transaction(&self) -> anyhow::Result<Transaction<'static, Postgres>> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock($1)")
+            .bind(IDENTITY_LOCK_KEY)
+            .execute(&mut *tx)
+            .await?;
+        Ok(tx)
+    }
+
+    /// A new key of `kind`, minted by the store and written nowhere yet.
+    pub async fn mint_key(&self, kind: &str) -> anyhow::Result<String> {
+        Ok(sqlx::query_scalar("SELECT weaver_key($1)")
+            .bind(kind)
+            .fetch_one(&self.pool)
+            .await?)
+    }
+
+    /// The person `spec` names: their identity (`pe-`), or their name in
+    /// its canonical form.
+    pub async fn person(&self, spec: &str) -> anyhow::Result<Option<Person>> {
+        let row = if spec.starts_with("pe-") {
+            sqlx::query("SELECT person_id, name, enabled FROM person WHERE person_id = $1")
+                .bind(spec)
+                .fetch_optional(&self.pool)
+                .await?
+        } else {
+            sqlx::query("SELECT person_id, name, enabled FROM person WHERE name_key = $1")
+                .bind(name_key(spec))
+                .fetch_optional(&self.pool)
+                .await?
+        };
+        Ok(row.map(|r| Person {
+            person_id: r.get("person_id"),
+            name: r.get("name"),
+            enabled: r.get("enabled"),
+        }))
+    }
+
+    /// The role named `name`.
+    pub async fn role(&self, name: &str) -> anyhow::Result<Option<Role>> {
+        Ok(
+            sqlx::query("SELECT name, scope, verbs FROM role WHERE name = $1")
+                .bind(name)
+                .fetch_optional(&self.pool)
+                .await?
+                .map(|r| Role {
+                    name: r.get("name"),
+                    scope: r.get("scope"),
+                    verbs: r.get("verbs"),
+                }),
+        )
+    }
+
+    /// The live grant binding a person to a role on an agent, or
+    /// server-wide where `agent` is `None`.
+    pub async fn live_grant(
+        &self,
+        person: &str,
+        role: &str,
+        agent: Option<&str>,
+    ) -> anyhow::Result<Option<String>> {
+        Ok(sqlx::query_scalar(
+            "SELECT grant_id FROM role_grant WHERE person_id = $1 AND role = $2 \
+             AND agent_id IS NOT DISTINCT FROM $3 AND revoked_at IS NULL",
+        )
+        .bind(person)
+        .bind(role)
+        .bind(agent)
+        .fetch_optional(&self.pool)
+        .await?)
+    }
+}
+
+/// Whether a person row with this canonical name stands.
+pub async fn name_taken(tx: &mut Transaction<'_, Postgres>, key: &str) -> anyhow::Result<bool> {
+    Ok(
+        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM person WHERE name_key = $1)")
+            .bind(key)
+            .fetch_one(&mut **tx)
+            .await?,
+    )
+}
+
+/// Write the person row.
+pub async fn insert_person(
+    tx: &mut Transaction<'_, Postgres>,
+    person: &str,
+    name: &str,
+    author: Option<&str>,
+) -> anyhow::Result<()> {
+    sqlx::query("INSERT INTO person (person_id, name, name_key, author) VALUES ($1, $2, $3, $4)")
+        .bind(person)
+        .bind(name)
+        .bind(name_key(name))
+        .bind(author)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+/// Write a live grant.
+pub async fn insert_grant(
+    tx: &mut Transaction<'_, Postgres>,
+    grant: &str,
+    person: &str,
+    role: &str,
+    agent: Option<&str>,
+    author: Option<&str>,
+) -> anyhow::Result<()> {
+    sqlx::query(
+        "INSERT INTO role_grant (grant_id, person_id, role, agent_id, author) \
+         VALUES ($1, $2, $3, $4, $5)",
+    )
+    .bind(grant)
+    .bind(person)
+    .bind(role)
+    .bind(agent)
+    .bind(author)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+/// Whether the person holds a passkey, read under the exclusion.
+pub async fn holds_passkey(
+    tx: &mut Transaction<'_, Postgres>,
+    person: &str,
+) -> anyhow::Result<bool> {
+    Ok(
+        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM passkey WHERE person_id = $1)")
+            .bind(person)
+            .fetch_one(&mut **tx)
+            .await?,
+    )
+}
+
+/// Clear the person's passkeys, answering how many there were.
+pub async fn clear_passkeys(
+    tx: &mut Transaction<'_, Postgres>,
+    person: &str,
+) -> anyhow::Result<u64> {
+    Ok(sqlx::query("DELETE FROM passkey WHERE person_id = $1")
+        .bind(person)
+        .execute(&mut **tx)
+        .await?
+        .rows_affected())
+}
+
+/// **Issue an enrollment token** for the person: a fresh bearer, its digest
+/// written beside its expiry, the person's earlier live token ended first,
+/// and the value answered once, to be printed and never stored.
+pub async fn issue_token(
+    tx: &mut Transaction<'_, Postgres>,
+    person: &str,
+    hours: u32,
+    supersedes: Supersedes,
+) -> anyhow::Result<IssuedToken> {
+    if hours == 0 || hours > TOKEN_LIFETIME_MAX_HOURS {
+        anyhow::bail!(
+            "an enrollment token lives between 1 and {TOKEN_LIFETIME_MAX_HOURS} hours, not {hours}"
+        );
+    }
+    let ended = match supersedes {
+        Supersedes::Issue => "superseded",
+        Supersedes::Reset => "reset",
+    };
+    sqlx::query(
+        "UPDATE enrollment_token SET ended_at = now(), ended = $2 \
+         WHERE person_id = $1 AND ended_at IS NULL",
+    )
+    .bind(person)
+    .bind(ended)
+    .execute(&mut **tx)
+    .await?;
+    let value = hex(&bearer());
+    let expires_at: chrono::DateTime<chrono::Utc> = sqlx::query_scalar(
+        "INSERT INTO enrollment_token (token_digest, person_id, expires_at) \
+         VALUES ($1, $2, now() + make_interval(hours => $3)) RETURNING expires_at",
+    )
+    .bind(digest(&value))
+    .bind(person)
+    .bind(hours as i32)
+    .fetch_one(&mut **tx)
+    .await?;
+    Ok(IssuedToken { value, expires_at })
+}
+
+/// **The enabled persons who would still hold a live admin grant** were the
+/// grant `without` revoked, counted under the exclusion: the last-admin
+/// rule refuses where this is zero.
+pub async fn admins_remaining_without(
+    tx: &mut Transaction<'_, Postgres>,
+    without: &str,
+) -> anyhow::Result<i64> {
+    Ok(sqlx::query_scalar(
+        "SELECT count(DISTINCT g.person_id) FROM role_grant g JOIN person p USING (person_id) \
+         WHERE g.role = 'admin' AND g.revoked_at IS NULL AND p.enabled AND g.grant_id <> $1",
+    )
+    .bind(without)
+    .fetch_one(&mut **tx)
+    .await?)
+}
+
+/// Whether the grant is live, read under the exclusion.
+pub async fn grant_is_live(
+    tx: &mut Transaction<'_, Postgres>,
+    grant: &str,
+) -> anyhow::Result<bool> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM role_grant WHERE grant_id = $1 AND revoked_at IS NULL)",
+    )
+    .bind(grant)
+    .fetch_one(&mut **tx)
+    .await?)
+}
+
+/// Revoke a live grant: its row stands, with when it was revoked and the
+/// version moved.
+pub async fn revoke_grant(
+    tx: &mut Transaction<'_, Postgres>,
+    grant: &str,
+    author: Option<&str>,
+) -> anyhow::Result<()> {
+    sqlx::query(
+        "UPDATE role_grant SET revoked_at = now(), author = $2, version = version + 1 \
+         WHERE grant_id = $1 AND revoked_at IS NULL",
+    )
+    .bind(grant)
+    .bind(author)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+/// Write a role's verbs, the version moved.
+pub async fn set_role_verbs(
+    tx: &mut Transaction<'_, Postgres>,
+    role: &str,
+    verbs: &[String],
+    author: Option<&str>,
+) -> anyhow::Result<()> {
+    sqlx::query("UPDATE role SET verbs = $2, author = $3, version = version + 1 WHERE name = $1")
+        .bind(role)
+        .bind(verbs)
+        .bind(author)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}

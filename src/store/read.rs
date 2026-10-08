@@ -508,6 +508,67 @@ pub(crate) mod tests {
         Some(Store::connect(&url).await.expect("connect and migrate"))
     }
 
+    /// **A database of the test's own**, created beside the one
+    /// `DATABASE_URL` names and migrated, for a test whose rule is
+    /// store-wide (the last enabled admin) and would read the shared
+    /// store's other rows. `drop` removes it; a test that panics first
+    /// leaves a `wwt_` database behind, named so it can be found.
+    pub(crate) struct Fresh {
+        pub(crate) store: Store,
+        name: String,
+        base: sqlx::postgres::PgConnectOptions,
+    }
+
+    pub(crate) async fn fresh_store() -> Option<Fresh> {
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!(
+                "skipped: DATABASE_URL is not set, and a store-wide rule is tested against one"
+            );
+            return None;
+        };
+        let base: sqlx::postgres::PgConnectOptions = url.parse().expect("a database URL");
+        let name = format!("wwt_{}", &uuid::Uuid::new_v4().simple().to_string()[..16]);
+        let admin = sqlx::PgPool::connect_with(base.clone())
+            .await
+            .expect("connect");
+        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {name}")))
+            .execute(&admin)
+            .await
+            .expect("create the test's database");
+        admin.close().await;
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(8)
+            .connect_with(base.clone().database(&name))
+            .await
+            .expect("connect to the test's database");
+        sqlx::migrate!("./migrations")
+            .run(&pool)
+            .await
+            .expect("migrate");
+        Some(Fresh {
+            store: Store { pool },
+            name,
+            base,
+        })
+    }
+
+    impl Fresh {
+        pub(crate) async fn drop(self) {
+            self.store.pool.close().await;
+            let admin = sqlx::PgPool::connect_with(self.base)
+                .await
+                .expect("connect");
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "DROP DATABASE {} WITH (FORCE)",
+                self.name
+            )))
+            .execute(&admin)
+            .await
+            .expect("drop the test's database");
+            admin.close().await;
+        }
+    }
+
     async fn seed_run(s: &Store, run_id: &str, parent: Option<&str>, parting: Option<i32>) {
         sqlx::query(
             "INSERT INTO run (run_id, record_identity, seed, sampler, device, \

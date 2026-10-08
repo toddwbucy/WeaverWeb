@@ -46,7 +46,7 @@ pub struct Answer {
     pub ok: bool,
 }
 
-fn refused(verb: &str, error: impl std::fmt::Display) -> Answer {
+pub(crate) fn refused(verb: &str, error: impl std::fmt::Display) -> Answer {
     Answer {
         value: json!({ "verb": verb, "ok": false, "error": error.to_string() }),
         ok: false,
@@ -55,7 +55,7 @@ fn refused(verb: &str, error: impl std::fmt::Display) -> Answer {
 
 /// **The first record, written before the verb acts**, or the verb's
 /// refusal where it cannot be written: a verb never acts unaudited.
-async fn first_record(
+pub(crate) async fn first_record(
     store: &Store,
     verb: &str,
     author: Option<&str>,
@@ -79,7 +79,7 @@ async fn first_record(
 /// An outcome that cannot be written leaves the first record standing
 /// without its second, which is how the audit shows an act whose outcome
 /// never came, and the answer says so; the act stands as it answered.
-async fn with_outcome(store: &Store, first: String, mut answer: Answer) -> Answer {
+pub(crate) async fn with_outcome(store: &Store, first: String, mut answer: Answer) -> Answer {
     if let Err(e) = store.audit_outcome(&first, answer.ok).await {
         answer.value["audit_outcome"] =
             Value::String(format!("the outcome record could not be written: {e:#}"));

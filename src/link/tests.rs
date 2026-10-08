@@ -1977,6 +1977,7 @@ pub(super) fn lab_config(lab: &Lab) -> crate::config::ServerConfig {
         admins: Vec::new(),
         agent_hop_budget: 8,
         providers: Vec::new(),
+        enrollment_token_hours: 24,
     }
 }
 
@@ -2998,6 +2999,7 @@ fn a_staging_entry_swapped_before_the_publish_is_refused() {
         admins: Vec::new(),
         agent_hop_budget: 8,
         providers: Vec::new(),
+        enrollment_token_hours: 24,
     };
     let out = tmp.path().join("out");
     std::fs::create_dir(&out).unwrap();

@@ -48,11 +48,15 @@ impl Principal<'_> {
 }
 
 /// **What was acted on**, by kind and identity (Spec 2.13): the server's
-/// authority, which has no identity of its own, or an agent's row.
+/// authority, which has no identity of its own, an agent's row, a person, a
+/// grant, or a role by its name.
 #[derive(Debug, Clone, Copy)]
 pub enum Target<'a> {
     Authority,
     Agent(&'a str),
+    Person(&'a str),
+    Grant(&'a str),
+    Role(&'a str),
 }
 
 impl Target<'_> {
@@ -60,13 +64,18 @@ impl Target<'_> {
         match self {
             Target::Authority => "authority",
             Target::Agent(_) => "agent",
+            Target::Person(_) => "person",
+            Target::Grant(_) => "grant",
+            Target::Role(_) => "role",
         }
     }
 
     fn id(&self) -> Option<&str> {
         match self {
             Target::Authority => None,
-            Target::Agent(id) => Some(id),
+            Target::Agent(id) | Target::Person(id) | Target::Grant(id) | Target::Role(id) => {
+                Some(id)
+            }
         }
     }
 }

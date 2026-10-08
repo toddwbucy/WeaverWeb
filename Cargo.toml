@@ -64,6 +64,16 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # The bearer is hashed before it is stored or looked up, per Spec 2.8.
 sha2 = "0.10"
+# Act 11: a person's canonical name, Unicode's compatibility caseless form
+# (design section 6), measured on 2026-10-07: caseless 0.2.2 implements D146
+# with the full case folding of Unicode 16.0's CaseFolding.txt, and adds one
+# crate, unicode-normalization and tinyvec being in the tree through sqlx.
+caseless = "0.2"
+unicode-normalization = "0.1"
+# Every bearer the server issues is read from the operating system's random
+# source (design section 6). getrandom directly, already in the tree through
+# rand: the source itself, with no generator between it and the bearer.
+getrandom = "0.4"
 toml = "0.9"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }

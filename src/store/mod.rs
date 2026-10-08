@@ -16,6 +16,9 @@ pub mod audit;
 #[cfg(test)]
 mod audit_tests;
 pub mod experiment;
+pub mod identity;
+#[cfg(test)]
+mod identity_tests;
 pub mod key;
 pub mod plan;
 pub mod read;

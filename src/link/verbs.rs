@@ -286,7 +286,7 @@ async fn rotate_the_authority(
 /// certificate, the server's certificate, the server's link address and
 /// the name it is verified under, the agent's name, its row's identity,
 /// and the plane.
-fn client_config(
+pub(crate) fn client_config(
     cfg: &ServerConfig,
     authority: &Authority,
     agent_id: &str,
@@ -963,7 +963,7 @@ async fn publish_retained(
     }
 }
 
-pub(super) fn mint_pair(
+pub(crate) fn mint_pair(
     name: &str,
     authority: &Authority,
 ) -> anyhow::Result<(ClientCredential, ClientCredential)> {
@@ -1070,7 +1070,10 @@ pub fn well_formed(r#box: &str, name: &str) -> anyhow::Result<()> {
 /// the authority lock before any fingerprint is committed: a rotation that
 /// committed between the load and the lock retired what this verb would
 /// mint under.
-fn authority_still_stands(cfg: &ServerConfig, authority: &Authority) -> anyhow::Result<()> {
+pub(crate) fn authority_still_stands(
+    cfg: &ServerConfig,
+    authority: &Authority,
+) -> anyhow::Result<()> {
     let on_disk = Authority::load(&cfg.authority_dir)?;
     if on_disk.fingerprint() != authority.fingerprint() {
         anyhow::bail!(

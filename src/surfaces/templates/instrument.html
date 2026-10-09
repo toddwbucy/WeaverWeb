@@ -17,6 +17,7 @@
     {%- if admin %}
     <a href="/admin/persons"{% if here == "admin" %} class="here"{% endif %}>Persons</a>
     <a href="/admin/grants"{% if here == "grants" %} class="here"{% endif %}>Grants</a>
+    <a href="/admin/agents"{% if here == "agents" %} class="here"{% endif %}>Agents</a>
     {%- endif %}
     <span class="who">{{ who }}</span>
     <form method="post" action="/sign-out" class="sign-out"><button type="submit">Sign out</button></form>

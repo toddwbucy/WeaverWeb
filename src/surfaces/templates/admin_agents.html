@@ -1,0 +1,44 @@
+{% extends "instrument.html" %}
+{% block title %}agents - weaver-web{% endblock %}
+{% block mainclass %}listing{% endblock %}
+{% block body %}
+{#- The register as an admin governs it: names, presence and credentials'
+    state, and nothing of an agent's door, load state or trace. No inline
+    script. -#}
+<header class="listing-head">
+  <h1>Agents</h1>
+  <p class="destination">Registering an agent, or rotating one, mints two client configs, offered once and for five minutes. Registering a box and name that hold a live row retires that row.</p>
+</header>
+<table>
+  <thead><tr><th>Agent</th><th>Identity</th><th>Gate</th><th>Admin</th><th>Present</th><th>Registered</th><th></th></tr></thead>
+  <tbody>
+  {% for row in rows %}
+  <tr>
+    <td>{{ row.label }}</td>
+    <td>{{ row.agent_id }}</td>
+    <td>{{ row.gate }}</td>
+    <td>{{ row.admin }}</td>
+    <td>{% if row.present %}present{% else %}absent{% endif %}</td>
+    <td>{{ row.registered }}</td>
+    <td>
+      {% if row.live %}
+      <form method="post" action="/admin/agents/rotate">
+        <input type="hidden" name="agent" value="{{ row.agent_id }}">
+        <button type="submit">Rotate</button>
+      </form>
+      {% else %}
+      <span class="chip-note">retired; register it again</span>
+      {% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+<form method="post" action="/admin/agents/register" autocomplete="off">
+  <label for="box">Register an agent: box</label>
+  <input id="box" type="text" name="box" spellcheck="false" required>
+  <label for="name">name</label>
+  <input id="name" type="text" name="name" spellcheck="false" required>
+  <button type="submit">Register</button>
+</form>
+{% endblock %}

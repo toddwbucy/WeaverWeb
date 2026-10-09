@@ -755,3 +755,39 @@ async fn a_removal_under_a_session_that_no_longer_stands_removes_nothing() {
         "nothing removed"
     );
 }
+
+/// **No person removes another person's passkey** (Spec 2.13: a person
+/// writes only their own authentication material): an admin holding two
+/// passkeys, so the last-passkey rule does not answer first, asks to remove
+/// another person's, which is refused as no passkey of theirs and stands.
+#[tokio::test]
+async fn another_persons_passkey_is_never_removed() {
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let app = app(s, Some(passkeys()));
+    let mut key = authenticator();
+    let (_, _, session) = signed_in(&app, s, &mut key, "ada").await;
+    let earned = grant(&app, &mut key, &session).await;
+    add(&app, &mut authenticator(), &earned, &session, "phone").await;
+    let (_, theirs) = enrolled(&app, s, &mut authenticator(), "bea").await;
+    let theirs = passkey_of(s, &theirs).await;
+
+    let (status, _, answer) = send_as(
+        &app,
+        "POST",
+        "/passkeys/remove",
+        None,
+        Some(format!("passkey={theirs}")),
+        &session,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{answer}");
+    let stands: i64 = sqlx::query_scalar("SELECT count(*) FROM passkey WHERE passkey_id = $1")
+        .bind(&theirs)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    assert_eq!(stands, 1, "bea's passkey stands");
+}

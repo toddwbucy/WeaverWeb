@@ -26,7 +26,7 @@ use crate::store::read::tests::fresh_store;
 use crate::surfaces::admin::READ_HOLD;
 
 /// A request under a session's cookie, a form's body or none.
-async fn send_as(
+pub(crate) async fn send_as(
     app: &axum::Router,
     method: &str,
     uri: &str,
@@ -58,7 +58,7 @@ async fn send_as(
 }
 
 /// A form's body, its values encoded.
-fn form(fields: &[(&str, &str)]) -> String {
+pub(crate) fn form(fields: &[(&str, &str)]) -> String {
     url::form_urlencoded::Serializer::new(String::new())
         .extend_pairs(fields)
         .finish()
@@ -66,7 +66,7 @@ fn form(fields: &[(&str, &str)]) -> String {
 
 /// A person enrolled with `key` and signed in: their identity and the
 /// session's bearer.
-async fn signed_in(
+pub(crate) async fn signed_in(
     app: &axum::Router,
     s: &Store,
     key: &mut WebauthnAuthenticator<SoftPasskey>,
@@ -79,7 +79,7 @@ async fn signed_in(
 }
 
 /// A person signed in and holding the admin grant, the host's.
-async fn admin(
+pub(crate) async fn admin(
     app: &axum::Router,
     s: &Store,
     key: &mut WebauthnAuthenticator<SoftPasskey>,
@@ -91,7 +91,7 @@ async fn admin(
     (person, session)
 }
 
-async fn version(s: &Store, person: &str) -> String {
+pub(crate) async fn version(s: &Store, person: &str) -> String {
     let version: i64 = sqlx::query_scalar("SELECT version FROM person WHERE person_id = $1")
         .bind(person)
         .fetch_one(&s.pool)
@@ -100,7 +100,7 @@ async fn version(s: &Store, person: &str) -> String {
     version.to_string()
 }
 
-async fn enabled(s: &Store, person: &str) -> bool {
+pub(crate) async fn enabled(s: &Store, person: &str) -> bool {
     sqlx::query_scalar("SELECT enabled FROM person WHERE person_id = $1")
         .bind(person)
         .fetch_one(&s.pool)
@@ -141,7 +141,7 @@ fn token_in(page: &str) -> String {
 }
 
 /// A hold's two signals, registered under `key` in `holds`.
-fn hold(
+pub(crate) fn hold(
     holds: &std::sync::Mutex<Vec<crate::store::admin::AdminHold>>,
     key: &str,
 ) -> (Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>) {
@@ -705,7 +705,7 @@ async fn two_admins_disabling_each_other_leave_one() {
 /// a session holding no grant, and a malformed passkey at the removal, are
 /// refused as the ask's fault with no audit row written, where the audit's
 /// target check would have made each the server's failure; a well-shaped
-/// person naming nobody goes on to the store's answer.
+/// person naming nobody is not found, the store resolving it at step three.
 #[tokio::test]
 async fn a_malformed_identity_is_refused_before_any_record() {
     let Some(fresh) = fresh_store().await else {

@@ -159,7 +159,7 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
 
 - **DB-backed unit tests** (`store::read`, `store::plan`, `store::audit_tests`,
   `store::identity_tests`, `host_tests`, `surfaces::record`, `passkeys_tests`,
-  `sign_in_tests`, `keys_tests`, `admin_tests`, `link::tests`,
+  `sign_in_tests`, `keys_tests`, `admin_tests`, `grants_tests`, `link::tests`,
   `link::client_tests`, `link::admin_con_tests`, `link::verbs_audit_tests`)
   connect to the database in `DATABASE_URL` and run the migrations. The link's tests run one at
   a time, since a listener's start resets every row's link state, which is the claim. Without that variable they print
@@ -261,8 +261,19 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
   principal by `session`, each in one identity transaction that first re-checks the session
   and the admin grant. An admin never writes their own row; a disable revokes the person's
   outstanding token (migration `0018`, ending `revoked`) and never leaves no enabled admin; a
-  token is shown once under `no-store`. Roles and grants are not on it yet (PR 5b), and the
-  register verbs through the server are PR 5c's; until then they are host commands. `admin_tests` runs each test on a `fresh_store`.
+  token is shown once under `no-store`. **Every admin write takes one order** (Spec 2.13):
+  parse identities to their shape (`identity::is_person_id` and its three siblings), then the
+  admin gate with its one refusal record before any reference is looked up (no oracle for a
+  non-admin), then resolve every reference by the store (unknown: 404, no record), then the
+  audited write. The audit checks every target by its kind (`0018`).
+- **The admin's grants page** (`GET /admin/grants`, `src/surfaces/grants.rs` over
+  `src/store/grants.rs`; act 11, PR 5b) beside it: every live grant, every role and the
+  register's agents, with the shared-conversation note where more than one person holds
+  `turn` on an agent, and three writes, `grant add`, `grant remove` and `role set`, of the same
+  shape. No admin grants or revokes their own grant or edits a role they hold, refused before
+  any record and again under the exclusion; a lone admin uses the host's `grant` and `role`
+  commands, which remain. The register verbs through the server are PR 5c's; until then they
+  are host commands. `admin_tests` and `grants_tests` run each test on a `fresh_store`.
 
 ## The seed tree: what carries forward and what leaves
 

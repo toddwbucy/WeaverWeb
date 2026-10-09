@@ -12,6 +12,8 @@ pub mod adapters;
 mod admin_tests;
 pub mod config;
 pub mod fault;
+#[cfg(all(test, feature = "passkeys"))]
+mod grants_tests;
 pub mod host;
 #[cfg(test)]
 mod host_tests;

@@ -1,0 +1,91 @@
+{% extends "instrument.html" %}
+{% block title %}roles and grants - weaver-web{% endblock %}
+{% block mainclass %}listing{% endblock %}
+{% block body %}
+{#- Every live grant, every role and the register's agents, for an admin.
+    Each write posts a form; a revocation and a role's edit carry the version
+    the page read. No grant of the admin's own and no role they hold carries a
+    write. No inline script. -#}
+<header class="listing-head">
+  <h1>Roles and grants</h1>
+  <p class="destination">No admin grants or revokes their own grant, or edits a role they hold. A lone admin who needs either uses the host's commands, grant add, grant remove and role set.</p>
+</header>
+<h2>Grants</h2>
+<table>
+  <thead><tr><th>Person</th><th>Role</th><th>Agent</th><th></th></tr></thead>
+  <tbody>
+  {% for row in grants %}
+  <tr>
+    <td>{{ row.listed.name }}{% if row.own %} <span class="pill">you</span>{% endif %}</td>
+    <td>{{ row.listed.role }}</td>
+    <td>{% match row.listed.agent %}{% when Some with (agent) %}{{ agent }}{% when None %}server-wide{% endmatch %}</td>
+    <td>
+      {% if row.own %}
+      <span class="chip-note">your own grant is written by another admin or the host</span>
+      {% else %}
+      <form method="post" action="/admin/grants/revoke">
+        <input type="hidden" name="grant" value="{{ row.listed.grant_id }}">
+        <input type="hidden" name="version" value="{{ row.listed.version }}">
+        <button type="submit">Revoke</button>
+      </form>
+      {% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+<form method="post" action="/admin/grants/grant" autocomplete="off">
+  <label for="grant-person">Grant</label>
+  <select id="grant-person" name="person" required>
+    {% for (person_id, name) in persons %}<option value="{{ person_id }}">{{ name }}</option>{% endfor %}
+  </select>
+  <select name="role" required>
+    {% for role in roles %}<option value="{{ role.name }}">{{ role.name }}</option>{% endfor %}
+  </select>
+  <select name="agent">
+    <option value="">server-wide (admin only)</option>
+    {% for agent in agents %}<option value="{{ agent.agent_id }}">{{ agent.label }}</option>{% endfor %}
+  </select>
+  <button type="submit">Grant</button>
+</form>
+<h2>Roles</h2>
+<table>
+  <thead><tr><th>Role</th><th>Verbs</th><th>Version</th><th></th></tr></thead>
+  <tbody>
+  {% for role in roles %}
+  <tr>
+    <td>{{ role.name }}</td>
+    <td>{{ role.verbs }}</td>
+    <td>{{ role.version }}</td>
+    <td>
+      {% match role.fixed %}
+      {% when Some with (why) %}<span class="chip-note">{{ why }}</span>
+      {% when None %}
+      <form method="post" action="/admin/roles/set">
+        <input type="hidden" name="role" value="{{ role.name }}">
+        <input type="hidden" name="version" value="{{ role.version }}">
+        {% for (verb, on) in role.checks %}
+        <label><input type="checkbox" name="verbs" value="{{ verb }}"{% if on %} checked{% endif %}> {{ verb }}</label>
+        {% endfor %}
+        <button type="submit">Set verbs</button>
+      </form>
+      {% endmatch %}
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+<h2>Agents</h2>
+<table>
+  <thead><tr><th>Agent</th><th>Identity</th><th></th></tr></thead>
+  <tbody>
+  {% for agent in agents %}
+  <tr>
+    <td>{{ agent.label }}</td>
+    <td>{{ agent.agent_id }}</td>
+    <td>{% if agent.shared_turn %}<span class="chip-note shared-turn">more than one person holds turn here: their turns interleave in this agent's one conversation</span>{% endif %}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

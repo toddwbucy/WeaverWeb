@@ -14,6 +14,7 @@ pub mod enroll;
 pub mod gate;
 #[cfg(test)]
 pub(crate) mod gate_tests;
+pub mod grants;
 #[cfg(feature = "passkeys")]
 pub mod keys;
 pub mod record;

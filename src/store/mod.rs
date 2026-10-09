@@ -16,6 +16,7 @@ pub mod admin;
 pub mod audit;
 #[cfg(test)]
 mod audit_tests;
+pub(crate) mod commit;
 pub mod experiment;
 pub mod grants;
 pub mod identity;

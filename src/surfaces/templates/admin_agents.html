@@ -7,7 +7,7 @@
     script. -#}
 <header class="listing-head">
   <h1>Agents</h1>
-  <p class="destination">Registering an agent, or rotating one, mints two client configs, offered once and for five minutes. Registering a box and name that hold a live row retires that row.</p>
+  <p class="destination">Registering an agent, or rotating one, mints two client configs, offered once and for five minutes. Registering a box and name that hold a live row retires that row. Revoking a plane, or retiring the agent, closes its live connections at once; a retired agent is never live again, and its grants stand until revoked on the grants page.</p>
 </header>
 <table>
   <thead><tr><th>Agent</th><th>Identity</th><th>Gate</th><th>Admin</th><th>Present</th><th>Registered</th><th></th></tr></thead>
@@ -25,6 +25,24 @@
       <form method="post" action="/admin/agents/rotate">
         <input type="hidden" name="agent" value="{{ row.agent_id }}">
         <button type="submit">Rotate</button>
+      </form>
+      {% if row.gate_live %}
+      <form method="post" action="/admin/agents/revoke">
+        <input type="hidden" name="agent" value="{{ row.agent_id }}">
+        <input type="hidden" name="plane" value="gate">
+        <button type="submit">Revoke gate</button>
+      </form>
+      {% endif %}
+      {% if row.admin_live %}
+      <form method="post" action="/admin/agents/revoke">
+        <input type="hidden" name="agent" value="{{ row.agent_id }}">
+        <input type="hidden" name="plane" value="admin">
+        <button type="submit">Revoke admin</button>
+      </form>
+      {% endif %}
+      <form method="post" action="/admin/agents/retire">
+        <input type="hidden" name="agent" value="{{ row.agent_id }}">
+        <button type="submit">Retire</button>
       </form>
       {% else %}
       <span class="chip-note">retired; register it again</span>

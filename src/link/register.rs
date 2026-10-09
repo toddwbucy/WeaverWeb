@@ -132,7 +132,7 @@ thread_local! {
 }
 
 #[cfg(test)]
-fn fail_after_commit(kind: &'static str) -> anyhow::Result<()> {
+pub(crate) fn fail_after_commit(kind: &'static str) -> anyhow::Result<()> {
     let armed = FAIL_AFTER_COMMIT.with(|f| {
         if f.get() == Some(kind) {
             f.set(None);
@@ -155,10 +155,25 @@ fn fail_after_commit(kind: &'static str) -> anyhow::Result<()> {
 /// switch.
 /// **An admin's session asking a register verb through the server**: the
 /// session and its person, re-checked inside the verb's transaction.
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct AdminWrite<'a> {
     pub session_id: i64,
     pub person: &'a str,
+    /// The act's first audit record, whose `ok` outcome commits with it.
+    pub first: &'a str,
+    /// The store, for the read-back of a lost commit answer.
+    pub store: &'a Store,
+}
+
+impl AdminWrite<'_> {
+    /// **The act committed with its `ok` outcome** (`store::commit`).
+    async fn commit(
+        &self,
+        tx: sqlx::Transaction<'_, sqlx::Postgres>,
+        kind: &'static str,
+    ) -> anyhow::Result<()> {
+        crate::store::commit::commit_with_outcome(tx, kind, self.store, self.first).await
+    }
 }
 
 /// **The authority of an admin's register verb no longer stands**: the
@@ -192,6 +207,19 @@ impl std::fmt::Display for Retired {
 }
 
 impl std::error::Error for Retired {}
+
+/// **The plane asked for is revoked already**, read inside an admin's
+/// revocation under the row's lock. Nothing was written.
+#[derive(Debug)]
+pub struct PlaneRevoked;
+
+impl std::fmt::Display for PlaneRevoked {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "that plane's credential is revoked already")
+    }
+}
+
+impl std::error::Error for PlaneRevoked {}
 
 impl AdminWrite<'_> {
     /// The identity exclusion taken shared for the rest of the
@@ -567,13 +595,90 @@ impl Store {
         .bind(id.as_str())
         .fetch_one(&mut *tx)
         .await?;
-        tx.commit().await?;
-        #[cfg(test)]
-        fail_after_commit("register")?;
+        match admin {
+            Some(admin) => admin.commit(tx, "register").await?,
+            None => {
+                tx.commit().await?;
+                #[cfg(test)]
+                fail_after_commit("register")?;
+            }
+        }
         Ok((
             id.parse().map_err(|e: String| anyhow::anyhow!(e))?,
             retired_fingerprints,
         ))
+    }
+
+    /// **An admin's revocation through the server** (Spec 2.13): one
+    /// plane's credential where `plane` names it, or every live plane's
+    /// where it is `None`, which retires the agent. Inside the one
+    /// transaction the identity exclusion is held shared from the admin's
+    /// re-check to the commit, and **the row is read again under its own
+    /// lock**: a plane revoked since the request resolved it answers
+    /// `PlaneRevoked`, and a row holding no live credential answers
+    /// `Retired`, nothing written. Each credential revoked is told to the
+    /// running listener, so its live connection closes in this act.
+    /// Answers the fingerprints revoked.
+    pub async fn revoke_by_admin(
+        &self,
+        admin: AdminWrite<'_>,
+        agent_id: &AgentId,
+        plane: Option<Plane>,
+    ) -> anyhow::Result<Vec<String>> {
+        let mut tx = self.pool.begin().await?;
+        admin.stands(&mut tx).await?;
+        lock_row(&mut tx, agent_id).await?;
+        let row = sqlx::query(
+            "SELECT gate_state, admin_state, gate_fingerprint, admin_fingerprint \
+             FROM agent WHERE agent_id = $1",
+        )
+        .bind(agent_id.as_str())
+        .fetch_one(&mut *tx)
+        .await?;
+        let live = |p: Plane| -> anyhow::Result<bool> {
+            Ok(row.try_get::<String, _>(format!("{}_state", p.as_str()).as_str())? == "live")
+        };
+        let planes: Vec<Plane> = match plane {
+            Some(plane) if live(plane)? => vec![plane],
+            Some(_) => return Err(PlaneRevoked.into()),
+            None => {
+                let mut planes = Vec::new();
+                for p in [Plane::Gate, Plane::Admin] {
+                    if live(p)? {
+                        planes.push(p);
+                    }
+                }
+                if planes.is_empty() {
+                    return Err(Retired.into());
+                }
+                planes
+            }
+        };
+        let mut revoked = Vec::new();
+        for plane in planes {
+            let p = plane_columns(plane);
+            sqlx::query(audited(format!(
+                "UPDATE agent SET \
+                   {p}_state = 'revoked', {p}_state_at = now(), \
+                   {p}_link_at = CASE WHEN {p}_connected THEN now() ELSE {p}_link_at END, \
+                   {p}_connected = false, {p}_incarnation = NULL, \
+                   author = $2, version = version + 1 \
+                 WHERE agent_id = $1 AND {p}_state = 'live'"
+            )))
+            .bind(agent_id.as_str())
+            .bind(admin.person)
+            .execute(&mut *tx)
+            .await?;
+            let fingerprint: String =
+                row.try_get(format!("{}_fingerprint", plane.as_str()).as_str())?;
+            notify(&mut tx, &fingerprint).await?;
+            revoked.push((plane, fingerprint));
+        }
+        admin.commit(tx, "agent revoke").await?;
+        Ok(revoked
+            .into_iter()
+            .map(|(_, fingerprint)| fingerprint)
+            .collect())
     }
 
     /// **Revoke one credential** (Spec 8): an authored edit under section
@@ -585,6 +690,30 @@ impl Store {
         agent: &Agent,
         plane: Plane,
         author: Option<&str>,
+    ) -> anyhow::Result<String> {
+        self.revoke_credential_in(agent, plane, author, None).await
+    }
+
+    /// **The same as the host's `revoke`**, its `ok` outcome committed with
+    /// it and a lost commit answer read back by that record
+    /// (`store::commit`).
+    pub async fn revoke_credential_recorded(
+        &self,
+        agent: &Agent,
+        plane: Plane,
+        author: Option<&str>,
+        first: &str,
+    ) -> anyhow::Result<String> {
+        self.revoke_credential_in(agent, plane, author, Some(first))
+            .await
+    }
+
+    async fn revoke_credential_in(
+        &self,
+        agent: &Agent,
+        plane: Plane,
+        author: Option<&str>,
+        first: Option<&str>,
     ) -> anyhow::Result<String> {
         let p = plane_columns(plane);
         let mut tx = self.pool.begin().await?;
@@ -611,7 +740,12 @@ impl Store {
         }
         let fingerprint = agent.credential(plane).fingerprint.clone();
         notify(&mut tx, &fingerprint).await?;
-        tx.commit().await?;
+        match first {
+            Some(first) => {
+                crate::store::commit::commit_with_outcome(tx, "revoke", self, first).await?
+            }
+            None => tx.commit().await?,
+        }
         Ok(fingerprint)
     }
 
@@ -696,20 +830,27 @@ impl Store {
             admin.stands(&mut tx).await?;
         }
         lock_row(&mut tx, &agent.agent_id).await?;
+        // **A retired row is never live again, whoever asks** (Spec 2.12):
+        // the row is read again under its lock, and one holding no live
+        // credential is refused here, for the host's `rotate` as for the
+        // web's. The host's recovery of a staged pair is a separate path in
+        // `verbs::rotate` and revives nothing.
+        let row = sqlx::query(
+            "SELECT version, gate_state, admin_state, gate_fingerprint, admin_fingerprint \
+             FROM agent WHERE agent_id = $1",
+        )
+        .bind(agent.agent_id.as_str())
+        .fetch_one(&mut *tx)
+        .await?;
+        let live =
+            |col: &str| -> anyhow::Result<bool> { Ok(row.try_get::<String, _>(col)? == "live") };
+        if !live("gate_state")? && !live("admin_state")? {
+            return Err(Retired.into());
+        }
+        // The admin's rotation names the version and fingerprints read
+        // here; the host's names the version it read before the lock, a
+        // stale edit refused as every register verb refuses one.
         let (version, retired) = if admin.is_some() {
-            let row = sqlx::query(
-                "SELECT version, gate_state, admin_state, gate_fingerprint, admin_fingerprint \
-                 FROM agent WHERE agent_id = $1",
-            )
-            .bind(agent.agent_id.as_str())
-            .fetch_one(&mut *tx)
-            .await?;
-            let live = |col: &str| -> anyhow::Result<bool> {
-                Ok(row.try_get::<String, _>(col)? == "live")
-            };
-            if !live("gate_state")? && !live("admin_state")? {
-                return Err(Retired.into());
-            }
             (
                 row.try_get::<i64, _>("version")?,
                 vec![
@@ -754,9 +895,14 @@ impl Store {
         for fp in &retired {
             notify(&mut tx, fp).await?;
         }
-        tx.commit().await?;
-        #[cfg(test)]
-        fail_after_commit("rotate")?;
+        match admin {
+            Some(admin) => admin.commit(tx, "rotate").await?,
+            None => {
+                tx.commit().await?;
+                #[cfg(test)]
+                fail_after_commit("rotate")?;
+            }
+        }
         Ok(retired)
     }
 

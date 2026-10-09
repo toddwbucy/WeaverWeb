@@ -494,7 +494,16 @@ async fn two_concurrent_removals_of_the_last_two_leave_one() {
     let session_id = session_id_of(s, &session).await;
     let held = tokio::spawn({
         let (s, person, first) = (s.clone(), person.clone(), first.clone());
-        async move { s.remove_passkey(&person, session_id, &first).await.unwrap() }
+        async move {
+            s.remove_passkey(
+                &person,
+                session_id,
+                &first,
+                &crate::admin_tests::first(&s, &person, "passkey remove").await,
+            )
+            .await
+            .unwrap()
+        }
     });
     tokio::time::timeout(Duration::from_secs(10), read.notified())
         .await
@@ -502,9 +511,14 @@ async fn two_concurrent_removals_of_the_last_two_leave_one() {
     let other = tokio::spawn({
         let (s, person, second) = (s.clone(), person.clone(), second.clone());
         async move {
-            s.remove_passkey(&person, session_id, &second)
-                .await
-                .unwrap()
+            s.remove_passkey(
+                &person,
+                session_id,
+                &second,
+                &crate::admin_tests::first(&s, &person, "passkey remove").await,
+            )
+            .await
+            .unwrap()
         }
     });
     // Long enough for the second to count, were it not excluded.
@@ -740,7 +754,12 @@ async fn a_removal_under_a_session_that_no_longer_stands_removes_nothing() {
         .await
         .unwrap();
     let removed = s
-        .remove_passkey(&person, session_id, &passkey_of(s, &credential).await)
+        .remove_passkey(
+            &person,
+            session_id,
+            &passkey_of(s, &credential).await,
+            &crate::admin_tests::first(s, &person, "passkey remove").await,
+        )
         .await
         .unwrap();
     assert_eq!(removed, Removed::AuthorityGone);
@@ -790,4 +809,94 @@ async fn another_persons_passkey_is_never_removed() {
         .await
         .unwrap();
     assert_eq!(stands, 1, "bea's passkey stands");
+}
+
+/// The person's outcome records of `action`: the `ok` and the `failed`.
+async fn outcomes(s: &Store, person: &str, action: &str) -> (i64, i64) {
+    sqlx::query_as(
+        "SELECT count(*) FILTER (WHERE outcome = 'ok'), count(*) FILTER (WHERE outcome = 'failed') \
+         FROM audit WHERE person_id = $1 AND action = $2",
+    )
+    .bind(person)
+    .bind(action)
+    .fetch_one(&s.pool)
+    .await
+    .unwrap()
+}
+
+/// **A redemption whose commit's answer is lost reads back its own `ok`
+/// outcome** (Spec 2.13), which committed with the passkey: the enrollment
+/// answers its success and its outcome reads `ok`.
+#[tokio::test]
+async fn a_redemption_whose_commits_answer_is_lost_reads_back_its_outcome() {
+    use crate::store::commit::{lose_the_commits_answer, the_answer_was_lost};
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let app = app(s, Some(passkeys()));
+    lose_the_commits_answer("passkey enroll");
+    let (person, _) = enrolled(&app, s, &mut authenticator(), "ada").await;
+    assert!(the_answer_was_lost());
+    assert_eq!(outcomes(s, &person, "passkey enroll").await, (1, 0));
+}
+
+/// **A session's opening whose commit's answer is lost reads back its own
+/// `ok` outcome**: the sign-in answers its cookie, the session serves, and
+/// the opening's outcome reads `ok`.
+#[tokio::test]
+async fn an_opening_whose_commits_answer_is_lost_reads_back_its_outcome() {
+    use crate::store::commit::{lose_the_commits_answer, the_answer_was_lost};
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let app = app(s, Some(passkeys()));
+    let mut key = authenticator();
+    let (person, _) = enrolled(&app, s, &mut key, "ada").await;
+    lose_the_commits_answer("session open");
+    let (status, headers, answer) = sign_in(&app, &mut key, "ada").await;
+    assert!(the_answer_was_lost());
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    let (status, _, _) = send_as(&app, "GET", "/passkeys", None, None, &bearer(&headers)).await;
+    assert_eq!(status, StatusCode::OK, "the session serves");
+    assert_eq!(outcomes(s, &person, "session open").await, (1, 0));
+}
+
+/// **An addition and a removal whose commit's answers are lost read back
+/// their own `ok` outcomes**: each answers its success and records `ok`.
+#[tokio::test]
+async fn an_addition_and_a_removal_whose_commits_answers_are_lost_read_back_their_outcomes() {
+    use crate::store::commit::{lose_the_commits_answer, the_answer_was_lost};
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let app = app(s, Some(passkeys()));
+    let mut key = authenticator();
+    let (person, _, session) = signed_in(&app, s, &mut key, "ada").await;
+    let earned = grant(&app, &mut key, &session).await;
+    lose_the_commits_answer("passkey add");
+    let (status, answer) = add(&app, &mut authenticator(), &earned, &session, "phone").await;
+    assert!(the_answer_was_lost());
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(outcomes(s, &person, "passkey add").await, (1, 0));
+
+    let phone: String = sqlx::query_scalar("SELECT passkey_id FROM passkey WHERE label = 'phone'")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    lose_the_commits_answer("passkey remove");
+    let (status, _, answer) = send_as(
+        &app,
+        "POST",
+        "/passkeys/remove",
+        None,
+        Some(format!("passkey={phone}")),
+        &session,
+    )
+    .await;
+    assert!(the_answer_was_lost());
+    assert_eq!(status, StatusCode::SEE_OTHER, "{answer}");
+    assert_eq!(outcomes(s, &person, "passkey remove").await, (1, 0));
 }

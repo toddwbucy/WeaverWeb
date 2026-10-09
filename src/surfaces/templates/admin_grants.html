@@ -18,7 +18,7 @@
   <tr>
     <td>{{ row.listed.name }}{% if row.own %} <span class="pill">you</span>{% endif %}</td>
     <td>{{ row.listed.role }}</td>
-    <td>{% match row.listed.agent %}{% when Some with (agent) %}{{ agent }}{% when None %}server-wide{% endmatch %}</td>
+    <td>{% match row.listed.agent %}{% when Some with (agent) %}{{ agent }}{% when None %}server-wide{% endmatch %}{% if row.listed.agent_retired %} <span class="pill retired">agent retired</span>{% endif %}</td>
     <td>
       {% if row.own %}
       <span class="chip-note">your own grant is written by another admin or the host</span>

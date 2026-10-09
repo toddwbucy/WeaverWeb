@@ -1263,7 +1263,14 @@ registration. **At most one row per box and name holds live credentials**,
 held at the schema by a partial unique index over the rows whose
 credentials are live, so one physical agent cannot be registered twice into
 two rows with independent credentials; re-registering a live pair retires
-the previous row by revoking its credentials in the same act.
+the previous row by revoking its credentials in the same act. **A row
+holding no live credential is retired, and never live again**: an admin
+retires one through the server by revoking every live plane in one write,
+**a rotation refuses one, the host's `rotate` as the web's**, read under the
+row's lock inside the rotation's transaction, and the agent comes back only
+as a new registration, a new row with a new identity. The host's recovery
+of a replacement row's staged pair, asked by the retired row's identity,
+publishes a pair already committed to the replacement and revives nothing.
 
 ```graph
 node: web-one-live-row-per-box-and-name
@@ -1506,7 +1513,17 @@ it decides are stated here and in section 2.8, and the reasons are there.
   write**: its first record, the write in its transaction, which
   re-checks under its locks the authority and **every fact step three
   resolved**, since step three read them before the lock, and mints or
-  writes anything only once they pass, and its outcome.
+  writes anything only once they pass, and **its `ok` outcome, written in
+  the same transaction, so the effect and its outcome commit together or
+  not at all**. **Where the commit's answer is lost, the write reads back
+  that one record**: an `ok` outcome answering its first record stands, and
+  the write answers its success; none, and it failed, its `failed` outcome
+  written after. An error may come after PostgreSQL applied the commit, and
+  an act that landed recorded as failed could never be put right, a retry
+  meeting step three's refusal; and reading back the act's effect instead
+  would read state a later act may already have overwritten (a rotation
+  over a revocation, another admin's edit past the version), where the
+  audit is append-only and its record cannot be.
   Each write
   lands in one transaction under the exclusion below that first re-checks
   its authority, the session standing and its person still holding a live
@@ -1761,7 +1778,21 @@ it decides are stated here and in section 2.8, and the reasons are there.
   **The outcome is a second record naming the first**, written when the
   answer lands, the write commits, or either fails, so nothing is ever
   rewritten and an act whose outcome never came is visible as a first
-  record with no second. A refusal at the first gate is one record
+  record with no second. **Where the act is one store transaction**, every
+  admin write through the server, a person's own (a token's redemption, a
+  session's opening at sign-in, a passkey's addition and its removal), the
+  host's identity commands and the host's `revoke`, **its `ok` outcome
+  commits with it**, in the same
+  transaction, and a lost commit answer is read back by that record; its
+  `failed` outcome is written after, a rolled-back act having taken
+  nothing with it, so one outcome per first record holds. An act whose
+  commit point is not one store transaction, the host's `register` and
+  `rotate`, which publish their client configs to files after the store
+  commits, the authority's verbs, and the fresh assertion's add grant,
+  whose effect is a one-time grant in the ceremony table in memory and no
+  store transaction, has its outcome written after it, and
+  the host's `register` and `rotate` read back a lost commit by the new
+  fingerprint, which decides whether the staged configs are published. A refusal at the first gate is one record
   carrying the refusal as its outcome, since no ask left, and **a refusal
   whose record cannot be written is answered as the server's failure**,
   logged at error, never as the ordinary refusal, which would read as one
@@ -1817,9 +1848,18 @@ it decides are stated here and in section 2.8, and the reasons are there.
   taken, after which the admin rotates. The
   page says each holds its connector's private key and goes to the box with
   the install script, readable only by the connector's own user at 0600.
-  `revoke` and retiring an agent are the next pull request's; `authority
-  init` and `authority rotate` stay host commands, being the server's own
-  authority.
+  **`revoke` (one plane) and `retire` (every live plane in one write)**, as
+  built on 2026-10-09, take the same four steps: the `ag-` and the plane
+  parsed, the first gate, the agent resolved for the admin (unknown: not
+  found; a plane revoked already, or a retire of a retired row: refused),
+  and the audited write, which holds the identity exclusion shared and
+  re-reads the row under its lock inside its transaction, refusing a plane
+  or a row revoked since step three, and tells the running listener each
+  credential it revokes, so the live connection closes in the act. **A
+  grant on a retired agent stands**: the row is never live again, so the
+  grant names an agent that will not answer, and the grants page marks it
+  for an admin to revoke. `authority init` and `authority rotate` stay host
+  commands, being the server's own authority.
 
 **An agent holds one conversation.** Every gate connection lands in the
 agent's one session working structure, per `toddwbucy/WeaverAgent#59`, so
@@ -3953,11 +3993,12 @@ missing while it was relaying.
 | an agent is present only when both planes connect from one row | perturbation: mark present on either plane alone, an agent whose admin-con is down reads present with a tuple and a load state nobody has confirmed |
 | the server's authority is loaded before the listener starts and never minted at start | perturbation: mint the authority at start instead of loading it, restart the server, and every connector's hello is refused against a certificate it does not pin |
 | the client credential is stored as a fingerprint and never the key | perturbation, at the schema: store the key, a read of the register is a set of credentials anyone can present |
-| a register verb through the server is an admin's under the exclusion, and its client configs are handed over once and kept nowhere | perturbation in `src/agents_tests.rs`, against a real listener and an authority minted at test time: drop the admin's re-check from the register's transaction, revoke the grant between the surface's read and the write, and the agent is registered; drop the shared identity exclusion from it, and a revocation commits beneath a register held after its re-check; drop the take's session check, and another session of the same admin takes a config; drop the take's removal, and a config is taken twice; drop the lifetime, and a config past five minutes is taken; drop the reservation, and a registration with no room for its configs is recorded and written; count the configs held and not those reserved, and five concurrent registers against room for four all land, past the bound; drop a rotation's re-check of its row inside the transaction, and a row the host retired after step three is live again; drop the check of the authority on disk, and a register mints under an authority rotated since the server loaded it; drop a rotation's notification, and the old credential's live connection stays open; drop a rotation's resolution of its agent, and an admin's unknown agent leaves a begun and failed pair; log a config at its take, and a private key is in a log line |
+| a register verb through the server is an admin's under the exclusion, a retired row is never live again, and its client configs are handed over once and kept nowhere | perturbation in `src/agents_tests.rs`, against a real listener and an authority minted at test time: drop the admin's re-check from the register's transaction, revoke the grant between the surface's read and the write, and the agent is registered; drop the shared identity exclusion from it, and a revocation commits beneath a register held after its re-check; drop the take's session check, and another session of the same admin takes a config; drop the take's removal, and a config is taken twice; drop the lifetime, and a config past five minutes is taken; drop the reservation, and a registration with no room for its configs is recorded and written; count the configs held and not those reserved, and five concurrent registers against room for four all land, past the bound; drop a rotation's re-check of its row inside the transaction, and a row the host retired after step three is live again; drop the check of the authority on disk, and a register mints under an authority rotated since the server loaded it; drop a rotation's notification, and the old credential's live connection stays open; drop a rotation's resolution of its agent, and an admin's unknown agent leaves a begun and failed pair; log a config at its take, and a private key is in a log line; drop the retired check from the host's rotation, and a row retired through the web is made live again by the host's `rotate` of its identity; drop the re-read of a revocation's row, and a revocation the host's overtook after step three answers and is audited as landed, though it revoked nothing; drop a revocation's notification, and the revoked plane's live connection stays open; drop the shared identity exclusion from a revocation, and a grant removal commits beneath a revocation held after its re-check; drop the grants page's mark, and a grant on a retired agent reads as any other |
+| an act's `ok` outcome commits with it, and a lost commit answer is classified by that record | perturbation in `src/admin_tests.rs`, `src/grants_tests.rs`, `src/agents_tests.rs`, `src/keys_tests.rs` and `src/host_tests.rs`, the commit's answer lost by a test fault after PostgreSQL applied it: write the `ok` outcome after the commit's answer instead of in the transaction, and each of the five person writes, the three grant and role writes, a revocation and a retirement, a registration and a rotation through the server, a token's redemption, a session's opening, a passkey's addition and removal (`src/keys_tests.rs`), and the host's bootstrap and token answers as failed (the web's writes with the server's failure, the host's commands with a refusal), its outcome `failed`, for an act that landed; and where a later act commits between the lost answer and the read-back, a rotation over a revocation or another admin's enable over a disable, the act is still classified as landed, which a read-back of its effect would not do |
 | the tuple and the load state come by admin-con and never by gate-con | perturbation: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it; let a replayed load event write the tuple, restart the server after an unload, backfill, and the row reads loaded; ask `show` before fixing the replay boundary, unload between the two, and the row reads loaded until the next `show`. **Four clauses are admin-con's ordering**, against the real listener with a fake invoker in `src/link/admin_con_tests.rs`: let a `show` answer cross the link out of order with the file events around it, unload during the `show`, and the row reads loaded until the next `show`; place the answer in the stream at receipt and unload between the snapshot and the receipt, and the row reads loaded; skip the drain, leave an unread load event behind the tail, invoke `show` after an unload, and the row reads loaded; run two verbs at once on one connection, and an older answer lands after a newer one. **The slot's clause**, against the real listener with the sudo invoker over a fake `sudo` in `src/link/sudo_invoker_tests.rs`: free the slot at a reconnection while a timed-out verb's process still runs, and the new connection's admission `show` runs beside it. **A turn's start and close refresh the load state**, against the real listener in `src/link/tests.rs`: drop the `turn.started` mapping, and the row never reads `active` between a turn's start and close; let a replayed `turn.started` land, and the row reads `active` from history; let a turn's event write the tuple, and the row loses the tuple it held; let a turn's event write the tuple's source, and a `show`-shaped tuple reads as an event's |
 | nothing crosses the link in the clear | perturbation: offer a plaintext hello to the listener, it is refused below any roster; and review, over the listener, that no plaintext accept path exists |
 | the server never asks a verb outside the agent's ceiling | perturbation: drop the ceiling check, ask a verb admin-con's hello did not declare, and it leaves the server; and admin-con's half, drop its typed error answer, and it reaches the invoker. **One clause is owed**: check against the row's copy, narrow the ceiling by reconnecting between the check and the enqueue, and an ask outside the new ceiling leaves. The race has no deterministic staging, and the guard is held by review: the check reads the live connection's ceiling under the live map's lock that finds the connection |
-| a verb or turn its principal may not ask is refused before an ask | perturbation, **owed**: drop the grant check, a person whose role permits `show` asks `stop`, and the ask leaves the server; let the server principal ask a lifecycle verb, and it leaves without a grant; drop the enabled check, and a disabled person's live session still asks a verb; drop the grant check on turns, and a person granted only `show` places a turn; take the check outside the exclusion, revoke between the check and the enqueue, and the ask is authorized on a revoked grant; take `revoke`'s check through the server outside the exclusion, disable its admin between the check and the commit, and the revocation lands, owed to the pull request that brings `revoke` to the web (`register` and `rotate` stand in their own row). Lands with the IAM act |
+| a verb or turn its principal may not ask is refused before an ask | perturbation, **owed**: drop the grant check, a person whose role permits `show` asks `stop`, and the ask leaves the server; let the server principal ask a lifecycle verb, and it leaves without a grant; drop the enabled check, and a disabled person's live session still asks a verb; drop the grant check on turns, and a person granted only `show` places a turn; take the check outside the exclusion, revoke between the check and the enqueue, and the ask is authorized on a revoked grant; the register verbs through the server stand in their own row. Lands with the IAM act |
 | a role, a grant, or another person's authentication material written by a principal not permitted to write it is refused | perturbation in `src/grants_tests.rs` and `src/keys_tests.rs`: drop the write's admin check at the surface, and a person holding no admin grant has a write audited as begun rather than refused; drop the live admin grant from the transaction's re-check, revoke the grant between the surface's read and the write, and the grant lands; drop the self-grant refusal at the surface, and it is refused only after a record, and drop the store's too, and an admin grants themselves a role; the same for revoking one's own grant, and for editing a role one holds, the admin holding the observer role then adding `stop` to it; take the role's edit outside the store's check, grant the role to its editor between the surface's read and the edit, and the editor widens a role they hold; take a revocation's transaction without the exclusion, have two admins revoke each other's admin grant at once, and no admin remains; drop the last-admin count from a revocation, and the store's refusal of the last enabled admin's grant rests on the own-grant rule alone, and drop that too, and the grant is revoked; drop the version from a role's edit or a revocation, and a second edit from the same page overwrites the first; write a grant as the host principal, and the record names no admin behind it; drop a removal's ownership check, and a person holding two passkeys removes another person's; drop the parse of a submitted person, agent, grant or role name, or the vocabulary's check, and a malformed ask is recorded or is the server's failure rather than refused before any record; drop the resolution of step three (a grant's role, scope, person and agent, a revocation's grant, a role edit's role, or a person write's person), and an admin's unknown reference leaves a begun and failed pair; move it before the first gate, and a non-admin's unknown reference answers not found where a known one answers the refusal, telling them what exists; drop the page's admin check, and a person holding no admin grant reads every grant |
 | the host's identity commands write their audit record before any mutation, and an outcome naming it | perturbation in `src/host_tests.rs`: drop any one command's first record (bootstrap, token, reset, grant add, grant remove, role set), and with the first record refused that command writes its rows unaudited |
 | the last enabled admin's grant is never revoked, the host's removal included, and two removals cannot both pass | perturbation in `src/host_tests.rs`: drop the count of the admins that would remain, and the last admin's grant is revoked; take the identity transaction without the exclusion, hold one removal between its count and its revocation and ask the other meanwhile, and both land, leaving no admin |
@@ -4006,7 +4047,11 @@ Six stand so marked as of 2026-10-09. Act 11's pull request of registering
 agents through the web of 2026-10-09 stood up a register verb through the
 server as an admin's under the exclusion and the hand-over of its client
 configs, once and kept nowhere, each shown to fail with its guard removed,
-and narrowed the principal check's register clause to `revoke`'s. The
+and narrowed the principal check's register clause to `revoke`'s, which the
+pull request of revoking and retiring agents through the web of 2026-10-09
+then stood up in the same row (the row re-read in the transaction, the
+connection closed in the act, the shared hold, and the mark on a grant
+whose agent is retired). The
 batch's order is owed because
 section 2.11 describes its table and no migration builds it. Two rows of
 the role shape ruled on 2026-10-02 are owed to the IAM act: the principal

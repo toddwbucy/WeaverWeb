@@ -852,3 +852,578 @@ async fn a_row_retired_mid_rotation_stays_retired() {
         1
     );
 }
+
+/// An agent registered through the page with both configs taken and both
+/// connectors admitted: the row's identity and the two connectors.
+async fn connected(
+    rig: &Rig,
+    session: &str,
+    r#box: &str,
+) -> (String, Connector, Connector, String) {
+    let (id, handles) = rig.register(session, r#box, "karl").await;
+    let (_, _, gate_config) = rig.take(&handles[0], session).await;
+    let (_, _, admin_config) = rig.take(&handles[1], session).await;
+    let mut gate = Connector::dial(&gate_config).await;
+    assert!(matches!(
+        gate.recv().await,
+        Some(ToClient::HelloAnswer { .. })
+    ));
+    let mut admin = Connector::dial(&admin_config).await;
+    assert!(matches!(
+        admin.recv().await,
+        Some(ToClient::HelloAnswer { .. })
+    ));
+    assert!(matches!(admin.recv().await, Some(ToClient::Verb { .. })));
+    (id, gate, admin, gate_config)
+}
+
+async fn states(s: &Store, id: &str) -> (String, String) {
+    sqlx::query_as("SELECT gate_state, admin_state FROM agent WHERE agent_id = $1")
+        .bind(id)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap()
+}
+
+/// **Revoking one plane closes its connection in the act and leaves the
+/// other**: the gate's credential revoked and its connection closed, the
+/// admin plane's live and connected, the audit pair naming the agent, and
+/// the revoked config refused at its next dial.
+#[tokio::test]
+async fn revoking_a_plane_closes_its_connection_and_leaves_the_other() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (ada, session) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (id, mut gate, mut admin_plane, gate_config) = connected(&rig, &session, "box-a").await;
+
+    let (status, headers, answer) = rig
+        .post(
+            "/admin/agents/revoke",
+            form(&[("agent", &id), ("plane", "gate")]),
+            &session,
+        )
+        .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{answer}");
+    assert_eq!(headers[header::LOCATION], "/admin/agents");
+    assert!(
+        gate.closed().await,
+        "the gate's connection closed in the act"
+    );
+    assert!(!admin_plane.closed().await, "the admin plane's stays open");
+    assert_eq!(states(s, &id).await, ("revoked".into(), "live".into()));
+    let mut again = Connector::dial(&gate_config).await;
+    assert!(matches!(
+        again.recv().await,
+        Some(ToClient::Refusal {
+            reason: LinkRefusal::NotLive
+        })
+    ));
+    let pair: (i64, i64) = sqlx::query_as(
+        "SELECT count(*) FILTER (WHERE answers IS NULL AND refusal IS NULL), \
+         count(*) FILTER (WHERE outcome = 'ok') FROM audit \
+         WHERE person_id = $1 AND method = 'session' AND target_kind = 'agent' \
+         AND target_id = $2 AND action = 'revoke'",
+    )
+    .bind(&ada)
+    .bind(&id)
+    .fetch_one(&s.pool)
+    .await
+    .unwrap();
+    assert_eq!(pair, (1, 1));
+}
+
+/// **Retiring revokes every live plane in one write**: both connections
+/// close in the act, the page reads the row retired with no write but to
+/// register again, and a rotation of it is refused.
+#[tokio::test]
+async fn retiring_closes_both_planes_and_the_row_is_never_live_again() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, session) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (id, mut gate, mut admin_plane, _) = connected(&rig, &session, "box-a").await;
+
+    let (status, _, answer) = rig
+        .post("/admin/agents/retire", form(&[("agent", &id)]), &session)
+        .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{answer}");
+    assert!(
+        gate.closed().await && admin_plane.closed().await,
+        "both closed in the act"
+    );
+    assert_eq!(states(s, &id).await, ("revoked".into(), "revoked".into()));
+    let (_, _, page) = send_as(&rig.app, "GET", "/admin/agents", None, &session).await;
+    assert!(page.contains("retired; register it again"), "{page}");
+    assert!(
+        !page.contains(&format!("name=\"agent\" value=\"{id}\"")),
+        "no write on it"
+    );
+    let (status, _, _) = rig
+        .post("/admin/agents/rotate", form(&[("agent", &id)]), &session)
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::CONFLICT,
+        "a retired row is never rotated live"
+    );
+    assert_eq!(
+        rows(
+            s,
+            &format!("SELECT count(*) FROM audit WHERE target_id = '{id}' AND action = 'retire' AND outcome = 'ok'")
+        )
+        .await,
+        1
+    );
+}
+
+/// **The four steps of a revocation and a retirement**: malformed asks
+/// refused before any record from anyone; a non-admin refused with one
+/// record, alike for a known agent and an unknown one; for an admin, an
+/// unknown agent not found, a plane already revoked and a retired row
+/// refused, none recorded.
+#[tokio::test]
+async fn revoking_and_retiring_take_the_four_steps() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, session) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (_, other) = signed_in(&rig.app, s, &mut authenticator(), "dot").await;
+    let (known, _) = rig.register(&session, "box-a", "karl").await;
+    let (half, _) = rig.register(&session, "box-b", "jane").await;
+    let (retired, _) = rig.register(&session, "box-c", "kim").await;
+    for (agent, planes) in [
+        (&half, &[Plane::Gate][..]),
+        (&retired, &[Plane::Gate, Plane::Admin][..]),
+    ] {
+        for plane in planes {
+            let revoked = crate::link::verbs::revoke(s, agent, *plane, None).await;
+            assert!(revoked.ok, "{}", revoked.value);
+        }
+    }
+
+    let before = rows(s, "SELECT count(*) FROM audit").await;
+    for (uri, body) in [
+        (
+            "/admin/agents/revoke",
+            form(&[("agent", "ag-0123"), ("plane", "gate")]),
+        ),
+        (
+            "/admin/agents/revoke",
+            form(&[("agent", &known), ("plane", "both")]),
+        ),
+        ("/admin/agents/retire", form(&[("agent", "box-a/karl")])),
+    ] {
+        for (who, asking) in [("an admin", &session), ("a non-admin", &other)] {
+            let (status, _, answer) = rig.post(uri, body.clone(), asking).await;
+            assert_eq!(
+                rows(s, "SELECT count(*) FROM audit").await,
+                before,
+                "{uri} {body} from {who}: no record"
+            );
+            assert_eq!(
+                status,
+                StatusCode::BAD_REQUEST,
+                "{uri} {body} from {who}: {answer}"
+            );
+        }
+    }
+
+    let unknown = "ag-0123456789abcdef";
+    for (uri, body, expected) in [
+        (
+            "/admin/agents/revoke",
+            form(&[("agent", unknown), ("plane", "gate")]),
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            "/admin/agents/retire",
+            form(&[("agent", unknown)]),
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            "/admin/agents/revoke",
+            form(&[("agent", &half), ("plane", "gate")]),
+            StatusCode::CONFLICT,
+        ),
+        (
+            "/admin/agents/retire",
+            form(&[("agent", &retired)]),
+            StatusCode::CONFLICT,
+        ),
+    ] {
+        let before = rows(s, "SELECT count(*) FROM audit").await;
+        let (status, _, answer) = rig.post(uri, body.clone(), &session).await;
+        assert_eq!(
+            rows(s, "SELECT count(*) FROM audit").await,
+            before,
+            "{uri} {body}: no record"
+        );
+        assert_eq!(status, expected, "{uri} {body}: {answer}");
+    }
+
+    for (uri, unknown_body, known_body) in [
+        (
+            "/admin/agents/revoke",
+            form(&[("agent", unknown), ("plane", "gate")]),
+            form(&[("agent", &known), ("plane", "gate")]),
+        ),
+        (
+            "/admin/agents/retire",
+            form(&[("agent", unknown)]),
+            form(&[("agent", &known)]),
+        ),
+    ] {
+        let before = rows(s, "SELECT count(*) FROM audit").await;
+        let (status, _, refused_unknown) = rig.post(uri, unknown_body, &other).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(
+            rows(s, "SELECT count(*) FROM audit").await,
+            before + 1,
+            "one record"
+        );
+        let (status, _, refused_known) = rig.post(uri, known_body, &other).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(refused_unknown, refused_known, "{uri}: no oracle");
+    }
+    assert_eq!(states(s, &known).await, ("live".into(), "live".into()));
+}
+
+/// **The row is re-read inside the write's transaction**: the host revokes
+/// the plane, or retires the agent, while the web's revocation or
+/// retirement is held after step three; the web's write is refused,
+/// audited as failed, and the row is as the host left it.
+#[tokio::test]
+async fn a_plane_revoked_mid_write_refuses_the_write() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (ada, session) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (id, _) = rig.register(&session, "box-a", "karl").await;
+
+    for (uri, body, host_planes, action) in [
+        (
+            "/admin/agents/revoke",
+            form(&[("agent", &id), ("plane", "gate")]),
+            &[Plane::Gate][..],
+            "revoke",
+        ),
+        (
+            "/admin/agents/retire",
+            form(&[("agent", &id)]),
+            &[Plane::Admin][..],
+            "retire",
+        ),
+    ] {
+        let (read, release) = hold(&READ_HOLD, &ada);
+        let write = tokio::spawn({
+            let (app, session, body) = (rig.app.clone(), session.clone(), body.clone());
+            async move { send_as(&app, "POST", uri, Some(body), &session).await }
+        });
+        read.notified().await;
+        for plane in host_planes {
+            let revoked = crate::link::verbs::revoke(s, &id, *plane, None).await;
+            assert!(revoked.ok, "{}", revoked.value);
+        }
+        release.notify_one();
+        let (status, _, answer) = write.await.unwrap();
+        assert_eq!(status, StatusCode::CONFLICT, "{uri}: {answer}");
+        assert_eq!(
+            rows(
+                s,
+                &format!("SELECT count(*) FROM audit WHERE target_id = '{id}' AND action = '{action}' AND outcome = 'failed'")
+            )
+            .await,
+            1,
+            "{uri}"
+        );
+    }
+    assert_eq!(states(s, &id).await, ("revoked".into(), "revoked".into()));
+}
+
+/// **A revocation holds the identity exclusion shared from its re-check to
+/// its commit**: held inside its transaction after the admin's re-check, a
+/// removal of that admin's grant by the host waits until it commits.
+#[tokio::test]
+async fn a_grant_removal_waits_for_the_revocation_it_would_have_refused() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (ada, session) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    admin(&rig.app, s, &mut authenticator(), "cara").await;
+    let (id, _) = rig.register(&session, "box-a", "karl").await;
+
+    let (inside, release) = hold(&crate::store::admin::INSIDE_HOLD, &ada);
+    let write = tokio::spawn({
+        let (app, session, body) = (
+            rig.app.clone(),
+            session.clone(),
+            form(&[("agent", &id), ("plane", "gate")]),
+        );
+        async move { send_as(&app, "POST", "/admin/agents/revoke", Some(body), &session).await }
+    });
+    inside.notified().await;
+    let removal = tokio::spawn({
+        let (s, ada) = (s.clone(), ada.clone());
+        async move { host::grant_remove(&s, &ada, "admin", None, None).await }
+    });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(
+        s.is_admin(&ada).await.unwrap(),
+        "the removal waits for the revocation's commit"
+    );
+    release.notify_one();
+    let (status, _, answer) = write.await.unwrap();
+    assert_eq!(status, StatusCode::SEE_OTHER, "{answer}");
+    assert!(removal.await.unwrap().ok);
+    assert_eq!(states(s, &id).await, ("revoked".into(), "live".into()));
+}
+
+/// **A grant on a retired agent stands, and the grants page marks it**:
+/// the row is never live again and a new registration is a new row, so the
+/// grant names nothing an agent will answer, and an admin revokes it there.
+#[tokio::test]
+async fn the_grants_page_marks_a_grant_on_a_retired_agent() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, session) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (bea, _) = crate::passkeys_tests::person_with_token(s, "bea").await;
+    let (id, _) = rig.register(&session, "box-a", "karl").await;
+    let (other, _) = rig.register(&session, "box-b", "jane").await;
+    for agent in [&id, &other] {
+        let granted = host::grant_add(s, &bea, "observer", Some(agent), None).await;
+        assert!(granted.ok, "{}", granted.value);
+    }
+    let marked = |page: &str, agent: &str| {
+        let at = page.find(&format!("<td>{agent}")).unwrap();
+        let end = at + page[at..].find("</td>").unwrap();
+        page[at..end].contains("agent retired")
+    };
+    let (_, _, page) = send_as(&rig.app, "GET", "/admin/grants", None, &session).await;
+    assert!(
+        !marked(&page, "box-a/karl") && !marked(&page, "box-b/jane"),
+        "{page}"
+    );
+
+    let (status, _, _) = rig
+        .post("/admin/agents/retire", form(&[("agent", &id)]), &session)
+        .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let (_, _, page) = send_as(&rig.app, "GET", "/admin/grants", None, &session).await;
+    assert!(
+        marked(&page, "box-a/karl"),
+        "the retired agent's grant is marked: {page}"
+    );
+    assert!(!marked(&page, "box-b/jane"), "a live agent's is not");
+    assert!(
+        s.live_grant(&bea, "observer", Some(&id))
+            .await
+            .unwrap()
+            .is_some(),
+        "the grant stands"
+    );
+}
+
+/// **A revocation or a retirement whose commit's answer is lost reads back
+/// its outcome** (Spec 2.13): the planes revoked and notified, the answer
+/// lost after PostgreSQL applied the commit, and the write answers its
+/// success with its outcome `ok`, where a retry would meet step three's
+/// refusal and the record could never be put right.
+#[tokio::test]
+async fn a_revocation_whose_commits_answer_is_lost_reads_back_its_outcome() {
+    use crate::store::commit::{lose_the_commits_answer, the_answer_was_lost};
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, session) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (id, mut gate, mut admin_plane, _) = connected(&rig, &session, "box-a").await;
+
+    lose_the_commits_answer("agent revoke");
+    let (status, _, answer) = rig
+        .post(
+            "/admin/agents/revoke",
+            form(&[("agent", &id), ("plane", "gate")]),
+            &session,
+        )
+        .await;
+    assert!(the_answer_was_lost());
+    assert_eq!(status, StatusCode::SEE_OTHER, "{answer}");
+    assert!(gate.closed().await, "notified with the commit");
+
+    lose_the_commits_answer("agent revoke");
+    let (status, _, answer) = rig
+        .post("/admin/agents/retire", form(&[("agent", &id)]), &session)
+        .await;
+    assert!(the_answer_was_lost());
+    assert_eq!(status, StatusCode::SEE_OTHER, "{answer}");
+    assert!(admin_plane.closed().await);
+    assert_eq!(states(s, &id).await, ("revoked".into(), "revoked".into()));
+    for action in ["revoke", "retire"] {
+        assert_eq!(
+            rows(
+                s,
+                &format!("SELECT count(*) FROM audit WHERE target_id = '{id}' AND action = '{action}' AND outcome = 'ok'")
+            )
+            .await,
+            1,
+            "{action}"
+        );
+    }
+    assert_eq!(
+        rows(s, "SELECT count(*) FROM audit WHERE outcome = 'failed'").await,
+        0
+    );
+}
+
+/// **A registration or a rotation through the server whose commit's answer
+/// is lost reads back its outcome**: the configs are handed over
+/// and the outcome recorded `ok`.
+#[tokio::test]
+async fn a_register_whose_commits_answer_is_lost_reads_back_its_outcome() {
+    use crate::store::commit::{lose_the_commits_answer, the_answer_was_lost};
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, session) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+
+    lose_the_commits_answer("register");
+    let (id, handles) = rig.register(&session, "box-a", "karl").await;
+    assert!(the_answer_was_lost());
+    assert_eq!(handles.len(), 2, "the configs handed over");
+
+    lose_the_commits_answer("rotate");
+    let (status, _, page) = rig
+        .post("/admin/agents/rotate", form(&[("agent", &id)]), &session)
+        .await;
+    assert!(the_answer_was_lost());
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(Rig::handles(&page).len(), 2);
+    for action in ["register", "rotate"] {
+        assert_eq!(
+            rows(
+                s,
+                &format!("SELECT count(*) FROM audit WHERE target_id = '{id}' AND action = '{action}' AND outcome = 'ok'")
+            )
+            .await,
+            1,
+            "{action}"
+        );
+    }
+}
+
+/// A hold between a lost commit answer of `kind` and its read-back.
+fn hold_the_read_back(kind: &'static str) -> (Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>) {
+    let (read, release) = (
+        Arc::new(tokio::sync::Notify::new()),
+        Arc::new(tokio::sync::Notify::new()),
+    );
+    crate::store::commit::READ_BACK_HOLD.lock().unwrap().push((
+        kind,
+        read.clone(),
+        release.clone(),
+    ));
+    (read, release)
+}
+
+/// **A lost answer is read back by the act's own outcome, which no later
+/// act can overwrite**: a revocation's commit answer is lost, and before
+/// its read-back a rotation of the same agent commits, making the plane
+/// live again under a new fingerprint; the revocation still answers its
+/// success and its outcome reads `ok`, where reading back the plane's state
+/// would have called it failed.
+#[tokio::test]
+async fn a_revocation_whose_answer_is_lost_lands_though_a_rotation_follows() {
+    use crate::store::commit::{lose_the_commits_answer, the_answer_was_lost};
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, session) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (id, handles) = rig.register(&session, "box-a", "karl").await;
+    for handle in &handles {
+        rig.take(handle, &session).await;
+    }
+
+    lose_the_commits_answer("agent revoke");
+    let (read, release) = hold_the_read_back("agent revoke");
+    let revocation = tokio::spawn({
+        let (app, session, body) = (
+            rig.app.clone(),
+            session.clone(),
+            form(&[("agent", &id), ("plane", "gate")]),
+        );
+        async move { send_as(&app, "POST", "/admin/agents/revoke", Some(body), &session).await }
+    });
+    read.notified().await;
+    assert!(the_answer_was_lost());
+    let (status, _, page) = rig
+        .post("/admin/agents/rotate", form(&[("agent", &id)]), &session)
+        .await;
+    assert_eq!(status, StatusCode::OK, "the rotation commits first: {page}");
+    assert_eq!(states(s, &id).await, ("live".into(), "live".into()));
+    release.notify_one();
+    let (status, _, answer) = revocation.await.unwrap();
+    assert_eq!(status, StatusCode::SEE_OTHER, "{answer}");
+    assert_eq!(
+        rows(
+            s,
+            &format!("SELECT count(*) FROM audit WHERE target_id = '{id}' AND action = 'revoke' AND outcome = 'ok'")
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        rows(s, "SELECT count(*) FROM audit WHERE outcome = 'failed'").await,
+        0
+    );
+}
+
+/// **A retired row is never live again, the host's `rotate` included**:
+/// an agent retired through the web is refused by the host's rotation of
+/// its identity, which names the refusal and tells the operator to register
+/// again; the row stays retired, its grant stands and is still marked, and
+/// no client config is left behind.
+#[tokio::test]
+async fn the_hosts_rotate_refuses_a_retired_row() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, session) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (bea, _) = crate::passkeys_tests::person_with_token(s, "bea").await;
+    let (id, _) = rig.register(&session, "box-a", "karl").await;
+    let granted = host::grant_add(s, &bea, "observer", Some(&id), None).await;
+    assert!(granted.ok, "{}", granted.value);
+    let (status, _, _) = rig
+        .post("/admin/agents/retire", form(&[("agent", &id)]), &session)
+        .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+
+    let cfg = server_config(rig.dir.path(), rig.listener.address());
+    let out = tempfile::tempdir().unwrap();
+    let rotated =
+        crate::link::verbs::rotate(s, &cfg, &rig.authority, &id, out.path(), Some("lab")).await;
+    assert!(!rotated.ok, "{}", rotated.value);
+    let error = rotated.value["error"].as_str().unwrap_or_default();
+    assert!(error.contains("register the agent again"), "{error}");
+    assert_eq!(states(s, &id).await, ("revoked".into(), "revoked".into()));
+    assert!(
+        s.live_grant(&bea, "observer", Some(&id))
+            .await
+            .unwrap()
+            .is_some(),
+        "the grant stands"
+    );
+    let (_, _, page) = send_as(&rig.app, "GET", "/admin/grants", None, &session).await;
+    assert!(page.contains("agent retired"), "and is still marked");
+    let configs = walk(out.path());
+    assert!(
+        !configs.iter().any(|p| p.ends_with(".toml")),
+        "no client config left behind: {configs:?}"
+    );
+}
+
+/// Every file under `dir`, by path.
+fn walk(dir: &std::path::Path) -> Vec<String> {
+    let mut found = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                found.extend(walk(&path));
+            } else {
+                found.push(path.display().to_string());
+            }
+        }
+    }
+    found
+}

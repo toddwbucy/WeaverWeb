@@ -346,6 +346,7 @@ impl Store {
         passkey_id: &str,
         credential_id: &str,
         credential: &serde_json::Value,
+        first: &str,
     ) -> anyhow::Result<Redeemed> {
         let mut tx = self.identity_transaction().await?;
         let still: Option<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
@@ -385,7 +386,7 @@ impl Store {
         .bind(token_digest)
         .execute(&mut *tx)
         .await?;
-        tx.commit().await?;
+        crate::store::commit::commit_with_outcome(tx, "passkey enroll", self, first).await?;
         Ok(Redeemed::Enrolled)
     }
 
@@ -416,6 +417,7 @@ impl Store {
         credential_id: &str,
         credential: &serde_json::Value,
         label: Option<&str>,
+        first: &str,
     ) -> anyhow::Result<Added> {
         let mut tx = self.identity_transaction().await?;
         if !session_stands(&mut tx, session_id, person_id).await?
@@ -442,7 +444,7 @@ impl Store {
         .bind(label)
         .execute(&mut *tx)
         .await?;
-        tx.commit().await?;
+        crate::store::commit::commit_with_outcome(tx, "passkey add", self, first).await?;
         Ok(Added::Inserted)
     }
 
@@ -457,6 +459,7 @@ impl Store {
         person_id: &str,
         session_id: i64,
         passkey_id: &str,
+        first: &str,
     ) -> anyhow::Result<Removed> {
         let mut tx = self.identity_transaction().await?;
         if !session_stands(&mut tx, session_id, person_id).await? {
@@ -485,7 +488,7 @@ impl Store {
             .bind(person_id)
             .execute(&mut *tx)
             .await?;
-        tx.commit().await?;
+        crate::store::commit::commit_with_outcome(tx, "passkey remove", self, first).await?;
         Ok(Removed::Removed)
     }
 

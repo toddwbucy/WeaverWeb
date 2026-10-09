@@ -281,10 +281,11 @@ async fn finish(store: Store, passkeys: &Passkeys, ask: FinishAsk) -> Response {
         Ok(first) => first,
         Err(e) => return Fault::from(e).into_response(),
     };
-    let opened = gate::open(&store, &person_id, &passkey_id).await;
-    if let Err(e) = store
-        .audit_outcome(&first, matches!(opened, Ok(Some(_))))
-        .await
+    let opened = gate::open(&store, &person_id, &passkey_id, &first).await;
+    // An opening that landed wrote its `ok` outcome in its own
+    // transaction (`store::commit`); one that did not is recorded here.
+    if !matches!(opened, Ok(Some(_)))
+        && let Err(e) = store.audit_outcome(&first, false).await
     {
         tracing::error!("the session's opening outcome record {first} was not written: {e:#}");
     }

@@ -38,7 +38,7 @@ use tokio::time::Instant;
 use crate::config::ServerConfig;
 use crate::link::authority::{Authority, ClientCredential};
 use crate::link::frames::Plane;
-use crate::link::register::{AdminWrite, AuthorityGone, CredentialState, Retired};
+use crate::link::register::{AdminWrite, AuthorityGone, CredentialState, PlaneRevoked, Retired};
 use crate::link::verbs::{
     authority_still_stands, client_config, mint_pair, name_agrees, well_formed,
 };
@@ -46,7 +46,9 @@ use crate::store::admin::Refusal;
 use crate::store::audit::Target;
 use crate::store::identity::{bearer, hex, is_agent_id};
 use crate::store::{AgentId, Store};
-use crate::surfaces::admin::{NOT_AN_ADMIN, admin_session, audited, fault, refused, writer};
+use crate::surfaces::admin::{
+    NOT_AN_ADMIN, admin_session, fault, first_of, refused, settled, writer,
+};
 use crate::surfaces::gate::{Policy, Session};
 
 /// How long a client config waits to be taken.
@@ -223,6 +225,8 @@ pub fn routes(seams: Seams) -> Router<Store> {
         )
         .route("/admin/agents/rotate", post(seamed!(rotate, RotateAsk)))
         .route("/admin/agents/config", post(seamed!(take, TakeAsk)))
+        .route("/admin/agents/revoke", post(seamed!(revoke, RevokeAsk)))
+        .route("/admin/agents/retire", post(seamed!(retire, RotateAsk)))
 }
 
 struct AgentRow {
@@ -230,6 +234,8 @@ struct AgentRow {
     label: String,
     gate: &'static str,
     admin: &'static str,
+    gate_live: bool,
+    admin_live: bool,
     present: bool,
     registered: String,
     live: bool,
@@ -271,6 +277,8 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap) -> Response {
             label: format!("{}/{}", a.r#box, a.name),
             gate: state(&a.gate.state),
             admin: state(&a.admin.state),
+            gate_live: a.gate.state == CredentialState::Live,
+            admin_live: a.admin.state == CredentialState::Live,
             present: a.present(),
             registered: a.registered_at.format("%Y-%m-%d %H:%M UTC").to_string(),
             live: matches!(a.gate.state, CredentialState::Live)
@@ -411,6 +419,10 @@ async fn register(store: Store, seams: &Seams, headers: HeaderMap, ask: Register
     let Some(reservation) = seams.handover.reserve(2) else {
         return refused(&Refusal::HandoverFull);
     };
+    let first = match first_of(&store, &session, Target::Agent(minted.as_str()), ACTION).await {
+        Ok(first) => first,
+        Err(answer) => return answer,
+    };
     let write = async {
         let mut lock = store.authority_lock().await?;
         if let Err(refusal) = authority_stands(seams) {
@@ -424,6 +436,8 @@ async fn register(store: Store, seams: &Seams, headers: HeaderMap, ask: Register
             AdminWrite {
                 session_id: session.session_id,
                 person: &session.person_id,
+                first: &first,
+                store: &store,
             },
             &minted,
             &ask.r#box,
@@ -441,30 +455,14 @@ async fn register(store: Store, seams: &Seams, headers: HeaderMap, ask: Register
             (Ok((id, _)), Some((gate, admin))) => Ok(Ok((id, gate, admin))),
             (Ok(_), None) => anyhow::bail!("a register landed with no credentials minted"),
             (Err(e), _) if e.is::<AuthorityGone>() => Ok(Err(Refusal::AuthorityGone)),
-            (Err(e), None) => Err(e),
-            // **A commit's outcome is unknown until it is read back**, as in
-            // the host's `register`: the row carrying the new fingerprint
-            // means the write landed, and the configs are handed over.
-            (Err(e), Some((gate, admin))) => {
-                match store.agent_by_fingerprint(&gate.fingerprint).await? {
-                    Some((row, _)) => Ok(Ok((row.agent_id, gate, admin))),
-                    None => Err(e),
-                }
-            }
+            // A lost commit answer was read back by the act's own outcome
+            // record in the store (`store::commit`): an error here did not
+            // land.
+            (Err(e), _) => Err(e),
         }
     };
-    let written = match audited(
-        &store,
-        &session,
-        Target::Agent(minted.as_str()),
-        ACTION,
-        write,
-    )
-    .await
-    {
-        Ok(written) => written,
-        Err(answer) => return answer,
-    };
+    let written = write.await;
+    settled(&store, &first, &written).await;
     match written {
         Ok(Ok((id, gate, admin))) => hand_over(
             seams,
@@ -531,6 +529,10 @@ async fn rotate(store: Store, seams: &Seams, headers: HeaderMap, ask: RotateAsk)
     let Some(reservation) = seams.handover.reserve(2) else {
         return refused(&Refusal::HandoverFull);
     };
+    let first = match first_of(&store, &session, Target::Agent(&ask.agent), ACTION).await {
+        Ok(first) => first,
+        Err(answer) => return answer,
+    };
     let write = async {
         let mut lock = store.authority_lock().await?;
         if let Err(refusal) = authority_stands(seams) {
@@ -546,6 +548,8 @@ async fn rotate(store: Store, seams: &Seams, headers: HeaderMap, ask: RotateAsk)
             AdminWrite {
                 session_id: session.session_id,
                 person: &session.person_id,
+                first: &first,
+                store: &store,
             },
             &agent,
             &seams.authority.fingerprint(),
@@ -562,19 +566,11 @@ async fn rotate(store: Store, seams: &Seams, headers: HeaderMap, ask: RotateAsk)
             (Ok(_), None) => anyhow::bail!("a rotation landed with no credentials minted"),
             (Err(e), _) if e.is::<AuthorityGone>() => Ok(Err(Refusal::AuthorityGone)),
             (Err(e), _) if e.is::<Retired>() => Ok(Err(Refusal::Retired)),
-            (Err(e), None) => Err(e),
-            (Err(e), Some((gate, admin))) => {
-                match store.agent_by_fingerprint(&gate.fingerprint).await? {
-                    Some(_) => Ok(Ok((gate, admin))),
-                    None => Err(e),
-                }
-            }
+            (Err(e), _) => Err(e),
         }
     };
-    let written = match audited(&store, &session, Target::Agent(&ask.agent), ACTION, write).await {
-        Ok(written) => written,
-        Err(answer) => return answer,
-    };
+    let written = write.await;
+    settled(&store, &first, &written).await;
     match written {
         Ok(Ok((gate, admin))) => hand_over(
             seams,
@@ -631,4 +627,110 @@ async fn take(store: Store, seams: &Seams, headers: HeaderMap, ask: TakeAsk) -> 
         content,
     )
         .into_response()
+}
+
+#[derive(Deserialize)]
+pub struct RevokeAsk {
+    agent: String,
+    plane: String,
+}
+
+/// **Steps one to three of a revocation or a retirement**: the `ag-`
+/// parsed, the first gate, and the agent resolved for the admin by the
+/// store, its plane live for a revocation and some plane live for a
+/// retirement, each refusal before any record.
+async fn resolve_revocation(
+    store: &Store,
+    seams: &Seams,
+    headers: &HeaderMap,
+    agent: &str,
+    plane: Option<Plane>,
+    action: &str,
+) -> Result<(Session, AgentId), Response> {
+    if !is_agent_id(agent) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "the agent asked for is not of its identity's shape",
+        )
+            .into_response());
+    }
+    let session = writer(store, &seams.policy, headers, Target::Agent(agent), action).await?;
+    let id: AgentId = agent.parse().map_err(|e| fault(anyhow::Error::msg(e)))?;
+    let row = match store.agent(&id).await {
+        Ok(Some(row)) => row,
+        Ok(None) => return Err(refused(&Refusal::NoSuchAgent)),
+        Err(e) => return Err(fault(e)),
+    };
+    let live = |p: Plane| row.credential(p).state == CredentialState::Live;
+    match plane {
+        Some(p) if !live(p) => return Err(refused(&Refusal::PlaneRevoked)),
+        None if !live(Plane::Gate) && !live(Plane::Admin) => {
+            return Err(refused(&Refusal::Retired));
+        }
+        _ => {}
+    }
+    Ok((session, id))
+}
+
+/// **Step four of a revocation or a retirement**: the audited write, the
+/// row re-read inside its transaction under the shared identity hold.
+async fn revoked(
+    store: &Store,
+    session: &Session,
+    id: &AgentId,
+    plane: Option<Plane>,
+    action: &str,
+) -> Response {
+    let first = match first_of(store, session, Target::Agent(id.as_str()), action).await {
+        Ok(first) => first,
+        Err(answer) => return answer,
+    };
+    let write = async {
+        match store
+            .revoke_by_admin(
+                AdminWrite {
+                    session_id: session.session_id,
+                    person: &session.person_id,
+                    first: &first,
+                    store,
+                },
+                id,
+                plane,
+            )
+            .await
+        {
+            Ok(revoked) => Ok(Ok(revoked)),
+            Err(e) if e.is::<AuthorityGone>() => Ok(Err(Refusal::AuthorityGone)),
+            Err(e) if e.is::<PlaneRevoked>() => Ok(Err(Refusal::PlaneRevoked)),
+            Err(e) if e.is::<Retired>() => Ok(Err(Refusal::Retired)),
+            Err(e) => Err(e),
+        }
+    };
+    let written = write.await;
+    settled(store, &first, &written).await;
+    crate::surfaces::admin::landed(written, "/admin/agents")
+}
+
+/// **One plane's credential revoked**: its live connection closed in this
+/// act, the other plane untouched.
+async fn revoke(store: Store, seams: &Seams, headers: HeaderMap, ask: RevokeAsk) -> Response {
+    const ACTION: &str = "revoke";
+    let Ok(plane) = ask.plane.parse::<Plane>() else {
+        return (StatusCode::BAD_REQUEST, "the plane is gate or admin").into_response();
+    };
+    match resolve_revocation(&store, seams, &headers, &ask.agent, Some(plane), ACTION).await {
+        Ok((session, id)) => revoked(&store, &session, &id, Some(plane), ACTION).await,
+        Err(answer) => answer,
+    }
+}
+
+/// **An agent retired**: every live plane's credential revoked in one
+/// write, its connections closed in this act. A retired row is never live
+/// again; the agent is registered afresh, as a new row.
+async fn retire(store: Store, seams: &Seams, headers: HeaderMap, ask: RotateAsk) -> Response {
+    const ACTION: &str = "retire";
+    match resolve_revocation(&store, seams, &headers, &ask.agent, None, ACTION).await {
+        Ok((session, id)) => revoked(&store, &session, &id, None, ACTION).await,
+        Err(answer) => answer,
+    }
 }

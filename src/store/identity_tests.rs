@@ -108,6 +108,53 @@ async fn every_identity_check_refuses_its_member_missing() {
     }
 }
 
+/// **Every target the audit writes is checked by its kind** (0018's
+/// sweep): a passkey target out of its `pk-` shape, an authority target
+/// naming a row, and a target of no kind the writer knows are each refused
+/// by their check's name.
+#[tokio::test]
+async fn every_audit_target_is_checked_by_its_kind() {
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let cases: [(&str, &str, &str); 4] = [
+        (
+            "a passkey target out of shape",
+            "INSERT INTO audit (principal, method, target_kind, target_id, action) \
+             VALUES ('host', 'host', 'passkey', 'pk-0123', 'test')",
+            "audit_a_passkey_target_names_its_row",
+        ),
+        (
+            "a passkey target with no identity",
+            "INSERT INTO audit (principal, method, target_kind, action) \
+             VALUES ('host', 'host', 'passkey', 'test')",
+            "audit_a_passkey_target_names_its_row",
+        ),
+        (
+            "an authority target naming a row",
+            "INSERT INTO audit (principal, method, target_kind, target_id, action) \
+             VALUES ('host', 'host', 'authority', 'ag-0123456789abcdef', 'test')",
+            "audit_an_authority_target_names_no_row",
+        ),
+        (
+            "a target of no known kind",
+            "INSERT INTO audit (principal, method, target_kind, action) \
+             VALUES ('host', 'host', 'session', 'test')",
+            "audit_a_target_is_a_known_kind",
+        ),
+    ];
+    for (what, statement, check) in cases {
+        let mut tx = s.pool.begin().await.unwrap();
+        let result = sqlx::query(statement).execute(&mut *tx).await;
+        tx.rollback().await.unwrap();
+        let error = result
+            .err()
+            .unwrap_or_else(|| panic!("{what} landed where {check} should refuse it"));
+        assert!(error.to_string().contains(check), "{what}: {error}");
+    }
+}
+
 /// **The audit's person is a person** (0015's foreign key): a record naming
 /// a person no row holds is refused.
 #[tokio::test]

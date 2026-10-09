@@ -51,7 +51,7 @@ pub const NAME_BOUND: usize = 1024;
 /// surface's boundary, before any record**, by these four helpers, one per
 /// kind: a malformed one is refused there as the ask's fault and written
 /// nowhere, so a request's text never becomes an audit target, and the
-/// targets the audit checks by shape (a person's, a grant's) never turn an
+/// audit, which checks every target by its kind (0018), never turns an
 /// ordinary malformed request into the server's failure. A well-shaped
 /// identity naming nothing goes on to the store, which answers that no such
 /// row stands.

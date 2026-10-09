@@ -758,6 +758,11 @@ async fn a_malformed_identity_is_refused_before_any_record() {
             &session,
         )
         .await;
+        assert_eq!(
+            rows(s, "SELECT count(*) FROM audit").await,
+            before,
+            "{passkey}: a malformed passkey lands no audit row"
+        );
         assert_eq!(status, StatusCode::BAD_REQUEST, "{passkey}: {answer}");
     }
     assert_eq!(

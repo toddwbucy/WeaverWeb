@@ -433,11 +433,16 @@ its load state, and its live trace window.
 
 ## 10. The audit record, the exclusion, and what is out
 
-**The passkey table** holds, per passkey: the person, the credential ID (unique across the
-table, section 7), the library's serialized passkey (the public key, its algorithm and the
+**The passkey table** holds, per passkey: **its own identity** (`pk-`, Spec 2's
+convention, drawn at random and never reused, added by migration `0017`), the person, the
+credential ID (unique across the table, section 7), the library's serialized passkey (the public key, its algorithm and the
 stored counter), a label the person gives, and when it was added and last used. Nothing in
 it is secret; it is authentication material under Spec 2.13 all the same, written only by
-its own person or by the host reset.
+its own person or by the host reset. **A session names the passkey by that identity and
+not by its credential ID**: the host reset deletes a person's passkeys, and re-enrolling
+the same authenticator brings the same credential ID back as a new row, which a session
+opened before the reset must not match; a new row has a new identity, so the reset ends
+every session its passkeys opened.
 
 **The audit table** is `audit`, one row per record:
 - its identity;

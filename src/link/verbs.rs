@@ -55,12 +55,29 @@ pub(crate) fn refused(verb: &str, error: impl std::fmt::Display) -> Answer {
 
 /// **The first record, written before the verb acts**, or the verb's
 /// refusal where it cannot be written: a verb never acts unaudited.
+///
+/// **A host's `--author` claim of a person's identity is refused here**,
+/// before any record is written, for every host command (the register
+/// verbs and the identity commands alike all pass through): an author in
+/// the whole `pe-` shape resolves as that person (Spec 3.2), and an
+/// identity is never a claim, so a stored `pe-` author can only have come
+/// from a person's session. A claim merely starting `pe-` stays a claim.
 pub(crate) async fn first_record(
     store: &Store,
     verb: &str,
     author: Option<&str>,
     target: Target<'_>,
 ) -> Result<String, Answer> {
+    if let Some(author) = author
+        && crate::store::identity::is_person_id(author)
+    {
+        return Err(refused(
+            verb,
+            format!(
+                "--author {author} has the shape of a person's identity, and an identity is never a claim: a person's identity is written as an author by their session alone"
+            ),
+        ));
+    }
     store
         .audit_first(Principal::Host { author }, target, verb)
         .await

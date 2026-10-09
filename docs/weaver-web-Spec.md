@@ -815,25 +815,24 @@ to: web-nothing-is-computed-at-read-time-unless-the-query-is-recorded
 ### 2.8 The session
 
 **Admitted on the same ground section 2.6 was: a rule stated elsewhere needs
-somewhere to land.** Section 3.2 gives every authored row a nullable author
-and says the member holds the name the authoring surface had. **HTTP carries
-no name between requests**, so a surface can only have one if something holds
-it, and that something is this row. Without it the author member has a value
-and no source, which is the state this document was in until 2026-09-08.
+somewhere to land.** Section 3.2 gives every authored row a nullable author,
+and **HTTP carries no identity between requests**, so a surface can only know
+who asks if something holds it, and that something is this row.
 
-**It is continuity and it is not a person.** A session is opened by an
-operator who claims a name, and what is stored is the claim. Nothing here
-proves anyone is anyone, per the charter's section 6, and nothing here is
-access control.
+**A session is a person's**, as act 11 built it on 2026-10-08 to its design
+(`docs/project/design-2026-10-07-iam.md` section 6): it is opened at sign-in
+by a passkey of the person's, per section 2.13, and carries the person and
+the passkey it was opened with. It is what a surface reads to know who asks,
+and what an authored row's author member takes its value from.
 
 ```graph
-node: web-session-carries-a-claim-and-never-a-proof
+node: web-session-carries-a-person
 kind: assertion
-tag: review
+tag: perturbation
 
 edge: asserts
 from: weaver-web
-to: web-session-carries-a-claim-and-never-a-proof
+to: web-session-carries-a-person
 ```
 
 Each row carries:
@@ -842,18 +841,22 @@ Each row carries:
 - **the bearer's digest and never the bearer.** The value the browser holds
   is hashed before it is stored and the lookup is on the digest, so a read of
   this table is not a set of live sessions
-- **the name claimed at open**, which is what section 3.2's author member
-  takes its value from
-- **the role**, per the charter's section 6
-- when it was opened, and when it closed where it has
+- **the person**, whose identity section 3.2's author member takes
+- **the passkey it was opened with**, by the passkey's own identity (`pk-`,
+  drawn at random and never reused) and not its credential ID, and with no
+  foreign key: removing a passkey deletes its row, which a key would refuse
+  or cascade into the session, and the session sees the absence at its next
+  use; the same credential re-enrolled after a host reset is a new row with
+  a new identity, so it revives no session opened before the reset
+- when it opened, when it was last used, and when it closed where it has
 
-**The digest rule is stated before there is a token to migrate.** The prior
-schema stored the bearer in the clear and the fix would have wanted a
+**The digest rule was stated before there was a token to migrate.** The
+prior schema stored the bearer in the clear and the fix would have wanted a
 migration and an invalidation path for everything already issued, per
 issue #336. That table retired with the conversation half at PR #499, so this
-document states the shape while stating it is free, on the same reasoning
-section 3.2's author member was landed under: the cheap moment is before the
-first row exists.
+document stated the shape while it was free, on the same reasoning section
+3.2's author member was landed under: the cheap moment is before the first
+row exists.
 
 ```graph
 node: web-bearer-is-stored-as-a-digest
@@ -865,49 +868,61 @@ from: weaver-web
 to: web-bearer-is-stored-as-a-digest
 ```
 
-**Before the identity act a role is a property of the session and not of a
-person**, because no person is proved and a role has nothing else to attach
-to. That is what the charter's section 6 means by roles being structural
-while not being access control: the structure stands, and what is missing is
-the proof rather than the shape. **When the act's trigger fires, the role
-attaches to the proved identity and this row references it.** The column
-moves and the gate does not, which is section 6's own promise made checkable
-rather than left as a sentence.
+**The cookie is `__Host-weaver_session`**: `Secure`, `HttpOnly`,
+`SameSite=Strict` and `Path=/` with no `Domain`, the prefix making a browser
+refuse it otherwise, so no script reads it, no other site's request carries
+it, and no other host can set it. The bearer is drawn under section 2.13's
+rule for every bearer the server issues. **The one name serves every origin
+the server may run on**: measured on 2026-10-08, Chromium 153 and Firefox 156
+keep a `__Host-` `Secure` cookie on `http://localhost`, which they treat as a
+secure context, and drop it on a plain origin elsewhere, which section 2.13's
+scheme rule already refuses. A cookie under the claimed-name session's old
+name, `weaver_session`, names nothing.
 
-**Once section 2.13's authentication stands, the session carries the
-authenticated person and not a claim**, and the role this row holds today
-gives way to that person's grants on each agent. **The session act 11
-builds**, decided by its design (`docs/project/design-2026-10-07-iam.md`
-section 6) on 2026-10-07:
+**Each end is checked at every use**, in one read on the database's clock:
+the session closed, its person disabled, the passkey it was opened with
+removed (the host reset among the ways, clearing the person's passkeys),
+open past the absolute limit, or unused past the idle limit. **The limits are
+twelve hours open and one hour idle**, the server's config
+(`session_absolute_secs`, `session_idle_secs`) with those defaults, **the
+absolute limit never past seven days** (`SESSION_ABSOLUTE_MAX_SECS`, refused
+at load past it), since an absolute limit longer than a week stops being one
+and the bound keeps every limit an interval the database can represent; the
+idle limit is never past the absolute, so it is bounded too. The use that
+finds a session ended closes its row, **the close restating the reason it
+found in its own condition**, so a close decided on a read another request
+has since overtaken, a refresh above all, moves no row; the use then reads
+the session once more and serves or refuses it on that read. Sign-out closes
+unconditionally, the person having asked. So **no end needs a write to
+every session**, and **nothing but the surface writes a session**: a
+disable, a passkey's removal and the host reset change the person or the
+passkey, and the session sees it at its next use. An open live view counts
+as use while it streams and is re-checked every 15 seconds, per section 2.13.
 
-- **the row carries the person and the passkey it was opened with**, beside
-  the bearer's digest, its opening, its last use and its close, and **the
-  claimed name and the configured role retire**; its last use is written at
-  most once a minute, per section 3's writer model, so idle expiry is
-  accurate to a minute
-- **the cookie is `__Host-weaver_session`**, `Secure`, `HttpOnly`,
-  `SameSite=Strict` and `Path=/` with no `Domain`, the prefix making a
-  browser refuse it otherwise; the bearer is drawn under section 2.13's rule
-  for every bearer the server issues and stored as its digest under the rule
-  above
-- **it ends at an hour idle and twelve hours open**, both the server's config
-  with those defaults, an open live view counting as use; at sign-out; and
-  when its person is disabled, the passkey it was opened with is removed, or
-  the host resets its person, each seen at the session's next use
-- **sign-in is name-first**: the person gives their name and answers a
-  challenge for their own passkeys, the challenge held in the server's memory
-  for at most five minutes and used once, **with at most 64 ceremonies in
-  flight**, a new one beyond that refused, since a ceremony starts before
-  anyone is authenticated and an unbounded map would be a crash
-- **an open live view is re-checked every 15 seconds** and closes when its
-  session or its person's grant on the agent has ended, per section 2.13
-- **every request that changes state carries an `Origin` equal to the
-  configured origin** or is refused before its handler, beside
-  `SameSite=Strict`
+**The last use is written at most once a minute**: one conditional update on
+the database's clock, `last_used_at = now()` where the stored time is a
+minute old or more, so concurrent uses refresh it once, the writes stay
+bounded whatever a page polls, and it never moves backwards. **Idle expiry is
+honoured to within a minute**, which an hour's limit needs no finer than, and
+**the idle limit is never under five minutes** (`SESSION_IDLE_FLOOR_SECS`,
+refused at load below it): a limit near the refresh's one-minute grain would
+end a session in active use, so it must be several times that grain, and
+five minutes is that with margin.
 
-Until act 11's passkey pull request lands, this section's assertion that a
-session carries a claim and never a proof stands as written, and that pull
-request replaces it.
+**Every request that changes state carries an `Origin` equal to the
+configured origin**, exactly one such header, or is refused before its
+handler: every method but `GET` and `HEAD`, over the whole app, the legacy
+routes included, beside `SameSite=Strict`. **With no origin configured,
+nothing that changes state is served**, since nothing can sign in without
+one. **Sign-out** is a `POST` that closes the session's row and clears the
+cookie.
+
+**Sign-in is name-first**, built by act 11's sign-in pull request: the person
+gives their name and answers a challenge for their own passkeys, the
+challenge held in the server's memory for at most five minutes and used
+once, **with at most 64 ceremonies in flight**, a new one beyond that
+refused, since a ceremony starts before anyone is authenticated and an
+unbounded map would be a crash.
 
 **A session is not an authored row and takes no version.** Section 3.2's
 ordering rule answers two engineers editing one declaration, and nobody edits
@@ -1320,15 +1335,14 @@ recovery. That design is `docs/project/design-2026-10-07-iam.md`, which
 holds the threat model and the measurements the choices rest on; the rules
 it decides are stated here and in section 2.8, and the reasons are there.
 
-- **The person**: an identity authenticated to the server, distinct from
-  section 2.8's session, which carries a claim and no proof. A person row
+- **The person**: an identity authenticated to the server, whose session,
+  section 2.8, carries the person and the passkey it was opened with. A person row
   carries its own identity under the convention section 2 opens with, the
   name it is known by, and whatever the authentication mechanism keeps,
   never a secret in the clear, which is section 2.8's digest rule carried to
-  the person. Once authentication stands, a session carries the
-  authenticated person rather than a claimed name, and section 3.2's author
-  member takes its value from the person's identity, the surfaces rendering
-  the person's current name. **The person authenticates by passkey alone**:
+  the person. Section 3.2's author member takes its value from the
+  session's person's identity, the surfaces rendering the person's current
+  name. **The person authenticates by passkey alone**:
   no password, no second factor and no external identity provider, the
   relying party's identity and origin coming from the server's config and
   never from the repository. **The browser's listener serves TLS before any
@@ -1336,7 +1350,9 @@ it decides are stated here and in section 2.8, and the reasons are there.
   relying party's identity being a domain and never an address, and **the
   server refuses to start, where passkeys are on, on the faults the design's
   section 3 lists and on nothing beyond them**: the relying party
-  missing or an address, an origin that is not a serialized origin, not
+  missing or an address, or not its domain's ASCII serialization (refused
+  rather than normalized, as the origin is, naming the form to configure),
+  an origin that is not a serialized origin, not
   `https` (bar `http` on `localhost`) or not under the relying party, a
   certificate and key that are missing, do not load or do not pair, or a
   certificate not valid for the origin's host or not valid at the clock at
@@ -1960,16 +1976,24 @@ current, the other says whether this row has moved since you read it.**
   name an author when the row was written, and it never means the
   operator**, because a default that guesses writes a fact nobody can
   correct later and an unknown that says so can be filled by anyone who
-  knows. **The member holds the name the authoring surface had, and section
-  2.8 says where the surface had it from**: the session the operator opened,
-  which holds a claimed name and not a proved one. That is the whole of why
-  a pre-act author is asserted rather than proved, and it is stated in two
-  places because the member is in one section and its source in another.
-  **The identity act of the charter's section 6 changes what fills it and
-  not whether it exists**, the act attaching authentication to the roles that
-  already stand rather than rearchitecting around them. That act is act 11,
-  whose design has the member hold the authenticated person's identity, per
-  section 10.
+  knows. **The member holds the identity of the person whose session wrote
+  the row, and section 2.8 says where the surface had it from**: the session,
+  which carries the person. **It holds the identity (`pe-`) and never the
+  name**, since a person can be renamed and an author must not move with
+  them, and a surface renders the person's current name. **A host's
+  `--author` claim of the whole `pe-` shape is refused** at every host
+  command, the register verbs and the identity commands alike, before any
+  record is written, since an identity is never a claim: so a stored `pe-`
+  author can only have come from a person's session, and a claim merely
+  starting `pe-` stays a claim. **A member written
+  before persons stood keeps the claimed name it carries**, which reads as a
+  claim because it resolves to no person; the store's `author` read answers
+  a person with their current name, a claim, or no author, which is how a
+  surface renders the member. It is stated in two places because the member
+  is in one section and its source in another. **The identity act of the
+  charter's section 6 changed what fills it and not whether it exists**,
+  attaching authentication to the roles that already stood rather than
+  rearchitecting around them.
 
 ```graph
 node: web-authored-row-names-its-author-or-names-none
@@ -3743,7 +3767,6 @@ missing while it was relaying.
 | import computes the identity rather than accepting one | perturbation: take the operator's digest, two boxes disagree about one artifact |
 | a record identity names at most one catalog row for a file or a directory artifact, a renamed split excepted per sections 2.3 and 10 | perturbation, at the schema: drop the unique index that holds for every shape but a split, a second import of the same file or directory opens a second row and a lookup answers two where it owes one |
 | the bearer is stored as a digest and never in the clear | perturbation, at the schema: store the bearer and look up on it, a read of the session table is a set of live sessions |
-| a session carries a claimed name and never a proof | review, over the open path: nothing between the posted name and the row tests it, which is the posture section 6 defers and not a defect. **Retires with act 11's passkey pull request**, which replaces the claim with the authenticated person, per section 2.8 |
 | the sentinel joins to nothing | perturbation: register the empty string as an identity, a run whose hash failed joins to an artifact it never named |
 | the record's session and digest are absent where unsent | perturbation: fill an absent digest from the landed rows, a row from a record cut short vouches for bytes nobody drained |
 | the record's session and digest agree across a run | perturbation: land a run whose generations name two sessions, the row holds two truths about which record it came from |
@@ -3778,14 +3801,14 @@ missing while it was relaying.
 | every verb or turn asked and every person, role or grant written has an audit record naming its principal, and its outcome is a second record naming the first | perturbation, **owed**: write the first record after the ask instead of before, fail the store between the two, and an ask leaves with no record; update the first record with the outcome instead of appending a second, and an ask whose answer is lost reads as never answered with no trace of the rewrite; drop the refusal's record, and a refused verb leaves no trace; write a grant with the audit write dropped, and the grant lands with no record; enroll a person or add a passkey with the audit write dropped, and the write lands with no record; record the material in an authentication write's record, and a read of the audit table is a set of credentials. Lands with the IAM act |
 | a person authenticates by passkey and by nothing else | perturbation, **owed**: open a session on a posted name with no assertion, and a session opens with no proof; verify an assertion against another person's passkey, and one person signs in as another; accept a ceremony's challenge twice, and a captured assertion opens a second session. Lands with act 11's passkey pull request |
 | the server refuses to start on the listener's faults the design lists, and promises nothing beyond them | perturbation, each start refusal of `docs/project/design-2026-10-07-iam.md` section 3 that concerns the origin and the certificate, against certificates minted at test time in `src/listen_tests.rs`: the origin parsed by `url`, the WHATWG URL Standard a browser parses by, and required to equal its origin's ASCII serialization: drop the equality, and an origin with userinfo, a path or a trailing slash, a query, a fragment, a scheme or host in upper case, a default port written, a port with a leading zero, an IPv6 address not in its canonical form, a host a browser reads as an IPv4 address written otherwise than in dotted decimal, or an internationalized name not in its ASCII form starts, each a value no browser sends, so every state-changing request would fail the `Origin` comparison; compare the Unicode serialization instead, and an internationalized name starts in its Unicode form; keep the brackets of an IPv6 host in the name check, and a certificate for that address is refused; let `http` through off `localhost`, and the server listens on an origin where no ceremony can run; drop the refusal of an `https` origin with no certificate and key, and the listener serves it in the clear; drop the pair check, and a key that does not pair with its certificate starts; drop the name check, and a certificate for another host starts against the origin; drop either half of the validity check, and an expired or a not-yet-valid certificate starts; drop the warning, and one expiring within fourteen days starts silently. And the listener itself: let the binary serve plain where a certificate and key are configured, and `tests/startup.rs` (ignored, the real binary, started with a certificate minted at test time) gets no answer over TLS and a surface's answer in the clear; take each handshake on the accepting task, and a client that connects and never speaks stalls the next client's handshake in `src/listen_tests.rs`; drop the permit taken before each accept, and with the cap held by silent clients the next connection is accepted at once rather than waiting for a silent one's bound, at a small cap and bound the test sets; the same file shows a TLS client a surface's answer and a plain request none. And the listener's log, against a log captured in `src/listen_tests.rs`: log a client's certificate alert at debug, and a browser refusing the certificate leaves the operator nothing at the default level; warn of every one, and a second alert within the interval warns again; take every failed handshake for a certificate alert, and a plain client warns. With a certificate and no origin, the pair and the period are checked and the name check waits for an origin. A fault the list does not name, a certificate unfit for server authentication among them, is not this row's: the browser's refused handshake shows it |
-| the server refuses to start on the relying party's faults the design lists | perturbation, **owed**: drop the refusal of a missing `rp_id` or `origin` where passkeys are on, and the server listens with passkeys no browser will use; drop the refusal of an `rp_id` that is empty or an IP address, or of an origin whose host is neither the `rp_id` nor under it, and every ceremony fails with the browser's `SecurityError`. A public suffix as the `rp_id` is not this row's: the browser's failure at the first ceremony shows it. Lands with act 11's passkey pull request |
+| the server refuses to start on the relying party's faults the design lists | perturbation, each refusal its own case in `src/listen_tests.rs`: drop the refusal of an `rp_id` with no `origin`, or of an `origin` with no `rp_id`, and the server listens with passkeys no browser will use; drop the refusal of an empty `rp_id`, or of one that is an IP address, bracketed or not, and every ceremony fails with the browser's `SecurityError`; drop the refusal of an origin whose host is neither the `rp_id` nor under it, or take a bare suffix for a domain under it, and an origin of another registrable domain, or one the `rp_id` sits under, starts; drop the requirement that the `rp_id`, parsed by `url` as a browser parses a host, equal its domain's ASCII serialization, and an `rp_id` in upper case or with a Unicode label starts, the config and what the ceremonies send the browser no longer one fact. A public suffix as the `rp_id` is not this row's: the browser's failure at the first ceremony shows it |
 | a person's name is unique in its canonical form at enrollment | perturbation in `src/host_tests.rs` and `src/store/identity_tests.rs`: compare names as given, and a second person bootstraps as `ADA` beside `Ada`, as full-width letters, or with an accent composed where the first decomposed it, so name-first sign-in would find two |
 | a person is named by identity only in an identity's whole shape, and no name takes it | perturbation in `src/host_tests.rs`: read any `pe-` argument as an identity, and a person named `pe-alice` is not found by name; take a name of an identity's whole shape, and it lands, shadowing the person whose identity it spells |
 | the host's write of a role refuses a stale version | perturbation in `src/host_tests.rs`: drop the version from the role's update, hold one write after its read while another commits, and the held write overwrites the other's verbs. A grant's removal carries its version too; the re-check of its liveness under the exclusion already refuses a grant another removal revoked, so the version adds no instrument of its own there |
 | a person's name stays unique in its canonical form at rename | perturbation, **owed**: drop the check at rename, and a rename lands a name another person's form already holds. Lands with act 11's pull request of an admin's writes |
 | a credential ID belongs to one passkey of one person | perturbation, **owed**: drop the unique constraint, and a registration returning a credential ID another person holds lands a second passkey row for it, so one credential signs in as either person. Lands with act 11's passkey pull request |
 | a signature counter that did not rise refuses the assertion, any assertion, and the stored passkey is updated by a locked read, merge and write | perturbation, **owed**: take the library's `CredentialPossibleCompromise` as a success, roll a device-bound passkey's counter back, and a session opens, and the same at the fresh assertion before adding a passkey, and a passkey is added on a cloned credential's word; drop the update of the stored passkey, and a clone replaying an old counter passes against the first value ever stored; update it at sign-in alone, and the addition's assertion leaves it stale; put the update back in the action's transaction, fail the addition, and the passkey rolls back with it, stale; persist the counter alone, and a passkey's backup state goes stale; write back the copy deserialized before the ceremony without the row's lock, and a concurrent assertion erases another's backup-eligibility upgrade; compare against that pre-ceremony copy instead of the locked read, and two concurrent assertions with a nonzero counter both succeed; apply the refusal to a zero counter, and a synced passkey cannot sign in; audit a sign-in whose signature failed, and a stream of bad assertions fills the audit. Lands with act 11's passkey pull request |
-| a session carries an authenticated person, ends where its person or its passkey does, and its cookie is neither readable by script nor carried by another site | perturbation, **owed**: drop `HttpOnly`, `Secure`, `SameSite=Strict` or the `__Host-` prefix, and the cookie's test finds the attribute gone; drop the `Origin` check, and a POST from another origin changes state; drop the idle or the absolute expiry, and a session past it still authorizes; drop the check of the passkey a session was opened with, remove that passkey, and the session still authorizes. Lands with act 11's passkey pull request |
+| a session carries a person, ends where its person or its passkey does, and its cookie is neither readable by script nor carried by another site | perturbation, against sessions opened in the store in `src/surfaces/gate_tests.rs`: drop `HttpOnly`, `Secure`, `SameSite=Strict` or `Path=/`, or set the cookie under another name, and the cookie's test finds it changed; read the old `weaver_session` name too, and a claimed-name cookie names a session; drop the check of a session's close, of its person's disable, of its passkey's presence, of the absolute limit or of the idle limit, and a session so ended is served; name the passkey by its credential ID rather than its own identity, reset the person and enroll the same credential again, and the session opened before the reset is served; leave the row open where a use finds it ended, and the next read finds it open; drop the `Origin` check, admit a request with no origin configured, or take the first of two `Origin` headers, and a POST from another origin changes state; refresh the last use unconditionally, and two uses within a minute write twice and a time ahead of the clock moves back; close unconditionally where a read found a session ended, hold a use between its read and its close, refresh the session from another request meanwhile, and the refreshed session is closed on the stale read (`src/surfaces/gate_tests.rs`); drop the absolute limit's seven-day bound, and an absolute limit of the largest integer a config holds loads (`src/config.rs`), an interval the database cannot make at every use; drop the idle limit's five-minute floor, and an idle limit of 30 seconds is accepted at load (`src/config.rs`), where a session in active use would end; and a session used every 50 seconds is held open at the floor itself (`src/surfaces/gate_tests.rs`); let sign-out leave the row open, and the cookie it cleared still names a session; write the person's name as the author, or resolve every member as a claim, and an authored row stops naming its person or their current name; let a host's `--author` claim of the whole `pe-` shape through, and each register verb and identity command acts on it (`src/link/verbs_audit_tests.rs`, `src/host_tests.rs`), its claim then resolving as that person. `tests/startup.rs` (ignored, the real binary) reads Record under a person's session and refuses a legacy POST at the `Origin` check |
 | a passkey is added only after a fresh assertion, and a person's last is never removed | perturbation, **owed**: add a passkey on a session alone, and a stolen cookie gains access that outlasts it; let a registration use an add grant another session earned, and a parallel session adds a passkey on someone else's assertion; leave the grant unconsumed at the registration's start, and one assertion adds two passkeys; let a person remove their last passkey, and they are locked out with only the host to recover them. Lands with act 11's passkey pull request |
 | an enrollment token is issued only for a person holding no passkey, lives at most seven days, is kept as its digest, and is its person's one live token | perturbation in `src/host_tests.rs`: drop the passkey check, and a token is issued for a person holding a credential, which an admin could redeem over theirs; drop the command's lifetime bound, and a token past seven days is refused only by the store, as a fault; drop the store's lifetime check, and a row past seven days lands; store the token in the clear, and a read of the token table is a set of usable tokens; leave an earlier token live when issuing, and the newest is refused against the one live token per person. And in `src/config.rs`: configure a lifetime past seven days, and it is taken |
 | an enrollment token is single-use and redeemed only within its lifetime | perturbation, **owed**: redeem a token twice, or past its lifetime, and each lands a credential. Lands with act 11's passkey pull request |
@@ -3809,19 +3832,22 @@ missing while it was relaying.
 act that lands it states what removal makes it fail and confirms it does.
 
 **A row marked owed has no instrument and is not counted as enforced.**
-Eighteen stand so marked as of 2026-10-08. The batch's order is owed because
+Sixteen stand so marked as of 2026-10-08. The batch's order is owed because
 section 2.11 describes its table and no migration builds it. Three rows of
 the role shape ruled on 2026-10-02 are owed to the IAM act: the principal
 check, the writer's check for persons, roles and grants, and the audit
-record. **Fourteen are owed to act 11's code pull requests**, from its design
-of 2026-10-07: passkey-only sign-in, the relying party's start refusals, the unique name at
-rename, the credential ID, the signature counter, the session, the fresh
+record. **Twelve are owed to act 11's code pull requests**, from its design
+of 2026-10-07: passkey-only sign-in, the unique name at
+rename, the credential ID, the signature counter, the fresh
 assertion and the last passkey, the enrollment token's redemption, the session
 bearer's and the ceremony identity's randomness, the
 admin's lack of agent actions, read access, the live view's bound, the
 ceremony cap, and the WebAuthn library's place in the server binary alone.
-The row that a session carries a claimed name is not owed but retires with
-act 11's passkey pull request. Act 11's TLS pull request of 2026-10-08 stood up
+Act 11's session pull request of 2026-10-08 retired the row that a session
+carries a claimed name, and stood up the relying party's start refusals and
+the session as a person's (its cookie, its ends at every use, its last-used
+refresh, the `Origin` check, sign-out and the author member), each shown to
+fail with its guard removed. Act 11's TLS pull request of 2026-10-08 stood up
 the listener's start refusals, those of the origin and the certificate, and the
 listener that serves TLS alone, each shown to fail with its guard removed, and
 narrowed the start-refusal row to the relying party's two. The alignment with
@@ -3905,9 +3931,9 @@ a `web-` assertion beside `weaver-admin`'s.
   stands staged on bulk-store since 2026-07-29 and in no record yet, so the
   first import of it is where the ambiguity lands, and the ruling is owed
   before that import rather than after.
-- **What an author names, closed 2026-10-07 by act 11's design.** Once the
-  act's passkey pull request lands, section 3.2's member holds the
-  authenticated person's identity and not their name, a person being
+- **What an author names, closed 2026-10-07 by act 11's design** and built
+  on 2026-10-08: section 3.2's member holds the session's person's identity
+  and not their name, a person being
   renamable and an author not moving with them, and the surfaces render the
   current name; a row written before the act keeps the claimed name it
   carries, which reads as a claim because it resolves to no person. Per

@@ -67,6 +67,7 @@ impl Server {
                 "origin".into(),
                 format!("https://localhost:{}", address.port()).into(),
             );
+            values.insert("rp_id".into(), "localhost".into());
         }
         // The server refuses to start without an authority (Spec 8), so
         // the acceptance mints one first, under the scratch directory. Since
@@ -157,7 +158,8 @@ impl Server {
             "\n%{http_code}",
         ]);
         if let Some(token) = token {
-            curl.arg("--cookie").arg(format!("weaver_session={token}"));
+            curl.arg("--cookie")
+                .arg(format!("__Host-weaver_session={token}"));
         }
         let url = match &self.ca {
             Some(ca) => {
@@ -211,19 +213,39 @@ async fn real_server_starts_on_current_schema() {
         server.get("/record", None),
         (
             401,
-            "this surface is read under a session. Open one and ask again.".into()
+            "this surface is read under a session. Sign in and ask again.".into()
         )
     );
 
+    // **A person's session, opened in the store** (act 11, PR 4a): the
+    // person, the passkey it was opened with, and the session, as sign-in
+    // will open them.
     let token = uuid::Uuid::new_v4().to_string();
-    sqlx::query("INSERT INTO session (bearer_digest, claimed_name, role) VALUES ($1, 'startup-check', 'user')")
+    let person: String = sqlx::query_scalar(
+        "INSERT INTO person (name, name_key) VALUES ('startup-check', 'startup-check') RETURNING person_id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let passkey: String = sqlx::query_scalar(
+        "INSERT INTO passkey (credential_id, person_id, credential) VALUES ('startup-cred', $1, '{}') RETURNING passkey_id",
+    )
+    .bind(&person)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO session (bearer_digest, person_id, passkey_id) VALUES ($1, $2, $3)")
         .bind(format!("{:x}", Sha256::digest(token.as_bytes())))
-        .execute(&pool).await.unwrap();
+        .bind(&person)
+        .bind(&passkey)
+        .execute(&pool)
+        .await
+        .unwrap();
     let (status, body) = server.get("/record", Some(&token));
     assert_eq!(status, 200);
     assert!(
         body.contains("startup-check"),
-        "record must render the seeded claim: {body}"
+        "record must render the session's person: {body}"
     );
     let (status, body) = server.get("/admin", None);
     eprintln!("W2 /admin measurement: status={status}, body={body:?}");
@@ -235,13 +257,24 @@ async fn real_server_starts_on_current_schema() {
         ("GET", "/admin/trace/startup-check"),
         ("GET", "/admin/trace/startup-check/stream"),
     ] {
+        // A request that changes state meets the `Origin` check first (act
+        // 11, PR 4a), and this server has no origin configured.
+        let refused = if method == "POST" {
+            (
+                403,
+                "no origin is configured, so this server serves no request that changes state"
+                    .into(),
+            )
+        } else {
+            (
+                503,
+                "the legacy admin surface is unavailable until the session/IAM act.".into(),
+            )
+        };
         for cookie in [None, Some(token.as_str())] {
             assert_eq!(
                 server.request(method, path, cookie),
-                (
-                    503,
-                    "the legacy admin surface is unavailable until the session/IAM act.".into()
-                ),
+                refused,
                 "legacy route {method} {path} must refuse before any handler work"
             );
         }

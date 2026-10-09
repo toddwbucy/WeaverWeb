@@ -410,6 +410,9 @@ async fn serve(cfg: Arc<ServerConfig>) -> anyhow::Result<()> {
         }
     }
 
+    // And the relying party's, where passkeys are on (design section 3).
+    weaver_web::listen::relying_party(&cfg)?;
+
     let store = store::Store::connect(&cfg.database).await?;
     tracing::info!("store connected, migrations applied");
 
@@ -425,7 +428,8 @@ async fn serve(cfg: Arc<ServerConfig>) -> anyhow::Result<()> {
     // Spec section 6: a surface that renders what is kept reads the store
     // and nothing else. They carry their own state rather than the
     // legacy admin `AppState`, keeping record reads independent of the link.
-    let instrument = weaver_web::surfaces::routes().with_state(store.clone());
+    let policy = weaver_web::surfaces::gate::Policy::from_config(&cfg);
+    let instrument = weaver_web::surfaces::routes(policy.clone()).with_state(store.clone());
 
     // The legacy admin routes answer 503 and reach no agent; their trace
     // views are the listener's live window, so the one ring per agent is
@@ -436,7 +440,10 @@ async fn serve(cfg: Arc<ServerConfig>) -> anyhow::Result<()> {
     };
 
     let listener = tokio::net::TcpListener::bind(&cfg.listen).await?;
-    let app = web::router(state).merge(instrument);
+    // **The `Origin` check over the whole app** (design section 6), so no
+    // route that changes state, the legacy routes' included, stands outside
+    // it.
+    let app = weaver_web::surfaces::gate::guard(web::router(state).merge(instrument), policy);
     // The listener halting itself (its lock session lost) ends the process,
     // so the operator's supervisor restarts it into a clean start.
     let halting = link.clone();

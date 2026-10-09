@@ -4,7 +4,7 @@
 //! none is in the repository.
 
 use crate::config::ServerConfig;
-use crate::listen::{browser_tls, parse_origin, scheme_admits};
+use crate::listen::{browser_tls, parse_origin, relying_party, scheme_admits};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -26,6 +26,9 @@ fn cfg() -> ServerConfig {
         origin: None,
         tls_certificate: None,
         tls_key: None,
+        rp_id: None,
+        session_idle_secs: 3600,
+        session_absolute_secs: 43200,
     }
 }
 
@@ -200,6 +203,96 @@ fn an_ipv6_address_is_accepted_only_as_a_browser_serializes_it() {
             );
         }
         parse_origin(&canonical).unwrap_or_else(|e| panic!("{canonical}: {e}"));
+    }
+}
+
+/// **The relying party's refusals** (design section 3), each its own case:
+/// an `rp_id` without an `origin` and the reverse, an empty `rp_id`, an
+/// `rp_id` that is an IP address, and an origin whose host is neither the
+/// `rp_id` nor under it, a bare suffix and the reverse nesting among them;
+/// neither configured starts with no passkey on.
+#[test]
+fn the_relying_partys_faults_are_refused() {
+    let with_rp = |origin: Option<&str>, rp_id: Option<&str>| {
+        let mut c = cfg();
+        c.origin = origin.map(str::to_owned);
+        c.rp_id = rp_id.map(str::to_owned);
+        c
+    };
+    relying_party(&with_rp(None, None)).expect("no passkey on, nothing refused");
+    for (origin, rp_id, why) in [
+        (
+            None,
+            Some("weaver.test"),
+            "rp_id is configured and origin is not",
+        ),
+        (
+            Some("https://weaver.test"),
+            None,
+            "origin is configured and rp_id is not",
+        ),
+        (Some("https://weaver.test"), Some(""), "rp_id is empty"),
+        (
+            Some("https://192.0.2.1"),
+            Some("192.0.2.1"),
+            "is an IP address",
+        ),
+        (
+            Some("https://[2001:db8::1]"),
+            Some("2001:db8::1"),
+            "is an IP address",
+        ),
+        (
+            Some("https://[2001:db8::1]"),
+            Some("[2001:db8::1]"),
+            "is an IP address",
+        ),
+        (Some("https://weaver.test"), Some("other.test"), "neither"),
+        (
+            Some("https://notweaver.test"),
+            Some("weaver.test"),
+            "neither",
+        ),
+        (
+            Some("https://weaver.test"),
+            Some("app.weaver.test"),
+            "neither",
+        ),
+        (
+            Some("https://127.0.0.1"),
+            Some("0x7f.1"),
+            "is an IP address",
+        ),
+        (
+            Some("https://weaver.test"),
+            Some("Weaver.Test"),
+            "configure it as \"weaver.test\"",
+        ),
+        (
+            Some("https://xn--bcher-kva.test"),
+            Some("b\u{fc}cher.test"),
+            "configure it as \"xn--bcher-kva.test\"",
+        ),
+        (
+            Some("https://weaver.test"),
+            Some("weaver test"),
+            "is not a domain",
+        ),
+    ] {
+        let error = relying_party(&with_rp(origin, rp_id))
+            .expect_err(&format!("{origin:?} {rp_id:?}"))
+            .to_string();
+        assert!(error.contains(why), "{origin:?} {rp_id:?}: {error}");
+    }
+    for (origin, rp_id) in [
+        ("https://weaver.test", "weaver.test"),
+        ("https://app.weaver.test:8443", "weaver.test"),
+        ("http://localhost:8080", "localhost"),
+        ("https://xn--bcher-kva.test", "xn--bcher-kva.test"),
+        ("https://app.xn--bcher-kva.test", "xn--bcher-kva.test"),
+    ] {
+        relying_party(&with_rp(Some(origin), Some(rp_id)))
+            .unwrap_or_else(|e| panic!("{origin} {rp_id}: {e}"));
     }
 }
 

@@ -73,6 +73,21 @@ pub struct ServerConfig {
     pub tls_certificate: Option<PathBuf>,
     #[serde(default)]
     pub tls_key: Option<PathBuf>,
+    /// **The relying party's identity** (design section 3): the domain a
+    /// passkey is scoped to, the origin's host or a domain it is under.
+    /// Configured with `origin` or not at all; checked at start.
+    #[serde(default)]
+    pub rp_id: Option<String>,
+    /// **A session ends this long after its last use** (design section 6),
+    /// in seconds: an hour by default, and never under
+    /// [`SESSION_IDLE_FLOOR_SECS`].
+    #[serde(default = "default_session_idle_secs")]
+    pub session_idle_secs: u64,
+    /// **A session ends this long after it opened, used or not** (design
+    /// section 6), in seconds: twelve hours by default, and never past
+    /// [`SESSION_ABSOLUTE_MAX_SECS`].
+    #[serde(default = "default_session_absolute_secs")]
+    pub session_absolute_secs: u64,
 }
 
 // Read by the upstream adapter once it is implemented. **No standing
@@ -118,6 +133,27 @@ fn default_enrollment_token_hours() -> u32 {
     24
 }
 
+/// **The shortest idle limit a session may have**: its last use is written
+/// at most once a minute, so idle expiry is honoured to within a minute, and
+/// a limit of a minute or less would end a session in active use. Five
+/// minutes is several times that grain, with margin.
+pub const SESSION_IDLE_FLOOR_SECS: u64 = 300;
+
+/// **The longest absolute limit a session may have**: seven days. An
+/// absolute limit longer than a week stops being one, and the bound keeps
+/// every limit an interval the database can represent, so no configured
+/// value breaks every authenticated request at its first use. The idle
+/// limit is never past the absolute one, so it is bounded too.
+pub const SESSION_ABSOLUTE_MAX_SECS: u64 = 7 * 24 * 60 * 60;
+
+fn default_session_idle_secs() -> u64 {
+    60 * 60
+}
+
+fn default_session_absolute_secs() -> u64 {
+    12 * 60 * 60
+}
+
 fn load_toml<T: serde::de::DeserializeOwned>(path: &Path) -> anyhow::Result<T> {
     let raw = std::fs::read_to_string(path)
         .map_err(|e| anyhow::anyhow!("reading config {}: {e}", path.display()))?;
@@ -150,6 +186,28 @@ impl ServerConfig {
             anyhow::bail!(
                 "enrollment_token_hours is {}, outside 1 to {most} (seven days)",
                 cfg.enrollment_token_hours
+            );
+        }
+        // The last use is written at most once a minute, so an idle limit
+        // near that grain would end a session in active use; and an idle
+        // limit past the absolute one could never be reached.
+        if cfg.session_idle_secs < SESSION_IDLE_FLOOR_SECS {
+            anyhow::bail!(
+                "session_idle_secs is {}, under {SESSION_IDLE_FLOOR_SECS}: a session's last use is written at most once a minute, so idle expiry is honoured to within a minute and its limit must be several times that",
+                cfg.session_idle_secs
+            );
+        }
+        if cfg.session_absolute_secs > SESSION_ABSOLUTE_MAX_SECS {
+            anyhow::bail!(
+                "session_absolute_secs is {}, over {SESSION_ABSOLUTE_MAX_SECS} (seven days): an absolute limit longer than a week stops being one",
+                cfg.session_absolute_secs
+            );
+        }
+        if cfg.session_idle_secs > cfg.session_absolute_secs {
+            anyhow::bail!(
+                "session_idle_secs is {} and session_absolute_secs {}: the idle limit is no longer than the absolute",
+                cfg.session_idle_secs,
+                cfg.session_absolute_secs
             );
         }
         Ok(cfg)
@@ -202,6 +260,44 @@ mod tests {
             std::fs::write(&path, format!("{base}enrollment_token_hours = {hours}\n")).unwrap();
             let loaded = ServerConfig::load(&path);
             assert_eq!(loaded.is_ok(), ok, "{hours}: {:?}", loaded.err());
+        }
+    }
+
+    /// **A session's limits are an hour idle and twelve hours open by
+    /// default**; an idle limit under five minutes is refused, since the
+    /// last use is written at most once a minute, and so is one past the
+    /// absolute limit; an absolute limit past seven days is refused, the
+    /// largest integer a config can hold among them.
+    #[test]
+    fn a_sessions_limits_default_and_refuse_what_cannot_hold() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("server.toml");
+        let base =
+            "listen = \"127.0.0.1:0\"\ndatabase = \"postgres:///x\"\nauthority_dir = \"/a\"\n";
+        std::fs::write(&path, base).unwrap();
+        let loaded = ServerConfig::load(&path).unwrap();
+        assert_eq!(
+            (loaded.session_idle_secs, loaded.session_absolute_secs),
+            (3600, 43200)
+        );
+        for (idle, absolute, ok) in [
+            (300, 300, true),
+            (299, 43200, false),
+            (30, 43200, false),
+            (0, 43200, false),
+            (300, 0, false),
+            (301, 300, false),
+            (300, 604800, true),
+            (300, 604801, false),
+            (300, i64::MAX as u64, false),
+        ] {
+            std::fs::write(
+                &path,
+                format!("{base}session_idle_secs = {idle}\nsession_absolute_secs = {absolute}\n"),
+            )
+            .unwrap();
+            let loaded = ServerConfig::load(&path);
+            assert_eq!(loaded.is_ok(), ok, "{idle}/{absolute}: {:?}", loaded.err());
         }
     }
 }

@@ -176,8 +176,13 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
   refuses to start without an authority at `authority_dir`; `authority init` makes one.
   Optional `tls_certificate` and `tls_key` (PEM paths) make the browser's listener serve TLS
   only, no plain listener beside it; optional `origin` is the listener's serialized origin
-  (`https`, or `http` on `localhost`), and the certificate must be valid for its host. The
-  start refusals are `src/listen.rs`'s, design section 3. Keep configs, certificates, keys,
+  (`https`, or `http` on `localhost`), and the certificate must be valid for its host;
+  optional `rp_id` is the relying party's domain, configured with `origin` or not at all, the
+  origin's host or a domain it is under; `session_idle_secs` (3600) and
+  `session_absolute_secs` (43200) are a session's limits, the idle one never under 300, since
+  the last use is written at most once a minute, and the absolute never over 604800 (seven
+  days). The start refusals are
+  `src/listen.rs`'s, design section 3. Keep configs, certificates, keys,
   authorities and client configs out of the repository. Logging uses `RUST_LOG`,
   which defaults to `weaver_web=info,sqlx=warn`.
 - **gate-con** reads the file `register` wrote (`server`, `server_name`, `agent`, `agent_id`, `plane`,
@@ -221,7 +226,8 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
   store for this. The answer names its first record under `audit`.
 - **The host's identity commands** (`src/host.rs`, over `src/store/identity.rs` and
   migration `0015`): `person bootstrap`, `person token`, `person reset`, `grant add`,
-  `grant remove` and `role set`, each audited as the host's like the register verbs and each
+  `grant remove` and `role set`, each audited as the host's like the register verbs (an
+  `--author` of a person's whole `pe-` shape refused before any record, at every host command) and each
   writing under the identity exclusion, one advisory key (`IDENTITY_LOCK_KEY`). A token is
   printed once and stored as its digest; its lifetime is the config's
   `enrollment_token_hours` (24, at most 168) or `--hours`. A person is named by `pe-` or by
@@ -246,10 +252,17 @@ weaver-analysis's arrow lands.
   state is `Store` alone. A surface reads the store and never writes the recorded half, since
   runs and positions land only by ingest. A surface that needs a seam takes it as its own
   argument rather than widening the router state.
-- `surfaces/gate.rs` is the session gate. The `weaver_session` cookie is a bearer, stored only
-  as a SHA-256 digest. It carries a claimed name and a configured role and proves nothing
-  until act 11 replaces it: passkeys (WebAuthn) only, the session carrying the
-  authenticated person, per `docs/project/design-2026-10-07-iam.md` and Spec 2.8 and 2.13.
+- `surfaces/gate.rs` is the session gate. A session is a person's (migration `0017`): it
+  carries the person and the passkey it was opened with, under the `__Host-weaver_session`
+  cookie (`Secure`, `HttpOnly`, `SameSite=Strict`, `Path=/`), its bearer stored only as a
+  SHA-256 digest. Each use checks it closed, its person disabled, its passkey removed, open
+  past `session_absolute_secs` or unused past `session_idle_secs`, closing the row where it
+  ended, and refreshes its last use at most once a minute; `POST /sign-out` closes it. Every
+  request but `GET` and `HEAD` must carry `Origin` equal to the configured `origin`, over the
+  whole app (`gate::guard`). An authored row's author is the person's `pe-` identity, and
+  `Store::author` renders it. Sign-in by passkey is act 11's next pull request; until then
+  sessions are opened in the store by tests alone. Per `docs/project/design-2026-10-07-iam.md`
+  section 6 and Spec 2.8.
 - The rendering approach is server-rendered askama templates (dirs in `askama.toml`) with htmx
   and SSE vendored into the binary via `include_bytes!`. There is no node toolchain and no
   SPA, and the browser is a display engine. This is inherited. The handoff leaves the stack to

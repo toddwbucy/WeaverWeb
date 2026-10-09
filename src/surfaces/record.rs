@@ -33,8 +33,16 @@ use crate::store::{Chip, Cursor, RunId, RunTuple, Store};
 /// the filter admits.
 const PAGE: u32 = 50;
 
-pub fn routes() -> Router<Store> {
-    Router::new().route("/record", get(record))
+pub fn routes(policy: gate::Policy) -> Router<Store> {
+    Router::new().route(
+        "/record",
+        get(
+            move |State(store): State<Store>, headers: HeaderMap, Query(ask): Query<Ask>| {
+                let policy = policy.clone();
+                async move { record(store, &policy, headers, ask).await }
+            },
+        ),
+    )
 }
 
 /// The query this surface takes, which is its whole state: a chip and a
@@ -219,8 +227,8 @@ impl From<RunTuple> for Row {
 #[template(path = "record.html")]
 struct RecordPage {
     here: &'static str,
-    /// The name the session claimed, shown so a reader knows which claim
-    /// this page was drawn under. **It is not a proof of anything.**
+    /// The current name of the person the session is, shown so a reader
+    /// knows whose session this page was drawn under.
     who: String,
     rows: Vec<Row>,
     /// The chip in force, as a word a reader can see and a link can clear.
@@ -236,9 +244,10 @@ struct RecordPage {
 /// different things: a refusal says the ask was malformed and a fault says
 /// this surface could not serve a well-formed one.
 async fn record(
-    State(store): State<Store>,
+    store: Store,
+    policy: &gate::Policy,
     headers: HeaderMap,
-    Query(ask): Query<Ask>,
+    ask: Ask,
 ) -> Result<Response, Response> {
     // **The gate is the surface's own argument**, per `surfaces/mod.rs`: a
     // surface reads the store and nothing else, and a surface holding a
@@ -246,11 +255,9 @@ async fn record(
     // store alone would leave nowhere for this to stand, which is how every
     // run's tuple came to be served to anyone who reached the listener.
     //
-    // **The claim is a claim**, per Spec section 2.8, so what this refuses
-    // is a request that named nobody. Until the identity act of the
-    // charter's section 6 lands, per issue #336, that is the shape standing
-    // and not access control.
-    let who = gate::claim(&store, &headers)
+    // **The session is a person's** (Spec 2.8), checked at this use. Read
+    // access by a grant on an agent is the authorization pull request's.
+    let who = gate::session(&store, policy, &headers)
         .await
         .map_err(|e| Failure::from(e).into_response())?;
     let Some(who) = who else {
@@ -282,16 +289,16 @@ async fn record(
     Ok(Html(html).into_response())
 }
 
-/// A request that named nobody. **The answer says what is missing rather
-/// than what is forbidden**, because nothing here is access control: a
-/// session is opened by claiming a name, and this request claimed none.
+/// A request that names no live session. **The answer says what is
+/// missing**: this surface is read under a person's session, and this
+/// request carries none, or one that has ended.
 pub struct NoSession;
 
 impl IntoResponse for NoSession {
     fn into_response(self) -> Response {
         (
             axum::http::StatusCode::UNAUTHORIZED,
-            "this surface is read under a session. Open one and ask again.",
+            "this surface is read under a session. Sign in and ask again.",
         )
             .into_response()
     }
@@ -325,34 +332,27 @@ mod tests {
     use axum::http::{Request, StatusCode};
     use tower::ServiceExt;
 
-    /// Open a session and hand back the bearer a browser would hold.
+    /// Open a person's session and hand back the bearer a browser would
+    /// hold and the person's name.
     ///
-    /// **The row is brought to this seed rather than left as it was found.**
-    /// A watch below asserts the page names the claim it was drawn under, so
-    /// a session a previous run opened under another name would be the row
-    /// the assertion measured.
-    async fn a_session(store: &Store, name: &str, role: &str) -> String {
-        let bearer = format!("bearer-{name}-{role}");
-        sqlx::query(
-            "INSERT INTO session (bearer_digest, claimed_name, role) VALUES ($1, $2, $3) \
-             ON CONFLICT (bearer_digest) DO UPDATE SET claimed_name = EXCLUDED.claimed_name, \
-             role = EXCLUDED.role, closed_at = NULL",
-        )
-        .bind(gate::digest(&bearer))
-        .bind(name)
-        .bind(role)
-        .execute(&store.pool)
-        .await
-        .unwrap();
-        bearer
+    /// **The person is this run's own, named afresh**: the store is shared
+    /// and a person's name is unique, and a watch below asserts the page
+    /// names the person it was drawn under.
+    async fn a_session(store: &Store) -> (String, String) {
+        let name = format!(
+            "reader-{}",
+            &uuid::Uuid::new_v4().simple().to_string()[..12]
+        );
+        let (bearer, ..) = crate::surfaces::gate_tests::open(store, &name).await;
+        (bearer, name)
     }
 
     async fn ask(store: &Store, uri: &str, bearer: Option<&str>) -> (StatusCode, String) {
         let mut request = Request::builder().uri(uri);
         if let Some(bearer) = bearer {
-            request = request.header("cookie", format!("weaver_session={bearer}"));
+            request = request.header("cookie", format!("{}={bearer}", gate::COOKIE));
         }
-        let response = routes()
+        let response = routes(crate::surfaces::gate_tests::policy())
             .with_state(store.clone())
             .oneshot(request.body(Body::empty()).unwrap())
             .await
@@ -364,10 +364,11 @@ mod tests {
         (status, String::from_utf8(body.to_vec()).unwrap())
     }
 
-    /// **A request that names nobody is not served**, per Spec section 2.8
-    /// read at the gate, and one that names a claim is.
+    /// **A request that names no session is not served**, per Spec section
+    /// 2.8 read at the gate, and one under a person's session is, the page
+    /// naming the person.
     ///
-    /// conforms: web-session-carries-a-claim-and-never-a-proof
+    /// conforms: web-session-carries-a-person
     #[tokio::test]
     async fn record_is_read_under_a_session_and_never_without_one() {
         let Some(store) = crate::store::read::tests::store().await else {
@@ -377,10 +378,10 @@ mod tests {
         assert_eq!(status, StatusCode::UNAUTHORIZED, "no session, no page");
         assert!(!body.contains("<table"), "and no run's tuple in the body");
 
-        let bearer = a_session(&store, "todd", "user").await;
+        let (bearer, name) = a_session(&store).await;
         let (status, body) = ask(&store, "/record", Some(&bearer)).await;
         assert_eq!(status, StatusCode::OK);
-        assert!(body.contains("todd"), "the claim the page was drawn under");
+        assert!(body.contains(&name), "the person the page was drawn under");
     }
 
     /// The surface draws a run's tuple, **names an absent member rather
@@ -404,7 +405,7 @@ mod tests {
         let Some(store) = crate::store::read::tests::store().await else {
             return;
         };
-        let bearer = a_session(&store, "todd", "user").await;
+        let (bearer, _) = a_session(&store).await;
         // **The row and the session it is chipped by are this run's alone.**
         // The assertion below counts the rows on the page, so anything else
         // carrying this session - a row a previous run retained, or one a
@@ -506,7 +507,7 @@ mod tests {
         let Some(store) = crate::store::read::tests::store().await else {
             return;
         };
-        let bearer = a_session(&store, "todd", "user").await;
+        let (bearer, _) = a_session(&store).await;
         for uri in [
             "/record?chip=session",
             "/record?of=a-value-with-no-kind",
@@ -529,7 +530,7 @@ mod tests {
         let Some(store) = crate::store::read::tests::store().await else {
             return;
         };
-        let bearer = a_session(&store, "todd", "user").await;
+        let (bearer, _) = a_session(&store).await;
 
         let (status, _) = ask(
             &store,

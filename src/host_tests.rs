@@ -29,6 +29,9 @@ fn cfg() -> ServerConfig {
         origin: None,
         tls_certificate: None,
         tls_key: None,
+        rp_id: None,
+        session_idle_secs: 3600,
+        session_absolute_secs: 43200,
     }
 }
 
@@ -537,5 +540,99 @@ async fn a_stale_role_write_is_refused() {
         s.role("operator").await.unwrap().unwrap().verbs,
         vec!["show", "turn"],
         "the second's verbs stand"
+    );
+}
+
+/// **A host's `--author` claim of a person's identity is refused before any
+/// record** (Spec 3.2): each identity command, asked with the author
+/// `pe-0123456789abcdef`, refuses saying an identity is never a claim, and
+/// leaves what it would have changed as it was; the same setups as the
+/// refused first record above, so every command reaches the check.
+#[tokio::test]
+async fn a_host_author_of_an_identitys_shape_is_refused_before_any_record() {
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let unaudited = |answer: &Answer| refused(answer, "an identity is never a claim").len();
+    unaudited(&host::bootstrap(s, &cfg(), "ada", None, Some("pe-0123456789abcdef")).await);
+    assert!(s.person("ada").await.unwrap().is_none(), "no person");
+
+    let a = host::bootstrap(s, &cfg(), "ada", None, LAB).await;
+    let ada = ok(&a)["person"].as_str().unwrap().to_owned();
+    host::bootstrap(s, &cfg(), "bea", None, LAB).await;
+    sqlx::query(
+        "INSERT INTO passkey (credential_id, person_id, credential) VALUES ('cred-1', $1, '{}')",
+    )
+    .bind(&ada)
+    .execute(&s.pool)
+    .await
+    .unwrap();
+    let tokens = "SELECT count(*) FROM enrollment_token WHERE person_id = $1";
+    let before = count(s, tokens, &ada).await;
+    unaudited(&host::reset(s, &cfg(), &ada, None, Some("pe-0123456789abcdef")).await);
+    assert_eq!(
+        count(s, "SELECT count(*) FROM passkey WHERE person_id = $1", &ada).await,
+        1,
+        "no passkey cleared"
+    );
+    assert_eq!(count(s, tokens, &ada).await, before, "no token issued");
+
+    let bea = s.person("bea").await.unwrap().unwrap().person_id;
+    unaudited(&host::token(s, &cfg(), &bea, None, Some("pe-0123456789abcdef")).await);
+    assert_eq!(count(s, tokens, &bea).await, 1, "no token issued");
+
+    let agent = agent(s).await;
+    unaudited(
+        &host::grant_add(
+            s,
+            &ada,
+            "observer",
+            Some(&agent),
+            Some("pe-0123456789abcdef"),
+        )
+        .await,
+    );
+    assert!(
+        s.live_grant(&ada, "observer", Some(&agent))
+            .await
+            .unwrap()
+            .is_none(),
+        "no grant"
+    );
+    unaudited(&host::grant_remove(s, &ada, "admin", None, Some("pe-0123456789abcdef")).await);
+    assert!(
+        s.live_grant(&ada, "admin", None).await.unwrap().is_some(),
+        "no grant revoked"
+    );
+    unaudited(&host::role_set(s, "observer", &["turn".into()], Some("pe-0123456789abcdef")).await);
+    assert_eq!(
+        s.role("observer").await.unwrap().unwrap().verbs,
+        vec!["show"],
+        "no verb changed"
+    );
+}
+
+/// **A claim merely starting `pe-` stays a claim**: `--author pe-alice` is
+/// not an identity's whole shape, so the command acts, the row carries the
+/// claim, and it renders as a claim and never as a person.
+#[tokio::test]
+async fn a_claim_starting_pe_but_not_an_identity_stays_a_claim() {
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let answer = host::bootstrap(s, &cfg(), "ada", None, Some("pe-alice")).await;
+    let ada = ok(&answer)["person"].as_str().unwrap().to_owned();
+    let author: Option<String> =
+        sqlx::query_scalar("SELECT author FROM person WHERE person_id = $1")
+            .bind(&ada)
+            .fetch_one(&s.pool)
+            .await
+            .unwrap();
+    assert_eq!(author.as_deref(), Some("pe-alice"));
+    assert_eq!(
+        s.author(author.as_deref()).await.unwrap(),
+        crate::store::identity::Author::Claim("pe-alice".to_owned())
     );
 }

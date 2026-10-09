@@ -193,6 +193,19 @@ impl std::fmt::Display for Retired {
 
 impl std::error::Error for Retired {}
 
+/// **The plane asked for is revoked already**, read inside an admin's
+/// revocation under the row's lock. Nothing was written.
+#[derive(Debug)]
+pub struct PlaneRevoked;
+
+impl std::fmt::Display for PlaneRevoked {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "that plane's credential is revoked already")
+    }
+}
+
+impl std::error::Error for PlaneRevoked {}
+
 impl AdminWrite<'_> {
     /// The identity exclusion taken shared for the rest of the
     /// transaction, then the admin's authority re-checked under it.
@@ -574,6 +587,75 @@ impl Store {
             id.parse().map_err(|e: String| anyhow::anyhow!(e))?,
             retired_fingerprints,
         ))
+    }
+
+    /// **An admin's revocation through the server** (Spec 2.13): one
+    /// plane's credential where `plane` names it, or every live plane's
+    /// where it is `None`, which retires the agent. Inside the one
+    /// transaction the identity exclusion is held shared from the admin's
+    /// re-check to the commit, and **the row is read again under its own
+    /// lock**: a plane revoked since the request resolved it answers
+    /// `PlaneRevoked`, and a row holding no live credential answers
+    /// `Retired`, nothing written. Each credential revoked is told to the
+    /// running listener, so its live connection closes in this act.
+    /// Answers the fingerprints revoked.
+    pub async fn revoke_by_admin(
+        &self,
+        admin: AdminWrite<'_>,
+        agent_id: &AgentId,
+        plane: Option<Plane>,
+    ) -> anyhow::Result<Vec<String>> {
+        let mut tx = self.pool.begin().await?;
+        admin.stands(&mut tx).await?;
+        lock_row(&mut tx, agent_id).await?;
+        let row = sqlx::query(
+            "SELECT gate_state, admin_state, gate_fingerprint, admin_fingerprint \
+             FROM agent WHERE agent_id = $1",
+        )
+        .bind(agent_id.as_str())
+        .fetch_one(&mut *tx)
+        .await?;
+        let live = |p: Plane| -> anyhow::Result<bool> {
+            Ok(row.try_get::<String, _>(format!("{}_state", p.as_str()).as_str())? == "live")
+        };
+        let planes: Vec<Plane> = match plane {
+            Some(plane) if live(plane)? => vec![plane],
+            Some(_) => return Err(PlaneRevoked.into()),
+            None => {
+                let mut planes = Vec::new();
+                for p in [Plane::Gate, Plane::Admin] {
+                    if live(p)? {
+                        planes.push(p);
+                    }
+                }
+                if planes.is_empty() {
+                    return Err(Retired.into());
+                }
+                planes
+            }
+        };
+        let mut revoked = Vec::new();
+        for plane in planes {
+            let p = plane_columns(plane);
+            sqlx::query(audited(format!(
+                "UPDATE agent SET \
+                   {p}_state = 'revoked', {p}_state_at = now(), \
+                   {p}_link_at = CASE WHEN {p}_connected THEN now() ELSE {p}_link_at END, \
+                   {p}_connected = false, {p}_incarnation = NULL, \
+                   author = $2, version = version + 1 \
+                 WHERE agent_id = $1 AND {p}_state = 'live'"
+            )))
+            .bind(agent_id.as_str())
+            .bind(admin.person)
+            .execute(&mut *tx)
+            .await?;
+            let fingerprint: String =
+                row.try_get(format!("{}_fingerprint", plane.as_str()).as_str())?;
+            notify(&mut tx, &fingerprint).await?;
+            revoked.push(fingerprint);
+        }
+        tx.commit().await?;
+        Ok(revoked)
     }
 
     /// **Revoke one credential** (Spec 8): an authored edit under section

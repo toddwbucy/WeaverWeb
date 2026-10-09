@@ -116,7 +116,8 @@ pub(crate) fn refused(refusal: &Refusal) -> Response {
         | Refusal::Held
         | Refusal::Revoked
         | Refusal::Authority(_)
-        | Refusal::Retired => StatusCode::CONFLICT,
+        | Refusal::Retired
+        | Refusal::PlaneRevoked => StatusCode::CONFLICT,
         Refusal::HandoverFull => StatusCode::SERVICE_UNAVAILABLE,
     };
     (status, refusal.to_string()).into_response()

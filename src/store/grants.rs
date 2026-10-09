@@ -30,6 +30,9 @@ pub struct ListedGrant {
     pub agent_id: Option<String>,
     /// The agent as `box/name`.
     pub agent: Option<String>,
+    /// Whether the agent is retired, holding no live credential: its grant
+    /// stands, the row never being live again, for an admin to revoke.
+    pub agent_retired: bool,
     pub version: i64,
 }
 
@@ -78,7 +81,9 @@ impl Store {
     pub async fn listed_grants(&self) -> anyhow::Result<Vec<ListedGrant>> {
         let rows = sqlx::query(
             "SELECT g.grant_id, g.person_id, p.name, g.role, g.agent_id, \
-             a.box || '/' || a.name AS agent, g.version \
+             a.box || '/' || a.name AS agent, g.version, \
+             (a.agent_id IS NOT NULL AND a.gate_state <> 'live' AND a.admin_state <> 'live') \
+               AS agent_retired \
              FROM role_grant g JOIN person p ON p.person_id = g.person_id \
              LEFT JOIN agent a ON a.agent_id = g.agent_id \
              WHERE g.revoked_at IS NULL ORDER BY p.name_key, g.role, agent",
@@ -94,6 +99,7 @@ impl Store {
                 role: r.get("role"),
                 agent_id: r.get("agent_id"),
                 agent: r.get("agent"),
+                agent_retired: r.get("agent_retired"),
                 version: r.get("version"),
             })
             .collect())

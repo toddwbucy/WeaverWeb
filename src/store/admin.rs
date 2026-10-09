@@ -67,6 +67,8 @@ pub enum Refusal {
     Retired,
     /// The hand-over holds as many client configs as it may.
     HandoverFull,
+    /// The plane's credential is revoked already.
+    PlaneRevoked,
 }
 
 impl std::fmt::Display for Refusal {
@@ -114,6 +116,7 @@ impl std::fmt::Display for Refusal {
                 "the admin role is fixed by the store and carries no agent verb; nothing writes it"
             ),
             Refusal::Authority(why) => write!(f, "{why}"),
+            Refusal::PlaneRevoked => write!(f, "that plane's credential is revoked already"),
             Refusal::Retired => write!(
                 f,
                 "that agent's row holds no live credential; register the agent again rather than rotating it"

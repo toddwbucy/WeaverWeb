@@ -3,11 +3,13 @@
 //! of agents, and listens for the two connectors over the link of Spec
 //! section 8. The connectors, gate-con and admin-con, are this crate's
 //! binaries beside the agent: gate-con (`link::gate_con`, relaying through
-//! `adapters/gate.rs`) and admin-con (`link::admin_con`, tailing the trace
-//! file and answering verbs through an invoker that carries no privilege
-//! code, Spec 7.2).
+//! `adapters/gate.rs`) and admin-con (`link::admin_con`, reading the trace
+//! through its relay, `link::relay`, and answering verbs through the sudo
+//! invoker, `link::sudo_invoker`, Spec 7.2).
 
 pub mod adapters;
+#[cfg(all(test, feature = "passkeys"))]
+mod admin_tests;
 pub mod config;
 pub mod fault;
 pub mod host;

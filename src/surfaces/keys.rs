@@ -148,6 +148,8 @@ struct Row {
 struct PasskeysPage {
     here: &'static str,
     who: String,
+    /// Whether the navigation offers the admin's page.
+    admin: bool,
     rows: Vec<Row>,
     only_one: bool,
 }
@@ -178,9 +180,14 @@ async fn page(store: Store, policy: &Policy, headers: HeaderMap) -> Response {
         })
         .collect();
     let only_one = rows.len() == 1;
+    let admin = match store.is_admin(&session.person_id).await {
+        Ok(admin) => admin,
+        Err(e) => return fault(e),
+    };
     match (PasskeysPage {
         here: "passkeys",
         who: session.name,
+        admin,
         rows,
         only_one,
     })

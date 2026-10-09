@@ -83,6 +83,7 @@ pub fn routes(passkeys: Option<Passkeys>) -> Router<Store> {
 struct SignInPage {
     here: &'static str,
     who: String,
+    admin: bool,
     configured: bool,
 }
 
@@ -90,6 +91,7 @@ async fn page(configured: bool) -> Response {
     match (SignInPage {
         here: "sign-in",
         who: String::new(),
+        admin: false,
         configured,
     })
     .render()

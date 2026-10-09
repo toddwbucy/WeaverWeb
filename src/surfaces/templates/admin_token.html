@@ -1,0 +1,14 @@
+{% extends "instrument.html" %}
+{% block title %}enrollment token - weaver-web{% endblock %}
+{% block mainclass %}listing{% endblock %}
+{% block body %}
+{#- The token, shown this once: this answer is kept from every cache, and the
+    server holds only its digest. -#}
+<header class="listing-head">
+  <h1>Enrollment token for {{ name }}</h1>
+  <p class="destination">Shown this once. Give it to {{ name }} by a channel you trust; it enrolls their first passkey at /enroll.</p>
+</header>
+<p><code>{{ token }}</code></p>
+<p class="chip-note">Single use, until {{ expires }}. Issuing another ends this one, and disabling the person revokes it.</p>
+<p><a href="/admin/persons">Back to persons</a></p>
+{% endblock %}

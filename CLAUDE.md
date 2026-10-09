@@ -158,7 +158,8 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
 ```
 
 - **DB-backed unit tests** (`store::read`, `store::plan`, `store::audit_tests`,
-  `store::identity_tests`, `host_tests`, `surfaces::record`, `link::tests`,
+  `store::identity_tests`, `host_tests`, `surfaces::record`, `passkeys_tests`,
+  `sign_in_tests`, `keys_tests`, `admin_tests`, `link::tests`,
   `link::client_tests`, `link::admin_con_tests`, `link::verbs_audit_tests`)
   connect to the database in `DATABASE_URL` and run the migrations. The link's tests run one at
   a time, since a listener's start resets every row's link state, which is the claim. Without that variable they print
@@ -253,6 +254,15 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
   last-admin rule binds the host. `store::identity_tests` and `host_tests` each run on a
   database of their own (`fresh_store`, named `wwt_...`, dropped at the end), since the
   last-admin rule is store-wide.
+- **The admin's page** (`GET /admin/persons`, `src/surfaces/admin.rs` over
+  `src/store/admin.rs`; act 11, PR 5a) stands beside the host's commands, which remain: for a
+  session whose person holds a live admin grant, every person and five writes, `enroll`,
+  `token`, `disable`, `enable` and `rename`, each a form's post audited with the admin as
+  principal by `session`, each in one identity transaction that first re-checks the session
+  and the admin grant. An admin never writes their own row; a disable revokes the person's
+  outstanding token (migration `0018`, ending `revoked`) and never leaves no enabled admin; a
+  token is shown once under `no-store`. Roles and grants are not on it yet (PR 5b), and the
+  register verbs stay host commands. `admin_tests` runs each test on a `fresh_store`.
 
 ## The seed tree: what carries forward and what leaves
 
@@ -266,7 +276,8 @@ weaver-analysis's arrow lands.
   `read.rs` and `plan.rs` hold the six reads. `key.rs` holds typed identities (`RunId`,
   `TurnId`, `PositionKey`, `ArmId`, `PlanId`). `experiment.rs` holds staged and registered
   experiments; a registered one is immutable by type.
-- `src/surfaces/` holds the browser surfaces; Record is the only one so far. The router's
+- `src/surfaces/` holds the browser surfaces: Record, enrollment, sign-in, one's own
+  passkeys, and the admin's persons. The router's
   state is `Store` alone. A surface reads the store and never writes the recorded half, since
   runs and positions land only by ingest. A surface that needs a seam takes it as its own
   argument rather than widening the router state.

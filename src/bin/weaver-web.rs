@@ -438,6 +438,11 @@ async fn serve(cfg: Arc<ServerConfig>) -> anyhow::Result<()> {
         ))
         .merge(weaver_web::surfaces::script_policy(
             weaver_web::surfaces::sign_in::routes(passkeys.clone()),
+        ))
+        // **An admin's writes to persons** (Spec 2.13), each re-checking
+        // its admin's grant in its own transaction.
+        .merge(weaver_web::surfaces::script_policy(
+            weaver_web::surfaces::admin::routes(policy.clone(), cfg.enrollment_token_hours),
         ));
     // **A person's own passkeys** (design section 7), where passkeys are on.
     let instrument = match passkeys {

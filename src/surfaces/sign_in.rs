@@ -197,7 +197,14 @@ async fn clone_refused(store: &Store, person_id: &str, passkey_id: &str) -> Resp
         )
         .await
     {
+        // **The refusal's record lost is the server's failure**, never the
+        // ordinary refusal, which would read as a refusal the audit holds.
         tracing::error!("a possible cloned credential's audit record was not written: {e:#}");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "the refusal could not be recorded; nothing was done",
+        )
+            .into_response();
     }
     refused(StatusCode::FORBIDDEN, POSSIBLE_CLONE)
 }

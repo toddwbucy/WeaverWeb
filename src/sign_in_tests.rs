@@ -19,7 +19,7 @@ use crate::passkeys_tests::{
     ORIGIN, app, authenticator, count, passkeys, person_with_token, register, send,
 };
 use crate::store::Store;
-use crate::store::audit::FAIL_FIRST_RECORD;
+use crate::store::audit::{FAIL_FIRST_RECORD, FAIL_REFUSAL};
 use crate::store::read::tests::fresh_store;
 
 /// A person enrolled through the token's redemption with this
@@ -857,5 +857,49 @@ async fn a_credential_re_enrolled_between_options_and_finish_opens_nothing() {
         stored(s, &credential).await.counter,
         Credential::from(serde_json::from_value::<Passkey>(kept).unwrap()).counter,
         "the re-enrolled row was counted"
+    );
+}
+
+/// **A refusal whose record cannot be written is the server's failure**:
+/// with the possible clone's refusal record failing, the sign-in answers
+/// 500, never the ordinary refusal, and opens nothing.
+#[tokio::test]
+async fn a_clone_refusal_that_cannot_be_recorded_answers_the_servers_failure() {
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let app = app(s, Some(passkeys()));
+    let mut key = authenticator();
+    let (_, credential) = enrolled(&app, s, &mut key, "ada").await;
+    restore(s, &credential, |c| c.counter = 1_000).await;
+    let (_, _, options) = send(
+        &app,
+        "POST",
+        "/sign-in/options",
+        Some(json!({ "name": "ada" })),
+    )
+    .await;
+    let (ceremony, asserted) = assert_with(&mut key, &options);
+    FAIL_REFUSAL.with(|f| f.set(true));
+    let (status, headers, answer) = send(
+        &app,
+        "POST",
+        "/sign-in/finish",
+        Some(json!({ "ceremony": ceremony, "credential": asserted })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{answer}");
+    assert!(answer.contains("could not be recorded"), "{answer}");
+    assert!(headers.get(header::SET_COOKIE).is_none());
+    assert_eq!(
+        rows(s, "SELECT count(*) FROM session").await,
+        0,
+        "nothing opened"
+    );
+    assert_eq!(
+        rows(s, "SELECT count(*) FROM audit WHERE action = 'sign in'").await,
+        0,
+        "the hook refused the record"
     );
 }

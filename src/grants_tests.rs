@@ -727,17 +727,20 @@ async fn a_malformed_ask_is_refused_before_any_record() {
             StatusCode::BAD_REQUEST,
         ),
     ];
+    // Each ask's records are counted before its status, so a guard dropped
+    // fails where the records land: an admin's begun and failed pair, or a
+    // non-admin's refusal.
     for (uri, body, expected) in cases {
-        for asking in [&session, &other] {
+        for (who, asking) in [("an admin", &session), ("a non-admin", &other)] {
             let (status, answer) = post(&app, uri, body.clone(), asking).await;
-            assert_eq!(status, expected, "{uri} {body}: {answer}");
+            assert_eq!(
+                rows(s, "SELECT count(*) FROM audit").await,
+                before,
+                "{uri} {body} from {who}: no record"
+            );
+            assert_eq!(status, expected, "{uri} {body} from {who}: {answer}");
         }
     }
-    assert_eq!(
-        rows(s, "SELECT count(*) FROM audit").await,
-        before,
-        "no record"
-    );
 }
 
 /// **The page names a shared conversation** beside an agent on which more

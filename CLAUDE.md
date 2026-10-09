@@ -276,9 +276,11 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
 - **The admin's agents page** (`GET /admin/agents`, `src/surfaces/agents.rs`; act 11, PR 5c):
   the register's rows (names, credential states, presence; not the door, load state or trace),
   and `register` and `rotate` through the server in the same four steps, under the authority
-  lock, the identity exclusion held shared inside the register's transaction. The two client
+  lock, the identity exclusion held shared inside the register's transaction, which re-checks
+  every fact step three resolved (a rotation's row still live) before it mints. The two client
   configs a write mints wait in the server's memory alone (`agents::Handover`: 32-byte
-  handles, taken once, five minutes, the minting session only, at most 64, `no-store`), never
+  handles, taken once, five minutes, the minting session only, `no-store`, at most 64 held or
+  reserved, a write reserving its two at step three), never
   in the store, a file, a log line or the audit; a restart drops them and the admin rotates.
   The server mints under the authority it loaded, so restart it after `authority rotate`.
   The register verbs are host commands and web writes alike; `revoke` and retiring come to

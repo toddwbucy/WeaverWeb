@@ -178,6 +178,21 @@ impl std::fmt::Display for AuthorityGone {
 
 impl std::error::Error for AuthorityGone {}
 
+/// **The agent's row holds no live credential**, read inside an admin's
+/// rotation under the row's lock: it was retired since the request
+/// resolved it, and a rotation would make it live again. Nothing was
+/// written.
+#[derive(Debug)]
+pub struct Retired;
+
+impl std::fmt::Display for Retired {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "the agent's row holds no live credential")
+    }
+}
+
+impl std::error::Error for Retired {}
+
 impl AdminWrite<'_> {
     /// The identity exclusion taken shared for the rest of the
     /// transaction, then the admin's authority re-checked under it.
@@ -444,17 +459,9 @@ impl Store {
         admin_fingerprint: &str,
         authority: &str,
     ) -> anyhow::Result<(AgentId, Vec<String>)> {
-        Self::register_agent_in(
-            conn,
-            None,
-            id,
-            r#box,
-            name,
-            author,
-            gate_fingerprint,
-            admin_fingerprint,
-            authority,
-        )
+        Self::register_agent_in(conn, None, id, r#box, name, author, authority, || {
+            Ok((gate_fingerprint.to_owned(), admin_fingerprint.to_owned()))
+        })
         .await
     }
 
@@ -463,17 +470,17 @@ impl Store {
     /// held shared, from the admin's re-check to the commit, so a
     /// revocation or a disable either commits before the check and is seen,
     /// or waits for the commit. A grant or session gone answers
-    /// `AuthorityGone` and nothing is written.
-    #[allow(clippy::too_many_arguments)]
+    /// `AuthorityGone` and nothing is written. **The credentials are minted
+    /// only once the re-check passes**: `fingerprints` mints them and
+    /// answers the two fingerprints, called inside the transaction after it.
     pub async fn register_agent_by_admin_on(
         conn: &mut sqlx::PgConnection,
         admin: AdminWrite<'_>,
         id: &AgentId,
         r#box: &str,
         name: &str,
-        gate_fingerprint: &str,
-        admin_fingerprint: &str,
         authority: &str,
+        fingerprints: impl FnOnce() -> anyhow::Result<(String, String)>,
     ) -> anyhow::Result<(AgentId, Vec<String>)> {
         Self::register_agent_in(
             conn,
@@ -482,9 +489,8 @@ impl Store {
             r#box,
             name,
             Some(admin.person),
-            gate_fingerprint,
-            admin_fingerprint,
             authority,
+            fingerprints,
         )
         .await
     }
@@ -497,14 +503,14 @@ impl Store {
         r#box: &str,
         name: &str,
         author: Option<&str>,
-        gate_fingerprint: &str,
-        admin_fingerprint: &str,
         authority: &str,
+        fingerprints: impl FnOnce() -> anyhow::Result<(String, String)>,
     ) -> anyhow::Result<(AgentId, Vec<String>)> {
         let mut tx = conn.begin().await?;
         if let Some(admin) = admin {
             admin.stands(&mut tx).await?;
         }
+        let (gate_fingerprint, admin_fingerprint) = fingerprints()?;
         // **The retire is ordered on the previous row's version** like every
         // register verb (Spec 8): the live row is read under the lock and
         // the update names the version it read.
@@ -644,37 +650,35 @@ impl Store {
         admin_fingerprint: &str,
         authority: &str,
     ) -> anyhow::Result<Vec<String>> {
-        Self::rotate_credentials_in(
-            conn,
-            None,
-            agent,
-            author,
-            gate_fingerprint,
-            admin_fingerprint,
-            authority,
-        )
+        Self::rotate_credentials_in(conn, None, agent, author, authority, || {
+            Ok((gate_fingerprint.to_owned(), admin_fingerprint.to_owned()))
+        })
         .await
     }
 
     /// **The same, asked by an admin through the server**, the identity
     /// exclusion held shared from the admin's re-check to the commit, as
-    /// `register_agent_by_admin_on` holds it.
+    /// `register_agent_by_admin_on` holds it. **Every fact the request
+    /// resolved before the lock is re-checked inside the transaction**: the
+    /// row is read again under its own lock, and a row holding no live
+    /// credential, retired since the request read it, answers `Retired`
+    /// rather than being made live again. The credentials are minted only
+    /// once both re-checks pass, by `fingerprints`, and the retired
+    /// fingerprints and the version are the row's as read here.
     pub async fn rotate_credentials_by_admin_on(
         conn: &mut sqlx::PgConnection,
         admin: AdminWrite<'_>,
         agent: &Agent,
-        gate_fingerprint: &str,
-        admin_fingerprint: &str,
         authority: &str,
+        fingerprints: impl FnOnce() -> anyhow::Result<(String, String)>,
     ) -> anyhow::Result<Vec<String>> {
         Self::rotate_credentials_in(
             conn,
             Some(admin),
             agent,
             Some(admin.person),
-            gate_fingerprint,
-            admin_fingerprint,
             authority,
+            fingerprints,
         )
         .await
     }
@@ -684,15 +688,45 @@ impl Store {
         admin: Option<AdminWrite<'_>>,
         agent: &Agent,
         author: Option<&str>,
-        gate_fingerprint: &str,
-        admin_fingerprint: &str,
         authority: &str,
+        fingerprints: impl FnOnce() -> anyhow::Result<(String, String)>,
     ) -> anyhow::Result<Vec<String>> {
         let mut tx = conn.begin().await?;
         if let Some(admin) = admin {
             admin.stands(&mut tx).await?;
         }
         lock_row(&mut tx, &agent.agent_id).await?;
+        let (version, retired) = if admin.is_some() {
+            let row = sqlx::query(
+                "SELECT version, gate_state, admin_state, gate_fingerprint, admin_fingerprint \
+                 FROM agent WHERE agent_id = $1",
+            )
+            .bind(agent.agent_id.as_str())
+            .fetch_one(&mut *tx)
+            .await?;
+            let live = |col: &str| -> anyhow::Result<bool> {
+                Ok(row.try_get::<String, _>(col)? == "live")
+            };
+            if !live("gate_state")? && !live("admin_state")? {
+                return Err(Retired.into());
+            }
+            (
+                row.try_get::<i64, _>("version")?,
+                vec![
+                    row.try_get::<String, _>("gate_fingerprint")?,
+                    row.try_get::<String, _>("admin_fingerprint")?,
+                ],
+            )
+        } else {
+            (
+                agent.version,
+                vec![
+                    agent.gate.fingerprint.clone(),
+                    agent.admin.fingerprint.clone(),
+                ],
+            )
+        };
+        let (gate_fingerprint, admin_fingerprint) = fingerprints()?;
         let affected = sqlx::query(
             "UPDATE agent SET \
                gate_fingerprint = $3, gate_state = 'live', gate_state_at = now(), \
@@ -706,24 +740,17 @@ impl Store {
              WHERE agent_id = $1 AND version = $2",
         )
         .bind(agent.agent_id.as_str())
-        .bind(agent.version)
-        .bind(gate_fingerprint)
-        .bind(admin_fingerprint)
+        .bind(version)
+        .bind(&gate_fingerprint)
+        .bind(&admin_fingerprint)
         .bind(author)
         .bind(authority)
         .execute(&mut *tx)
         .await?
         .rows_affected();
         if affected != 1 {
-            anyhow::bail!(
-                "the row moved since it was read at version {}: read it again",
-                agent.version
-            );
+            anyhow::bail!("the row moved since it was read at version {version}: read it again");
         }
-        let retired = vec![
-            agent.gate.fingerprint.clone(),
-            agent.admin.fingerprint.clone(),
-        ];
         for fp in &retired {
             notify(&mut tx, fp).await?;
         }

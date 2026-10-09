@@ -38,7 +38,7 @@ use tokio::time::Instant;
 use crate::config::ServerConfig;
 use crate::link::authority::{Authority, ClientCredential};
 use crate::link::frames::Plane;
-use crate::link::register::{AdminWrite, AuthorityGone, CredentialState};
+use crate::link::register::{AdminWrite, AuthorityGone, CredentialState, Retired};
 use crate::link::verbs::{
     authority_still_stands, client_config, mint_pair, name_agrees, well_formed,
 };
@@ -52,9 +52,9 @@ use crate::surfaces::gate::{Policy, Session};
 /// How long a client config waits to be taken.
 pub const HANDOVER_LIFETIME: Duration = Duration::from_secs(5 * 60);
 
-/// **How many client configs may wait at once.** A write checks for room
-/// for its two before it begins, and register verbs run one at a time under
-/// the authority lock, so the table holds at most this and one write's two.
+/// **How many client configs may wait at once**, held or reserved: a
+/// write reserves room for its two at step three, under the hand-over's
+/// lock, so the bound counts the writes in flight too and is exact.
 pub const HANDOVERS_HELD: usize = 64;
 
 struct Held {
@@ -64,32 +64,109 @@ struct Held {
     until: Instant,
 }
 
+#[derive(Default)]
+struct Table {
+    held: HashMap<String, Held>,
+    /// Slots reserved by writes in flight, not yet held.
+    reserved: usize,
+}
+
+impl Table {
+    fn prune(&mut self) {
+        let now = Instant::now();
+        self.held.retain(|_, h| h.until > now);
+    }
+}
+
 /// **The client configs waiting to be taken**, in this process's memory
 /// alone.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct Handover {
-    held: Arc<Mutex<HashMap<String, Held>>>,
+    table: Arc<Mutex<Table>>,
+    cap: usize,
+}
+
+impl Default for Handover {
+    fn default() -> Self {
+        Self::with_cap(HANDOVERS_HELD)
+    }
 }
 
 impl Handover {
-    fn prune(held: &mut HashMap<String, Held>) {
-        let now = Instant::now();
-        held.retain(|_, h| h.until > now);
+    /// A hand-over bounded at `cap`, which tests set small.
+    pub fn with_cap(cap: usize) -> Self {
+        Self {
+            table: Arc::default(),
+            cap,
+        }
     }
 
-    /// Whether `n` more configs may wait.
-    pub fn room(&self, n: usize) -> bool {
-        let mut held = self.held.lock().unwrap();
-        Self::prune(&mut held);
-        held.len() + n <= HANDOVERS_HELD
+    /// **Room for `n` configs reserved**, atomically under the table's
+    /// lock, or none where the held and the reserved would pass the bound.
+    /// The reservation's slots become configs as it holds them, and any
+    /// left are released when it drops, on every path a write takes.
+    pub fn reserve(&self, n: usize) -> Option<Reservation> {
+        let mut table = self.table.lock().unwrap();
+        table.prune();
+        if table.held.len() + table.reserved + n > self.cap {
+            return None;
+        }
+        table.reserved += n;
+        Some(Reservation {
+            handover: self.clone(),
+            slots: n,
+        })
     }
 
-    /// A config held for the session, answering its handle.
-    pub(crate) fn hold(&self, session_id: i64, filename: String, content: String) -> String {
+    /// **The config under `handle`, taken once by the session that holds
+    /// it**: removed as it is answered. Unknown, taken, expired or another
+    /// session's answers nothing, and another session's ask leaves it held.
+    pub(crate) fn take(&self, handle: &str, session_id: i64) -> Option<(String, String)> {
+        let mut table = self.table.lock().unwrap();
+        table.prune();
+        match table.held.get(handle) {
+            Some(h) if h.session_id == session_id => {
+                table.held.remove(handle).map(|h| (h.filename, h.content))
+            }
+            _ => None,
+        }
+    }
+
+    /// How many configs wait, expired ones dropped.
+    pub fn held(&self) -> usize {
+        let mut table = self.table.lock().unwrap();
+        table.prune();
+        table.held.len()
+    }
+
+    /// How many configs wait or are reserved, the count the bound holds.
+    pub fn occupied(&self) -> usize {
+        let mut table = self.table.lock().unwrap();
+        table.prune();
+        table.held.len() + table.reserved
+    }
+}
+
+/// **Room reserved in the hand-over** for one write's configs.
+pub struct Reservation {
+    handover: Handover,
+    slots: usize,
+}
+
+impl Reservation {
+    /// A config held for the session in one of the reserved slots,
+    /// answering its handle.
+    pub(crate) fn hold(&mut self, session_id: i64, filename: String, content: String) -> String {
+        assert!(
+            self.slots > 0,
+            "a reservation holds no more than it reserved"
+        );
         let handle = hex(&bearer());
-        let mut held = self.held.lock().unwrap();
-        Self::prune(&mut held);
-        held.insert(
+        let mut table = self.handover.table.lock().unwrap();
+        table.prune();
+        table.reserved -= 1;
+        self.slots -= 1;
+        table.held.insert(
             handle.clone(),
             Held {
                 session_id,
@@ -100,26 +177,12 @@ impl Handover {
         );
         handle
     }
+}
 
-    /// **The config under `handle`, taken once by the session that holds
-    /// it**: removed as it is answered. Unknown, taken, expired or another
-    /// session's answers nothing, and another session's ask leaves it held.
-    pub(crate) fn take(&self, handle: &str, session_id: i64) -> Option<(String, String)> {
-        let mut held = self.held.lock().unwrap();
-        Self::prune(&mut held);
-        match held.get(handle) {
-            Some(h) if h.session_id == session_id => {
-                held.remove(handle).map(|h| (h.filename, h.content))
-            }
-            _ => None,
-        }
-    }
-
-    /// How many configs wait, expired ones dropped.
-    pub fn held(&self) -> usize {
-        let mut held = self.held.lock().unwrap();
-        Self::prune(&mut held);
-        held.len()
+impl Drop for Reservation {
+    fn drop(&mut self) {
+        let mut table = self.handover.table.lock().unwrap();
+        table.reserved -= self.slots;
     }
 }
 
@@ -258,7 +321,13 @@ struct HandoverPage {
 /// **The two client configs held for the session, and the page that
 /// offers them**, under `no-store`. The page carries the handles, never the
 /// configs.
-fn hand_over(seams: &Seams, session: Session, verb: &'static str, minted: Minted) -> Response {
+fn hand_over(
+    seams: &Seams,
+    mut reservation: Reservation,
+    session: Session,
+    verb: &'static str,
+    minted: Minted,
+) -> Response {
     let mut waiting = Vec::new();
     for (plane, credential) in [(Plane::Gate, &minted.gate), (Plane::Admin, &minted.admin)] {
         let content = client_config(
@@ -270,9 +339,7 @@ fn hand_over(seams: &Seams, session: Session, verb: &'static str, minted: Minted
             credential,
         );
         let filename = format!("{}-{}-{}.toml", minted.r#box, minted.name, plane.as_str());
-        let handle = seams
-            .handover
-            .hold(session.session_id, filename.clone(), content);
+        let handle = reservation.hold(session.session_id, filename.clone(), content);
         waiting.push(Waiting {
             plane: plane.as_str(),
             filename,
@@ -341,15 +408,17 @@ async fn register(store: Store, seams: &Seams, headers: HeaderMap, ask: Register
         Ok(session) => session,
         Err(answer) => return answer,
     };
-    if !seams.handover.room(2) {
+    let Some(reservation) = seams.handover.reserve(2) else {
         return refused(&Refusal::HandoverFull);
-    }
+    };
     let write = async {
         let mut lock = store.authority_lock().await?;
         if let Err(refusal) = authority_stands(seams) {
             return Ok(Err(refusal));
         }
-        let (gate, admin) = mint_pair(&ask.name, &seams.authority)?;
+        // **Minted inside the register's transaction, once the admin's
+        // re-check has passed.**
+        let mut pair = None;
         let landed = Store::register_agent_by_admin_on(
             lock.connection(),
             AdminWrite {
@@ -359,21 +428,29 @@ async fn register(store: Store, seams: &Seams, headers: HeaderMap, ask: Register
             &minted,
             &ask.r#box,
             &ask.name,
-            &gate.fingerprint,
-            &admin.fingerprint,
             &seams.authority.fingerprint(),
+            || {
+                let (gate, admin) = mint_pair(&ask.name, &seams.authority)?;
+                let fingerprints = (gate.fingerprint.clone(), admin.fingerprint.clone());
+                pair = Some((gate, admin));
+                Ok(fingerprints)
+            },
         )
         .await;
-        match landed {
-            Ok((id, _)) => Ok(Ok((id, gate, admin))),
-            Err(e) if e.is::<AuthorityGone>() => Ok(Err(Refusal::AuthorityGone)),
+        match (landed, pair) {
+            (Ok((id, _)), Some((gate, admin))) => Ok(Ok((id, gate, admin))),
+            (Ok(_), None) => anyhow::bail!("a register landed with no credentials minted"),
+            (Err(e), _) if e.is::<AuthorityGone>() => Ok(Err(Refusal::AuthorityGone)),
+            (Err(e), None) => Err(e),
             // **A commit's outcome is unknown until it is read back**, as in
             // the host's `register`: the row carrying the new fingerprint
             // means the write landed, and the configs are handed over.
-            Err(e) => match store.agent_by_fingerprint(&gate.fingerprint).await? {
-                Some((row, _)) => Ok(Ok((row.agent_id, gate, admin))),
-                None => Err(e),
-            },
+            (Err(e), Some((gate, admin))) => {
+                match store.agent_by_fingerprint(&gate.fingerprint).await? {
+                    Some((row, _)) => Ok(Ok((row.agent_id, gate, admin))),
+                    None => Err(e),
+                }
+            }
         }
     };
     let written = match audited(
@@ -391,6 +468,7 @@ async fn register(store: Store, seams: &Seams, headers: HeaderMap, ask: Register
     match written {
         Ok(Ok((id, gate, admin))) => hand_over(
             seams,
+            reservation,
             session,
             "registered",
             Minted {
@@ -439,28 +517,30 @@ async fn rotate(store: Store, seams: &Seams, headers: HeaderMap, ask: RotateAsk)
         Ok(id) => id,
         Err(e) => return fault(anyhow::Error::msg(e)),
     };
-    match store.agent(&id).await {
+    let agent = match store.agent(&id).await {
         Ok(Some(agent))
             if agent.credential(Plane::Gate).state == CredentialState::Live
-                || agent.credential(Plane::Admin).state == CredentialState::Live => {}
+                || agent.credential(Plane::Admin).state == CredentialState::Live =>
+        {
+            agent
+        }
         Ok(Some(_)) => return refused(&Refusal::Retired),
         Ok(None) => return refused(&Refusal::NoSuchAgent),
         Err(e) => return fault(e),
-    }
-    if !seams.handover.room(2) {
+    };
+    let Some(reservation) = seams.handover.reserve(2) else {
         return refused(&Refusal::HandoverFull);
-    }
+    };
     let write = async {
         let mut lock = store.authority_lock().await?;
         if let Err(refusal) = authority_stands(seams) {
             return Ok(Err(refusal));
         }
-        // **The row read again under the lock**, so the rotation names the
-        // version the register holds now.
-        let Some(agent) = store.agent(&id).await? else {
-            return Ok(Err(Refusal::NoSuchAgent));
-        };
-        let (gate, admin) = mint_pair(&agent.name, &seams.authority)?;
+        // **The row step three resolved is re-checked inside the
+        // rotation's transaction**, under its lock, and the credentials are
+        // minted only after: a row retired meanwhile is refused, never made
+        // live again.
+        let mut pair = None;
         let landed = Store::rotate_credentials_by_admin_on(
             lock.connection(),
             AdminWrite {
@@ -468,18 +548,27 @@ async fn rotate(store: Store, seams: &Seams, headers: HeaderMap, ask: RotateAsk)
                 person: &session.person_id,
             },
             &agent,
-            &gate.fingerprint,
-            &admin.fingerprint,
             &seams.authority.fingerprint(),
+            || {
+                let (gate, admin) = mint_pair(&agent.name, &seams.authority)?;
+                let fingerprints = (gate.fingerprint.clone(), admin.fingerprint.clone());
+                pair = Some((gate, admin));
+                Ok(fingerprints)
+            },
         )
         .await;
-        match landed {
-            Ok(_) => Ok(Ok((agent, gate, admin))),
-            Err(e) if e.is::<AuthorityGone>() => Ok(Err(Refusal::AuthorityGone)),
-            Err(e) => match store.agent_by_fingerprint(&gate.fingerprint).await? {
-                Some(_) => Ok(Ok((agent, gate, admin))),
-                None => Err(e),
-            },
+        match (landed, pair) {
+            (Ok(_), Some((gate, admin))) => Ok(Ok((gate, admin))),
+            (Ok(_), None) => anyhow::bail!("a rotation landed with no credentials minted"),
+            (Err(e), _) if e.is::<AuthorityGone>() => Ok(Err(Refusal::AuthorityGone)),
+            (Err(e), _) if e.is::<Retired>() => Ok(Err(Refusal::Retired)),
+            (Err(e), None) => Err(e),
+            (Err(e), Some((gate, admin))) => {
+                match store.agent_by_fingerprint(&gate.fingerprint).await? {
+                    Some(_) => Ok(Ok((gate, admin))),
+                    None => Err(e),
+                }
+            }
         }
     };
     let written = match audited(&store, &session, Target::Agent(&ask.agent), ACTION, write).await {
@@ -487,8 +576,9 @@ async fn rotate(store: Store, seams: &Seams, headers: HeaderMap, ask: RotateAsk)
         Err(answer) => return answer,
     };
     match written {
-        Ok(Ok((agent, gate, admin))) => hand_over(
+        Ok(Ok((gate, admin))) => hand_over(
             seams,
+            reservation,
             session,
             "rotated",
             Minted {

@@ -1503,9 +1503,10 @@ it decides are stated here and in section 2.8, and the reasons are there.
   one is answered as not found and a role whose scope disagrees with the
   agent named or not as the ask's fault, each recorded nowhere, and the
   own-row and self-change rules are refused here too. (4) **The audited
-  write**: its first record, the write in its identity transaction, which
-  re-checks the authority and each reference's standing under the
-  exclusion since step three read them before the lock, and its outcome.
+  write**: its first record, the write in its transaction, which
+  re-checks under its locks the authority and **every fact step three
+  resolved**, since step three read them before the lock, and mints or
+  writes anything only once they pass, and its outcome.
   Each write
   lands in one transaction under the exclusion below that first re-checks
   its authority, the session standing and its person still holding a live
@@ -1801,14 +1802,19 @@ it decides are stated here and in section 2.8, and the reasons are there.
   config's name moved or the authority on disk is not the one the server
   loaded (the server is restarted after an authority rotation), and holds
   the identity exclusion shared, inside the register's own transaction,
-  from the admin's re-check to the store's commit. **The store keeps
+  from the admin's re-check to the store's commit; a rotation re-reads its
+  row there under the row's lock and refuses one retired since step three
+  read it, rather than making it live again, and the credentials are minted
+  only once both re-checks pass. **The store keeps
   fingerprints only, and the two client configs are handed over and kept
   nowhere**: held in the server's memory alone, each under a 32-byte handle
   from the operating system's random source, taken once, within five
   minutes, by the session that minted them, under `Cache-Control:
   no-store`, never in the store, a file, a log line or an audit record;
-  at most 64 wait, room for a write's two checked before its first record,
-  and a restart drops any not taken, after which the admin rotates. The
+  at most 64 wait or are reserved, a write reserving room for its two at
+  step three atomically and releasing what it does not hold on every path,
+  so the bound counts the writes in flight; and a restart drops any not
+  taken, after which the admin rotates. The
   page says each holds its connector's private key and goes to the box with
   the install script, readable only by the connector's own user at 0600.
   `revoke` and retiring an agent are the next pull request's; `authority
@@ -3947,7 +3953,7 @@ missing while it was relaying.
 | an agent is present only when both planes connect from one row | perturbation: mark present on either plane alone, an agent whose admin-con is down reads present with a tuple and a load state nobody has confirmed |
 | the server's authority is loaded before the listener starts and never minted at start | perturbation: mint the authority at start instead of loading it, restart the server, and every connector's hello is refused against a certificate it does not pin |
 | the client credential is stored as a fingerprint and never the key | perturbation, at the schema: store the key, a read of the register is a set of credentials anyone can present |
-| a register verb through the server is an admin's under the exclusion, and its client configs are handed over once and kept nowhere | perturbation in `src/agents_tests.rs`, against a real listener and an authority minted at test time: drop the admin's re-check from the register's transaction, revoke the grant between the surface's read and the write, and the agent is registered; drop the shared identity exclusion from it, and a revocation commits beneath a register held after its re-check; drop the take's session check, and another session of the same admin takes a config; drop the take's removal, and a config is taken twice; drop the lifetime, and a config past five minutes is taken; drop the room check, and a registration with no room for its configs is recorded and written; drop the check of the authority on disk, and a register mints under an authority rotated since the server loaded it; drop a rotation's notification, and the old credential's live connection stays open; drop a rotation's resolution of its agent, and an admin's unknown agent leaves a begun and failed pair; log a config at its take, and a private key is in a log line |
+| a register verb through the server is an admin's under the exclusion, and its client configs are handed over once and kept nowhere | perturbation in `src/agents_tests.rs`, against a real listener and an authority minted at test time: drop the admin's re-check from the register's transaction, revoke the grant between the surface's read and the write, and the agent is registered; drop the shared identity exclusion from it, and a revocation commits beneath a register held after its re-check; drop the take's session check, and another session of the same admin takes a config; drop the take's removal, and a config is taken twice; drop the lifetime, and a config past five minutes is taken; drop the reservation, and a registration with no room for its configs is recorded and written; count the configs held and not those reserved, and five concurrent registers against room for four all land, past the bound; drop a rotation's re-check of its row inside the transaction, and a row the host retired after step three is live again; drop the check of the authority on disk, and a register mints under an authority rotated since the server loaded it; drop a rotation's notification, and the old credential's live connection stays open; drop a rotation's resolution of its agent, and an admin's unknown agent leaves a begun and failed pair; log a config at its take, and a private key is in a log line |
 | the tuple and the load state come by admin-con and never by gate-con | perturbation: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it; let a replayed load event write the tuple, restart the server after an unload, backfill, and the row reads loaded; ask `show` before fixing the replay boundary, unload between the two, and the row reads loaded until the next `show`. **Four clauses are admin-con's ordering**, against the real listener with a fake invoker in `src/link/admin_con_tests.rs`: let a `show` answer cross the link out of order with the file events around it, unload during the `show`, and the row reads loaded until the next `show`; place the answer in the stream at receipt and unload between the snapshot and the receipt, and the row reads loaded; skip the drain, leave an unread load event behind the tail, invoke `show` after an unload, and the row reads loaded; run two verbs at once on one connection, and an older answer lands after a newer one. **The slot's clause**, against the real listener with the sudo invoker over a fake `sudo` in `src/link/sudo_invoker_tests.rs`: free the slot at a reconnection while a timed-out verb's process still runs, and the new connection's admission `show` runs beside it. **A turn's start and close refresh the load state**, against the real listener in `src/link/tests.rs`: drop the `turn.started` mapping, and the row never reads `active` between a turn's start and close; let a replayed `turn.started` land, and the row reads `active` from history; let a turn's event write the tuple, and the row loses the tuple it held; let a turn's event write the tuple's source, and a `show`-shaped tuple reads as an event's |
 | nothing crosses the link in the clear | perturbation: offer a plaintext hello to the listener, it is refused below any roster; and review, over the listener, that no plaintext accept path exists |
 | the server never asks a verb outside the agent's ceiling | perturbation: drop the ceiling check, ask a verb admin-con's hello did not declare, and it leaves the server; and admin-con's half, drop its typed error answer, and it reaches the invoker. **One clause is owed**: check against the row's copy, narrow the ceiling by reconnecting between the check and the enqueue, and an ask outside the new ceiling leaves. The race has no deterministic staging, and the guard is held by review: the check reads the live connection's ceiling under the live map's lock that finds the connection |

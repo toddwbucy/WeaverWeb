@@ -68,6 +68,10 @@ fn server_config(dir: &std::path::Path, link: std::net::SocketAddr) -> crate::co
 }
 
 async fn rig() -> Option<Rig> {
+    rig_with(Handover::default()).await
+}
+
+async fn rig_with(handover: Handover) -> Option<Rig> {
     let fresh = fresh_store().await?;
     let dir = tempfile::tempdir().unwrap();
     let authority =
@@ -81,7 +85,6 @@ async fn rig() -> Option<Rig> {
     .await
     .unwrap();
     let cfg = Arc::new(server_config(dir.path(), listener.address()));
-    let handover = Handover::default();
     let policy = gate::Policy {
         origin: Some(ORIGIN.to_owned()),
         idle: Duration::from_secs(3600),
@@ -402,8 +405,10 @@ async fn the_hand_over_refuses_another_session() {
 #[tokio::test(start_paused = true)]
 async fn a_config_past_its_five_minutes_is_gone() {
     let handover = Handover::default();
-    let kept = handover.hold(1, "a.toml".into(), "kept".into());
-    let late = handover.hold(1, "b.toml".into(), "late".into());
+    let mut reserved = handover.reserve(2).unwrap();
+    let kept = reserved.hold(1, "a.toml".into(), "kept".into());
+    let late = reserved.hold(1, "b.toml".into(), "late".into());
+    drop(reserved);
     assert_eq!(
         handover.take(&kept, 1).map(|(_, c)| c).as_deref(),
         Some("kept")
@@ -421,8 +426,9 @@ async fn a_full_hand_over_refuses_before_any_record() {
     let Some(rig) = rig().await else { return };
     let s = rig.store();
     let (_, session) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let mut filler = rig.handover.reserve(HANDOVERS_HELD - 1).unwrap();
     for n in 0..HANDOVERS_HELD - 1 {
-        rig.handover.hold(0, format!("{n}.toml"), String::new());
+        filler.hold(0, format!("{n}.toml"), String::new());
     }
     let before = rows(s, "SELECT count(*) FROM audit").await;
     let (status, _, answer) = rig
@@ -714,4 +720,135 @@ async fn a_revocation_waits_for_the_register_it_would_have_refused() {
     assert!(removed.ok, "{}", removed.value);
     assert!(!s.is_admin(&ada).await.unwrap());
     assert_eq!(rows(s, "SELECT count(*) FROM agent").await, 1);
+}
+
+/// **The hand-over's bound counts the writes in flight**: with room for
+/// four configs, five admins register at once, each held after reserving
+/// at step three; two reserve their two slots and land, the other three are
+/// refused before any record, and the configs held and reserved never pass
+/// the bound.
+#[tokio::test]
+async fn concurrent_registers_never_pass_the_hand_overs_bound() {
+    let Some(rig) = rig_with(Handover::with_cap(4)).await else {
+        return;
+    };
+    let s = rig.store();
+    let mut admins = Vec::new();
+    for name in ["ada", "bea", "cara", "dot", "eve"] {
+        admins.push(admin(&rig.app, s, &mut authenticator(), name).await);
+    }
+    let before = rows(s, "SELECT count(*) FROM audit").await;
+    let mut releases = Vec::new();
+    let mut writes = Vec::new();
+    for (n, (person, session)) in admins.iter().enumerate() {
+        let (_, release) = hold(&READ_HOLD, person);
+        releases.push(release);
+        writes.push(tokio::spawn({
+            let (app, session) = (rig.app.clone(), session.clone());
+            let r#box = format!("box-{n}");
+            async move {
+                send_as(
+                    &app,
+                    "POST",
+                    "/admin/agents/register",
+                    Some(form(&[("box", &r#box), ("name", "karl")])),
+                    &session,
+                )
+                .await
+            }
+        }));
+    }
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(rig.handover.occupied() <= 4, "reserved within the bound");
+    for release in &releases {
+        release.notify_one();
+    }
+    let mut answered = Vec::new();
+    for write in writes {
+        answered.push(write.await.unwrap().0);
+    }
+    let landed = answered.iter().filter(|s| **s == StatusCode::OK).count();
+    let refused = answered
+        .iter()
+        .filter(|s| **s == StatusCode::SERVICE_UNAVAILABLE)
+        .count();
+    assert_eq!((landed, refused), (2, 3), "{answered:?}");
+    assert_eq!(rig.handover.held(), 4);
+    assert_eq!(rig.handover.occupied(), 4, "no slot left reserved");
+    assert_eq!(rows(s, "SELECT count(*) FROM agent").await, 2);
+    assert_eq!(
+        rows(s, "SELECT count(*) FROM audit").await,
+        before + 4,
+        "two audit pairs, and none for the refused"
+    );
+    // Holds left unused by the refused writes are cleared for later tests.
+    READ_HOLD
+        .lock()
+        .unwrap()
+        .retain(|(key, ..)| !admins.iter().any(|(person, _)| person == key));
+}
+
+/// **A rotation re-checks, inside its transaction, the row step three
+/// resolved**: the host revokes both of a live row's credentials while a
+/// rotation is held after step three, and the rotation is refused as
+/// retired, audited as failed, the row left retired and nothing minted or
+/// handed over.
+#[tokio::test]
+async fn a_row_retired_mid_rotation_stays_retired() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (ada, session) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (id, handles) = rig.register(&session, "box-a", "karl").await;
+    for handle in &handles {
+        rig.take(handle, &session).await;
+    }
+    let before: (String, String) =
+        sqlx::query_as("SELECT gate_fingerprint, admin_fingerprint FROM agent WHERE agent_id = $1")
+            .bind(&id)
+            .fetch_one(&s.pool)
+            .await
+            .unwrap();
+
+    let (read, release) = hold(&READ_HOLD, &ada);
+    let rotation = tokio::spawn({
+        let (app, session, body) = (rig.app.clone(), session.clone(), form(&[("agent", &id)]));
+        async move { send_as(&app, "POST", "/admin/agents/rotate", Some(body), &session).await }
+    });
+    read.notified().await;
+    for plane in [Plane::Gate, Plane::Admin] {
+        let revoked = crate::link::verbs::revoke(s, &id, plane, None).await;
+        assert!(revoked.ok, "{}", revoked.value);
+    }
+    release.notify_one();
+    let (status, _, answer) = rotation.await.unwrap();
+    assert_eq!(status, StatusCode::CONFLICT, "{answer}");
+    assert!(answer.contains("no live credential"), "{answer}");
+    let after: (String, String, String, String) = sqlx::query_as(
+        "SELECT gate_state, admin_state, gate_fingerprint, admin_fingerprint FROM agent \
+         WHERE agent_id = $1",
+    )
+    .bind(&id)
+    .fetch_one(&s.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        after,
+        ("revoked".into(), "revoked".into(), before.0, before.1),
+        "the row stays retired, its fingerprints untouched"
+    );
+    assert_eq!(
+        rig.handover.occupied(),
+        0,
+        "nothing handed over or reserved"
+    );
+    assert_eq!(
+        rows(
+            s,
+            &format!(
+                "SELECT count(*) FROM audit WHERE target_id = '{id}' AND action = 'rotate' AND outcome = 'failed'"
+            )
+        )
+        .await,
+        1
+    );
 }

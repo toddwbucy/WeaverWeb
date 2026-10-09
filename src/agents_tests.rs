@@ -1218,3 +1218,88 @@ async fn the_grants_page_marks_a_grant_on_a_retired_agent() {
         "the grant stands"
     );
 }
+
+/// **A revocation or a retirement whose commit's answer is lost reads back
+/// its effect** (Spec 2.13): the planes revoked and notified, the answer
+/// lost after PostgreSQL applied the commit, and the write answers its
+/// success with its outcome `ok`, where a retry would meet step three's
+/// refusal and the record could never be put right.
+#[tokio::test]
+async fn a_revocation_whose_commits_answer_is_lost_reads_back_its_effect() {
+    use crate::admin_tests::{lose_the_commits_answer, the_answer_was_lost};
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, session) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (id, mut gate, mut admin_plane, _) = connected(&rig, &session, "box-a").await;
+
+    lose_the_commits_answer("agent revoke");
+    let (status, _, answer) = rig
+        .post(
+            "/admin/agents/revoke",
+            form(&[("agent", &id), ("plane", "gate")]),
+            &session,
+        )
+        .await;
+    assert!(the_answer_was_lost());
+    assert_eq!(status, StatusCode::SEE_OTHER, "{answer}");
+    assert!(gate.closed().await, "notified with the commit");
+
+    lose_the_commits_answer("agent revoke");
+    let (status, _, answer) = rig
+        .post("/admin/agents/retire", form(&[("agent", &id)]), &session)
+        .await;
+    assert!(the_answer_was_lost());
+    assert_eq!(status, StatusCode::SEE_OTHER, "{answer}");
+    assert!(admin_plane.closed().await);
+    assert_eq!(states(s, &id).await, ("revoked".into(), "revoked".into()));
+    for action in ["revoke", "retire"] {
+        assert_eq!(
+            rows(
+                s,
+                &format!("SELECT count(*) FROM audit WHERE target_id = '{id}' AND action = '{action}' AND outcome = 'ok'")
+            )
+            .await,
+            1,
+            "{action}"
+        );
+    }
+    assert_eq!(
+        rows(s, "SELECT count(*) FROM audit WHERE outcome = 'failed'").await,
+        0
+    );
+}
+
+/// **A registration or a rotation through the server whose commit's answer
+/// is lost reads back its new fingerprint**: the configs are handed over
+/// and the outcome recorded `ok`.
+#[tokio::test]
+async fn a_register_whose_commits_answer_is_lost_reads_back_its_fingerprint() {
+    use crate::admin_tests::{lose_the_commits_answer, the_answer_was_lost};
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, session) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+
+    lose_the_commits_answer("register");
+    let (id, handles) = rig.register(&session, "box-a", "karl").await;
+    assert!(the_answer_was_lost());
+    assert_eq!(handles.len(), 2, "the configs handed over");
+
+    lose_the_commits_answer("rotate");
+    let (status, _, page) = rig
+        .post("/admin/agents/rotate", form(&[("agent", &id)]), &session)
+        .await;
+    assert!(the_answer_was_lost());
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(Rig::handles(&page).len(), 2);
+    for action in ["register", "rotate"] {
+        assert_eq!(
+            rows(
+                s,
+                &format!("SELECT count(*) FROM audit WHERE target_id = '{id}' AND action = '{action}' AND outcome = 'ok'")
+            )
+            .await,
+            1,
+            "{action}"
+        );
+    }
+}

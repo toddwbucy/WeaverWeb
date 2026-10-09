@@ -132,7 +132,7 @@ thread_local! {
 }
 
 #[cfg(test)]
-fn fail_after_commit(kind: &'static str) -> anyhow::Result<()> {
+pub(crate) fn fail_after_commit(kind: &'static str) -> anyhow::Result<()> {
     let armed = FAIL_AFTER_COMMIT.with(|f| {
         if f.get() == Some(kind) {
             f.set(None);
@@ -652,10 +652,42 @@ impl Store {
             let fingerprint: String =
                 row.try_get(format!("{}_fingerprint", plane.as_str()).as_str())?;
             notify(&mut tx, &fingerprint).await?;
-            revoked.push(fingerprint);
+            revoked.push((plane, fingerprint));
         }
-        tx.commit().await?;
-        Ok(revoked)
+        let read_back = &revoked;
+        crate::store::commit::commit_or_read_back(tx, "agent revoke", || {
+            self.planes_revoked(agent_id, read_back)
+        })
+        .await?;
+        Ok(revoked
+            .into_iter()
+            .map(|(_, fingerprint)| fingerprint)
+            .collect())
+    }
+
+    /// **A revocation's effect, read back where its commit's answer was
+    /// lost** (`store::commit`): each plane asked revoked, still carrying
+    /// the fingerprint the revocation read.
+    async fn planes_revoked(
+        &self,
+        agent_id: &AgentId,
+        planes: &[(Plane, String)],
+    ) -> anyhow::Result<bool> {
+        for (plane, fingerprint) in planes {
+            let p = plane_columns(*plane);
+            let revoked: bool = sqlx::query_scalar(audited(format!(
+                "SELECT EXISTS (SELECT 1 FROM agent WHERE agent_id = $1 \
+                 AND {p}_state = 'revoked' AND {p}_fingerprint = $2)"
+            )))
+            .bind(agent_id.as_str())
+            .bind(fingerprint)
+            .fetch_one(&self.pool)
+            .await?;
+            if !revoked {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// **Revoke one credential** (Spec 8): an authored edit under section

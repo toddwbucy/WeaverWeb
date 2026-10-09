@@ -781,3 +781,87 @@ async fn a_malformed_identity_is_refused_before_any_record() {
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{answer}");
 }
+
+/// Arm the test fault that loses the answer of the next commit of `kind`.
+pub(crate) fn lose_the_commits_answer(kind: &'static str) {
+    crate::link::register::FAIL_AFTER_COMMIT.with(|f| f.set(Some(kind)));
+}
+
+/// Whether the armed fault fired, and so the answer was lost.
+pub(crate) fn the_answer_was_lost() -> bool {
+    crate::link::register::FAIL_AFTER_COMMIT.with(|f| f.get().is_none())
+}
+
+/// **A person write whose commit's answer is lost reads back its effect**
+/// (Spec 2.13): for each of the five, the answer of the commit is lost
+/// after PostgreSQL applied it, and the write reads its effect back, answers
+/// its success, and records its outcome `ok`.
+#[tokio::test]
+async fn a_person_write_whose_commits_answer_is_lost_reads_back_its_effect() {
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let app = app(s, Some(passkeys()));
+    let (ada, session) = admin(&app, s, &mut authenticator(), "ada").await;
+    let (bea, _) = person_with_token(s, "bea").await;
+
+    lose_the_commits_answer("person enroll");
+    let (status, _, page) = send_as(
+        &app,
+        "POST",
+        "/admin/persons/enroll",
+        Some(form(&[("name", "cara")])),
+        &session,
+    )
+    .await;
+    assert!(the_answer_was_lost());
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let cara = s.person("cara").await.unwrap().unwrap().person_id;
+
+    lose_the_commits_answer("person token");
+    let (status, _, page) = send_as(
+        &app,
+        "POST",
+        "/admin/persons/token",
+        Some(form(&[("person", &cara)])),
+        &session,
+    )
+    .await;
+    assert!(the_answer_was_lost());
+    assert_eq!(status, StatusCode::OK, "{page}");
+
+    for (kind, uri, extra) in [
+        ("person disable", "/admin/persons/disable", None),
+        ("person enable", "/admin/persons/enable", None),
+        ("person rename", "/admin/persons/rename", Some("bee")),
+    ] {
+        let v = version(s, &bea).await;
+        let mut fields = vec![("person", bea.as_str()), ("version", v.as_str())];
+        if let Some(name) = extra {
+            fields.push(("name", name));
+        }
+        lose_the_commits_answer(kind);
+        let (status, _, answer) = send_as(&app, "POST", uri, Some(form(&fields)), &session).await;
+        assert!(the_answer_was_lost(), "{kind}");
+        assert_eq!(status, StatusCode::SEE_OTHER, "{kind}: {answer}");
+    }
+    assert!(enabled(s, &bea).await);
+    assert_eq!(s.person(&bea).await.unwrap().unwrap().name, "bee");
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM audit WHERE person_id = $1 AND action LIKE 'person %' \
+             AND outcome = 'ok'"
+        )
+        .bind(&ada)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap(),
+        5,
+        "each write's outcome ok"
+    );
+    assert_eq!(
+        rows(s, "SELECT count(*) FROM audit WHERE outcome = 'failed'").await,
+        0
+    );
+}

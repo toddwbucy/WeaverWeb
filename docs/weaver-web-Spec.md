@@ -914,8 +914,10 @@ configured origin**, exactly one such header, or is refused before its
 handler: every method but `GET` and `HEAD`, over the whole app, the legacy
 routes included, beside `SameSite=Strict`. **With no origin configured,
 nothing that changes state is served**, since nothing can sign in without
-one. **Sign-out** is a `POST` that closes the session's row and clears the
-cookie.
+one. **Sign-out** is a `POST` that closes the session's row, clears the
+cookie and sends the browser to the sign-in page. **A signed-in page's
+navigation** links to Record and to the person's own passkeys and carries
+the sign-out as a plain form; a page without a session links to sign-in.
 
 **Sign-in is name-first**, as built on 2026-10-09 (`/sign-in`): the person
 gives their name, found by its canonical form, and answers a challenge for

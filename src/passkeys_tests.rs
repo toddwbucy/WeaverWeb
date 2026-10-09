@@ -539,6 +539,14 @@ async fn the_module_is_small_and_the_page_has_no_inline_script() {
         page.contains(r#"<form id="enroll" method="post""#),
         "{page}"
     );
+    assert!(
+        page.contains(r#"<a href="/sign-in""#),
+        "no session: a sign-in link"
+    );
+    assert!(
+        !page.contains(r#"<a href="/passkeys""#),
+        "no session: no passkeys link"
+    );
     let input = page
         .split("<input")
         .nth(1)

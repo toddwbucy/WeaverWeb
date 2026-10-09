@@ -50,10 +50,11 @@ pub const NAME_BOUND: usize = 1024;
 /// **An identity a request submits is parsed into its exact shape at the
 /// surface's boundary, before any record**, by these four helpers, one per
 /// kind: a malformed one is refused there as the ask's fault and written
-/// nowhere, since the audit's target and every key column refuse a value
-/// out of shape and would turn an ordinary malformed request into the
-/// server's failure. A well-shaped identity naming nothing goes on to the
-/// store, which answers that no such row stands.
+/// nowhere, so a request's text never becomes an audit target, and the
+/// targets the audit checks by shape (a person's, a grant's) never turn an
+/// ordinary malformed request into the server's failure. A well-shaped
+/// identity naming nothing goes on to the store, which answers that no such
+/// row stands.
 pub fn is_person_id(spec: &str) -> bool {
     shaped("pe-", spec)
 }

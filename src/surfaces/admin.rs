@@ -33,7 +33,7 @@ use crate::surfaces::gate::{self, Policy, Session};
 use crate::surfaces::record::NoSession;
 
 /// The answer to a session whose person holds no live admin grant.
-const NOT_AN_ADMIN: &str =
+pub(crate) const NOT_AN_ADMIN: &str =
     "this is an admin's page, and this session's person holds no admin grant";
 
 /// The answer to a submitted person that is not a person's identity.
@@ -73,6 +73,7 @@ pub fn routes(policy: Policy, token_hours: u32) -> Router<Store> {
         .route("/admin/persons/disable", post(seamed!(disable, VersionAsk)))
         .route("/admin/persons/enable", post(seamed!(enable, VersionAsk)))
         .route("/admin/persons/rename", post(seamed!(rename, RenameAsk)))
+        .merge(crate::surfaces::grants::routes(seams.policy))
 }
 
 #[derive(Clone)]
@@ -81,21 +82,28 @@ struct Seams {
     token_hours: u32,
 }
 
-fn fault(e: impl Into<anyhow::Error>) -> Response {
+pub(crate) fn fault(e: impl Into<anyhow::Error>) -> Response {
     Fault::from(e.into()).into_response()
 }
 
 /// A refused write's answer, in words the admin can act on.
-fn refused(refusal: &Refusal) -> Response {
+pub(crate) fn refused(refusal: &Refusal) -> Response {
     let status = match refusal {
-        Refusal::AuthorityGone => StatusCode::FORBIDDEN,
-        Refusal::NoSuchPerson => StatusCode::NOT_FOUND,
-        Refusal::Name(_) => StatusCode::BAD_REQUEST,
+        Refusal::AuthorityGone | Refusal::OwnGrant | Refusal::HoldsRole | Refusal::Fixed => {
+            StatusCode::FORBIDDEN
+        }
+        Refusal::NoSuchPerson
+        | Refusal::NoSuchGrant
+        | Refusal::NoSuchRole
+        | Refusal::NoSuchAgent => StatusCode::NOT_FOUND,
+        Refusal::Name(_) | Refusal::Scope(_) | Refusal::Vocabulary(_) => StatusCode::BAD_REQUEST,
         Refusal::Stale
         | Refusal::Taken(_)
         | Refusal::HoldsPasskey
         | Refusal::LastAdmin
-        | Refusal::Already => StatusCode::CONFLICT,
+        | Refusal::Already
+        | Refusal::Held
+        | Refusal::Revoked => StatusCode::CONFLICT,
     };
     (status, refusal.to_string()).into_response()
 }
@@ -103,7 +111,7 @@ fn refused(refusal: &Refusal) -> Response {
 /// The session a request carries, its person holding a live admin grant,
 /// or the answer that it does not. A refusal for want of the grant is not
 /// recorded here; a write records its own.
-async fn admin_session(
+pub(crate) async fn admin_session(
     store: &Store,
     policy: &Policy,
     headers: &HeaderMap,
@@ -124,11 +132,11 @@ async fn admin_session(
 /// session whose person holds no live admin grant is refused, one audit
 /// record carrying the refusal, a refusal whose record cannot be written
 /// answering as the server's failure.
-async fn writer(
+pub(crate) async fn writer(
     store: &Store,
     policy: &Policy,
     headers: &HeaderMap,
-    target: &str,
+    target: Target<'_>,
     action: &str,
 ) -> Result<Session, Response> {
     match admin_session(store, policy, headers).await? {
@@ -139,7 +147,7 @@ async fn writer(
                 method: PersonMethod::Session,
             };
             match store
-                .audit_refusal(principal, Target::Person(target), action, "not an admin")
+                .audit_refusal(principal, target, action, "not an admin")
                 .await
             {
                 Ok(_) => Err((StatusCode::FORBIDDEN, NOT_AN_ADMIN).into_response()),
@@ -154,10 +162,10 @@ async fn writer(
 
 /// **The write, between its two audit records**: the first before it, the
 /// outcome after, an act whose first record cannot be written not acting.
-async fn audited<T, F>(
+pub(crate) async fn audited<T, F>(
     store: &Store,
     session: &Session,
-    target: &str,
+    target: Target<'_>,
     action: &str,
     write: F,
 ) -> Result<anyhow::Result<Result<T, Refusal>>, Response>
@@ -170,10 +178,7 @@ where
         person_id: &session.person_id,
         method: PersonMethod::Session,
     };
-    let first = match store
-        .audit_first(principal, Target::Person(target), action)
-        .await
-    {
+    let first = match store.audit_first(principal, target, action).await {
         Ok(first) => first,
         Err(e) => return Err(fault(e)),
     };
@@ -188,13 +193,12 @@ where
 }
 
 /// Back to the page, the write landed.
-fn landed<T>(written: anyhow::Result<Result<T, Refusal>>) -> Response {
+pub(crate) fn landed<T>(
+    written: anyhow::Result<Result<T, Refusal>>,
+    page: &'static str,
+) -> Response {
     match written {
-        Ok(Ok(_)) => (
-            StatusCode::SEE_OTHER,
-            [(header::LOCATION, "/admin/persons")],
-        )
-            .into_response(),
+        Ok(Ok(_)) => (StatusCode::SEE_OTHER, [(header::LOCATION, page)]).into_response(),
         Ok(Err(refusal)) => refused(&refusal),
         Err(e) => fault(e),
     }
@@ -289,14 +293,22 @@ async fn enroll(store: Store, seams: &Seams, headers: HeaderMap, ask: EnrollAsk)
         Ok(person) => person,
         Err(e) => return fault(e),
     };
-    let session = match writer(&store, &seams.policy, &headers, &person, ACTION).await {
+    let session = match writer(
+        &store,
+        &seams.policy,
+        &headers,
+        Target::Person(&person),
+        ACTION,
+    )
+    .await
+    {
         Ok(session) => session,
         Err(answer) => return answer,
     };
     let written = match audited(
         &store,
         &session,
-        &person,
+        Target::Person(&person),
         ACTION,
         store.admin_enroll(
             &session.person_id,
@@ -329,7 +341,15 @@ async fn token(store: Store, seams: &Seams, headers: HeaderMap, ask: PersonAsk) 
     if !is_person_id(&ask.person) {
         return (StatusCode::BAD_REQUEST, MALFORMED_PERSON).into_response();
     }
-    let session = match writer(&store, &seams.policy, &headers, &ask.person, ACTION).await {
+    let session = match writer(
+        &store,
+        &seams.policy,
+        &headers,
+        Target::Person(&ask.person),
+        ACTION,
+    )
+    .await
+    {
         Ok(session) => session,
         Err(answer) => return answer,
     };
@@ -339,7 +359,7 @@ async fn token(store: Store, seams: &Seams, headers: HeaderMap, ask: PersonAsk) 
     let written = match audited(
         &store,
         &session,
-        &ask.person,
+        Target::Person(&ask.person),
         ACTION,
         store.admin_issue_token(
             &session.person_id,
@@ -373,7 +393,15 @@ async fn disable(store: Store, seams: &Seams, headers: HeaderMap, ask: VersionAs
     if !is_person_id(&ask.person) {
         return (StatusCode::BAD_REQUEST, MALFORMED_PERSON).into_response();
     }
-    let session = match writer(&store, &seams.policy, &headers, &ask.person, ACTION).await {
+    let session = match writer(
+        &store,
+        &seams.policy,
+        &headers,
+        Target::Person(&ask.person),
+        ACTION,
+    )
+    .await
+    {
         Ok(session) => session,
         Err(answer) => return answer,
     };
@@ -383,7 +411,7 @@ async fn disable(store: Store, seams: &Seams, headers: HeaderMap, ask: VersionAs
     match audited(
         &store,
         &session,
-        &ask.person,
+        Target::Person(&ask.person),
         ACTION,
         store.admin_disable(
             &session.person_id,
@@ -394,7 +422,7 @@ async fn disable(store: Store, seams: &Seams, headers: HeaderMap, ask: VersionAs
     )
     .await
     {
-        Ok(written) => landed(written),
+        Ok(written) => landed(written, "/admin/persons"),
         Err(answer) => answer,
     }
 }
@@ -405,7 +433,15 @@ async fn enable(store: Store, seams: &Seams, headers: HeaderMap, ask: VersionAsk
     if !is_person_id(&ask.person) {
         return (StatusCode::BAD_REQUEST, MALFORMED_PERSON).into_response();
     }
-    let session = match writer(&store, &seams.policy, &headers, &ask.person, ACTION).await {
+    let session = match writer(
+        &store,
+        &seams.policy,
+        &headers,
+        Target::Person(&ask.person),
+        ACTION,
+    )
+    .await
+    {
         Ok(session) => session,
         Err(answer) => return answer,
     };
@@ -415,7 +451,7 @@ async fn enable(store: Store, seams: &Seams, headers: HeaderMap, ask: VersionAsk
     match audited(
         &store,
         &session,
-        &ask.person,
+        Target::Person(&ask.person),
         ACTION,
         store.admin_enable(
             &session.person_id,
@@ -426,7 +462,7 @@ async fn enable(store: Store, seams: &Seams, headers: HeaderMap, ask: VersionAsk
     )
     .await
     {
-        Ok(written) => landed(written),
+        Ok(written) => landed(written, "/admin/persons"),
         Err(answer) => answer,
     }
 }
@@ -445,7 +481,15 @@ async fn rename(store: Store, seams: &Seams, headers: HeaderMap, ask: RenameAsk)
     if !is_person_id(&ask.person) {
         return (StatusCode::BAD_REQUEST, MALFORMED_PERSON).into_response();
     }
-    let session = match writer(&store, &seams.policy, &headers, &ask.person, ACTION).await {
+    let session = match writer(
+        &store,
+        &seams.policy,
+        &headers,
+        Target::Person(&ask.person),
+        ACTION,
+    )
+    .await
+    {
         Ok(session) => session,
         Err(answer) => return answer,
     };
@@ -455,7 +499,7 @@ async fn rename(store: Store, seams: &Seams, headers: HeaderMap, ask: RenameAsk)
     match audited(
         &store,
         &session,
-        &ask.person,
+        Target::Person(&ask.person),
         ACTION,
         store.admin_rename(
             &session.person_id,
@@ -467,7 +511,7 @@ async fn rename(store: Store, seams: &Seams, headers: HeaderMap, ask: RenameAsk)
     )
     .await
     {
-        Ok(written) => landed(written),
+        Ok(written) => landed(written, "/admin/persons"),
         Err(answer) => answer,
     }
 }

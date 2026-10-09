@@ -26,7 +26,7 @@ pub enum Refusal {
     AuthorityGone,
     /// No such person.
     NoSuchPerson,
-    /// The person row moved since the page read it.
+    /// The row moved since the page read it.
     Stale,
     /// The name is refused: empty, too long, or an identity's shape.
     Name(String),
@@ -38,6 +38,27 @@ pub enum Refusal {
     LastAdmin,
     /// The person is already in the state asked for.
     Already,
+    /// No such grant.
+    NoSuchGrant,
+    /// No such role.
+    NoSuchRole,
+    /// No such agent in the register.
+    NoSuchAgent,
+    /// The role and the agent do not agree: `admin` server-wide and with no
+    /// agent, every other role on one agent.
+    Scope(String),
+    /// The person already holds the role there.
+    Held,
+    /// The grant was revoked already.
+    Revoked,
+    /// A grant whose grantee is the admin themselves, granting or revoking.
+    OwnGrant,
+    /// A role the admin holds a grant of on some agent.
+    HoldsRole,
+    /// The admin role is fixed by the store.
+    Fixed,
+    /// A verb outside the vocabulary.
+    Vocabulary(String),
 }
 
 impl std::fmt::Display for Refusal {
@@ -50,7 +71,7 @@ impl std::fmt::Display for Refusal {
             Refusal::NoSuchPerson => write!(f, "no such person"),
             Refusal::Stale => write!(
                 f,
-                "that person changed since the page was read; reload it and try again"
+                "that row changed since the page was read; reload it and try again"
             ),
             Refusal::Name(why) => write!(f, "{why}"),
             Refusal::Taken(name) => write!(
@@ -66,6 +87,29 @@ impl std::fmt::Display for Refusal {
                 "this would leave no enabled person holding the admin grant"
             ),
             Refusal::Already => write!(f, "the person is already so"),
+            Refusal::NoSuchGrant => write!(f, "no such grant"),
+            Refusal::NoSuchRole => write!(f, "no such role"),
+            Refusal::NoSuchAgent => write!(f, "no such agent in the register"),
+            Refusal::Scope(why) => write!(f, "{why}"),
+            Refusal::Held => write!(f, "that person already holds that role there"),
+            Refusal::Revoked => write!(f, "that grant is revoked already"),
+            Refusal::OwnGrant => write!(
+                f,
+                "no person grants or revokes a grant of their own; another admin, or the host's grant commands, write it"
+            ),
+            Refusal::HoldsRole => write!(
+                f,
+                "no person edits a role they hold a grant of, since widening it widens their own grant; another admin, or the host's role set, writes it"
+            ),
+            Refusal::Fixed => write!(
+                f,
+                "the admin role is fixed by the store and carries no agent verb; nothing writes it"
+            ),
+            Refusal::Vocabulary(verb) => write!(
+                f,
+                "{verb} is not in the vocabulary ({})",
+                crate::store::identity::VOCABULARY.join(", ")
+            ),
         }
     }
 }
@@ -110,7 +154,7 @@ async fn holds_live_admin(
 }
 
 /// The authority checked, or the write refused as its authority gone.
-async fn authorized(
+pub(crate) async fn authorized(
     tx: &mut Transaction<'_, Postgres>,
     session_id: i64,
     admin: &str,

@@ -577,11 +577,12 @@ async fn session_bearers_share_no_prefix() {
     }
 }
 
-/// **One person never signs in as another**: an assertion by another
-/// person's passkey, finished against this person's ceremony, opens
-/// nothing. Two guards hold it, each alone: the ceremony allows this
-/// person's passkeys only, and the counter rule finds the credential among
-/// this person's passkeys only.
+/// **One person never signs in as another**: another person's
+/// authenticator answering this person's challenge opens nothing. Three
+/// guards hold it, each alone: the ceremony's options allow this person's
+/// passkeys only, so the other authenticator finds nothing to answer with;
+/// the counter rule finds the credential among this person's passkeys only;
+/// and the opening checks the passkey is this person's.
 #[tokio::test]
 async fn an_assertion_by_another_persons_passkey_opens_nothing() {
     let Some(fresh) = fresh_store().await else {
@@ -600,23 +601,21 @@ async fn an_assertion_by_another_persons_passkey_opens_nothing() {
         Some(json!({ "name": "ada" })),
     )
     .await;
-    let (_, _, bea_options) = send(
-        &app,
-        "POST",
-        "/sign-in/options",
-        Some(json!({ "name": "bea" })),
-    )
-    .await;
-    let (_, bea_assertion) = assert_with(&mut bea, &bea_options);
-    let ada_ceremony = serde_json::from_str::<Value>(&ada_options).unwrap()["ceremony"]
-        .as_str()
-        .unwrap()
-        .to_owned();
+    let options: Value = serde_json::from_str(&ada_options).unwrap();
+    let challenge: RequestChallengeResponse =
+        serde_json::from_value(options["options"].clone()).unwrap();
+    let Ok(answered) = bea.do_authentication(Url::parse(ORIGIN).unwrap(), challenge) else {
+        // The options allowed none of the other person's passkeys.
+        assert_eq!(rows(s, "SELECT count(*) FROM session").await, 0);
+        return;
+    };
+    let mut credential = serde_json::to_value(&answered).unwrap();
+    credential.as_object_mut().unwrap().remove("extensions");
     let (status, headers, answer) = send(
         &app,
         "POST",
         "/sign-in/finish",
-        Some(json!({ "ceremony": ada_ceremony, "credential": bea_assertion })),
+        Some(json!({ "ceremony": options["ceremony"], "credential": credential })),
     )
     .await;
     assert_ne!(status, StatusCode::OK, "{answer}");

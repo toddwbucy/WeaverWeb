@@ -1368,3 +1368,62 @@ async fn a_revocation_whose_answer_is_lost_lands_though_a_rotation_follows() {
         0
     );
 }
+
+/// **A retired row is never live again, the host's `rotate` included**:
+/// an agent retired through the web is refused by the host's rotation of
+/// its identity, which names the refusal and tells the operator to register
+/// again; the row stays retired, its grant stands and is still marked, and
+/// no client config is left behind.
+#[tokio::test]
+async fn the_hosts_rotate_refuses_a_retired_row() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, session) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (bea, _) = crate::passkeys_tests::person_with_token(s, "bea").await;
+    let (id, _) = rig.register(&session, "box-a", "karl").await;
+    let granted = host::grant_add(s, &bea, "observer", Some(&id), None).await;
+    assert!(granted.ok, "{}", granted.value);
+    let (status, _, _) = rig
+        .post("/admin/agents/retire", form(&[("agent", &id)]), &session)
+        .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+
+    let cfg = server_config(rig.dir.path(), rig.listener.address());
+    let out = tempfile::tempdir().unwrap();
+    let rotated =
+        crate::link::verbs::rotate(s, &cfg, &rig.authority, &id, out.path(), Some("lab")).await;
+    assert!(!rotated.ok, "{}", rotated.value);
+    let error = rotated.value["error"].as_str().unwrap_or_default();
+    assert!(error.contains("register the agent again"), "{error}");
+    assert_eq!(states(s, &id).await, ("revoked".into(), "revoked".into()));
+    assert!(
+        s.live_grant(&bea, "observer", Some(&id))
+            .await
+            .unwrap()
+            .is_some(),
+        "the grant stands"
+    );
+    let (_, _, page) = send_as(&rig.app, "GET", "/admin/grants", None, &session).await;
+    assert!(page.contains("agent retired"), "and is still marked");
+    let configs = walk(out.path());
+    assert!(
+        !configs.iter().any(|p| p.ends_with(".toml")),
+        "no client config left behind: {configs:?}"
+    );
+}
+
+/// Every file under `dir`, by path.
+fn walk(dir: &std::path::Path) -> Vec<String> {
+    let mut found = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                found.extend(walk(&path));
+            } else {
+                found.push(path.display().to_string());
+            }
+        }
+    }
+    found
+}

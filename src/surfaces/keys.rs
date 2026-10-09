@@ -545,11 +545,13 @@ async fn add_finish(
             &credential_id,
             &credential,
             label,
+            &first,
         )
         .await;
-    if let Err(e) = store
-        .audit_outcome(&first, matches!(added, Ok(Added::Inserted)))
-        .await
+    // An addition that landed wrote its `ok` outcome in its own
+    // transaction (`store::commit`); one that did not is recorded here.
+    if !matches!(added, Ok(Added::Inserted))
+        && let Err(e) = store.audit_outcome(&first, false).await
     {
         tracing::error!("the addition's outcome record {first} was not written: {e:#}");
     }
@@ -595,11 +597,12 @@ async fn remove(store: Store, policy: &Policy, headers: HeaderMap, ask: RemoveAs
         Err(e) => return fault(e),
     };
     let removed = store
-        .remove_passkey(&session.person_id, session.session_id, &ask.passkey)
+        .remove_passkey(&session.person_id, session.session_id, &ask.passkey, &first)
         .await;
-    if let Err(e) = store
-        .audit_outcome(&first, matches!(removed, Ok(Removed::Removed)))
-        .await
+    // A removal that landed wrote its `ok` outcome in its own transaction
+    // (`store::commit`); one that did not is recorded here.
+    if !matches!(removed, Ok(Removed::Removed))
+        && let Err(e) = store.audit_outcome(&first, false).await
     {
         tracing::error!("the removal's outcome record {first} was not written: {e:#}");
     }

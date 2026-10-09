@@ -830,20 +830,27 @@ impl Store {
             admin.stands(&mut tx).await?;
         }
         lock_row(&mut tx, &agent.agent_id).await?;
+        // **A retired row is never live again, whoever asks** (Spec 2.12):
+        // the row is read again under its lock, and one holding no live
+        // credential is refused here, for the host's `rotate` as for the
+        // web's. The host's recovery of a staged pair is a separate path in
+        // `verbs::rotate` and revives nothing.
+        let row = sqlx::query(
+            "SELECT version, gate_state, admin_state, gate_fingerprint, admin_fingerprint \
+             FROM agent WHERE agent_id = $1",
+        )
+        .bind(agent.agent_id.as_str())
+        .fetch_one(&mut *tx)
+        .await?;
+        let live =
+            |col: &str| -> anyhow::Result<bool> { Ok(row.try_get::<String, _>(col)? == "live") };
+        if !live("gate_state")? && !live("admin_state")? {
+            return Err(Retired.into());
+        }
+        // The admin's rotation names the version and fingerprints read
+        // here; the host's names the version it read before the lock, a
+        // stale edit refused as every register verb refuses one.
         let (version, retired) = if admin.is_some() {
-            let row = sqlx::query(
-                "SELECT version, gate_state, admin_state, gate_fingerprint, admin_fingerprint \
-                 FROM agent WHERE agent_id = $1",
-            )
-            .bind(agent.agent_id.as_str())
-            .fetch_one(&mut *tx)
-            .await?;
-            let live = |col: &str| -> anyhow::Result<bool> {
-                Ok(row.try_get::<String, _>(col)? == "live")
-            };
-            if !live("gate_state")? && !live("admin_state")? {
-                return Err(Retired.into());
-            }
             (
                 row.try_get::<i64, _>("version")?,
                 vec![

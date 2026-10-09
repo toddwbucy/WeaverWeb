@@ -1362,7 +1362,10 @@ pub async fn rotate(
             let dir = existing.expect("a retained pair stands under an existing directory");
             // **The row whose pair is published**, which may be a
             // replacement of the agent the verb was asked by, as in
-            // `register`'s recovery.
+            // `register`'s recovery. This revives nothing: the pair is the
+            // replacement row's, already committed, so a retired row asked
+            // by its identity stays retired, the store's rotation refusing
+            // it below.
             let target = Target::Agent(row.agent_id.as_str());
             let first = match first_record(store, "rotate", author, target).await {
                 Ok(first) => first,
@@ -1414,6 +1417,16 @@ pub async fn rotate(
         .await
         {
             Ok(r) => (r, None),
+            Err(e) if e.is::<crate::link::register::Retired>() => {
+                staged.discard();
+                return refused(
+                    "rotate",
+                    format!(
+                        "{} is retired: it holds no live credential and is never live again; register the agent again, as a new row",
+                        agent.agent_id
+                    ),
+                );
+            }
             Err(e) => {
                 // A commit's outcome is unknown until it is read back, as in
                 // `register`: the row carrying the new fingerprint means the

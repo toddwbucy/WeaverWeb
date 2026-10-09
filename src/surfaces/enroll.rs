@@ -207,11 +207,13 @@ async fn finish(store: Store, passkeys: &Passkeys, ask: FinishAsk) -> Response {
             &passkey_id,
             &credential_id,
             &credential,
+            &first,
         )
         .await;
-    if let Err(e) = store
-        .audit_outcome(&first, matches!(redeemed, Ok(Redeemed::Enrolled)))
-        .await
+    // A redemption that landed wrote its `ok` outcome in its own
+    // transaction (`store::commit`); one that did not is recorded here.
+    if !matches!(redeemed, Ok(Redeemed::Enrolled))
+        && let Err(e) = store.audit_outcome(&first, false).await
     {
         tracing::error!("the enrollment's outcome record {first} was not written: {e:#}");
     }

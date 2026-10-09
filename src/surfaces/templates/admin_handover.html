@@ -1,0 +1,24 @@
+{% extends "instrument.html" %}
+{% block title %}client configs - weaver-web{% endblock %}
+{% block mainclass %}listing{% endblock %}
+{% block body %}
+{#- The two client configs a write minted, offered once each, to this
+    session alone, for a few minutes. This page carries their handles and
+    never the configs. -#}
+<header class="listing-head">
+  <h1>Client configs for {{ agent }}</h1>
+  <p class="destination">The agent is {{ verb }}. Take each config now: each is offered once, to this session alone, for {{ minutes }} minutes, and the server keeps neither. If one is lost, rotate the agent.</p>
+</header>
+<ul>
+  {% for config in waiting %}
+  <li>
+    <form method="post" action="/admin/agents/config">
+      <input type="hidden" name="handle" value="{{ config.handle }}">
+      <button type="submit">Take the {{ config.plane }} config ({{ config.filename }})</button>
+    </form>
+  </li>
+  {% endfor %}
+</ul>
+<p class="chip-note">Each config holds its connector's private key. Carry it to the agent's box with the install script, readable only by the connector's own user, at mode 0600, and keep it out of every repository.</p>
+<p><a href="/admin/agents">Back to agents</a></p>
+{% endblock %}

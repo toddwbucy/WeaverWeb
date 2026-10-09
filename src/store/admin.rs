@@ -59,6 +59,14 @@ pub enum Refusal {
     Fixed,
     /// A verb outside the vocabulary.
     Vocabulary(String),
+    /// The server's authority cannot mint now: its config's name moved, or
+    /// it was rotated on disk since the server loaded it.
+    Authority(String),
+    /// The agent's row holds no live credential: it was retired, and the
+    /// agent is registered again rather than rotated.
+    Retired,
+    /// The hand-over holds as many client configs as it may.
+    HandoverFull,
 }
 
 impl std::fmt::Display for Refusal {
@@ -104,6 +112,15 @@ impl std::fmt::Display for Refusal {
             Refusal::Fixed => write!(
                 f,
                 "the admin role is fixed by the store and carries no agent verb; nothing writes it"
+            ),
+            Refusal::Authority(why) => write!(f, "{why}"),
+            Refusal::Retired => write!(
+                f,
+                "that agent's row holds no live credential; register the agent again rather than rotating it"
+            ),
+            Refusal::HandoverFull => write!(
+                f,
+                "too many client configs wait to be taken; take or let expire those waiting, and begin again in a few minutes"
             ),
             Refusal::Vocabulary(verb) => write!(
                 f,

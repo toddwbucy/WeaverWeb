@@ -9,6 +9,7 @@
 //! and a run land by the ingest of section 3.1 alone.
 
 pub mod admin;
+pub mod agents;
 #[cfg(feature = "passkeys")]
 pub mod enroll;
 pub mod gate;

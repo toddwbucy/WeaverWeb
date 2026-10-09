@@ -387,7 +387,7 @@ async fn serve(cfg: Arc<ServerConfig>) -> anyhow::Result<()> {
 
     // **The authority is loaded before anything listens, and never
     // minted here** (Spec section 8): absent, the server refuses to start.
-    let authority = Authority::load(&cfg.authority_dir)?;
+    let authority = Arc::new(Authority::load(&cfg.authority_dir)?);
     if authority.server_name() != cfg.server_name {
         anyhow::bail!(
             "the config's server_name is {} but the authority was minted for {}; the connectors verify the latter, so the config is changed back or the authority rotated",
@@ -443,6 +443,17 @@ async fn serve(cfg: Arc<ServerConfig>) -> anyhow::Result<()> {
         // its admin's grant in its own transaction.
         .merge(weaver_web::surfaces::script_policy(
             weaver_web::surfaces::admin::routes(policy.clone(), cfg.enrollment_token_hours),
+        ))
+        // **The register of agents through the server** (Spec 2.13): the
+        // two client configs a write mints wait in this process's memory
+        // alone, so a restart drops any not taken.
+        .merge(weaver_web::surfaces::script_policy(
+            weaver_web::surfaces::agents::routes(weaver_web::surfaces::agents::Seams {
+                policy: policy.clone(),
+                cfg: cfg.clone(),
+                authority: authority.clone(),
+                handover: weaver_web::surfaces::agents::Handover::default(),
+            }),
         ));
     // **A person's own passkeys** (design section 7), where passkeys are on.
     let instrument = match passkeys {

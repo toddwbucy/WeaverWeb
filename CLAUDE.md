@@ -159,7 +159,7 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
 
 - **DB-backed unit tests** (`store::read`, `store::plan`, `store::audit_tests`,
   `store::identity_tests`, `host_tests`, `surfaces::record`, `passkeys_tests`,
-  `sign_in_tests`, `keys_tests`, `admin_tests`, `grants_tests`, `link::tests`,
+  `sign_in_tests`, `keys_tests`, `admin_tests`, `grants_tests`, `agents_tests`, `link::tests`,
   `link::client_tests`, `link::admin_con_tests`, `link::verbs_audit_tests`)
   connect to the database in `DATABASE_URL` and run the migrations. The link's tests run one at
   a time, since a listener's start resets every row's link state, which is the claim. Without that variable they print
@@ -272,8 +272,19 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
   `turn` on an agent, and three writes, `grant add`, `grant remove` and `role set`, of the same
   shape. No admin grants or revokes their own grant or edits a role they hold, refused before
   any record and again under the exclusion; a lone admin uses the host's `grant` and `role`
-  commands, which remain. The register verbs through the server are PR 5c's; until then they
-  are host commands. `admin_tests` and `grants_tests` run each test on a `fresh_store`.
+  commands, which remain.
+- **The admin's agents page** (`GET /admin/agents`, `src/surfaces/agents.rs`; act 11, PR 5c):
+  the register's rows (names, credential states, presence; not the door, load state or trace),
+  and `register` and `rotate` through the server in the same four steps, under the authority
+  lock, the identity exclusion held shared inside the register's transaction. The two client
+  configs a write mints wait in the server's memory alone (`agents::Handover`: 32-byte
+  handles, taken once, five minutes, the minting session only, at most 64, `no-store`), never
+  in the store, a file, a log line or the audit; a restart drops them and the admin rotates.
+  The server mints under the authority it loaded, so restart it after `authority rotate`.
+  The register verbs are host commands and web writes alike; `revoke` and retiring come to
+  the web in PR 5d, and `authority init`/`rotate` stay host commands. `admin_tests`,
+  `grants_tests` and `agents_tests` run each test on a `fresh_store` (`agents_tests` with its
+  own listener and an authority in a temporary directory).
 
 ## The seed tree: what carries forward and what leaves
 

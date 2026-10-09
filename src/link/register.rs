@@ -153,6 +153,48 @@ fn fail_after_commit(kind: &'static str) -> anyhow::Result<()> {
 /// verb's transaction rather than letting the verb continue on the pool
 /// while another process holds the lock, and pings it before its file
 /// switch.
+/// **An admin's session asking a register verb through the server**: the
+/// session and its person, re-checked inside the verb's transaction.
+#[derive(Debug, Clone, Copy)]
+pub struct AdminWrite<'a> {
+    pub session_id: i64,
+    pub person: &'a str,
+}
+
+/// **The authority of an admin's register verb no longer stands**: the
+/// session, its person or their admin grant went between the request's read
+/// and the verb's transaction. Nothing was written.
+#[derive(Debug)]
+pub struct AuthorityGone;
+
+impl std::fmt::Display for AuthorityGone {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "the session or the admin grant that authorized this no longer stands"
+        )
+    }
+}
+
+impl std::error::Error for AuthorityGone {}
+
+impl AdminWrite<'_> {
+    /// The identity exclusion taken shared for the rest of the
+    /// transaction, then the admin's authority re-checked under it.
+    async fn stands(&self, tx: &mut sqlx::Transaction<'_, sqlx::Postgres>) -> anyhow::Result<()> {
+        sqlx::query("SELECT pg_advisory_xact_lock_shared($1)")
+            .bind(crate::store::identity::IDENTITY_LOCK_KEY)
+            .execute(&mut **tx)
+            .await?;
+        if !crate::store::admin::admin_stands(tx, self.session_id, self.person).await? {
+            return Err(AuthorityGone.into());
+        }
+        #[cfg(test)]
+        crate::store::admin::hold_inside(self.person).await;
+        Ok(())
+    }
+}
+
 pub struct AuthorityLock {
     connection: sqlx::PgConnection,
 }
@@ -402,7 +444,67 @@ impl Store {
         admin_fingerprint: &str,
         authority: &str,
     ) -> anyhow::Result<(AgentId, Vec<String>)> {
+        Self::register_agent_in(
+            conn,
+            None,
+            id,
+            r#box,
+            name,
+            author,
+            gate_fingerprint,
+            admin_fingerprint,
+            authority,
+        )
+        .await
+    }
+
+    /// **The same, asked by an admin through the server** (Spec 2.13):
+    /// inside the register's own transaction the identity exclusion is
+    /// held shared, from the admin's re-check to the commit, so a
+    /// revocation or a disable either commits before the check and is seen,
+    /// or waits for the commit. A grant or session gone answers
+    /// `AuthorityGone` and nothing is written.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn register_agent_by_admin_on(
+        conn: &mut sqlx::PgConnection,
+        admin: AdminWrite<'_>,
+        id: &AgentId,
+        r#box: &str,
+        name: &str,
+        gate_fingerprint: &str,
+        admin_fingerprint: &str,
+        authority: &str,
+    ) -> anyhow::Result<(AgentId, Vec<String>)> {
+        Self::register_agent_in(
+            conn,
+            Some(admin),
+            id,
+            r#box,
+            name,
+            Some(admin.person),
+            gate_fingerprint,
+            admin_fingerprint,
+            authority,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn register_agent_in(
+        conn: &mut sqlx::PgConnection,
+        admin: Option<AdminWrite<'_>>,
+        id: &AgentId,
+        r#box: &str,
+        name: &str,
+        author: Option<&str>,
+        gate_fingerprint: &str,
+        admin_fingerprint: &str,
+        authority: &str,
+    ) -> anyhow::Result<(AgentId, Vec<String>)> {
         let mut tx = conn.begin().await?;
+        if let Some(admin) = admin {
+            admin.stands(&mut tx).await?;
+        }
         // **The retire is ordered on the previous row's version** like every
         // register verb (Spec 8): the live row is read under the lock and
         // the update names the version it read.
@@ -542,7 +644,54 @@ impl Store {
         admin_fingerprint: &str,
         authority: &str,
     ) -> anyhow::Result<Vec<String>> {
+        Self::rotate_credentials_in(
+            conn,
+            None,
+            agent,
+            author,
+            gate_fingerprint,
+            admin_fingerprint,
+            authority,
+        )
+        .await
+    }
+
+    /// **The same, asked by an admin through the server**, the identity
+    /// exclusion held shared from the admin's re-check to the commit, as
+    /// `register_agent_by_admin_on` holds it.
+    pub async fn rotate_credentials_by_admin_on(
+        conn: &mut sqlx::PgConnection,
+        admin: AdminWrite<'_>,
+        agent: &Agent,
+        gate_fingerprint: &str,
+        admin_fingerprint: &str,
+        authority: &str,
+    ) -> anyhow::Result<Vec<String>> {
+        Self::rotate_credentials_in(
+            conn,
+            Some(admin),
+            agent,
+            Some(admin.person),
+            gate_fingerprint,
+            admin_fingerprint,
+            authority,
+        )
+        .await
+    }
+
+    async fn rotate_credentials_in(
+        conn: &mut sqlx::PgConnection,
+        admin: Option<AdminWrite<'_>>,
+        agent: &Agent,
+        author: Option<&str>,
+        gate_fingerprint: &str,
+        admin_fingerprint: &str,
+        authority: &str,
+    ) -> anyhow::Result<Vec<String>> {
         let mut tx = conn.begin().await?;
+        if let Some(admin) = admin {
+            admin.stands(&mut tx).await?;
+        }
         lock_row(&mut tx, &agent.agent_id).await?;
         let affected = sqlx::query(
             "UPDATE agent SET \

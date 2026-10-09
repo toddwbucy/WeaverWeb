@@ -33,7 +33,7 @@ use crate::fault::Fault;
 use crate::passkeys::{self, Ceremony, Counted, Full, Passkeys};
 use crate::store::Store;
 use crate::store::audit::{PersonMethod, Principal, Target};
-use crate::store::identity::{Added, OwnPasskey, Removed};
+use crate::store::identity::{self, Added, OwnPasskey, Removed};
 use crate::surfaces::gate::{self, Policy, Session};
 use crate::surfaces::record::NoSession;
 
@@ -573,6 +573,12 @@ pub struct RemoveAsk {
 /// `session`, its first record before the removal. The page is the answer,
 /// where this session still stands.
 async fn remove(store: Store, policy: &Policy, headers: HeaderMap, ask: RemoveAsk) -> Response {
+    if !identity::is_passkey_id(&ask.passkey) {
+        return refused(
+            StatusCode::BAD_REQUEST,
+            "the passkey asked for is not a passkey's identity: `pk-` and sixteen lowercase hex",
+        );
+    }
     let session = match session_of(&store, policy, &headers).await {
         Ok(session) => session,
         Err(answer) => return answer,

@@ -699,3 +699,80 @@ async fn two_admins_disabling_each_other_leave_one() {
         1
     );
 }
+
+/// **A submitted identity is parsed into its exact shape before any
+/// record**: a malformed person at each admin write, from an admin and from
+/// a session holding no grant, and a malformed passkey at the removal, are
+/// refused as the ask's fault with no audit row written, where the audit's
+/// target check would have made each the server's failure; a well-shaped
+/// person naming nobody goes on to the store's answer.
+#[tokio::test]
+async fn a_malformed_identity_is_refused_before_any_record() {
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let app = app(s, Some(passkeys()));
+    let (_, session) = admin(&app, s, &mut authenticator(), "ada").await;
+    let (_, other) = signed_in(&app, s, &mut authenticator(), "bea").await;
+    let before = rows(s, "SELECT count(*) FROM audit").await;
+    for person in [
+        "bea",
+        "pe-0123456789ABCDEF",
+        "pe-0123",
+        "pe-0123456789abcdef0",
+        "",
+    ] {
+        for (uri, body) in [
+            ("/admin/persons/token", form(&[("person", person)])),
+            (
+                "/admin/persons/disable",
+                form(&[("person", person), ("version", "1")]),
+            ),
+            (
+                "/admin/persons/enable",
+                form(&[("person", person), ("version", "1")]),
+            ),
+            (
+                "/admin/persons/rename",
+                form(&[("person", person), ("version", "1"), ("name", "cara")]),
+            ),
+        ] {
+            for asking in [&session, &other] {
+                let (status, _, answer) =
+                    send_as(&app, "POST", uri, Some(body.clone()), asking).await;
+                assert_eq!(
+                    status,
+                    StatusCode::BAD_REQUEST,
+                    "{uri} {person:?}: {answer}"
+                );
+            }
+        }
+    }
+    for passkey in ["pk-0123", "pe-0123456789abcdef", "label"] {
+        let (status, _, answer) = send_as(
+            &app,
+            "POST",
+            "/passkeys/remove",
+            Some(form(&[("passkey", passkey)])),
+            &session,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{passkey}: {answer}");
+    }
+    assert_eq!(
+        rows(s, "SELECT count(*) FROM audit").await,
+        before,
+        "no record of a malformed ask"
+    );
+
+    let (status, _, answer) = send_as(
+        &app,
+        "POST",
+        "/admin/persons/disable",
+        Some(form(&[("person", "pe-0123456789abcdef"), ("version", "1")])),
+        &session,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{answer}");
+}

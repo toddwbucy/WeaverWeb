@@ -58,7 +58,7 @@ pub struct PlanId(String);
 /// constructs one yet - section 4's sixth read takes it from a database
 /// column a domain already governs - and the act that gives the matrix a
 /// link is the act that would have found this the expensive way.
-fn shaped(prefix: &str, s: &str) -> bool {
+pub(crate) fn shaped(prefix: &str, s: &str) -> bool {
     let Some(hex) = s.strip_prefix(prefix) else {
         return false;
     };

@@ -28,13 +28,17 @@ use crate::fault::Fault;
 use crate::store::Store;
 use crate::store::admin::{Listed, Refusal};
 use crate::store::audit::{PersonMethod, Principal, Target};
-use crate::store::identity::IssuedToken;
+use crate::store::identity::{IssuedToken, is_person_id};
 use crate::surfaces::gate::{self, Policy, Session};
 use crate::surfaces::record::NoSession;
 
 /// The answer to a session whose person holds no live admin grant.
 const NOT_AN_ADMIN: &str =
     "this is an admin's page, and this session's person holds no admin grant";
+
+/// The answer to a submitted person that is not a person's identity.
+const MALFORMED_PERSON: &str =
+    "the person asked for is not a person's identity: `pe-` and sixteen lowercase hex";
 
 /// The answer to an admin's write to their own row.
 const OWN_ROW: &str = "an admin never writes their own row; another admin, or the host, does";
@@ -322,6 +326,9 @@ pub struct PersonAsk {
 /// **A token issued** for a person holding no passkey, shown once.
 async fn token(store: Store, seams: &Seams, headers: HeaderMap, ask: PersonAsk) -> Response {
     const ACTION: &str = "person token";
+    if !is_person_id(&ask.person) {
+        return (StatusCode::BAD_REQUEST, MALFORMED_PERSON).into_response();
+    }
     let session = match writer(&store, &seams.policy, &headers, &ask.person, ACTION).await {
         Ok(session) => session,
         Err(answer) => return answer,
@@ -363,6 +370,9 @@ pub struct VersionAsk {
 /// write, never the last enabled admin.
 async fn disable(store: Store, seams: &Seams, headers: HeaderMap, ask: VersionAsk) -> Response {
     const ACTION: &str = "person disable";
+    if !is_person_id(&ask.person) {
+        return (StatusCode::BAD_REQUEST, MALFORMED_PERSON).into_response();
+    }
     let session = match writer(&store, &seams.policy, &headers, &ask.person, ACTION).await {
         Ok(session) => session,
         Err(answer) => return answer,
@@ -392,6 +402,9 @@ async fn disable(store: Store, seams: &Seams, headers: HeaderMap, ask: VersionAs
 /// **A disabled person enabled again.**
 async fn enable(store: Store, seams: &Seams, headers: HeaderMap, ask: VersionAsk) -> Response {
     const ACTION: &str = "person enable";
+    if !is_person_id(&ask.person) {
+        return (StatusCode::BAD_REQUEST, MALFORMED_PERSON).into_response();
+    }
     let session = match writer(&store, &seams.policy, &headers, &ask.person, ACTION).await {
         Ok(session) => session,
         Err(answer) => return answer,
@@ -429,6 +442,9 @@ pub struct RenameAsk {
 /// shape.
 async fn rename(store: Store, seams: &Seams, headers: HeaderMap, ask: RenameAsk) -> Response {
     const ACTION: &str = "person rename";
+    if !is_person_id(&ask.person) {
+        return (StatusCode::BAD_REQUEST, MALFORMED_PERSON).into_response();
+    }
     let session = match writer(&store, &seams.policy, &headers, &ask.person, ACTION).await {
         Ok(session) => session,
         Err(answer) => return answer,

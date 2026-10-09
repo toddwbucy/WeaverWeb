@@ -105,6 +105,25 @@ pub(crate) async fn with_outcome(store: &Store, first: String, mut answer: Answe
     answer
 }
 
+/// **The outcome of an act whose `ok` outcome committed with it**
+/// (`store::commit`): the host's identity commands and `revoke`, each one
+/// store transaction. Only an act that did not land has its `failed`
+/// outcome written here, after it.
+pub(crate) async fn with_landed_outcome(
+    store: &Store,
+    first: String,
+    mut answer: Answer,
+) -> Answer {
+    if !answer.ok
+        && let Err(e) = store.audit_outcome(&first, false).await
+    {
+        answer.value["audit_outcome"] =
+            Value::String(format!("the outcome record could not be written: {e:#}"));
+    }
+    answer.value["audit"] = Value::String(first);
+    answer
+}
+
 /// `authority init`: create the server's authority once, audited as the
 /// host's: the store is reached first, and a store that cannot be reached
 /// or cannot take the first record refuses before anything is written.
@@ -1281,7 +1300,10 @@ pub async fn revoke(store: &Store, spec: &str, plane: Plane, author: Option<&str
         Ok(first) => first,
         Err(refusal) => return refusal,
     };
-    let answer = match store.revoke_credential(&agent, plane, author).await {
+    let answer = match store
+        .revoke_credential_recorded(&agent, plane, author, &first)
+        .await
+    {
         Ok(fingerprint) => Answer {
             value: json!({
                 "verb": "revoke",
@@ -1294,7 +1316,7 @@ pub async fn revoke(store: &Store, spec: &str, plane: Plane, author: Option<&str
         },
         Err(e) => refused("revoke", format!("{e:#}")),
     };
-    with_outcome(store, first, answer).await
+    with_landed_outcome(store, first, answer).await
 }
 
 /// `rotate <agent> --out <path>`: a fresh pair, the old pair revoked, new

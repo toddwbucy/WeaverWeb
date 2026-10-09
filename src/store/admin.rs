@@ -16,7 +16,7 @@
 use sqlx::{Postgres, Transaction};
 
 use crate::store::Store;
-use crate::store::commit::commit_or_read_back;
+use crate::store::commit::commit_with_outcome;
 use crate::store::identity::{self, IssuedToken, Supersedes, session_stands};
 
 /// **Why an admin's write was refused.** Nothing was written.
@@ -225,6 +225,7 @@ impl Store {
         &self,
         admin: &str,
         session_id: i64,
+        first: &str,
         person_id: &str,
         name: &str,
         hours: u32,
@@ -242,10 +243,7 @@ impl Store {
         }
         identity::insert_person(&mut tx, person_id, &name, Some(admin)).await?;
         let token = identity::issue_token(&mut tx, person_id, hours, Supersedes::Issue).await?;
-        commit_or_read_back(tx, "person enroll", || {
-            self.token_stands(person_id, &token.value)
-        })
-        .await?;
+        commit_with_outcome(tx, "person enroll", self, first).await?;
         Ok(Ok(token))
     }
 
@@ -255,6 +253,7 @@ impl Store {
         &self,
         admin: &str,
         session_id: i64,
+        first: &str,
         person: &str,
         hours: u32,
     ) -> anyhow::Result<Result<(IssuedToken, String), Refusal>> {
@@ -274,10 +273,7 @@ impl Store {
             return Ok(Err(Refusal::HoldsPasskey));
         }
         let token = identity::issue_token(&mut tx, person, hours, Supersedes::Issue).await?;
-        commit_or_read_back(tx, "person token", || {
-            self.token_stands(person, &token.value)
-        })
-        .await?;
+        commit_with_outcome(tx, "person token", self, first).await?;
         Ok(Ok((token, name)))
     }
 
@@ -289,6 +285,7 @@ impl Store {
         &self,
         admin: &str,
         session_id: i64,
+        first: &str,
         person: &str,
         version: i64,
     ) -> anyhow::Result<Result<(), Refusal>> {
@@ -317,10 +314,7 @@ impl Store {
         .bind(person)
         .execute(&mut *tx)
         .await?;
-        commit_or_read_back(tx, "person disable", || {
-            self.state_set(person, version, false, admin)
-        })
-        .await?;
+        commit_with_outcome(tx, "person disable", self, first).await?;
         Ok(Ok(()))
     }
 
@@ -330,6 +324,7 @@ impl Store {
         &self,
         admin: &str,
         session_id: i64,
+        first: &str,
         person: &str,
         version: i64,
     ) -> anyhow::Result<Result<(), Refusal>> {
@@ -346,10 +341,7 @@ impl Store {
         if !set_enabled(&mut tx, person, version, true, admin).await? {
             return Ok(Err(Refusal::Stale));
         }
-        commit_or_read_back(tx, "person enable", || {
-            self.state_set(person, version, true, admin)
-        })
-        .await?;
+        commit_with_outcome(tx, "person enable", self, first).await?;
         Ok(Ok(()))
     }
 
@@ -360,6 +352,7 @@ impl Store {
         &self,
         admin: &str,
         session_id: i64,
+        first: &str,
         person: &str,
         version: i64,
         name: &str,
@@ -400,69 +393,8 @@ impl Store {
         if moved.rows_affected() != 1 {
             return Ok(Err(Refusal::Stale));
         }
-        commit_or_read_back(tx, "person rename", || {
-            self.renamed(person, version, &name, admin)
-        })
-        .await?;
+        commit_with_outcome(tx, "person rename", self, first).await?;
         Ok(Ok(()))
-    }
-
-    // **What each person write leaves, read back where its commit's
-    // answer was lost** (`store::commit`), on a fresh connection.
-
-    /// An enrollment's or a token's effect: the token, by its digest,
-    /// stands for the person.
-    async fn token_stands(&self, person: &str, token: &str) -> anyhow::Result<bool> {
-        Ok(sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM enrollment_token \
-             WHERE person_id = $1 AND token_digest = $2)",
-        )
-        .bind(person)
-        .bind(identity::digest(token))
-        .fetch_one(&self.pool)
-        .await?)
-    }
-
-    /// A disable's or an enable's effect: the state set, at the version
-    /// after the one read, by this admin.
-    async fn state_set(
-        &self,
-        person: &str,
-        version: i64,
-        enabled: bool,
-        admin: &str,
-    ) -> anyhow::Result<bool> {
-        Ok(sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM person WHERE person_id = $1 \
-             AND version = $2 + 1 AND enabled = $3 AND author = $4)",
-        )
-        .bind(person)
-        .bind(version)
-        .bind(enabled)
-        .bind(admin)
-        .fetch_one(&self.pool)
-        .await?)
-    }
-
-    /// A rename's effect: the name set, at the version after the one read,
-    /// by this admin.
-    async fn renamed(
-        &self,
-        person: &str,
-        version: i64,
-        name: &str,
-        admin: &str,
-    ) -> anyhow::Result<bool> {
-        Ok(sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM person WHERE person_id = $1 \
-             AND version = $2 + 1 AND name = $3 AND author = $4)",
-        )
-        .bind(person)
-        .bind(version)
-        .bind(name)
-        .bind(admin)
-        .fetch_one(&self.pool)
-        .await?)
     }
 }
 

@@ -548,9 +548,15 @@ async fn the_last_enabled_admins_grant_is_never_revoked() {
             .unwrap();
     let (grant, version) = s.live_grant(&ada, "admin", None).await.unwrap().unwrap();
     assert_eq!(
-        s.admin_revoke(&ada, session_id, &grant, version)
-            .await
-            .unwrap(),
+        s.admin_revoke(
+            &ada,
+            session_id,
+            &crate::admin_tests::first(s, &ada, "grant remove").await,
+            &grant,
+            version
+        )
+        .await
+        .unwrap(),
         Err(Refusal::LastAdmin)
     );
     assert!(live(s, &grant).await);
@@ -888,12 +894,12 @@ async fn the_page_names_a_shared_conversation() {
 }
 
 /// **A grant or role write whose commit's answer is lost reads back its
-/// effect** (Spec 2.13): a grant, a role's edit and a revocation each have
+/// outcome** (Spec 2.13): a grant, a role's edit and a revocation each have
 /// their commit's answer lost after PostgreSQL applied it, and each reads
-/// its effect back, answers its success, and records its outcome `ok`.
+/// its `ok` outcome back, answers its success, and records its outcome `ok`.
 #[tokio::test]
-async fn a_grant_write_whose_commits_answer_is_lost_reads_back_its_effect() {
-    use crate::admin_tests::{lose_the_commits_answer, the_answer_was_lost};
+async fn a_grant_write_whose_commits_answer_is_lost_reads_back_its_outcome() {
+    use crate::store::commit::{lose_the_commits_answer, the_answer_was_lost};
     let Some(fresh) = fresh_store().await else {
         return;
     };

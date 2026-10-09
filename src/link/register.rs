@@ -155,10 +155,25 @@ pub(crate) fn fail_after_commit(kind: &'static str) -> anyhow::Result<()> {
 /// switch.
 /// **An admin's session asking a register verb through the server**: the
 /// session and its person, re-checked inside the verb's transaction.
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct AdminWrite<'a> {
     pub session_id: i64,
     pub person: &'a str,
+    /// The act's first audit record, whose `ok` outcome commits with it.
+    pub first: &'a str,
+    /// The store, for the read-back of a lost commit answer.
+    pub store: &'a Store,
+}
+
+impl AdminWrite<'_> {
+    /// **The act committed with its `ok` outcome** (`store::commit`).
+    async fn commit(
+        &self,
+        tx: sqlx::Transaction<'_, sqlx::Postgres>,
+        kind: &'static str,
+    ) -> anyhow::Result<()> {
+        crate::store::commit::commit_with_outcome(tx, kind, self.store, self.first).await
+    }
 }
 
 /// **The authority of an admin's register verb no longer stands**: the
@@ -580,9 +595,14 @@ impl Store {
         .bind(id.as_str())
         .fetch_one(&mut *tx)
         .await?;
-        tx.commit().await?;
-        #[cfg(test)]
-        fail_after_commit("register")?;
+        match admin {
+            Some(admin) => admin.commit(tx, "register").await?,
+            None => {
+                tx.commit().await?;
+                #[cfg(test)]
+                fail_after_commit("register")?;
+            }
+        }
         Ok((
             id.parse().map_err(|e: String| anyhow::anyhow!(e))?,
             retired_fingerprints,
@@ -654,40 +674,11 @@ impl Store {
             notify(&mut tx, &fingerprint).await?;
             revoked.push((plane, fingerprint));
         }
-        let read_back = &revoked;
-        crate::store::commit::commit_or_read_back(tx, "agent revoke", || {
-            self.planes_revoked(agent_id, read_back)
-        })
-        .await?;
+        admin.commit(tx, "agent revoke").await?;
         Ok(revoked
             .into_iter()
             .map(|(_, fingerprint)| fingerprint)
             .collect())
-    }
-
-    /// **A revocation's effect, read back where its commit's answer was
-    /// lost** (`store::commit`): each plane asked revoked, still carrying
-    /// the fingerprint the revocation read.
-    async fn planes_revoked(
-        &self,
-        agent_id: &AgentId,
-        planes: &[(Plane, String)],
-    ) -> anyhow::Result<bool> {
-        for (plane, fingerprint) in planes {
-            let p = plane_columns(*plane);
-            let revoked: bool = sqlx::query_scalar(audited(format!(
-                "SELECT EXISTS (SELECT 1 FROM agent WHERE agent_id = $1 \
-                 AND {p}_state = 'revoked' AND {p}_fingerprint = $2)"
-            )))
-            .bind(agent_id.as_str())
-            .bind(fingerprint)
-            .fetch_one(&self.pool)
-            .await?;
-            if !revoked {
-                return Ok(false);
-            }
-        }
-        Ok(true)
     }
 
     /// **Revoke one credential** (Spec 8): an authored edit under section
@@ -699,6 +690,30 @@ impl Store {
         agent: &Agent,
         plane: Plane,
         author: Option<&str>,
+    ) -> anyhow::Result<String> {
+        self.revoke_credential_in(agent, plane, author, None).await
+    }
+
+    /// **The same as the host's `revoke`**, its `ok` outcome committed with
+    /// it and a lost commit answer read back by that record
+    /// (`store::commit`).
+    pub async fn revoke_credential_recorded(
+        &self,
+        agent: &Agent,
+        plane: Plane,
+        author: Option<&str>,
+        first: &str,
+    ) -> anyhow::Result<String> {
+        self.revoke_credential_in(agent, plane, author, Some(first))
+            .await
+    }
+
+    async fn revoke_credential_in(
+        &self,
+        agent: &Agent,
+        plane: Plane,
+        author: Option<&str>,
+        first: Option<&str>,
     ) -> anyhow::Result<String> {
         let p = plane_columns(plane);
         let mut tx = self.pool.begin().await?;
@@ -725,7 +740,12 @@ impl Store {
         }
         let fingerprint = agent.credential(plane).fingerprint.clone();
         notify(&mut tx, &fingerprint).await?;
-        tx.commit().await?;
+        match first {
+            Some(first) => {
+                crate::store::commit::commit_with_outcome(tx, "revoke", self, first).await?
+            }
+            None => tx.commit().await?,
+        }
         Ok(fingerprint)
     }
 
@@ -868,9 +888,14 @@ impl Store {
         for fp in &retired {
             notify(&mut tx, fp).await?;
         }
-        tx.commit().await?;
-        #[cfg(test)]
-        fail_after_commit("rotate")?;
+        match admin {
+            Some(admin) => admin.commit(tx, "rotate").await?,
+            None => {
+                tx.commit().await?;
+                #[cfg(test)]
+                fail_after_commit("rotate")?;
+            }
+        }
         Ok(retired)
     }
 

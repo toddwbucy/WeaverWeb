@@ -35,7 +35,7 @@ use crate::store::grants::{ListedGrant, in_scope, verbs_within_vocabulary};
 use crate::store::identity::{VOCABULARY, is_agent_id, is_grant_id, is_person_id};
 use crate::store::key::AgentId;
 use crate::surfaces::admin::{
-    NOT_AN_ADMIN, admin_session, audited, fault, landed, refused, writer,
+    NOT_AN_ADMIN, admin_session, fault, first_of, landed, refused, settled, writer,
 };
 use crate::surfaces::gate::Policy;
 
@@ -280,20 +280,25 @@ async fn grant(store: Store, policy: &Policy, headers: HeaderMap, ask: GrantAsk)
     if ask.person == session.person_id {
         return refused(&Refusal::OwnGrant);
     }
-    match audited(
-        &store,
-        &session,
-        Target::Grant(&grant_id),
-        ACTION,
-        store.admin_grant(
-            &session.person_id,
-            session.session_id,
-            &grant_id,
-            &ask.person,
-            &ask.role,
-            agent,
-        ),
-    )
+    match async {
+        let first = match first_of(&store, &session, Target::Grant(&grant_id), ACTION).await {
+            Ok(first) => first,
+            Err(answer) => return Err(answer),
+        };
+        let written = store
+            .admin_grant(
+                &session.person_id,
+                session.session_id,
+                &first,
+                &grant_id,
+                &ask.person,
+                &ask.role,
+                agent,
+            )
+            .await;
+        settled(&store, &first, &written).await;
+        Ok(written)
+    }
     .await
     {
         Ok(written) => landed(written, PAGE),
@@ -326,18 +331,23 @@ async fn revoke(store: Store, policy: &Policy, headers: HeaderMap, ask: RevokeAs
         Ok(None) => return refused(&Refusal::NoSuchGrant),
         Err(e) => return fault(e),
     }
-    match audited(
-        &store,
-        &session,
-        Target::Grant(&ask.grant),
-        ACTION,
-        store.admin_revoke(
-            &session.person_id,
-            session.session_id,
-            &ask.grant,
-            ask.version,
-        ),
-    )
+    match async {
+        let first = match first_of(&store, &session, Target::Grant(&ask.grant), ACTION).await {
+            Ok(first) => first,
+            Err(answer) => return Err(answer),
+        };
+        let written = store
+            .admin_revoke(
+                &session.person_id,
+                session.session_id,
+                &first,
+                &ask.grant,
+                ask.version,
+            )
+            .await;
+        settled(&store, &first, &written).await;
+        Ok(written)
+    }
     .await
     {
         Ok(written) => landed(written, PAGE),
@@ -392,19 +402,24 @@ async fn set_role(store: Store, policy: &Policy, headers: HeaderMap, body: Strin
         Ok(false) => {}
         Err(e) => return fault(e),
     }
-    match audited(
-        &store,
-        &session,
-        Target::Role(&role),
-        ACTION,
-        store.admin_set_role(
-            &session.person_id,
-            session.session_id,
-            &role,
-            &verbs,
-            version,
-        ),
-    )
+    match async {
+        let first = match first_of(&store, &session, Target::Role(&role), ACTION).await {
+            Ok(first) => first,
+            Err(answer) => return Err(answer),
+        };
+        let written = store
+            .admin_set_role(
+                &session.person_id,
+                session.session_id,
+                &first,
+                &role,
+                &verbs,
+                version,
+            )
+            .await;
+        settled(&store, &first, &written).await;
+        Ok(written)
+    }
     .await
     {
         Ok(written) => landed(written, PAGE),

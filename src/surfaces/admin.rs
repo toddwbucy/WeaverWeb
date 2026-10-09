@@ -188,36 +188,41 @@ pub(crate) async fn resolve_person(store: &Store, person: &str) -> Result<(), Re
     }
 }
 
-/// **The write, between its two audit records**: the first before it, the
-/// outcome after, an act whose first record cannot be written not acting.
-pub(crate) async fn audited<T, F>(
+/// **The first record of an admin's write**, before it acts, an act
+/// whose first record cannot be written not acting. Its `ok` outcome is
+/// written by the write itself, in its own transaction (`store::commit`).
+pub(crate) async fn first_of(
     store: &Store,
     session: &Session,
     target: Target<'_>,
     action: &str,
-    write: F,
-) -> Result<anyhow::Result<Result<T, Refusal>>, Response>
-where
-    F: std::future::Future<Output = anyhow::Result<Result<T, Refusal>>>,
-{
+) -> Result<String, Response> {
     #[cfg(test)]
     hold_after_the_admin_read(&session.person_id).await;
     let principal = Principal::Person {
         person_id: &session.person_id,
         method: PersonMethod::Session,
     };
-    let first = match store.audit_first(principal, target, action).await {
-        Ok(first) => first,
-        Err(e) => return Err(fault(e)),
-    };
-    let written = write.await;
-    if let Err(e) = store
-        .audit_outcome(&first, matches!(written, Ok(Ok(_))))
+    store
+        .audit_first(principal, target, action)
         .await
-    {
+        .map_err(fault)
+}
+
+/// **A write that did not land, its `failed` outcome written after it**:
+/// one that landed wrote its `ok` outcome in its own transaction, and a
+/// write rolled back took nothing with it, so the one-outcome index holds.
+pub(crate) async fn settled<T>(
+    store: &Store,
+    first: &str,
+    written: &anyhow::Result<Result<T, Refusal>>,
+) {
+    if matches!(written, Ok(Ok(_))) {
+        return;
+    }
+    if let Err(e) = store.audit_outcome(first, false).await {
         tracing::error!("the outcome record of {first} was not written: {e:#}");
     }
-    Ok(written)
 }
 
 /// Back to the page, the write landed.
@@ -333,19 +338,24 @@ async fn enroll(store: Store, seams: &Seams, headers: HeaderMap, ask: EnrollAsk)
         Ok(session) => session,
         Err(answer) => return answer,
     };
-    let written = match audited(
-        &store,
-        &session,
-        Target::Person(&person),
-        ACTION,
-        store.admin_enroll(
-            &session.person_id,
-            session.session_id,
-            &person,
-            &ask.name,
-            seams.token_hours,
-        ),
-    )
+    let written = match async {
+        let first = match first_of(&store, &session, Target::Person(&person), ACTION).await {
+            Ok(first) => first,
+            Err(answer) => return Err(answer),
+        };
+        let written = store
+            .admin_enroll(
+                &session.person_id,
+                session.session_id,
+                &first,
+                &person,
+                &ask.name,
+                seams.token_hours,
+            )
+            .await;
+        settled(&store, &first, &written).await;
+        Ok(written)
+    }
     .await
     {
         Ok(written) => written,
@@ -387,18 +397,23 @@ async fn token(store: Store, seams: &Seams, headers: HeaderMap, ask: PersonAsk) 
     if ask.person == session.person_id {
         return (StatusCode::FORBIDDEN, OWN_ROW).into_response();
     }
-    let written = match audited(
-        &store,
-        &session,
-        Target::Person(&ask.person),
-        ACTION,
-        store.admin_issue_token(
-            &session.person_id,
-            session.session_id,
-            &ask.person,
-            seams.token_hours,
-        ),
-    )
+    let written = match async {
+        let first = match first_of(&store, &session, Target::Person(&ask.person), ACTION).await {
+            Ok(first) => first,
+            Err(answer) => return Err(answer),
+        };
+        let written = store
+            .admin_issue_token(
+                &session.person_id,
+                session.session_id,
+                &first,
+                &ask.person,
+                seams.token_hours,
+            )
+            .await;
+        settled(&store, &first, &written).await;
+        Ok(written)
+    }
     .await
     {
         Ok(written) => written,
@@ -442,18 +457,23 @@ async fn disable(store: Store, seams: &Seams, headers: HeaderMap, ask: VersionAs
     if ask.person == session.person_id {
         return (StatusCode::FORBIDDEN, OWN_ROW).into_response();
     }
-    match audited(
-        &store,
-        &session,
-        Target::Person(&ask.person),
-        ACTION,
-        store.admin_disable(
-            &session.person_id,
-            session.session_id,
-            &ask.person,
-            ask.version,
-        ),
-    )
+    match async {
+        let first = match first_of(&store, &session, Target::Person(&ask.person), ACTION).await {
+            Ok(first) => first,
+            Err(answer) => return Err(answer),
+        };
+        let written = store
+            .admin_disable(
+                &session.person_id,
+                session.session_id,
+                &first,
+                &ask.person,
+                ask.version,
+            )
+            .await;
+        settled(&store, &first, &written).await;
+        Ok(written)
+    }
     .await
     {
         Ok(written) => landed(written, "/admin/persons"),
@@ -485,18 +505,23 @@ async fn enable(store: Store, seams: &Seams, headers: HeaderMap, ask: VersionAsk
     if ask.person == session.person_id {
         return (StatusCode::FORBIDDEN, OWN_ROW).into_response();
     }
-    match audited(
-        &store,
-        &session,
-        Target::Person(&ask.person),
-        ACTION,
-        store.admin_enable(
-            &session.person_id,
-            session.session_id,
-            &ask.person,
-            ask.version,
-        ),
-    )
+    match async {
+        let first = match first_of(&store, &session, Target::Person(&ask.person), ACTION).await {
+            Ok(first) => first,
+            Err(answer) => return Err(answer),
+        };
+        let written = store
+            .admin_enable(
+                &session.person_id,
+                session.session_id,
+                &first,
+                &ask.person,
+                ask.version,
+            )
+            .await;
+        settled(&store, &first, &written).await;
+        Ok(written)
+    }
     .await
     {
         Ok(written) => landed(written, "/admin/persons"),
@@ -536,19 +561,24 @@ async fn rename(store: Store, seams: &Seams, headers: HeaderMap, ask: RenameAsk)
     if ask.person == session.person_id {
         return (StatusCode::FORBIDDEN, OWN_ROW).into_response();
     }
-    match audited(
-        &store,
-        &session,
-        Target::Person(&ask.person),
-        ACTION,
-        store.admin_rename(
-            &session.person_id,
-            session.session_id,
-            &ask.person,
-            ask.version,
-            &ask.name,
-        ),
-    )
+    match async {
+        let first = match first_of(&store, &session, Target::Person(&ask.person), ACTION).await {
+            Ok(first) => first,
+            Err(answer) => return Err(answer),
+        };
+        let written = store
+            .admin_rename(
+                &session.person_id,
+                session.session_id,
+                &first,
+                &ask.person,
+                ask.version,
+                &ask.name,
+            )
+            .await;
+        settled(&store, &first, &written).await;
+        Ok(written)
+    }
     .await
     {
         Ok(written) => landed(written, "/admin/persons"),

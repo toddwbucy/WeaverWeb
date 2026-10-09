@@ -636,3 +636,35 @@ async fn a_claim_starting_pe_but_not_an_identity_stays_a_claim() {
         crate::store::identity::Author::Claim("pe-alice".to_owned())
     );
 }
+
+/// **A host command whose commit's answer is lost reads back its own
+/// outcome** (Spec 2.13): the bootstrap's and a token's commit answers are
+/// lost after PostgreSQL applied them, and each answers its success with
+/// its outcome `ok`, its `ok` outcome having committed with it.
+#[tokio::test]
+async fn a_host_command_whose_commits_answer_is_lost_reads_back_its_outcome() {
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let cfg = cfg();
+    crate::store::commit::lose_the_commits_answer("person bootstrap");
+    let boot = host::bootstrap(s, &cfg, "ada", None, LAB).await;
+    assert!(crate::store::commit::the_answer_was_lost());
+    ok(&boot);
+    let person = boot.value["person"].as_str().unwrap().to_owned();
+    let cleared = host::reset(s, &cfg, &person, None, LAB).await;
+    ok(&cleared);
+    crate::store::commit::lose_the_commits_answer("person token");
+    let token = host::token(s, &cfg, &person, None, LAB).await;
+    assert!(crate::store::commit::the_answer_was_lost());
+    ok(&token);
+    let outcomes: (i64, i64) = sqlx::query_as(
+        "SELECT count(*) FILTER (WHERE outcome = 'ok'), count(*) FILTER (WHERE outcome = 'failed') \
+         FROM audit WHERE principal = 'host'",
+    )
+    .fetch_one(&s.pool)
+    .await
+    .unwrap();
+    assert_eq!(outcomes, (3, 0), "each outcome ok, none failed");
+}

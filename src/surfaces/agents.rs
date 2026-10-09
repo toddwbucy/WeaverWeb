@@ -46,7 +46,9 @@ use crate::store::admin::Refusal;
 use crate::store::audit::Target;
 use crate::store::identity::{bearer, hex, is_agent_id};
 use crate::store::{AgentId, Store};
-use crate::surfaces::admin::{NOT_AN_ADMIN, admin_session, audited, fault, refused, writer};
+use crate::surfaces::admin::{
+    NOT_AN_ADMIN, admin_session, fault, first_of, refused, settled, writer,
+};
 use crate::surfaces::gate::{Policy, Session};
 
 /// How long a client config waits to be taken.
@@ -417,6 +419,10 @@ async fn register(store: Store, seams: &Seams, headers: HeaderMap, ask: Register
     let Some(reservation) = seams.handover.reserve(2) else {
         return refused(&Refusal::HandoverFull);
     };
+    let first = match first_of(&store, &session, Target::Agent(minted.as_str()), ACTION).await {
+        Ok(first) => first,
+        Err(answer) => return answer,
+    };
     let write = async {
         let mut lock = store.authority_lock().await?;
         if let Err(refusal) = authority_stands(seams) {
@@ -430,6 +436,8 @@ async fn register(store: Store, seams: &Seams, headers: HeaderMap, ask: Register
             AdminWrite {
                 session_id: session.session_id,
                 person: &session.person_id,
+                first: &first,
+                store: &store,
             },
             &minted,
             &ask.r#box,
@@ -447,30 +455,14 @@ async fn register(store: Store, seams: &Seams, headers: HeaderMap, ask: Register
             (Ok((id, _)), Some((gate, admin))) => Ok(Ok((id, gate, admin))),
             (Ok(_), None) => anyhow::bail!("a register landed with no credentials minted"),
             (Err(e), _) if e.is::<AuthorityGone>() => Ok(Err(Refusal::AuthorityGone)),
-            (Err(e), None) => Err(e),
-            // **A commit's outcome is unknown until it is read back**, as in
-            // the host's `register`: the row carrying the new fingerprint
-            // means the write landed, and the configs are handed over.
-            (Err(e), Some((gate, admin))) => {
-                match store.agent_by_fingerprint(&gate.fingerprint).await? {
-                    Some((row, _)) => Ok(Ok((row.agent_id, gate, admin))),
-                    None => Err(e),
-                }
-            }
+            // A lost commit answer was read back by the act's own outcome
+            // record in the store (`store::commit`): an error here did not
+            // land.
+            (Err(e), _) => Err(e),
         }
     };
-    let written = match audited(
-        &store,
-        &session,
-        Target::Agent(minted.as_str()),
-        ACTION,
-        write,
-    )
-    .await
-    {
-        Ok(written) => written,
-        Err(answer) => return answer,
-    };
+    let written = write.await;
+    settled(&store, &first, &written).await;
     match written {
         Ok(Ok((id, gate, admin))) => hand_over(
             seams,
@@ -537,6 +529,10 @@ async fn rotate(store: Store, seams: &Seams, headers: HeaderMap, ask: RotateAsk)
     let Some(reservation) = seams.handover.reserve(2) else {
         return refused(&Refusal::HandoverFull);
     };
+    let first = match first_of(&store, &session, Target::Agent(&ask.agent), ACTION).await {
+        Ok(first) => first,
+        Err(answer) => return answer,
+    };
     let write = async {
         let mut lock = store.authority_lock().await?;
         if let Err(refusal) = authority_stands(seams) {
@@ -552,6 +548,8 @@ async fn rotate(store: Store, seams: &Seams, headers: HeaderMap, ask: RotateAsk)
             AdminWrite {
                 session_id: session.session_id,
                 person: &session.person_id,
+                first: &first,
+                store: &store,
             },
             &agent,
             &seams.authority.fingerprint(),
@@ -568,19 +566,11 @@ async fn rotate(store: Store, seams: &Seams, headers: HeaderMap, ask: RotateAsk)
             (Ok(_), None) => anyhow::bail!("a rotation landed with no credentials minted"),
             (Err(e), _) if e.is::<AuthorityGone>() => Ok(Err(Refusal::AuthorityGone)),
             (Err(e), _) if e.is::<Retired>() => Ok(Err(Refusal::Retired)),
-            (Err(e), None) => Err(e),
-            (Err(e), Some((gate, admin))) => {
-                match store.agent_by_fingerprint(&gate.fingerprint).await? {
-                    Some(_) => Ok(Ok((gate, admin))),
-                    None => Err(e),
-                }
-            }
+            (Err(e), _) => Err(e),
         }
     };
-    let written = match audited(&store, &session, Target::Agent(&ask.agent), ACTION, write).await {
-        Ok(written) => written,
-        Err(answer) => return answer,
-    };
+    let written = write.await;
+    settled(&store, &first, &written).await;
     match written {
         Ok(Ok((gate, admin))) => hand_over(
             seams,
@@ -691,12 +681,18 @@ async fn revoked(
     plane: Option<Plane>,
     action: &str,
 ) -> Response {
+    let first = match first_of(store, session, Target::Agent(id.as_str()), action).await {
+        Ok(first) => first,
+        Err(answer) => return answer,
+    };
     let write = async {
         match store
             .revoke_by_admin(
                 AdminWrite {
                     session_id: session.session_id,
                     person: &session.person_id,
+                    first: &first,
+                    store,
                 },
                 id,
                 plane,
@@ -710,10 +706,9 @@ async fn revoked(
             Err(e) => Err(e),
         }
     };
-    match audited(store, session, Target::Agent(id.as_str()), action, write).await {
-        Ok(written) => crate::surfaces::admin::landed(written, "/admin/agents"),
-        Err(answer) => answer,
-    }
+    let written = write.await;
+    settled(store, &first, &written).await;
+    crate::surfaces::admin::landed(written, "/admin/agents")
 }
 
 /// **One plane's credential revoked**: its live connection closed in this

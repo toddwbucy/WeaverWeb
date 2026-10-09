@@ -1220,13 +1220,13 @@ async fn the_grants_page_marks_a_grant_on_a_retired_agent() {
 }
 
 /// **A revocation or a retirement whose commit's answer is lost reads back
-/// its effect** (Spec 2.13): the planes revoked and notified, the answer
+/// its outcome** (Spec 2.13): the planes revoked and notified, the answer
 /// lost after PostgreSQL applied the commit, and the write answers its
 /// success with its outcome `ok`, where a retry would meet step three's
 /// refusal and the record could never be put right.
 #[tokio::test]
-async fn a_revocation_whose_commits_answer_is_lost_reads_back_its_effect() {
-    use crate::admin_tests::{lose_the_commits_answer, the_answer_was_lost};
+async fn a_revocation_whose_commits_answer_is_lost_reads_back_its_outcome() {
+    use crate::store::commit::{lose_the_commits_answer, the_answer_was_lost};
     let Some(rig) = rig().await else { return };
     let s = rig.store();
     let (_, session) = admin(&rig.app, s, &mut authenticator(), "ada").await;
@@ -1270,11 +1270,11 @@ async fn a_revocation_whose_commits_answer_is_lost_reads_back_its_effect() {
 }
 
 /// **A registration or a rotation through the server whose commit's answer
-/// is lost reads back its new fingerprint**: the configs are handed over
+/// is lost reads back its outcome**: the configs are handed over
 /// and the outcome recorded `ok`.
 #[tokio::test]
-async fn a_register_whose_commits_answer_is_lost_reads_back_its_fingerprint() {
-    use crate::admin_tests::{lose_the_commits_answer, the_answer_was_lost};
+async fn a_register_whose_commits_answer_is_lost_reads_back_its_outcome() {
+    use crate::store::commit::{lose_the_commits_answer, the_answer_was_lost};
     let Some(rig) = rig().await else { return };
     let s = rig.store();
     let (_, session) = admin(&rig.app, s, &mut authenticator(), "ada").await;
@@ -1302,4 +1302,69 @@ async fn a_register_whose_commits_answer_is_lost_reads_back_its_fingerprint() {
             "{action}"
         );
     }
+}
+
+/// A hold between a lost commit answer of `kind` and its read-back.
+fn hold_the_read_back(kind: &'static str) -> (Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>) {
+    let (read, release) = (
+        Arc::new(tokio::sync::Notify::new()),
+        Arc::new(tokio::sync::Notify::new()),
+    );
+    crate::store::commit::READ_BACK_HOLD.lock().unwrap().push((
+        kind,
+        read.clone(),
+        release.clone(),
+    ));
+    (read, release)
+}
+
+/// **A lost answer is read back by the act's own outcome, which no later
+/// act can overwrite**: a revocation's commit answer is lost, and before
+/// its read-back a rotation of the same agent commits, making the plane
+/// live again under a new fingerprint; the revocation still answers its
+/// success and its outcome reads `ok`, where reading back the plane's state
+/// would have called it failed.
+#[tokio::test]
+async fn a_revocation_whose_answer_is_lost_lands_though_a_rotation_follows() {
+    use crate::store::commit::{lose_the_commits_answer, the_answer_was_lost};
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, session) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (id, handles) = rig.register(&session, "box-a", "karl").await;
+    for handle in &handles {
+        rig.take(handle, &session).await;
+    }
+
+    lose_the_commits_answer("agent revoke");
+    let (read, release) = hold_the_read_back("agent revoke");
+    let revocation = tokio::spawn({
+        let (app, session, body) = (
+            rig.app.clone(),
+            session.clone(),
+            form(&[("agent", &id), ("plane", "gate")]),
+        );
+        async move { send_as(&app, "POST", "/admin/agents/revoke", Some(body), &session).await }
+    });
+    read.notified().await;
+    assert!(the_answer_was_lost());
+    let (status, _, page) = rig
+        .post("/admin/agents/rotate", form(&[("agent", &id)]), &session)
+        .await;
+    assert_eq!(status, StatusCode::OK, "the rotation commits first: {page}");
+    assert_eq!(states(s, &id).await, ("live".into(), "live".into()));
+    release.notify_one();
+    let (status, _, answer) = revocation.await.unwrap();
+    assert_eq!(status, StatusCode::SEE_OTHER, "{answer}");
+    assert_eq!(
+        rows(
+            s,
+            &format!("SELECT count(*) FROM audit WHERE target_id = '{id}' AND action = 'revoke' AND outcome = 'ok'")
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        rows(s, "SELECT count(*) FROM audit WHERE outcome = 'failed'").await,
+        0
+    );
 }

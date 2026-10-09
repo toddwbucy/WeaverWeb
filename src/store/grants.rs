@@ -16,7 +16,7 @@ use sqlx::Row;
 
 use crate::store::Store;
 use crate::store::admin::{Refusal, authorized};
-use crate::store::commit::commit_or_read_back;
+use crate::store::commit::commit_with_outcome;
 use crate::store::identity::{self, Role, VOCABULARY};
 
 /// **A live grant as the admin page lists it**: the person by identity and
@@ -155,10 +155,14 @@ impl Store {
     /// **A role granted by an admin**: a person, a role, and an agent of
     /// the register or none for `admin`, never the admin themselves, one
     /// live grant per person, role and agent.
+    // The admin, the session and the first record that authorize it, and
+    // the grant's four members: each one an argument the one insert takes.
+    #[allow(clippy::too_many_arguments)]
     pub async fn admin_grant(
         &self,
         admin: &str,
         session_id: i64,
+        first: &str,
         grant_id: &str,
         person: &str,
         role: &str,
@@ -212,7 +216,7 @@ impl Store {
             return Ok(Err(Refusal::Held));
         }
         identity::insert_grant(&mut tx, grant_id, person, role, agent, Some(admin)).await?;
-        commit_or_read_back(tx, "grant add", || self.granted(grant_id)).await?;
+        commit_with_outcome(tx, "grant add", self, first).await?;
         Ok(Ok(()))
     }
 
@@ -222,6 +226,7 @@ impl Store {
         &self,
         admin: &str,
         session_id: i64,
+        first: &str,
         grant: &str,
         version: i64,
     ) -> anyhow::Result<Result<(), Refusal>> {
@@ -250,10 +255,7 @@ impl Store {
         if !identity::revoke_grant(&mut tx, grant, Some(admin), version).await? {
             return Ok(Err(Refusal::Stale));
         }
-        commit_or_read_back(tx, "grant remove", || {
-            self.grant_revoked(grant, version, admin)
-        })
-        .await?;
+        commit_with_outcome(tx, "grant remove", self, first).await?;
         Ok(Ok(()))
     }
 
@@ -264,6 +266,7 @@ impl Store {
         &self,
         admin: &str,
         session_id: i64,
+        first: &str,
         role: &str,
         verbs: &[String],
         version: i64,
@@ -298,59 +301,8 @@ impl Store {
         if !identity::set_role_verbs(&mut tx, role, &verbs, Some(admin), version).await? {
             return Ok(Err(Refusal::Stale));
         }
-        commit_or_read_back(tx, "role set", || {
-            self.role_set(role, version, &verbs, admin)
-        })
-        .await?;
+        commit_with_outcome(tx, "role set", self, first).await?;
         Ok(Ok(()))
-    }
-
-    // **What each write leaves, read back where its commit's answer was
-    // lost** (`store::commit`), on a fresh connection.
-
-    /// A grant's effect: the grant's row stands.
-    async fn granted(&self, grant: &str) -> anyhow::Result<bool> {
-        Ok(
-            sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM role_grant WHERE grant_id = $1)")
-                .bind(grant)
-                .fetch_one(&self.pool)
-                .await?,
-        )
-    }
-
-    /// A revocation's effect: the grant revoked, at the version after the
-    /// one read, by this admin.
-    async fn grant_revoked(&self, grant: &str, version: i64, admin: &str) -> anyhow::Result<bool> {
-        Ok(sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM role_grant WHERE grant_id = $1 \
-             AND revoked_at IS NOT NULL AND version = $2 + 1 AND author = $3)",
-        )
-        .bind(grant)
-        .bind(version)
-        .bind(admin)
-        .fetch_one(&self.pool)
-        .await?)
-    }
-
-    /// A role's edit's effect: the verbs set, at the version after the one
-    /// read, by this admin.
-    async fn role_set(
-        &self,
-        role: &str,
-        version: i64,
-        verbs: &[String],
-        admin: &str,
-    ) -> anyhow::Result<bool> {
-        Ok(sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM role WHERE name = $1 \
-             AND version = $2 + 1 AND verbs = $3 AND author = $4)",
-        )
-        .bind(role)
-        .bind(version)
-        .bind(verbs)
-        .bind(admin)
-        .fetch_one(&self.pool)
-        .await?)
     }
 }
 

@@ -362,8 +362,10 @@ pub async fn open(
     Ok(Some(bearer))
 }
 
-/// **Sign-out**: the session's row closed and the cookie cleared. A request
-/// naming no session is answered the same, since there is nothing to end.
+/// **Sign-out**: the session's row closed and the cookie cleared, and the
+/// browser sent to the sign-in page, which a plain form posting here
+/// follows. A request naming no session is answered the same, since there
+/// is nothing to end.
 pub async fn sign_out(State(store): State<Store>, headers: HeaderMap) -> Response {
     if let Some(bearer) = bearer(&headers)
         && let Err(e) = sqlx::query(
@@ -376,8 +378,11 @@ pub async fn sign_out(State(store): State<Store>, headers: HeaderMap) -> Respons
         return crate::fault::Fault::from(anyhow::Error::from(e)).into_response();
     }
     (
-        StatusCode::NO_CONTENT,
-        [(header::SET_COOKIE, cleared_cookie())],
+        StatusCode::SEE_OTHER,
+        [
+            (header::SET_COOKIE, cleared_cookie()),
+            (header::LOCATION, HeaderValue::from_static("/sign-in")),
+        ],
     )
         .into_response()
 }

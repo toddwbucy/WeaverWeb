@@ -93,7 +93,7 @@ fn refused(status: StatusCode, why: &'static str) -> Response {
 /// **The user handle a person's passkeys carry**, stable for the person and
 /// derived from their identity's sixteen hex alone, so it names no one
 /// beyond what the identity does.
-fn user_handle(person_id: &str) -> Uuid {
+pub(crate) fn user_handle(person_id: &str) -> Uuid {
     let bits = person_id
         .strip_prefix("pe-")
         .and_then(|hex| u64::from_str_radix(hex, 16).ok())

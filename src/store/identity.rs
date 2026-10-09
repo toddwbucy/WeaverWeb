@@ -168,6 +168,109 @@ pub enum Supersedes {
 const REDEEMABLE: &str = "t.ended_at IS NULL AND t.expires_at > now() AND p.enabled \
      AND NOT EXISTS (SELECT 1 FROM passkey k WHERE k.person_id = t.person_id)";
 
+/// **One of a person's own passkeys**, as their page shows it.
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub struct OwnPasskey {
+    pub passkey_id: String,
+    pub label: Option<String>,
+    pub added_at: chrono::DateTime<chrono::Utc>,
+    pub last_used_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// **What an addition came to.**
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Added {
+    /// The passkey is inserted.
+    Inserted,
+    /// The session that asked no longer stands, or the passkey whose
+    /// assertion earned the grant was removed. Nothing was written.
+    AuthorityGone,
+    /// Another passkey holds the credential ID. Nothing was written.
+    CredentialHeld,
+}
+
+/// **What a removal came to.**
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Removed {
+    /// The passkey is removed.
+    Removed,
+    /// The passkey is not the person's, or no longer stands.
+    NotTheirs,
+    /// It is the person's last, which is never removed.
+    Last,
+    /// The session that asked no longer stands. Nothing was written.
+    AuthorityGone,
+}
+
+/// **The rule for every write a session authorizes** (Spec 2.13): inside
+/// the write's own transaction, under the identity exclusion, the session is
+/// re-checked as standing (open, its person enabled, the passkey it was
+/// opened with still the person's), so a disable, a removal or a host reset
+/// committed after the request read its session refuses the write rather
+/// than landing beneath it.
+pub async fn session_stands(
+    tx: &mut Transaction<'_, Postgres>,
+    session_id: i64,
+    person_id: &str,
+) -> anyhow::Result<bool> {
+    let standing: Option<i32> = sqlx::query_scalar(
+        "SELECT 1 FROM session s \
+         JOIN person p ON p.person_id = s.person_id \
+         JOIN passkey k ON k.passkey_id = s.passkey_id AND k.person_id = s.person_id \
+         WHERE s.session_id = $1 AND s.person_id = $2 AND s.closed_at IS NULL AND p.enabled",
+    )
+    .bind(session_id)
+    .bind(person_id)
+    .fetch_optional(&mut **tx)
+    .await?;
+    Ok(standing.is_some())
+}
+
+/// **A passkey that earned a write still stands**, its person's, read in
+/// the write's transaction under the identity exclusion.
+pub async fn passkey_stands(
+    tx: &mut Transaction<'_, Postgres>,
+    passkey_id: &str,
+    person_id: &str,
+) -> anyhow::Result<bool> {
+    let standing: Option<i32> =
+        sqlx::query_scalar("SELECT 1 FROM passkey WHERE passkey_id = $1 AND person_id = $2")
+            .bind(passkey_id)
+            .bind(person_id)
+            .fetch_optional(&mut **tx)
+            .await?;
+    Ok(standing.is_some())
+}
+
+/// A hold after a removal's count, keyed by the passkey's identity, one of
+/// a list so tests running at once each keep their own: the removal signals
+/// `read` and waits on `release`, which lets a test start a second removal.
+#[cfg(test)]
+pub(crate) type RemoveHold = (
+    String,
+    std::sync::Arc<tokio::sync::Notify>,
+    std::sync::Arc<tokio::sync::Notify>,
+);
+
+#[cfg(test)]
+pub(crate) static REMOVE_HOLD: std::sync::Mutex<Vec<RemoveHold>> =
+    std::sync::Mutex::new(Vec::new());
+
+#[cfg(test)]
+async fn hold_after_the_count(passkey_id: &str) {
+    let hold = {
+        let mut holds = REMOVE_HOLD.lock().unwrap();
+        holds
+            .iter()
+            .position(|(key, ..)| key == passkey_id)
+            .map(|at| holds.remove(at))
+    };
+    if let Some((_, read, release)) = hold {
+        read.notify_one();
+        release.notified().await;
+    }
+}
+
 /// **What a redemption came to.**
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Redeemed {
@@ -260,6 +363,106 @@ impl Store {
         .await?;
         tx.commit().await?;
         Ok(Redeemed::Enrolled)
+    }
+
+    /// **A person's own passkeys**, oldest first, for their page: the
+    /// identity, the label, when each was added and last used.
+    pub async fn own_passkeys(&self, person_id: &str) -> anyhow::Result<Vec<OwnPasskey>> {
+        Ok(sqlx::query_as(
+            "SELECT passkey_id, label, added_at, last_used_at FROM passkey \
+             WHERE person_id = $1 ORDER BY added_at, passkey_id",
+        )
+        .bind(person_id)
+        .fetch_all(&self.pool)
+        .await?)
+    }
+
+    /// **A passkey added by its person** (design section 7), after the
+    /// fresh assertion's grant was consumed: in one transaction under the
+    /// identity exclusion, the person found enabled, the credential ID found
+    /// held by no passkey, and the passkey inserted with its label. A check
+    /// that fails writes nothing.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn add_passkey(
+        &self,
+        person_id: &str,
+        session_id: i64,
+        earned_by: &str,
+        passkey_id: &str,
+        credential_id: &str,
+        credential: &serde_json::Value,
+        label: Option<&str>,
+    ) -> anyhow::Result<Added> {
+        let mut tx = self.identity_transaction().await?;
+        if !session_stands(&mut tx, session_id, person_id).await?
+            || !passkey_stands(&mut tx, earned_by, person_id).await?
+        {
+            return Ok(Added::AuthorityGone);
+        }
+        let held: Option<i32> =
+            sqlx::query_scalar("SELECT 1 FROM passkey WHERE credential_id = $1")
+                .bind(credential_id)
+                .fetch_optional(&mut *tx)
+                .await?;
+        if held.is_some() {
+            return Ok(Added::CredentialHeld);
+        }
+        sqlx::query(
+            "INSERT INTO passkey (passkey_id, credential_id, person_id, credential, label) \
+             VALUES ($1, $2, $3, $4, $5)",
+        )
+        .bind(passkey_id)
+        .bind(credential_id)
+        .bind(person_id)
+        .bind(credential)
+        .bind(label)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(Added::Inserted)
+    }
+
+    /// **A passkey removed by its person, never their last** (design
+    /// section 7): in one transaction under the identity exclusion, the
+    /// passkey found theirs and their passkeys counted, so two concurrent
+    /// removals of a person's last two cannot both land. Every session
+    /// opened with it ends at its next use, the session's own check seeing
+    /// the passkey gone; nothing here writes a session.
+    pub async fn remove_passkey(
+        &self,
+        person_id: &str,
+        session_id: i64,
+        passkey_id: &str,
+    ) -> anyhow::Result<Removed> {
+        let mut tx = self.identity_transaction().await?;
+        if !session_stands(&mut tx, session_id, person_id).await? {
+            return Ok(Removed::AuthorityGone);
+        }
+        let held: i64 = sqlx::query_scalar("SELECT count(*) FROM passkey WHERE person_id = $1")
+            .bind(person_id)
+            .fetch_one(&mut *tx)
+            .await?;
+        let theirs: Option<i32> =
+            sqlx::query_scalar("SELECT 1 FROM passkey WHERE passkey_id = $1 AND person_id = $2")
+                .bind(passkey_id)
+                .bind(person_id)
+                .fetch_optional(&mut *tx)
+                .await?;
+        #[cfg(test)]
+        hold_after_the_count(passkey_id).await;
+        if theirs.is_none() {
+            return Ok(Removed::NotTheirs);
+        }
+        if held <= 1 {
+            return Ok(Removed::Last);
+        }
+        sqlx::query("DELETE FROM passkey WHERE passkey_id = $1 AND person_id = $2")
+            .bind(passkey_id)
+            .bind(person_id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(Removed::Removed)
     }
 
     /// A new key of `kind`, minted by the store and written nowhere yet.

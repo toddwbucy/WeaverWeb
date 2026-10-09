@@ -10,7 +10,13 @@
   <nav class="masthead">
     <span class="brand">weaver-web</span>
     <a href="/record"{% if here == "record" %} class="here"{% endif %}>Record</a>
+    {%- if who.is_empty() %}
+    <a href="/sign-in"{% if here == "sign-in" %} class="here"{% endif %}>Sign in</a>
+    {%- else %}
+    <a href="/passkeys"{% if here == "passkeys" %} class="here"{% endif %}>Passkeys</a>
     <span class="who">{{ who }}</span>
+    <form method="post" action="/sign-out" class="sign-out"><button type="submit">Sign out</button></form>
+    {%- endif %}
   </nav>
   <main class="{% block mainclass %}{% endblock %}">
   {% block body %}{% endblock %}

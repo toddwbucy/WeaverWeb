@@ -1,0 +1,41 @@
+{% extends "instrument.html" %}
+{% block title %}passkeys - weaver-web{% endblock %}
+{% block mainclass %}listing{% endblock %}
+{% block body %}
+{#- Your own passkeys, and nothing of another person's. Removing posts a
+    form; adding runs the module's two ceremonies. No inline script. -#}
+<header class="listing-head">
+  <h1>Your passkeys</h1>
+  <p class="destination">Keep more than one, so a lost device is not a lost account.</p>
+</header>
+<table>
+  <thead><tr><th>Label</th><th>Added</th><th>Last used</th><th></th></tr></thead>
+  <tbody>
+  {% for row in rows %}
+  <tr>
+    <td>{{ row.label }}{% if row.this_session %} <span class="pill">this session</span>{% endif %}</td>
+    <td>{{ row.added }}</td>
+    <td>{{ row.used }}</td>
+    <td>
+      {% if only_one %}
+      <span class="chip-note">your only passkey; add another before removing it</span>
+      {% else %}
+      <form method="post" action="/passkeys/remove">
+        <input type="hidden" name="passkey" value="{{ row.passkey_id }}">
+        <button type="submit">Remove</button>
+      </form>
+      {% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p class="chip-note">Removing a passkey ends every session opened with it, this one included if it was opened with it.</p>
+<form id="add" method="post" autocomplete="off">
+  <label for="label">Label for a new passkey</label>
+  <input id="label" type="text" maxlength="100" spellcheck="false">
+  <button type="submit">Add a passkey</button>
+</form>
+<p id="status" role="status"></p>
+<script type="module" src="/assets/surfaces/passkeys.js"></script>
+{% endblock %}

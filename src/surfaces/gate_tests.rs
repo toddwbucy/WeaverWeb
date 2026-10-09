@@ -363,7 +363,7 @@ async fn a_request_that_changes_state_comes_from_the_origin_or_is_refused() {
     .await;
     assert_eq!(
         status,
-        StatusCode::NO_CONTENT,
+        StatusCode::SEE_OTHER,
         "the configured origin is served"
     );
 }
@@ -385,11 +385,16 @@ async fn sign_out_closes_the_row_and_the_next_use_finds_no_session() {
         Some(&bearer),
     )
     .await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(status, StatusCode::SEE_OTHER);
     assert_eq!(
         headers.get(header::SET_COOKIE),
         Some(&gate::cleared_cookie()),
         "the cookie is cleared"
+    );
+    assert_eq!(
+        headers.get(header::LOCATION).unwrap(),
+        "/sign-in",
+        "a form posting sign-out lands on the sign-in page"
     );
     assert!(closed(s, &bearer).await, "the row is closed");
     assert_eq!(

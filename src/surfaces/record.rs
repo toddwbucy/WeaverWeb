@@ -388,6 +388,14 @@ mod tests {
         let (status, body) = ask(&store, "/record", Some(&bearer)).await;
         assert_eq!(status, StatusCode::OK);
         assert!(body.contains(&name), "the person the page was drawn under");
+        assert!(
+            body.contains(r#"<a href="/passkeys""#),
+            "a signed-in page's navigation reaches the person's passkeys"
+        );
+        assert!(
+            body.contains(r#"<form method="post" action="/sign-out""#),
+            "and signs out by a form"
+        );
     }
 
     /// The surface draws a run's tuple, **names an absent member rather

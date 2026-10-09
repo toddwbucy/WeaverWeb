@@ -914,8 +914,10 @@ configured origin**, exactly one such header, or is refused before its
 handler: every method but `GET` and `HEAD`, over the whole app, the legacy
 routes included, beside `SameSite=Strict`. **With no origin configured,
 nothing that changes state is served**, since nothing can sign in without
-one. **Sign-out** is a `POST` that closes the session's row and clears the
-cookie.
+one. **Sign-out** is a `POST` that closes the session's row, clears the
+cookie and sends the browser to the sign-in page. **A signed-in page's
+navigation** links to Record and to the person's own passkeys and carries
+the sign-out as a plain form; a page without a session links to sign-in.
 
 **Sign-in is name-first**, as built on 2026-10-09 (`/sign-in`): the person
 gives their name, found by its canonical form, and answers a challenge for
@@ -1453,7 +1455,17 @@ it decides are stated here and in section 2.8, and the reasons are there.
   and counting toward its cap, and the registration requires and consumes it
   at its start, a failed registration consuming it too, so one assertion
   serves one registration from the session that made it. A person removes
-  any of their own passkeys but the last. **The person row is authored
+  any of their own passkeys but the last, the count taken under the
+  exclusion below so two concurrent removals of the last two cannot both
+  land, and every session opened with the removed passkey ends at its next
+  use. **As built on 2026-10-09** (`/passkeys`): the page lists the
+  session's person's own passkeys alone, which one opened this session, and
+  their labels; the fresh assertion records its challenged passkeys by
+  their own identities as sign-in does, falls under the counter rule, and
+  is audited by `passkey assertion` on the asserting passkey; the addition
+  is audited by `passkey assertion` on the new passkey, its insert under the
+  exclusion refusing a credential ID held by anyone; a removal is audited
+  by `session`. **The person row is authored
   through section 3.2, and its writes split three ways**: enrolling,
   disabling or renaming a person is written by a holder of the server-wide
   admin grant; the bootstrap person, the first admin, is written by the host
@@ -1628,6 +1640,15 @@ it decides are stated here and in section 2.8, and the reasons are there.
   So a revocation or a disable either commits before the check and is seen,
   or waits until the commit point, and without the hold one could commit
   between the two and the act would land on authority that no longer stood.
+  **Every write a session authorizes re-checks its authority inside its own
+  transaction**, under the identity exclusion: the session as standing
+  (open, its person enabled, the passkey it was opened with still theirs),
+  and any passkey that earned the write, as an addition's grant was earned,
+  as still standing. Otherwise the write is refused as its authority gone,
+  audited as failed, and nothing lands, so a disable, a removal or a host
+  reset committed after the request read its session refuses the write
+  rather than landing beneath it: an addition never plants the device a
+  reset meant to cut off, nor strands the reset's token.
   **For an ask the guarantee is about order**: an ask is authorized at its
   enqueue, and a revocation or disable that commits after that is ordered
   after the ask, exactly as it is for an ask already in flight at the agent,
@@ -3855,11 +3876,11 @@ missing while it was relaying.
 | a person is named by identity only in an identity's whole shape, and no name takes it | perturbation in `src/host_tests.rs`: read any `pe-` argument as an identity, and a person named `pe-alice` is not found by name; take a name of an identity's whole shape, and it lands, shadowing the person whose identity it spells |
 | the host's write of a role refuses a stale version | perturbation in `src/host_tests.rs`: drop the version from the role's update, hold one write after its read while another commits, and the held write overwrites the other's verbs. A grant's removal carries its version too; the re-check of its liveness under the exclusion already refuses a grant another removal revoked, so the version adds no instrument of its own there |
 | a person's name stays unique in its canonical form at rename | perturbation, **owed**: drop the check at rename, and a rename lands a name another person's form already holds. Lands with act 11's pull request of an admin's writes |
-| a credential ID belongs to one passkey of one person | perturbation, **owed**: drop the unique constraint, and a registration returning a credential ID another person holds lands a second passkey row for it, so one credential signs in as either person. Lands with act 11's passkey pull request |
+| a credential ID belongs to one passkey of one person | perturbation in `src/passkeys_tests.rs` and `src/keys_tests.rs`, through a soft passkey: drop the addition's check of a credential ID already held, under the identity exclusion, and a registration whose ID another person holds fails at the store's key rather than refusing, its grant spent either way; drop that key too (the passkey table's primary key on the credential ID) with the checks, and the ID lands a second passkey row, so one credential signs in as either person |
 | a signature counter that did not rise refuses the sign-in, and the stored passkey is updated by a locked read, merge and write | perturbation in `src/sign_in_tests.rs`, the counter rule driven through its `Assertion` seam where a soft passkey cannot reach: drop the library's `CredentialPossibleCompromise` arm, and a clone's sign-in is refused unaudited; swallow the error where the possible clone's refusal cannot be recorded, and it answers the ordinary refusal over a record the audit lost; drop the rule's own comparison, and a counter raised between the options and the finish signs in; drop the write of the merged passkey, and the stored counter never rises; drop the row's lock, and of two concurrent assertions with one nonzero counter both succeed, and a concurrent assertion erases another's backup-eligibility upgrade; apply the refusal to a zero counter, and two zero-counter assertions are refused; drop the rule's commit, and the counter does not persist where the opening then fails |
-| a signature counter that did not rise refuses the fresh assertion before adding a passkey, its update committed before the addition's | perturbation, **owed**: take a cloned credential's assertion at the fresh assertion, and a passkey is added on its word; put the update in the addition's transaction, fail the addition, and the passkey rolls back with it, stale. Lands with act 11's pull request that adds and removes passkeys |
+| a signature counter that did not rise refuses the fresh assertion before adding a passkey, its update committed before the addition's | perturbation in `src/keys_tests.rs`: drop the library's `CredentialPossibleCompromise` arm at the fresh assertion, and a clone's assertion is refused unaudited; the rule's own comparison is the one sign-in's row shows, by the same function. The counter's transaction commits before the grant is minted and the grant is held in memory alone, so no addition's failure can roll it back |
 | a session carries a person, ends where its person or its passkey does, and its cookie is neither readable by script nor carried by another site | perturbation, against sessions opened in the store in `src/surfaces/gate_tests.rs`: drop `HttpOnly`, `Secure`, `SameSite=Strict` or `Path=/`, or set the cookie under another name, and the cookie's test finds it changed; read the old `weaver_session` name too, and a claimed-name cookie names a session; drop the check of a session's close, of its person's disable, of its passkey's presence, of the absolute limit or of the idle limit, and a session so ended is served; name the passkey by its credential ID rather than its own identity, reset the person and enroll the same credential again, and the session opened before the reset is served; leave the row open where a use finds it ended, and the next read finds it open; drop the `Origin` check, admit a request with no origin configured, or take the first of two `Origin` headers, and a POST from another origin changes state; refresh the last use unconditionally, and two uses within a minute write twice and a time ahead of the clock moves back; close unconditionally where a read found a session ended, hold a use between its read and its close, refresh the session from another request meanwhile, and the refreshed session is closed on the stale read (`src/surfaces/gate_tests.rs`); drop the absolute limit's seven-day bound, and an absolute limit of the largest integer a config holds loads (`src/config.rs`), an interval the database cannot make at every use; drop the idle limit's five-minute floor, and an idle limit of 30 seconds is accepted at load (`src/config.rs`), where a session in active use would end; and a session used every 50 seconds is held open at the floor itself (`src/surfaces/gate_tests.rs`); let sign-out leave the row open, and the cookie it cleared still names a session; write the person's name as the author, or resolve every member as a claim, and an authored row stops naming its person or their current name; let a host's `--author` claim of the whole `pe-` shape through, and each register verb and identity command acts on it (`src/link/verbs_audit_tests.rs`, `src/host_tests.rs`), its claim then resolving as that person. `tests/startup.rs` (ignored, the real binary) reads Record under a person's session and refuses a legacy POST at the `Origin` check |
-| a passkey is added only after a fresh assertion, and a person's last is never removed | perturbation, **owed**: add a passkey on a session alone, and a stolen cookie gains access that outlasts it; let a registration use an add grant another session earned, and a parallel session adds a passkey on someone else's assertion; leave the grant unconsumed at the registration's start, and one assertion adds two passkeys; let a person remove their last passkey, and they are locked out with only the host to recover them. Lands with act 11's passkey pull request |
+| a passkey is added only after a fresh assertion, and a person's last is never removed | perturbation in `src/keys_tests.rs`: start a registration with no grant, and a session alone adds a passkey, a stolen cookie gaining access that outlasts it; drop the grant's binding to its session, and another session of the same person spends a grant it did not earn; drop the refusal of the last, and a person removes their last passkey; drop the addition's re-check of its session and of the passkey that earned its grant, hold the addition after its session read, run the host reset, and the device the reset cut off lands while the reset's token is stranded; drop the re-check of the passkey that earned the grant alone, remove that passkey while the session stands, and the addition lands on a removed passkey's grant; drop the removal's re-check of its session, and a removal asked under a session that no longer stands lands; take the removal's count outside the identity exclusion, hold one removal after its count, and two concurrent removals of the last two both land; list passkeys without the session's person, and the page shows another person's. A grant is taken once by the ceremony table, whose own test shows it |
 | an enrollment token is issued only for a person holding no passkey, lives at most seven days, is kept as its digest, and is its person's one live token | perturbation in `src/host_tests.rs`: drop the passkey check, and a token is issued for a person holding a credential, which an admin could redeem over theirs; drop the command's lifetime bound, and a token past seven days is refused only by the store, as a fault; drop the store's lifetime check, and a row past seven days lands; store the token in the clear, and a read of the token table is a set of usable tokens; leave an earlier token live when issuing, and the newest is refused against the one live token per person. And in `src/config.rs`: configure a lifetime past seven days, and it is taken |
 | an enrollment token is single-use and redeemed only within its lifetime | perturbation, against a soft passkey (`webauthn-authenticator-rs`, a dev-dependency) in `src/passkeys_tests.rs`: drop the token's expiry, its end, its person's enable or the person's holding no passkey from what makes a token redeemable, and that token starts a ceremony; drop the transaction's re-check, and a passkey appearing between the options and the finish leaves the person holding two; leave the token unended at the redemption, and it redeems again; drop the check of a credential ID already held, and the finish fails at the store rather than refusing. A redemption sets no cookie and writes no session row, which the end-to-end test asserts |
 | an enrollment token is 32 bytes of the operating system's cryptographic randomness | perturbation in `src/store/identity_tests.rs`: draw bearers from a counter, and consecutive bearers share a prefix, the next guessed from the last |
@@ -3883,15 +3904,17 @@ missing while it was relaying.
 act that lands it states what removal makes it fail and confirms it does.
 
 **A row marked owed has no instrument and is not counted as enforced.**
-Eleven stand so marked as of 2026-10-09. The batch's order is owed because
+Eight stand so marked as of 2026-10-09. The batch's order is owed because
 section 2.11 describes its table and no migration builds it. Three rows of
 the role shape ruled on 2026-10-02 are owed to the IAM act: the principal
 check, the writer's check for persons, roles and grants, and the audit
-record. **Seven are owed to act 11's code pull requests**, from its design
-of 2026-10-07: the unique name at rename, the credential ID, the
-signature counter at the fresh assertion before adding a passkey, the fresh
-assertion and the last passkey, the admin's lack of agent actions, read
-access, and the live view's bound. Act 11's sign-in pull request of
+record. **Four are owed to act 11's code pull requests**, from its design
+of 2026-10-07: the unique name at rename, the admin's lack of agent
+actions, read access, and the live view's bound. Act 11's passkeys pull
+request of 2026-10-09 stood up the credential ID's uniqueness, the signature
+counter at the fresh assertion before adding a passkey, and the fresh
+assertion's grant with the last passkey's keeping, each shown to fail with
+its guard removed. Act 11's sign-in pull request of
 2026-10-09 stood up passkey-only sign-in, the signature counter at sign-in
 (narrowing that row to the fresh assertion's, owed to the pull request that
 adds passkeys), and the session bearer's randomness, each shown to fail with

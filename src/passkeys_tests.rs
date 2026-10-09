@@ -51,8 +51,15 @@ pub(crate) fn app(s: &Store, passkeys: Option<Passkeys>) -> axum::Router {
                 passkeys.clone(),
             )))
             .merge(crate::surfaces::script_policy(
-                crate::surfaces::sign_in::routes(passkeys),
+                crate::surfaces::sign_in::routes(passkeys.clone()),
             ))
+            .merge(match passkeys {
+                Some(passkeys) => crate::surfaces::script_policy(crate::surfaces::keys::routes(
+                    policy.clone(),
+                    passkeys,
+                )),
+                None => axum::Router::new(),
+            })
             .with_state(s.clone()),
         policy,
     )
@@ -531,6 +538,14 @@ async fn the_module_is_small_and_the_page_has_no_inline_script() {
     assert!(
         page.contains(r#"<form id="enroll" method="post""#),
         "{page}"
+    );
+    assert!(
+        page.contains(r#"<a href="/sign-in""#),
+        "no session: a sign-in link"
+    );
+    assert!(
+        !page.contains(r#"<a href="/passkeys""#),
+        "no session: no passkeys link"
     );
     let input = page
         .split("<input")

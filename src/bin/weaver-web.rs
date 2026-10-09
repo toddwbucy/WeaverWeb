@@ -437,9 +437,16 @@ async fn serve(cfg: Arc<ServerConfig>) -> anyhow::Result<()> {
             weaver_web::surfaces::enroll::routes(passkeys.clone()),
         ))
         .merge(weaver_web::surfaces::script_policy(
-            weaver_web::surfaces::sign_in::routes(passkeys),
-        ))
-        .with_state(store.clone());
+            weaver_web::surfaces::sign_in::routes(passkeys.clone()),
+        ));
+    // **A person's own passkeys** (design section 7), where passkeys are on.
+    let instrument = match passkeys {
+        Some(passkeys) => instrument.merge(weaver_web::surfaces::script_policy(
+            weaver_web::surfaces::keys::routes(policy.clone(), passkeys),
+        )),
+        None => instrument,
+    }
+    .with_state(store.clone());
 
     // The legacy admin routes answer 503 and reach no agent; their trace
     // views are the listener's live window, so the one ring per agent is

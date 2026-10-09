@@ -12,8 +12,12 @@
 //! principal and is refused unaudited; a counter that did not rise is
 //! audited as a possible cloned credential, the signature having proved the
 //! person, and opens nothing, the passkey staying enrolled so a clone cannot
-//! lock its owner out; a session's opening is audited, its first record
-//! before the write. No bearer, digest or name reaches a log line.
+//! lock its owner out; a session's opening is audited on the passkey it
+//! began with, its first record before the write. Every audit of an attempt
+//! names the passkey the ceremony challenged, by its own identity. No
+//! bearer, digest or name reaches a log line.
+
+use std::collections::HashMap;
 
 use askama::Template;
 use axum::Router;
@@ -37,6 +41,9 @@ use crate::surfaces::gate;
 /// answers whether a name exists at all, which the design accepts and
 /// states (section 6); it says nothing more than that.
 const NO_SIGN_IN: &str = "no passkey sign-in is open for that name";
+
+/// The answer to an assertion by a passkey removed since the challenge.
+const PASSKEY_REMOVED: &str = "the passkey you signed in with has been removed; sign in with another passkey, or ask your admin";
 
 /// The answer to an assertion whose counter did not rise.
 const POSSIBLE_CLONE: &str = "this passkey's signature counter did not rise, so it may be a copy; sign in with another passkey, or ask your admin";
@@ -117,30 +124,39 @@ async fn options(store: Store, passkeys: &Passkeys, ask: OptionsAsk) -> Response
     let Some(person_id) = found else {
         return refused(StatusCode::FORBIDDEN, NO_SIGN_IN);
     };
-    let stored: Vec<serde_json::Value> =
-        match sqlx::query_scalar("SELECT credential FROM passkey WHERE person_id = $1")
-            .bind(&person_id)
-            .fetch_all(&store.pool)
-            .await
-        {
-            Ok(stored) => stored,
-            Err(e) => return Fault::from(anyhow::Error::from(e)).into_response(),
-        };
+    let stored: Vec<(String, String, serde_json::Value)> = match sqlx::query_as(
+        "SELECT passkey_id, credential_id, credential FROM passkey WHERE person_id = $1",
+    )
+    .bind(&person_id)
+    .fetch_all(&store.pool)
+    .await
+    {
+        Ok(stored) => stored,
+        Err(e) => return Fault::from(anyhow::Error::from(e)).into_response(),
+    };
     if stored.is_empty() {
         return refused(StatusCode::FORBIDDEN, NO_SIGN_IN);
     }
-    let held: Vec<Passkey> = match stored.into_iter().map(serde_json::from_value).collect() {
-        Ok(held) => held,
-        Err(e) => return Fault::from(anyhow::Error::from(e)).into_response(),
-    };
+    // **The challenged passkeys, by credential ID to their own identity**,
+    // which the finish uses alone.
+    let mut challenged = HashMap::new();
+    let mut held: Vec<Passkey> = Vec::new();
+    for (passkey_id, credential_id, credential) in stored {
+        match serde_json::from_value(credential) {
+            Ok(passkey) => held.push(passkey),
+            Err(e) => return Fault::from(anyhow::Error::from(e)).into_response(),
+        }
+        challenged.insert(credential_id, passkey_id);
+    }
     let (options, state) = match passkeys.webauthn.start_passkey_authentication(&held) {
         Ok(started) => started,
         Err(e) => return Fault::from(anyhow::Error::from(e)).into_response(),
     };
-    match passkeys
-        .ceremonies
-        .start(Ceremony::SignIn { state, person_id })
-    {
+    match passkeys.ceremonies.start(Ceremony::SignIn {
+        state,
+        person_id,
+        challenged,
+    }) {
         Ok(ceremony) => Json(json!({ "ceremony": ceremony, "options": options })).into_response(),
         Err(Full) => refused(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -190,7 +206,11 @@ async fn clone_refused(store: &Store, person_id: &str, passkey_id: &str) -> Resp
 /// verified by the library; the counter rule, committed in its own
 /// transaction; then the session's opening, audited, in its own.
 async fn finish(store: Store, passkeys: &Passkeys, ask: FinishAsk) -> Response {
-    let Some(Ceremony::SignIn { state, person_id }) = passkeys.ceremonies.take(&ask.ceremony)
+    let Some(Ceremony::SignIn {
+        state,
+        person_id,
+        challenged,
+    }) = passkeys.ceremonies.take(&ask.ceremony)
     else {
         return refused(
             StatusCode::BAD_REQUEST,
@@ -204,24 +224,15 @@ async fn finish(store: Store, passkeys: &Passkeys, ask: FinishAsk) -> Response {
         Ok(result) => result,
         Err(WebauthnError::CredentialPossibleCompromise) => {
             // The library's own check against the copy loaded at the start:
-            // the signature verified, so the person is proved.
+            // the signature verified, so the person is proved, and the
+            // attempt is audited against the passkey the ceremony
+            // challenged, whether or not it still stands.
             let submitted = match credential_id(&ask.credential.raw_id) {
                 Ok(id) => id,
                 Err(e) => return Fault::from(e).into_response(),
             };
-            let passkey_id: Option<String> = match sqlx::query_scalar(
-                "SELECT passkey_id FROM passkey WHERE credential_id = $1 AND person_id = $2",
-            )
-            .bind(&submitted)
-            .bind(&person_id)
-            .fetch_optional(&store.pool)
-            .await
-            {
-                Ok(found) => found,
-                Err(e) => return Fault::from(anyhow::Error::from(e)).into_response(),
-            };
-            return match passkey_id {
-                Some(passkey_id) => clone_refused(&store, &person_id, &passkey_id).await,
+            return match challenged.get(&submitted) {
+                Some(passkey_id) => clone_refused(&store, &person_id, passkey_id).await,
                 None => refused(StatusCode::FORBIDDEN, NO_SIGN_IN),
             };
         }
@@ -237,12 +248,17 @@ async fn finish(store: Store, passkeys: &Passkeys, ask: FinishAsk) -> Response {
         Ok(id) => id,
         Err(e) => return Fault::from(e).into_response(),
     };
-    let passkey_id = match passkeys::count(&store, &asserted, &person_id, &result).await {
+    // **The passkey the ceremony challenged, by its own identity**: the
+    // mapping recorded at the start, never a lookup by credential ID now.
+    let Some(challenged_id) = challenged.get(&asserted) else {
+        return refused(StatusCode::FORBIDDEN, NO_SIGN_IN);
+    };
+    let passkey_id = match passkeys::count(&store, challenged_id, &person_id, &result).await {
         Ok(Counted::Admitted { passkey_id }) => passkey_id,
         Ok(Counted::PossibleClone { passkey_id }) => {
             return clone_refused(&store, &person_id, &passkey_id).await;
         }
-        Ok(Counted::Gone) => return refused(StatusCode::FORBIDDEN, NO_SIGN_IN),
+        Ok(Counted::Gone) => return refused(StatusCode::FORBIDDEN, PASSKEY_REMOVED),
         Err(e) => return Fault::from(e).into_response(),
     };
     let principal = Principal::Person {
@@ -250,7 +266,7 @@ async fn finish(store: Store, passkeys: &Passkeys, ask: FinishAsk) -> Response {
         method: PersonMethod::PasskeyAssertion,
     };
     let first = match store
-        .audit_first(principal, Target::Person(&person_id), "session open")
+        .audit_first(principal, Target::Passkey(&passkey_id), "session open")
         .await
     {
         Ok(first) => first,

@@ -38,11 +38,15 @@ pub enum Ceremony {
         person_id: String,
         token_digest: String,
     },
-    /// A name-first sign-in: the person the name found, whose passkeys the
-    /// challenge was for.
+    /// A name-first sign-in: the person the name found, and **the passkeys
+    /// the challenge was for, by credential ID to their own `pk-` identity**,
+    /// recorded at the start. The finish uses this mapping alone, so a
+    /// credential re-enrolled meanwhile, a new row under a new identity the
+    /// ceremony never challenged, is never counted or opened on.
     SignIn {
         state: PasskeyAuthentication,
         person_id: String,
+        challenged: HashMap<String, String>,
     },
 }
 
@@ -146,7 +150,7 @@ pub enum Counted {
     /// A nonzero counter not greater than the freshly read stored one: a
     /// possible cloned credential. Nothing was written.
     PossibleClone { passkey_id: String },
-    /// No passkey of this person holds the credential ID any more.
+    /// The challenged passkey no longer stands for this person.
     Gone,
 }
 
@@ -162,24 +166,24 @@ pub enum Counted {
 /// leaves the passkey as updated: the authenticator did advance.
 pub async fn count(
     store: &Store,
-    credential_id: &str,
+    passkey_id: &str,
     person_id: &str,
     assertion: &impl Assertion,
 ) -> anyhow::Result<Counted> {
+    let passkey_id = passkey_id.to_owned();
     let mut tx = store.pool.begin().await?;
-    let row: Option<(String, serde_json::Value)> = sqlx::query_as(
-        "SELECT passkey_id, credential FROM passkey \
-         WHERE credential_id = $1 AND person_id = $2 FOR UPDATE",
+    let stored: Option<serde_json::Value> = sqlx::query_scalar(
+        "SELECT credential FROM passkey WHERE passkey_id = $1 AND person_id = $2 FOR UPDATE",
     )
-    .bind(credential_id)
+    .bind(&passkey_id)
     .bind(person_id)
     .fetch_optional(&mut *tx)
     .await?;
-    let Some((passkey_id, stored)) = row else {
+    let Some(stored) = stored else {
         return Ok(Counted::Gone);
     };
     #[cfg(test)]
-    hold_after_the_read(credential_id).await;
+    hold_after_the_read(&passkey_id).await;
     let mut passkey: Passkey = serde_json::from_value(stored)?;
     let stored_counter = Credential::from(passkey.clone()).counter;
     let returned = assertion.counter();
@@ -196,23 +200,24 @@ pub async fn count(
     Ok(Counted::Admitted { passkey_id })
 }
 
-/// A hold after the counter rule's locked read, keyed by the credential ID
-/// so no other test's assertion takes it: the rule signals `read` and waits
+/// A hold after the counter rule's locked read, keyed by the passkey's
+/// identity so no other test's assertion takes it, and one of a list, so
+/// tests running at once each keep their own: the rule signals `read` and waits
 /// on `release`, which lets a test start a second assertion meanwhile.
 #[cfg(test)]
 pub(crate) type CountHold = (String, Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>);
 
 #[cfg(test)]
-pub(crate) static COUNT_HOLD: Mutex<Option<CountHold>> = Mutex::new(None);
+pub(crate) static COUNT_HOLD: Mutex<Vec<CountHold>> = Mutex::new(Vec::new());
 
 #[cfg(test)]
-async fn hold_after_the_read(credential_id: &str) {
+async fn hold_after_the_read(passkey_id: &str) {
     let hold = {
-        let mut slot = COUNT_HOLD.lock().unwrap();
-        match slot.as_ref() {
-            Some((key, ..)) if key == credential_id => slot.take(),
-            _ => None,
-        }
+        let mut holds = COUNT_HOLD.lock().unwrap();
+        holds
+            .iter()
+            .position(|(key, ..)| key == passkey_id)
+            .map(|at| holds.remove(at))
     };
     if let Some((_, read, release)) = hold {
         read.notify_one();

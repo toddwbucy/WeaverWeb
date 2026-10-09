@@ -126,6 +126,24 @@ async fn restore(s: &Store, credential_id: &str, change: impl FnOnce(&mut Creden
         .unwrap();
 }
 
+/// An audit record's method, person, target kind and identity, and outcome.
+type AuditRow = (
+    String,
+    Option<String>,
+    String,
+    Option<String>,
+    Option<String>,
+);
+
+/// The passkey's own identity, by its credential ID.
+async fn passkey_of(s: &Store, credential_id: &str) -> String {
+    sqlx::query_scalar("SELECT passkey_id FROM passkey WHERE credential_id = $1")
+        .bind(credential_id)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap()
+}
+
 async fn rows(s: &Store, query: &str) -> i64 {
     sqlx::query_scalar(sqlx::AssertSqlSafe(query.to_owned()))
         .fetch_one(&s.pool)
@@ -190,23 +208,26 @@ async fn a_person_enrolled_signs_in_and_the_session_serves() {
         "the session serves Record"
     );
 
-    let opened: Vec<(String, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT method, person_id, outcome FROM audit WHERE action = 'session open' \
-         ORDER BY answers NULLS FIRST",
+    let opened: Vec<AuditRow> = sqlx::query_as(
+        "SELECT method, person_id, target_kind, target_id, outcome FROM audit \
+             WHERE action = 'session open' ORDER BY answers NULLS FIRST",
     )
     .fetch_all(&s.pool)
     .await
     .unwrap();
+    let on_the_passkey = |outcome: Option<&str>| {
+        (
+            "passkey assertion".to_owned(),
+            Some(person.clone()),
+            "passkey".to_owned(),
+            Some(passkey_id.clone()),
+            outcome.map(str::to_owned),
+        )
+    };
     assert_eq!(
         opened,
-        [
-            ("passkey assertion".to_owned(), Some(person.clone()), None),
-            (
-                "passkey assertion".to_owned(),
-                Some(person),
-                Some("ok".to_owned())
-            ),
-        ]
+        [on_the_passkey(None), on_the_passkey(Some("ok"))],
+        "the opening is audited on the passkey it began with"
     );
 }
 
@@ -390,11 +411,17 @@ async fn concurrently(
     first: Fake,
     second: Fake,
 ) -> (Counted, Counted) {
+    // The rule counts, and the hold is keyed, by the passkey's own identity.
+    let credential = passkey_of(s, credential).await;
+    let credential = credential.as_str();
     let (read, release) = (
         Arc::new(tokio::sync::Notify::new()),
         Arc::new(tokio::sync::Notify::new()),
     );
-    *COUNT_HOLD.lock().unwrap() = Some((credential.to_owned(), read.clone(), release.clone()));
+    COUNT_HOLD
+        .lock()
+        .unwrap()
+        .push((credential.to_owned(), read.clone(), release.clone()));
     let held = tokio::spawn({
         let (s, person, credential) = (s.clone(), person.to_owned(), credential.to_owned());
         async move {
@@ -652,7 +679,11 @@ async fn a_person_disabled_during_sign_in_gets_no_session() {
         Arc::new(tokio::sync::Notify::new()),
         Arc::new(tokio::sync::Notify::new()),
     );
-    *COUNT_HOLD.lock().unwrap() = Some((credential.clone(), read.clone(), release.clone()));
+    let held = passkey_of(s, &credential).await;
+    COUNT_HOLD
+        .lock()
+        .unwrap()
+        .push((held, read.clone(), release.clone()));
     let finishing = tokio::spawn({
         let app = app.clone();
         async move {
@@ -681,5 +712,150 @@ async fn a_person_disabled_during_sign_in_gets_no_session() {
         rows(s, "SELECT count(*) FROM session").await,
         0,
         "no session"
+    );
+}
+
+/// Each of a person's passkeys removed, as the host reset removes them.
+async fn reset(s: &Store, person: &str) {
+    sqlx::query("DELETE FROM passkey WHERE person_id = $1")
+        .bind(person)
+        .execute(&s.pool)
+        .await
+        .unwrap();
+}
+
+/// **A passkey removed between the options and the finish signs no one
+/// in** (design section 6): the finish counts and opens on the passkey the
+/// ceremony challenged, by its own identity, and that row is gone, so the
+/// sign-in is refused as its passkey removed. A verified assertion the
+/// library calls a possible clone is still audited, against the challenged
+/// identity.
+#[tokio::test]
+async fn a_passkey_removed_between_options_and_finish_signs_no_one_in() {
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let app = app(s, Some(passkeys()));
+    let mut key = authenticator();
+    let (person, _) = enrolled(&app, s, &mut key, "ada").await;
+    let (_, _, options) = send(
+        &app,
+        "POST",
+        "/sign-in/options",
+        Some(json!({ "name": "ada" })),
+    )
+    .await;
+    let (ceremony, asserted) = assert_with(&mut key, &options);
+    reset(s, &person).await;
+    let (status, headers, answer) = send(
+        &app,
+        "POST",
+        "/sign-in/finish",
+        Some(json!({ "ceremony": ceremony, "credential": asserted })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{answer}");
+    assert!(answer.contains("has been removed"), "{answer}");
+    assert!(headers.get(header::SET_COOKIE).is_none());
+
+    // A possible clone, its passkey removed before the finish: still
+    // audited against the identity the ceremony challenged.
+    let (person, credential) = enrolled(&app, s, &mut key, "bea").await;
+    let old = passkey_of(s, &credential).await;
+    restore(s, &credential, |c| c.counter = 1_000).await;
+    let (_, _, options) = send(
+        &app,
+        "POST",
+        "/sign-in/options",
+        Some(json!({ "name": "bea" })),
+    )
+    .await;
+    let (ceremony, asserted) = assert_with(&mut key, &options);
+    reset(s, &person).await;
+    let (status, _, answer) = send(
+        &app,
+        "POST",
+        "/sign-in/finish",
+        Some(json!({ "ceremony": ceremony, "credential": asserted })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{answer}");
+    let audited: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT target_kind, target_id FROM audit WHERE action = 'sign in' AND person_id = $1",
+    )
+    .bind(&person)
+    .fetch_all(&s.pool)
+    .await
+    .unwrap();
+    assert_eq!(audited, [("passkey".to_owned(), Some(old))]);
+    assert_eq!(
+        rows(s, "SELECT count(*) FROM session").await,
+        0,
+        "nothing opened"
+    );
+}
+
+/// **A credential re-enrolled between the options and the finish opens
+/// nothing** (design section 6): the reset removes the challenged passkey,
+/// and the same credential enrolled again is a new row under a new
+/// identity the ceremony never challenged, so the finish counts nothing on
+/// it and opens no session.
+#[tokio::test]
+async fn a_credential_re_enrolled_between_options_and_finish_opens_nothing() {
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let app = app(s, Some(passkeys()));
+    let mut key = authenticator();
+    let (person, credential) = enrolled(&app, s, &mut key, "ada").await;
+    let (_, _, options) = send(
+        &app,
+        "POST",
+        "/sign-in/options",
+        Some(json!({ "name": "ada" })),
+    )
+    .await;
+    let (ceremony, asserted) = assert_with(&mut key, &options);
+
+    let kept: Value = sqlx::query_scalar("SELECT credential FROM passkey WHERE credential_id = $1")
+        .bind(&credential)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    reset(s, &person).await;
+    sqlx::query("INSERT INTO passkey (credential_id, person_id, credential) VALUES ($1, $2, $3)")
+        .bind(&credential)
+        .bind(&person)
+        .bind(&kept)
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    let renewed = passkey_of(s, &credential).await;
+
+    let (status, headers, answer) = send(
+        &app,
+        "POST",
+        "/sign-in/finish",
+        Some(json!({ "ceremony": ceremony, "credential": asserted })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{answer}");
+    assert!(headers.get(header::SET_COOKIE).is_none());
+    assert_eq!(
+        count(
+            s,
+            "SELECT count(*) FROM session WHERE passkey_id = $1",
+            &renewed
+        )
+        .await,
+        0,
+        "a session opened on the re-enrolled row"
+    );
+    assert_eq!(
+        stored(s, &credential).await.counter,
+        Credential::from(serde_json::from_value::<Passkey>(kept).unwrap()).counter,
+        "the re-enrolled row was counted"
     );
 }

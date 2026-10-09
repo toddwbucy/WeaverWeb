@@ -39,6 +39,10 @@ pub enum PersonMethod {
     /// An enrollment token, which authenticates its person for the one
     /// write it is redeemed for and nothing else.
     EnrollmentToken,
+    /// A passkey assertion the library verified: a sign-in, and an
+    /// assertion whose counter the rule refused, the signature having
+    /// proved its person.
+    PasskeyAssertion,
 }
 
 impl Principal<'_> {
@@ -56,6 +60,10 @@ impl Principal<'_> {
                 method: PersonMethod::EnrollmentToken,
                 ..
             } => "enrollment token",
+            Principal::Person {
+                method: PersonMethod::PasskeyAssertion,
+                ..
+            } => "passkey assertion",
         }
     }
 
@@ -118,6 +126,8 @@ impl Target<'_> {
 #[cfg(test)]
 thread_local! {
     pub(crate) static FAIL_FIRST_RECORD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The same lever on a refusal's record.
+    pub(crate) static FAIL_REFUSAL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 impl Store {
@@ -170,7 +180,11 @@ impl Store {
     }
 
     /// **A refusal at the first gate, as one record**, since nothing acted.
-    /// The refusal names why, and no credential.
+    /// The refusal names why, and no credential. **A caller whose refusal
+    /// cannot be recorded answers with the server's failure**, logged at
+    /// error, and never with the ordinary refusal: a refusal the audit lost
+    /// would read as one it holds, as a first record that cannot be written
+    /// already refuses its act.
     pub async fn audit_refusal(
         &self,
         principal: Principal<'_>,
@@ -178,6 +192,10 @@ impl Store {
         action: &str,
         refusal: &str,
     ) -> anyhow::Result<String> {
+        #[cfg(test)]
+        if FAIL_REFUSAL.with(|f| f.replace(false)) {
+            anyhow::bail!("a test fault refused the refusal's record");
+        }
         let id: String = sqlx::query_scalar(
             "INSERT INTO audit (principal, person_id, method, claimed_author, target_kind, \
              target_id, action, refusal) VALUES ($1, $8, $2, $3, $4, $5, $6, $7) RETURNING audit_id",

@@ -324,6 +324,44 @@ async fn refresh(store: &Store, session_id: i64) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// **A session opened** for a person by the passkey they just asserted with
+/// (design section 6), after the counter rule has committed: in a
+/// transaction of its own, the person checked again as enabled and the
+/// passkey as standing, both read under their rows' share locks so neither
+/// a disable nor a removal lands between the check and the insert; then a
+/// bearer of 32 bytes from the operating system's random source, stored as
+/// its digest alone, and the session naming the person and the passkey's
+/// own identity. The bearer, for the cookie, or `None` where the person or
+/// the passkey no longer stands.
+pub async fn open(
+    store: &Store,
+    person_id: &str,
+    passkey_id: &str,
+) -> anyhow::Result<Option<String>> {
+    let mut tx = store.pool.begin().await?;
+    let standing: Option<i32> = sqlx::query_scalar(
+        "SELECT 1 FROM person p JOIN passkey k ON k.person_id = p.person_id \
+         WHERE p.person_id = $1 AND p.enabled AND k.passkey_id = $2 \
+         FOR SHARE OF p, k",
+    )
+    .bind(person_id)
+    .bind(passkey_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if standing.is_none() {
+        return Ok(None);
+    }
+    let bearer = crate::store::identity::hex(&crate::store::identity::bearer());
+    sqlx::query("INSERT INTO session (bearer_digest, person_id, passkey_id) VALUES ($1, $2, $3)")
+        .bind(digest(&bearer))
+        .bind(person_id)
+        .bind(passkey_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(Some(bearer))
+}
+
 /// **Sign-out**: the session's row closed and the cookie cleared. A request
 /// naming no session is answered the same, since there is nothing to end.
 pub async fn sign_out(State(store): State<Store>, headers: HeaderMap) -> Response {

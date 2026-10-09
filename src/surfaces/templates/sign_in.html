@@ -1,0 +1,24 @@
+{% extends "instrument.html" %}
+{% block title %}sign in - weaver-web{% endblock %}
+{% block mainclass %}listing{% endblock %}
+{% block body %}
+{#- Name-first: the person gives their name and answers their own
+    authenticator. The input has no name and the form's method is POST, so a
+    submit without the module carries nothing. No inline script. -#}
+<header class="listing-head">
+  <h1>Sign in</h1>
+  <p class="destination">Give your name, then answer your passkey.</p>
+</header>
+{% if configured %}
+<form id="sign-in" method="post" autocomplete="off">
+  <label for="person">Name</label>
+  <input id="person" type="text" required autocomplete="username" spellcheck="false">
+  <button type="submit">Sign in</button>
+</form>
+<p id="status" role="status"></p>
+<p>No passkey yet? <a href="/enroll">Enroll with your token.</a></p>
+<script type="module" src="/assets/surfaces/passkeys.js"></script>
+{% else %}
+<p>Passkeys are not configured on this server: it has no relying party's identity and origin.</p>
+{% endif %}
+{% endblock %}

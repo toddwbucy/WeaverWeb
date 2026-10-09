@@ -434,7 +434,10 @@ async fn serve(cfg: Arc<ServerConfig>) -> anyhow::Result<()> {
     let passkeys = weaver_web::passkeys::Passkeys::from_config(&cfg)?;
     let instrument = weaver_web::surfaces::routes(policy.clone())
         .merge(weaver_web::surfaces::script_policy(
-            weaver_web::surfaces::enroll::routes(passkeys),
+            weaver_web::surfaces::enroll::routes(passkeys.clone()),
+        ))
+        .merge(weaver_web::surfaces::script_policy(
+            weaver_web::surfaces::sign_in::routes(passkeys),
         ))
         .with_state(store.clone());
 

@@ -643,11 +643,9 @@ async fn a_write_whose_admin_grant_was_revoked_is_refused() {
     );
 }
 
-/// **Every name or identity an ask refers to is resolved before any
-/// record**: a malformed identity, an unknown role at a grant or a role's
-/// edit, a role whose scope disagrees with the agent named or not, the
-/// admin role's edit, or a verb outside the vocabulary each answers as the
-/// ask's fault, and no audit row is written.
+/// **Step one: a malformed identity or role name, or a verb outside the
+/// vocabulary, is refused before any record**, from an admin and from a
+/// session holding no admin grant alike, as the ask's fault.
 #[tokio::test]
 async fn a_malformed_ask_is_refused_before_any_record() {
     let Some(fresh) = fresh_store().await else {
@@ -664,28 +662,11 @@ async fn a_malformed_ask_is_refused_before_any_record() {
     let cases = [
         (
             "/admin/grants/grant",
-            form(&[("person", &bea), ("role", "watcher"), ("agent", &k)]),
-            StatusCode::NOT_FOUND,
-        ),
-        (
-            "/admin/grants/grant",
-            form(&[("person", &bea), ("role", "observer"), ("agent", "")]),
-            StatusCode::BAD_REQUEST,
-        ),
-        (
-            "/admin/grants/grant",
-            form(&[("person", &bea), ("role", "admin"), ("agent", &k)]),
-            StatusCode::BAD_REQUEST,
-        ),
-        (
-            "/admin/grants/grant",
             form(&[("person", "bea"), ("role", "observer"), ("agent", &k)]),
-            StatusCode::BAD_REQUEST,
         ),
         (
             "/admin/grants/grant",
             form(&[("person", "pe-0123"), ("role", "observer"), ("agent", &k)]),
-            StatusCode::BAD_REQUEST,
         ),
         (
             "/admin/grants/grant",
@@ -694,43 +675,35 @@ async fn a_malformed_ask_is_refused_before_any_record() {
                 ("role", "observer"),
                 ("agent", "box/karl"),
             ]),
-            StatusCode::BAD_REQUEST,
         ),
         (
             "/admin/grants/grant",
             form(&[("person", &bea), ("role", "observer"), ("agent", "ag-0123")]),
-            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "/admin/grants/grant",
+            form(&[("person", &bea), ("role", "Observer!"), ("agent", &k)]),
         ),
         (
             "/admin/grants/revoke",
             form(&[("grant", "gr-0123"), ("version", "1")]),
-            StatusCode::BAD_REQUEST,
         ),
         (
             "/admin/grants/revoke",
             form(&[("grant", "pe-0123456789abcdef"), ("version", "1")]),
-            StatusCode::BAD_REQUEST,
         ),
         (
             "/admin/roles/set",
-            form(&[("role", "watcher"), ("version", &r), ("verbs", "show")]),
-            StatusCode::NOT_FOUND,
-        ),
-        (
-            "/admin/roles/set",
-            form(&[("role", "admin"), ("version", "1"), ("verbs", "show")]),
-            StatusCode::FORBIDDEN,
+            form(&[("role", "an operator"), ("version", &r), ("verbs", "show")]),
         ),
         (
             "/admin/roles/set",
             form(&[("role", "operator"), ("version", &r), ("verbs", "fly")]),
-            StatusCode::BAD_REQUEST,
         ),
     ];
     // Each ask's records are counted before its status, so a guard dropped
-    // fails where the records land: an admin's begun and failed pair, or a
-    // non-admin's refusal.
-    for (uri, body, expected) in cases {
+    // fails where the records land.
+    for (uri, body) in cases {
         for (who, asking) in [("an admin", &session), ("a non-admin", &other)] {
             let (status, answer) = post(&app, uri, body.clone(), asking).await;
             assert_eq!(
@@ -738,8 +711,146 @@ async fn a_malformed_ask_is_refused_before_any_record() {
                 before,
                 "{uri} {body} from {who}: no record"
             );
-            assert_eq!(status, expected, "{uri} {body} from {who}: {answer}");
+            assert_eq!(
+                status,
+                StatusCode::BAD_REQUEST,
+                "{uri} {body} from {who}: {answer}"
+            );
         }
+    }
+}
+
+/// **Step two before step three: an unknown reference is not found for an
+/// admin, and tells a non-admin nothing.** For an admin, an unknown
+/// well-shaped person (at a grant and at each of 5a's person writes), agent
+/// or grant, an unknown role, a scope that disagrees with the agent, and
+/// the admin role's edit each answer before any record. For a session
+/// holding no admin grant, the same ask answers the refusal with exactly
+/// one record, its answer identical to the same ask naming a known
+/// reference, so a non-admin learns nothing of what exists.
+#[tokio::test]
+async fn an_unknown_reference_is_not_found_for_an_admin_and_tells_others_nothing() {
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let app = app(s, Some(passkeys()));
+    let (_, session) = admin(&app, s, &mut authenticator(), "ada").await;
+    let (_, other) = signed_in(&app, s, &mut authenticator(), "dot").await;
+    let (bea, _) = person_with_token(s, "bea").await;
+    let k = agent(s, "karl").await;
+    let held = host_grant(s, &bea, "observer", Some(&k)).await;
+    let (vb, vg) = (
+        crate::admin_tests::version(s, &bea).await,
+        grant_version(s, &held).await,
+    );
+    let r = role_version(s, "operator").await;
+    let nobody = "pe-0123456789abcdef";
+    let nowhere = "ag-0123456789abcdef";
+    let no_grant = "gr-0123456789abcdef";
+    // (the ask naming an unknown reference, the same ask naming a known
+    // one, and what the admin's unknown ask answers)
+    let cases = [
+        (
+            "/admin/grants/grant",
+            form(&[("person", nobody), ("role", "operator"), ("agent", &k)]),
+            form(&[("person", &bea), ("role", "operator"), ("agent", &k)]),
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            "/admin/grants/grant",
+            form(&[("person", &bea), ("role", "operator"), ("agent", nowhere)]),
+            form(&[("person", &bea), ("role", "operator"), ("agent", &k)]),
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            "/admin/grants/grant",
+            form(&[("person", &bea), ("role", "watcher"), ("agent", &k)]),
+            form(&[("person", &bea), ("role", "operator"), ("agent", &k)]),
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            "/admin/grants/grant",
+            form(&[("person", &bea), ("role", "operator"), ("agent", "")]),
+            form(&[("person", &bea), ("role", "operator"), ("agent", &k)]),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "/admin/grants/grant",
+            form(&[("person", &bea), ("role", "admin"), ("agent", &k)]),
+            form(&[("person", &bea), ("role", "operator"), ("agent", &k)]),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "/admin/grants/revoke",
+            form(&[("grant", no_grant), ("version", "1")]),
+            form(&[("grant", &held), ("version", &vg)]),
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            "/admin/roles/set",
+            form(&[("role", "watcher"), ("version", &r), ("verbs", "show")]),
+            form(&[("role", "operator"), ("version", &r), ("verbs", "show")]),
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            "/admin/roles/set",
+            form(&[("role", "admin"), ("version", "1"), ("verbs", "show")]),
+            form(&[("role", "operator"), ("version", &r), ("verbs", "show")]),
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            "/admin/persons/token",
+            form(&[("person", nobody)]),
+            form(&[("person", &bea)]),
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            "/admin/persons/disable",
+            form(&[("person", nobody), ("version", "1")]),
+            form(&[("person", &bea), ("version", &vb)]),
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            "/admin/persons/enable",
+            form(&[("person", nobody), ("version", "1")]),
+            form(&[("person", &bea), ("version", &vb)]),
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            "/admin/persons/rename",
+            form(&[("person", nobody), ("version", "1"), ("name", "cara")]),
+            form(&[("person", &bea), ("version", &vb), ("name", "cara")]),
+            StatusCode::NOT_FOUND,
+        ),
+    ];
+    for (uri, unknown, known, expected) in cases {
+        let before = rows(s, "SELECT count(*) FROM audit").await;
+        let (status, answer) = post(&app, uri, unknown.clone(), &session).await;
+        assert_eq!(
+            rows(s, "SELECT count(*) FROM audit").await,
+            before,
+            "{uri} {unknown} from an admin: no record"
+        );
+        assert_eq!(status, expected, "{uri} {unknown} from an admin: {answer}");
+
+        let (status, refused_unknown) = post(&app, uri, unknown.clone(), &other).await;
+        assert_eq!(
+            rows(s, "SELECT count(*) FROM audit").await,
+            before + 1,
+            "{uri} {unknown} from a non-admin: one record"
+        );
+        assert_eq!(
+            status,
+            StatusCode::FORBIDDEN,
+            "{uri} {unknown}: {refused_unknown}"
+        );
+        let (status, refused_known) = post(&app, uri, known.clone(), &other).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{uri} {known}");
+        assert_eq!(
+            refused_unknown, refused_known,
+            "{uri}: a non-admin's answer is the same for a known reference and an unknown one"
+        );
     }
 }
 

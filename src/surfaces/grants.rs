@@ -6,10 +6,11 @@
 //! role's verbs, each under a session whose person holds a live admin
 //! grant. A plain shell, per the operator's ruling of 2026-10-09.
 //!
-//! **Each write is 5a's shape** (`surfaces::admin`): every name or
-//! identity it refers to resolved before any record (identities parsed at
-//! the boundary, a role named by the store with its scope checked), a
-//! session without the grant refused with one record carrying it, the
+//! **Each write takes the order `surfaces::admin` states** (Spec 2.13):
+//! identities and a role's name parsed to their shapes, the first gate with
+//! its one refusal record before any reference is looked up, every
+//! reference resolved for the admin by the store (the role with its scope
+//! checked against the agent, the person, the agent, the grant), then the
 //! admin as principal by `session`, its first record before and its outcome
 //! after, and one identity transaction
 //! that re-checks the authority first (`store::grants`). **The self-change
@@ -32,6 +33,7 @@ use crate::store::admin::Refusal;
 use crate::store::audit::Target;
 use crate::store::grants::{ListedGrant, in_scope, verbs_within_vocabulary};
 use crate::store::identity::{VOCABULARY, is_agent_id, is_grant_id, is_person_id};
+use crate::store::key::AgentId;
 use crate::surfaces::admin::{
     NOT_AN_ADMIN, admin_session, audited, fault, landed, refused, writer,
 };
@@ -47,6 +49,52 @@ fn malformed(what: &'static str) -> Response {
         format!("the {what} asked for is not of its identity's shape"),
     )
         .into_response()
+}
+
+/// **Whether `name` is of a role's name's shape**: one to sixty-four
+/// lowercase ASCII letters, digits or hyphens. Not a lookup: a role is
+/// named by the store at step three, after the first gate.
+fn is_role_name(name: &str) -> bool {
+    (1..=64).contains(&name.len())
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
+
+/// **Step three of a grant**, after the first gate and before any record:
+/// the role named by the store (unknown: not found) with its scope checked
+/// against the agent named or not (a mismatch: the ask's fault), and the
+/// person and the agent resolved by their identities (unknown: not found).
+async fn resolve_grant_add(
+    store: &Store,
+    person: &str,
+    role: &str,
+    agent: Option<&str>,
+) -> Result<(), Response> {
+    let read = async {
+        let role = match store.role(role).await? {
+            Some(role) => role,
+            None => return anyhow::Ok(Err(Refusal::NoSuchRole)),
+        };
+        if let Err(refusal) = in_scope(&role.name, &role.scope, agent) {
+            return Ok(Err(refusal));
+        }
+        if store.person(person).await?.is_none() {
+            return Ok(Err(Refusal::NoSuchPerson));
+        }
+        if let Some(agent) = agent {
+            let id: AgentId = agent.parse().map_err(anyhow::Error::msg)?;
+            if store.agent(&id).await?.is_none() {
+                return Ok(Err(Refusal::NoSuchAgent));
+            }
+        }
+        Ok(Ok(()))
+    };
+    match read.await {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(refusal)) => Err(refused(&refusal)),
+        Err(e) => Err(fault(e)),
+    }
 }
 
 /// The roles-and-grants surface, taking the session's policy as its own
@@ -215,17 +263,8 @@ async fn grant(store: Store, policy: &Policy, headers: HeaderMap, ask: GrantAsk)
         agent if is_agent_id(agent) => Some(agent),
         _ => return malformed("agent"),
     };
-    // **The role is named by the store before any record**, and its scope
-    // checked against the agent's presence, as every name or identity a
-    // request refers to is resolved before the records begin.
-    match store.role(&ask.role).await {
-        Ok(Some(role)) => {
-            if let Err(refusal) = in_scope(&role.name, &role.scope, agent) {
-                return refused(&refusal);
-            }
-        }
-        Ok(None) => return refused(&Refusal::NoSuchRole),
-        Err(e) => return fault(e),
+    if !is_role_name(&ask.role) {
+        return malformed("role");
     }
     let grant_id = match store.mint_key("gr").await {
         Ok(id) => id,
@@ -235,6 +274,9 @@ async fn grant(store: Store, policy: &Policy, headers: HeaderMap, ask: GrantAsk)
         Ok(session) => session,
         Err(answer) => return answer,
     };
+    if let Err(answer) = resolve_grant_add(&store, &ask.person, &ask.role, agent).await {
+        return answer;
+    }
     if ask.person == session.person_id {
         return refused(&Refusal::OwnGrant);
     }
@@ -280,7 +322,8 @@ async fn revoke(store: Store, policy: &Policy, headers: HeaderMap, ask: RevokeAs
         Ok(Some(read)) if read.person_id == session.person_id => {
             return refused(&Refusal::OwnGrant);
         }
-        Ok(_) => {}
+        Ok(Some(_)) => {}
+        Ok(None) => return refused(&Refusal::NoSuchGrant),
         Err(e) => return fault(e),
     }
     match audited(
@@ -323,16 +366,11 @@ async fn set_role(store: Store, policy: &Policy, headers: HeaderMap, body: Strin
         )
             .into_response();
     };
-    // **The role is named by the store before any record**, so a request's
-    // text never becomes an audit target: an unknown name, `admin`, or a
-    // verb outside the vocabulary is refused here.
-    match store.role(&role).await {
-        Ok(Some(_)) => {}
-        Ok(None) => return refused(&Refusal::NoSuchRole),
-        Err(e) => return fault(e),
-    }
-    if role == "admin" {
-        return refused(&Refusal::Fixed);
+    // **A role's name is parsed to a name's shape**, so a request's text
+    // never becomes the audit target of a non-admin's refusal, and a verb
+    // outside the vocabulary is refused, both before any record.
+    if !is_role_name(&role) {
+        return malformed("role");
     }
     if let Err(refusal) = verbs_within_vocabulary(&verbs) {
         return refused(&refusal);
@@ -341,6 +379,14 @@ async fn set_role(store: Store, policy: &Policy, headers: HeaderMap, body: Strin
         Ok(session) => session,
         Err(answer) => return answer,
     };
+    match store.role(&role).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return refused(&Refusal::NoSuchRole),
+        Err(e) => return fault(e),
+    }
+    if role == "admin" {
+        return refused(&Refusal::Fixed);
+    }
     match store.holds_role(&session.person_id, &role).await {
         Ok(true) => return refused(&Refusal::HoldsRole),
         Ok(false) => {}

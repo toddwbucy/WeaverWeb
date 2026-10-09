@@ -261,9 +261,11 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
   principal by `session`, each in one identity transaction that first re-checks the session
   and the admin grant. An admin never writes their own row; a disable revokes the person's
   outstanding token (migration `0018`, ending `revoked`) and never leaves no enabled admin; a
-  token is shown once under `no-store`. Every identity a request submits is parsed at the
-  boundary before any record (`identity::is_person_id` and its three siblings), and the
-  audit checks every target by its kind (`0018`).
+  token is shown once under `no-store`. **Every admin write takes one order** (Spec 2.13):
+  parse identities to their shape (`identity::is_person_id` and its three siblings), then the
+  admin gate with its one refusal record before any reference is looked up (no oracle for a
+  non-admin), then resolve every reference by the store (unknown: 404, no record), then the
+  audited write. The audit checks every target by its kind (`0018`).
 - **The admin's grants page** (`GET /admin/grants`, `src/surfaces/grants.rs` over
   `src/store/grants.rs`; act 11, PR 5b) beside it: every live grant, every role and the
   register's agents, with the shared-conversation note where more than one person holds

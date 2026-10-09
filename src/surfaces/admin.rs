@@ -15,6 +15,17 @@
 //! row** (Spec 2.13: never their own name or state), refused before any
 //! record. **A token is shown once**, in the answer to the write that
 //! issued it, under `Cache-Control: no-store`, and never in a URL or a log.
+//!
+//! **Every admin write, here and in `surfaces::grants`, takes one order**
+//! (Spec 2.13): (1) every submitted identity parsed to its shape, a
+//! malformed one refused with no record; (2) the first gate, a session
+//! without a live admin grant refused with one record **before any
+//! reference is looked up**, so a non-admin learns nothing of which
+//! persons, agents, grants or roles exist, a known reference and an unknown
+//! one answering alike; (3) every reference resolved for the admin by the
+//! store, an unknown one not found and recorded nowhere; (4) the audited
+//! write, whose transaction re-checks authority and standing under the
+//! exclusion.
 
 use askama::Template;
 use axum::Router;
@@ -157,6 +168,19 @@ pub(crate) async fn writer(
                 }
             }
         }
+    }
+}
+
+/// **Step three of an admin's write: a person reference resolved by the
+/// store** for the admin, after the first gate and before any record of
+/// the write: an unknown person is not found and recorded nowhere. The
+/// write's transaction re-checks the person's standing under the
+/// exclusion, since this read comes before the lock.
+pub(crate) async fn resolve_person(store: &Store, person: &str) -> Result<(), Response> {
+    match store.person(person).await {
+        Ok(Some(_)) => Ok(()),
+        Ok(None) => Err(refused(&Refusal::NoSuchPerson)),
+        Err(e) => Err(fault(e)),
     }
 }
 
@@ -353,6 +377,9 @@ async fn token(store: Store, seams: &Seams, headers: HeaderMap, ask: PersonAsk) 
         Ok(session) => session,
         Err(answer) => return answer,
     };
+    if let Err(answer) = resolve_person(&store, &ask.person).await {
+        return answer;
+    }
     if ask.person == session.person_id {
         return (StatusCode::FORBIDDEN, OWN_ROW).into_response();
     }
@@ -405,6 +432,9 @@ async fn disable(store: Store, seams: &Seams, headers: HeaderMap, ask: VersionAs
         Ok(session) => session,
         Err(answer) => return answer,
     };
+    if let Err(answer) = resolve_person(&store, &ask.person).await {
+        return answer;
+    }
     if ask.person == session.person_id {
         return (StatusCode::FORBIDDEN, OWN_ROW).into_response();
     }
@@ -445,6 +475,9 @@ async fn enable(store: Store, seams: &Seams, headers: HeaderMap, ask: VersionAsk
         Ok(session) => session,
         Err(answer) => return answer,
     };
+    if let Err(answer) = resolve_person(&store, &ask.person).await {
+        return answer;
+    }
     if ask.person == session.person_id {
         return (StatusCode::FORBIDDEN, OWN_ROW).into_response();
     }
@@ -493,6 +526,9 @@ async fn rename(store: Store, seams: &Seams, headers: HeaderMap, ask: RenameAsk)
         Ok(session) => session,
         Err(answer) => return answer,
     };
+    if let Err(answer) = resolve_person(&store, &ask.person).await {
+        return answer;
+    }
     if ask.person == session.person_id {
         return (StatusCode::FORBIDDEN, OWN_ROW).into_response();
     }

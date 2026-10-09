@@ -705,7 +705,7 @@ async fn two_admins_disabling_each_other_leave_one() {
 /// a session holding no grant, and a malformed passkey at the removal, are
 /// refused as the ask's fault with no audit row written, where the audit's
 /// target check would have made each the server's failure; a well-shaped
-/// person naming nobody goes on to the store's answer.
+/// person naming nobody is not found, the store resolving it at step three.
 #[tokio::test]
 async fn a_malformed_identity_is_refused_before_any_record() {
     let Some(fresh) = fresh_store().await else {

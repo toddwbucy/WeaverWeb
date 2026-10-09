@@ -160,8 +160,6 @@ pub(crate) async fn authorized(
     admin: &str,
 ) -> anyhow::Result<Result<(), Refusal>> {
     let stands = admin_stands(tx, session_id, admin).await?;
-    #[cfg(test)]
-    hold_inside(admin).await;
     Ok(if stands {
         Ok(())
     } else {
@@ -280,6 +278,8 @@ impl Store {
         if holds_live_admin(&mut tx, person).await? && admins_besides(&mut tx, person).await? == 0 {
             return Ok(Err(Refusal::LastAdmin));
         }
+        #[cfg(test)]
+        hold_inside(admin).await;
         if !set_enabled(&mut tx, person, version, false, admin).await? {
             return Ok(Err(Refusal::Stale));
         }
@@ -414,8 +414,11 @@ async fn set_enabled(
     Ok(moved.rows_affected() == 1)
 }
 
-/// A hold inside an admin's write, after its authority is read, keyed by
-/// the admin, one of a list so tests running at once each keep their own.
+/// A hold inside an admin's disable or revocation, after its authority and
+/// its last-admin count are read and before it writes, keyed by the admin,
+/// one of a list so tests running at once each keep their own: where the
+/// exclusion did not serialize two such writes, both counts would read the
+/// other admin live.
 #[cfg(test)]
 pub(crate) type AdminHold = (
     String,
@@ -427,7 +430,7 @@ pub(crate) type AdminHold = (
 pub(crate) static INSIDE_HOLD: std::sync::Mutex<Vec<AdminHold>> = std::sync::Mutex::new(Vec::new());
 
 #[cfg(test)]
-async fn hold_inside(admin: &str) {
+pub(crate) async fn hold_inside(admin: &str) {
     let hold = {
         let mut holds = INSIDE_HOLD.lock().unwrap();
         holds

@@ -230,6 +230,8 @@ impl Store {
         if read.role == "admin" && identity::admins_remaining_without(&mut tx, grant).await? == 0 {
             return Ok(Err(Refusal::LastAdmin));
         }
+        #[cfg(test)]
+        crate::store::admin::hold_inside(admin).await;
         if read.person_id == admin {
             return Ok(Err(Refusal::OwnGrant));
         }

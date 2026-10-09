@@ -627,3 +627,60 @@ async fn an_assertion_by_another_persons_passkey_opens_nothing() {
         "nothing opened"
     );
 }
+
+/// **The session's opening checks its person again** (design section 6):
+/// a person disabled after the counter rule read their passkey, and before
+/// the session opens, gets no session, the opening's own check under a share
+/// lock refusing it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_person_disabled_during_sign_in_gets_no_session() {
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let app = app(s, Some(passkeys()));
+    let mut key = authenticator();
+    let (person, credential) = enrolled(&app, s, &mut key, "ada").await;
+    let (_, _, options) = send(
+        &app,
+        "POST",
+        "/sign-in/options",
+        Some(json!({ "name": "ada" })),
+    )
+    .await;
+    let (ceremony, asserted) = assert_with(&mut key, &options);
+    let (read, release) = (
+        Arc::new(tokio::sync::Notify::new()),
+        Arc::new(tokio::sync::Notify::new()),
+    );
+    *COUNT_HOLD.lock().unwrap() = Some((credential.clone(), read.clone(), release.clone()));
+    let finishing = tokio::spawn({
+        let app = app.clone();
+        async move {
+            send(
+                &app,
+                "POST",
+                "/sign-in/finish",
+                Some(json!({ "ceremony": ceremony, "credential": asserted })),
+            )
+            .await
+        }
+    });
+    tokio::time::timeout(Duration::from_secs(10), read.notified())
+        .await
+        .expect("the counter rule read the passkey");
+    sqlx::query("UPDATE person SET enabled = false, version = version + 1 WHERE person_id = $1")
+        .bind(&person)
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    release.notify_one();
+    let (status, headers, answer) = finishing.await.unwrap();
+    assert_eq!(status, StatusCode::FORBIDDEN, "{answer}");
+    assert!(headers.get(header::SET_COOKIE).is_none());
+    assert_eq!(
+        rows(s, "SELECT count(*) FROM session").await,
+        0,
+        "no session"
+    );
+}

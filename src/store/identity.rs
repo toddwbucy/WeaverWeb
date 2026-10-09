@@ -13,6 +13,7 @@
 //! **No secret is stored**: a token is printed once and kept as its digest.
 
 use crate::store::Store;
+use crate::store::key::shaped;
 use caseless::Caseless;
 use sha2::{Digest, Sha256};
 use sqlx::{Postgres, Row, Transaction};
@@ -45,12 +46,35 @@ pub const NAME_BOUND: usize = 1024;
 
 /// **Whether `spec` is a person's identity**: exactly `pe-` and sixteen
 /// lowercase hex, as an agent's is read. Anything else is a name.
+///
+/// **An identity a request submits is parsed into its exact shape at the
+/// surface's boundary, before any record**, by these four helpers, one per
+/// kind: a malformed one is refused there as the ask's fault and written
+/// nowhere, so a request's text never becomes an audit target, and the
+/// audit, which checks every target by its kind (0018), never turns an
+/// ordinary malformed request into the server's failure. A well-shaped
+/// identity naming nothing goes on to the store, which answers that no such
+/// row stands.
 pub fn is_person_id(spec: &str) -> bool {
-    spec.len() == 19
-        && spec.starts_with("pe-")
-        && spec[3..]
-            .bytes()
-            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    shaped("pe-", spec)
+}
+
+/// Whether `spec` is a passkey's identity: exactly `pk-` and sixteen
+/// lowercase hex.
+pub fn is_passkey_id(spec: &str) -> bool {
+    shaped("pk-", spec)
+}
+
+/// Whether `spec` is a grant's identity: exactly `gr-` and sixteen
+/// lowercase hex.
+pub fn is_grant_id(spec: &str) -> bool {
+    shaped("gr-", spec)
+}
+
+/// Whether `spec` is an agent's identity: exactly `ag-` and sixteen
+/// lowercase hex, as `AgentId` parses one.
+pub fn is_agent_id(spec: &str) -> bool {
+    shaped("ag-", spec)
 }
 
 /// **A name as given, trimmed of surrounding white space**, or why it is

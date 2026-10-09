@@ -1,0 +1,65 @@
+{% extends "instrument.html" %}
+{% block title %}persons - weaver-web{% endblock %}
+{% block mainclass %}listing{% endblock %}
+{% block body %}
+{#- Every person, for an admin. Each write posts a form carrying the version
+    the page read, so a write against a row that moved since is refused. An
+    admin's own row carries no write: another admin, or the host, writes it.
+    No inline script. -#}
+<header class="listing-head">
+  <h1>Persons</h1>
+  <p class="destination">Enroll, issue a token, disable, enable and rename. Roles and grants are not here yet.</p>
+</header>
+<table>
+  <thead><tr><th>Name</th><th>Identity</th><th>State</th><th>Passkey</th><th>Token</th><th>Admin</th><th></th></tr></thead>
+  <tbody>
+  {% for row in rows %}
+  <tr>
+    <td>{{ row.listed.name }}{% if row.own %} <span class="pill">you</span>{% endif %}</td>
+    <td>{{ row.listed.person_id }}</td>
+    <td>{% if row.listed.enabled %}enabled{% else %}disabled{% endif %}</td>
+    <td>{% if row.listed.holds_passkey %}held{% else %}none{% endif %}</td>
+    <td>{% if row.listed.token_outstanding %}outstanding{% else %}none{% endif %}</td>
+    <td>{% if row.listed.admin %}admin{% endif %}</td>
+    <td>
+      {% if row.own %}
+      <span class="chip-note">your own row is written by another admin or the host</span>
+      {% else %}
+      <form method="post" action="/admin/persons/rename">
+        <input type="hidden" name="person" value="{{ row.listed.person_id }}">
+        <input type="hidden" name="version" value="{{ row.listed.version }}">
+        <input type="text" name="name" value="{{ row.listed.name }}" spellcheck="false" required>
+        <button type="submit">Rename</button>
+      </form>
+      {% if row.listed.enabled %}
+      <form method="post" action="/admin/persons/disable">
+        <input type="hidden" name="person" value="{{ row.listed.person_id }}">
+        <input type="hidden" name="version" value="{{ row.listed.version }}">
+        <button type="submit">Disable</button>
+      </form>
+      {% else %}
+      <form method="post" action="/admin/persons/enable">
+        <input type="hidden" name="person" value="{{ row.listed.person_id }}">
+        <input type="hidden" name="version" value="{{ row.listed.version }}">
+        <button type="submit">Enable</button>
+      </form>
+      {% endif %}
+      {% if !row.listed.holds_passkey %}
+      <form method="post" action="/admin/persons/token">
+        <input type="hidden" name="person" value="{{ row.listed.person_id }}">
+        <button type="submit">Issue a token</button>
+      </form>
+      {% endif %}
+      {% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p class="chip-note">Disabling a person revokes their outstanding token and ends their sessions at their next use. A token is issued only to a person holding no passkey.</p>
+<form method="post" action="/admin/persons/enroll" autocomplete="off">
+  <label for="name">Enroll a person by name</label>
+  <input id="name" type="text" name="name" spellcheck="false" required>
+  <button type="submit">Enroll</button>
+</form>
+{% endblock %}

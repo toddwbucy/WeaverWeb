@@ -70,6 +70,7 @@ pub fn routes(passkeys: Option<Passkeys>) -> Router<Store> {
 struct EnrollPage {
     here: &'static str,
     who: String,
+    admin: bool,
     configured: bool,
 }
 
@@ -77,6 +78,7 @@ async fn page(configured: bool) -> Response {
     match (EnrollPage {
         here: "enroll",
         who: String::new(),
+        admin: false,
         configured,
     })
     .render()

@@ -44,6 +44,12 @@ const POSSIBLE_CLONE: &str = "this passkey's signature counter did not rise, so 
 const NOT_THIS_SESSIONS: &str =
     "this ceremony or grant is unknown, already used, expired, or not this session's; begin again";
 
+/// The answer to a write whose authority went between the request's read
+/// and the write: the session, its person, its passkey, or the passkey that
+/// earned the grant.
+const AUTHORITY_GONE: &str =
+    "the session or the passkey that authorized this no longer stands; sign in and begin again";
+
 /// The longest label a person may give a passkey.
 const LABEL_BOUND: usize = 100;
 
@@ -356,6 +362,7 @@ async fn assert_finish(
     let granted = passkeys.ceremonies.start(Ceremony::AddGrant {
         person_id,
         session_id,
+        earned_by: passkey_id.clone(),
     });
     if let Err(e) = store.audit_outcome(&first, granted.is_ok()).await {
         tracing::error!("the add grant's outcome record {first} was not written: {e:#}");
@@ -392,6 +399,7 @@ async fn add_options(
     let Some(Ceremony::AddGrant {
         person_id,
         session_id,
+        earned_by,
     }) = passkeys.ceremonies.take(&ask.grant)
     else {
         return refused(StatusCode::FORBIDDEN, NOT_THIS_SESSIONS);
@@ -428,6 +436,7 @@ async fn add_options(
         state,
         person_id,
         session_id,
+        earned_by,
     }) {
         Ok(ceremony) => Json(json!({ "ceremony": ceremony, "options": options })).into_response(),
         Err(Full) => refused(
@@ -464,6 +473,7 @@ async fn add_finish(
         state,
         person_id,
         session_id,
+        earned_by,
     }) = passkeys.ceremonies.take(&ask.ceremony)
     else {
         return refused(StatusCode::BAD_REQUEST, NOT_THIS_SESSIONS);
@@ -471,6 +481,8 @@ async fn add_finish(
     if session_id != session.session_id || person_id != session.person_id {
         return refused(StatusCode::FORBIDDEN, NOT_THIS_SESSIONS);
     }
+    #[cfg(test)]
+    hold_after_the_session_read(&person_id).await;
     let label = ask
         .label
         .as_deref()
@@ -518,7 +530,15 @@ async fn add_finish(
         Err(e) => return fault(e),
     };
     let added = store
-        .add_passkey(&person_id, &passkey_id, &credential_id, &credential, label)
+        .add_passkey(
+            &person_id,
+            session_id,
+            &earned_by,
+            &passkey_id,
+            &credential_id,
+            &credential,
+            label,
+        )
         .await;
     if let Err(e) = store
         .audit_outcome(&first, matches!(added, Ok(Added::Inserted)))
@@ -528,7 +548,7 @@ async fn add_finish(
     }
     match added {
         Ok(Added::Inserted) => Json(json!({ "added": true, "next": "/passkeys" })).into_response(),
-        Ok(Added::PersonRefused) => refused(StatusCode::FORBIDDEN, NOT_THIS_SESSIONS),
+        Ok(Added::AuthorityGone) => refused(StatusCode::FORBIDDEN, AUTHORITY_GONE),
         Ok(Added::CredentialHeld) => refused(
             StatusCode::CONFLICT,
             "this authenticator's credential is already enrolled; begin again with a fresh assertion",
@@ -561,7 +581,9 @@ async fn remove(store: Store, policy: &Policy, headers: HeaderMap, ask: RemoveAs
         Ok(first) => first,
         Err(e) => return fault(e),
     };
-    let removed = store.remove_passkey(&session.person_id, &ask.passkey).await;
+    let removed = store
+        .remove_passkey(&session.person_id, session.session_id, &ask.passkey)
+        .await;
     if let Err(e) = store
         .audit_outcome(&first, matches!(removed, Ok(Removed::Removed)))
         .await
@@ -573,10 +595,38 @@ async fn remove(store: Store, policy: &Policy, headers: HeaderMap, ask: RemoveAs
             (StatusCode::SEE_OTHER, [(header::LOCATION, "/passkeys")]).into_response()
         }
         Ok(Removed::NotTheirs) => refused(StatusCode::NOT_FOUND, "no such passkey of yours"),
+        Ok(Removed::AuthorityGone) => refused(StatusCode::FORBIDDEN, AUTHORITY_GONE),
         Ok(Removed::Last) => refused(
             StatusCode::CONFLICT,
             "this is your last passkey, and your last is never removed; add another first",
         ),
         Err(e) => fault(e),
+    }
+}
+
+/// A hold in an addition's finish after its session read, keyed by the
+/// person, one of a list so tests running at once each keep their own.
+#[cfg(test)]
+pub(crate) type AddHold = (
+    String,
+    std::sync::Arc<tokio::sync::Notify>,
+    std::sync::Arc<tokio::sync::Notify>,
+);
+
+#[cfg(test)]
+pub(crate) static ADD_HOLD: std::sync::Mutex<Vec<AddHold>> = std::sync::Mutex::new(Vec::new());
+
+#[cfg(test)]
+async fn hold_after_the_session_read(person_id: &str) {
+    let hold = {
+        let mut holds = ADD_HOLD.lock().unwrap();
+        holds
+            .iter()
+            .position(|(key, ..)| key == person_id)
+            .map(|at| holds.remove(at))
+    };
+    if let Some((_, read, release)) = hold {
+        read.notify_one();
+        release.notified().await;
     }
 }

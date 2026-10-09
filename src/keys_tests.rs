@@ -59,6 +59,15 @@ async fn send_as(
     (status, headers, String::from_utf8(bytes.to_vec()).unwrap())
 }
 
+/// A session's row identity, by its bearer.
+async fn session_id_of(s: &Store, bearer: &str) -> i64 {
+    sqlx::query_scalar("SELECT session_id FROM session WHERE bearer_digest = $1")
+        .bind(crate::surfaces::gate::digest(bearer))
+        .fetch_one(&s.pool)
+        .await
+        .unwrap()
+}
+
 /// A person enrolled with `key` and signed in: their identity, the passkey's
 /// credential ID, and the session's bearer.
 async fn signed_in(
@@ -271,6 +280,7 @@ async fn a_grant_expires_with_the_ceremony_window() {
         .start(Ceremony::AddGrant {
             person_id: "pe-0000000000000000".to_owned(),
             session_id: 1,
+            earned_by: "pk-0000000000000000".to_owned(),
         })
         .unwrap();
     tokio::time::advance(CEREMONY_LIFETIME).await;
@@ -448,9 +458,9 @@ async fn the_last_is_never_removed_and_removing_another_ends_its_sessions() {
 }
 
 /// **Two concurrent removals of a person's last two passkeys cannot both
-/// land** (design section 7): the first held after its count while the
-/// second starts; the second counts after the first's removal, and is
-/// refused as the last.
+/// land** (design section 7): from a session that stands throughout, the
+/// first held after its count while the second starts; the second counts
+/// after the first's removal, and is refused as the last.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn two_concurrent_removals_of_the_last_two_leave_one() {
     let Some(fresh) = fresh_store().await else {
@@ -461,12 +471,17 @@ async fn two_concurrent_removals_of_the_last_two_leave_one() {
     let mut key = authenticator();
     let (person, credential, session) = signed_in(&app, s, &mut key, "ada").await;
     let earned = grant(&app, &mut key, &session).await;
-    add(&app, &mut authenticator(), &earned, &session, "phone").await;
+    let mut phone = authenticator();
+    add(&app, &mut phone, &earned, &session, "phone").await;
     let first = passkey_of(s, &credential).await;
     let second: String = sqlx::query_scalar("SELECT passkey_id FROM passkey WHERE label = 'phone'")
         .fetch_one(&s.pool)
         .await
         .unwrap();
+    // Both removals from the phone's session, which stands until its own
+    // passkey goes: the first removes the other passkey, the second the
+    // phone's own, so only the count can refuse the second.
+    let session = another_session(&app, &mut phone, "ada").await;
 
     let (read, release) = (
         Arc::new(tokio::sync::Notify::new()),
@@ -476,16 +491,21 @@ async fn two_concurrent_removals_of_the_last_two_leave_one() {
         .lock()
         .unwrap()
         .push((first.clone(), read.clone(), release.clone()));
+    let session_id = session_id_of(s, &session).await;
     let held = tokio::spawn({
         let (s, person, first) = (s.clone(), person.clone(), first.clone());
-        async move { s.remove_passkey(&person, &first).await.unwrap() }
+        async move { s.remove_passkey(&person, session_id, &first).await.unwrap() }
     });
     tokio::time::timeout(Duration::from_secs(10), read.notified())
         .await
         .expect("the first removal counted");
     let other = tokio::spawn({
         let (s, person, second) = (s.clone(), person.clone(), second.clone());
-        async move { s.remove_passkey(&person, &second).await.unwrap() }
+        async move {
+            s.remove_passkey(&person, session_id, &second)
+                .await
+                .unwrap()
+        }
     });
     // Long enough for the second to count, were it not excluded.
     tokio::time::sleep(Duration::from_millis(300)).await;
@@ -538,4 +558,105 @@ async fn the_page_lists_only_ones_own_passkeys() {
     assert_eq!(rows(s, "SELECT count(*) FROM passkey").await, 3);
     let (status, _, _) = send_as(&app, "GET", "/passkeys", None, None, "no-such-session").await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+/// **A write a session authorizes re-checks its authority inside its own
+/// transaction** (Spec 2.13): an addition held after its session read, a
+/// host reset committing meanwhile (the person's passkeys cleared, a
+/// recovery token issued), then released, is refused as its authority
+/// gone, audited as failed: no passkey lands, so the reset's token still
+/// redeems.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_host_reset_during_an_addition_refuses_it() {
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let app = app(s, Some(passkeys()));
+    let mut key = authenticator();
+    let (person, _, session) = signed_in(&app, s, &mut key, "ada").await;
+    let earned = grant(&app, &mut key, &session).await;
+    let (status, options) = add_options(&app, &earned, &session).await;
+    assert_eq!(status, StatusCode::OK, "{options}");
+    let (ceremony, credential) = register(&mut authenticator(), &options);
+
+    let (read, release) = (
+        Arc::new(tokio::sync::Notify::new()),
+        Arc::new(tokio::sync::Notify::new()),
+    );
+    crate::surfaces::keys::ADD_HOLD.lock().unwrap().push((
+        person.clone(),
+        read.clone(),
+        release.clone(),
+    ));
+    let finishing = tokio::spawn({
+        let (app, session) = (app.clone(), session.clone());
+        async move {
+            send_as(
+                &app,
+                "POST",
+                "/passkeys/add/finish",
+                Some(json!({ "ceremony": ceremony, "credential": credential, "label": "late" })),
+                None,
+                &session,
+            )
+            .await
+        }
+    });
+    tokio::time::timeout(Duration::from_secs(10), read.notified())
+        .await
+        .expect("the addition read its session");
+    let reset = crate::host::reset(s, &cfg(), &person, None, Some("lab")).await;
+    assert!(reset.ok, "{}", reset.value);
+    let token = reset.value["token"].as_str().unwrap().to_owned();
+    release.notify_one();
+    let (status, _, answer) = finishing.await.unwrap();
+    assert_eq!(status, StatusCode::FORBIDDEN, "{answer}");
+    assert_eq!(
+        count(
+            s,
+            "SELECT count(*) FROM passkey WHERE person_id = $1",
+            &person
+        )
+        .await,
+        0,
+        "the device the reset cut off was planted"
+    );
+    assert!(
+        s.redeemable(&crate::store::identity::digest(&token))
+            .await
+            .unwrap()
+            .is_some(),
+        "the reset's token is stranded"
+    );
+    let outcome: Option<String> = sqlx::query_scalar(
+        "SELECT outcome FROM audit WHERE action = 'passkey add' AND answers IS NOT NULL",
+    )
+    .fetch_one(&s.pool)
+    .await
+    .unwrap();
+    assert_eq!(outcome.as_deref(), Some("failed"));
+}
+
+/// A server config for the host's commands.
+fn cfg() -> crate::config::ServerConfig {
+    crate::config::ServerConfig {
+        listen: "127.0.0.1:0".into(),
+        link_listen: "127.0.0.1:0".into(),
+        database: String::new(),
+        authority_dir: std::path::PathBuf::new(),
+        silence_bound_secs: 60,
+        link_address: None,
+        server_name: "weaver-web".into(),
+        admins: Vec::new(),
+        agent_hop_budget: 8,
+        providers: Vec::new(),
+        enrollment_token_hours: 24,
+        origin: None,
+        tls_certificate: None,
+        tls_key: None,
+        rp_id: None,
+        session_idle_secs: 3600,
+        session_absolute_secs: 43200,
+    }
 }

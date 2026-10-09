@@ -61,12 +61,20 @@ pub enum Ceremony {
     /// to that session and that person, expiring with the ceremony window
     /// and counting toward the cap like any ceremony, and consumed by the
     /// registration that starts with it.
-    AddGrant { person_id: String, session_id: i64 },
-    /// **The registration the grant started**, bound to the same session.
+    /// It names the passkey whose assertion earned it, which must still
+    /// stand when the addition lands.
+    AddGrant {
+        person_id: String,
+        session_id: i64,
+        earned_by: String,
+    },
+    /// **The registration the grant started**, bound to the same session
+    /// and carrying the passkey that earned the grant.
     AddRegistration {
         state: PasskeyRegistration,
         person_id: String,
         session_id: i64,
+        earned_by: String,
     },
 }
 

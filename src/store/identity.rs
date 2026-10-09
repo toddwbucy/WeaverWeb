@@ -105,7 +105,7 @@ pub fn bearer() -> [u8; 32] {
     bytes
 }
 
-fn hex(bytes: &[u8]) -> String {
+pub(crate) fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
@@ -161,6 +161,25 @@ pub enum Supersedes {
     Reset,
 }
 
+/// **What makes a token redeemable**, over `enrollment_token t` joined to
+/// `person p`: unexpired and not ended, its person enabled and holding no
+/// passkey. One definition, read at a ceremony's start and again under the
+/// exclusion at its finish.
+const REDEEMABLE: &str = "t.ended_at IS NULL AND t.expires_at > now() AND p.enabled \
+     AND NOT EXISTS (SELECT 1 FROM passkey k WHERE k.person_id = t.person_id)";
+
+/// **What a redemption came to.**
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Redeemed {
+    /// The passkey is enrolled and the token ended `redeemed`.
+    Enrolled,
+    /// The token no longer redeems: expired, ended, its person disabled or
+    /// now holding a passkey. Nothing was written.
+    TokenRefused,
+    /// Another passkey holds the credential ID. Nothing was written.
+    CredentialHeld,
+}
+
 impl Store {
     /// **A transaction holding the identity exclusion**, exclusively, until
     /// it commits or rolls back.
@@ -171,6 +190,76 @@ impl Store {
             .execute(&mut *tx)
             .await?;
         Ok(tx)
+    }
+
+    /// **The person a token can enroll a passkey for**, by the token's
+    /// digest: their identity and name, where the token is unexpired and
+    /// has not ended, and its person is enabled and holds no passkey (Spec
+    /// 2.13: a token registers a person's first passkey and nothing else).
+    pub async fn redeemable(&self, token_digest: &str) -> anyhow::Result<Option<(String, String)>> {
+        Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT p.person_id, p.name FROM enrollment_token t \
+             JOIN person p ON p.person_id = t.person_id \
+             WHERE t.token_digest = $1 AND {REDEEMABLE}"
+        )))
+        .bind(token_digest)
+        .fetch_optional(&self.pool)
+        .await?)
+    }
+
+    /// **A token redeemed** (design section 7): in one transaction under the
+    /// identity exclusion, the token checked again as [`Self::redeemable`]
+    /// checks it and bound to the same person, the credential ID found held
+    /// by no passkey, the passkey inserted under the identity `passkey_id`,
+    /// and the token ended `redeemed`. A check that fails writes nothing.
+    pub async fn redeem(
+        &self,
+        token_digest: &str,
+        person_id: &str,
+        passkey_id: &str,
+        credential_id: &str,
+        credential: &serde_json::Value,
+    ) -> anyhow::Result<Redeemed> {
+        let mut tx = self.identity_transaction().await?;
+        let still: Option<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT p.person_id FROM enrollment_token t \
+             JOIN person p ON p.person_id = t.person_id \
+             WHERE t.token_digest = $1 AND t.person_id = $2 AND {REDEEMABLE}"
+        )))
+        .bind(token_digest)
+        .bind(person_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if still.is_none() {
+            return Ok(Redeemed::TokenRefused);
+        }
+        let held: Option<i32> =
+            sqlx::query_scalar("SELECT 1 FROM passkey WHERE credential_id = $1")
+                .bind(credential_id)
+                .fetch_optional(&mut *tx)
+                .await?;
+        if held.is_some() {
+            return Ok(Redeemed::CredentialHeld);
+        }
+        sqlx::query(
+            "INSERT INTO passkey (passkey_id, credential_id, person_id, credential) \
+             VALUES ($1, $2, $3, $4)",
+        )
+        .bind(passkey_id)
+        .bind(credential_id)
+        .bind(person_id)
+        .bind(credential)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "UPDATE enrollment_token SET ended_at = now(), ended = 'redeemed' \
+             WHERE token_digest = $1 AND ended_at IS NULL",
+        )
+        .bind(token_digest)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(Redeemed::Enrolled)
     }
 
     /// A new key of `kind`, minted by the store and written nowhere yet.

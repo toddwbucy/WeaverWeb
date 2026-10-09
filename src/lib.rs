@@ -17,6 +17,10 @@ pub mod link;
 pub mod listen;
 #[cfg(test)]
 mod listen_tests;
+#[cfg(feature = "passkeys")]
+pub mod passkeys;
+#[cfg(all(test, feature = "passkeys"))]
+mod passkeys_tests;
 pub mod registry;
 pub mod store;
 pub mod surfaces;

@@ -918,11 +918,13 @@ one. **Sign-out** is a `POST` that closes the session's row and clears the
 cookie.
 
 **Sign-in is name-first**, built by act 11's sign-in pull request: the person
-gives their name and answers a challenge for their own passkeys, the
-challenge held in the server's memory for at most five minutes and used
-once, **with at most 64 ceremonies in flight**, a new one beyond that
-refused, since a ceremony starts before anyone is authenticated and an
-unbounded map would be a crash.
+gives their name and answers a challenge for their own passkeys. **A
+ceremony's state is held in the server's memory**, in the ceremony table
+built with enrollment on 2026-10-08 (`src/passkeys.rs`): keyed by a ceremony
+identity drawn as every bearer the server issues is, for at most five
+minutes, used once, **with at most 64 ceremonies in flight**, a new one
+beyond that refused, since a ceremony starts before anyone is authenticated
+and an unbounded map would be a crash. A restart drops what is in flight.
 
 **A session is not an authored row and takes no version.** Section 3.2's
 ordering rule answers two engineers editing one declaration, and nobody edits
@@ -1379,8 +1381,19 @@ it decides are stated here and in section 2.8, and the reasons are there.
   and must equal its origin's ASCII serialization, the browser's own
   algorithm, so no rule of the standard is approximated by hand. HSTS and a
   redirect from plain to TLS are not built. The ceremonies are the library the design's section 2 measured,
-  carried by the server binary alone, and the browser's half is one vendored
-  module doing the two ceremonies and nothing else. **A person's name is
+  `webauthn-rs` 0.5, **carried by the server binary alone**: the `passkeys`
+  cargo feature, on by default, carries it and its OpenSSL, the server binary
+  requires it, and the connectors are built for agent boxes without it
+  (`--no-default-features`), their dependency graph then holding no
+  `openssl-sys` at all; measured on 2026-10-08, `ldd` finds no `libcrypto` in
+  either connector under that build or the default one, where the linker
+  drops the library the connectors never call. The browser's half is one
+  vendored module doing the two ceremonies and nothing else, under 4 KiB and
+  served from the surfaces' own asset route, and **the surfaces answer with
+  `Content-Security-Policy: script-src 'self'`**, carrying no inline script;
+  measured on 2026-10-08, htmx's own `hx-get` and `hx-post` hold under it in
+  Chromium 153 and Firefox 156, its evaluating attributes (`hx-on`) being
+  what no surface may use while it stands. **A person's name is
   unique among persons in one canonical form**, Unicode's compatibility
   caseless form of the name trimmed of surrounding white space, since
   sign-in finds the person by it: checked at enrollment and at rename under
@@ -1460,7 +1473,16 @@ it decides are stated here and in section 2.8, and the reasons are there.
   revoke their outstanding enrollment tokens in the same write, under the
   same exclusion, the tokens being part of the person row. Redeeming a token
   checks that its person is enabled too, so a token issued before a disable
-  can never land a credential on a disabled row.
+  can never land a credential on a disabled row. **Redemption, as built on
+  2026-10-08**: the page `/enroll` takes the token pasted, never in a URL;
+  its options endpoint checks the token (unexpired, not ended, its person
+  enabled and holding no passkey) and starts a registration ceremony; its
+  finish verifies the registration, writes the first audit record (the
+  person, by enrollment token, on the passkey by its `pk-` identity), and in
+  one transaction under the exclusion checks the token again, refuses a
+  credential ID already held, inserts the passkey and ends the token
+  `redeemed`. **It opens no session**: the person signs in with the passkey
+  afterwards.
 - **The server, one of the two principals that are not a person**, for the
   asks the server makes itself, of which the admission's `show` of section 7.2 is the
   one today. It may ask `show` only, the one observation verb, and never a
@@ -3811,9 +3833,10 @@ missing while it was relaying.
 | a session carries a person, ends where its person or its passkey does, and its cookie is neither readable by script nor carried by another site | perturbation, against sessions opened in the store in `src/surfaces/gate_tests.rs`: drop `HttpOnly`, `Secure`, `SameSite=Strict` or `Path=/`, or set the cookie under another name, and the cookie's test finds it changed; read the old `weaver_session` name too, and a claimed-name cookie names a session; drop the check of a session's close, of its person's disable, of its passkey's presence, of the absolute limit or of the idle limit, and a session so ended is served; name the passkey by its credential ID rather than its own identity, reset the person and enroll the same credential again, and the session opened before the reset is served; leave the row open where a use finds it ended, and the next read finds it open; drop the `Origin` check, admit a request with no origin configured, or take the first of two `Origin` headers, and a POST from another origin changes state; refresh the last use unconditionally, and two uses within a minute write twice and a time ahead of the clock moves back; close unconditionally where a read found a session ended, hold a use between its read and its close, refresh the session from another request meanwhile, and the refreshed session is closed on the stale read (`src/surfaces/gate_tests.rs`); drop the absolute limit's seven-day bound, and an absolute limit of the largest integer a config holds loads (`src/config.rs`), an interval the database cannot make at every use; drop the idle limit's five-minute floor, and an idle limit of 30 seconds is accepted at load (`src/config.rs`), where a session in active use would end; and a session used every 50 seconds is held open at the floor itself (`src/surfaces/gate_tests.rs`); let sign-out leave the row open, and the cookie it cleared still names a session; write the person's name as the author, or resolve every member as a claim, and an authored row stops naming its person or their current name; let a host's `--author` claim of the whole `pe-` shape through, and each register verb and identity command acts on it (`src/link/verbs_audit_tests.rs`, `src/host_tests.rs`), its claim then resolving as that person. `tests/startup.rs` (ignored, the real binary) reads Record under a person's session and refuses a legacy POST at the `Origin` check |
 | a passkey is added only after a fresh assertion, and a person's last is never removed | perturbation, **owed**: add a passkey on a session alone, and a stolen cookie gains access that outlasts it; let a registration use an add grant another session earned, and a parallel session adds a passkey on someone else's assertion; leave the grant unconsumed at the registration's start, and one assertion adds two passkeys; let a person remove their last passkey, and they are locked out with only the host to recover them. Lands with act 11's passkey pull request |
 | an enrollment token is issued only for a person holding no passkey, lives at most seven days, is kept as its digest, and is its person's one live token | perturbation in `src/host_tests.rs`: drop the passkey check, and a token is issued for a person holding a credential, which an admin could redeem over theirs; drop the command's lifetime bound, and a token past seven days is refused only by the store, as a fault; drop the store's lifetime check, and a row past seven days lands; store the token in the clear, and a read of the token table is a set of usable tokens; leave an earlier token live when issuing, and the newest is refused against the one live token per person. And in `src/config.rs`: configure a lifetime past seven days, and it is taken |
-| an enrollment token is single-use and redeemed only within its lifetime | perturbation, **owed**: redeem a token twice, or past its lifetime, and each lands a credential. Lands with act 11's passkey pull request |
+| an enrollment token is single-use and redeemed only within its lifetime | perturbation, against a soft passkey (`webauthn-authenticator-rs`, a dev-dependency) in `src/passkeys_tests.rs`: drop the token's expiry, its end, its person's enable or the person's holding no passkey from what makes a token redeemable, and that token starts a ceremony; drop the transaction's re-check, and a passkey appearing between the options and the finish leaves the person holding two; leave the token unended at the redemption, and it redeems again; drop the check of a credential ID already held, and the finish fails at the store rather than refusing. A redemption sets no cookie and writes no session row, which the end-to-end test asserts |
 | an enrollment token is 32 bytes of the operating system's cryptographic randomness | perturbation in `src/store/identity_tests.rs`: draw bearers from a counter, and consecutive bearers share a prefix, the next guessed from the last |
-| every other bearer the server issues, the session bearer and the ceremony identity, is drawn the same way | perturbation, **owed**: draw a session bearer or a ceremony identity from the time, and the next is guessed. Lands with act 11's passkey pull request |
+| a ceremony identity is drawn as every bearer the server issues is | perturbation in `src/passkeys_tests.rs`: draw ceremony identities from a counter, and consecutive identities share a prefix, the next guessed from the last |
+| the session bearer is drawn the same way | perturbation, **owed**: draw a session bearer from the time, and the next is guessed. Lands with act 11's sign-in pull request |
 | no statement this crate issues can rewrite, remove or truncate an audit record | perturbation in `src/store/audit_tests.rs`, each statement in a transaction the test rolls back: drop the row trigger, and an update rewrites a record and a delete removes one; drop the truncate trigger, and a truncate empties the audit. The triggers guard this crate's code paths, not a process dropping them with the owner's rights, which section 2.13 puts outside the threat model |
 | every register verb writes its audit record before it acts, and an outcome naming it | perturbation in `src/link/verbs_audit_tests.rs`: drop any of the five verbs' first record, and with the first record refused that verb acts anyway, unaudited; write `authority init`'s first record after the act, and with it refused the authority is created without one; drop the outcome, and a verb's first record stands unanswered; let the inspection before the first record make the agent's directory, and with the first record refused a directory stands that nothing audited; discard a stale half pair during that inspection, and with the first record refused the pair is gone unaudited; name the agent a rotation was asked by instead of the row whose retained pair it publishes, and the record names a retired row. And in `src/store/audit_tests.rs`: insert into the audit from a second file, and the test reading the tree for one writer finds it; drop the index of one outcome per first record, and a first record is answered twice |
 | a record's principal and its method agree | perturbation in `src/store/audit_tests.rs`: drop the check, and a host record carrying a person's method lands |
@@ -3821,8 +3844,8 @@ missing while it was relaying.
 | the admin role grants no action on any agent | perturbation, **owed**: let the server-wide admin grant authorize a verb, and an admin holding no grant on an agent asks `stop` of it. Lands with act 11's authorization pull request |
 | reading an agent takes a grant on it | perturbation, **owed**: drop the grant check on a read, and a person holding no grant on an agent reads its trace window and its load state; give the admin's register view the door and the load state, and an admin with no grant reads an agent's state. Lands with act 11's authorization pull request |
 | an open live view ends within its bound of what ended its session or grant | perturbation, **owed**: drop the stream's re-check, disable a person whose live view is open, and the view keeps receiving the trace; remove the grant instead, and the same. Lands with act 11's authorization pull request |
-| the ceremonies in flight are bounded | perturbation, **owed**: drop the cap, start ceremonies for posted names past it, and the map grows with every unauthenticated request. Lands with act 11's passkey pull request |
-| the WebAuthn library links into the server binary alone | measurement, **owed**: `ldd` on gate-con and admin-con shows no `libcrypto`, the library being carried by a cargo feature the server binary alone requires. Lands with act 11's passkey pull request |
+| the ceremonies in flight are bounded, each expiring and used once | perturbation in `src/passkeys_tests.rs`, on a paused clock: drop the cap, and a sixty-fifth ceremony starts; take a ceremony without removing it, and it finishes twice; drop the expiry, and a ceremony past five minutes is taken; keep expired ceremonies against the cap, and the table refuses while none is live |
+| the WebAuthn library links into the server binary alone | measurement and perturbation in `tests/connectors_link.rs`: `ldd` on the connectors as `cargo test` builds them finds no `libcrypto`, and on the server binary finds it, which shows the reading; and the package's normal graph without the default features holds no `openssl-sys` and no `webauthn-rs`, the build CLAUDE.md gives for agent boxes. Make the library a dependency the feature does not carry, and the graph holds it |
 | the admission's `show` is required only where the ceiling grants it | perturbation: ask `show` at every admission, and an agent whose ceiling grants no `show` is closed `admission_incomplete` at every reconnection and never stays admitted; skip it where it is granted, and the row reads the last process's state as current |
 | the ceiling declared in the hello is exactly what the box's sudo rules grant | perturbation, against a fake `sudo` generated at test time in `src/link/sudo_invoker_tests.rs`: answer `grants` from anything but each verb's own `sudo -n -l` line, and a verb the rule refuses is declared, or one it grants is not |
 | the orderly stop retries `unload` until rest, never past its grace and never forcing | perturbation, against a scripted invoker in `src/link/admin_con_tests.rs`: drop the retry, and an `unload` refusing `ActivityNotAtRest` twice before a clean answer is asked once; drop the deadline check, and one refusing past the grace is asked again after the stop returned; check the deadline before the wait rather than after it, and on a paused clock a wait overtaken past the deadline starts one more `unload`; retry on every refusal, and a `SavePointNotTaken` is asked again. The stop runs `unload` alone, never `force-unload`, which each test asserts |
@@ -3832,18 +3855,21 @@ missing while it was relaying.
 act that lands it states what removal makes it fail and confirms it does.
 
 **A row marked owed has no instrument and is not counted as enforced.**
-Sixteen stand so marked as of 2026-10-08. The batch's order is owed because
+Thirteen stand so marked as of 2026-10-08. The batch's order is owed because
 section 2.11 describes its table and no migration builds it. Three rows of
 the role shape ruled on 2026-10-02 are owed to the IAM act: the principal
 check, the writer's check for persons, roles and grants, and the audit
-record. **Twelve are owed to act 11's code pull requests**, from its design
+record. **Nine are owed to act 11's code pull requests**, from its design
 of 2026-10-07: passkey-only sign-in, the unique name at
 rename, the credential ID, the signature counter, the fresh
-assertion and the last passkey, the enrollment token's redemption, the session
-bearer's and the ceremony identity's randomness, the
-admin's lack of agent actions, read access, the live view's bound, the
-ceremony cap, and the WebAuthn library's place in the server binary alone.
-Act 11's session pull request of 2026-10-08 retired the row that a session
+assertion and the last passkey, the session bearer's randomness, the
+admin's lack of agent actions, read access, and the live view's bound.
+Act 11's enrollment pull request of 2026-10-08 stood up the enrollment
+token's redemption, the ceremony table's cap, expiry and single use, the
+ceremony identity's randomness (narrowing the bearer row to the session
+bearer, owed to sign-in), and the WebAuthn library's place in the server
+binary alone, each shown to fail with its guard removed and the last
+measured with `ldd`. Act 11's session pull request of 2026-10-08 retired the row that a session
 carries a claimed name, and stood up the relying party's start refusals and
 the session as a person's (its cookie, its ends at every use, its last-used
 refresh, the `Origin` check, sign-out and the author member), each shown to

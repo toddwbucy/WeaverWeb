@@ -136,7 +136,8 @@ The toolchain is pinned to `nightly-2026-02-13` with rustfmt and clippy (the Wea
 carried over). The edition is 2024.
 
 ```sh
-cargo build --locked
+cargo build --locked                     # the `passkeys` feature is on by default
+cargo build --locked --release --no-default-features --bin gate-con --bin admin-con   # connectors for an agent box: no OpenSSL
 cargo test --locked                      # DB-backed tests pass by skipping without DATABASE_URL
 cargo clippy --all-targets --locked
 cargo fmt
@@ -170,6 +171,17 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
 - **Startup acceptance** (`tests/startup.rs`) is `#[ignore]`d. It spawns the real binary and
   needs `curl` plus a **never-migrated** disposable database:
   `DATABASE_URL=... cargo test --test startup -- --ignored`.
+- **Passkeys and OpenSSL**: the `passkeys` feature (default on) carries `webauthn-rs` 0.5 and
+  its OpenSSL, and the `weaver-web` binary requires it. **Build connectors for an agent box with
+  `--no-default-features`**: their dependency graph then holds no `openssl-sys`
+  (`tests/connectors_link.rs` checks both that and `ldd` on the test build's binaries; measured
+  2026-10-08, the default build's connectors carry no `libcrypto` either, the linker dropping
+  it). Clippy runs both ways (`--no-default-features` too). The passkey tests use
+  `webauthn-authenticator-rs`'s soft passkey, a dev-dependency. `GET /enroll` is the page where a
+  person pastes their enrollment token to register their first passkey (`surfaces::enroll`,
+  `src/passkeys.rs` for the ceremony table: 64 in flight, five minutes, used once); it opens no
+  session. The surfaces answer `Content-Security-Policy: script-src 'self'`, so no inline script
+  and no `hx-on`.
 - **Run the server:** `cargo run -- --config <config.toml>`, where the config sets `listen`,
   `link_listen`, `database` and `authority_dir`, with `silence_bound_secs` (60), `link_address`
   and `server_name` (`weaver-web`) optional (see `ServerConfig` in `src/config.rs`). The server

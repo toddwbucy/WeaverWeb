@@ -17,32 +17,59 @@
 
 use crate::store::Store;
 
-/// **Who acted, and how it was authenticated.** The host is the one
-/// principal this crate writes as today; act 11's next pull request adds
-/// the person, and the server's own asks are audited with every ask.
+/// **Who acted, and how it was authenticated.** The host and a person are
+/// the principals this crate writes as; the server's own asks are audited
+/// with every ask.
 #[derive(Debug, Clone, Copy)]
 pub enum Principal<'a> {
     /// A command on the server's host, carrying the name it was given with
     /// `--author` as an unverified claim.
     Host { author: Option<&'a str> },
+    /// A person, by their identity, and how they were authenticated.
+    Person {
+        person_id: &'a str,
+        method: PersonMethod,
+    },
+}
+
+/// **How a person was authenticated** for the act (Spec 2.13): the methods
+/// the audit's schema admits, as this crate comes to write them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PersonMethod {
+    /// An enrollment token, which authenticates its person for the one
+    /// write it is redeemed for and nothing else.
+    EnrollmentToken,
 }
 
 impl Principal<'_> {
     fn kind(&self) -> &'static str {
         match self {
             Principal::Host { .. } => "host",
+            Principal::Person { .. } => "person",
         }
     }
 
     fn method(&self) -> &'static str {
         match self {
             Principal::Host { .. } => "host",
+            Principal::Person {
+                method: PersonMethod::EnrollmentToken,
+                ..
+            } => "enrollment token",
         }
     }
 
     fn claimed_author(&self) -> Option<&str> {
         match self {
             Principal::Host { author } => *author,
+            Principal::Person { .. } => None,
+        }
+    }
+
+    fn person_id(&self) -> Option<&str> {
+        match self {
+            Principal::Host { .. } => None,
+            Principal::Person { person_id, .. } => Some(person_id),
         }
     }
 }
@@ -57,6 +84,8 @@ pub enum Target<'a> {
     Person(&'a str),
     Grant(&'a str),
     Role(&'a str),
+    /// A passkey, by its own identity (`pk-`).
+    Passkey(&'a str),
 }
 
 impl Target<'_> {
@@ -67,15 +96,18 @@ impl Target<'_> {
             Target::Person(_) => "person",
             Target::Grant(_) => "grant",
             Target::Role(_) => "role",
+            Target::Passkey(_) => "passkey",
         }
     }
 
     fn id(&self) -> Option<&str> {
         match self {
             Target::Authority => None,
-            Target::Agent(id) | Target::Person(id) | Target::Grant(id) | Target::Role(id) => {
-                Some(id)
-            }
+            Target::Agent(id)
+            | Target::Person(id)
+            | Target::Grant(id)
+            | Target::Role(id)
+            | Target::Passkey(id) => Some(id),
         }
     }
 }
@@ -103,8 +135,8 @@ impl Store {
             anyhow::bail!("a test fault refused the first record");
         }
         let id: String = sqlx::query_scalar(
-            "INSERT INTO audit (principal, method, claimed_author, target_kind, target_id, action) \
-             VALUES ($1, $2, $3, $4, $5, $6) RETURNING audit_id",
+            "INSERT INTO audit (principal, person_id, method, claimed_author, target_kind, \
+             target_id, action) VALUES ($1, $7, $2, $3, $4, $5, $6) RETURNING audit_id",
         )
         .bind(principal.kind())
         .bind(principal.method())
@@ -112,6 +144,7 @@ impl Store {
         .bind(target.kind())
         .bind(target.id())
         .bind(action)
+        .bind(principal.person_id())
         .fetch_one(&self.pool)
         .await?;
         Ok(id)
@@ -146,8 +179,8 @@ impl Store {
         refusal: &str,
     ) -> anyhow::Result<String> {
         let id: String = sqlx::query_scalar(
-            "INSERT INTO audit (principal, method, claimed_author, target_kind, target_id, action, refusal) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING audit_id",
+            "INSERT INTO audit (principal, person_id, method, claimed_author, target_kind, \
+             target_id, action, refusal) VALUES ($1, $8, $2, $3, $4, $5, $6, $7) RETURNING audit_id",
         )
         .bind(principal.kind())
         .bind(principal.method())
@@ -156,6 +189,7 @@ impl Store {
         .bind(target.id())
         .bind(action)
         .bind(refusal)
+        .bind(principal.person_id())
         .fetch_one(&self.pool)
         .await?;
         Ok(id)

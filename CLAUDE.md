@@ -262,7 +262,7 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
   and the admin grant. An admin never writes their own row; a disable revokes the person's
   outstanding token (migration `0018`, ending `revoked`) and never leaves no enabled admin; a
   token is shown once under `no-store`. Roles and grants are not on it yet (PR 5b), and the
-  register verbs stay host commands. `admin_tests` runs each test on a `fresh_store`.
+  register verbs through the server are PR 5c's; until then they are host commands. `admin_tests` runs each test on a `fresh_store`.
 
 ## The seed tree: what carries forward and what leaves
 

@@ -45,9 +45,8 @@ passkeys page: no styling work, no design applied.
    - **rename** a person: the canonical name unique, the identity shape refused.
    - **An admin never writes their own row** (Spec 2.13: never their own name or state): a
      self-disable or self-rename is refused before any record.
-3. **Out of this PR**: roles and grants (5b); register verbs through the server (they stay
-   host commands; minting a connector's credentials through a browser is a posture change
-   the operator has not ruled); read access by grant (PR 6).
+3. **Out of this PR**: roles and grants (5b); the register verbs through the server are 5c's;
+   read access by grant (PR 6).
 
 ## 3. Tests and perturbations
 

@@ -209,12 +209,11 @@ async fn real_server_starts_on_current_schema() {
 
     let mut server = Server::spawn(&database);
     server.wait_for_listen();
-    assert_eq!(
-        server.get("/record", None),
-        (
-            401,
-            "this surface is read under a session. Sign in and ask again.".into()
-        )
+    let (status, body) = server.get("/record", None);
+    assert_eq!(status, 401);
+    assert!(
+        body.contains(r#"<a href="/sign-in">Sign in</a>"#),
+        "the refusal links to the sign-in page: {body}"
     );
 
     // **A person's session, opened in the store** (act 11, PR 4a): the

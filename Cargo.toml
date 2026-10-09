@@ -127,7 +127,11 @@ url = "2.5.8"
 # webauthn-rs 0.5 links OpenSSL's libcrypto, which the connectors, running on
 # agent boxes, must not carry. The `passkeys` feature carries it, and only
 # the server binary requires it.
-webauthn-rs = { version = "0.5", optional = true }
+# `danger-credential-internals` gives typed, read-only access to a stored
+# passkey's counter, which the counter rule compares (design section 6) and
+# the stable API does not expose; reading the serialized JSON by path instead
+# would read a moved field as null, and so as zero, skipping the check.
+webauthn-rs = { version = "0.5", optional = true, features = ["danger-credential-internals"] }
 # `O_NOFOLLOW` for the client configs' staging files (Spec 8): a staging
 # entry that is a symlink must refuse rather than be followed to a file
 # another owner can read. Already in the graph through tokio.

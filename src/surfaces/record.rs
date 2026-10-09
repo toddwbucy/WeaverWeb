@@ -290,15 +290,21 @@ async fn record(
 }
 
 /// A request that names no live session. **The answer says what is
-/// missing**: this surface is read under a person's session, and this
-/// request carries none, or one that has ended.
+/// missing and where to get it**: this surface is read under a person's
+/// session, and this request carries none, or one that has ended, so the
+/// answer links to the sign-in page.
 pub struct NoSession;
 
 impl IntoResponse for NoSession {
     fn into_response(self) -> Response {
         (
             axum::http::StatusCode::UNAUTHORIZED,
-            "this surface is read under a session. Sign in and ask again.",
+            Html(
+                "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
+                 <title>sign in - weaver-web</title></head><body>\
+                 <p>This surface is read under a session. <a href=\"/sign-in\">Sign in</a> \
+                 and ask again.</p></body></html>",
+            ),
         )
             .into_response()
     }

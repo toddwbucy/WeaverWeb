@@ -42,18 +42,48 @@ async function enroll(token) {
   });
 }
 
-const form = document.getElementById("enroll");
-if (form) {
+// Authentication, for a name-first sign-in: the credential's id, rawId,
+// type, authenticatorData, clientDataJSON, signature and userHandle.
+async function signIn(name) {
+  const { ceremony, options } = await post("/sign-in/options", { name });
+  const key = options.publicKey;
+  key.challenge = fromB64(key.challenge);
+  for (const held of key.allowCredentials || []) held.id = fromB64(held.id);
+  const got = await navigator.credentials.get({ publicKey: key });
+  const r = got.response;
+  return post("/sign-in/finish", {
+    ceremony,
+    credential: {
+      id: got.id, rawId: toB64(got.rawId), type: got.type,
+      response: {
+        authenticatorData: toB64(r.authenticatorData),
+        clientDataJSON: toB64(r.clientDataJSON),
+        signature: toB64(r.signature),
+        userHandle: r.userHandle ? toB64(r.userHandle) : null,
+      },
+    },
+  });
+}
+
+// One form per page: the ceremony it runs, what it reads, and what it says.
+function ceremony(id, field, run, done, failed) {
+  const form = document.getElementById(id);
+  if (!form) return;
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const status = document.getElementById("status");
     status.textContent = "Waiting for your authenticator.";
     try {
-      await enroll(form.elements.token.value.trim());
+      const answer = await run(form.elements[field].value.trim());
       form.reset();
-      status.textContent = "Your passkey is enrolled. Sign in with it to continue.";
+      done(status, answer);
     } catch (error) {
-      status.textContent = "Not enrolled: " + error.message;
+      status.textContent = failed + error.message;
     }
   });
 }
+
+ceremony("enroll", "token", enroll,
+  (status) => { status.textContent = "Your passkey is enrolled. Sign in with it to continue."; },
+  "Not enrolled: ");
+ceremony("sign-in", "person", signIn, (_, answer) => location.assign(answer.next), "Not signed in: ");

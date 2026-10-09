@@ -9,9 +9,13 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tokio::time::Instant;
-use webauthn_rs::prelude::{PasskeyRegistration, Url, Webauthn, WebauthnBuilder};
+use webauthn_rs::prelude::{
+    AuthenticationResult, Credential, Passkey, PasskeyAuthentication, PasskeyRegistration, Url,
+    Webauthn, WebauthnBuilder,
+};
 
 use crate::config::ServerConfig;
+use crate::store::Store;
 
 /// **At most this many ceremonies in flight** (design section 6): a ceremony
 /// starts before anyone is authenticated, so without a cap a client could
@@ -33,6 +37,12 @@ pub enum Ceremony {
         state: PasskeyRegistration,
         person_id: String,
         token_digest: String,
+    },
+    /// A name-first sign-in: the person the name found, whose passkeys the
+    /// challenge was for.
+    SignIn {
+        state: PasskeyAuthentication,
+        person_id: String,
     },
 }
 
@@ -104,5 +114,108 @@ impl Passkeys {
             webauthn: Arc::new(webauthn),
             ceremonies: Arc::new(Ceremonies::default()),
         }))
+    }
+}
+
+/// **An assertion the library verified**, as the counter rule reads it: the
+/// counter it returned, and how it merges into a stored passkey (the
+/// library's `update_credential`: the counter, the backup state and the
+/// backup eligibility). A trait so a test can drive counters a software
+/// authenticator never returns, zero above all.
+pub trait Assertion {
+    fn counter(&self) -> u32;
+    fn merge_into(&self, passkey: &mut Passkey);
+}
+
+impl Assertion for AuthenticationResult {
+    fn counter(&self) -> u32 {
+        AuthenticationResult::counter(self)
+    }
+
+    fn merge_into(&self, passkey: &mut Passkey) {
+        passkey.update_credential(self);
+    }
+}
+
+/// **What the counter rule came to.**
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Counted {
+    /// The assertion's counter rose or is zero, and the stored passkey is
+    /// updated: the passkey's identity, for the session it opens.
+    Admitted { passkey_id: String },
+    /// A nonzero counter not greater than the freshly read stored one: a
+    /// possible cloned credential. Nothing was written.
+    PossibleClone { passkey_id: String },
+    /// No passkey of this person holds the credential ID any more.
+    Gone,
+}
+
+/// **The counter rule** (design section 6), for every assertion the server
+/// verifies: in a transaction of its own, the stored passkey is read under
+/// its row's lock (`FOR UPDATE`), so this holds the freshest copy and no
+/// other assertion's update interleaves; where the returned counter is
+/// nonzero and not greater than that copy's, the assertion is refused as a
+/// possible clone and nothing is written; otherwise the assertion is merged
+/// into that fresh copy and written back, **always where the returned
+/// counter is zero**, which has nothing to race. It commits before any
+/// action the assertion authorizes begins, so an action that then fails
+/// leaves the passkey as updated: the authenticator did advance.
+pub async fn count(
+    store: &Store,
+    credential_id: &str,
+    person_id: &str,
+    assertion: &impl Assertion,
+) -> anyhow::Result<Counted> {
+    let mut tx = store.pool.begin().await?;
+    let row: Option<(String, serde_json::Value)> = sqlx::query_as(
+        "SELECT passkey_id, credential FROM passkey \
+         WHERE credential_id = $1 AND person_id = $2 FOR UPDATE",
+    )
+    .bind(credential_id)
+    .bind(person_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some((passkey_id, stored)) = row else {
+        return Ok(Counted::Gone);
+    };
+    #[cfg(test)]
+    hold_after_the_read(credential_id).await;
+    let mut passkey: Passkey = serde_json::from_value(stored)?;
+    let stored_counter = Credential::from(passkey.clone()).counter;
+    let returned = assertion.counter();
+    if returned != 0 && returned <= stored_counter {
+        return Ok(Counted::PossibleClone { passkey_id });
+    }
+    assertion.merge_into(&mut passkey);
+    sqlx::query("UPDATE passkey SET credential = $2, last_used_at = now() WHERE passkey_id = $1")
+        .bind(&passkey_id)
+        .bind(serde_json::to_value(&passkey)?)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(Counted::Admitted { passkey_id })
+}
+
+/// A hold after the counter rule's locked read, keyed by the credential ID
+/// so no other test's assertion takes it: the rule signals `read` and waits
+/// on `release`, which lets a test start a second assertion meanwhile.
+#[cfg(test)]
+pub(crate) type CountHold = (String, Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>);
+
+#[cfg(test)]
+pub(crate) static COUNT_HOLD: Mutex<Option<CountHold>> = Mutex::new(None);
+
+#[cfg(test)]
+async fn hold_after_the_read(credential_id: &str) {
+    let hold = {
+        let mut slot = COUNT_HOLD.lock().unwrap();
+        match slot.as_ref() {
+            Some((key, ..)) if key == credential_id => slot.take(),
+            _ => None,
+        }
+    };
+    if let Some((_, read, release)) = hold {
+        read.notify_one();
+        release.notified().await;
     }
 }

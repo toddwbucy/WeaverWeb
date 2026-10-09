@@ -24,9 +24,9 @@ use crate::store::read::tests::fresh_store;
 use crate::surfaces::{enroll, gate};
 
 /// The origin and relying party, reserved test names.
-const ORIGIN: &str = "https://weaver.test";
+pub(crate) const ORIGIN: &str = "https://weaver.test";
 
-fn passkeys() -> Passkeys {
+pub(crate) fn passkeys() -> Passkeys {
     let webauthn = WebauthnBuilder::new("weaver.test", &Url::parse(ORIGIN).unwrap())
         .unwrap()
         .build()
@@ -39,7 +39,7 @@ fn passkeys() -> Passkeys {
 
 /// The enrollment surface and the others, as the server mounts them: under
 /// the script policy and the `Origin` check.
-fn app(s: &Store, passkeys: Option<Passkeys>) -> axum::Router {
+pub(crate) fn app(s: &Store, passkeys: Option<Passkeys>) -> axum::Router {
     let policy = gate::Policy {
         origin: Some(ORIGIN.to_owned()),
         idle: Duration::from_secs(3600),
@@ -47,7 +47,12 @@ fn app(s: &Store, passkeys: Option<Passkeys>) -> axum::Router {
     };
     gate::guard(
         crate::surfaces::routes(policy.clone())
-            .merge(crate::surfaces::script_policy(enroll::routes(passkeys)))
+            .merge(crate::surfaces::script_policy(enroll::routes(
+                passkeys.clone(),
+            )))
+            .merge(crate::surfaces::script_policy(
+                crate::surfaces::sign_in::routes(passkeys),
+            ))
             .with_state(s.clone()),
         policy,
     )
@@ -55,7 +60,7 @@ fn app(s: &Store, passkeys: Option<Passkeys>) -> axum::Router {
 
 /// A person and an enrollment token issued for them, the token's value
 /// as the host printed it.
-async fn person_with_token(s: &Store, name: &str) -> (String, String) {
+pub(crate) async fn person_with_token(s: &Store, name: &str) -> (String, String) {
     let person: String = sqlx::query_scalar(
         "INSERT INTO person (name, name_key) VALUES ($1, $2) RETURNING person_id",
     )
@@ -72,7 +77,7 @@ async fn person_with_token(s: &Store, name: &str) -> (String, String) {
     (person, issued.value)
 }
 
-async fn send(
+pub(crate) async fn send(
     app: &axum::Router,
     method: &str,
     uri: &str,
@@ -104,7 +109,7 @@ async fn send(
 /// The authenticator's answer to the options the server gave: the
 /// ceremony's identity and the credential, as the browser module sends it
 /// (its members and no extension output).
-fn register(
+pub(crate) fn register(
     authenticator: &mut WebauthnAuthenticator<SoftPasskey>,
     options: &str,
 ) -> (String, Value) {
@@ -120,7 +125,7 @@ fn register(
     (ceremony, credential)
 }
 
-fn authenticator() -> WebauthnAuthenticator<SoftPasskey> {
+pub(crate) fn authenticator() -> WebauthnAuthenticator<SoftPasskey> {
     WebauthnAuthenticator::new(SoftPasskey::new(true))
 }
 
@@ -134,7 +139,7 @@ type AuditRow = (
     Option<String>,
 );
 
-async fn count(s: &Store, query: &str, bind: &str) -> i64 {
+pub(crate) async fn count(s: &Store, query: &str, bind: &str) -> i64 {
     sqlx::query_scalar(sqlx::AssertSqlSafe(query.to_owned()))
         .bind(bind)
         .fetch_one(&s.pool)

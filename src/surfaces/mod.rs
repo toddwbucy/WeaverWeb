@@ -14,6 +14,8 @@ pub mod gate;
 #[cfg(test)]
 pub(crate) mod gate_tests;
 pub mod record;
+#[cfg(feature = "passkeys")]
+pub mod sign_in;
 
 use axum::Router;
 use axum::http::{HeaderValue, StatusCode, header};

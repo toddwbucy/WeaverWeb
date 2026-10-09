@@ -180,7 +180,9 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
   `webauthn-authenticator-rs`'s soft passkey, a dev-dependency. `GET /enroll` is the page where a
   person pastes their enrollment token to register their first passkey (`surfaces::enroll`,
   `src/passkeys.rs` for the ceremony table: 64 in flight, five minutes, used once); it opens no
-  session. The surfaces answer `Content-Security-Policy: script-src 'self'`, so no inline script
+  session. `GET /sign-in` is the sign-in page; Record links to it without a session. The
+  library's `danger-credential-internals` feature is on for typed read access to a stored
+  passkey's counter. The surfaces answer `Content-Security-Policy: script-src 'self'`, so no inline script
   and no `hx-on`.
 - **Run the server:** `cargo run -- --config <config.toml>`, where the config sets `listen`,
   `link_listen`, `database` and `authority_dir`, with `silence_bound_secs` (60), `link_address`
@@ -272,8 +274,9 @@ weaver-analysis's arrow lands.
   ended, and refreshes its last use at most once a minute; `POST /sign-out` closes it. Every
   request but `GET` and `HEAD` must carry `Origin` equal to the configured `origin`, over the
   whole app (`gate::guard`). An authored row's author is the person's `pe-` identity, and
-  `Store::author` renders it. Sign-in by passkey is act 11's next pull request; until then
-  sessions are opened in the store by tests alone. Per `docs/project/design-2026-10-07-iam.md`
+  `Store::author` renders it. A session is opened by sign-in alone (`GET /sign-in`,
+  `surfaces::sign_in`): name-first, the library's verification, the counter rule
+  (`passkeys::count`, a locked read, merge and write committed first), then `gate::open`. Per `docs/project/design-2026-10-07-iam.md`
   section 6 and Spec 2.8.
 - The rendering approach is server-rendered askama templates (dirs in `askama.toml`) with htmx
   and SSE vendored into the binary via `include_bytes!`. There is no node toolchain and no

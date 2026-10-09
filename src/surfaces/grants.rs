@@ -6,10 +6,12 @@
 //! role's verbs, each under a session whose person holds a live admin
 //! grant. A plain shell, per the operator's ruling of 2026-10-09.
 //!
-//! **Each write is 5a's shape** (`surfaces::admin`): its identities parsed
-//! at the boundary before any record, a session without the grant refused
-//! with one record carrying it, the admin as principal by `session`, its
-//! first record before and its outcome after, and one identity transaction
+//! **Each write is 5a's shape** (`surfaces::admin`): every name or
+//! identity it refers to resolved before any record (identities parsed at
+//! the boundary, a role named by the store with its scope checked), a
+//! session without the grant refused with one record carrying it, the
+//! admin as principal by `session`, its first record before and its outcome
+//! after, and one identity transaction
 //! that re-checks the authority first (`store::grants`). **The self-change
 //! rules are refused before any record** here and checked again by the
 //! store under the exclusion: no grant whose grantee is the admin, granting
@@ -28,7 +30,7 @@ use serde::Deserialize;
 use crate::store::Store;
 use crate::store::admin::Refusal;
 use crate::store::audit::Target;
-use crate::store::grants::{ListedGrant, verbs_within_vocabulary};
+use crate::store::grants::{ListedGrant, in_scope, verbs_within_vocabulary};
 use crate::store::identity::{VOCABULARY, is_agent_id, is_grant_id, is_person_id};
 use crate::surfaces::admin::{
     NOT_AN_ADMIN, admin_session, audited, fault, landed, refused, writer,
@@ -213,6 +215,18 @@ async fn grant(store: Store, policy: &Policy, headers: HeaderMap, ask: GrantAsk)
         agent if is_agent_id(agent) => Some(agent),
         _ => return malformed("agent"),
     };
+    // **The role is named by the store before any record**, and its scope
+    // checked against the agent's presence, as every name or identity a
+    // request refers to is resolved before the records begin.
+    match store.role(&ask.role).await {
+        Ok(Some(role)) => {
+            if let Err(refusal) = in_scope(&role.name, &role.scope, agent) {
+                return refused(&refusal);
+            }
+        }
+        Ok(None) => return refused(&Refusal::NoSuchRole),
+        Err(e) => return fault(e),
+    }
     let grant_id = match store.mint_key("gr").await {
         Ok(id) => id,
         Err(e) => return fault(e),

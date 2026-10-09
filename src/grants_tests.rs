@@ -643,9 +643,11 @@ async fn a_write_whose_admin_grant_was_revoked_is_refused() {
     );
 }
 
-/// **A malformed identity, an unknown role, the admin role, or a verb
-/// outside the vocabulary is refused before any record**: each answers as
-/// the ask's fault and no audit row is written.
+/// **Every name or identity an ask refers to is resolved before any
+/// record**: a malformed identity, an unknown role at a grant or a role's
+/// edit, a role whose scope disagrees with the agent named or not, the
+/// admin role's edit, or a verb outside the vocabulary each answers as the
+/// ask's fault, and no audit row is written.
 #[tokio::test]
 async fn a_malformed_ask_is_refused_before_any_record() {
     let Some(fresh) = fresh_store().await else {
@@ -660,6 +662,21 @@ async fn a_malformed_ask_is_refused_before_any_record() {
     let r = role_version(s, "operator").await;
     let before = rows(s, "SELECT count(*) FROM audit").await;
     let cases = [
+        (
+            "/admin/grants/grant",
+            form(&[("person", &bea), ("role", "watcher"), ("agent", &k)]),
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            "/admin/grants/grant",
+            form(&[("person", &bea), ("role", "observer"), ("agent", "")]),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "/admin/grants/grant",
+            form(&[("person", &bea), ("role", "admin"), ("agent", &k)]),
+            StatusCode::BAD_REQUEST,
+        ),
         (
             "/admin/grants/grant",
             form(&[("person", "bea"), ("role", "observer"), ("agent", &k)]),

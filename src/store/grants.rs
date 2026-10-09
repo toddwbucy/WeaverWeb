@@ -58,6 +58,21 @@ pub fn verbs_within_vocabulary(verbs: &[String]) -> Result<Vec<String>, Refusal>
     Ok(set)
 }
 
+/// **A role and an agent that agree**: `admin` server-wide and naming no
+/// agent, every other role on one agent. The surface checks it before any
+/// record and the store again in its transaction.
+pub fn in_scope(role: &str, scope: &str, agent: Option<&str>) -> Result<(), Refusal> {
+    match (scope, agent) {
+        ("server", Some(_)) => Err(Refusal::Scope(format!(
+            "{role} is server-wide and names no agent"
+        ))),
+        ("agent", None) => Err(Refusal::Scope(format!(
+            "{role} is a role on an agent; name the agent"
+        ))),
+        _ => Ok(()),
+    }
+}
+
 impl Store {
     /// **Every live grant**, by person name, role and agent.
     pub async fn listed_grants(&self) -> anyhow::Result<Vec<ListedGrant>> {
@@ -156,18 +171,8 @@ impl Store {
         let Some(scope) = scope else {
             return Ok(Err(Refusal::NoSuchRole));
         };
-        match (scope.as_str(), agent) {
-            ("server", Some(_)) => {
-                return Ok(Err(Refusal::Scope(format!(
-                    "{role} is server-wide and names no agent"
-                ))));
-            }
-            ("agent", None) => {
-                return Ok(Err(Refusal::Scope(format!(
-                    "{role} is a role on an agent; name the agent"
-                ))));
-            }
-            _ => {}
+        if let Err(refusal) = in_scope(role, &scope, agent) {
+            return Ok(Err(refusal));
         }
         let person_stands: bool =
             sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM person WHERE person_id = $1)")

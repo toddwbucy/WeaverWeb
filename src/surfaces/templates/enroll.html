@@ -1,0 +1,24 @@
+{% extends "instrument.html" %}
+{% block title %}enroll - weaver-web{% endblock %}
+{% block mainclass %}listing{% endblock %}
+{% block body %}
+{#- The token is pasted, never carried in a URL, so it lands in no log and
+    no history: the input has no name and the form's method is POST, so a
+    submit without the module carries nothing, and the module sends the
+    token to the ceremony's endpoint. No inline script. -#}
+<header class="listing-head">
+  <h1>Enroll a passkey</h1>
+  <p class="destination">Paste the enrollment token you were given, then answer your authenticator.</p>
+</header>
+{% if configured %}
+<form id="enroll" method="post" autocomplete="off">
+  <label for="token">Enrollment token</label>
+  <input id="token" type="password" required spellcheck="false">
+  <button type="submit">Enroll</button>
+</form>
+<p id="status" role="status"></p>
+<script type="module" src="/assets/surfaces/passkeys.js"></script>
+{% else %}
+<p>Passkeys are not configured on this server: it has no relying party's identity and origin.</p>
+{% endif %}
+{% endblock %}

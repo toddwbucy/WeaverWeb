@@ -429,7 +429,14 @@ async fn serve(cfg: Arc<ServerConfig>) -> anyhow::Result<()> {
     // and nothing else. They carry their own state rather than the
     // legacy admin `AppState`, keeping record reads independent of the link.
     let policy = weaver_web::surfaces::gate::Policy::from_config(&cfg);
-    let instrument = weaver_web::surfaces::routes(policy.clone()).with_state(store.clone());
+    // **Enrollment by token** where passkeys are on (design section 7): the
+    // relying party from `rp_id` and `origin`, checked above.
+    let passkeys = weaver_web::passkeys::Passkeys::from_config(&cfg)?;
+    let instrument = weaver_web::surfaces::routes(policy.clone())
+        .merge(weaver_web::surfaces::script_policy(
+            weaver_web::surfaces::enroll::routes(passkeys),
+        ))
+        .with_state(store.clone());
 
     // The legacy admin routes answer 503 and reach no agent; their trace
     // views are the listener's live window, so the one ring per agent is

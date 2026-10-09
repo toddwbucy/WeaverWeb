@@ -660,3 +660,98 @@ fn cfg() -> crate::config::ServerConfig {
         session_absolute_secs: 43200,
     }
 }
+
+/// **The passkey that earned a grant must still stand when the addition
+/// lands**: the session stands throughout, opened with the first passkey,
+/// while the grant is earned by a second, which is removed before the
+/// registration finishes; the addition is refused as its authority gone.
+#[tokio::test]
+async fn an_addition_whose_earning_passkey_was_removed_is_refused() {
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let app = app(s, Some(passkeys()));
+    let mut key = authenticator();
+    let (person, _, session) = signed_in(&app, s, &mut key, "ada").await;
+    let mut phone = authenticator();
+    let earned = grant(&app, &mut key, &session).await;
+    add(&app, &mut phone, &earned, &session, "phone").await;
+    let phone_id: String =
+        sqlx::query_scalar("SELECT passkey_id FROM passkey WHERE label = 'phone'")
+            .fetch_one(&s.pool)
+            .await
+            .unwrap();
+
+    let earned = grant(&app, &mut phone, &session).await;
+    let (status, options) = add_options(&app, &earned, &session).await;
+    assert_eq!(status, StatusCode::OK, "{options}");
+    let (ceremony, credential) = register(&mut authenticator(), &options);
+    let (status, _, _) = send_as(
+        &app,
+        "POST",
+        "/passkeys/remove",
+        None,
+        Some(format!("passkey={phone_id}")),
+        &session,
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "the earning passkey removed");
+    let (status, _, answer) = send_as(
+        &app,
+        "POST",
+        "/passkeys/add/finish",
+        Some(json!({ "ceremony": ceremony, "credential": credential, "label": "laptop" })),
+        None,
+        &session,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{answer}");
+    assert_eq!(
+        count(
+            s,
+            "SELECT count(*) FROM passkey WHERE person_id = $1",
+            &person
+        )
+        .await,
+        1,
+        "the addition landed on a removed passkey's grant"
+    );
+}
+
+/// **A removal re-checks its session inside its own transaction**: asked
+/// under a session that no longer stands, it is refused as its authority
+/// gone and removes nothing.
+#[tokio::test]
+async fn a_removal_under_a_session_that_no_longer_stands_removes_nothing() {
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let app = app(s, Some(passkeys()));
+    let mut key = authenticator();
+    let (person, credential, session) = signed_in(&app, s, &mut key, "ada").await;
+    let earned = grant(&app, &mut key, &session).await;
+    add(&app, &mut authenticator(), &earned, &session, "phone").await;
+    let session_id = session_id_of(s, &session).await;
+    sqlx::query("UPDATE session SET closed_at = now() WHERE session_id = $1")
+        .bind(session_id)
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    let removed = s
+        .remove_passkey(&person, session_id, &passkey_of(s, &credential).await)
+        .await
+        .unwrap();
+    assert_eq!(removed, Removed::AuthorityGone);
+    assert_eq!(
+        count(
+            s,
+            "SELECT count(*) FROM passkey WHERE person_id = $1",
+            &person
+        )
+        .await,
+        2,
+        "nothing removed"
+    );
+}

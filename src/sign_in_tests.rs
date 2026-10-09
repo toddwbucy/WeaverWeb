@@ -24,7 +24,7 @@ use crate::store::read::tests::fresh_store;
 
 /// A person enrolled through the token's redemption with this
 /// authenticator: their identity and the passkey's credential ID.
-async fn enrolled(
+pub(crate) async fn enrolled(
     app: &axum::Router,
     s: &Store,
     authenticator: &mut WebauthnAuthenticator<SoftPasskey>,
@@ -52,7 +52,7 @@ async fn enrolled(
 
 /// The authenticator's answer to the sign-in options the server gave: the
 /// ceremony's identity and the assertion, as the browser module sends it.
-fn assert_with(
+pub(crate) fn assert_with(
     authenticator: &mut WebauthnAuthenticator<SoftPasskey>,
     options: &str,
 ) -> (String, Value) {
@@ -69,7 +69,7 @@ fn assert_with(
 }
 
 /// A whole sign-in: the options for `name`, the assertion, the finish.
-async fn sign_in(
+pub(crate) async fn sign_in(
     app: &axum::Router,
     authenticator: &mut WebauthnAuthenticator<SoftPasskey>,
     name: &str,
@@ -92,7 +92,7 @@ async fn sign_in(
     .await
 }
 
-fn bearer(headers: &HeaderMap) -> String {
+pub(crate) fn bearer(headers: &HeaderMap) -> String {
     let cookie = headers.get(header::SET_COOKIE).unwrap().to_str().unwrap();
     cookie
         .strip_prefix("__Host-weaver_session=")
@@ -104,7 +104,7 @@ fn bearer(headers: &HeaderMap) -> String {
 }
 
 /// The stored passkey of a credential, as the library holds it.
-async fn stored(s: &Store, credential_id: &str) -> Credential {
+pub(crate) async fn stored(s: &Store, credential_id: &str) -> Credential {
     let value: Value =
         sqlx::query_scalar("SELECT credential FROM passkey WHERE credential_id = $1")
             .bind(credential_id)
@@ -115,7 +115,7 @@ async fn stored(s: &Store, credential_id: &str) -> Credential {
 }
 
 /// The stored passkey of a credential, changed by `change` and written back.
-async fn restore(s: &Store, credential_id: &str, change: impl FnOnce(&mut Credential)) {
+pub(crate) async fn restore(s: &Store, credential_id: &str, change: impl FnOnce(&mut Credential)) {
     let mut credential = stored(s, credential_id).await;
     change(&mut credential);
     sqlx::query("UPDATE passkey SET credential = $2 WHERE credential_id = $1")
@@ -136,7 +136,7 @@ type AuditRow = (
 );
 
 /// The passkey's own identity, by its credential ID.
-async fn passkey_of(s: &Store, credential_id: &str) -> String {
+pub(crate) async fn passkey_of(s: &Store, credential_id: &str) -> String {
     sqlx::query_scalar("SELECT passkey_id FROM passkey WHERE credential_id = $1")
         .bind(credential_id)
         .fetch_one(&s.pool)
@@ -144,7 +144,7 @@ async fn passkey_of(s: &Store, credential_id: &str) -> String {
         .unwrap()
 }
 
-async fn rows(s: &Store, query: &str) -> i64 {
+pub(crate) async fn rows(s: &Store, query: &str) -> i64 {
     sqlx::query_scalar(sqlx::AssertSqlSafe(query.to_owned()))
         .fetch_one(&s.pool)
         .await
@@ -716,7 +716,7 @@ async fn a_person_disabled_during_sign_in_gets_no_session() {
 }
 
 /// Each of a person's passkeys removed, as the host reset removes them.
-async fn reset(s: &Store, person: &str) {
+pub(crate) async fn reset(s: &Store, person: &str) {
     sqlx::query("DELETE FROM passkey WHERE person_id = $1")
         .bind(person)
         .execute(&s.pool)

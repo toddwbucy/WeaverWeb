@@ -48,6 +48,26 @@ pub enum Ceremony {
         person_id: String,
         challenged: HashMap<String, String>,
     },
+    /// **The fresh assertion before adding a passkey** (design section 7):
+    /// an authentication ceremony for the session's person, recording the
+    /// challenged passkeys as sign-in does, bound to the session that asked.
+    AddAssertion {
+        state: PasskeyAuthentication,
+        person_id: String,
+        session_id: i64,
+        challenged: HashMap<String, String>,
+    },
+    /// **The one-time add grant** a verified fresh assertion yields: bound
+    /// to that session and that person, expiring with the ceremony window
+    /// and counting toward the cap like any ceremony, and consumed by the
+    /// registration that starts with it.
+    AddGrant { person_id: String, session_id: i64 },
+    /// **The registration the grant started**, bound to the same session.
+    AddRegistration {
+        state: PasskeyRegistration,
+        person_id: String,
+        session_id: i64,
+    },
 }
 
 /// The table is full: a ceremony is refused until one finishes or expires.

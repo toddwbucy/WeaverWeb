@@ -13,6 +13,8 @@ pub mod fault;
 pub mod host;
 #[cfg(test)]
 mod host_tests;
+#[cfg(all(test, feature = "passkeys"))]
+mod keys_tests;
 pub mod link;
 pub mod listen;
 #[cfg(test)]

@@ -180,7 +180,11 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
   `webauthn-authenticator-rs`'s soft passkey, a dev-dependency. `GET /enroll` is the page where a
   person pastes their enrollment token to register their first passkey (`surfaces::enroll`,
   `src/passkeys.rs` for the ceremony table: 64 in flight, five minutes, used once); it opens no
-  session. `GET /sign-in` is the sign-in page; Record links to it without a session. The
+  session. `GET /sign-in` is the sign-in page; Record links to it without a session.
+  `GET /passkeys` (`surfaces::keys`) is a signed-in person's own passkeys: adding one is a
+  fresh assertion whose verified answer is a one-time grant (in the ceremony table, bound to
+  the session and person), spent by the registration that starts with it; removing one is
+  never of the last, counted under the identity exclusion. The
   library's `danger-credential-internals` feature is on for typed read access to a stored
   passkey's counter. The surfaces answer `Content-Security-Policy: script-src 'self'`, so no inline script
   and no `hx-on`.

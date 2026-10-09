@@ -39,10 +39,14 @@ pub enum PersonMethod {
     /// An enrollment token, which authenticates its person for the one
     /// write it is redeemed for and nothing else.
     EnrollmentToken,
-    /// A passkey assertion the library verified: a sign-in, and an
-    /// assertion whose counter the rule refused, the signature having
-    /// proved its person.
+    /// A passkey assertion the library verified: a sign-in, the fresh
+    /// assertion before a passkey's addition and the addition it
+    /// authorizes, and an assertion whose counter the rule refused, the
+    /// signature having proved its person.
     PasskeyAssertion,
+    /// A live session: what a signed-in person does with it, removing one
+    /// of their passkeys among them.
+    Session,
 }
 
 impl Principal<'_> {
@@ -64,6 +68,10 @@ impl Principal<'_> {
                 method: PersonMethod::PasskeyAssertion,
                 ..
             } => "passkey assertion",
+            Principal::Person {
+                method: PersonMethod::Session,
+                ..
+            } => "session",
         }
     }
 

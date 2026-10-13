@@ -113,8 +113,12 @@ pub(crate) async fn with_landed_outcome(
     store: &Store,
     first: String,
     mut answer: Answer,
+    unknown: bool,
 ) -> Answer {
+    // **An unknown outcome is left unwritten**, so a later read of the
+    // audit can still settle the act (`store::commit`).
     if !answer.ok
+        && !unknown
         && let Err(e) = store.audit_outcome(&first, false).await
     {
         answer.value["audit_outcome"] =
@@ -1300,10 +1304,11 @@ pub async fn revoke(store: &Store, spec: &str, plane: Plane, author: Option<&str
         Ok(first) => first,
         Err(refusal) => return refusal,
     };
-    let answer = match store
+    let revoked = store
         .revoke_credential_recorded(&agent, plane, author, &first)
-        .await
-    {
+        .await;
+    let unknown = crate::store::commit::outcome_unknown(&revoked);
+    let answer = match revoked {
         Ok(fingerprint) => Answer {
             value: json!({
                 "verb": "revoke",
@@ -1316,7 +1321,7 @@ pub async fn revoke(store: &Store, spec: &str, plane: Plane, author: Option<&str
         },
         Err(e) => refused("revoke", format!("{e:#}")),
     };
-    with_landed_outcome(store, first, answer).await
+    with_landed_outcome(store, first, answer, unknown).await
 }
 
 /// `rotate <agent> --out <path>`: a fresh pair, the old pair revoked, new

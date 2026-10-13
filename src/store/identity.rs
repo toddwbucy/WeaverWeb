@@ -20,7 +20,9 @@ use sqlx::{Postgres, Row, Transaction};
 use unicode_normalization::UnicodeNormalization;
 
 /// The identity exclusion's advisory key, beside the listener's and the
-/// authority's: one key for every identity write in the store.
+/// authority's: one key for every identity write in the store. The
+/// per-act outcome locks take the two-key form under their own class
+/// (`store::commit::OUTCOME_LOCK_CLASS`), a keyspace apart from these.
 pub const IDENTITY_LOCK_KEY: i64 = i64::from_be_bytes(*b"weaverid");
 
 /// **A role's verbs are drawn from this vocabulary alone**: the verbs a box

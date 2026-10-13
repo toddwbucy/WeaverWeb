@@ -551,6 +551,7 @@ async fn add_finish(
     // An addition that landed wrote its `ok` outcome in its own
     // transaction (`store::commit`); one that did not is recorded here.
     if !matches!(added, Ok(Added::Inserted))
+        && !crate::store::commit::outcome_unknown(&added)
         && let Err(e) = store.audit_outcome(&first, false).await
     {
         tracing::error!("the addition's outcome record {first} was not written: {e:#}");
@@ -602,6 +603,7 @@ async fn remove(store: Store, policy: &Policy, headers: HeaderMap, ask: RemoveAs
     // A removal that landed wrote its `ok` outcome in its own transaction
     // (`store::commit`); one that did not is recorded here.
     if !matches!(removed, Ok(Removed::Removed))
+        && !crate::store::commit::outcome_unknown(&removed)
         && let Err(e) = store.audit_outcome(&first, false).await
     {
         tracing::error!("the removal's outcome record {first} was not written: {e:#}");

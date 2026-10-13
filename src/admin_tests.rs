@@ -951,3 +951,130 @@ async fn a_disable_whose_answer_is_lost_lands_though_another_admin_edits_first()
         0
     );
 }
+
+/// A COMMIT of `person disable` slowed by `secs` in this test's own
+/// database: a deferred constraint trigger on its `ok` outcome sleeps at
+/// commit time, while the act's locks are still held.
+async fn slow_the_disables_commit(s: &Store, secs: f64) {
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "CREATE FUNCTION slow_commit() RETURNS trigger LANGUAGE plpgsql AS \
+         $$ BEGIN PERFORM pg_sleep({secs}); RETURN NULL; END $$"
+    )))
+    .execute(&s.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE CONSTRAINT TRIGGER slow_commit AFTER INSERT ON audit \
+         DEFERRABLE INITIALLY DEFERRED FOR EACH ROW \
+         WHEN (NEW.action = 'person disable' AND NEW.outcome = 'ok') \
+         EXECUTE FUNCTION slow_commit()",
+    )
+    .execute(&s.pool)
+    .await
+    .unwrap();
+}
+
+/// **A lost answer's read-back waits for the original transaction to
+/// end** (Spec 2.13): the disable's COMMIT is sent and the server gives up
+/// on its answer while the backend is still committing; the read-back takes
+/// the act's own lock, waits for the commit to complete, and finds the `ok`
+/// outcome, where an immediate read would have found none.
+#[tokio::test]
+async fn a_lost_answers_read_back_waits_for_its_transaction_to_end() {
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let app = app(s, Some(passkeys()));
+    let (ada, session) = admin(&app, s, &mut authenticator(), "ada").await;
+    let (bea, _) = person_with_token(s, "bea").await;
+    slow_the_disables_commit(s, 1.0).await;
+    let v = version(s, &bea).await;
+
+    crate::store::commit::GIVE_UP_ON_COMMIT
+        .with(|g| g.set(Some(("person disable", Duration::from_millis(200)))));
+    let (status, _, answer) = send_as(
+        &app,
+        "POST",
+        "/admin/persons/disable",
+        Some(form(&[("person", &bea), ("version", &v)])),
+        &session,
+    )
+    .await;
+    assert!(
+        crate::store::commit::GIVE_UP_ON_COMMIT.with(|g| g.get().is_none()),
+        "the answer was given up"
+    );
+    assert_eq!(status, StatusCode::SEE_OTHER, "{answer}");
+    assert!(!enabled(s, &bea).await);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM audit WHERE person_id = $1 AND action = 'person disable' \
+             AND outcome = 'ok'"
+        )
+        .bind(&ada)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        rows(s, "SELECT count(*) FROM audit WHERE outcome = 'failed'").await,
+        0
+    );
+}
+
+/// **Past the read-back's bound, the outcome is unknown and left
+/// unwritten**: the commit outlasts the bound, the write answers the
+/// server's failure with no outcome written, and once the commit completes
+/// its own `ok` outcome stands, settling the act.
+#[tokio::test]
+async fn past_the_read_backs_bound_the_outcome_is_left_unwritten() {
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let app = app(s, Some(passkeys()));
+    let (ada, session) = admin(&app, s, &mut authenticator(), "ada").await;
+    let (bea, _) = person_with_token(s, "bea").await;
+    slow_the_disables_commit(s, 1.5).await;
+    let v = version(s, &bea).await;
+
+    crate::store::commit::GIVE_UP_ON_COMMIT
+        .with(|g| g.set(Some(("person disable", Duration::from_millis(100)))));
+    crate::store::commit::READ_BACK_BOUND_FOR_TEST
+        .with(|b| b.set(Some(Duration::from_millis(200))));
+    let (status, _, _) = send_as(
+        &app,
+        "POST",
+        "/admin/persons/disable",
+        Some(form(&[("person", &bea), ("version", &v)])),
+        &session,
+    )
+    .await;
+    crate::store::commit::READ_BACK_BOUND_FOR_TEST.with(|b| b.set(None));
+    assert_eq!(
+        status,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "unknown: the server's failure"
+    );
+    let outcomes = || async {
+        sqlx::query_as::<_, (i64, i64)>(
+            "SELECT count(*) FILTER (WHERE outcome = 'ok'), \
+             count(*) FILTER (WHERE outcome = 'failed') FROM audit \
+             WHERE person_id = $1 AND action = 'person disable'",
+        )
+        .bind(&ada)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap()
+    };
+    assert_eq!(outcomes().await.1, 0, "no failed outcome written");
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    assert_eq!(
+        outcomes().await,
+        (1, 0),
+        "the commit landed and its outcome settles it"
+    );
+    assert!(!enabled(s, &bea).await);
+}

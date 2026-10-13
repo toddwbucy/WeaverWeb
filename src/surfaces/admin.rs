@@ -220,6 +220,11 @@ pub(crate) async fn settled<T>(
     if matches!(written, Ok(Ok(_))) {
         return;
     }
+    // **An unknown outcome is left unwritten**, so a later read of the
+    // audit can still settle the act (`store::commit`).
+    if matches!(written, Err(e) if e.is::<crate::store::commit::OutcomeUnknown>()) {
+        return;
+    }
     if let Err(e) = store.audit_outcome(first, false).await {
         tracing::error!("the outcome record of {first} was not written: {e:#}");
     }

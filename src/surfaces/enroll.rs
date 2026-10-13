@@ -213,6 +213,7 @@ async fn finish(store: Store, passkeys: &Passkeys, ask: FinishAsk) -> Response {
     // A redemption that landed wrote its `ok` outcome in its own
     // transaction (`store::commit`); one that did not is recorded here.
     if !matches!(redeemed, Ok(Redeemed::Enrolled))
+        && !crate::store::commit::outcome_unknown(&redeemed)
         && let Err(e) = store.audit_outcome(&first, false).await
     {
         tracing::error!("the enrollment's outcome record {first} was not written: {e:#}");

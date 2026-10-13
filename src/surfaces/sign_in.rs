@@ -285,6 +285,7 @@ async fn finish(store: Store, passkeys: &Passkeys, ask: FinishAsk) -> Response {
     // An opening that landed wrote its `ok` outcome in its own
     // transaction (`store::commit`); one that did not is recorded here.
     if !matches!(opened, Ok(Some(_)))
+        && !crate::store::commit::outcome_unknown(&opened)
         && let Err(e) = store.audit_outcome(&first, false).await
     {
         tracing::error!("the session's opening outcome record {first} was not written: {e:#}");

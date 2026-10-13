@@ -94,6 +94,7 @@ pub async fn bootstrap(
         anyhow::Ok(token)
     }
     .await;
+    let unknown = crate::store::commit::outcome_unknown(&answer);
     let answer = match answer {
         Ok(token) => {
             let mut value = json!({
@@ -107,7 +108,7 @@ pub async fn bootstrap(
         }
         Err(e) => refused(VERB, format!("{e:#}")),
     };
-    with_landed_outcome(store, first, answer).await
+    with_landed_outcome(store, first, answer, unknown).await
 }
 
 /// `person token <person>`: **an enrollment token for a person holding no
@@ -154,6 +155,7 @@ pub async fn token(
         anyhow::Ok(token)
     }
     .await;
+    let unknown = crate::store::commit::outcome_unknown(&answer);
     let answer = match answer {
         Ok(token) => {
             let mut value = json!({ "verb": VERB, "ok": true, "person": person.person_id });
@@ -165,7 +167,7 @@ pub async fn token(
         }
         Err(e) => refused(VERB, format!("{e:#}")),
     };
-    with_landed_outcome(store, first, answer).await
+    with_landed_outcome(store, first, answer, unknown).await
 }
 
 /// `person reset <person>`: **the person's passkeys cleared and a token
@@ -200,6 +202,7 @@ pub async fn reset(
         anyhow::Ok((cleared, token))
     }
     .await;
+    let unknown = crate::store::commit::outcome_unknown(&answer);
     let answer = match answer {
         Ok((cleared, token)) => {
             let mut value = json!({
@@ -213,7 +216,7 @@ pub async fn reset(
         }
         Err(e) => refused(VERB, format!("{e:#}")),
     };
-    with_landed_outcome(store, first, answer).await
+    with_landed_outcome(store, first, answer, unknown).await
 }
 
 /// The role and agent a grant names, checked against each other: `admin`
@@ -305,6 +308,7 @@ pub async fn grant_add(
         anyhow::Ok(())
     }
     .await;
+    let unknown = crate::store::commit::outcome_unknown(&answer);
     let answer = match answer {
         Ok(()) => Answer {
             value: json!({
@@ -315,7 +319,7 @@ pub async fn grant_add(
         },
         Err(e) => refused(VERB, format!("{e:#}")),
     };
-    with_landed_outcome(store, first, answer).await
+    with_landed_outcome(store, first, answer, unknown).await
 }
 
 // A test's hold on `grant remove` of one named grant, between the
@@ -402,6 +406,7 @@ pub async fn grant_remove(
         anyhow::Ok(())
     }
     .await;
+    let unknown = crate::store::commit::outcome_unknown(&answer);
     let answer = match answer {
         Ok(()) => Answer {
             value: json!({ "verb": VERB, "ok": true, "grant": grant_id, "person": person.person_id }),
@@ -409,7 +414,7 @@ pub async fn grant_remove(
         },
         Err(e) => refused(VERB, format!("{e:#}")),
     };
-    with_landed_outcome(store, first, answer).await
+    with_landed_outcome(store, first, answer, unknown).await
 }
 
 // A test's hold on `role set`, after the role's version is read and before
@@ -479,6 +484,7 @@ pub async fn role_set(store: &Store, role: &str, verbs: &[String], author: Optio
         anyhow::Ok(())
     }
     .await;
+    let unknown = crate::store::commit::outcome_unknown(&answer);
     let answer = match answer {
         Ok(()) => Answer {
             value: json!({ "verb": VERB, "ok": true, "role": role, "verbs": set }),
@@ -486,5 +492,5 @@ pub async fn role_set(store: &Store, role: &str, verbs: &[String], author: Optio
         },
         Err(e) => refused(VERB, format!("{e:#}")),
     };
-    with_landed_outcome(store, first, answer).await
+    with_landed_outcome(store, first, answer, unknown).await
 }

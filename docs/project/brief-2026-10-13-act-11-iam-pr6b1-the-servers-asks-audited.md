@@ -45,7 +45,9 @@ Backend first, as ruled: 6b1 adds no page.
    passes closes the connection as the failed write would.
 3. **The outcome when the answer lands**, naming the first: `ok` where admin answered a
    `lifecycle-answer`, `failed` where it answered a `lifecycle-refusal` or admin-con
-   answered a `VerbFault`. Read the contract's two shapes (WeaverAgent's
+   answered a `VerbFault` of a verb that never ran (`busy`, `not_started`,
+   `outside_ceiling`). A `VerbFault` of `unknown` or `fault` leaves the act unknown and
+   writes no outcome, the first standing alone. Read the contract's two shapes (WeaverAgent's
    `weaver-admin-operator-contract`) for what tells them apart and say in the PR body
    which field decides. **A connection that ends with the frame in flight writes no
    outcome**: the first stands alone, which is the audit's "unknown", and the trace and
@@ -78,7 +80,8 @@ Pre-review against these before telling me the draft is up:
 
 - An admission with `show` in the ceiling writes the first record (server, server, agent,
   `show`) and, on the fake connector's answer, an `ok` outcome naming it; a refusal answer
-  writes `failed`; a fault answer writes `failed`.
+  writes `failed`; a fault of a verb that never ran writes `failed`, and an `unknown`
+  fault writes none.
 - A ceiling without `show`: no frame, no record.
 - The door's re-opening `show`: its own first record and outcome.
 - The first record refused (the existing `FAIL_FIRST_RECORD` fault): no `show` frame

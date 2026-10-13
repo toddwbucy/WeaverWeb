@@ -16,6 +16,7 @@
 use sqlx::{Postgres, Transaction};
 
 use crate::store::Store;
+use crate::store::commit::commit_with_outcome;
 use crate::store::identity::{self, IssuedToken, Supersedes, session_stands};
 
 /// **Why an admin's write was refused.** Nothing was written.
@@ -67,6 +68,8 @@ pub enum Refusal {
     Retired,
     /// The hand-over holds as many client configs as it may.
     HandoverFull,
+    /// The plane's credential is revoked already.
+    PlaneRevoked,
 }
 
 impl std::fmt::Display for Refusal {
@@ -114,6 +117,7 @@ impl std::fmt::Display for Refusal {
                 "the admin role is fixed by the store and carries no agent verb; nothing writes it"
             ),
             Refusal::Authority(why) => write!(f, "{why}"),
+            Refusal::PlaneRevoked => write!(f, "that plane's credential is revoked already"),
             Refusal::Retired => write!(
                 f,
                 "that agent's row holds no live credential; register the agent again rather than rotating it"
@@ -221,6 +225,7 @@ impl Store {
         &self,
         admin: &str,
         session_id: i64,
+        first: &str,
         person_id: &str,
         name: &str,
         hours: u32,
@@ -238,7 +243,7 @@ impl Store {
         }
         identity::insert_person(&mut tx, person_id, &name, Some(admin)).await?;
         let token = identity::issue_token(&mut tx, person_id, hours, Supersedes::Issue).await?;
-        tx.commit().await?;
+        commit_with_outcome(tx, "person enroll", self, first).await?;
         Ok(Ok(token))
     }
 
@@ -248,6 +253,7 @@ impl Store {
         &self,
         admin: &str,
         session_id: i64,
+        first: &str,
         person: &str,
         hours: u32,
     ) -> anyhow::Result<Result<(IssuedToken, String), Refusal>> {
@@ -267,7 +273,7 @@ impl Store {
             return Ok(Err(Refusal::HoldsPasskey));
         }
         let token = identity::issue_token(&mut tx, person, hours, Supersedes::Issue).await?;
-        tx.commit().await?;
+        commit_with_outcome(tx, "person token", self, first).await?;
         Ok(Ok((token, name)))
     }
 
@@ -279,6 +285,7 @@ impl Store {
         &self,
         admin: &str,
         session_id: i64,
+        first: &str,
         person: &str,
         version: i64,
     ) -> anyhow::Result<Result<(), Refusal>> {
@@ -307,7 +314,7 @@ impl Store {
         .bind(person)
         .execute(&mut *tx)
         .await?;
-        tx.commit().await?;
+        commit_with_outcome(tx, "person disable", self, first).await?;
         Ok(Ok(()))
     }
 
@@ -317,6 +324,7 @@ impl Store {
         &self,
         admin: &str,
         session_id: i64,
+        first: &str,
         person: &str,
         version: i64,
     ) -> anyhow::Result<Result<(), Refusal>> {
@@ -333,7 +341,7 @@ impl Store {
         if !set_enabled(&mut tx, person, version, true, admin).await? {
             return Ok(Err(Refusal::Stale));
         }
-        tx.commit().await?;
+        commit_with_outcome(tx, "person enable", self, first).await?;
         Ok(Ok(()))
     }
 
@@ -344,6 +352,7 @@ impl Store {
         &self,
         admin: &str,
         session_id: i64,
+        first: &str,
         person: &str,
         version: i64,
         name: &str,
@@ -384,7 +393,7 @@ impl Store {
         if moved.rows_affected() != 1 {
             return Ok(Err(Refusal::Stale));
         }
-        tx.commit().await?;
+        commit_with_outcome(tx, "person rename", self, first).await?;
         Ok(Ok(()))
     }
 }

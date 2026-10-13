@@ -337,6 +337,7 @@ pub async fn open(
     store: &Store,
     person_id: &str,
     passkey_id: &str,
+    first: &str,
 ) -> anyhow::Result<Option<String>> {
     let mut tx = store.pool.begin().await?;
     let standing: Option<i32> = sqlx::query_scalar(
@@ -358,7 +359,7 @@ pub async fn open(
         .bind(passkey_id)
         .execute(&mut *tx)
         .await?;
-    tx.commit().await?;
+    crate::store::commit::commit_with_outcome(tx, "session open", store, first).await?;
     Ok(Some(bearer))
 }
 

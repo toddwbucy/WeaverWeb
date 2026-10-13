@@ -283,8 +283,10 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
   reserved, a write reserving its two at step three), never
   in the store, a file, a log line or the audit; a restart drops them and the admin rotates.
   The server mints under the authority it loaded, so restart it after `authority rotate`.
-  The register verbs are host commands and web writes alike; `revoke` and retiring come to
-  the web in PR 5d, and `authority init`/`rotate` stay host commands. `admin_tests`,
+  `revoke` (one plane) and `retire` (every live plane in one write) take the same steps, re-read
+  the row inside their transaction and close the live connection in the act; a retired row is
+  never live again, and the grants page marks a grant on one. The register verbs are host
+  commands and web writes alike; `authority init`/`rotate` stay host commands. `admin_tests`,
   `grants_tests` and `agents_tests` run each test on a `fresh_store` (`agents_tests` with its
   own listener and an authority in a temporary directory).
 

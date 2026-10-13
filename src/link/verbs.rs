@@ -105,6 +105,29 @@ pub(crate) async fn with_outcome(store: &Store, first: String, mut answer: Answe
     answer
 }
 
+/// **The outcome of an act whose `ok` outcome committed with it**
+/// (`store::commit`): the host's identity commands and `revoke`, each one
+/// store transaction. Only an act that did not land has its `failed`
+/// outcome written here, after it.
+pub(crate) async fn with_landed_outcome(
+    store: &Store,
+    first: String,
+    mut answer: Answer,
+    unknown: bool,
+) -> Answer {
+    // **An unknown outcome is left unwritten**, so a later read of the
+    // audit can still settle the act (`store::commit`).
+    if !answer.ok
+        && !unknown
+        && let Err(e) = store.audit_outcome(&first, false).await
+    {
+        answer.value["audit_outcome"] =
+            Value::String(format!("the outcome record could not be written: {e:#}"));
+    }
+    answer.value["audit"] = Value::String(first);
+    answer
+}
+
 /// `authority init`: create the server's authority once, audited as the
 /// host's: the store is reached first, and a store that cannot be reached
 /// or cannot take the first record refuses before anything is written.
@@ -1281,7 +1304,11 @@ pub async fn revoke(store: &Store, spec: &str, plane: Plane, author: Option<&str
         Ok(first) => first,
         Err(refusal) => return refusal,
     };
-    let answer = match store.revoke_credential(&agent, plane, author).await {
+    let revoked = store
+        .revoke_credential_recorded(&agent, plane, author, &first)
+        .await;
+    let unknown = crate::store::commit::outcome_unknown(&revoked);
+    let answer = match revoked {
         Ok(fingerprint) => Answer {
             value: json!({
                 "verb": "revoke",
@@ -1294,7 +1321,7 @@ pub async fn revoke(store: &Store, spec: &str, plane: Plane, author: Option<&str
         },
         Err(e) => refused("revoke", format!("{e:#}")),
     };
-    with_outcome(store, first, answer).await
+    with_landed_outcome(store, first, answer, unknown).await
 }
 
 /// `rotate <agent> --out <path>`: a fresh pair, the old pair revoked, new
@@ -1340,7 +1367,10 @@ pub async fn rotate(
             let dir = existing.expect("a retained pair stands under an existing directory");
             // **The row whose pair is published**, which may be a
             // replacement of the agent the verb was asked by, as in
-            // `register`'s recovery.
+            // `register`'s recovery. This revives nothing: the pair is the
+            // replacement row's, already committed, so a retired row asked
+            // by its identity stays retired, the store's rotation refusing
+            // it below.
             let target = Target::Agent(row.agent_id.as_str());
             let first = match first_record(store, "rotate", author, target).await {
                 Ok(first) => first,
@@ -1392,6 +1422,16 @@ pub async fn rotate(
         .await
         {
             Ok(r) => (r, None),
+            Err(e) if e.is::<crate::link::register::Retired>() => {
+                staged.discard();
+                return refused(
+                    "rotate",
+                    format!(
+                        "{} is retired: it holds no live credential and is never live again; register the agent again, as a new row",
+                        agent.agent_id
+                    ),
+                );
+            }
             Err(e) => {
                 // A commit's outcome is unknown until it is read back, as in
                 // `register`: the row carrying the new fingerprint means the

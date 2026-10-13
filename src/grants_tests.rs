@@ -548,9 +548,15 @@ async fn the_last_enabled_admins_grant_is_never_revoked() {
             .unwrap();
     let (grant, version) = s.live_grant(&ada, "admin", None).await.unwrap().unwrap();
     assert_eq!(
-        s.admin_revoke(&ada, session_id, &grant, version)
-            .await
-            .unwrap(),
+        s.admin_revoke(
+            &ada,
+            session_id,
+            &crate::admin_tests::first(s, &ada, "grant remove").await,
+            &grant,
+            version
+        )
+        .await
+        .unwrap(),
         Err(Refusal::LastAdmin)
     );
     assert!(live(s, &grant).await);
@@ -885,4 +891,77 @@ async fn the_page_names_a_shared_conversation() {
     let (_, _, page) = send_as(&app, "GET", "/admin/grants", None, &session).await;
     assert!(note(&page, &k), "two holders of turn on karl: {page}");
     assert!(!note(&page, &j), "one on jane");
+}
+
+/// **A grant or role write whose commit's answer is lost reads back its
+/// outcome** (Spec 2.13): a grant, a role's edit and a revocation each have
+/// their commit's answer lost after PostgreSQL applied it, and each reads
+/// its `ok` outcome back, answers its success, and records its outcome `ok`.
+#[tokio::test]
+async fn a_grant_write_whose_commits_answer_is_lost_reads_back_its_outcome() {
+    use crate::store::commit::{lose_the_commits_answer, the_answer_was_lost};
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let app = app(s, Some(passkeys()));
+    let (ada, session) = admin(&app, s, &mut authenticator(), "ada").await;
+    let (bea, _) = person_with_token(s, "bea").await;
+    let k = agent(s, "karl").await;
+
+    lose_the_commits_answer("grant add");
+    let (status, answer) = post(
+        &app,
+        "/admin/grants/grant",
+        form(&[("person", &bea), ("role", "observer"), ("agent", &k)]),
+        &session,
+    )
+    .await;
+    assert!(the_answer_was_lost());
+    assert_eq!(status, StatusCode::SEE_OTHER, "{answer}");
+    let (granted, _) = s
+        .live_grant(&bea, "observer", Some(&k))
+        .await
+        .unwrap()
+        .unwrap();
+
+    let r = role_version(s, "operator").await;
+    lose_the_commits_answer("role set");
+    let (status, answer) = post(
+        &app,
+        "/admin/roles/set",
+        form(&[("role", "operator"), ("version", &r), ("verbs", "show")]),
+        &session,
+    )
+    .await;
+    assert!(the_answer_was_lost());
+    assert_eq!(status, StatusCode::SEE_OTHER, "{answer}");
+
+    let v = grant_version(s, &granted).await;
+    lose_the_commits_answer("grant remove");
+    let (status, answer) = post(
+        &app,
+        "/admin/grants/revoke",
+        form(&[("grant", &granted), ("version", &v)]),
+        &session,
+    )
+    .await;
+    assert!(the_answer_was_lost());
+    assert_eq!(status, StatusCode::SEE_OTHER, "{answer}");
+    assert!(!live(s, &granted).await);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM audit WHERE person_id = $1 AND outcome = 'ok' \
+             AND action IN ('grant add', 'role set', 'grant remove')"
+        )
+        .bind(&ada)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap(),
+        3
+    );
+    assert_eq!(
+        rows(s, "SELECT count(*) FROM audit WHERE outcome = 'failed'").await,
+        0
+    );
 }

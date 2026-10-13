@@ -138,6 +138,14 @@ thread_local! {
     pub(crate) static FAIL_REFUSAL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+/// The outcome record's one statement: its principal, target and action
+/// copied from the first it answers.
+const OUTCOME: &str = "INSERT INTO audit (principal, person_id, method, claimed_author, \
+     target_kind, target_id, action, answers, outcome) \
+     SELECT principal, person_id, method, claimed_author, target_kind, target_id, \
+     action, audit_id, $2 FROM audit WHERE audit_id = $1 AND answers IS NULL \
+     AND refusal IS NULL RETURNING audit_id";
+
 impl Store {
     /// **The first record, written before the act**, answering its
     /// identity. An act whose first record cannot be written does not act:
@@ -172,19 +180,44 @@ impl Store {
     /// action copied from the first in the one statement, so the two never
     /// disagree, and the outcome `ok` or `failed`.
     pub async fn audit_outcome(&self, first: &str, ok: bool) -> anyhow::Result<String> {
-        let id: String = sqlx::query_scalar(
-            "INSERT INTO audit (principal, person_id, method, claimed_author, target_kind, \
-             target_id, action, answers, outcome) \
-             SELECT principal, person_id, method, claimed_author, target_kind, target_id, \
-             action, audit_id, $2 FROM audit WHERE audit_id = $1 AND answers IS NULL \
-             AND refusal IS NULL RETURNING audit_id",
+        let id: String = sqlx::query_scalar(OUTCOME)
+            .bind(first)
+            .bind(if ok { "ok" } else { "failed" })
+            .fetch_optional(&self.pool)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("{first} is not a first record"))?;
+        Ok(id)
+    }
+
+    /// **The `ok` outcome, inside the act's own transaction** (Spec 2.13):
+    /// written on the act's connection before its commit, so the effect and
+    /// the outcome answering it commit together or not at all. A write
+    /// that rolls back takes this record with it, and its `failed` outcome
+    /// is written after by `audit_outcome`, the one-outcome index holding.
+    pub async fn audit_outcome_in(
+        conn: &mut sqlx::PgConnection,
+        first: &str,
+    ) -> anyhow::Result<String> {
+        let id: String = sqlx::query_scalar(OUTCOME)
+            .bind(first)
+            .bind("ok")
+            .fetch_optional(&mut *conn)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("{first} is not a first record"))?;
+        Ok(id)
+    }
+
+    /// **Whether an `ok` outcome answers `first`**: the one read-back for
+    /// every act whose `ok` outcome commits with it, where the commit's
+    /// answer was lost. The audit is append-only, so no later act can erase
+    /// what this reads.
+    pub async fn outcome_landed(&self, first: &str) -> anyhow::Result<bool> {
+        Ok(sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM audit WHERE answers = $1 AND outcome = 'ok')",
         )
         .bind(first)
-        .bind(if ok { "ok" } else { "failed" })
-        .fetch_optional(&self.pool)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("{first} is not a first record"))?;
-        Ok(id)
+        .fetch_one(&self.pool)
+        .await?)
     }
 
     /// **A refusal at the first gate, as one record**, since nothing acted.

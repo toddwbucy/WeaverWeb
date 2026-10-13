@@ -16,6 +16,7 @@ use sqlx::Row;
 
 use crate::store::Store;
 use crate::store::admin::{Refusal, authorized};
+use crate::store::commit::commit_with_outcome;
 use crate::store::identity::{self, Role, VOCABULARY};
 
 /// **A live grant as the admin page lists it**: the person by identity and
@@ -30,6 +31,9 @@ pub struct ListedGrant {
     pub agent_id: Option<String>,
     /// The agent as `box/name`.
     pub agent: Option<String>,
+    /// Whether the agent is retired, holding no live credential: its grant
+    /// stands, the row never being live again, for an admin to revoke.
+    pub agent_retired: bool,
     pub version: i64,
 }
 
@@ -78,7 +82,9 @@ impl Store {
     pub async fn listed_grants(&self) -> anyhow::Result<Vec<ListedGrant>> {
         let rows = sqlx::query(
             "SELECT g.grant_id, g.person_id, p.name, g.role, g.agent_id, \
-             a.box || '/' || a.name AS agent, g.version \
+             a.box || '/' || a.name AS agent, g.version, \
+             (a.agent_id IS NOT NULL AND a.gate_state <> 'live' AND a.admin_state <> 'live') \
+               AS agent_retired \
              FROM role_grant g JOIN person p ON p.person_id = g.person_id \
              LEFT JOIN agent a ON a.agent_id = g.agent_id \
              WHERE g.revoked_at IS NULL ORDER BY p.name_key, g.role, agent",
@@ -94,6 +100,7 @@ impl Store {
                 role: r.get("role"),
                 agent_id: r.get("agent_id"),
                 agent: r.get("agent"),
+                agent_retired: r.get("agent_retired"),
                 version: r.get("version"),
             })
             .collect())
@@ -148,10 +155,14 @@ impl Store {
     /// **A role granted by an admin**: a person, a role, and an agent of
     /// the register or none for `admin`, never the admin themselves, one
     /// live grant per person, role and agent.
+    // The admin, the session and the first record that authorize it, and
+    // the grant's four members: each one an argument the one insert takes.
+    #[allow(clippy::too_many_arguments)]
     pub async fn admin_grant(
         &self,
         admin: &str,
         session_id: i64,
+        first: &str,
         grant_id: &str,
         person: &str,
         role: &str,
@@ -205,7 +216,7 @@ impl Store {
             return Ok(Err(Refusal::Held));
         }
         identity::insert_grant(&mut tx, grant_id, person, role, agent, Some(admin)).await?;
-        tx.commit().await?;
+        commit_with_outcome(tx, "grant add", self, first).await?;
         Ok(Ok(()))
     }
 
@@ -215,6 +226,7 @@ impl Store {
         &self,
         admin: &str,
         session_id: i64,
+        first: &str,
         grant: &str,
         version: i64,
     ) -> anyhow::Result<Result<(), Refusal>> {
@@ -243,7 +255,7 @@ impl Store {
         if !identity::revoke_grant(&mut tx, grant, Some(admin), version).await? {
             return Ok(Err(Refusal::Stale));
         }
-        tx.commit().await?;
+        commit_with_outcome(tx, "grant remove", self, first).await?;
         Ok(Ok(()))
     }
 
@@ -254,6 +266,7 @@ impl Store {
         &self,
         admin: &str,
         session_id: i64,
+        first: &str,
         role: &str,
         verbs: &[String],
         version: i64,
@@ -288,7 +301,7 @@ impl Store {
         if !identity::set_role_verbs(&mut tx, role, &verbs, Some(admin), version).await? {
             return Ok(Err(Refusal::Stale));
         }
-        tx.commit().await?;
+        commit_with_outcome(tx, "role set", self, first).await?;
         Ok(Ok(()))
     }
 }

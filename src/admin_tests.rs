@@ -21,6 +21,7 @@ use crate::passkeys_tests::{ORIGIN, app, authenticator, passkeys, person_with_to
 use crate::sign_in_tests::{bearer, enrolled, rows, sign_in};
 use crate::store::Store;
 use crate::store::admin::{INSIDE_HOLD, Refusal};
+use crate::store::commit::{lose_the_commits_answer, the_answer_was_lost};
 use crate::store::identity;
 use crate::store::read::tests::fresh_store;
 use crate::surfaces::admin::READ_HOLD;
@@ -597,7 +598,15 @@ async fn the_last_enabled_admin_is_never_disabled() {
             .unwrap();
     let v: i64 = version(s, &ada).await.parse().unwrap();
     assert_eq!(
-        s.admin_disable(&ada, session_id, &ada, v).await.unwrap(),
+        s.admin_disable(
+            &ada,
+            session_id,
+            &first(s, &ada, "person disable").await,
+            &ada,
+            v
+        )
+        .await
+        .unwrap(),
         Err(Refusal::LastAdmin)
     );
     assert!(enabled(s, &ada).await);
@@ -780,4 +789,292 @@ async fn a_malformed_identity_is_refused_before_any_record() {
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{answer}");
+}
+
+/// **A person write whose commit's answer is lost reads back its outcome**
+/// (Spec 2.13): for each of the five, the answer of the commit is lost
+/// after PostgreSQL applied it, and the write reads back its own `ok` outcome, which committed with it, answers
+/// its success, and records its outcome `ok`.
+#[tokio::test]
+async fn a_person_write_whose_commits_answer_is_lost_reads_back_its_outcome() {
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let app = app(s, Some(passkeys()));
+    let (ada, session) = admin(&app, s, &mut authenticator(), "ada").await;
+    let (bea, _) = person_with_token(s, "bea").await;
+
+    lose_the_commits_answer("person enroll");
+    let (status, _, page) = send_as(
+        &app,
+        "POST",
+        "/admin/persons/enroll",
+        Some(form(&[("name", "cara")])),
+        &session,
+    )
+    .await;
+    assert!(the_answer_was_lost());
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let cara = s.person("cara").await.unwrap().unwrap().person_id;
+
+    lose_the_commits_answer("person token");
+    let (status, _, page) = send_as(
+        &app,
+        "POST",
+        "/admin/persons/token",
+        Some(form(&[("person", &cara)])),
+        &session,
+    )
+    .await;
+    assert!(the_answer_was_lost());
+    assert_eq!(status, StatusCode::OK, "{page}");
+
+    for (kind, uri, extra) in [
+        ("person disable", "/admin/persons/disable", None),
+        ("person enable", "/admin/persons/enable", None),
+        ("person rename", "/admin/persons/rename", Some("bee")),
+    ] {
+        let v = version(s, &bea).await;
+        let mut fields = vec![("person", bea.as_str()), ("version", v.as_str())];
+        if let Some(name) = extra {
+            fields.push(("name", name));
+        }
+        lose_the_commits_answer(kind);
+        let (status, _, answer) = send_as(&app, "POST", uri, Some(form(&fields)), &session).await;
+        assert!(the_answer_was_lost(), "{kind}");
+        assert_eq!(status, StatusCode::SEE_OTHER, "{kind}: {answer}");
+    }
+    assert!(enabled(s, &bea).await);
+    assert_eq!(s.person(&bea).await.unwrap().unwrap().name, "bee");
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM audit WHERE person_id = $1 AND action LIKE 'person %' \
+             AND outcome = 'ok'"
+        )
+        .bind(&ada)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap(),
+        5,
+        "each write's outcome ok"
+    );
+    assert_eq!(
+        rows(s, "SELECT count(*) FROM audit WHERE outcome = 'failed'").await,
+        0
+    );
+}
+
+/// A first audit record of the admin's, by session, for a write asked of
+/// the store directly.
+pub(crate) async fn first(s: &Store, admin: &str, action: &str) -> String {
+    s.audit_first(
+        crate::store::audit::Principal::Person {
+            person_id: admin,
+            method: crate::store::audit::PersonMethod::Session,
+        },
+        crate::store::audit::Target::Authority,
+        action,
+    )
+    .await
+    .unwrap()
+}
+
+/// **Another admin's edit between a lost answer and its read-back changes
+/// nothing of the classification**: a disable's commit answer is lost, and
+/// before its read-back another admin enables the person again, past the
+/// disable's version; the disable still answers its success and its
+/// outcome reads `ok`.
+#[tokio::test]
+async fn a_disable_whose_answer_is_lost_lands_though_another_admin_edits_first() {
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let app = app(s, Some(passkeys()));
+    let (ada, ada_session) = admin(&app, s, &mut authenticator(), "ada").await;
+    let (_, cara_session) = admin(&app, s, &mut authenticator(), "cara").await;
+    let (bea, _) = person_with_token(s, "bea").await;
+    let v = version(s, &bea).await;
+
+    lose_the_commits_answer("person disable");
+    let (read, release) = (
+        Arc::new(tokio::sync::Notify::new()),
+        Arc::new(tokio::sync::Notify::new()),
+    );
+    crate::store::commit::READ_BACK_HOLD.lock().unwrap().push((
+        "person disable",
+        read.clone(),
+        release.clone(),
+    ));
+    let disable = tokio::spawn({
+        let (app, session, body) = (
+            app.clone(),
+            ada_session.clone(),
+            form(&[("person", &bea), ("version", &v)]),
+        );
+        async move { send_as(&app, "POST", "/admin/persons/disable", Some(body), &session).await }
+    });
+    read.notified().await;
+    assert!(the_answer_was_lost());
+    let v = version(s, &bea).await;
+    let (status, _, answer) = send_as(
+        &app,
+        "POST",
+        "/admin/persons/enable",
+        Some(form(&[("person", &bea), ("version", &v)])),
+        &cara_session,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::SEE_OTHER,
+        "the other admin's edit commits first: {answer}"
+    );
+    release.notify_one();
+    let (status, _, answer) = disable.await.unwrap();
+    assert_eq!(status, StatusCode::SEE_OTHER, "{answer}");
+    assert!(enabled(s, &bea).await, "the later edit stands");
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM audit WHERE person_id = $1 AND action = 'person disable' \
+             AND outcome = 'ok'"
+        )
+        .bind(&ada)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        rows(s, "SELECT count(*) FROM audit WHERE outcome = 'failed'").await,
+        0
+    );
+}
+
+/// A COMMIT of `person disable` slowed by `secs` in this test's own
+/// database: a deferred constraint trigger on its `ok` outcome sleeps at
+/// commit time, while the act's locks are still held.
+async fn slow_the_disables_commit(s: &Store, secs: f64) {
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "CREATE FUNCTION slow_commit() RETURNS trigger LANGUAGE plpgsql AS \
+         $$ BEGIN PERFORM pg_sleep({secs}); RETURN NULL; END $$"
+    )))
+    .execute(&s.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE CONSTRAINT TRIGGER slow_commit AFTER INSERT ON audit \
+         DEFERRABLE INITIALLY DEFERRED FOR EACH ROW \
+         WHEN (NEW.action = 'person disable' AND NEW.outcome = 'ok') \
+         EXECUTE FUNCTION slow_commit()",
+    )
+    .execute(&s.pool)
+    .await
+    .unwrap();
+}
+
+/// **A lost answer's read-back waits for the original transaction to
+/// end** (Spec 2.13): the disable's COMMIT is sent and the server gives up
+/// on its answer while the backend is still committing; the read-back takes
+/// the act's own lock, waits for the commit to complete, and finds the `ok`
+/// outcome, where an immediate read would have found none.
+#[tokio::test]
+async fn a_lost_answers_read_back_waits_for_its_transaction_to_end() {
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let app = app(s, Some(passkeys()));
+    let (ada, session) = admin(&app, s, &mut authenticator(), "ada").await;
+    let (bea, _) = person_with_token(s, "bea").await;
+    slow_the_disables_commit(s, 1.0).await;
+    let v = version(s, &bea).await;
+
+    crate::store::commit::GIVE_UP_ON_COMMIT
+        .with(|g| g.set(Some(("person disable", Duration::from_millis(200)))));
+    let (status, _, answer) = send_as(
+        &app,
+        "POST",
+        "/admin/persons/disable",
+        Some(form(&[("person", &bea), ("version", &v)])),
+        &session,
+    )
+    .await;
+    assert!(
+        crate::store::commit::GIVE_UP_ON_COMMIT.with(|g| g.get().is_none()),
+        "the answer was given up"
+    );
+    assert_eq!(status, StatusCode::SEE_OTHER, "{answer}");
+    assert!(!enabled(s, &bea).await);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM audit WHERE person_id = $1 AND action = 'person disable' \
+             AND outcome = 'ok'"
+        )
+        .bind(&ada)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        rows(s, "SELECT count(*) FROM audit WHERE outcome = 'failed'").await,
+        0
+    );
+}
+
+/// **Past the read-back's bound, the outcome is unknown and left
+/// unwritten**: the commit outlasts the bound, the write answers the
+/// server's failure with no outcome written, and once the commit completes
+/// its own `ok` outcome stands, settling the act.
+#[tokio::test]
+async fn past_the_read_backs_bound_the_outcome_is_left_unwritten() {
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let app = app(s, Some(passkeys()));
+    let (ada, session) = admin(&app, s, &mut authenticator(), "ada").await;
+    let (bea, _) = person_with_token(s, "bea").await;
+    slow_the_disables_commit(s, 1.5).await;
+    let v = version(s, &bea).await;
+
+    crate::store::commit::GIVE_UP_ON_COMMIT
+        .with(|g| g.set(Some(("person disable", Duration::from_millis(100)))));
+    crate::store::commit::READ_BACK_BOUND_FOR_TEST
+        .with(|b| b.set(Some(Duration::from_millis(200))));
+    let (status, _, _) = send_as(
+        &app,
+        "POST",
+        "/admin/persons/disable",
+        Some(form(&[("person", &bea), ("version", &v)])),
+        &session,
+    )
+    .await;
+    crate::store::commit::READ_BACK_BOUND_FOR_TEST.with(|b| b.set(None));
+    assert_eq!(
+        status,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "unknown: the server's failure"
+    );
+    let outcomes = || async {
+        sqlx::query_as::<_, (i64, i64)>(
+            "SELECT count(*) FILTER (WHERE outcome = 'ok'), \
+             count(*) FILTER (WHERE outcome = 'failed') FROM audit \
+             WHERE person_id = $1 AND action = 'person disable'",
+        )
+        .bind(&ada)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap()
+    };
+    assert_eq!(outcomes().await.1, 0, "no failed outcome written");
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    assert_eq!(
+        outcomes().await,
+        (1, 0),
+        "the commit landed and its outcome settles it"
+    );
+    assert!(!enabled(s, &bea).await);
 }

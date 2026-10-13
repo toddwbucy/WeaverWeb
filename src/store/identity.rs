@@ -20,7 +20,9 @@ use sqlx::{Postgres, Row, Transaction};
 use unicode_normalization::UnicodeNormalization;
 
 /// The identity exclusion's advisory key, beside the listener's and the
-/// authority's: one key for every identity write in the store.
+/// authority's: one key for every identity write in the store. The
+/// per-act outcome locks take the two-key form under their own class
+/// (`store::commit::OUTCOME_LOCK_CLASS`), a keyspace apart from these.
 pub const IDENTITY_LOCK_KEY: i64 = i64::from_be_bytes(*b"weaverid");
 
 /// **A role's verbs are drawn from this vocabulary alone**: the verbs a box
@@ -346,6 +348,7 @@ impl Store {
         passkey_id: &str,
         credential_id: &str,
         credential: &serde_json::Value,
+        first: &str,
     ) -> anyhow::Result<Redeemed> {
         let mut tx = self.identity_transaction().await?;
         let still: Option<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
@@ -385,7 +388,7 @@ impl Store {
         .bind(token_digest)
         .execute(&mut *tx)
         .await?;
-        tx.commit().await?;
+        crate::store::commit::commit_with_outcome(tx, "passkey enroll", self, first).await?;
         Ok(Redeemed::Enrolled)
     }
 
@@ -416,6 +419,7 @@ impl Store {
         credential_id: &str,
         credential: &serde_json::Value,
         label: Option<&str>,
+        first: &str,
     ) -> anyhow::Result<Added> {
         let mut tx = self.identity_transaction().await?;
         if !session_stands(&mut tx, session_id, person_id).await?
@@ -442,7 +446,7 @@ impl Store {
         .bind(label)
         .execute(&mut *tx)
         .await?;
-        tx.commit().await?;
+        crate::store::commit::commit_with_outcome(tx, "passkey add", self, first).await?;
         Ok(Added::Inserted)
     }
 
@@ -457,6 +461,7 @@ impl Store {
         person_id: &str,
         session_id: i64,
         passkey_id: &str,
+        first: &str,
     ) -> anyhow::Result<Removed> {
         let mut tx = self.identity_transaction().await?;
         if !session_stands(&mut tx, session_id, person_id).await? {
@@ -485,7 +490,7 @@ impl Store {
             .bind(person_id)
             .execute(&mut *tx)
             .await?;
-        tx.commit().await?;
+        crate::store::commit::commit_with_outcome(tx, "passkey remove", self, first).await?;
         Ok(Removed::Removed)
     }
 

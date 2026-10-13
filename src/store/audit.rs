@@ -17,14 +17,17 @@
 
 use crate::store::Store;
 
-/// **Who acted, and how it was authenticated.** The host and a person are
-/// the principals this crate writes as; the server's own asks are audited
-/// with every ask.
+/// **Who acted, and how it was authenticated.** The host, a person and the
+/// server are the principals this crate writes as.
 #[derive(Debug, Clone, Copy)]
 pub enum Principal<'a> {
     /// A command on the server's host, carrying the name it was given with
     /// `--author` as an unverified claim.
     Host { author: Option<&'a str> },
+    /// **The server, for its own asks** (Spec 2.13, design section 10): the
+    /// `show` it asks at an admission and at each opening of the trace
+    /// door, its method `server`, as the schema pairs them.
+    Server,
     /// A person, by their identity, and how they were authenticated.
     Person {
         person_id: &'a str,
@@ -53,6 +56,7 @@ impl Principal<'_> {
     fn kind(&self) -> &'static str {
         match self {
             Principal::Host { .. } => "host",
+            Principal::Server => "server",
             Principal::Person { .. } => "person",
         }
     }
@@ -60,6 +64,7 @@ impl Principal<'_> {
     fn method(&self) -> &'static str {
         match self {
             Principal::Host { .. } => "host",
+            Principal::Server => "server",
             Principal::Person {
                 method: PersonMethod::EnrollmentToken,
                 ..
@@ -78,13 +83,13 @@ impl Principal<'_> {
     fn claimed_author(&self) -> Option<&str> {
         match self {
             Principal::Host { author } => *author,
-            Principal::Person { .. } => None,
+            Principal::Server | Principal::Person { .. } => None,
         }
     }
 
     fn person_id(&self) -> Option<&str> {
         match self {
-            Principal::Host { .. } => None,
+            Principal::Host { .. } | Principal::Server => None,
             Principal::Person { person_id, .. } => Some(person_id),
         }
     }

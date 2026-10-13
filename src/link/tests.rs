@@ -11,7 +11,7 @@
 
 use super::authority::{Authority, ClientCredential, client_tls, fingerprint};
 use super::frames::{FromClient, Plane, Position, Refusal, ToClient};
-use super::frames::{Principal, VerbFault, VerbOutcome};
+use super::frames::{VerbFault, VerbOutcome};
 use super::listener::{Listener, VerbError};
 use super::register::{Agent, CredentialState};
 use crate::store::{AgentId, Store};
@@ -45,7 +45,7 @@ pub(super) async fn store() -> Option<Store> {
     Some(Store::connect(&url).await.expect("connect and migrate"))
 }
 
-fn position(offset: u64) -> Position {
+pub(super) fn position(offset: u64) -> Position {
     Position {
         generation: "g1".into(),
         offset,
@@ -53,7 +53,11 @@ fn position(offset: u64) -> Position {
     }
 }
 
-fn show_answer(agent: &str, state: &str, load: Option<serde_json::Value>) -> VerbOutcome {
+pub(super) fn show_answer(
+    agent: &str,
+    state: &str,
+    load: Option<serde_json::Value>,
+) -> VerbOutcome {
     let mut answer = json!({ "kind": "state", "state": state });
     if let Some(load) = load {
         answer["load"] = load;
@@ -145,10 +149,15 @@ impl Fake {
             .expect("the handshake completes against the authority that minted the credential")
     }
 
+    /// One frame, **flushed**: over TLS a write can return with the tail
+    /// of its record still in the session's buffer where the socket pushed
+    /// back, and a fake that then only reads would leave the frame unsent,
+    /// the server waiting on it to its bound.
     pub(super) async fn send(&mut self, frame: FromClient) {
         let mut line = serde_json::to_string(&frame).unwrap();
         line.push('\n');
         self.writer.write_all(line.as_bytes()).await.unwrap();
+        self.writer.flush().await.unwrap();
     }
 
     /// A send that may meet a connection the server already closed.
@@ -156,6 +165,7 @@ impl Fake {
         let mut line = serde_json::to_string(&frame).unwrap();
         line.push('\n');
         let _ = self.writer.write_all(line.as_bytes()).await;
+        let _ = self.writer.flush().await;
     }
 
     /// The next frame, or `None` where the server closed the connection or
@@ -180,7 +190,7 @@ impl Fake {
         }
     }
 
-    async fn expect_refusal(&mut self, reason: Refusal) {
+    pub(super) async fn expect_refusal(&mut self, reason: Refusal) {
         match self.recv().await {
             Some(ToClient::Refusal { reason: got }) => assert_eq!(got, reason),
             other => panic!("expected the refusal {reason}, got {other:?}"),
@@ -243,7 +253,7 @@ impl Lab {
                 .unwrap();
     }
 
-    async fn register(&self, name: &str) -> Registered {
+    pub(super) async fn register(&self, name: &str) -> Registered {
         let r#box = format!("box-{}", uuid::Uuid::new_v4().simple());
         self.register_at(&r#box, name).await
     }
@@ -297,7 +307,7 @@ impl Lab {
         }
     }
 
-    async fn connect(&self, credential: &ClientCredential) -> Fake {
+    pub(super) async fn connect(&self, credential: &ClientCredential) -> Fake {
         Fake::connect(
             self.listener.address(),
             self.authority.certificate_pem(),
@@ -1701,7 +1711,7 @@ async fn a_turns_start_and_close_refresh_the_load_state() {
     // past this test's end.)
     let listener = lab.listener.clone();
     let asked = karl.id.clone();
-    let shown = tokio::spawn(async move { listener.verb(&asked, "show", Principal::Server).await });
+    let shown = tokio::spawn(async move { listener.verb(&asked, "show").await });
     let id = loop {
         match admin.recv().await {
             Some(ToClient::Verb { id, verb, .. }) if verb == "show" => break id,
@@ -1907,7 +1917,7 @@ async fn a_show_answer_the_register_never_took_closes_the_connection_and_fails_t
 
     let listener = lab.listener.clone();
     let id = karl.id.clone();
-    let asked = tokio::spawn(async move { listener.verb(&id, "show", Principal::Server).await });
+    let asked = tokio::spawn(async move { listener.verb(&id, "show").await });
     let ask = match admin.recv().await {
         Some(ToClient::Verb { id, verb, .. }) if verb == "show" => id,
         other => panic!("expected the show ask, got {other:?}"),

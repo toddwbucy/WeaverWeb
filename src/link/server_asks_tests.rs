@@ -863,44 +863,174 @@ async fn an_admission_answered_near_its_deadline_does_not_complete_past_it() {
     );
 }
 
-/// **Only the contract's evidence writes an outcome, in every field the
-/// audit reads**: admin's exit status is 0 for an answer and 1 for a
-/// refusal, and an outcome with no status or any other one is a fault by
-/// the contract, so each leaves the first with no second.
+/// A case's answer to the ask its id names.
+type Frame = Box<dyn Fn(u64) -> FromClient>;
+
+/// **An answer's shape is checked once, at the door, against the contract
+/// and the ask it answers** (Spec 2.13, 7.2, 8): each answer below to the
+/// server's `show` is outside it, and each is refused as malformed, the
+/// connection closed; the asker gets no answer, its first record no
+/// outcome, and the row lands nothing of the `active` it carries.
 ///
-/// Perturbation: go back to `exit_code == Some(0)` as the only test. Exit 2
-/// writes `failed`.
+/// Perturbation: drop the verb check. The `load` answer to the `show` ask
+/// passes the door, and its first writes `ok`.
 #[tokio::test]
-async fn an_outcome_whose_exit_status_proves_nothing_writes_no_outcome() {
+async fn an_answer_outside_the_contracts_shape_is_refused_at_the_door() {
     let Some(lab) = Lab::open().await else { return };
     let karl = lab.register("karl").await;
-    let (mut admin, _) = ready(&lab, &karl).await;
-    for exit_code in [None, Some(2)] {
+    let active = || show_answer("karl", "active", None);
+    let cases: Vec<(&str, Frame)> = vec![
+        (
+            "a load answer to a show ask",
+            Box::new(move |id| {
+                let mut outcome = active();
+                outcome.verb = "load".into();
+                FromClient::Verb {
+                    id,
+                    outcome: Some(outcome),
+                    error: None,
+                }
+            }),
+        ),
+        (
+            "another agent's answer",
+            Box::new(move |id| {
+                let mut outcome = active();
+                outcome.agent = "jane".into();
+                FromClient::Verb {
+                    id,
+                    outcome: Some(outcome),
+                    error: None,
+                }
+            }),
+        ),
+        (
+            "exit 2",
+            Box::new(move |id| {
+                let mut outcome = active();
+                outcome.exit_code = Some(2);
+                FromClient::Verb {
+                    id,
+                    outcome: Some(outcome),
+                    error: None,
+                }
+            }),
+        ),
+        (
+            "no exit status",
+            Box::new(move |id| {
+                let mut outcome = active();
+                outcome.exit_code = None;
+                FromClient::Verb {
+                    id,
+                    outcome: Some(outcome),
+                    error: None,
+                }
+            }),
+        ),
+        (
+            "no answer object",
+            Box::new(move |id| {
+                let mut outcome = active();
+                outcome.answer = None;
+                outcome.raw_stdout = Some("not an object".into());
+                FromClient::Verb {
+                    id,
+                    outcome: Some(outcome),
+                    error: None,
+                }
+            }),
+        ),
+        (
+            "an answer that is not an object",
+            Box::new(move |id| {
+                let mut outcome = active();
+                outcome.answer = Some(json!("active"));
+                FromClient::Verb {
+                    id,
+                    outcome: Some(outcome),
+                    error: None,
+                }
+            }),
+        ),
+        (
+            "raw output beside the object",
+            Box::new(move |id| {
+                let mut outcome = active();
+                outcome.raw_stdout = Some("{}".into());
+                FromClient::Verb {
+                    id,
+                    outcome: Some(outcome),
+                    error: None,
+                }
+            }),
+        ),
+        (
+            "an answer to no ask",
+            Box::new(move |id| FromClient::Verb {
+                id: id + 1000,
+                outcome: Some(active()),
+                error: None,
+            }),
+        ),
+    ];
+    for (case, frame) in cases {
+        let mut admin = admitted(&lab, &karl, &["show"]).await;
         let listener = lab.listener.clone();
         let asked = karl.id.clone();
         let shown = tokio::spawn(async move { listener.verb(&asked, "show").await });
         let id = take_show(&mut admin).await;
-        let mut outcome = show_answer("karl", "idle", None);
-        outcome.exit_code = exit_code;
-        admin
-            .send(FromClient::Verb {
-                id,
-                outcome: Some(outcome),
-                error: None,
-            })
-            .await;
-        shown
-            .await
-            .unwrap()
-            .expect("the asker reads admin's answer");
+        admin.send(frame(id)).await;
+        admin.expect_refusal(Refusal::Malformed).await;
+        match shown.await.unwrap() {
+            Err(VerbError::Unanswered) => {}
+            other => panic!("{case}: expected no answer, got {other:?}"),
+        }
+        disconnected(&lab, &karl).await;
         tokio::time::sleep(Duration::from_millis(200)).await;
         let records = records(&lab, &karl.id).await;
         let first = firsts(&records).pop().unwrap();
         assert_servers_show(&first);
+        assert_eq!(outcome_of(&records, &first), None, "{case}: {records:#?}");
         assert_eq!(
-            outcome_of(&records, &first),
-            None,
-            "exit {exit_code:?}: {records:#?}"
+            lab.agent(&karl.id).await.load_state.as_deref(),
+            Some("idle"),
+            "{case}: the row landed the refused answer"
         );
     }
+}
+
+/// **A refusal is never an observation**: admin's refusal of the server's
+/// `show` (exit 1) passes the door, writes `failed` and reaches its asker,
+/// and lands nothing on the row, whatever its object says.
+///
+/// Perturbation: land a `show` answer's state whatever its exit status. The
+/// refusal's object lands as the row's state.
+#[tokio::test]
+async fn a_refusal_is_never_an_observation() {
+    let Some(lab) = Lab::open().await else { return };
+    let karl = lab.register("karl").await;
+    let (mut admin, _) = ready(&lab, &karl).await;
+    let listener = lab.listener.clone();
+    let asked = karl.id.clone();
+    let shown = tokio::spawn(async move { listener.verb(&asked, "show").await });
+    let id = take_show(&mut admin).await;
+    let mut refused = show_answer("karl", "active", None);
+    refused.exit_code = Some(1);
+    admin
+        .send(FromClient::Verb {
+            id,
+            outcome: Some(refused),
+            error: None,
+        })
+        .await;
+    let answered = shown.await.unwrap().expect("the refusal reaches its asker");
+    assert_eq!(answered.exit_code, Some(1));
+    let (first, outcome) = newest_answered(&lab, &karl.id, "the refusal's outcome").await;
+    assert_servers_show(&first);
+    assert_eq!(outcome.as_deref(), Some("failed"));
+    assert_eq!(
+        lab.agent(&karl.id).await.load_state.as_deref(),
+        Some("idle")
+    );
 }

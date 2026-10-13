@@ -109,17 +109,24 @@ struct LiveConnection {
     /// reconnection that narrows the ceiling cannot race an ask. The row's
     /// copy is what surfaces read and never the authorization input.
     ceiling: Option<Arc<BTreeSet<String>>>,
-    /// **Each verb frame's first record, by its ask** (Spec 2.13): the
+    /// **Each verb ask's record, by its ask** (Spec 2.13, 7.2): the verb
+    /// asked and its first record, where the ask is audited. The
     /// connection task's own, filled before the frame enters the channel
-    /// and taken by the answer the frame's id names, so an answer is
-    /// matched to its own record only. It goes with the connection, and an
-    /// entry still in it then is a first record with no second, the
-    /// audit's "unknown".
-    firsts: Firsts,
+    /// and taken by the answer the frame's id names, which is checked
+    /// against it, so an answer is matched to its own ask and record only.
+    /// It goes with the connection, and an entry still in it then is a
+    /// first record with no second, the audit's "unknown".
+    asks: Asks,
 }
 
-/// The connection's map from an ask's id to its verb's first record.
-type Firsts = Arc<Mutex<HashMap<u64, String>>>;
+/// What the connection holds of one verb ask until its answer.
+struct Asked {
+    verb: String,
+    first: Option<String>,
+}
+
+/// The connection's map from an ask's id to its record.
+type Asks = Arc<Mutex<HashMap<u64, Asked>>>;
 
 /// The connection's map from an ask's id to its asker's reply.
 type Pending = Arc<Mutex<HashMap<u64, oneshot::Sender<FromClient>>>>;
@@ -140,7 +147,7 @@ struct Unsent {
     store: Store,
     silence: Duration,
     pending: Option<Pending>,
-    firsts: Option<Firsts>,
+    asks: Option<Asks>,
     armed: bool,
 }
 
@@ -160,8 +167,8 @@ impl Drop for Unsent {
         if let Some(pending) = &self.pending {
             pending.lock().unwrap().remove(&self.id);
         }
-        if let Some(firsts) = &self.firsts {
-            firsts.lock().unwrap().remove(&self.id);
+        if let Some(asks) = &self.asks {
+            asks.lock().unwrap().remove(&self.id);
         }
         let Some(first) = self.first.take() else {
             return;
@@ -698,7 +705,7 @@ impl Listener {
         live.get(&(agent.clone(), Plane::Admin)).map(|c| {
             (
                 c.pending.lock().unwrap().len(),
-                c.firsts.lock().unwrap().len(),
+                c.asks.lock().unwrap().len(),
             )
         })
     }
@@ -894,7 +901,7 @@ impl Inner {
             store: self.store.clone(),
             silence: self.silence,
             pending: None,
-            firsts: None,
+            asks: None,
             armed: true,
         };
         let (store, silence, owner) = (self.store.clone(), self.silence, agent.clone());
@@ -1006,7 +1013,7 @@ impl Inner {
                 store: self.store.clone(),
                 silence: self.silence,
                 pending: None,
-                firsts: None,
+                asks: None,
                 armed: true,
             },
         };
@@ -1025,13 +1032,21 @@ impl Inner {
                 .filter(|c| c.ready && c.incarnation == incarnation)
                 .map(|conn| {
                     conn.pending.lock().unwrap().insert(id, reply_tx);
-                    if let Some(first) = &first {
-                        conn.firsts.lock().unwrap().insert(id, first.clone());
+                    // **Every verb ask is recorded with its verb**, audited
+                    // or not, so its answer is checked against it.
+                    if let Some(verb) = verb {
+                        conn.asks.lock().unwrap().insert(
+                            id,
+                            Asked {
+                                verb: verb.to_owned(),
+                                first: first.clone(),
+                            },
+                        );
                     }
                     (
                         conn.tx.clone(),
                         conn.pending.clone(),
-                        conn.firsts.clone(),
+                        conn.asks.clone(),
                         conn.close.clone(),
                         conn.silent.clone(),
                     )
@@ -1040,11 +1055,11 @@ impl Inner {
         // **A frame that never entered the channel is an act that never
         // happened**: each return below, and a drop of this future at the
         // send, leaves `unsent` to answer its first `failed`.
-        let Some((tx, pending, firsts, close, silent)) = found else {
+        let Some((tx, pending, asks, close, silent)) = found else {
             return Err(AskError::NotConnected);
         };
         unsent.pending = Some(pending.clone());
-        unsent.firsts = Some(firsts);
+        unsent.asks = Some(asks);
         // **Bounded like every enqueue, and a bound that passes is the
         // peer gone silent**: a connector that stopped reading fills the
         // write channel, and the connection task, which on the gate plane
@@ -1322,7 +1337,7 @@ async fn ask_show(
     inner: &Inner,
     agent: &AgentId,
     tx: &mpsc::Sender<ToClient>,
-    firsts: &Firsts,
+    asks: &Asks,
     close: &mut watch::Receiver<bool>,
 ) -> Result<u64, &'static str> {
     let id = inner.next_ask.fetch_add(1, Ordering::Relaxed);
@@ -1363,8 +1378,14 @@ async fn ask_show(
         .first
         .clone()
         .expect("the record step names its first");
-    firsts.lock().unwrap().insert(id, first);
-    unsent.firsts = Some(firsts.clone());
+    asks.lock().unwrap().insert(
+        id,
+        Asked {
+            verb: "show".into(),
+            first: Some(first),
+        },
+    );
+    unsent.asks = Some(asks.clone());
     let frame = ToClient::Verb {
         id,
         verb: "show".into(),
@@ -1376,19 +1397,47 @@ async fn ask_show(
 }
 
 /// **A verb's answer, classified once**: admin's outcome, or a fault,
-/// admin-con's or the invocation's. A frame carrying both or neither is
-/// no answer and has no classification.
+/// admin-con's or the invocation's. A frame outside the contract's shape
+/// is no answer and has no classification.
 enum Answer {
     Outcome(VerbOutcome),
     Fault(VerbFault),
 }
 
 impl Answer {
-    fn of(outcome: Option<VerbOutcome>, error: Option<VerbFault>) -> Option<Self> {
+    /// **The door**: a verb frame checked against the contract and the ask
+    /// it answers, the verb asked and the connection's agent, or why it is
+    /// outside them. Exactly one of an outcome and a fault. An outcome
+    /// names the verb asked and the connection's agent, and has the shape
+    /// the box's invocation answers (`weaver-admin-operator-contract`,
+    /// built by `link::sudo_invoker`): exit 0 or 1 and one answer object,
+    /// with no raw output beside it, which is kept only where no object
+    /// parsed. A fault's kind stays free on the wire; what it means is the
+    /// audit's allow-list.
+    fn of(
+        outcome: Option<VerbOutcome>,
+        error: Option<VerbFault>,
+        asked: &str,
+        agent: &str,
+    ) -> Result<Self, &'static str> {
         match (outcome, error) {
-            (Some(outcome), None) => Some(Answer::Outcome(outcome)),
-            (None, Some(fault)) => Some(Answer::Fault(fault)),
-            _ => None,
+            (Some(outcome), None) => {
+                if outcome.verb != asked {
+                    Err("its outcome names another verb than the one asked")
+                } else if outcome.agent != agent {
+                    Err("its outcome names another agent than the connection's")
+                } else if !matches!(outcome.exit_code, Some(0 | 1)) {
+                    Err("its exit status is neither an answer's nor a refusal's")
+                } else if !outcome.answer.as_ref().is_some_and(|a| a.is_object()) {
+                    Err("its outcome carries no answer object")
+                } else if outcome.raw_stdout.is_some() {
+                    Err("its outcome carries raw output beside its answer object")
+                } else {
+                    Ok(Answer::Outcome(outcome))
+                }
+            }
+            (None, Some(fault)) => Ok(Answer::Fault(fault)),
+            _ => Err("it carries both an outcome and a fault, or neither"),
         }
     }
 
@@ -1397,7 +1446,8 @@ impl Answer {
     /// audit reads from the peer's frame: `weaver-admin-operator-contract`'s
     /// exit status, 0 a `lifecycle-answer` and so `ok`, 1 a
     /// `lifecycle-refusal` and so `failed`; any other status, or none, is a
-    /// fault by the contract and writes no outcome. A fault writes `failed` only
+    /// fault by the contract and writes no outcome, a shape the door
+    /// refuses and kept here as defence. A fault writes `failed` only
     /// where its kind proves the verb never ran, by an allow-list: `busy`,
     /// `not_started`, `outside_ceiling`. **Every other kind, known or not,
     /// writes no outcome** (`None`): `unknown` and `fault`, which leave the
@@ -1708,7 +1758,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
 
     let incarnation = (inner.epoch << 32) | inner.next_incarnation.fetch_add(1, Ordering::Relaxed);
     let pending = Arc::new(Mutex::new(HashMap::new()));
-    let firsts: Firsts = Arc::new(Mutex::new(HashMap::new()));
+    let asks: Asks = Arc::new(Mutex::new(HashMap::new()));
     let (close_tx, mut close_rx) = watch::channel(false);
     let silent = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let key = (agent.agent_id.clone(), plane);
@@ -1753,7 +1803,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                         silent: silent.clone(),
                         ready: false,
                         ceiling: ceiling.clone(),
-                        firsts: firsts.clone(),
+                        asks: asks.clone(),
                     },
                 );
                 Ok(())
@@ -1834,7 +1884,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
             // it does not, nothing is asked, admission completes at
             // `caught_up`, and the row's state stands on live events.
             if ceiling.as_deref().is_some_and(|c| c.contains("show")) {
-                match ask_show(&inner, &agent.agent_id, &tx, &firsts, &mut close_rx).await {
+                match ask_show(&inner, &agent.agent_id, &tx, &asks, &mut close_rx).await {
                     Ok(id) => {
                         admission_show = Some((id, tokio::time::Instant::now() + inner.silence))
                     }
@@ -1984,34 +2034,44 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                     resolve(&pending, id, FromClient::Turn { id, close, error });
                 }
                 (Plane::Admin, FromClient::Verb { id, outcome, error }) => {
-                    // **An answer is classified once** (Spec 7.2, 8), and
-                    // the audit, the landing and the asker all read that
-                    // one classification: admin's outcome or a fault. A
-                    // verb frame with both or neither is the peer's
-                    // protocol violation, refused as malformed as any frame
-                    // of the wrong shape is; its first record gets no
-                    // outcome, since what admin did cannot be said, and the
-                    // asker gets no answer, its ask ending with the
-                    // connection.
-                    let Some(answer) = Answer::of(outcome, error) else {
-                        tracing::warn!(
-                            "link from {peer}: {} (admin) answered ask {id} with both an outcome and a fault, or neither, refused",
-                            agent.agent_id
-                        );
-                        send(
-                            &tx,
-                            ToClient::Refusal {
-                                reason: Refusal::Malformed,
-                            },
-                        )
-                        .await;
-                        reason = "refused as malformed";
-                        break;
+                    // **An answer's shape is checked once, here at the door,
+                    // against the contract and the ask it answers** (Spec
+                    // 2.13, 7.2, 8), and the audit, the landing and the
+                    // asker all read that one classification. An answer
+                    // outside it, to no ask or of the wrong shape, is the
+                    // peer's protocol violation, refused as malformed as
+                    // any frame of the wrong shape is; its first record
+                    // gets no outcome, since what admin did cannot be said,
+                    // and the asker gets no answer, its ask ending with the
+                    // connection. Nothing past the door sees it.
+                    let asked = asks.lock().unwrap().remove(&id);
+                    let checked = asked.ok_or("it answers no ask").and_then(|asked| {
+                        Answer::of(outcome, error, &asked.verb, &agent.name)
+                            .map(|answer| (asked.first, answer))
+                    });
+                    let (first, answer) = match checked {
+                        Ok(checked) => checked,
+                        Err(why) => {
+                            tracing::warn!(
+                                "link from {peer}: {} (admin) answered ask {id} outside the contract's shape ({why}), refused",
+                                agent.agent_id
+                            );
+                            send(
+                                &tx,
+                                ToClient::Refusal {
+                                    reason: Refusal::Malformed,
+                                },
+                            )
+                            .await;
+                            reason = "refused as malformed";
+                            break;
+                        }
                     };
                     let is_admission = admission_show.is_some_and(|(ask, _)| ask == id);
                     // **The outcome when the answer lands, naming its own
                     // first** (Spec 2.13): the entry this answer's id names
-                    // is taken, so a second answer to one ask finds none.
+                    // was taken at the door, so a second answer to one ask
+                    // finds none.
                     // Written ahead of the landing, which a store failure
                     // can cut short after admin has acted. **Once the
                     // answer is in hand its outcome is written whatever
@@ -2024,7 +2084,6 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                     // the close costs: it waits at most one silence bound on
                     // a stalled store, a halt within its grace and aborted
                     // past it.
-                    let first = firsts.lock().unwrap().remove(&id);
                     let owed = first.zip(answer.audited());
                     if let Some((first, ok)) = owed {
                         inner.record_outcome(&agent.agent_id, &first, ok).await;
@@ -2261,7 +2320,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                     caught_up = !open;
                     boundary = tail;
                     if open && ceiling.as_deref().is_some_and(|c| c.contains("show")) {
-                        match ask_show(&inner, &agent.agent_id, &tx, &firsts, &mut close_rx).await {
+                        match ask_show(&inner, &agent.agent_id, &tx, &asks, &mut close_rx).await {
                             Ok(id) => {
                                 admission_show =
                                     Some((id, tokio::time::Instant::now() + inner.silence))
@@ -2504,7 +2563,13 @@ impl Inner {
     /// other verb's answer lands nothing. **The date is the receipt's**, a
     /// gap section 2.12 names: admin's answer carries no time of its own.
     async fn land_verb(&self, agent: &AgentId, outcome: &VerbOutcome) -> Landing {
-        let Some(answer) = &outcome.answer else {
+        // **Only admin's answer is an observation**: a refusal (exit 1) is
+        // never admin's word on the state, whatever its object says.
+        let Some(answer) = outcome
+            .answer
+            .as_ref()
+            .filter(|_| outcome.exit_code == Some(0))
+        else {
             return Landing::Nothing;
         };
         let summary = match outcome.verb.as_str() {

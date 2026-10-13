@@ -1864,7 +1864,10 @@ async fn an_observation_the_register_never_took_is_not_acknowledged() {
         }
         other => panic!("expected the hello answer, got {other:?}"),
     }
-    assert!(matches!(again.recv().await, Some(ToClient::Verb { .. })));
+    let show = match again.recv().await {
+        Some(ToClient::Verb { id, .. }) => id,
+        other => panic!("expected the reconnection's show, got {other:?}"),
+    };
     again
         .send(FromClient::Event {
             position: position(120),
@@ -1886,7 +1889,7 @@ async fn an_observation_the_register_never_took_is_not_acknowledged() {
     // the lifecycle fact reaches the row by the show the reconnection asked.
     again
         .send(FromClient::Verb {
-            id: 0,
+            id: show,
             outcome: Some(show_answer(
                 "karl",
                 "idle",

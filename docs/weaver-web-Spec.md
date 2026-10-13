@@ -898,6 +898,10 @@ every session**, and **nothing but the surface writes a session**: a
 disable, a passkey's removal and the host reset change the person or the
 passkey, and the session sees it at its next use. An open live view counts
 as use while it streams and is re-checked every 15 seconds, per section 2.13.
+**Its re-check refreshes the session's last use, by the operator's ruling in
+the design's section 6** (`docs/project/design-2026-10-07-iam.md`), so a
+person watching a long run is not signed out mid-run; the twelve-hour limit
+and sign-out still bound an unattended view.
 
 **The last use is written at most once a minute**: one conditional update on
 the database's clock, `last_used_at = now()` where the stored time is a

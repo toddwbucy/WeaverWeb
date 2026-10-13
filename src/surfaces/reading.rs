@@ -30,7 +30,6 @@ use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
 use tokio_stream::StreamExt;
-use tokio_stream::wrappers::ReceiverStream;
 
 use crate::fault::Fault;
 use crate::link::register::{Agent, CredentialState};
@@ -328,10 +327,11 @@ async fn trace(store: Store, seams: Seams, headers: HeaderMap, agent: String) ->
     let (tx, rx) = tokio::sync::mpsc::channel::<SseEvent>(64);
     let recheck =
         tokio::time::interval_at(tokio::time::Instant::now() + seams.recheck, seams.recheck);
+    let (cut, gate) = tokio::sync::watch::channel(None);
     let mut view = View {
         tx,
         recheck,
-        bound: seams.recheck,
+        cut,
         store,
         policy: seams.policy,
         headers,
@@ -385,9 +385,52 @@ async fn trace(store: Store, seams: Seams, headers: HeaderMap, agent: String) ->
             }
         }
     });
-    Sse::new(ReceiverStream::new(rx).map(Ok::<SseEvent, Infallible>))
+    Sse::new(gated(rx, gate).map(Ok::<SseEvent, Infallible>))
         .keep_alive(KeepAlive::default())
         .into_response()
+}
+
+/// **The response's body, gated by the view's cut**: before every item it
+/// reads the cut, and once the cut is set it yields the closing line and
+/// ends, the events still queued in the channel dropped unread, so nothing
+/// reaches the reader after access ended, whenever it reads.
+fn gated(
+    rx: tokio::sync::mpsc::Receiver<SseEvent>,
+    gate: tokio::sync::watch::Receiver<Option<&'static str>>,
+) -> impl futures::Stream<Item = SseEvent> {
+    futures::stream::unfold(
+        (rx, gate, true, false),
+        |(mut rx, mut gate, gate_live, done)| async move {
+            if done {
+                return None;
+            }
+            let closed = |why: &str| SseEvent::default().event("closed").data(why);
+            let mut gate_live = gate_live;
+            loop {
+                let cut = *gate.borrow_and_update();
+                if let Some(why) = cut {
+                    return Some((closed(why), (rx, gate, gate_live, true)));
+                }
+                tokio::select! {
+                    biased;
+                    changed = gate.changed(), if gate_live => {
+                        // The view gone without a cut: its sender dropped.
+                        if changed.is_err() {
+                            gate_live = false;
+                        }
+                    }
+                    item = rx.recv() => {
+                        let item = item?;
+                        let cut = *gate.borrow();
+                        if let Some(why) = cut {
+                            return Some((closed(why), (rx, gate, gate_live, true)));
+                        }
+                        return Some((item, (rx, gate, gate_live, false)));
+                    }
+                }
+            }
+        },
+    )
 }
 
 /// **One open live view's sending half.** **No await in it outlasts the
@@ -402,7 +445,9 @@ async fn trace(store: Store, seams: Seams, headers: HeaderMap, agent: String) ->
 struct View {
     tx: tokio::sync::mpsc::Sender<SseEvent>,
     recheck: tokio::time::Interval,
-    bound: Duration,
+    /// **The cut**: set, with its reason, when the re-check finds access
+    /// ended; the response's body reads it before every item (`gated`).
+    cut: tokio::sync::watch::Sender<Option<&'static str>>,
     store: Store,
     policy: Policy,
     headers: HeaderMap,
@@ -436,21 +481,15 @@ impl View {
     }
 
     /// **The re-check**: `true` where the session and the grant stand;
-    /// otherwise the closing line offered, within the re-check's own
-    /// bound, and `false`.
+    /// otherwise the view cut, with its reason, and `false`.
     async fn still_open(&mut self) -> bool {
         let Some(why) = ended(&self.store, &self.policy, &self.headers, &self.id).await else {
             return true;
         };
-        tokio::select! {
-            _ = self.tx.closed() => {}
-            permit = self.tx.reserve() => {
-                if let Ok(permit) = permit {
-                    permit.send(SseEvent::default().event("closed").data(why));
-                }
-            }
-            _ = tokio::time::sleep(self.bound) => {}
-        }
+        // The cut, which the body reads before every item: the events
+        // already queued are dropped unread, and the closing line goes out
+        // ahead of nothing else.
+        self.cut.send_replace(Some(why));
         false
     }
 }

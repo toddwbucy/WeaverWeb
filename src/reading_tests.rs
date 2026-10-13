@@ -276,12 +276,14 @@ async fn a_dropped_view_releases_its_subscription() {
     );
 }
 
-/// **No send outlasts the re-check**: a reader that never reads fills the
-/// view's channel; the host revokes the grant; the view still closes within
-/// its re-check, releasing its subscription, and once read, the stream
-/// carries no event that arrived after the revocation.
+/// **Nothing reaches the reader after the cut**: a reader reads the first
+/// events and then stops reading, the view's channel filling behind it;
+/// the host revokes the grant; the view closes within its re-check
+/// (releasing its subscription) though its reader is not reading; and when
+/// the reader resumes, it receives the closing line and the end, and none
+/// of the events queued before the cut nor any arriving after.
 #[tokio::test]
-async fn a_full_channel_does_not_hold_the_view_past_its_recheck() {
+async fn nothing_reaches_the_reader_after_the_cut() {
     let Some((rig, _, karl, _, bea, session)) = granted().await else {
         return;
     };
@@ -291,6 +293,11 @@ async fn a_full_channel_does_not_hold_the_view_past_its_recheck() {
             .windows()
             .ingest(&karl, event(seq, &format!("before-{seq}")));
     }
+    let (read, _) = until(&mut stream, "before-3\"", Duration::from_secs(2)).await;
+    assert!(
+        read.contains("before-1"),
+        "the reader read the first: {read}"
+    );
     tokio::time::sleep(Duration::from_millis(100)).await;
     let removed = host::grant_remove(rig.store(), &bea, "observer", Some(&karl), None).await;
     assert!(removed.ok, "{}", removed.value);
@@ -306,13 +313,16 @@ async fn a_full_channel_does_not_hold_the_view_past_its_recheck() {
     assert_eq!(
         rig.listener.windows().watchers(&karl),
         0,
-        "the view closed within its re-check though its reader never read"
+        "the view closed within its re-check though its reader was not reading"
     );
-    let (read, ended) = until(&mut stream, "\u{0}", Duration::from_secs(2)).await;
+    let (resumed, ended) = until(&mut stream, "\u{0}", Duration::from_secs(2)).await;
     assert!(ended, "the stream ends");
-    assert!(read.contains("before-1"), "{read}");
     assert!(
-        !read.contains("after-"),
-        "no event after the revocation: {read}"
+        resumed.contains("event: closed") && resumed.contains("the grant on this agent ended"),
+        "the closing line, first: {resumed}"
+    );
+    assert!(
+        !resumed.contains("event: trace"),
+        "no queued event after the cut: {resumed}"
     );
 }

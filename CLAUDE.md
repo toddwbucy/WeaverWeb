@@ -160,7 +160,7 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
 - **DB-backed unit tests** (`store::read`, `store::plan`, `store::audit_tests`,
   `store::identity_tests`, `host_tests`, `surfaces::record`, `passkeys_tests`,
   `sign_in_tests`, `keys_tests`, `admin_tests`, `grants_tests`, `agents_tests`, `reading_tests`,
-  `link::tests`,
+  `link::tests`, `link::server_asks_tests`,
   `link::client_tests`, `link::admin_con_tests`, `link::verbs_audit_tests`)
   connect to the database in `DATABASE_URL` and run the migrations. The link's tests run one at
   a time, since a listener's start resets every row's link state, which is the claim. Without that variable they print
@@ -351,7 +351,9 @@ plane, one verb at a time with its answer placed at the invocation, behind an `I
 **The sudo invoker landed in act 9a** (#17): `link::sudo_invoker`, the process-wide slot and
 the orderly stop's `unload`. **The relay client replaced the file tailer in act 9b**
 (#17): `link::relay`, the door and its openings. The listener holds each connection's
-ceiling, asks `show` only where it is granted and at every opening of the door, and records
+ceiling, asks `show` only where it is granted and at every opening of the door,
+each `show` audited as the server's (its first record committed before the frame, the
+outcome naming it at the answer; the server asks `show` only, PR 6b1), and records
 the ceiling and the load state's source on the row (migration `0011`), the tuple's own source
 (`0012`, since a turn moves the state and not the tuple), and the run's constituents from
 `show` and the trace door's state (`0013`); `0010` through `0013` are frozen. `traceview.rs` keeps the rings, the listener's live window; its seed

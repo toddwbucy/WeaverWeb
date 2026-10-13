@@ -444,6 +444,16 @@ async fn serve(cfg: Arc<ServerConfig>) -> anyhow::Result<()> {
         .merge(weaver_web::surfaces::script_policy(
             weaver_web::surfaces::admin::routes(policy.clone(), cfg.enrollment_token_hours),
         ))
+        // **Reading an agent** (Spec 2.13, design section 9): what a person
+        // holding a grant on it may see, and the live view of the
+        // listener's windows, re-checked every fifteen seconds.
+        .merge(weaver_web::surfaces::script_policy(
+            weaver_web::surfaces::reading::routes(weaver_web::surfaces::reading::Seams {
+                policy: policy.clone(),
+                windows: link.windows().clone(),
+                recheck: weaver_web::surfaces::reading::RECHECK,
+            }),
+        ))
         // **The register of agents through the server** (Spec 2.13): the
         // two client configs a write mints wait in this process's memory
         // alone, so a restart drops any not taken.

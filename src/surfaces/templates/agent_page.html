@@ -1,0 +1,24 @@
+{% extends "instrument.html" %}
+{% block title %}{{ label }} - weaver-web{% endblock %}
+{% block mainclass %}listing{% endblock %}
+{% block body %}
+{#- One agent's register row, for a person holding a grant on it. No inline
+    script. -#}
+<header class="listing-head">
+  <h1>{{ label }}</h1>
+  <p class="destination">{{ agent_id }}; your roles: {{ roles }}</p>
+</header>
+<table>
+  <tbody>
+  <tr><th>Present</th><td>{% if present %}both planes connected{% else %}not present{% endif %}</td></tr>
+  <tr><th>Gate plane</th><td>{{ gate }}</td></tr>
+  <tr><th>Admin plane</th><td>{{ admin_plane }}</td></tr>
+  <tr><th>Ceiling</th><td>{{ ceiling }}</td></tr>
+  <tr><th>Trace door</th><td>{{ door }}</td></tr>
+  <tr><th>Load state</th><td>{{ load_state }}</td></tr>
+  <tr><th>Tuple</th><td>{{ tuple }}</td></tr>
+  <tr><th>Constituents</th><td>{{ constituents }}</td></tr>
+  </tbody>
+</table>
+<p><a href="/agents/{{ agent_id }}/trace">The live trace view</a> (an event stream): {{ window }}.</p>
+{% endblock %}

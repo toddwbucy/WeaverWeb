@@ -159,7 +159,8 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
 
 - **DB-backed unit tests** (`store::read`, `store::plan`, `store::audit_tests`,
   `store::identity_tests`, `host_tests`, `surfaces::record`, `passkeys_tests`,
-  `sign_in_tests`, `keys_tests`, `admin_tests`, `grants_tests`, `agents_tests`, `link::tests`,
+  `sign_in_tests`, `keys_tests`, `admin_tests`, `grants_tests`, `agents_tests`, `reading_tests`,
+  `link::tests`,
   `link::client_tests`, `link::admin_con_tests`, `link::verbs_audit_tests`)
   connect to the database in `DATABASE_URL` and run the migrations. The link's tests run one at
   a time, since a listener's start resets every row's link state, which is the claim. Without that variable they print
@@ -286,9 +287,21 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
   `revoke` (one plane) and `retire` (every live plane in one write) take the same steps, re-read
   the row inside their transaction and close the live connection in the act; a retired row is
   never live again, and the grants page marks a grant on one. The register verbs are host
-  commands and web writes alike; `authority init`/`rotate` stay host commands. `admin_tests`,
+  commands and web writes alike; `authority init`/`rotate` stay host commands. The nav names it
+  Register. `admin_tests`,
   `grants_tests` and `agents_tests` run each test on a `fresh_store` (`agents_tests` with its
   own listener and an authority in a temporary directory).
+
+- **Reading an agent** (`src/surfaces/reading.rs` over `src/store/access.rs`; act 11, PR 6a),
+  for every signed-in person (Agents in the nav): `GET /agents` lists the agents the person
+  holds a live grant on and no other; `GET /agents/{ag}` shows the register row and the
+  person's roles; `GET /agents/{ag}/trace` is the live view, an SSE stream of the listener's
+  window (`Listener::windows`), not a record. An agent without a grant answers exactly as an
+  unknown one (404); the identity is parsed first (400). The grant check runs at every read
+  under the identity exclusion held shared for the check alone; reads are not audited. The
+  live view re-checks its session (`gate::session`, as every use) and the grant every
+  `reading::RECHECK` (15 s; `reading_tests` set it short through the rig's seams) and closes
+  with its reason at the first failure.
 
 ## The seed tree: what carries forward and what leaves
 
@@ -303,7 +316,7 @@ weaver-analysis's arrow lands.
   `TurnId`, `PositionKey`, `ArmId`, `PlanId`). `experiment.rs` holds staged and registered
   experiments; a registered one is immutable by type.
 - `src/surfaces/` holds the browser surfaces: Record, enrollment, sign-in, one's own
-  passkeys, and the admin's persons. The router's
+  passkeys, reading an agent, and the admin's persons, grants and register. The router's
   state is `Store` alone. A surface reads the store and never writes the recorded half, since
   runs and positions land only by ingest. A surface that needs a seam takes it as its own
   argument rather than widening the router state.

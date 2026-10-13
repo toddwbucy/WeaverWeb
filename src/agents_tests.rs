@@ -30,14 +30,18 @@ use crate::surfaces::gate;
 /// A store of its own, an authority minted for the test, a listener over
 /// both, and the app with the agents surface mounted as the server mounts
 /// it.
-struct Rig {
+pub(crate) struct Rig {
     fresh: Fresh,
     dir: tempfile::TempDir,
     authority: Arc<Authority>,
-    listener: Listener,
+    pub(crate) listener: Listener,
     handover: Handover,
-    app: axum::Router,
+    pub(crate) app: axum::Router,
 }
+
+/// The reading surface's re-check interval in these tests: short, so a
+/// test sees a live view close within a second.
+pub(crate) const TEST_RECHECK: Duration = Duration::from_millis(200);
 
 impl Drop for Rig {
     fn drop(&mut self) {
@@ -67,7 +71,7 @@ fn server_config(dir: &std::path::Path, link: std::net::SocketAddr) -> crate::co
     }
 }
 
-async fn rig() -> Option<Rig> {
+pub(crate) async fn rig() -> Option<Rig> {
     rig_with(Handover::default()).await
 }
 
@@ -98,9 +102,22 @@ async fn rig_with(handover: Handover) -> Option<Rig> {
             handover: handover.clone(),
         }))
         .with_state(fresh.store.clone()),
-        policy,
+        policy.clone(),
     );
-    let app = app(&fresh.store, Some(passkeys())).merge(agents);
+    let reading = gate::guard(
+        crate::surfaces::script_policy(crate::surfaces::reading::routes(
+            crate::surfaces::reading::Seams {
+                policy: policy.clone(),
+                windows: listener.windows().clone(),
+                recheck: TEST_RECHECK,
+            },
+        ))
+        .with_state(fresh.store.clone()),
+        policy.clone(),
+    );
+    let app = app(&fresh.store, Some(passkeys()))
+        .merge(agents)
+        .merge(reading);
     Some(Rig {
         fresh,
         dir,
@@ -112,7 +129,7 @@ async fn rig_with(handover: Handover) -> Option<Rig> {
 }
 
 impl Rig {
-    fn store(&self) -> &Store {
+    pub(crate) fn store(&self) -> &Store {
         &self.fresh.store
     }
 
@@ -134,7 +151,12 @@ impl Rig {
 
     /// Register through the page, answering the row's identity and the two
     /// handles.
-    async fn register(&self, session: &str, r#box: &str, name: &str) -> (String, Vec<String>) {
+    pub(crate) async fn register(
+        &self,
+        session: &str,
+        r#box: &str,
+        name: &str,
+    ) -> (String, Vec<String>) {
         let (status, headers, page) = self
             .post(
                 "/admin/agents/register",

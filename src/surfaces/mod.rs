@@ -18,6 +18,7 @@ pub(crate) mod gate_tests;
 pub mod grants;
 #[cfg(feature = "passkeys")]
 pub mod keys;
+pub mod reading;
 pub mod record;
 #[cfg(feature = "passkeys")]
 pub mod sign_in;

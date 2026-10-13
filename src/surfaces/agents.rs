@@ -286,7 +286,7 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap) -> Response {
         })
         .collect();
     match (AgentsPage {
-        here: "agents",
+        here: "register",
         who: session.name,
         admin: true,
         rows,
@@ -355,7 +355,7 @@ fn hand_over(
         });
     }
     match (HandoverPage {
-        here: "agents",
+        here: "register",
         who: session.name,
         admin: true,
         verb,

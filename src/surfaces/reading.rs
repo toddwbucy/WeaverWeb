@@ -345,6 +345,11 @@ async fn trace(store: Store, seams: Seams, headers: HeaderMap, agent: String) ->
             tokio::time::interval_at(tokio::time::Instant::now() + seams.recheck, seams.recheck);
         loop {
             tokio::select! {
+                // **A viewer gone ends the view at once**: a quiet agent
+                // sends nothing, so a send's failure would not notice a
+                // closed tab, and the task and its subscription would live
+                // until the session's or the grant's end.
+                _ = tx.closed() => return,
                 received = live.recv() => match received {
                     Ok(event) if event.seq > cursor => {
                         cursor = event.seq;

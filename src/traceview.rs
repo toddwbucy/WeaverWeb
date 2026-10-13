@@ -133,6 +133,12 @@ impl TraceViews {
     pub fn subscribe(&self, agent: &str) -> Option<broadcast::Receiver<TraceEvent>> {
         self.view(agent).map(|v| v.tx.subscribe())
     }
+
+    /// How many views subscribe to an agent's window.
+    #[cfg(all(test, feature = "passkeys"))]
+    pub(crate) fn watchers(&self, agent: &str) -> usize {
+        self.view(agent).map(|v| v.tx.receiver_count()).unwrap_or(0)
+    }
 }
 
 impl Default for TraceViews {

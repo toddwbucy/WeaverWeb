@@ -252,3 +252,26 @@ async fn the_live_view_closes_when_the_person_or_the_session_ends() {
         "a signed-out session's view closes: {read}"
     );
 }
+
+/// **A viewer gone ends the view at once**: the stream dropped on a quiet
+/// agent, whose session and grant stand, releases its subscription to the
+/// window within moments, not at the session's or the grant's end.
+#[tokio::test]
+async fn a_dropped_view_releases_its_subscription() {
+    let Some((rig, _, karl, _, _, session)) = granted().await else {
+        return;
+    };
+    let mut stream = open(&rig, &karl, &session).await;
+    until(&mut stream, "not a record", Duration::from_secs(2)).await;
+    assert_eq!(rig.listener.windows().watchers(&karl), 1);
+    drop(stream);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    while rig.listener.windows().watchers(&karl) > 0 && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(
+        rig.listener.windows().watchers(&karl),
+        0,
+        "the view's task ended with its viewer"
+    );
+}

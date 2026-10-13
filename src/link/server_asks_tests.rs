@@ -728,3 +728,65 @@ async fn a_first_that_never_commits_leaves_nothing() {
     assert_eq!(records(&lab, &karl.id).await.len(), before);
     assert_eq!(lab.listener.held_asks(&karl.id), Some((0, 0)));
 }
+
+/// **A verb answer carrying both an outcome and a fault, or neither, is
+/// the peer's protocol violation** (Spec 7.2, 8): the answer is classified
+/// once, and one of neither shape is refused as malformed, the connection
+/// closed; the asker never reads it as a success, and its first record has
+/// no outcome, since what admin did cannot be said.
+///
+/// Perturbation: classify a frame with both as admin's outcome. The asker
+/// gets a success and the audit `ok` for a contradictory answer.
+#[tokio::test]
+async fn a_verb_answer_with_both_or_neither_shape_is_refused_as_malformed() {
+    let Some(lab) = Lab::open().await else { return };
+    let karl = lab.register("karl").await;
+    let (mut admin, _) = ready(&lab, &karl).await;
+    let listener = lab.listener.clone();
+    let asked = karl.id.clone();
+    let shown = tokio::spawn(async move { listener.verb(&asked, "show").await });
+    let id = take_show(&mut admin).await;
+    admin
+        .send(FromClient::Verb {
+            id,
+            outcome: Some(show_answer("karl", "idle", None)),
+            error: Some(VerbFault {
+                kind: VerbFault::BUSY.into(),
+                message: "busy".into(),
+            }),
+        })
+        .await;
+    admin.expect_refusal(Refusal::Malformed).await;
+    match shown.await.unwrap() {
+        Err(VerbError::Unanswered) => {}
+        other => panic!("expected no answer for a contradictory frame, got {other:?}"),
+    }
+    disconnected(&lab, &karl).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let after_both = records(&lab, &karl.id).await;
+    let both = firsts(&after_both).pop().unwrap();
+    assert_servers_show(&both);
+    assert_eq!(outcome_of(&after_both, &both), None, "{after_both:#?}");
+
+    // An admission's show answered with neither.
+    let mut admin = hello(&lab, &karl, &["show"]).await;
+    let id = take_show(&mut admin).await;
+    admin
+        .send(FromClient::Verb {
+            id,
+            outcome: None,
+            error: None,
+        })
+        .await;
+    admin.expect_refusal(Refusal::Malformed).await;
+    disconnected(&lab, &karl).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let after_neither = records(&lab, &karl.id).await;
+    let neither = firsts(&after_neither).pop().unwrap();
+    assert_ne!(neither.audit_id, both.audit_id);
+    assert_eq!(
+        outcome_of(&after_neither, &neither),
+        None,
+        "{after_neither:#?}"
+    );
+}

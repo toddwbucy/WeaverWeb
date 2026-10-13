@@ -1375,23 +1375,59 @@ async fn ask_show(
     Ok(id)
 }
 
-/// **What admin's answer says of the act**, for its outcome record:
-/// `weaver-admin-operator-contract`'s exit status decides, 0 a
-/// `lifecycle-answer` and so `ok`, 1 a `lifecycle-refusal` and so
-/// `failed`. A `VerbFault` of a verb that never ran (`busy`,
-/// `not_started`, `outside_ceiling`) is `failed`. **One that leaves the act
-/// unknown writes no outcome** (`None`): `unknown`, an invocation ended past
-/// its bound, and `fault`, a status the contract has the caller answer by
-/// reading the next `show`; the first then stands alone, which is the
-/// audit's "unknown", as where the connection ends with the frame in flight.
-fn answered(outcome: Option<&VerbOutcome>, error: Option<&VerbFault>) -> Option<bool> {
-    match (outcome, error) {
-        (_, Some(fault)) if fault.kind == VerbFault::UNKNOWN || fault.kind == VerbFault::FAULT => {
-            None
+/// **A verb's answer, classified once**: admin's outcome, or a fault,
+/// admin-con's or the invocation's. A frame carrying both or neither is
+/// no answer and has no classification.
+enum Answer {
+    Outcome(VerbOutcome),
+    Fault(VerbFault),
+}
+
+impl Answer {
+    fn of(outcome: Option<VerbOutcome>, error: Option<VerbFault>) -> Option<Self> {
+        match (outcome, error) {
+            (Some(outcome), None) => Some(Answer::Outcome(outcome)),
+            (None, Some(fault)) => Some(Answer::Fault(fault)),
+            _ => None,
         }
-        (_, Some(_)) => Some(false),
-        (Some(outcome), None) => Some(outcome.exit_code == Some(0)),
-        (None, None) => Some(false),
+    }
+
+    /// **What the answer says of the act**, for its outcome record:
+    /// `weaver-admin-operator-contract`'s exit status decides, 0 a
+    /// `lifecycle-answer` and so `ok`, 1 a `lifecycle-refusal` and so
+    /// `failed`. A fault of a verb that never ran (`busy`, `not_started`,
+    /// `outside_ceiling`) is `failed`. **One that leaves the act unknown
+    /// writes no outcome** (`None`): `unknown`, an invocation ended past
+    /// its bound, and `fault`, a status the contract has the caller answer
+    /// by reading the next `show`; the first then stands alone, which is
+    /// the audit's "unknown", as where the connection ends with the frame
+    /// in flight.
+    fn audited(&self) -> Option<bool> {
+        match self {
+            Answer::Outcome(outcome) => Some(outcome.exit_code == Some(0)),
+            Answer::Fault(fault)
+                if fault.kind == VerbFault::UNKNOWN || fault.kind == VerbFault::FAULT =>
+            {
+                None
+            }
+            Answer::Fault(_) => Some(false),
+        }
+    }
+
+    /// The asker's answer, the one classification as a frame.
+    fn into_frame(self, id: u64) -> FromClient {
+        match self {
+            Answer::Outcome(outcome) => FromClient::Verb {
+                id,
+                outcome: Some(outcome),
+                error: None,
+            },
+            Answer::Fault(fault) => FromClient::Verb {
+                id,
+                outcome: None,
+                error: Some(fault),
+            },
+        }
     }
 }
 
@@ -1928,6 +1964,30 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                     resolve(&pending, id, FromClient::Turn { id, close, error });
                 }
                 (Plane::Admin, FromClient::Verb { id, outcome, error }) => {
+                    // **An answer is classified once** (Spec 7.2, 8), and
+                    // the audit, the landing and the asker all read that
+                    // one classification: admin's outcome or a fault. A
+                    // verb frame with both or neither is the peer's
+                    // protocol violation, refused as malformed as any frame
+                    // of the wrong shape is; its first record gets no
+                    // outcome, since what admin did cannot be said, and the
+                    // asker gets no answer, its ask ending with the
+                    // connection.
+                    let Some(answer) = Answer::of(outcome, error) else {
+                        tracing::warn!(
+                            "link from {peer}: {} (admin) answered ask {id} with both an outcome and a fault, or neither, refused",
+                            agent.agent_id
+                        );
+                        send(
+                            &tx,
+                            ToClient::Refusal {
+                                reason: Refusal::Malformed,
+                            },
+                        )
+                        .await;
+                        reason = "refused as malformed";
+                        break;
+                    };
                     // The admission's show is bounded by what remains of
                     // its deadline, not by a fresh bound: a show answered
                     // just before the deadline whose landing stalls would
@@ -1956,12 +2016,12 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                     // a stalled store, a halt within its grace and aborted
                     // past it.
                     let first = firsts.lock().unwrap().remove(&id);
-                    let owed = first.zip(answered(outcome.as_ref(), error.as_ref()));
+                    let owed = first.zip(answer.audited());
                     if let Some((first, ok)) = owed {
                         inner.record_outcome(&agent.agent_id, &first, ok).await;
                     }
-                    let landing = match &outcome {
-                        Some(outcome) => match bounded(
+                    let landing = match &answer {
+                        Answer::Outcome(outcome) => match bounded(
                             inner.land_verb(&agent.agent_id, outcome),
                             bound,
                             &mut close_rx,
@@ -2001,7 +2061,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                                 break;
                             }
                         },
-                        None => Landing::Nothing,
+                        Answer::Fault(_) => Landing::Nothing,
                     };
                     if landing == Landing::Failed {
                         // The answer could not be landed: the ask answers the
@@ -2010,7 +2070,10 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                         tracing::error!(
                             "{}: admin's {} answer could not be landed, closing the connection",
                             agent.agent_id,
-                            outcome.as_ref().map_or("show", |o| o.verb.as_str())
+                            match &answer {
+                                Answer::Outcome(o) => o.verb.as_str(),
+                                Answer::Fault(_) => "show",
+                            }
                         );
                         resolve(
                             &pending,
@@ -2060,9 +2123,10 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                             tracing::warn!(
                                 "{}: the admission's show answered without a usable observation ({}), closed so the reconnect asks again",
                                 agent.agent_id,
-                                error
-                                    .as_ref()
-                                    .map_or("no state in the answer", |e| e.message.as_str())
+                                match &answer {
+                                    Answer::Fault(e) => e.message.as_str(),
+                                    Answer::Outcome(_) => "no state in the answer",
+                                }
                             );
                             send(
                                 &tx,
@@ -2075,7 +2139,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                             break;
                         }
                     }
-                    resolve(&pending, id, FromClient::Verb { id, outcome, error });
+                    resolve(&pending, id, answer.into_frame(id));
                 }
                 (
                     Plane::Admin,

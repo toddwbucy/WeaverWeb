@@ -275,3 +275,44 @@ async fn a_dropped_view_releases_its_subscription() {
         "the view's task ended with its viewer"
     );
 }
+
+/// **No send outlasts the re-check**: a reader that never reads fills the
+/// view's channel; the host revokes the grant; the view still closes within
+/// its re-check, releasing its subscription, and once read, the stream
+/// carries no event that arrived after the revocation.
+#[tokio::test]
+async fn a_full_channel_does_not_hold_the_view_past_its_recheck() {
+    let Some((rig, _, karl, _, bea, session)) = granted().await else {
+        return;
+    };
+    let mut stream = open(&rig, &karl, &session).await;
+    for seq in 1..=100 {
+        rig.listener
+            .windows()
+            .ingest(&karl, event(seq, &format!("before-{seq}")));
+    }
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let removed = host::grant_remove(rig.store(), &bea, "observer", Some(&karl), None).await;
+    assert!(removed.ok, "{}", removed.value);
+    for seq in 101..=110 {
+        rig.listener
+            .windows()
+            .ingest(&karl, event(seq, &format!("after-{seq}")));
+    }
+    let deadline = tokio::time::Instant::now() + TEST_RECHECK * 8;
+    while rig.listener.windows().watchers(&karl) > 0 && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(
+        rig.listener.windows().watchers(&karl),
+        0,
+        "the view closed within its re-check though its reader never read"
+    );
+    let (read, ended) = until(&mut stream, "\u{0}", Duration::from_secs(2)).await;
+    assert!(ended, "the stream ends");
+    assert!(read.contains("before-1"), "{read}");
+    assert!(
+        !read.contains("after-"),
+        "no event after the revocation: {read}"
+    );
+}

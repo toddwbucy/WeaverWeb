@@ -326,60 +326,133 @@ async fn trace(store: Store, seams: Seams, headers: HeaderMap, agent: String) ->
         return fault(anyhow::anyhow!("a live window ensured is not there"));
     };
     let (tx, rx) = tokio::sync::mpsc::channel::<SseEvent>(64);
+    let recheck =
+        tokio::time::interval_at(tokio::time::Instant::now() + seams.recheck, seams.recheck);
+    let mut view = View {
+        tx,
+        recheck,
+        bound: seams.recheck,
+        store,
+        policy: seams.policy,
+        headers,
+        id,
+    };
     tokio::spawn(async move {
-        if tx
-            .send(SseEvent::default().event("window").data(LIVE_WINDOW))
+        if !view
+            .deliver(SseEvent::default().event("window").data(LIVE_WINDOW))
             .await
-            .is_err()
         {
             return;
         }
         let mut cursor = 0u64;
         for event in held {
             cursor = event.seq;
-            if tx.send(trace_event(&event)).await.is_err() {
+            if !view.deliver(trace_event(&event)).await {
                 return;
             }
         }
-        let mut recheck =
-            tokio::time::interval_at(tokio::time::Instant::now() + seams.recheck, seams.recheck);
         loop {
-            tokio::select! {
+            let next = tokio::select! {
                 // **A viewer gone ends the view at once**: a quiet agent
                 // sends nothing, so a send's failure would not notice a
                 // closed tab, and the task and its subscription would live
                 // until the session's or the grant's end.
-                _ = tx.closed() => return,
+                _ = view.tx.closed() => return,
                 received = live.recv() => match received {
                     Ok(event) if event.seq > cursor => {
                         cursor = event.seq;
-                        if tx.send(trace_event(&event)).await.is_err() {
-                            return;
-                        }
+                        Some(trace_event(&event))
                     }
-                    Ok(_) => {}
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                        let mark = SseEvent::default()
+                    Ok(_) => None,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => Some(
+                        SseEvent::default()
                             .event("mark")
-                            .data(format!("the view fell behind the window: {n} events not shown"));
-                        if tx.send(mark).await.is_err() {
-                            return;
-                        }
-                    }
+                            .data(format!("the view fell behind the window: {n} events not shown")),
+                    ),
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
                 },
-                _ = recheck.tick() => {
-                    if let Some(why) = ended(&store, &seams.policy, &headers, &id).await {
-                        let _ = tx.send(SseEvent::default().event("closed").data(why)).await;
+                _ = view.recheck.tick() => {
+                    if !view.still_open().await {
                         return;
                     }
+                    None
                 }
+            };
+            if let Some(event) = next
+                && !view.deliver(event).await
+            {
+                return;
             }
         }
     });
     Sse::new(ReceiverStream::new(rx).map(Ok::<SseEvent, Infallible>))
         .keep_alive(KeepAlive::default())
         .into_response()
+}
+
+/// **One open live view's sending half.** **No await in it outlasts the
+/// re-check's deadline**: a reader that does not read, or a trace busier
+/// than the reader, fills the channel, and a send awaited plainly would
+/// hold the task past its re-check, so a revoked grant, a disabled person
+/// or a closed session would keep receiving. Every send instead races a
+/// slot's reservation against the re-check's tick and the viewer's going:
+/// nothing is committed to the channel until a slot is held while access
+/// was last found standing, and where the tick wins and access has ended,
+/// the pending event is dropped and the view closes.
+struct View {
+    tx: tokio::sync::mpsc::Sender<SseEvent>,
+    recheck: tokio::time::Interval,
+    bound: Duration,
+    store: Store,
+    policy: Policy,
+    headers: HeaderMap,
+    id: AgentId,
+}
+
+impl View {
+    /// **One event sent, or the view closed**: `false` where the viewer
+    /// went or access ended while the event waited for a slot, the event
+    /// then never sent.
+    async fn deliver(&mut self, event: SseEvent) -> bool {
+        let mut event = Some(event);
+        loop {
+            let ticked = tokio::select! {
+                _ = self.tx.closed() => return false,
+                permit = self.tx.reserve() => match permit {
+                    Ok(permit) => {
+                        if let Some(event) = event.take() {
+                            permit.send(event);
+                        }
+                        return true;
+                    }
+                    Err(_) => return false,
+                },
+                _ = self.recheck.tick() => true,
+            };
+            if ticked && !self.still_open().await {
+                return false;
+            }
+        }
+    }
+
+    /// **The re-check**: `true` where the session and the grant stand;
+    /// otherwise the closing line offered, within the re-check's own
+    /// bound, and `false`.
+    async fn still_open(&mut self) -> bool {
+        let Some(why) = ended(&self.store, &self.policy, &self.headers, &self.id).await else {
+            return true;
+        };
+        tokio::select! {
+            _ = self.tx.closed() => {}
+            permit = self.tx.reserve() => {
+                if let Ok(permit) = permit {
+                    permit.send(SseEvent::default().event("closed").data(why));
+                }
+            }
+            _ = tokio::time::sleep(self.bound) => {}
+        }
+        false
+    }
 }
 
 /// **What ended the view**, where something did: the session (at its use,

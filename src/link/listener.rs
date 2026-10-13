@@ -1393,9 +1393,11 @@ impl Answer {
     }
 
     /// **What the answer says of the act**, for its outcome record, and
-    /// **only evidence writes one**: `weaver-admin-operator-contract`'s exit
-    /// status decides an outcome, 0 a `lifecycle-answer` and so `ok`, 1 a
-    /// `lifecycle-refusal` and so `failed`. A fault writes `failed` only
+    /// **only the contract's evidence writes one**, in every field the
+    /// audit reads from the peer's frame: `weaver-admin-operator-contract`'s
+    /// exit status, 0 a `lifecycle-answer` and so `ok`, 1 a
+    /// `lifecycle-refusal` and so `failed`; any other status, or none, is a
+    /// fault by the contract and writes no outcome. A fault writes `failed` only
     /// where its kind proves the verb never ran, by an allow-list: `busy`,
     /// `not_started`, `outside_ceiling`. **Every other kind, known or not,
     /// writes no outcome** (`None`): `unknown` and `fault`, which leave the
@@ -1410,7 +1412,11 @@ impl Answer {
             VerbFault::OUTSIDE_CEILING,
         ];
         match self {
-            Answer::Outcome(outcome) => Some(outcome.exit_code == Some(0)),
+            Answer::Outcome(outcome) => match outcome.exit_code {
+                Some(0) => Some(true),
+                Some(1) => Some(false),
+                _ => None,
+            },
             Answer::Fault(fault) if NEVER_RAN.contains(&fault.kind.as_str()) => Some(false),
             Answer::Fault(_) => None,
         }

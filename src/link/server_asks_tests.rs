@@ -862,3 +862,45 @@ async fn an_admission_answered_near_its_deadline_does_not_complete_past_it() {
         "the late show never landed on the row"
     );
 }
+
+/// **Only the contract's evidence writes an outcome, in every field the
+/// audit reads**: admin's exit status is 0 for an answer and 1 for a
+/// refusal, and an outcome with no status or any other one is a fault by
+/// the contract, so each leaves the first with no second.
+///
+/// Perturbation: go back to `exit_code == Some(0)` as the only test. Exit 2
+/// writes `failed`.
+#[tokio::test]
+async fn an_outcome_whose_exit_status_proves_nothing_writes_no_outcome() {
+    let Some(lab) = Lab::open().await else { return };
+    let karl = lab.register("karl").await;
+    let (mut admin, _) = ready(&lab, &karl).await;
+    for exit_code in [None, Some(2)] {
+        let listener = lab.listener.clone();
+        let asked = karl.id.clone();
+        let shown = tokio::spawn(async move { listener.verb(&asked, "show").await });
+        let id = take_show(&mut admin).await;
+        let mut outcome = show_answer("karl", "idle", None);
+        outcome.exit_code = exit_code;
+        admin
+            .send(FromClient::Verb {
+                id,
+                outcome: Some(outcome),
+                error: None,
+            })
+            .await;
+        shown
+            .await
+            .unwrap()
+            .expect("the asker reads admin's answer");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let records = records(&lab, &karl.id).await;
+        let first = firsts(&records).pop().unwrap();
+        assert_servers_show(&first);
+        assert_eq!(
+            outcome_of(&records, &first),
+            None,
+            "exit {exit_code:?}: {records:#?}"
+        );
+    }
+}

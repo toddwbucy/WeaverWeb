@@ -519,3 +519,43 @@ async fn the_servers_ask_sends_no_frame_without_its_first_record() {
     }
     assert_eq!(records(&lab, &karl.id).await.len(), before);
 }
+
+/// **An answer in hand has its outcome written whatever closes the
+/// connection** (Spec 2.13): the outcome's write is slow, the credential is
+/// revoked while it is in flight, and the `ok` outcome still lands, the
+/// connection closed by the revocation.
+///
+/// Perturbation: race the outcome's write against the close signal again.
+/// The revocation cancels it, and the answered ask's first stands alone.
+#[tokio::test]
+async fn an_answered_show_has_its_outcome_though_the_connection_closes_mid_write() {
+    let Some(lab) = Lab::open().await else { return };
+    let karl = lab.register("karl").await;
+    let mut admin = hello(&lab, &karl, &["show"]).await;
+    let id = take_show(&mut admin).await;
+    lab.listener.delay_next_outcome(Duration::from_secs(2));
+    admin
+        .send(FromClient::Verb {
+            id,
+            outcome: Some(show_answer("karl", "idle", None)),
+            error: None,
+        })
+        .await;
+    // The outcome's write is in flight when the revocation closes the link.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let row = lab.agent(&karl.id).await;
+    lab.store
+        .revoke_credential(&row, Plane::Admin, Some("lab"))
+        .await
+        .unwrap();
+    disconnected(&lab, &karl).await;
+    let records = wait_records(&lab, &karl.id, "the answered show's outcome", |r| {
+        firsts(r)
+            .first()
+            .is_some_and(|f| outcome_of(r, f).is_some())
+    })
+    .await;
+    let first = firsts(&records).remove(0);
+    assert_servers_show(&first);
+    assert_eq!(outcome_of(&records, &first), Some("ok"));
+}

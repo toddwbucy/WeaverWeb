@@ -272,6 +272,9 @@ struct Inner {
     /// completes, so its bound can be watched.
     #[cfg(test)]
     stall_next_first: std::sync::atomic::AtomicBool,
+    /// And on a verb's outcome: the next one waits this long first.
+    #[cfg(test)]
+    delay_next_outcome: Mutex<Option<Duration>>,
 }
 
 /// The server's handle on the link: the asks it routes and the window it
@@ -394,6 +397,8 @@ impl Listener {
                 stall_next_land: std::sync::atomic::AtomicBool::new(false),
                 #[cfg(test)]
                 stall_next_first: std::sync::atomic::AtomicBool::new(false),
+                #[cfg(test)]
+                delay_next_outcome: Mutex::new(None),
             }),
         };
         tracing::info!("link listening on {address} under epoch {epoch}");
@@ -618,6 +623,12 @@ impl Listener {
         self.inner.stall_next_first.store(true, Ordering::Relaxed);
     }
 
+    /// Make the next verb's outcome wait `delay` before its write, once.
+    #[cfg(test)]
+    pub fn delay_next_outcome(&self, delay: Duration) {
+        *self.inner.delay_next_outcome.lock().unwrap() = Some(delay);
+    }
+
     /// Make the next teardown's store write fail, once.
     #[cfg(test)]
     pub fn fail_next_teardown(&self) {
@@ -800,7 +811,17 @@ impl Inner {
     /// cannot be written is logged at error and changes nothing else: the
     /// act already happened, or never left.
     async fn record_outcome(&self, agent: &AgentId, first: &str, ok: bool) {
-        match tokio::time::timeout(self.silence, self.store.audit_outcome(first, ok)).await {
+        let outcome = async {
+            #[cfg(test)]
+            {
+                let delay = self.delay_next_outcome.lock().unwrap().take();
+                if let Some(delay) = delay {
+                    tokio::time::sleep(delay).await;
+                }
+            }
+            self.store.audit_outcome(first, ok).await
+        };
+        match tokio::time::timeout(self.silence, outcome).await {
             Ok(Ok(_)) => {}
             Ok(Err(e)) => {
                 tracing::error!("{agent}: the outcome of {first} could not be written: {e:#}")
@@ -1795,33 +1816,21 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                     // first** (Spec 2.13): the entry this answer's id names
                     // is taken, so a second answer to one ask finds none.
                     // Written ahead of the landing, which a store failure
-                    // can cut short after admin has acted. Held to the
-                    // silence bound and not the admission's deadline, so an
-                    // answer near the deadline still has its outcome.
+                    // can cut short after admin has acted. **Once the
+                    // answer is in hand its outcome is written whatever
+                    // closes the connection**: not raced against the close
+                    // signal, since a revocation, rotation or halt landing
+                    // mid-write would leave an answered ask's first alone,
+                    // reading as unknown. Held to the record step's own
+                    // silence bound, and not the admission's deadline, so an
+                    // answer near the deadline still has its outcome. What
+                    // the close costs: it waits at most one silence bound on
+                    // a stalled store, a halt within its grace and aborted
+                    // past it.
                     let first = firsts.lock().unwrap().remove(&id);
                     let owed = first.zip(answered(outcome.as_ref(), error.as_ref()));
                     if let Some((first, ok)) = owed {
-                        match bounded(
-                            inner.record_outcome(&agent.agent_id, &first, ok),
-                            inner.silence,
-                            &mut close_rx,
-                        )
-                        .await
-                        {
-                            Bounded::Done(()) => {}
-                            Bounded::TimedOut => tracing::error!(
-                                "{}: the outcome of {first} was not written within the bound",
-                                agent.agent_id
-                            ),
-                            Bounded::Closed => {
-                                reason = if silent.load(Ordering::Relaxed) {
-                                    "silent for the bound: the peer stopped reading"
-                                } else {
-                                    "closed by revocation, rotation or halt"
-                                };
-                                break;
-                            }
-                        }
+                        inner.record_outcome(&agent.agent_id, &first, ok).await;
                     }
                     let landing = match &outcome {
                         Some(outcome) => match bounded(

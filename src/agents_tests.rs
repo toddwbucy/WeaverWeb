@@ -1334,6 +1334,7 @@ fn hold_the_read_back(kind: &'static str) -> (Arc<tokio::sync::Notify>, Arc<toki
     );
     crate::store::commit::READ_BACK_HOLD.lock().unwrap().push((
         kind,
+        std::thread::current().id(),
         read.clone(),
         release.clone(),
     ));

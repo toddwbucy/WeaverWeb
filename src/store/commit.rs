@@ -183,10 +183,17 @@ fn give_up_on_the_commit(kind: &'static str) -> Option<Duration> {
 }
 
 /// A hold between a lost commit answer and its read-back, keyed by the
-/// act's kind, one of a list so tests running at once each keep their own.
+/// act's kind **and the thread of the test that set it**, one of a list so
+/// tests running at once each keep their own: two tests losing the same
+/// kind's answer would otherwise take each other's hold, one waking before
+/// its own commit and the other waiting on a release that never comes. A
+/// test's runtime is current-thread, so its act's read-back runs on the
+/// thread that set the hold, as the thread-local fault that loses the
+/// answer already assumes.
 #[cfg(test)]
 pub(crate) type ReadBackHold = (
     &'static str,
+    std::thread::ThreadId,
     std::sync::Arc<tokio::sync::Notify>,
     std::sync::Arc<tokio::sync::Notify>,
 );
@@ -201,10 +208,10 @@ async fn hold_before_the_read_back(kind: &'static str) {
         let mut holds = READ_BACK_HOLD.lock().unwrap();
         holds
             .iter()
-            .position(|(key, ..)| *key == kind)
+            .position(|(key, thread, ..)| *key == kind && *thread == std::thread::current().id())
             .map(|at| holds.remove(at))
     };
-    if let Some((_, read, release)) = hold {
+    if let Some((_, _, read, release)) = hold {
         read.notify_one();
         release.notified().await;
     }

@@ -1756,7 +1756,25 @@ it decides are stated here and in section 2.8, and the reasons are there.
   the read. **An open live view is one request**, so it re-checks its
   session and its person's grant on its agent every 15 seconds and closes at
   the first check that finds either ended, a disable, a removed passkey or
-  grant, or the session's expiry, the twelve-hour limit included.
+  grant, or the session's expiry, the twelve-hour limit included. **As
+  built on 2026-10-12**: `GET /agents` lists the agents the session's
+  person holds a live grant on, any role, by box and name with each plane's
+  connection, and no other, a person with none seeing an empty list;
+  `GET /agents/{ag}` shows one agent's register row (presence per plane,
+  the declared ceiling, the trace door, the load state with its source and
+  date, the run's tuple and constituents) and the person's roles on it;
+  `GET /agents/{ag}/trace` is the live view, an event stream of the
+  listener's window, which says it is that window and not a record. The
+  identity is parsed to its shape first (400); an agent the person holds no
+  grant on answers exactly as one that does not exist (404), page and view
+  alike, so neither is an oracle for agent identities. The grant check
+  runs at every read in a short transaction holding the identity
+  exclusion shared, released before the row is read and before any byte of
+  the stream; no read is audited. The live view re-checks every fifteen
+  seconds by reading its session as every use does, the last use refreshed
+  at most once a minute, and the grant, and closes with its reason at the
+  first that fails. The admin's register page is unchanged, showing no
+  agent's door, load state or trace.
 - **The audit record, append-only**: every record names its principal, the
   person, the server or the host, how that principal was authenticated (a
   session, an enrollment token or a passkey assertion for a person, the last
@@ -4043,8 +4061,8 @@ missing while it was relaying.
 | a record's principal and its method agree | perturbation in `src/store/audit_tests.rs`: drop the check, and a host record carrying a person's method lands |
 | every check of the audit is false, never unknown, on a missing value | perturbation in `src/store/audit_tests.rs`, one row per check with its guarded member missing, each in a transaction rolled back: drop the guard on the outcome, and an outcome record with no outcome lands and takes its first record's one outcome; drop it on an agent target's identity, and an agent target naming no row lands; drop it on a person's identity, and a person nobody can name lands |
 | the admin role grants no action on any agent | perturbation, **owed**: let the server-wide admin grant authorize a verb, and an admin holding no grant on an agent asks `stop` of it. Lands with act 11's authorization pull request |
-| reading an agent takes a grant on it | perturbation, **owed**: drop the grant check on a read, and a person holding no grant on an agent reads its trace window and its load state; give the admin's register view the door and the load state, and an admin with no grant reads an agent's state. Lands with act 11's authorization pull request |
-| an open live view ends within its bound of what ended its session or grant | perturbation, **owed**: drop the stream's re-check, disable a person whose live view is open, and the view keeps receiving the trace; remove the grant instead, and the same. Lands with act 11's authorization pull request |
+| reading an agent takes a grant on it | perturbation in `src/reading_tests.rs`, against a real listener: drop the list's grant filter, and a person sees an agent they hold no grant on; drop the page's grant check, and a person holding no grant on an agent reads its row and its live window; answer the agent without a grant differently from an unknown one, and the page is an oracle for agent identities; give the admin's register view the door and the load state, and an admin with no grant reads an agent's state |
+| an open live view ends within its bound of what ended its session or grant | perturbation in `src/reading_tests.rs`, the re-check's interval set short: drop the stream's re-check, and a view stays open after its grant is revoked by the host, its person disabled, or its session signed out; drop the grant from the re-check, and the revocation alone leaves it open |
 | the ceremonies in flight are bounded, each expiring and used once | perturbation in `src/passkeys_tests.rs`, on a paused clock: drop the cap, and a sixty-fifth ceremony starts; take a ceremony without removing it, and it finishes twice; drop the expiry, and a ceremony past five minutes is taken; keep expired ceremonies against the cap, and the table refuses while none is live |
 | the WebAuthn library links into the server binary alone | measurement and perturbation in `tests/connectors_link.rs`: `ldd` on the connectors as `cargo test` builds them finds no `libcrypto`, and on the server binary finds it, which shows the reading; and the package's normal graph without the default features holds no `openssl-sys` and no `webauthn-rs`, the build CLAUDE.md gives for agent boxes. Make the library a dependency the feature does not carry, and the graph holds it |
 | the admission's `show` is required only where the ceiling grants it | perturbation: ask `show` at every admission, and an agent whose ceiling grants no `show` is closed `admission_incomplete` at every reconnection and never stays admitted; skip it where it is granted, and the row reads the last process's state as current |
@@ -4056,7 +4074,11 @@ missing while it was relaying.
 act that lands it states what removal makes it fail and confirms it does.
 
 **A row marked owed has no instrument and is not counted as enforced.**
-Six stand so marked as of 2026-10-09. Act 11's pull request of registering
+Four stand so marked as of 2026-10-12. Act 11's pull request of reading
+an agent of 2026-10-12 stood up read access (the list, the page and the
+live view by grant, an agent without one answered as an unknown one) and
+the live view's bound (its fifteen-second re-check of the session and the
+grant), each shown to fail with its guard removed. Act 11's pull request of registering
 agents through the web of 2026-10-09 stood up a register verb through the
 server as an admin's under the exclusion and the hand-over of its client
 configs, once and kept nowhere, each shown to fail with its guard removed,
@@ -4068,9 +4090,9 @@ whose agent is retired). The
 batch's order is owed because
 section 2.11 describes its table and no migration builds it. Two rows of
 the role shape ruled on 2026-10-02 are owed to the IAM act: the principal
-check and the audit record. **Three are owed to act 11's code pull
+check and the audit record. **One is owed to act 11's code pull
 requests**, from its design of 2026-10-07: the admin's lack of agent
-actions, read access, and the live view's bound. Act 11's pull request of
+actions, which the pull request of verbs brings. Act 11's pull request of
 an admin's writes to roles and grants of 2026-10-09 stood up the writer's
 check for roles, grants and another person's authentication material (the
 admin grant at each write and re-checked in its transaction, the

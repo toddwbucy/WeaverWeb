@@ -13,11 +13,12 @@
     {%- if who.is_empty() %}
     <a href="/sign-in"{% if here == "sign-in" %} class="here"{% endif %}>Sign in</a>
     {%- else %}
+    <a href="/agents"{% if here == "agents" %} class="here"{% endif %}>Agents</a>
     <a href="/passkeys"{% if here == "passkeys" %} class="here"{% endif %}>Passkeys</a>
     {%- if admin %}
     <a href="/admin/persons"{% if here == "admin" %} class="here"{% endif %}>Persons</a>
     <a href="/admin/grants"{% if here == "grants" %} class="here"{% endif %}>Grants</a>
-    <a href="/admin/agents"{% if here == "agents" %} class="here"{% endif %}>Agents</a>
+    <a href="/admin/agents"{% if here == "register" %} class="here"{% endif %}>Register</a>
     {%- endif %}
     <span class="who">{{ who }}</span>
     <form method="post" action="/sign-out" class="sign-out"><button type="submit">Sign out</button></form>

@@ -127,10 +127,12 @@ type Pending = Arc<Mutex<HashMap<u64, oneshot::Sender<FromClient>>>>;
 /// **From an ask's first record to its frame in the channel** (Spec 2.13):
 /// whatever ends the ask in between, an error or its future dropped while
 /// the send waits on a full channel, removes the ask's entries and answers
-/// its first record `failed`, since the frame never left. Installed right
-/// after the record and disarmed only once the send has completed; the one
-/// cleanup of `Inner::ask` and `ask_show` alike. **Drop cannot await**, so
-/// the outcome's write is spawned, held to the silence bound.
+/// its first record `failed`, since the frame never left. Armed by the
+/// record step before the record's insert and disarmed only once the send
+/// has completed; the one cleanup of `Inner::ask` and `ask_show` alike.
+/// **Drop cannot await**, so the outcome's write is spawned, held to the
+/// silence bound, and waits on the first's outcome lock for its insert's
+/// transaction to end (`Store::audit_unsent`).
 struct Unsent {
     id: u64,
     agent: AgentId,
@@ -170,8 +172,11 @@ impl Drop for Unsent {
             return;
         };
         runtime.spawn(async move {
-            match tokio::time::timeout(silence, store.audit_outcome(&first, false)).await {
-                Ok(Ok(_)) => {}
+            match tokio::time::timeout(silence, store.audit_unsent(&first)).await {
+                Ok(Ok(true)) => {}
+                Ok(Ok(false)) => {
+                    tracing::info!("{agent}: {first} never landed, so it has no outcome to answer")
+                }
                 Ok(Err(e)) => tracing::error!(
                     "{agent}: the failed outcome of {first}, its frame never sent, could not be written: {e:#}"
                 ),
@@ -855,29 +860,71 @@ impl Listener {
 
 impl Inner {
     /// **The record step** (Spec 2.13): a verb's first record, written
-    /// before its frame enters the channel and bounded by the silence
-    /// bound, so a store that stalls never holds an ask, or the connection
-    /// task asking its own `show`, past it. **The one place a verb's first
-    /// record is written**: 6b2 holds the identity exclusion shared from
-    /// the person's check across it to the enqueue. A record that cannot
-    /// be written, or whose answer is lost, asks nothing.
+    /// before its frame enters the channel, for `Inner::ask` and `ask_show`
+    /// alike. **The duty to answer the first `failed` is owned from before
+    /// its insert until its frame is in the channel**:
+    ///
+    /// - the record's identity is drawn here and the `Unsent` guard armed
+    ///   with it before the insert, which takes the record's outcome lock;
+    /// - the insert runs in a task of its own, which its asker cannot
+    ///   cancel, and hands the armed guard back; a guard dropped anywhere,
+    ///   in the task on an insert error or a lost answer, in the hand-over
+    ///   where the asker is gone, or in the ask before its send completes,
+    ///   answers the first `failed` under the same lock, so only once the
+    ///   insert's transaction has ended, and only where it landed;
+    /// - the asker waits to the silence bound, so a store that stalls never
+    ///   holds an ask, or the connection task asking its own `show`, past
+    ///   it; the task finishes on its own and its guard answers.
+    ///
+    /// 6b2 holds the identity exclusion shared from the person's check
+    /// across this step to the enqueue.
     async fn record_ask(
         &self,
+        ask: u64,
         agent: &AgentId,
         verb: &str,
         principal: audit::Principal<'_>,
-    ) -> anyhow::Result<String> {
-        let first = async {
-            #[cfg(test)]
-            if self.stall_next_first.swap(false, Ordering::Relaxed) {
-                std::future::pending::<()>().await;
-            }
-            self.store
-                .audit_first(principal, Target::Agent(agent.as_str()), verb)
-                .await
+    ) -> anyhow::Result<Unsent> {
+        let first = audit::draw_audit_id();
+        let record = audit::FirstRecord::new(principal, Target::Agent(agent.as_str()), verb);
+        let unsent = Unsent {
+            id: ask,
+            agent: agent.clone(),
+            first: Some(first.clone()),
+            store: self.store.clone(),
+            silence: self.silence,
+            pending: None,
+            firsts: None,
+            armed: true,
         };
-        match tokio::time::timeout(self.silence, first).await {
-            Ok(first) => first,
+        let (store, silence, owner) = (self.store.clone(), self.silence, agent.clone());
+        #[cfg(test)]
+        let stall = self.stall_next_first.swap(false, Ordering::Relaxed);
+        let (hand_over, handed) = oneshot::channel();
+        tokio::spawn(async move {
+            let insert = async {
+                #[cfg(test)]
+                if stall {
+                    std::future::pending::<()>().await;
+                }
+                store.audit_first_as(&first, &record).await
+            };
+            match tokio::time::timeout(silence, insert).await {
+                // A receiver gone hands the guard back here, and it drops.
+                Ok(Ok(())) => {
+                    let _ = hand_over.send(unsent);
+                }
+                Ok(Err(e)) => {
+                    tracing::error!("{owner}: the first record {first} was not written: {e:#}");
+                }
+                Err(_) => tracing::error!(
+                    "{owner}: the first record {first} was not written within {silence:?}"
+                ),
+            }
+        });
+        match tokio::time::timeout(self.silence, handed).await {
+            Ok(Ok(unsent)) => Ok(unsent),
+            Ok(Err(_)) => anyhow::bail!("not written"),
             Err(_) => anyhow::bail!("not written within {:?}", self.silence),
         }
     }
@@ -938,29 +985,32 @@ impl Inner {
         // **The first record commits before the frame enters the channel**
         // (Spec 2.13), outside the live map's lock since it awaits the
         // store.
-        let first = match (record, verb) {
-            (Some(principal), Some(verb)) => match self.record_ask(agent, verb, principal).await {
-                Ok(first) => Some(first),
-                Err(e) => {
-                    tracing::error!(
-                        "{agent} ({plane}): the first record of {verb} could not be written, nothing asked: {e:#}"
-                    );
-                    return Err(AskError::Audit);
+        // **Armed from before the record until the frame is in the
+        // channel**; an ask with no record arms it for its entries alone.
+        let mut unsent = match (record, verb) {
+            (Some(principal), Some(verb)) => {
+                match self.record_ask(id, agent, verb, principal).await {
+                    Ok(unsent) => unsent,
+                    Err(e) => {
+                        tracing::error!(
+                            "{agent} ({plane}): the first record of {verb} could not be written, nothing asked: {e:#}"
+                        );
+                        return Err(AskError::Audit);
+                    }
                 }
+            }
+            _ => Unsent {
+                id,
+                agent: agent.clone(),
+                first: None,
+                store: self.store.clone(),
+                silence: self.silence,
+                pending: None,
+                firsts: None,
+                armed: true,
             },
-            _ => None,
         };
-        // **Armed from the record until the frame is in the channel.**
-        let mut unsent = Unsent {
-            id,
-            agent: agent.clone(),
-            first: first.clone(),
-            store: self.store.clone(),
-            silence: self.silence,
-            pending: None,
-            firsts: None,
-            armed: true,
-        };
+        let first = unsent.first.clone();
         let (reply_tx, reply_rx) = oneshot::channel();
         // **The sender is inserted in the same critical section that found
         // the connection**: a teardown then either sees the entry and drops
@@ -1276,14 +1326,14 @@ async fn ask_show(
     close: &mut watch::Receiver<bool>,
 ) -> Result<u64, &'static str> {
     let id = inner.next_ask.fetch_add(1, Ordering::Relaxed);
-    let first = match bounded(
-        inner.record_ask(agent, "show", audit::Principal::Server),
+    let mut unsent = match bounded(
+        inner.record_ask(id, agent, "show", audit::Principal::Server),
         inner.silence,
         close,
     )
     .await
     {
-        Bounded::Done(Ok(first)) => first,
+        Bounded::Done(Ok(unsent)) => unsent,
         Bounded::Done(Err(e)) => {
             tracing::error!("{agent}: the server's show was not asked: its first record: {e:#}");
             send(
@@ -1309,17 +1359,12 @@ async fn ask_show(
         }
         Bounded::Closed => return Err("closed by revocation, rotation or halt"),
     };
-    firsts.lock().unwrap().insert(id, first.clone());
-    let unsent = Unsent {
-        id,
-        agent: agent.clone(),
-        first: Some(first),
-        store: inner.store.clone(),
-        silence: inner.silence,
-        pending: None,
-        firsts: Some(firsts.clone()),
-        armed: true,
-    };
+    let first = unsent
+        .first
+        .clone()
+        .expect("the record step names its first");
+    firsts.lock().unwrap().insert(id, first);
+    unsent.firsts = Some(firsts.clone());
     let frame = ToClient::Verb {
         id,
         verb: "show".into(),

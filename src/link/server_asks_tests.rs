@@ -11,7 +11,7 @@ use super::frames::{FromClient, Plane, Principal, Refusal, ToClient, VerbFault, 
 use super::listener::VerbError;
 use super::tests::{Fake, Lab, Registered, SOON, position, position_in, show_answer, trace_event};
 use crate::store::AgentId;
-use crate::store::audit::{FAIL_FIRST_RECORD, FAIL_REFUSAL};
+use crate::store::audit::{FAIL_FIRST_RECORD, FAIL_REFUSAL, FIRST_FAULT, FirstFault};
 use serde_json::json;
 use std::time::Duration;
 
@@ -619,4 +619,112 @@ async fn an_ask_dropped_before_its_frame_leaves_answers_its_first_failed() {
     let cancelled = firsts(&records).remove(1);
     assert_servers_show(&cancelled);
     assert_eq!(outcome_of(&records, &cancelled), Some("failed"));
+}
+
+/// Admitted with `show` granted, the admission's own records written: the
+/// count to read the server's next ask against.
+async fn ready(lab: &Lab, karl: &Registered) -> (Fake, usize) {
+    let admin = admitted(lab, karl, &["show"]).await;
+    let before = records(lab, &karl.id).await.len();
+    (admin, before)
+}
+
+/// The newest first record on the agent and its outcome, once it has one.
+async fn newest_answered(lab: &Lab, agent: &AgentId, what: &str) -> (Record, Option<String>) {
+    let records = wait_records(lab, agent, what, |r| {
+        firsts(r).last().is_some_and(|f| outcome_of(r, f).is_some()) && firsts(r).len() >= 2
+    })
+    .await;
+    let first = firsts(&records).pop().unwrap();
+    let outcome = outcome_of(&records, &first).map(str::to_owned);
+    (first, outcome)
+}
+
+/// **A first record that commits after its asker left is answered
+/// `failed`** (Spec 2.13): the insert runs in a task the asker cannot
+/// cancel, its answer is held past the asker's own timeout, and the guard
+/// the task hands back finds no one to take it and answers the first,
+/// whose frame never left.
+#[tokio::test]
+async fn a_first_committed_after_its_asker_left_is_answered_failed() {
+    let Some(lab) = Lab::open().await else { return };
+    let karl = lab.register("karl").await;
+    let (mut admin, _) = ready(&lab, &karl).await;
+    FIRST_FAULT.with(|f| f.set(Some(FirstFault::DelayAnswer(Duration::from_secs(1)))));
+    let left = tokio::time::timeout(
+        Duration::from_millis(200),
+        lab.listener.verb(&karl.id, "show"),
+    )
+    .await;
+    assert!(left.is_err(), "the asker left before the answer: {left:?}");
+    let (first, outcome) = newest_answered(&lab, &karl.id, "the left ask's outcome").await;
+    assert_servers_show(&first);
+    assert_eq!(outcome.as_deref(), Some("failed"));
+    assert!(admin.recv().await.is_none(), "no frame left the server");
+    assert_eq!(lab.listener.held_asks(&karl.id), Some((0, 0)));
+}
+
+/// **A first record whose answer is lost after its commit is answered
+/// `failed`**: the guard was armed before the insert, so the task that
+/// lost the answer still holds it, and its drop answers the first.
+///
+/// Perturbation: arm the guard only once the insert has answered. The lost
+/// answer leaves it unarmed, and the committed first stands alone.
+#[tokio::test]
+async fn a_first_whose_answer_is_lost_after_its_commit_is_answered_failed() {
+    let Some(lab) = Lab::open().await else { return };
+    let karl = lab.register("karl").await;
+    let (mut admin, _) = ready(&lab, &karl).await;
+    FIRST_FAULT.with(|f| f.set(Some(FirstFault::LoseAnswer)));
+    assert!(matches!(
+        lab.listener.verb(&karl.id, "show").await,
+        Err(VerbError::Audit)
+    ));
+    let (first, outcome) = newest_answered(&lab, &karl.id, "the lost answer's outcome").await;
+    assert_servers_show(&first);
+    assert_eq!(outcome.as_deref(), Some("failed"));
+    assert!(admin.recv().await.is_none(), "no frame left the server");
+}
+
+/// **A `failed` outcome waits for the first's transaction to end**: the
+/// first's answer is lost while its COMMIT is still to land, as a
+/// connection that fails while its backend completes the commit; the
+/// `failed` write takes the first's outcome lock, so it runs only once the
+/// commit has landed, and then finds the first and answers it.
+///
+/// Perturbation: drop the lock from the `failed` write. It runs at once,
+/// finds no first yet, writes nothing, and the first that commits after it
+/// stands alone: Codex's interleaving, staged.
+#[tokio::test]
+async fn a_failed_outcome_waits_for_its_firsts_transaction_to_end() {
+    let Some(lab) = Lab::open().await else { return };
+    let karl = lab.register("karl").await;
+    let (_admin, before) = ready(&lab, &karl).await;
+    FIRST_FAULT.with(|f| f.set(Some(FirstFault::CommitLate(Duration::from_secs(1)))));
+    assert!(matches!(
+        lab.listener.verb(&karl.id, "show").await,
+        Err(VerbError::Audit)
+    ));
+    let at_the_answer = records(&lab, &karl.id).await;
+    assert_eq!(at_the_answer.len(), before, "nothing committed yet");
+    let (first, outcome) = newest_answered(&lab, &karl.id, "the late commit's outcome").await;
+    assert_servers_show(&first);
+    assert_eq!(outcome.as_deref(), Some("failed"));
+}
+
+/// **A first record that never commits gets no outcome and nothing else**:
+/// its guard's `failed` write finds no first and lands nothing.
+#[tokio::test]
+async fn a_first_that_never_commits_leaves_nothing() {
+    let Some(lab) = Lab::open().await else { return };
+    let karl = lab.register("karl").await;
+    let (mut admin, before) = ready(&lab, &karl).await;
+    FIRST_FAULT.with(|f| f.set(Some(FirstFault::Abort)));
+    assert!(matches!(
+        lab.listener.verb(&karl.id, "show").await,
+        Err(VerbError::Audit)
+    ));
+    assert!(admin.recv().await.is_none(), "no frame left the server");
+    assert_eq!(records(&lab, &karl.id).await.len(), before);
+    assert_eq!(lab.listener.held_asks(&karl.id), Some((0, 0)));
 }

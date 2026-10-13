@@ -654,21 +654,30 @@ impl Store {
                 planes
             }
         };
+        // **Every plane asked revoked in one statement**, the version
+        // advanced once for the one authored edit, as the other two-plane
+        // writes advance it; each credential is told to the listener after.
+        let sets: Vec<String> = planes
+            .iter()
+            .map(|plane| {
+                let p = plane_columns(*plane);
+                format!(
+                    "{p}_state = 'revoked', {p}_state_at = now(), \
+                     {p}_link_at = CASE WHEN {p}_connected THEN now() ELSE {p}_link_at END, \
+                     {p}_connected = false, {p}_incarnation = NULL"
+                )
+            })
+            .collect();
+        sqlx::query(audited(format!(
+            "UPDATE agent SET {}, author = $2, version = version + 1 WHERE agent_id = $1",
+            sets.join(", ")
+        )))
+        .bind(agent_id.as_str())
+        .bind(admin.person)
+        .execute(&mut *tx)
+        .await?;
         let mut revoked = Vec::new();
         for plane in planes {
-            let p = plane_columns(plane);
-            sqlx::query(audited(format!(
-                "UPDATE agent SET \
-                   {p}_state = 'revoked', {p}_state_at = now(), \
-                   {p}_link_at = CASE WHEN {p}_connected THEN now() ELSE {p}_link_at END, \
-                   {p}_connected = false, {p}_incarnation = NULL, \
-                   author = $2, version = version + 1 \
-                 WHERE agent_id = $1 AND {p}_state = 'live'"
-            )))
-            .bind(agent_id.as_str())
-            .bind(admin.person)
-            .execute(&mut *tx)
-            .await?;
             let fingerprint: String =
                 row.try_get(format!("{}_fingerprint", plane.as_str()).as_str())?;
             notify(&mut tx, &fingerprint).await?;

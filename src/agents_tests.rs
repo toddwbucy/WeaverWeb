@@ -1427,3 +1427,45 @@ fn walk(dir: &std::path::Path) -> Vec<String> {
     }
     found
 }
+
+/// **A retirement is one authored edit**: retiring a row with both planes
+/// live advances its version by exactly one, and so does revoking one
+/// plane.
+#[tokio::test]
+async fn a_retirement_advances_the_version_once() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, session) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (both, _) = rig.register(&session, "box-a", "karl").await;
+    let before = agent_version(s, &both).await;
+    let (status, _, _) = rig
+        .post("/admin/agents/retire", form(&[("agent", &both)]), &session)
+        .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(states(s, &both).await, ("revoked".into(), "revoked".into()));
+    assert_eq!(
+        agent_version(s, &both).await,
+        before + 1,
+        "one edit, one version"
+    );
+
+    let (one, _) = rig.register(&session, "box-b", "jane").await;
+    let before = agent_version(s, &one).await;
+    let (status, _, _) = rig
+        .post(
+            "/admin/agents/revoke",
+            form(&[("agent", &one), ("plane", "admin")]),
+            &session,
+        )
+        .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(agent_version(s, &one).await, before + 1);
+}
+
+async fn agent_version(s: &Store, id: &str) -> i64 {
+    sqlx::query_scalar("SELECT version FROM agent WHERE agent_id = $1")
+        .bind(id)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap()
+}

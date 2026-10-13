@@ -1392,25 +1392,27 @@ impl Answer {
         }
     }
 
-    /// **What the answer says of the act**, for its outcome record:
-    /// `weaver-admin-operator-contract`'s exit status decides, 0 a
-    /// `lifecycle-answer` and so `ok`, 1 a `lifecycle-refusal` and so
-    /// `failed`. A fault of a verb that never ran (`busy`, `not_started`,
-    /// `outside_ceiling`) is `failed`. **One that leaves the act unknown
-    /// writes no outcome** (`None`): `unknown`, an invocation ended past
-    /// its bound, and `fault`, a status the contract has the caller answer
-    /// by reading the next `show`; the first then stands alone, which is
-    /// the audit's "unknown", as where the connection ends with the frame
-    /// in flight.
+    /// **What the answer says of the act**, for its outcome record, and
+    /// **only evidence writes one**: `weaver-admin-operator-contract`'s exit
+    /// status decides an outcome, 0 a `lifecycle-answer` and so `ok`, 1 a
+    /// `lifecycle-refusal` and so `failed`. A fault writes `failed` only
+    /// where its kind proves the verb never ran, by an allow-list: `busy`,
+    /// `not_started`, `outside_ceiling`. **Every other kind, known or not,
+    /// writes no outcome** (`None`): `unknown` and `fault`, which leave the
+    /// act unknown, `not_landed`, which is this server's own, and any kind
+    /// a connector of another version invents. The first then stands
+    /// alone, which is the audit's "unknown", as where the connection ends
+    /// with the frame in flight.
     fn audited(&self) -> Option<bool> {
+        const NEVER_RAN: [&str; 3] = [
+            VerbFault::BUSY,
+            VerbFault::NOT_STARTED,
+            VerbFault::OUTSIDE_CEILING,
+        ];
         match self {
             Answer::Outcome(outcome) => Some(outcome.exit_code == Some(0)),
-            Answer::Fault(fault)
-                if fault.kind == VerbFault::UNKNOWN || fault.kind == VerbFault::FAULT =>
-            {
-                None
-            }
-            Answer::Fault(_) => Some(false),
+            Answer::Fault(fault) if NEVER_RAN.contains(&fault.kind.as_str()) => Some(false),
+            Answer::Fault(_) => None,
         }
     }
 
@@ -1474,8 +1476,20 @@ async fn bounded<T>(
     bound: Duration,
     close: &mut watch::Receiver<bool>,
 ) -> Bounded<T> {
+    bounded_at(landing, tokio::time::Instant::now() + bound, close).await
+}
+
+/// `bounded` to an instant rather than a span: **a deadline kept as an
+/// instant is read at the await it bounds**, and one already past fires
+/// at the first poll, where a remainder of zero computed earlier would
+/// still wait for the timer's next tick.
+async fn bounded_at<T>(
+    landing: impl Future<Output = T>,
+    deadline: tokio::time::Instant,
+    close: &mut watch::Receiver<bool>,
+) -> Bounded<T> {
     tokio::select! {
-        done = tokio::time::timeout(bound, landing) => match done {
+        done = tokio::time::timeout_at(deadline, landing) => match done {
             Ok(value) => Bounded::Done(value),
             Err(_) => Bounded::TimedOut,
         },
@@ -1988,18 +2002,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                         reason = "refused as malformed";
                         break;
                     };
-                    // The admission's show is bounded by what remains of
-                    // its deadline, not by a fresh bound: a show answered
-                    // just before the deadline whose landing stalls would
-                    // otherwise leave the connection admitted on stale
-                    // facts for almost two bounds.
                     let is_admission = admission_show.is_some_and(|(ask, _)| ask == id);
-                    let bound = match admission_show {
-                        Some((ask, deadline)) if ask == id => {
-                            deadline.saturating_duration_since(tokio::time::Instant::now())
-                        }
-                        _ => inner.silence,
-                    };
                     // **The outcome when the answer lands, naming its own
                     // first** (Spec 2.13): the entry this answer's id names
                     // is taken, so a second answer to one ask finds none.
@@ -2020,10 +2023,22 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                     if let Some((first, ok)) = owed {
                         inner.record_outcome(&agent.agent_id, &first, ok).await;
                     }
+                    // The admission's show is bounded by what remains of
+                    // its deadline, not by a fresh bound: a show answered
+                    // just before the deadline whose landing stalls would
+                    // otherwise leave the connection admitted on stale
+                    // facts for almost two bounds. **The deadline is kept as
+                    // an instant and read here, at the await it bounds**: a
+                    // remainder computed before the outcome's write above
+                    // would be stale by up to a silence bound.
+                    let until = match admission_show {
+                        Some((ask, deadline)) if ask == id => deadline,
+                        _ => tokio::time::Instant::now() + inner.silence,
+                    };
                     let landing = match &answer {
-                        Answer::Outcome(outcome) => match bounded(
+                        Answer::Outcome(outcome) => match bounded_at(
                             inner.land_verb(&agent.agent_id, outcome),
-                            bound,
+                            until,
                             &mut close_rx,
                         )
                         .await

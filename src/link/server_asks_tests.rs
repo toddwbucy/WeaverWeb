@@ -790,3 +790,75 @@ async fn a_verb_answer_with_both_or_neither_shape_is_refused_as_malformed() {
         "{after_neither:#?}"
     );
 }
+
+/// **Only evidence writes an outcome**: a fault writes `failed` only where
+/// its kind proves the verb never ran. One this server does not know, as
+/// a connector of another version might send, and `not_landed`, which is
+/// the server's own and never admin-con's word, each leave the first with
+/// no second.
+///
+/// Perturbation: go back to a deny-list of the unknown kinds. The invented
+/// kind writes `failed`.
+#[tokio::test]
+async fn a_fault_of_a_kind_that_proves_nothing_writes_no_outcome() {
+    let Some(lab) = Lab::open().await else { return };
+    let karl = lab.register("karl").await;
+    for kind in ["gremlin", VerbFault::NOT_LANDED] {
+        let mut admin = hello(&lab, &karl, &["show"]).await;
+        let id = take_show(&mut admin).await;
+        admin
+            .send(FromClient::Verb {
+                id,
+                outcome: None,
+                error: Some(VerbFault {
+                    kind: kind.into(),
+                    message: "no evidence".into(),
+                }),
+            })
+            .await;
+        admin.expect_refusal(Refusal::AdmissionIncomplete).await;
+        disconnected(&lab, &karl).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let records = records(&lab, &karl.id).await;
+        let first = firsts(&records).pop().unwrap();
+        assert_eq!(outcome_of(&records, &first), None, "{kind}: {records:#?}");
+    }
+}
+
+/// **The admission's deadline is read at the await it bounds**: the
+/// outcome's write takes the admission past its deadline, and the landing
+/// then has nothing left, so the admission fails at its deadline rather
+/// than completing late.
+///
+/// Perturbation: compute what remains of the deadline before the outcome's
+/// write. The landing gets the stale remainder and the admission completes
+/// after its deadline.
+#[tokio::test]
+async fn an_admission_answered_near_its_deadline_does_not_complete_past_it() {
+    let Some(lab) = Lab::open_with(Duration::from_secs(4)).await else {
+        return;
+    };
+    let karl = lab.register("karl").await;
+    let mut admin = hello(&lab, &karl, &["show"]).await;
+    let id = take_show(&mut admin).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    lab.listener.delay_next_outcome(Duration::from_millis(2500));
+    admin
+        .send(FromClient::Verb {
+            id,
+            outcome: Some(show_answer("karl", "idle", None)),
+            error: None,
+        })
+        .await;
+    admin.expect_refusal(Refusal::AdmissionIncomplete).await;
+    disconnected(&lab, &karl).await;
+    // The answer's outcome still landed: the answer was in hand.
+    let records = records(&lab, &karl.id).await;
+    let first = firsts(&records).pop().unwrap();
+    assert_eq!(outcome_of(&records, &first), Some("ok"));
+    assert_ne!(
+        lab.agent(&karl.id).await.state_source.as_deref(),
+        Some("show"),
+        "the late show never landed on the row"
+    );
+}

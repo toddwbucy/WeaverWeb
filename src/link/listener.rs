@@ -121,6 +121,68 @@ struct LiveConnection {
 /// The connection's map from an ask's id to its verb's first record.
 type Firsts = Arc<Mutex<HashMap<u64, String>>>;
 
+/// The connection's map from an ask's id to its asker's reply.
+type Pending = Arc<Mutex<HashMap<u64, oneshot::Sender<FromClient>>>>;
+
+/// **From an ask's first record to its frame in the channel** (Spec 2.13):
+/// whatever ends the ask in between, an error or its future dropped while
+/// the send waits on a full channel, removes the ask's entries and answers
+/// its first record `failed`, since the frame never left. Installed right
+/// after the record and disarmed only once the send has completed; the one
+/// cleanup of `Inner::ask` and `ask_show` alike. **Drop cannot await**, so
+/// the outcome's write is spawned, held to the silence bound.
+struct Unsent {
+    id: u64,
+    agent: AgentId,
+    first: Option<String>,
+    store: Store,
+    silence: Duration,
+    pending: Option<Pending>,
+    firsts: Option<Firsts>,
+    armed: bool,
+}
+
+impl Unsent {
+    /// The frame is in the channel: the ask's entries now belong to its
+    /// answer, and its first to the outcome the answer writes.
+    fn disarm(mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for Unsent {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        if let Some(pending) = &self.pending {
+            pending.lock().unwrap().remove(&self.id);
+        }
+        if let Some(firsts) = &self.firsts {
+            firsts.lock().unwrap().remove(&self.id);
+        }
+        let Some(first) = self.first.take() else {
+            return;
+        };
+        let (store, silence, agent) = (self.store.clone(), self.silence, self.agent.clone());
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            tracing::error!("{agent}: no runtime to answer {first} failed, its frame never sent");
+            return;
+        };
+        runtime.spawn(async move {
+            match tokio::time::timeout(silence, store.audit_outcome(&first, false)).await {
+                Ok(Ok(_)) => {}
+                Ok(Err(e)) => tracing::error!(
+                    "{agent}: the failed outcome of {first}, its frame never sent, could not be written: {e:#}"
+                ),
+                Err(_) => tracing::error!(
+                    "{agent}: the failed outcome of {first}, its frame never sent, was not written within {silence:?}"
+                ),
+            }
+        });
+    }
+}
+
 /// Why an ask did not reach a connection.
 enum AskError {
     /// No ready connection on the plane, or the ask could not be enqueued
@@ -623,6 +685,19 @@ impl Listener {
         self.inner.stall_next_first.store(true, Ordering::Relaxed);
     }
 
+    /// How many asks the agent's admin connection holds: its pending
+    /// replies and its first records.
+    #[cfg(test)]
+    pub fn held_asks(&self, agent: &AgentId) -> Option<(usize, usize)> {
+        let live = self.inner.live.lock().unwrap();
+        live.get(&(agent.clone(), Plane::Admin)).map(|c| {
+            (
+                c.pending.lock().unwrap().len(),
+                c.firsts.lock().unwrap().len(),
+            )
+        })
+    }
+
     /// Make the next verb's outcome wait `delay` before its write, once.
     #[cfg(test)]
     pub fn delay_next_outcome(&self, delay: Duration) {
@@ -875,6 +950,17 @@ impl Inner {
             },
             _ => None,
         };
+        // **Armed from the record until the frame is in the channel.**
+        let mut unsent = Unsent {
+            id,
+            agent: agent.clone(),
+            first: first.clone(),
+            store: self.store.clone(),
+            silence: self.silence,
+            pending: None,
+            firsts: None,
+            armed: true,
+        };
         let (reply_tx, reply_rx) = oneshot::channel();
         // **The sender is inserted in the same critical section that found
         // the connection**: a teardown then either sees the entry and drops
@@ -902,16 +988,13 @@ impl Inner {
                 })
         };
         // **A frame that never entered the channel is an act that never
-        // happened**, and its first record is answered `failed`.
-        let unsent = async |first: Option<String>| {
-            if let Some(first) = first {
-                self.record_outcome(agent, &first, false).await;
-            }
-        };
+        // happened**: each return below, and a drop of this future at the
+        // send, leaves `unsent` to answer its first `failed`.
         let Some((tx, pending, firsts, close, silent)) = found else {
-            unsent(first).await;
             return Err(AskError::NotConnected);
         };
+        unsent.pending = Some(pending.clone());
+        unsent.firsts = Some(firsts);
         // **Bounded like every enqueue, and a bound that passes is the
         // peer gone silent**: a connector that stopped reading fills the
         // write channel, and the connection task, which on the gate plane
@@ -919,22 +1002,14 @@ impl Inner {
         // ask failed. The ask fails and the connection is closed as silent.
         // A send that does not complete leaves nothing in the channel.
         match tokio::time::timeout(self.silence, tx.send(make(id))).await {
-            Ok(Ok(())) => {}
-            Ok(Err(_)) => {
-                pending.lock().unwrap().remove(&id);
-                firsts.lock().unwrap().remove(&id);
-                unsent(first).await;
-                return Err(AskError::NotConnected);
-            }
+            Ok(Ok(())) => unsent.disarm(),
+            Ok(Err(_)) => return Err(AskError::NotConnected),
             Err(_) => {
                 tracing::warn!(
                     "{agent} ({plane}): an ask could not be enqueued within the bound, the peer stopped reading"
                 );
                 silent.store(true, Ordering::Relaxed);
                 let _ = close.send(true);
-                pending.lock().unwrap().remove(&id);
-                firsts.lock().unwrap().remove(&id);
-                unsent(first).await;
                 return Err(AskError::NotConnected);
             }
         }
@@ -942,7 +1017,7 @@ impl Inner {
         // this future is dropped at the await, under the pending map's own
         // lock, so a hung connector that still heartbeats does not collect
         // one entry per cancelled ask. An answered ask finds it gone.
-        struct Unask(Arc<Mutex<HashMap<u64, oneshot::Sender<FromClient>>>>, u64);
+        struct Unask(Pending, u64);
         impl Drop for Unask {
             fn drop(&mut self) {
                 self.0.lock().unwrap().remove(&self.1);
@@ -1191,7 +1266,8 @@ const AUDIT_UNWRITTEN: &str = "the audit could not record the server's show";
 /// connection's map. A record that cannot be written sends no frame, and
 /// the connection closes with the audit's reason, refused as the store
 /// unavailable so admin-con reconnects and the next admission asks again;
-/// a frame that cannot be enqueued has its first answered `failed`.
+/// a frame that cannot be enqueued has its first answered `failed`, by the
+/// `Unsent` guard.
 async fn ask_show(
     inner: &Inner,
     agent: &AgentId,
@@ -1234,16 +1310,23 @@ async fn ask_show(
         Bounded::Closed => return Err("closed by revocation, rotation or halt"),
     };
     firsts.lock().unwrap().insert(id, first.clone());
+    let unsent = Unsent {
+        id,
+        agent: agent.clone(),
+        first: Some(first),
+        store: inner.store.clone(),
+        silence: inner.silence,
+        pending: None,
+        firsts: Some(firsts.clone()),
+        armed: true,
+    };
     let frame = ToClient::Verb {
         id,
         verb: "show".into(),
         principal: Principal::Server,
     };
-    if let Err(why) = enqueue(tx, frame, inner.silence, close).await {
-        firsts.lock().unwrap().remove(&id);
-        inner.record_outcome(agent, &first, false).await;
-        return Err(why);
-    }
+    enqueue(tx, frame, inner.silence, close).await?;
+    unsent.disarm();
     Ok(id)
 }
 

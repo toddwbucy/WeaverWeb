@@ -9,7 +9,7 @@
 
 use super::frames::{FromClient, Plane, Principal, Refusal, ToClient, VerbFault, VerbOutcome};
 use super::listener::VerbError;
-use super::tests::{Fake, Lab, Registered, SOON, position, show_answer};
+use super::tests::{Fake, Lab, Registered, SOON, position, position_in, show_answer, trace_event};
 use crate::store::AgentId;
 use crate::store::audit::{FAIL_FIRST_RECORD, FAIL_REFUSAL};
 use serde_json::json;
@@ -558,4 +558,65 @@ async fn an_answered_show_has_its_outcome_though_the_connection_closes_mid_write
     let first = firsts(&records).remove(0);
     assert_servers_show(&first);
     assert_eq!(outcome_of(&records, &first), Some("ok"));
+}
+
+/// **An ask dropped while its frame waits on a full channel leaves nothing
+/// behind** (Spec 2.13): admin-con stops reading, acks fill the server's
+/// write path, and the server's `show` is cancelled by its caller while its
+/// send waits. Its entries leave both of the connection's maps and its
+/// first record is answered `failed`, the frame never having left.
+///
+/// Perturbation: disarm the `Unsent` guard as soon as it is installed. The
+/// cancelled ask's entries stay for the connection's life and its first
+/// stands alone.
+#[tokio::test]
+async fn an_ask_dropped_before_its_frame_leaves_answers_its_first_failed() {
+    let Some(lab) = Lab::open().await else { return };
+    let karl = lab.register("karl").await;
+    let mut admin = admitted(&lab, &karl, &["show"]).await;
+    // Acks that outrun every buffer between the server's queue and this
+    // reader, which never reads them, so the write channel stays full.
+    let generation = "g".repeat(4096);
+    let events = 5_000u64;
+    for n in 1..=events {
+        admin
+            .send(FromClient::Event {
+                position: position_in(&generation, 100 + n),
+                replayed: false,
+                event: trace_event(n, "turn", json!({})),
+            })
+            .await;
+    }
+    let until = tokio::time::Instant::now() + Duration::from_secs(30);
+    while lab.listener.acknowledged(&karl.id).map(|p| p.offset) != Some(100 + events) {
+        assert!(
+            tokio::time::Instant::now() < until,
+            "never acknowledged through the last"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(lab.listener.held_asks(&karl.id), Some((0, 0)));
+
+    let cancelled = tokio::time::timeout(
+        Duration::from_millis(500),
+        lab.listener.verb(&karl.id, "show"),
+    )
+    .await;
+    assert!(
+        cancelled.is_err(),
+        "the send waited on the full channel: {cancelled:?}"
+    );
+    assert_eq!(
+        lab.listener.held_asks(&karl.id),
+        Some((0, 0)),
+        "the cancelled ask left an entry behind"
+    );
+    let records = wait_records(&lab, &karl.id, "the cancelled show's outcome", |r| {
+        let firsts = firsts(r);
+        firsts.len() == 2 && outcome_of(r, &firsts[1]).is_some()
+    })
+    .await;
+    let cancelled = firsts(&records).remove(1);
+    assert_servers_show(&cancelled);
+    assert_eq!(outcome_of(&records, &cancelled), Some("failed"));
 }

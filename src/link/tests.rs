@@ -75,7 +75,7 @@ pub(super) fn show_answer(
 /// A trace event with its own time, `wall_ms`, as the envelope carries it.
 const WALL_MS: i64 = 1_790_000_000_000;
 
-fn trace_event(seq: u64, kind: &str, payload: serde_json::Value) -> TraceEvent {
+pub(super) fn trace_event(seq: u64, kind: &str, payload: serde_json::Value) -> TraceEvent {
     TraceEvent {
         seq,
         mark: None,
@@ -86,7 +86,7 @@ fn trace_event(seq: u64, kind: &str, payload: serde_json::Value) -> TraceEvent {
     }
 }
 
-fn position_in(generation: &str, offset: u64) -> Position {
+pub(super) fn position_in(generation: &str, offset: u64) -> Position {
     Position {
         generation: generation.into(),
         offset,

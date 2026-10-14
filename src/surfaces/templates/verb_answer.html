@@ -1,0 +1,14 @@
+{% extends "instrument.html" %}
+{% block title %}{{ verb }} on {{ label }} - weaver-web{% endblock %}
+{% block mainclass %}listing{% endblock %}
+{% block body %}
+{#- A person's verb, asked through the server, and admin's answer. No inline
+    script. -#}
+<header class="listing-head">
+  <h1>{{ verb }} on {{ label }}</h1>
+  <p class="destination">{{ agent_id }}; recorded as {{ first }}</p>
+</header>
+<p>{{ kind }}</p>
+{% if !detail.is_empty() %}<pre>{{ detail }}</pre>{% endif %}
+<p><a href="/agents/{{ agent_id }}">Back to {{ label }}</a></p>
+{% endblock %}

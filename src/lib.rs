@@ -37,4 +37,6 @@ mod sign_in_tests;
 pub mod store;
 pub mod surfaces;
 pub mod traceview;
+#[cfg(all(test, feature = "passkeys"))]
+mod verbs_tests;
 pub mod web;

@@ -75,19 +75,23 @@ pub(crate) async fn rig() -> Option<Rig> {
     rig_with(Handover::default()).await
 }
 
+/// A rig whose listener holds the silence bound given.
+pub(crate) async fn rig_silenced(silence: Duration) -> Option<Rig> {
+    rig_of(Handover::default(), silence).await
+}
+
 async fn rig_with(handover: Handover) -> Option<Rig> {
+    rig_of(handover, Duration::from_secs(60)).await
+}
+
+async fn rig_of(handover: Handover, silence: Duration) -> Option<Rig> {
     let fresh = fresh_store().await?;
     let dir = tempfile::tempdir().unwrap();
     let authority =
         Arc::new(Authority::init(&dir.path().join("authority"), "weaver-web", &[]).unwrap());
-    let listener = Listener::start(
-        fresh.store.clone(),
-        &authority,
-        "127.0.0.1:0",
-        Duration::from_secs(60),
-    )
-    .await
-    .unwrap();
+    let listener = Listener::start(fresh.store.clone(), &authority, "127.0.0.1:0", silence)
+        .await
+        .unwrap();
     let cfg = Arc::new(server_config(dir.path(), listener.address()));
     let policy = gate::Policy {
         origin: Some(ORIGIN.to_owned()),
@@ -110,6 +114,7 @@ async fn rig_with(handover: Handover) -> Option<Rig> {
                 policy: policy.clone(),
                 windows: listener.windows().clone(),
                 recheck: TEST_RECHECK,
+                asker: listener.clone(),
             },
         ))
         .with_state(fresh.store.clone()),
@@ -185,7 +190,11 @@ impl Rig {
     }
 
     /// A config taken: its status, headers and body.
-    async fn take(&self, handle: &str, session: &str) -> (StatusCode, HeaderMap, String) {
+    pub(crate) async fn take(
+        &self,
+        handle: &str,
+        session: &str,
+    ) -> (StatusCode, HeaderMap, String) {
         self.post("/admin/agents/config", form(&[("handle", handle)]), session)
             .await
     }
@@ -193,13 +202,18 @@ impl Rig {
 
 /// A connector built from a client config: its PEMs pinned and presented,
 /// dialing the listener and saying hello on its plane.
-struct Connector {
+pub(crate) struct Connector {
     reader: BufReader<tokio::io::ReadHalf<tokio_rustls::client::TlsStream<TcpStream>>>,
     writer: tokio::io::WriteHalf<tokio_rustls::client::TlsStream<TcpStream>>,
 }
 
 impl Connector {
     async fn dial(config: &str) -> Self {
+        Self::dial_with(config, &["show"]).await
+    }
+
+    /// Dial on a client config, an admin plane declaring `ceiling`.
+    pub(crate) async fn dial_with(config: &str, ceiling: &[&str]) -> Self {
         let table: toml::Table = config.parse().expect("a client config is TOML");
         let field = |key: &str| table[key].as_str().unwrap().to_owned();
         let tls = client_tls(
@@ -232,20 +246,22 @@ impl Connector {
                     offset: 0,
                     digest: "d".into(),
                 }),
-                ceiling: (plane == Plane::Admin).then(|| vec!["show".to_owned()]),
+                ceiling: (plane == Plane::Admin)
+                    .then(|| ceiling.iter().map(|v| (*v).to_owned()).collect()),
                 door: (plane == Plane::Admin).then_some(true),
             })
             .await;
         connector
     }
 
-    async fn send(&mut self, frame: FromClient) {
+    pub(crate) async fn send(&mut self, frame: FromClient) {
         let mut line = serde_json::to_string(&frame).unwrap();
         line.push('\n');
         let _ = self.writer.write_all(line.as_bytes()).await;
+        let _ = self.writer.flush().await;
     }
 
-    async fn recv(&mut self) -> Option<ToClient> {
+    pub(crate) async fn recv(&mut self) -> Option<ToClient> {
         let mut line = String::new();
         match tokio::time::timeout(Duration::from_secs(5), self.reader.read_line(&mut line)).await {
             Ok(Ok(0)) | Err(_) | Ok(Err(_)) => None,

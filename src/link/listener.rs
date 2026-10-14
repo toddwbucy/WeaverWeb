@@ -6,6 +6,7 @@
 //! conforms: web-tuple-is-admins-word-and-never-gate-cons
 //! conforms: web-nothing-crosses-the-link-in-the-clear
 //! conforms: web-the-servers-asks-are-audited
+//! conforms: web-verb-refused-before-an-ask-unless-granted
 //!
 //! The listener (Spec section 8): the mutual-TLS accept loop, admission
 //! under the row's lock, the heartbeat, the incarnations that bind every
@@ -39,7 +40,9 @@ use crate::link::frames::{
 use crate::link::register::{
     ConstituentsWrite, CredentialState, Observation, REVOCATION_CHANNEL, TupleWrite,
 };
-use crate::store::audit::{self, Target};
+use crate::store::access::{shared_hold, verbs_granted_in};
+use crate::store::audit::{self, PersonMethod, Target};
+use crate::store::identity::session_stands;
 use crate::store::{AgentId, Store};
 use crate::traceview::{TraceEvent, TraceViews};
 use chrono::{DateTime, Utc};
@@ -235,6 +238,19 @@ pub enum VerbError {
     /// **The audit could not record the ask**, its first record or its
     /// refusal: the server's failure, and nothing was asked.
     Audit,
+    /// The person holds no grant on the agent, or their session no longer
+    /// stands: refused with one record, and answered to them as an agent
+    /// that does not exist.
+    NoGrant,
+    /// The person's grants on the agent do not carry the verb: refused
+    /// with one record.
+    NotGranted { verb: String },
+    /// The connection ended after the first record and before the frame
+    /// left: nothing was asked, and the first is answered `failed`.
+    Lost,
+    /// The store could not be read or written for the ask: the server's
+    /// failure, and nothing was asked.
+    Server(String),
 }
 
 impl std::fmt::Display for VerbError {
@@ -263,11 +279,103 @@ impl std::fmt::Display for VerbError {
                 f,
                 "the audit could not record the ask, so nothing was asked"
             ),
+            VerbError::NoGrant => write!(f, "no grant on the agent"),
+            VerbError::NotGranted { verb } => {
+                write!(f, "the roles held on the agent do not carry {verb}")
+            }
+            VerbError::Lost => write!(
+                f,
+                "the connection ended before the verb left; it was not asked"
+            ),
+            VerbError::Server(why) => write!(f, "the server could not ask: {why}"),
         }
     }
 }
 
 impl std::error::Error for VerbError {}
+
+/// **Who asks a verb through the server** (Spec 2.13): the session that
+/// asks and its person, checked again under the ask's hold.
+#[derive(Debug, Clone)]
+pub struct Asker {
+    pub session_id: i64,
+    pub person_id: String,
+}
+
+/// **A person's verb in the channel**, its first record durable before it:
+/// the record's identity, and the answer to wait for. Waiting is the
+/// caller's alone and bounds nothing of the ask; the outcome is written at
+/// the answer whatever the caller does.
+pub struct Enqueued {
+    pub first: String,
+    verb: String,
+    reply: oneshot::Receiver<FromClient>,
+    _unask: Unask,
+}
+
+impl Enqueued {
+    /// admin's answer, or why there is none.
+    pub async fn answer(self) -> Result<VerbOutcome, VerbError> {
+        match self.reply.await {
+            Ok(FromClient::Verb {
+                outcome: Some(o), ..
+            }) => Ok(o),
+            Ok(FromClient::Verb { error: Some(e), .. }) => Err(VerbError::Fault(e)),
+            Ok(_) => Err(VerbError::NotConnected),
+            Err(_) => Err(VerbError::Unanswered),
+        }
+    }
+
+    /// The verb asked.
+    pub fn verb(&self) -> &str {
+        &self.verb
+    }
+}
+
+/// **A cancelled ask removes its own entry**: run when the asker's wait is
+/// dropped, under the pending map's own lock, so a hung connector that still
+/// heartbeats does not collect one entry per cancelled ask. An answered ask
+/// finds it gone.
+struct Unask(Pending, u64);
+
+impl Drop for Unask {
+    fn drop(&mut self) {
+        self.0.lock().unwrap().remove(&self.1);
+    }
+}
+
+/// **How many persons' asks hold the identity exclusion at once.** A held
+/// ask keeps one of the store's connections for its hold and takes a second
+/// for its first record's insert or its refusal's record, so with every
+/// connection held by a hold no insert could be had, and the asks would
+/// wait together to the pool's own timeout: eight persons asking at once
+/// against the store's eight connections. Three held asks take at most six
+/// and leave two for every other writer. An ask waits for its place after
+/// its slot is reserved and before its hold, a wait on other asks' store
+/// writes and never on a peer; a lifecycle verb is a person's rare act.
+const HELD_ASKS: usize = 3;
+
+/// A slot reserved on a connection, and the incarnation it is on.
+struct Reserved {
+    incarnation: i64,
+    permit: mpsc::OwnedPermit<ToClient>,
+}
+
+/// Where a test may stop a person's ask (`Listener::pause_ask_at`).
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AskPoint {
+    /// The slot reserved, the hold not yet taken.
+    BeforeHold,
+    /// Under the hold, a refusal's record about to be written.
+    AtRefusal,
+    /// Under the hold, the first record durable, the frame not yet sent.
+    UnderHold,
+}
+
+/// A test's stop in a person's ask: reached, then released.
+#[cfg(test)]
+type Pause = (AskPoint, Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>);
 
 /// The most verbs a ceiling may name, and the longest name: the hello is
 /// bounded like every frame's content (Spec 8, eight verbs today).
@@ -347,8 +455,13 @@ struct Inner {
     #[cfg(test)]
     stall_next_first: std::sync::atomic::AtomicBool,
     /// And on a verb's outcome: the next one waits this long first.
+    /// The places of `HELD_ASKS`.
+    held: tokio::sync::Semaphore,
     #[cfg(test)]
     delay_next_outcome: Mutex<Option<Duration>>,
+    /// The stops a test set in persons' asks.
+    #[cfg(test)]
+    pauses: Mutex<Vec<Pause>>,
 }
 
 /// The server's handle on the link: the asks it routes and the window it
@@ -471,8 +584,11 @@ impl Listener {
                 stall_next_land: std::sync::atomic::AtomicBool::new(false),
                 #[cfg(test)]
                 stall_next_first: std::sync::atomic::AtomicBool::new(false),
+                held: tokio::sync::Semaphore::new(HELD_ASKS),
                 #[cfg(test)]
                 delay_next_outcome: Mutex::new(None),
+                #[cfg(test)]
+                pauses: Mutex::new(Vec::new()),
             }),
         };
         tracing::info!("link listening on {address} under epoch {epoch}");
@@ -659,6 +775,37 @@ impl Listener {
         self.inner.epoch
     }
 
+    /// **The silence bound**, which a caller waiting for a verb's answer
+    /// holds its own wait to.
+    pub fn silence(&self) -> Duration {
+        self.inner.silence
+    }
+
+    /// Stop the next person's ask at `point`: the first notifier fires when
+    /// it is reached, and the ask goes on once the second is notified.
+    #[cfg(test)]
+    pub fn pause_ask_at(
+        &self,
+        point: AskPoint,
+    ) -> (Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>) {
+        let (reached, release) = (
+            Arc::new(tokio::sync::Notify::new()),
+            Arc::new(tokio::sync::Notify::new()),
+        );
+        self.inner
+            .pauses
+            .lock()
+            .unwrap()
+            .push((point, reached.clone(), release.clone()));
+        (reached, release)
+    }
+
+    /// The store the listener writes, for a test's fixtures.
+    #[cfg(test)]
+    pub fn store(&self) -> &Store {
+        &self.inner.store
+    }
+
     /// The live window: one ring per agent, fed by the admin plane.
     pub fn windows(&self) -> &TraceViews {
         &self.inner.windows
@@ -750,10 +897,7 @@ impl Listener {
         let text = text.to_owned();
         match self
             .inner
-            .ask(agent, Plane::Gate, None, None, |id| ToClient::Turn {
-                id,
-                text,
-            })
+            .ask(agent, Plane::Gate, None, |id| ToClient::Turn { id, text })
             .await
         {
             Ok(FromClient::Turn { close: Some(c), .. }) => Ok(c),
@@ -803,51 +947,58 @@ impl Listener {
                 }
             };
         }
-        self.ask_verb(
-            agent,
-            verb,
-            Principal::Server,
-            Some(audit::Principal::Server),
-        )
-        .await
+        self.ask_verb(agent, verb).await
     }
 
-    /// **A person's verb, reachable under `cfg(test)` alone until 6b2**
-    /// (Spec 2.13): it writes no record, so no build the server ships can
-    /// enqueue a verb frame without its first. Owed to 6b2, which passes
-    /// the person's `pe-` identity and session into the record step as
-    /// `audit::Principal::Person` and lifts this gate. The tests drive
-    /// admin-con's verbs through it meanwhile.
-    #[cfg(test)]
+    /// **A person's verb, asked through the server** (Spec 2.13, 8): the
+    /// whole ask, from the reservation of its slot to its enqueue and its
+    /// refusals' records, runs in a task its caller cannot cancel, which
+    /// `Inner::ask_held` describes; this waits for that task and hands
+    /// back the frame in the channel, or the refusal.
+    pub async fn ask_as_person(
+        &self,
+        asker: &Asker,
+        agent: &AgentId,
+        verb: &str,
+    ) -> Result<Enqueued, VerbError> {
+        let (inner, asker, agent, verb) = (
+            self.inner.clone(),
+            asker.clone(),
+            agent.clone(),
+            verb.to_owned(),
+        );
+        match tokio::spawn(async move { inner.ask_held(&asker, &agent, &verb).await }).await {
+            Ok(asked) => asked,
+            Err(e) => Err(VerbError::Server(format!("the ask's task ended: {e}"))),
+        }
+    }
+
+    /// A person's verb, asked and its answer awaited without a bound.
     pub async fn verb_for_person(
         &self,
+        asker: &Asker,
         agent: &AgentId,
         verb: &str,
-        principal: Principal,
     ) -> Result<VerbOutcome, VerbError> {
-        self.ask_verb(agent, verb, principal, None).await
+        self.ask_as_person(asker, agent, verb).await?.answer().await
     }
 
-    /// One verb across the link, the frame's principal the claim it
-    /// carries and `record` the audit's principal for its first record,
-    /// `None` on the test-only person path alone.
-    async fn ask_verb(
-        &self,
-        agent: &AgentId,
-        verb: &str,
-        principal: Principal,
-        record: Option<audit::Principal<'_>>,
-    ) -> Result<VerbOutcome, VerbError> {
+    /// The server's own verb across the link, its frame's principal and its
+    /// first record's the server.
+    async fn ask_verb(&self, agent: &AgentId, verb: &str) -> Result<VerbOutcome, VerbError> {
         let v = verb.to_owned();
         match self
             .inner
-            .ask(agent, Plane::Admin, Some(verb), record, |id| {
-                ToClient::Verb {
+            .ask(
+                agent,
+                Plane::Admin,
+                Some((verb, audit::Principal::Server)),
+                |id| ToClient::Verb {
                     id,
                     verb: v,
-                    principal,
-                }
-            })
+                    principal: Principal::Server,
+                },
+            )
             .await
         {
             Ok(FromClient::Verb {
@@ -966,11 +1117,11 @@ impl Inner {
         &self,
         agent: &AgentId,
         plane: Plane,
-        verb: Option<&str>,
-        record: Option<audit::Principal<'_>>,
+        asked: Option<(&str, audit::Principal<'_>)>,
         make: impl FnOnce(u64) -> ToClient,
     ) -> Result<FromClient, AskError> {
         let id = self.next_ask.fetch_add(1, Ordering::Relaxed);
+        let verb = asked.map(|(verb, _)| verb);
         // **Checked before any record**: no ready connection, or a verb
         // outside its ceiling, asks nothing and writes nothing.
         let incarnation = {
@@ -993,20 +1144,19 @@ impl Inner {
         // (Spec 2.13), outside the live map's lock since it awaits the
         // store.
         // **Armed from before the record until the frame is in the
-        // channel**; an ask with no record arms it for its entries alone.
-        let mut unsent = match (record, verb) {
-            (Some(principal), Some(verb)) => {
-                match self.record_ask(id, agent, verb, principal).await {
-                    Ok(unsent) => unsent,
-                    Err(e) => {
-                        tracing::error!(
-                            "{agent} ({plane}): the first record of {verb} could not be written, nothing asked: {e:#}"
-                        );
-                        return Err(AskError::Audit);
-                    }
+        // channel**; a turn, which has no record here, arms it for its
+        // entries alone. **Every verb has its record.**
+        let mut unsent = match asked {
+            Some((verb, principal)) => match self.record_ask(id, agent, verb, principal).await {
+                Ok(unsent) => unsent,
+                Err(e) => {
+                    tracing::error!(
+                        "{agent} ({plane}): the first record of {verb} could not be written, nothing asked: {e:#}"
+                    );
+                    return Err(AskError::Audit);
                 }
-            }
-            _ => Unsent {
+            },
+            None => Unsent {
                 id,
                 agent: agent.clone(),
                 first: None,
@@ -1078,20 +1228,257 @@ impl Inner {
                 return Err(AskError::NotConnected);
             }
         }
-        // **A cancelled ask removes its own entry**: the guard runs when
-        // this future is dropped at the await, under the pending map's own
-        // lock, so a hung connector that still heartbeats does not collect
-        // one entry per cancelled ask. An answered ask finds it gone.
-        struct Unask(Pending, u64);
-        impl Drop for Unask {
-            fn drop(&mut self) {
-                self.0.lock().unwrap().remove(&self.1);
-            }
-        }
         let _unask = Unask(pending.clone(), id);
         // Enqueued: from here an ended connection leaves the ask's outcome
         // unknown rather than never sent.
         reply_rx.await.map_err(|_| AskError::Unanswered)
+    }
+
+    /// **A person's verb, from its slot to its enqueue** (Spec 2.13, as
+    /// built on 2026-10-13), run by `Listener::ask_as_person` in a task its
+    /// caller cannot cancel, so a request dropped mid-ask leaves it to
+    /// finish: refused with its record, or enqueued with its first.
+    ///
+    /// 1. **The slot, reserved before the hold**, held to the silence
+    ///    bound with the silent-peer close: no wait on a peer runs under
+    ///    the hold. The reservation decides nothing: an ask with none goes
+    ///    into the hold all the same, where the grant is checked first, so
+    ///    a person with no grant meets the unknown agent's answer and never
+    ///    learns the agent's presence.
+    /// 2. **A place among `HELD_ASKS`**, so held asks never take every
+    ///    connection the store has, then **the hold**, the identity
+    ///    exclusion shared, in one transaction:
+    ///    the session standing and the person's grants on the agent (the
+    ///    per-agent ones alone), then the live connection the slot was
+    ///    reserved on, ready, and its ceiling. A refusal is one record,
+    ///    written under the hold, and asks nothing.
+    /// 3. **The first record**, durable through the record step, still
+    ///    under the hold.
+    /// 4. **The enqueue**, through the permit on the incarnation the
+    ///    ceiling was read from; then the hold's commit.
+    ///
+    /// A revocation or a disable either commits before the check or waits
+    /// for the enqueue. Store I/O runs under the hold (the checks, the
+    /// records); peer I/O never does.
+    async fn ask_held(
+        &self,
+        asker: &Asker,
+        agent: &AgentId,
+        verb: &str,
+    ) -> Result<Enqueued, VerbError> {
+        let id = self.next_ask.fetch_add(1, Ordering::Relaxed);
+        let reserved = self.reserve(agent).await;
+        // A place among the held asks, after the slot and before the hold;
+        // the semaphore is never closed.
+        let _place = self.held.acquire().await;
+        #[cfg(test)]
+        self.pause_at(AskPoint::BeforeHold).await;
+        let server = |what: &str, e: anyhow::Error| {
+            tracing::error!("{agent}: a person's {verb} was not asked: {what}: {e:#}");
+            VerbError::Server(format!("{what}: {e:#}"))
+        };
+        let mut hold = shared_hold(&self.store)
+            .await
+            .map_err(|e| server("the hold", e))?;
+        let principal = audit::Principal::Person {
+            person_id: &asker.person_id,
+            method: PersonMethod::Session,
+        };
+        let stands = session_stands(&mut hold, asker.session_id, &asker.person_id)
+            .await
+            .map_err(|e| server("the session", e))?;
+        let verbs = if stands {
+            verbs_granted_in(&mut hold, &asker.person_id, agent)
+                .await
+                .map_err(|e| server("the grants", e))?
+        } else {
+            None
+        };
+        let refusal = match &verbs {
+            None => Some((VerbError::NoGrant, "no grant on the agent")),
+            Some(verbs) if !verbs.contains(verb) => Some((
+                VerbError::NotGranted {
+                    verb: verb.to_owned(),
+                },
+                "the roles held on the agent do not carry the verb",
+            )),
+            Some(_) => self.ceiling_refusal(agent, reserved.as_ref(), verb),
+        };
+        if let Some((answer, why)) = refusal {
+            #[cfg(test)]
+            self.pause_at(AskPoint::AtRefusal).await;
+            let recorded = tokio::time::timeout(
+                self.silence,
+                self.store
+                    .audit_refusal(principal, Target::Agent(agent.as_str()), verb, why),
+            )
+            .await;
+            return match recorded {
+                Ok(Ok(_)) => Err(answer),
+                Ok(Err(e)) => {
+                    tracing::error!(
+                        "{agent}: a person's refusal of {verb} could not be recorded: {e:#}"
+                    );
+                    Err(VerbError::Audit)
+                }
+                Err(_) => {
+                    tracing::error!(
+                        "{agent}: a person's refusal of {verb} was not recorded within {:?}",
+                        self.silence
+                    );
+                    Err(VerbError::Audit)
+                }
+            };
+        }
+        let mut unsent = match self.record_ask(id, agent, verb, principal).await {
+            Ok(unsent) => unsent,
+            Err(e) => {
+                tracing::error!(
+                    "{agent}: the first record of a person's {verb} could not be written, nothing asked: {e:#}"
+                );
+                return Err(VerbError::Audit);
+            }
+        };
+        #[cfg(test)]
+        self.pause_at(AskPoint::UnderHold).await;
+        let Some(Reserved {
+            incarnation,
+            permit,
+        }) = reserved
+        else {
+            return Err(VerbError::Lost);
+        };
+        let first = unsent.first.clone().unwrap_or_default();
+        let (reply_tx, reply_rx) = oneshot::channel();
+        // **Inserted where the ceiling was read**, the same incarnation
+        // under the live map's lock: a teardown since leaves nothing to
+        // send on, and the first is answered `failed`.
+        let found = {
+            let live = self.live.lock().unwrap();
+            live.get(&(agent.clone(), Plane::Admin))
+                .filter(|c| c.ready && c.incarnation == incarnation)
+                .map(|conn| {
+                    conn.pending.lock().unwrap().insert(id, reply_tx);
+                    conn.asks.lock().unwrap().insert(
+                        id,
+                        Asked {
+                            verb: verb.to_owned(),
+                            first: Some(first.clone()),
+                        },
+                    );
+                    (conn.pending.clone(), conn.asks.clone())
+                })
+        };
+        let Some((pending, asks)) = found else {
+            return Err(VerbError::Lost);
+        };
+        unsent.pending = Some(pending.clone());
+        unsent.asks = Some(asks);
+        // **The enqueue, through the slot reserved before the hold**: no
+        // wait, so nothing of the peer runs under the hold.
+        permit.send(ToClient::Verb {
+            id,
+            verb: verb.to_owned(),
+            principal: Principal::Person {
+                person_id: asker.person_id.clone(),
+            },
+        });
+        unsent.disarm();
+        if let Err(e) = hold.commit().await {
+            tracing::warn!(
+                "{agent}: the hold of a person's {verb} did not commit after its enqueue, its lock ending with its session: {e:#}"
+            );
+        }
+        Ok(Enqueued {
+            first,
+            verb: verb.to_owned(),
+            reply: reply_rx,
+            _unask: Unask(pending, id),
+        })
+    }
+
+    /// **A slot on the agent's admin connection**, ready, reserved before
+    /// any hold and held to the silence bound; a bound that passes is the
+    /// peer gone silent and closes it, as an enqueue's does. `None` where
+    /// there is no slot to be had, which decides nothing by itself.
+    async fn reserve(&self, agent: &AgentId) -> Option<Reserved> {
+        let (incarnation, tx, close, silent) = {
+            let live = self.live.lock().unwrap();
+            let conn = live
+                .get(&(agent.clone(), Plane::Admin))
+                .filter(|c| c.ready)?;
+            (
+                conn.incarnation,
+                conn.tx.clone(),
+                conn.close.clone(),
+                conn.silent.clone(),
+            )
+        };
+        match tokio::time::timeout(self.silence, tx.reserve_owned()).await {
+            Ok(Ok(permit)) => Some(Reserved {
+                incarnation,
+                permit,
+            }),
+            Ok(Err(_)) => None,
+            Err(_) => {
+                tracing::warn!(
+                    "{agent} (admin): a slot could not be reserved within the bound, the peer stopped reading"
+                );
+                silent.store(true, Ordering::Relaxed);
+                let _ = close.send(true);
+                None
+            }
+        }
+    }
+
+    /// **The connection's half of the check**, under the hold: the
+    /// connection the slot was reserved on still live and ready, and its
+    /// ceiling granting the verb.
+    fn ceiling_refusal(
+        &self,
+        agent: &AgentId,
+        reserved: Option<&Reserved>,
+        verb: &str,
+    ) -> Option<(VerbError, &'static str)> {
+        let not_connected = Some((VerbError::NotConnected, "admin-con is not connected"));
+        let Some(reserved) = reserved else {
+            return not_connected;
+        };
+        let live = self.live.lock().unwrap();
+        let Some(conn) = live
+            .get(&(agent.clone(), Plane::Admin))
+            .filter(|c| c.ready && c.incarnation == reserved.incarnation)
+        else {
+            return not_connected;
+        };
+        let ceiling = conn.ceiling.as_deref().cloned().unwrap_or_default();
+        if ceiling.contains(verb) {
+            None
+        } else {
+            Some((
+                VerbError::OutsideCeiling {
+                    verb: verb.to_owned(),
+                    ceiling: ceiling.into_iter().collect(),
+                },
+                "outside the connection's ceiling",
+            ))
+        }
+    }
+
+    /// A test's stop, where one was set for this point.
+    #[cfg(test)]
+    async fn pause_at(&self, point: AskPoint) {
+        let pause = {
+            let mut pauses = self.pauses.lock().unwrap();
+            pauses
+                .iter()
+                .position(|(at, ..)| *at == point)
+                .map(|at| pauses.remove(at))
+        };
+        if let Some((_, reached, release)) = pause {
+            reached.notify_one();
+            release.notified().await;
+        }
     }
 
     /// The revoking act's close (Spec 8): a notification names a

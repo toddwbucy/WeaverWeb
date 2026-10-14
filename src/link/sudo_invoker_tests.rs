@@ -239,7 +239,7 @@ fn answer_of(bytes: usize) -> String {
 
 fn person() -> Principal {
     Principal::Person {
-        name: PLANTED.to_owned(),
+        person_id: PLANTED.to_owned(),
     }
 }
 

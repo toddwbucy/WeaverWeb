@@ -152,13 +152,14 @@ pub struct VerbOutcome {
 }
 
 /// Who a verb is asked for, **a claim and never an authorization input on
-/// the box** (Spec 8, 2.13): the requesting person, or the server for its
-/// own asks, of which the admission's `show` is the one today.
+/// the box** (Spec 8, 2.13): the requesting person, by their `pe-`
+/// identity, which a rename leaves standing and the audit names them by,
+/// or the server for its own asks.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Principal {
     Server,
-    Person { name: String },
+    Person { person_id: String },
 }
 
 /// admin-con's typed error on a verb answer (Spec 8): why the verb was not

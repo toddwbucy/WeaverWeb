@@ -2553,12 +2553,17 @@ async fn an_openings_show_is_taken_past_a_full_queue() {
         );
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    let operator = operator(&lab.store, &id).await;
-    let asks: Vec<_> = (0..admin_con::VERB_QUEUE)
-        .map(|_| {
+    // A person per ask, so no person's share of the server's outstanding
+    // asks stops the queue filling.
+    let mut operators = Vec::new();
+    for _ in 0..admin_con::VERB_QUEUE {
+        operators.push(operator(&lab.store, &id).await);
+    }
+    let asks: Vec<_> = operators
+        .into_iter()
+        .map(|person| {
             let listener = lab.listener.clone();
             let asked = id.clone();
-            let person = operator.clone();
             tokio::spawn(async move {
                 tokio::time::timeout(
                     Duration::from_secs(20),

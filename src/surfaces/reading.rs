@@ -413,6 +413,14 @@ async fn ask(
         Ok(session) => session,
         Err(answer) => return answer,
     };
+    // **Admitted before anything is resolved**: past the server's bound on
+    // outstanding asks, or the person's share of it, the request is not
+    // taken, a known agent and an unknown one alike, and nothing is
+    // recorded, as for a malformed one; a record per shed request would
+    // rebuild the growth the bound prevents.
+    let Some(admission) = seams.asker.admit_ask(&session.person_id) else {
+        return (StatusCode::SERVICE_UNAVAILABLE, VerbError::Shed.to_string()).into_response();
+    };
     // **Resolved before any record**: an agent the register does not hold
     // is unknown, and nothing is recorded of it.
     let row = match store.agent(&id).await {
@@ -424,7 +432,11 @@ async fn ask(
         session_id: session.session_id,
         person_id: session.person_id.clone(),
     };
-    let enqueued = match seams.asker.ask_as_person(&asker, &id, &verb).await {
+    let enqueued = match seams
+        .asker
+        .ask_as_person(admission, &asker, &id, &verb)
+        .await
+    {
         Ok(enqueued) => enqueued,
         // **No grant answers as an unknown agent**, so the page is no
         // oracle for agent identities.

@@ -259,6 +259,9 @@ pub enum VerbError {
     /// The ask did not reach its enqueue within its bound, a store or a
     /// queue of asks too slow: the server's failure, and nothing was asked.
     Stalled,
+    /// The server is taking no more asks now, or none more of this
+    /// person's: nothing was asked and nothing recorded.
+    Shed,
 }
 
 impl std::fmt::Display for VerbError {
@@ -303,6 +306,10 @@ impl std::fmt::Display for VerbError {
             VerbError::Stalled => write!(
                 f,
                 "the ask was not made within its bound; nothing was asked"
+            ),
+            VerbError::Shed => write!(
+                f,
+                "the server is taking no more asks now; nothing was asked, ask again"
             ),
         }
     }
@@ -370,6 +377,45 @@ impl Drop for Unask {
 /// its slot is reserved and before its hold, a wait on other asks' store
 /// writes and never on a peer; a lifecycle verb is a person's rare act.
 const HELD_ASKS: usize = 3;
+
+/// **How many persons' asks the server holds outstanding at once**, from
+/// their admission to the end of their task, on every agent. An ask's task
+/// is detached so a dropped request cannot cut it, and detached work is
+/// admitted against a bound before it is detached: past this the server
+/// takes no more asks until some end, so a client posting and disconnecting
+/// faster than the held asks drain piles nothing up. Each outstanding ask
+/// lives at most two silence bounds and holds a few kilobytes; sixty-four is
+/// four connections' worth of `PERSON_SLOTS`, far past what persons asking
+/// verbs by hand ever hold at once.
+const OUTSTANDING_ASKS: usize = 64;
+
+/// **One person's share of `OUTSTANDING_ASKS`**, so one session cannot
+/// starve every other person's verbs: a person asks a verb at a time from
+/// a page, and four covers a few tabs with a slow agent behind them, while
+/// sixteen persons at their share still fit.
+const PERSON_SHARE: usize = 4;
+
+/// **An ask admitted against `OUTSTANDING_ASKS` and its person's share**,
+/// taken before its task is detached and carried into it, released when
+/// the task ends. `Listener::ask_as_person` takes one, so no person's ask
+/// is detached without it.
+pub struct Admission {
+    _slot: tokio::sync::OwnedSemaphorePermit,
+    shares: Arc<Mutex<HashMap<String, usize>>>,
+    person: String,
+}
+
+impl Drop for Admission {
+    fn drop(&mut self) {
+        let mut shares = self.shares.lock().unwrap();
+        if let Some(held) = shares.get_mut(&self.person) {
+            *held -= 1;
+            if *held == 0 {
+                shares.remove(&self.person);
+            }
+        }
+    }
+}
 
 /// **How many persons' asks may hold a slot on one connection at once**,
 /// from their reservation to their enqueue. A slot is capacity only the
@@ -489,6 +535,9 @@ struct Inner {
     reconciling: std::sync::atomic::AtomicBool,
     /// The places of `HELD_ASKS`.
     held: tokio::sync::Semaphore,
+    /// The places of `OUTSTANDING_ASKS`, and each person's count of them.
+    outstanding: Arc<tokio::sync::Semaphore>,
+    shares: Arc<Mutex<HashMap<String, usize>>>,
     #[cfg(test)]
     fault_next_teardown: std::sync::atomic::AtomicBool,
     /// A test's one lever on the store: the next landing fails once, so
@@ -622,6 +671,8 @@ impl Listener {
                 failed_teardowns: Mutex::new(Vec::new()),
                 reconciling: std::sync::atomic::AtomicBool::new(false),
                 held: tokio::sync::Semaphore::new(HELD_ASKS),
+                outstanding: Arc::new(tokio::sync::Semaphore::new(OUTSTANDING_ASKS)),
+                shares: Arc::new(Mutex::new(HashMap::new())),
                 #[cfg(test)]
                 fault_next_teardown: std::sync::atomic::AtomicBool::new(false),
                 #[cfg(test)]
@@ -995,13 +1046,39 @@ impl Listener {
         self.ask_verb(agent, verb).await
     }
 
+    /// **A person's ask admitted, or not**: a place among
+    /// `OUTSTANDING_ASKS` and within the person's `PERSON_SHARE`, taken
+    /// without waiting. `None` is the server taking no more asks now, which
+    /// is no refusal of the person's authority and writes no record.
+    pub fn admit_ask(&self, person_id: &str) -> Option<Admission> {
+        let mut shares = self.inner.shares.lock().unwrap();
+        if shares.get(person_id).copied().unwrap_or(0) >= PERSON_SHARE {
+            return None;
+        }
+        let slot = self.inner.outstanding.clone().try_acquire_owned().ok()?;
+        *shares.entry(person_id.to_owned()).or_insert(0) += 1;
+        Some(Admission {
+            _slot: slot,
+            shares: self.inner.shares.clone(),
+            person: person_id.to_owned(),
+        })
+    }
+
+    /// How many persons' asks are outstanding.
+    #[cfg(test)]
+    pub fn outstanding_asks(&self) -> usize {
+        OUTSTANDING_ASKS - self.inner.outstanding.available_permits()
+    }
+
     /// **A person's verb, asked through the server** (Spec 2.13, 8): the
     /// whole ask, from the reservation of its slot to its enqueue and its
     /// refusals' records, runs in a task its caller cannot cancel, which
-    /// `Inner::ask_held` describes; this waits for that task and hands
-    /// back the frame in the channel, or the refusal.
+    /// `Inner::ask_held` describes, **admitted before it is detached** and
+    /// carrying its admission until it ends; this waits for that task and
+    /// hands back the frame in the channel, or the refusal.
     pub async fn ask_as_person(
         &self,
+        admission: Admission,
         asker: &Asker,
         agent: &AgentId,
         verb: &str,
@@ -1012,20 +1089,29 @@ impl Listener {
             agent.clone(),
             verb.to_owned(),
         );
-        match tokio::spawn(async move { inner.ask_held(&asker, &agent, &verb).await }).await {
+        let task = async move {
+            let _admission = admission;
+            inner.ask_held(&asker, &agent, &verb).await
+        };
+        match tokio::spawn(task).await {
             Ok(asked) => asked,
             Err(e) => Err(VerbError::Server(format!("the ask's task ended: {e}"))),
         }
     }
 
-    /// A person's verb, asked and its answer awaited without a bound.
+    /// A person's verb, admitted, asked, and its answer awaited without a
+    /// bound.
     pub async fn verb_for_person(
         &self,
         asker: &Asker,
         agent: &AgentId,
         verb: &str,
     ) -> Result<VerbOutcome, VerbError> {
-        self.ask_as_person(asker, agent, verb).await?.answer().await
+        let admission = self.admit_ask(&asker.person_id).ok_or(VerbError::Shed)?;
+        self.ask_as_person(admission, asker, agent, verb)
+            .await?
+            .answer()
+            .await
     }
 
     /// The server's own verb across the link, its frame's principal and its

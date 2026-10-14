@@ -669,9 +669,15 @@ async fn persons_asks_never_fill_the_connections_channel() {
     let pauses: Vec<_> = (0..3)
         .map(|_| o.rig.listener.pause_ask_at(AskPoint::UnderHold))
         .collect();
-    for _ in 0..73 {
+    // As many asks as the server admits outstanding, each admitted under
+    // an identity of its own so no person's share stops them; the
+    // admission is a place, and the ask is bea's.
+    for n in 0..73 {
+        let Some(admission) = o.rig.listener.admit_ask(&format!("pe-{n:016x}")) else {
+            continue;
+        };
         let (listener, asker, id) = (o.rig.listener.clone(), asker.clone(), id.clone());
-        tokio::spawn(async move { listener.ask_as_person(&asker, &id, "load").await });
+        tokio::spawn(async move { listener.ask_as_person(admission, &asker, &id, "load").await });
     }
     for (reached, _) in &pauses {
         reached.notified().await;
@@ -752,7 +758,12 @@ async fn a_stalled_store_answers_within_the_bound_and_frees_its_place() {
     let stalled: Vec<_> = (0..3)
         .map(|_| {
             let (listener, asker, id) = (rig.listener.clone(), asker.clone(), id.clone());
-            tokio::spawn(async move { listener.ask_as_person(&asker, &id, "load").await })
+            let admission = listener
+                .admit_ask(&asker.person_id)
+                .expect("within bea's share");
+            tokio::spawn(
+                async move { listener.ask_as_person(admission, &asker, &id, "load").await },
+            )
         })
         .collect();
     for (reached, _) in &pauses {
@@ -770,7 +781,14 @@ async fn a_stalled_store_answers_within_the_bound_and_frees_its_place() {
     }
     let next = tokio::time::timeout(
         Duration::from_secs(6),
-        rig.listener.ask_as_person(&asker, &id, "load"),
+        rig.listener.ask_as_person(
+            rig.listener
+                .admit_ask(&asker.person_id)
+                .expect("the stalled asks' admissions were released"),
+            &asker,
+            &id,
+            "load",
+        ),
     )
     .await
     .expect("a place was free");
@@ -780,4 +798,98 @@ async fn a_stalled_store_answers_within_the_bound_and_frees_its_place() {
     let (_, verb, _) = take_verb(&mut admin_con).await;
     assert_eq!(verb, "load");
     drop(enqueued);
+}
+
+/// **Detached work is admitted against a bound before it is detached**:
+/// with every held place taken, bea's asks past her share answer 503 at
+/// once and record nothing, and the asks outstanding stay at her share;
+/// cara still gets in within hers; past the server's bound, a request is
+/// shed before its agent is resolved, a known agent and an unknown one
+/// alike; and once released, the held asks finish normally.
+///
+/// Perturbation: admit every ask. The excess is detached, bea's asks are
+/// not answered at once, and the asks outstanding pass her share.
+#[tokio::test]
+async fn asks_past_the_bound_are_shed_with_no_record() {
+    let Some(mut o) = operated(&["show", "load"]).await else {
+        return;
+    };
+    let s = o.rig.store().clone();
+    let (cara, cara_session) = signed_in(&o.rig.app, &s, &mut authenticator(), "cara").await;
+    let granted = host::grant_add(&s, &cara, "operator", Some(&o.karl), None).await;
+    assert!(granted.ok, "{}", granted.value);
+    let (_, dan_session) = signed_in(&o.rig.app, &s, &mut authenticator(), "dan").await;
+
+    let pauses: Vec<_> = (0..3)
+        .map(|_| o.rig.listener.pause_ask_at(AskPoint::UnderHold))
+        .collect();
+    let beas: Vec<_> = (0..10)
+        .map(|_| ask(&o.rig, &o.bea_session, &o.karl, "load"))
+        .collect();
+    for (reached, _) in &pauses {
+        reached.notified().await;
+    }
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let (shed, admitted): (Vec<_>, Vec<_>) = beas.into_iter().partition(|a| a.is_finished());
+    assert_eq!(shed.len(), 10 - 4, "bea's share is four");
+    for answer in shed {
+        let (status, _, body) = answer.await.unwrap();
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    }
+    assert_eq!(o.rig.listener.outstanding_asks(), 4);
+    assert_eq!(
+        records(&o).await.len(),
+        3,
+        "the held asks' firsts, and nothing shed"
+    );
+
+    let caras = ask(&o.rig, &cara_session, &o.karl, "load");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!caras.is_finished(), "cara is admitted within her share");
+    assert_eq!(o.rig.listener.outstanding_asks(), 5);
+
+    // The server's bound, filled by others: a request past it is shed
+    // before its agent is resolved, so a known one and an unknown one
+    // answer alike.
+    let mut others = Vec::new();
+    while let Some(admission) = o
+        .rig
+        .listener
+        .admit_ask(&format!("pe-{:016x}", 0x1000 + others.len()))
+    {
+        others.push(admission);
+    }
+    assert_eq!(others.len() + 5, 64);
+    let known = refused(&o.rig, &dan_session, &o.karl, "load").await;
+    let unknown = refused(&o.rig, &dan_session, UNKNOWN, "load").await;
+    assert_eq!(known.0, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(known, unknown, "shed before the agent is resolved");
+    assert_eq!(records(&o).await.len(), 3, "a shed request records nothing");
+    drop(others);
+
+    for (_, release) in &pauses {
+        release.notify_one();
+    }
+    for _ in 0..5 {
+        let (id, verb, _) = take_verb(&mut o.admin_con).await;
+        assert_eq!(verb, "load");
+        o.admin_con
+            .send(FromClient::Verb {
+                id,
+                outcome: Some(answer("load", json!({"kind": "loaded"}), 0)),
+                error: None,
+            })
+            .await;
+    }
+    for asked in admitted.into_iter().chain([caras]) {
+        assert_eq!(asked.await.unwrap().0, StatusCode::OK);
+    }
+    let until = tokio::time::Instant::now() + Duration::from_secs(5);
+    while o.rig.listener.outstanding_asks() > 0 {
+        assert!(
+            tokio::time::Instant::now() < until,
+            "the admissions were released"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
 }

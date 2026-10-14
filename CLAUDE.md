@@ -303,7 +303,9 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
   live view re-checks its session (`gate::session`, as every use) and the grant every
   `reading::RECHECK` (15 s; `reading_tests` set it short through the rig's seams) and closes
   with its reason at the first failure. `POST /agents/{ag}/verb` (PR 6b2) asks a lifecycle verb
-  through `Listener::ask_as_person`, offered on the page as plain forms: the slot reserved
+  through `Listener::ask_as_person`, offered on the page as plain forms, admitted first
+  (`Listener::admit_ask`: 64 outstanding, 4 per person, never waited for; shed 503 with no
+  record, before the agent is resolved): the slot reserved
   before the shared hold, the session, the per-agent grants and the ceiling checked under it
   with each refusal one record (no grant 404 as unknown, no verb 403, ceiling 403, not
   connected 503), the first record and the enqueue before its commit, all in a task a

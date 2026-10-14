@@ -2065,13 +2065,21 @@ written or at the teardown:
   turn, or a save point answered without its confirmation in the prompt's
   sequence below;
 - `unknown`: a fault or a cut connection leaving the act's outcome unknown,
-  each act still in flight at a teardown among them;
+  each act still in flight at a teardown among them, **the server's own
+  `show` excepted**: it acts on nothing, and the teardown's lost contact
+  stands for the connection;
 - `refused`: a person's ask refused for a system reason, no connection, the
   persons' slots taken, a stalled wait, the audit unwritable, the connection
-  lost, outside the ceiling, or a fault of the server's own. **Not** an
-  authorization refusal (no grant on the agent, a grant without the verb),
-  which is the audit's and not an operational failure, and **not** a shed
-  request, which by design leaves no trace;
+  lost, outside the ceiling, or a fault of the server's own, **and only where
+  the act's authorization stood**, the session standing and a grant carrying
+  the act. A failure before that check, a stall or a store error on the way
+  to it, is the server's log line at error and never an alert, so **no alert
+  is ever raised on behalf of a person holding no grant on the agent**. No
+  connection, the slots taken, outside the ceiling and the connection lost
+  are reached only past the check. **Not** an authorization refusal (no
+  grant on the agent, a grant without the verb), which is the audit's and
+  not an operational failure, and **not** a shed request, which by design
+  leaves no trace;
 - `lost_contact`: a connection on either plane ending for any reason but the
   server's own act. Revocation, rotation, retirement and the halt (one
   reason, "closed by revocation, rotation or halt") and a row naming another
@@ -4372,7 +4380,8 @@ missing while it was relaying.
 | raising an alert never waits on the store or the log | perturbation in `src/alerts_tests.rs`: wait on the full queue in the raise instead of dropping, and with the worker held a refused verb's answer is held behind it and the raises time out |
 | one open alert per agent, kind and subject, its count right under concurrency | perturbation in `src/alerts_tests.rs`: drop the open alert's index and the insert's conflict clause, and sixteen raisers at once leave sixteen alerts; drop the conflict clause alone, and a repeated refusal is never counted on the open alert |
 | an acknowledgement names the version it read, and only a person holding `operator` on the agent acknowledges | perturbation in `src/alerts_tests.rs`: drop the version from the acknowledgement's write, and an acknowledgement naming a version a repeat has moved lands; drop the `operator` check, before the record and in the transaction, and an observer's acknowledgement lands |
-| an authorization refusal raises no alert | perturbation in `src/alerts_tests.rs`: raise a `refused` alert for no grant or a grant without the verb, and a refused person's ask raises one |
+| an authorization refusal raises no alert, and no alert is raised on behalf of a person holding no grant on the agent | perturbation in `src/alerts_tests.rs`: raise a `refused` alert for no grant or a grant without the verb, and a refused person's ask raises one; raise a system refusal whether or not the authorization stood, and a person holding no grant whose ask stalls before the check raises a `refused` alert and an operations-log line on the agent |
+| the server's own `show` in flight at a teardown raises no `unknown` | perturbation in `src/alerts_tests.rs`: keep it among the in-flight unknowns, and a cut with the server's `show` in flight raises an `unknown` beside the lost contact |
 | choosing a prompt's option without a grant answers as an unknown agent | perturbation in `src/alerts_tests.rs`: resolve the alert before the grant check, and a person holding no grant tells a real prompt from an unknown one |
 | the prompt's `unload` follows only a hash-confirmed save point | perturbation in `src/alerts_tests.rs`: ask `unload` on any `save-point` answer, and a `save_point_not_taken`, or a `save_point_taken` with no report, is followed by an unload |
 | no privileged invocation exists outside admin-con's sudo invoker | perturbation, two instruments. A test, `tests/no_privilege.rs`: it reads every tracked file outside `docs/`, never following a symlink, comment lines aside by each file's syntax and Markdown read in its fences only, for a privilege-escalating program named as a word, a setuid family call, a child's user or group set on a command, and a setuid or setgid mode bit, with the program's word allowed in `src/link/sudo_invoker.rs` and its test module alone; shown to fail when one of each family is planted, in Rust and in a README fence, when the program is planted in another file of the invoker's name, and when another family is planted in the invoker's own files. And the argv instrument in `src/link/sudo_invoker_tests.rs`: plant the principal's name from the ask into the command, and the line the fake records is no longer exactly `sudo -n <weaver_admin> <verb> <agent>` |
@@ -4384,7 +4393,9 @@ act that lands it states what removal makes it fail and confirms it does.
 Two stand so marked as of 2026-10-14. Act 12's pull request of alerts
 and the operator's decisions of 2026-10-14 stood up alerts raised without
 waiting, one open alert per agent, kind and subject, the acknowledgement at
-its version and by `operator` alone, no alert for an authorization refusal,
+its version and by `operator` alone, no alert for an authorization refusal
+or on behalf of a person holding no grant, none for the server's own `show`
+in flight at a teardown,
 a prompt's choice answered as unknown without a grant, the prompt's
 `unload` only on a hash-confirmed save point, and a connector that never
 acts on the agent, each shown to fail with its guard removed, retiring the

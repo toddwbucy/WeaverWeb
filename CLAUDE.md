@@ -320,8 +320,9 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
 
 - **Alerts and the operator's decisions** (`src/alerting.rs`, `src/store/alerts.rs`,
   `src/surfaces/alerts.rs`, migration `0019`; act 12, PR 1; Spec 2.14): the listener raises
-  an alert for a failed or unknown outcome at either door, a person's ask refused for a system
-  reason (never an authorization refusal or a shed request), and lost contact (any teardown
+  an alert for a failed or unknown outcome at either door (not the server's own `show` in
+  flight at a teardown), a person's ask refused for a system reason once its authorization
+  stood (never before the grant check, an authorization refusal or a shed request), and lost contact (any teardown
   but revocation, rotation, retirement, the halt or a replaced row), through a bounded queue
   (256, `try_send`, drops counted and logged at error) to a worker that upserts the alert (one
   open per agent, kind and subject) and appends the operations log's line. Every grant holder

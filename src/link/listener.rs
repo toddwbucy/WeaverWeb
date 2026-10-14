@@ -120,6 +120,8 @@ struct LiveConnection {
     /// It goes with the connection, and an entry still in it then is a
     /// first record with no second, the audit's "unknown".
     asks: Asks,
+    /// The places of `PERSON_SLOTS` on this connection.
+    person_slots: Arc<tokio::sync::Semaphore>,
 }
 
 /// What the connection holds of one verb ask until its answer.
@@ -251,6 +253,12 @@ pub enum VerbError {
     /// The store could not be read or written for the ask: the server's
     /// failure, and nothing was asked.
     Server(String),
+    /// The connection's slots for persons' asks are all taken: refused
+    /// with one record.
+    Busy,
+    /// The ask did not reach its enqueue within its bound, a store or a
+    /// queue of asks too slow: the server's failure, and nothing was asked.
+    Stalled,
 }
 
 impl std::fmt::Display for VerbError {
@@ -288,6 +296,14 @@ impl std::fmt::Display for VerbError {
                 "the connection ended before the verb left; it was not asked"
             ),
             VerbError::Server(why) => write!(f, "the server could not ask: {why}"),
+            VerbError::Busy => write!(
+                f,
+                "admin-con's slots for persons' asks are all taken; ask again"
+            ),
+            VerbError::Stalled => write!(
+                f,
+                "the ask was not made within its bound; nothing was asked"
+            ),
         }
     }
 }
@@ -355,10 +371,37 @@ impl Drop for Unask {
 /// writes and never on a peer; a lifecycle verb is a person's rare act.
 const HELD_ASKS: usize = 3;
 
-/// A slot reserved on a connection, and the incarnation it is on.
+/// **How many persons' asks may hold a slot on one connection at once**,
+/// from their reservation to their enqueue. A slot is capacity only the
+/// peer can drain, and the write channel holds 64 frames: persons' asks
+/// parked on the server's own waits (a place among `HELD_ASKS`, the store)
+/// with their slots held would otherwise fill it, and the connection task's
+/// own frames, the `landed` that ends admin-con's hold and an opening's
+/// `show`, would time out as a silent peer and close a healthy connection.
+/// **As many as admin-con's own queue holds** (`admin_con::VERB_QUEUE`,
+/// 16), so the server never refuses as busy an ask admin-con would still
+/// take, and forty-eight frames stay for the server's own. An ask past the
+/// cap takes no slot and decides nothing: it goes into the hold like one
+/// with no connection, where the grant is checked first, and is refused as
+/// busy.
+const PERSON_SLOTS: usize = crate::link::admin_con::VERB_QUEUE;
+
+/// What an ask's reservation found.
+enum Slot {
+    /// A slot on the connection, and the incarnation it is on.
+    Reserved(Reserved),
+    /// The connection's persons' slots are all taken.
+    Busy,
+    /// No ready connection, or none whose channel took a reservation.
+    None,
+}
+
+/// A slot reserved on a connection, its place among `PERSON_SLOTS`, and
+/// the incarnation it is on.
 struct Reserved {
     incarnation: i64,
     permit: mpsc::OwnedPermit<ToClient>,
+    _place: tokio::sync::OwnedSemaphorePermit,
 }
 
 /// Where a test may stop a person's ask (`Listener::pause_ask_at`).
@@ -367,6 +410,8 @@ struct Reserved {
 pub enum AskPoint {
     /// The slot reserved, the hold not yet taken.
     BeforeHold,
+    /// Under the hold, the grants about to be read, inside the deadline.
+    AtGrants,
     /// Under the hold, a refusal's record about to be written.
     AtRefusal,
     /// Under the hold, the first record durable, the frame not yet sent.
@@ -442,6 +487,8 @@ struct Inner {
     /// the list's lock, so the worker exits exactly when the list empties
     /// and a new entry starts exactly one.
     reconciling: std::sync::atomic::AtomicBool,
+    /// The places of `HELD_ASKS`.
+    held: tokio::sync::Semaphore,
     #[cfg(test)]
     fault_next_teardown: std::sync::atomic::AtomicBool,
     /// A test's one lever on the store: the next landing fails once, so
@@ -455,8 +502,6 @@ struct Inner {
     #[cfg(test)]
     stall_next_first: std::sync::atomic::AtomicBool,
     /// And on a verb's outcome: the next one waits this long first.
-    /// The places of `HELD_ASKS`.
-    held: tokio::sync::Semaphore,
     #[cfg(test)]
     delay_next_outcome: Mutex<Option<Duration>>,
     /// The stops a test set in persons' asks.
@@ -576,6 +621,7 @@ impl Listener {
                 halting: watch::channel(false).0,
                 failed_teardowns: Mutex::new(Vec::new()),
                 reconciling: std::sync::atomic::AtomicBool::new(false),
+                held: tokio::sync::Semaphore::new(HELD_ASKS),
                 #[cfg(test)]
                 fault_next_teardown: std::sync::atomic::AtomicBool::new(false),
                 #[cfg(test)]
@@ -584,7 +630,6 @@ impl Listener {
                 stall_next_land: std::sync::atomic::AtomicBool::new(false),
                 #[cfg(test)]
                 stall_next_first: std::sync::atomic::AtomicBool::new(false),
-                held: tokio::sync::Semaphore::new(HELD_ASKS),
                 #[cfg(test)]
                 delay_next_outcome: Mutex::new(None),
                 #[cfg(test)]
@@ -1257,6 +1302,11 @@ impl Inner {
     /// 4. **The enqueue**, through the permit on the incarnation the
     ///    ceiling was read from; then the hold's commit.
     ///
+    /// **From the place to the commit, one deadline**, the silence bound
+    /// read at each await: a store or a queue of asks that stalls answers
+    /// the ask as the server's failure within it and frees its place. The
+    /// whole task is so bounded by the slot's wait and this deadline.
+    ///
     /// A revocation or a disable either commits before the check or waits
     /// for the enqueue. Store I/O runs under the hold (the checks, the
     /// records); peer I/O never does.
@@ -1268,29 +1318,57 @@ impl Inner {
     ) -> Result<Enqueued, VerbError> {
         let id = self.next_ask.fetch_add(1, Ordering::Relaxed);
         let reserved = self.reserve(agent).await;
-        // A place among the held asks, after the slot and before the hold;
-        // the semaphore is never closed.
-        let _place = self.held.acquire().await;
-        #[cfg(test)]
-        self.pause_at(AskPoint::BeforeHold).await;
+        // **One deadline from the place to the commit** (6b1's rule: nothing
+        // waits unboundedly on the store), an instant read at each await.
+        // Passed before the first record, the ask is the server's failure
+        // with nothing asked and nothing recorded; passed in the record
+        // step, `Unsent` answers its first `failed`.
+        let deadline = tokio::time::Instant::now() + self.silence;
+        let stalled = |what: &str| {
+            tracing::error!(
+                "{agent}: a person's {verb} was not asked: {what} did not complete within {:?}",
+                self.silence
+            );
+            VerbError::Stalled
+        };
         let server = |what: &str, e: anyhow::Error| {
             tracing::error!("{agent}: a person's {verb} was not asked: {what}: {e:#}");
             VerbError::Server(format!("{what}: {e:#}"))
         };
-        let mut hold = shared_hold(&self.store)
-            .await
-            .map_err(|e| server("the hold", e))?;
+        // A place among the held asks, after the slot and before the hold;
+        // the semaphore is never closed.
+        let Ok(_held) = tokio::time::timeout_at(deadline, self.held.acquire()).await else {
+            return Err(stalled("a place among the held asks"));
+        };
+        #[cfg(test)]
+        self.pause_at(AskPoint::BeforeHold).await;
+        let mut hold = match tokio::time::timeout_at(deadline, shared_hold(&self.store)).await {
+            Ok(hold) => hold.map_err(|e| server("the hold", e))?,
+            Err(_) => return Err(stalled("the hold")),
+        };
         let principal = audit::Principal::Person {
             person_id: &asker.person_id,
             method: PersonMethod::Session,
         };
-        let stands = session_stands(&mut hold, asker.session_id, &asker.person_id)
-            .await
-            .map_err(|e| server("the session", e))?;
+        let stands = match tokio::time::timeout_at(
+            deadline,
+            session_stands(&mut hold, asker.session_id, &asker.person_id),
+        )
+        .await
+        {
+            Ok(stands) => stands.map_err(|e| server("the session", e))?,
+            Err(_) => return Err(stalled("the session's read")),
+        };
         let verbs = if stands {
-            verbs_granted_in(&mut hold, &asker.person_id, agent)
-                .await
-                .map_err(|e| server("the grants", e))?
+            let granted = async {
+                #[cfg(test)]
+                self.pause_at(AskPoint::AtGrants).await;
+                verbs_granted_in(&mut hold, &asker.person_id, agent).await
+            };
+            match tokio::time::timeout_at(deadline, granted).await {
+                Ok(verbs) => verbs.map_err(|e| server("the grants", e))?,
+                Err(_) => return Err(stalled("the grants' read")),
+            }
         } else {
             None
         };
@@ -1302,13 +1380,13 @@ impl Inner {
                 },
                 "the roles held on the agent do not carry the verb",
             )),
-            Some(_) => self.ceiling_refusal(agent, reserved.as_ref(), verb),
+            Some(_) => self.ceiling_refusal(agent, &reserved, verb),
         };
         if let Some((answer, why)) = refusal {
             #[cfg(test)]
             self.pause_at(AskPoint::AtRefusal).await;
-            let recorded = tokio::time::timeout(
-                self.silence,
+            let recorded = tokio::time::timeout_at(
+                deadline,
                 self.store
                     .audit_refusal(principal, Target::Agent(agent.as_str()), verb, why),
             )
@@ -1321,29 +1399,34 @@ impl Inner {
                     );
                     Err(VerbError::Audit)
                 }
-                Err(_) => {
-                    tracing::error!(
-                        "{agent}: a person's refusal of {verb} was not recorded within {:?}",
-                        self.silence
-                    );
-                    Err(VerbError::Audit)
-                }
+                // **A refusal that cannot be recorded is the server's
+                // failure**, answered as the bound passed.
+                Err(_) => Err(stalled("the refusal's record")),
             };
         }
-        let mut unsent = match self.record_ask(id, agent, verb, principal).await {
-            Ok(unsent) => unsent,
-            Err(e) => {
+        let mut unsent = match tokio::time::timeout_at(
+            deadline,
+            self.record_ask(id, agent, verb, principal),
+        )
+        .await
+        {
+            Ok(Ok(unsent)) => unsent,
+            Ok(Err(e)) => {
                 tracing::error!(
                     "{agent}: the first record of a person's {verb} could not be written, nothing asked: {e:#}"
                 );
                 return Err(VerbError::Audit);
             }
+            // The record step's hand-over finds no one to take its guard,
+            // which answers the first `failed` where it landed.
+            Err(_) => return Err(stalled("the first record")),
         };
         #[cfg(test)]
         self.pause_at(AskPoint::UnderHold).await;
-        let Some(Reserved {
+        let Slot::Reserved(Reserved {
             incarnation,
             permit,
+            _place,
         }) = reserved
         else {
             return Err(VerbError::Lost);
@@ -1384,10 +1467,16 @@ impl Inner {
             },
         });
         unsent.disarm();
-        if let Err(e) = hold.commit().await {
-            tracing::warn!(
-                "{agent}: the hold of a person's {verb} did not commit after its enqueue, its lock ending with its session: {e:#}"
-            );
+        // **The commit is bounded too**: past the deadline the transaction
+        // is dropped, its lock ending with it, and the ask stands enqueued.
+        match tokio::time::timeout_at(deadline, hold.commit()).await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => tracing::warn!(
+                "{agent}: the hold of a person's {verb} did not commit after its enqueue, its lock ending with its transaction: {e:#}"
+            ),
+            Err(_) => tracing::warn!(
+                "{agent}: the hold of a person's {verb} did not commit within its bound after its enqueue; dropped, its lock ending with it"
+            ),
         }
         Ok(Enqueued {
             first,
@@ -1401,32 +1490,43 @@ impl Inner {
     /// any hold and held to the silence bound; a bound that passes is the
     /// peer gone silent and closes it, as an enqueue's does. `None` where
     /// there is no slot to be had, which decides nothing by itself.
-    async fn reserve(&self, agent: &AgentId) -> Option<Reserved> {
-        let (incarnation, tx, close, silent) = {
+    async fn reserve(&self, agent: &AgentId) -> Slot {
+        let found = {
             let live = self.live.lock().unwrap();
-            let conn = live
-                .get(&(agent.clone(), Plane::Admin))
-                .filter(|c| c.ready)?;
-            (
-                conn.incarnation,
-                conn.tx.clone(),
-                conn.close.clone(),
-                conn.silent.clone(),
-            )
+            live.get(&(agent.clone(), Plane::Admin))
+                .filter(|c| c.ready)
+                .map(|conn| {
+                    (
+                        conn.incarnation,
+                        conn.tx.clone(),
+                        conn.close.clone(),
+                        conn.silent.clone(),
+                        conn.person_slots.clone(),
+                    )
+                })
+        };
+        let Some((incarnation, tx, close, silent, places)) = found else {
+            return Slot::None;
+        };
+        // **A place among the connection's persons' slots, never waited
+        // for**: past the cap the ask takes no slot.
+        let Ok(place) = places.try_acquire_owned() else {
+            return Slot::Busy;
         };
         match tokio::time::timeout(self.silence, tx.reserve_owned()).await {
-            Ok(Ok(permit)) => Some(Reserved {
+            Ok(Ok(permit)) => Slot::Reserved(Reserved {
                 incarnation,
                 permit,
+                _place: place,
             }),
-            Ok(Err(_)) => None,
+            Ok(Err(_)) => Slot::None,
             Err(_) => {
                 tracing::warn!(
                     "{agent} (admin): a slot could not be reserved within the bound, the peer stopped reading"
                 );
                 silent.store(true, Ordering::Relaxed);
                 let _ = close.send(true);
-                None
+                Slot::None
             }
         }
     }
@@ -1437,12 +1537,19 @@ impl Inner {
     fn ceiling_refusal(
         &self,
         agent: &AgentId,
-        reserved: Option<&Reserved>,
+        reserved: &Slot,
         verb: &str,
     ) -> Option<(VerbError, &'static str)> {
         let not_connected = Some((VerbError::NotConnected, "admin-con is not connected"));
-        let Some(reserved) = reserved else {
-            return not_connected;
+        let reserved = match reserved {
+            Slot::Reserved(reserved) => reserved,
+            Slot::Busy => {
+                return Some((
+                    VerbError::Busy,
+                    "the connection's slots for persons' asks are all taken",
+                ));
+            }
+            Slot::None => return not_connected,
         };
         let live = self.live.lock().unwrap();
         let Some(conn) = live
@@ -2191,6 +2298,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                         ready: false,
                         ceiling: ceiling.clone(),
                         asks: asks.clone(),
+                        person_slots: Arc::new(tokio::sync::Semaphore::new(PERSON_SLOTS)),
                     },
                 );
                 Ok(())

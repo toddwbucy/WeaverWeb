@@ -432,7 +432,15 @@ async fn ask(
         Err(refused @ (VerbError::NotGranted { .. } | VerbError::OutsideCeiling { .. })) => {
             return (StatusCode::FORBIDDEN, refused.to_string()).into_response();
         }
-        Err(refused @ (VerbError::NotConnected | VerbError::Lost)) => {
+        // Not connected, the persons' slots all taken, the connection lost
+        // after the first, or the ask's bound passed on the server's own
+        // waits (logged at error): nothing was asked.
+        Err(
+            refused @ (VerbError::NotConnected
+            | VerbError::Busy
+            | VerbError::Lost
+            | VerbError::Stalled),
+        ) => {
             return (StatusCode::SERVICE_UNAVAILABLE, refused.to_string()).into_response();
         }
         Err(e) => return fault(anyhow::Error::new(e)),

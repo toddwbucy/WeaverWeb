@@ -16,7 +16,7 @@ use crate::admin_tests::{admin, form, send_as, signed_in};
 use crate::agents_tests::{Connector, Rig, rig_silenced};
 use crate::host;
 use crate::link::frames::{FromClient, Position, Principal, ToClient, VerbOutcome};
-use crate::link::listener::AskPoint;
+use crate::link::listener::{AskPoint, Asker, VerbError};
 use crate::passkeys_tests::authenticator;
 use crate::store::AgentId;
 use crate::store::audit::FAIL_FIRST_RECORD;
@@ -632,4 +632,152 @@ async fn a_first_record_the_audit_refuses_sends_no_frame() {
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
     assert!(records(&o).await.is_empty());
     no_frame(&mut o.admin_con).await;
+}
+
+/// bea's open session, as the listener's asker.
+async fn bea_asker(o: &Operated) -> Asker {
+    let session_id: i64 = sqlx::query_scalar(
+        "SELECT session_id FROM session WHERE person_id = $1 AND closed_at IS NULL \
+         ORDER BY session_id DESC LIMIT 1",
+    )
+    .bind(&o.bea)
+    .fetch_one(&o.rig.store().pool)
+    .await
+    .unwrap();
+    Asker {
+        session_id,
+        person_id: o.bea.clone(),
+    }
+}
+
+/// **Persons' asks never fill the connection's channel**: three asks stop
+/// under their holds and take every place, and seventy more park behind
+/// them, each having tried for a slot first. The connection's own frames
+/// still go out: an opening of the trace door has its `show` asked and its
+/// `landed` reported, and the connection stands.
+///
+/// Perturbation: drop the per-connection cap. The parked asks' slots take
+/// the channel, the opening's `show` waits on it, and the healthy
+/// connection would close as a silent peer.
+#[tokio::test]
+async fn persons_asks_never_fill_the_connections_channel() {
+    let Some(mut o) = operated(&["show", "load"]).await else {
+        return;
+    };
+    let asker = bea_asker(&o).await;
+    let id: AgentId = o.karl.parse().unwrap();
+    let pauses: Vec<_> = (0..3)
+        .map(|_| o.rig.listener.pause_ask_at(AskPoint::UnderHold))
+        .collect();
+    for _ in 0..73 {
+        let (listener, asker, id) = (o.rig.listener.clone(), asker.clone(), id.clone());
+        tokio::spawn(async move { listener.ask_as_person(&asker, &id, "load").await });
+    }
+    for (reached, _) in &pauses {
+        reached.notified().await;
+    }
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let tail = Position {
+        generation: "g".into(),
+        offset: 0,
+        digest: "d".into(),
+    };
+    o.admin_con
+        .send(FromClient::Door {
+            open: false,
+            wall_ms: 1_790_000_000_000,
+            tail: None,
+        })
+        .await;
+    o.admin_con
+        .send(FromClient::Door {
+            open: true,
+            wall_ms: 1_790_000_000_001,
+            tail: Some(tail),
+        })
+        .await;
+    let show = match o.admin_con.recv().await {
+        Some(ToClient::Verb { id, verb, .. }) if verb == "show" => id,
+        other => panic!("the opening's show did not go out: {other:?}"),
+    };
+    o.admin_con
+        .send(FromClient::Verb {
+            id: show,
+            outcome: Some(answer("show", json!({"kind": "state", "state": "idle"}), 0)),
+            error: None,
+        })
+        .await;
+    assert!(
+        matches!(o.admin_con.recv().await, Some(ToClient::Landed { id }) if id == show),
+        "the server's landed went out"
+    );
+    assert!(
+        o.rig
+            .listener
+            .connected(&id, crate::link::frames::Plane::Admin)
+    );
+}
+
+/// **Nothing from the place to the commit waits unboundedly on the
+/// store**: three asks stall under their holds at the grants' read, each
+/// answers the server's failure within the bound and frees its place, and
+/// the next ask takes a place and is enqueued.
+///
+/// Perturbation: read the grants without the deadline. The stalled asks
+/// never answer, and every place stays taken.
+#[tokio::test]
+async fn a_stalled_store_answers_within_the_bound_and_frees_its_place() {
+    let Some(o) = operated_with(&["show", "load"], Duration::from_secs(4)).await else {
+        return;
+    };
+    let asker = bea_asker(&o).await;
+    let id: AgentId = o.karl.parse().unwrap();
+    let Operated { rig, admin_con, .. } = o;
+    // admin-con keeps its link alive while the asks wait.
+    let (stop, mut stopped) = tokio::sync::oneshot::channel::<()>();
+    let beating = tokio::spawn(async move {
+        let mut admin_con = admin_con;
+        loop {
+            tokio::select! {
+                _ = &mut stopped => return admin_con,
+                _ = tokio::time::sleep(Duration::from_millis(500)) => {
+                    admin_con.send(FromClient::Heartbeat).await;
+                }
+            }
+        }
+    });
+    let pauses: Vec<_> = (0..3)
+        .map(|_| rig.listener.pause_ask_at(AskPoint::AtGrants))
+        .collect();
+    let stalled: Vec<_> = (0..3)
+        .map(|_| {
+            let (listener, asker, id) = (rig.listener.clone(), asker.clone(), id.clone());
+            tokio::spawn(async move { listener.ask_as_person(&asker, &id, "load").await })
+        })
+        .collect();
+    for (reached, _) in &pauses {
+        reached.notified().await;
+    }
+    for ask in stalled {
+        match tokio::time::timeout(Duration::from_secs(6), ask).await {
+            Ok(Ok(Err(VerbError::Stalled))) => {}
+            Ok(Ok(other)) => panic!("expected the bound's failure, got {:?}", other.err()),
+            other => panic!(
+                "the stalled ask did not answer within the bound: {:?}",
+                other.is_ok()
+            ),
+        }
+    }
+    let next = tokio::time::timeout(
+        Duration::from_secs(6),
+        rig.listener.ask_as_person(&asker, &id, "load"),
+    )
+    .await
+    .expect("a place was free");
+    let enqueued = next.expect("the next ask is enqueued");
+    let _ = stop.send(());
+    let mut admin_con = beating.await.unwrap();
+    let (_, verb, _) = take_verb(&mut admin_con).await;
+    assert_eq!(verb, "load");
+    drop(enqueued);
 }

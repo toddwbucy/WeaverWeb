@@ -307,8 +307,9 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
   before the shared hold, the session, the per-agent grants and the ceiling checked under it
   with each refusal one record (no grant 404 as unknown, no verb 403, ceiling 403, not
   connected 503), the first record and the enqueue before its commit, all in a task a
-  dropped request cannot cut; at most `HELD_ASKS` (3) hold at once; 202 past the silence
-  bound.
+  dropped request cannot cut; at most `PERSON_SLOTS` (16, admin-con's `VERB_QUEUE`) slots per connection (busy, 503,
+  past them) and `HELD_ASKS` (3) holds at once; one deadline, the silence bound, from the
+  place to the commit (a stall answers 503); 202 past the silence bound.
 
 ## The seed tree: what carries forward and what leaves
 

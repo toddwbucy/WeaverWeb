@@ -317,6 +317,76 @@ impl std::fmt::Display for VerbError {
 
 impl std::error::Error for VerbError {}
 
+/// **What a person asks of an agent** (Spec 2.13): a lifecycle verb on the
+/// admin plane, or a turn on the gate plane. One mechanism serves both;
+/// what differs is the verb the person's grant must carry (`turn` for a
+/// turn), the plane, the ceiling (a verb's alone: none applies to a turn,
+/// the gate's own admission being the box's), and the frame.
+#[derive(Debug)]
+pub enum Act {
+    Verb(String),
+    Turn(TurnText),
+}
+
+/// **A turn's text, which goes into its frame and nowhere else** (Spec
+/// 2.13: the agent's trace on its box is the record of what was said): not
+/// the audit, not a log line, not an error. Its `Debug` names no part of it.
+pub struct TurnText(String);
+
+impl TurnText {
+    pub fn new(text: impl Into<String>) -> Self {
+        Self(text.into())
+    }
+}
+
+impl std::fmt::Debug for TurnText {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("TurnText(..)")
+    }
+}
+
+impl Act {
+    /// The plane the act goes on.
+    fn plane(&self) -> Plane {
+        match self {
+            Act::Verb(_) => Plane::Admin,
+            Act::Turn(_) => Plane::Gate,
+        }
+    }
+
+    /// **The verb the person's grant must carry**, which is also the first
+    /// record's action: the verb asked, or `turn`.
+    fn granted(&self) -> &str {
+        match self {
+            Act::Verb(verb) => verb,
+            Act::Turn(_) => "turn",
+        }
+    }
+
+    /// The verb the connection's ceiling must grant: a verb's alone.
+    fn ceilinged(&self) -> Option<&str> {
+        match self {
+            Act::Verb(verb) => Some(verb),
+            Act::Turn(_) => None,
+        }
+    }
+
+    /// The act's frame: a verb names its person by `pe-` identity, a claim
+    /// the box never reads; a turn carries its text, which it alone does.
+    fn frame(self, id: u64, person_id: &str) -> ToClient {
+        match self {
+            Act::Verb(verb) => ToClient::Verb {
+                id,
+                verb,
+                principal: Principal::Person {
+                    person_id: person_id.to_owned(),
+                },
+            },
+            Act::Turn(TurnText(text)) => ToClient::Turn { id, text },
+        }
+    }
+}
+
 /// **Who asks a verb through the server** (Spec 2.13): the session that
 /// asks and its person, checked again under the ask's hold.
 #[derive(Debug, Clone)]
@@ -349,7 +419,17 @@ impl Enqueued {
         }
     }
 
-    /// The verb asked.
+    /// The gate's close of a turn, or why there is none.
+    pub async fn close(self) -> Result<GateClose, TurnError> {
+        match self.reply.await {
+            Ok(FromClient::Turn { close: Some(c), .. }) => Ok(c),
+            Ok(FromClient::Turn { error: Some(e), .. }) => Err(TurnError::Gate(e)),
+            Ok(_) => Err(TurnError::NotConnected),
+            Err(_) => Err(TurnError::Unanswered),
+        }
+    }
+
+    /// The verb asked, or `turn`.
     pub fn verb(&self) -> &str {
         &self.verb
     }
@@ -581,6 +661,9 @@ pub enum TurnError {
     /// agent's trace, relayed by admin-con, is where its outcome is read.
     /// It is never "not connected", which would say the turn did not run.
     Unanswered,
+    /// The server refused the turn before any frame left, or did not take
+    /// it: the person's ask's own answer.
+    Refused(VerbError),
 }
 
 impl std::fmt::Display for TurnError {
@@ -592,6 +675,7 @@ impl std::fmt::Display for TurnError {
                 f,
                 "the turn was sent and the connection ended before its close came back: its outcome is unknown here, and the agent's trace holds it"
             ),
+            TurnError::Refused(refused) => write!(f, "{refused}"),
         }
     }
 }
@@ -985,24 +1069,6 @@ impl Listener {
         self.inner.sweep_revoked().await
     }
 
-    /// One turn across the link (Spec 7.1): routed to the agent's gate-con.
-    /// **No deadline**: the gate serializes turns and a queued turn
-    /// legitimately waits, the seed's own reasoning; a connector that drops
-    /// with the turn in flight answers it `Unanswered`, its outcome unknown.
-    pub async fn turn(&self, agent: &AgentId, text: &str) -> Result<GateClose, TurnError> {
-        let text = text.to_owned();
-        match self
-            .inner
-            .ask(agent, Plane::Gate, None, |id| ToClient::Turn { id, text })
-            .await
-        {
-            Ok(FromClient::Turn { close: Some(c), .. }) => Ok(c),
-            Ok(FromClient::Turn { error: Some(e), .. }) => Err(TurnError::Gate(e)),
-            Err(AskError::Unanswered) => Err(TurnError::Unanswered),
-            _ => Err(TurnError::NotConnected),
-        }
-    }
-
     /// **The server's own verb across the link** (Spec 7.2, 2.13): routed
     /// to the agent's admin-con, whose answer lands on the row where it is
     /// `show` before it is answered here, and **audited as the server's**,
@@ -1064,6 +1130,14 @@ impl Listener {
         })
     }
 
+    /// How many persons' slots the agent's connection on the plane holds.
+    #[cfg(test)]
+    pub fn slots_taken(&self, agent: &AgentId, plane: Plane) -> Option<usize> {
+        let live = self.inner.live.lock().unwrap();
+        live.get(&(agent.clone(), plane))
+            .map(|c| PERSON_SLOTS - c.person_slots.available_permits())
+    }
+
     /// How many persons' asks are outstanding.
     #[cfg(test)]
     pub fn outstanding_asks(&self) -> usize {
@@ -1081,17 +1155,12 @@ impl Listener {
         admission: Admission,
         asker: &Asker,
         agent: &AgentId,
-        verb: &str,
+        act: Act,
     ) -> Result<Enqueued, VerbError> {
-        let (inner, asker, agent, verb) = (
-            self.inner.clone(),
-            asker.clone(),
-            agent.clone(),
-            verb.to_owned(),
-        );
+        let (inner, asker, agent) = (self.inner.clone(), asker.clone(), agent.clone());
         let task = async move {
             let _admission = admission;
-            inner.ask_held(&asker, &agent, &verb).await
+            inner.ask_held(&asker, &agent, act).await
         };
         match tokio::spawn(task).await {
             Ok(asked) => asked,
@@ -1108,10 +1177,34 @@ impl Listener {
         verb: &str,
     ) -> Result<VerbOutcome, VerbError> {
         let admission = self.admit_ask(&asker.person_id).ok_or(VerbError::Shed)?;
-        self.ask_as_person(admission, asker, agent, verb)
+        self.ask_as_person(admission, asker, agent, Act::Verb(verb.to_owned()))
             .await?
             .answer()
             .await
+    }
+
+    /// **A person's turn** (Spec 7.1, 2.13), admitted, placed through the
+    /// same held ask as a verb, and its close awaited without a bound. **No
+    /// deadline on the close**: the gate serializes turns and a queued turn
+    /// legitimately waits; a connector that drops with the turn in flight
+    /// answers it `Unanswered`, its outcome unknown.
+    pub async fn turn_for_person(
+        &self,
+        asker: &Asker,
+        agent: &AgentId,
+        text: &str,
+    ) -> Result<GateClose, TurnError> {
+        let admission = self
+            .admit_ask(&asker.person_id)
+            .ok_or(TurnError::Refused(VerbError::Shed))?;
+        match self
+            .ask_as_person(admission, asker, agent, Act::Turn(TurnText::new(text)))
+            .await
+        {
+            Ok(enqueued) => enqueued.close().await,
+            Err(VerbError::NotConnected) => Err(TurnError::NotConnected),
+            Err(refused) => Err(TurnError::Refused(refused)),
+        }
     }
 
     /// The server's own verb across the link, its frame's principal and its
@@ -1120,16 +1213,11 @@ impl Listener {
         let v = verb.to_owned();
         match self
             .inner
-            .ask(
-                agent,
-                Plane::Admin,
-                Some((verb, audit::Principal::Server)),
-                |id| ToClient::Verb {
-                    id,
-                    verb: v,
-                    principal: Principal::Server,
-                },
-            )
+            .ask(agent, verb, audit::Principal::Server, |id| ToClient::Verb {
+                id,
+                verb: v,
+                principal: Principal::Server,
+            })
             .await
         {
             Ok(FromClient::Verb {
@@ -1244,15 +1332,19 @@ impl Inner {
         }
     }
 
+    /// **The server's own ask** (Spec 2.13): its `show`, on the admin
+    /// plane, its first record the server's. Every other frame either plane
+    /// carries is a person's, through `Inner::ask_held`, so no frame leaves
+    /// the server without its first record.
     async fn ask(
         &self,
         agent: &AgentId,
-        plane: Plane,
-        asked: Option<(&str, audit::Principal<'_>)>,
+        verb: &str,
+        principal: audit::Principal<'_>,
         make: impl FnOnce(u64) -> ToClient,
     ) -> Result<FromClient, AskError> {
         let id = self.next_ask.fetch_add(1, Ordering::Relaxed);
-        let verb = asked.map(|(verb, _)| verb);
+        let plane = Plane::Admin;
         // **Checked before any record**: no ready connection, or a verb
         // outside its ceiling, asks nothing and writes nothing.
         let incarnation = {
@@ -1263,11 +1355,9 @@ impl Inner {
                 .ok_or(AskError::NotConnected)?;
             // **The ceiling is the live connection's own**, checked under
             // the same lock that found the connection (Spec 8).
-            if let Some(verb) = verb {
-                let ceiling = conn.ceiling.as_deref().cloned().unwrap_or_default();
-                if !ceiling.contains(verb) {
-                    return Err(AskError::OutsideCeiling(ceiling.into_iter().collect()));
-                }
+            let ceiling = conn.ceiling.as_deref().cloned().unwrap_or_default();
+            if !ceiling.contains(verb) {
+                return Err(AskError::OutsideCeiling(ceiling.into_iter().collect()));
             }
             conn.incarnation
         };
@@ -1275,28 +1365,15 @@ impl Inner {
         // (Spec 2.13), outside the live map's lock since it awaits the
         // store.
         // **Armed from before the record until the frame is in the
-        // channel**; a turn, which has no record here, arms it for its
-        // entries alone. **Every verb has its record.**
-        let mut unsent = match asked {
-            Some((verb, principal)) => match self.record_ask(id, agent, verb, principal).await {
-                Ok(unsent) => unsent,
-                Err(e) => {
-                    tracing::error!(
-                        "{agent} ({plane}): the first record of {verb} could not be written, nothing asked: {e:#}"
-                    );
-                    return Err(AskError::Audit);
-                }
-            },
-            None => Unsent {
-                id,
-                agent: agent.clone(),
-                first: None,
-                store: self.store.clone(),
-                silence: self.silence,
-                pending: None,
-                asks: None,
-                armed: true,
-            },
+        // channel.**
+        let mut unsent = match self.record_ask(id, agent, verb, principal).await {
+            Ok(unsent) => unsent,
+            Err(e) => {
+                tracing::error!(
+                    "{agent} ({plane}): the first record of {verb} could not be written, nothing asked: {e:#}"
+                );
+                return Err(AskError::Audit);
+            }
         };
         let first = unsent.first.clone();
         let (reply_tx, reply_rx) = oneshot::channel();
@@ -1313,17 +1390,15 @@ impl Inner {
                 .filter(|c| c.ready && c.incarnation == incarnation)
                 .map(|conn| {
                     conn.pending.lock().unwrap().insert(id, reply_tx);
-                    // **Every verb ask is recorded with its verb**, audited
-                    // or not, so its answer is checked against it.
-                    if let Some(verb) = verb {
-                        conn.asks.lock().unwrap().insert(
-                            id,
-                            Asked {
-                                verb: verb.to_owned(),
-                                first: first.clone(),
-                            },
-                        );
-                    }
+                    // **Every ask is recorded with its verb**, so its
+                    // answer is checked against it.
+                    conn.asks.lock().unwrap().insert(
+                        id,
+                        Asked {
+                            verb: verb.to_owned(),
+                            first: first.clone(),
+                        },
+                    );
                     (
                         conn.tx.clone(),
                         conn.pending.clone(),
@@ -1400,10 +1475,16 @@ impl Inner {
         &self,
         asker: &Asker,
         agent: &AgentId,
-        verb: &str,
+        act: Act,
     ) -> Result<Enqueued, VerbError> {
         let id = self.next_ask.fetch_add(1, Ordering::Relaxed);
-        let reserved = self.reserve(agent).await;
+        let plane = act.plane();
+        // **The verb the grant must carry and the first record's action**:
+        // the verb, or `turn`; never a turn's text, which only the frame
+        // carries.
+        let granted = act.granted().to_owned();
+        let verb = granted.as_str();
+        let reserved = self.reserve(agent, plane).await;
         // **One deadline from the place to the commit** (6b1's rule: nothing
         // waits unboundedly on the store), an instant read at each await.
         // Passed before the first record, the ask is the server's failure
@@ -1466,7 +1547,7 @@ impl Inner {
                 },
                 "the roles held on the agent do not carry the verb",
             )),
-            Some(_) => self.ceiling_refusal(agent, &reserved, verb),
+            Some(_) => self.connection_refusal(agent, plane, &reserved, act.ceilinged()),
         };
         if let Some((answer, why)) = refusal {
             #[cfg(test)]
@@ -1524,7 +1605,7 @@ impl Inner {
         // send on, and the first is answered `failed`.
         let found = {
             let live = self.live.lock().unwrap();
-            live.get(&(agent.clone(), Plane::Admin))
+            live.get(&(agent.clone(), plane))
                 .filter(|c| c.ready && c.incarnation == incarnation)
                 .map(|conn| {
                     conn.pending.lock().unwrap().insert(id, reply_tx);
@@ -1545,13 +1626,7 @@ impl Inner {
         unsent.asks = Some(asks);
         // **The enqueue, through the slot reserved before the hold**: no
         // wait, so nothing of the peer runs under the hold.
-        permit.send(ToClient::Verb {
-            id,
-            verb: verb.to_owned(),
-            principal: Principal::Person {
-                person_id: asker.person_id.clone(),
-            },
-        });
+        permit.send(act.frame(id, &asker.person_id));
         unsent.disarm();
         // **The commit is bounded too**: past the deadline the transaction
         // is dropped, its lock ending with it, and the ask stands enqueued.
@@ -1576,10 +1651,10 @@ impl Inner {
     /// any hold and held to the silence bound; a bound that passes is the
     /// peer gone silent and closes it, as an enqueue's does. `None` where
     /// there is no slot to be had, which decides nothing by itself.
-    async fn reserve(&self, agent: &AgentId) -> Slot {
+    async fn reserve(&self, agent: &AgentId, plane: Plane) -> Slot {
         let found = {
             let live = self.live.lock().unwrap();
-            live.get(&(agent.clone(), Plane::Admin))
+            live.get(&(agent.clone(), plane))
                 .filter(|c| c.ready)
                 .map(|conn| {
                     (
@@ -1608,7 +1683,7 @@ impl Inner {
             Ok(Err(_)) => Slot::None,
             Err(_) => {
                 tracing::warn!(
-                    "{agent} (admin): a slot could not be reserved within the bound, the peer stopped reading"
+                    "{agent} ({plane}): a slot could not be reserved within the bound, the peer stopped reading"
                 );
                 silent.store(true, Ordering::Relaxed);
                 let _ = close.send(true);
@@ -1620,13 +1695,20 @@ impl Inner {
     /// **The connection's half of the check**, under the hold: the
     /// connection the slot was reserved on still live and ready, and its
     /// ceiling granting the verb.
-    fn ceiling_refusal(
+    fn connection_refusal(
         &self,
         agent: &AgentId,
+        plane: Plane,
         reserved: &Slot,
-        verb: &str,
+        ceilinged: Option<&str>,
     ) -> Option<(VerbError, &'static str)> {
-        let not_connected = Some((VerbError::NotConnected, "admin-con is not connected"));
+        let not_connected = Some((
+            VerbError::NotConnected,
+            match plane {
+                Plane::Admin => "admin-con is not connected",
+                Plane::Gate => "gate-con is not connected",
+            },
+        ));
         let reserved = match reserved {
             Slot::Reserved(reserved) => reserved,
             Slot::Busy => {
@@ -1639,11 +1721,13 @@ impl Inner {
         };
         let live = self.live.lock().unwrap();
         let Some(conn) = live
-            .get(&(agent.clone(), Plane::Admin))
+            .get(&(agent.clone(), plane))
             .filter(|c| c.ready && c.incarnation == reserved.incarnation)
         else {
             return not_connected;
         };
+        // **A turn has no ceiling**: the gate's own admission is the box's.
+        let verb = ceilinged?;
         let ceiling = conn.ceiling.as_deref().cloned().unwrap_or_default();
         if ceiling.contains(verb) {
             None
@@ -2069,6 +2153,80 @@ impl Answer {
     }
 }
 
+/// **A turn's answer, classified once**: the gate's close, or gate-con's
+/// fault. A frame outside the contract's shape is no answer.
+enum TurnAnswer {
+    Close(GateClose),
+    Fault(TurnFault),
+}
+
+impl TurnAnswer {
+    /// **The door**: a turn frame checked against the ask it answers, which
+    /// must be a turn, and the contract's shape, exactly one of a close and
+    /// a fault. A close's kind and a fault's stay free on the wire; what
+    /// they mean is `audited`'s allow-lists.
+    fn of(
+        close: Option<GateClose>,
+        error: Option<TurnFault>,
+        asked: &str,
+    ) -> Result<Self, &'static str> {
+        if asked != "turn" {
+            return Err("it answers an ask that is no turn");
+        }
+        match (close, error) {
+            (Some(close), None) => Ok(TurnAnswer::Close(close)),
+            (None, Some(fault)) => Ok(TurnAnswer::Fault(fault)),
+            _ => Err("it carries both a close and a fault, or neither"),
+        }
+    }
+
+    /// **What the answer says of the turn**, for its outcome record, and
+    /// **only the contract's evidence writes one**, by allow-lists:
+    /// `weaver-gate-world-contract`'s close kind decides a close, `answered`
+    /// `ok`, and `stopped` or `refused` `failed`, the gate's own word that
+    /// the turn ended without its answer. A fault's kind decides a fault:
+    /// `failed` where it proves the turn never reached the gate (`busy` and
+    /// `not_started`, gate-con's own; `unloaded`, no gate to reach;
+    /// `line_too_long`, never sent). **Everything else writes no outcome**:
+    /// `delivery_lost`, `bad_close`, `close_too_long`, which cannot say
+    /// whether the agent answered, any kind on no list, and, at the
+    /// connection, a link that ends with the turn in flight.
+    fn audited(&self) -> Option<bool> {
+        const ENDED_UNANSWERED: [&str; 2] = ["stopped", "refused"];
+        const NEVER_REACHED: [&str; 4] = [
+            "busy",
+            crate::link::gate_con::NOT_STARTED,
+            "unloaded",
+            "line_too_long",
+        ];
+        match self {
+            TurnAnswer::Close(close) if close.kind == "answered" => Some(true),
+            TurnAnswer::Close(close) if ENDED_UNANSWERED.contains(&close.kind.as_str()) => {
+                Some(false)
+            }
+            TurnAnswer::Close(_) => None,
+            TurnAnswer::Fault(fault) if NEVER_REACHED.contains(&fault.kind.as_str()) => Some(false),
+            TurnAnswer::Fault(_) => None,
+        }
+    }
+
+    /// The asker's answer, the one classification as a frame.
+    fn into_frame(self, id: u64) -> FromClient {
+        match self {
+            TurnAnswer::Close(close) => FromClient::Turn {
+                id,
+                close: Some(close),
+                error: None,
+            },
+            TurnAnswer::Fault(fault) => FromClient::Turn {
+                id,
+                close: None,
+                error: Some(fault),
+            },
+        }
+    }
+}
+
 /// **A send to a peer that stopped reading is the peer gone silent.** The
 /// write channel behind the socket is bounded, so a peer that stops reading
 /// fills it and a plain send would suspend the connection task where the
@@ -2190,14 +2348,32 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
 
     let (read_half, mut write_half) = tokio::io::split(tls);
     let (tx, mut rx) = mpsc::channel::<ToClient>(64);
+    let (close_tx, mut close_rx) = watch::channel(false);
+    let silent = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    // **A write that cannot complete within the silence bound is the peer
+    // gone silent**, whatever fills the channel: persons' asks hold few
+    // slots and send through permits that never wait, so a peer that
+    // heartbeats and never reads is found here, at the socket, and the
+    // connection closes as silent.
+    let (write_bound, writer_close, writer_silent) =
+        (inner.silence, close_tx.clone(), silent.clone());
     let writer = tokio::spawn(async move {
         while let Some(frame) = rx.recv().await {
             let Ok(mut line) = serde_json::to_string(&frame) else {
                 continue;
             };
             line.push('\n');
-            if write_half.write_all(line.as_bytes()).await.is_err() {
-                return;
+            match tokio::time::timeout(write_bound, write_half.write_all(line.as_bytes())).await {
+                Ok(Ok(())) => {}
+                Ok(Err(_)) => return,
+                Err(_) => {
+                    tracing::warn!(
+                        "link from {peer}: a write did not complete within {write_bound:?}, the peer stopped reading"
+                    );
+                    writer_silent.store(true, Ordering::Relaxed);
+                    let _ = writer_close.send(true);
+                    return;
+                }
             }
         }
         let _ = write_half.shutdown().await;
@@ -2339,8 +2515,6 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
     let incarnation = (inner.epoch << 32) | inner.next_incarnation.fetch_add(1, Ordering::Relaxed);
     let pending = Arc::new(Mutex::new(HashMap::new()));
     let asks: Asks = Arc::new(Mutex::new(HashMap::new()));
-    let (close_tx, mut close_rx) = watch::channel(false);
-    let silent = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let key = (agent.agent_id.clone(), plane);
     let admitted = inner
         .store
@@ -2612,7 +2786,42 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                     break;
                 }
                 (Plane::Gate, FromClient::Turn { id, close, error }) => {
-                    resolve(&pending, id, FromClient::Turn { id, close, error });
+                    // **A turn's answer is checked once, here at the door,
+                    // against the contract and the ask it answers** (Spec
+                    // 2.13, 7.1), as a verb's is: an answer to no ask, or
+                    // with both a close and a fault or neither, is the
+                    // peer's protocol violation, refused as malformed, its
+                    // first given no outcome and its asker no answer.
+                    let asked = asks.lock().unwrap().remove(&id);
+                    let checked = asked.ok_or("it answers no ask").and_then(|asked| {
+                        TurnAnswer::of(close, error, &asked.verb)
+                            .map(|answer| (asked.first, answer))
+                    });
+                    let (first, answer) = match checked {
+                        Ok(checked) => checked,
+                        Err(why) => {
+                            tracing::warn!(
+                                "link from {peer}: {} (gate) answered ask {id} outside the contract's shape ({why}), refused",
+                                agent.agent_id
+                            );
+                            send(
+                                &tx,
+                                ToClient::Refusal {
+                                    reason: Refusal::Malformed,
+                                },
+                            )
+                            .await;
+                            reason = "refused as malformed";
+                            break;
+                        }
+                    };
+                    // **The outcome when the answer lands**, by the
+                    // contract's evidence alone, written whatever closes
+                    // the connection, as a verb's.
+                    if let Some((first, ok)) = first.zip(answer.audited()) {
+                        inner.record_outcome(&agent.agent_id, &first, ok).await;
+                    }
+                    resolve(&pending, id, answer.into_frame(id));
                 }
                 (Plane::Admin, FromClient::Verb { id, outcome, error }) => {
                     // **An answer's shape is checked once, here at the door,

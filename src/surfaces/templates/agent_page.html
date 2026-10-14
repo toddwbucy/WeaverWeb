@@ -29,4 +29,13 @@
 <form method="post" action="/agents/{{ agent_id }}/verb"><input type="hidden" name="verb" value="{{ verb }}"><button type="submit">{{ verb }}</button></form>
 {% endfor %}
 {% endif %}
+<h2>Turn</h2>
+{% if turn_form %}
+{% if shared %}
+<p>More than one person holds turn on this agent: your turns interleave with theirs in the agent's one conversation, and each of you reads the other's.</p>
+{% endif %}
+<form method="post" action="/agents/{{ agent_id }}/turn"><textarea name="text" rows="4" cols="60" required></textarea><button type="submit">Place the turn</button></form>
+{% else %}
+<p>No turn: your roles do not carry turn on this agent, or gate-con is not connected.</p>
+{% endif %}
 {% endblock %}

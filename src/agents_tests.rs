@@ -286,7 +286,7 @@ impl Connector {
 
 /// The log lines at every level, captured on the test's own thread.
 #[derive(Clone, Default)]
-struct Captured(Arc<std::sync::Mutex<Vec<u8>>>);
+pub(crate) struct Captured(pub(crate) Arc<std::sync::Mutex<Vec<u8>>>);
 
 impl std::io::Write for Captured {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {

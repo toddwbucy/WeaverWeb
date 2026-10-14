@@ -8,7 +8,7 @@ use super::client::{Backoff, Connect, Incoming, Link, LinkConfig, LinkStatus};
 use super::frames::{FromClient, LineReader, Plane, Refusal, ToClient};
 use super::gate_con::{self, GateConConfig};
 use super::listener::{Listener, TurnError};
-use super::tests::{Lab, SILENCE, SOON, lab_config};
+use super::tests::{Lab, SILENCE, SOON, lab_config, operator};
 use crate::adapters::gate::{CLOSE_BOUND, GateClose};
 use crate::store::AgentId;
 use serde_json::json;
@@ -243,12 +243,18 @@ async fn installed(
     (id, path)
 }
 
-/// A turn through the listener, bounded so a test that would hang fails
-/// instead, holding no serial guard forever.
+/// A turn through the listener, a person's, each its own fixture person so
+/// no share of the server's outstanding asks stops a test's concurrent
+/// turns; bounded so a test that would hang fails instead, holding no
+/// serial guard forever.
 async fn turn(listener: &Listener, id: &AgentId, text: &str) -> Result<GateClose, TurnError> {
-    tokio::time::timeout(Duration::from_secs(20), listener.turn(id, text))
-        .await
-        .unwrap_or_else(|_| panic!("the turn {text:?} was never answered"))
+    let asker = operator(listener.store(), id).await;
+    tokio::time::timeout(
+        Duration::from_secs(20),
+        listener.turn_for_person(&asker, id, text),
+    )
+    .await
+    .unwrap_or_else(|_| panic!("the turn {text:?} was never answered"))
 }
 
 /// The first turn after an admission: the server routes asks only to a

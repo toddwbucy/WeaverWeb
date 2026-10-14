@@ -2017,6 +2017,201 @@ from: weaver-web
 to: web-the-servers-asks-are-audited
 ```
 
+### 2.14 Alerts and the operator's decisions
+
+**What the server does with a failure, ruled by the operator on
+2026-10-14** while reading `toddwbucy/WeaverWeb#43`. Five rulings, each
+binding this crate:
+
+1. **Any failure that could lose data becomes a prompt to the operator**:
+   the problem, the current status and the immediate options, and the
+   operator chooses. **Nothing retries in the background and nothing picks
+   a recovery on its own**, since what to do after a possible loss depends
+   on context only the operator has.
+2. **An `unload` stopped at its save point**, refusing `SavePointNotTaken`
+   naming a leg other than `published` (the contract's S9, per section 7.2:
+   the run standing at rest, its gate lowered, nothing lost yet), gets a
+   prompt with two options: **save point, then unload**, and **force-unload**,
+   which loses the state since the last published save point.
+3. **A connector is a conduit**: it makes the pipe and passes traffic along,
+   and never acts on the agent on its own initiative, per section 8. A
+   connector's exit and a broken route look the same to the server: **lost
+   contact, raised to the operator, the agent possibly still running**.
+4. **Why a thing failed reaches the operator**: the server writes each
+   failure's reason to an operations log and shows it on the agent's page.
+5. **Everyone holding a grant on the agent, any role, sees its alerts, and an
+   alert stays until acknowledged** by a person holding `operator` on that
+   agent, the acknowledgement audited.
+
+**An alert** is a row of its own (migration `0019`), its identity `al-` under
+the convention section 2 opens with: the agent, its kind, its subject (the
+act, a verb or `turn`, or the plane for lost contact), its source (the
+server; the connectors' entries join in the next act), a summary of at most
+1024 bytes and a detail of at most 8192, the first record of the act it
+concerns where there is one, the options of a prompt, when it was raised and
+last occurred, how many times, when contact was restored where it was lost,
+a version, and its acknowledgement, when and by whom. The first record is
+named by its `au-` shape and no foreign key, since a key on the audit would
+let a `TRUNCATE audit` be refused by the key before the audit's own trigger,
+which is the guarantee. **Never a turn's text and never a secret**: the reason
+is admin's refusal object and stderr, bounded to 2048 bytes, a connector's
+fault, the gate's close kind and reason, or a teardown's reason.
+
+**The kinds, and what raises each**, at the door where the outcome is
+written or at the teardown:
+
+- `failed`: admin refused a verb (exit 1), a fault proving the act never ran
+  (the door's allow-list of section 7.2), the gate stopping or refusing a
+  turn, or a save point answered without its confirmation in the prompt's
+  sequence below;
+- `unknown`: a fault or a cut connection leaving the act's outcome unknown,
+  each act still in flight at a teardown among them;
+- `refused`: a person's ask refused for a system reason, no connection, the
+  persons' slots taken, a stalled wait, the audit unwritable, the connection
+  lost, outside the ceiling, or a fault of the server's own. **Not** an
+  authorization refusal (no grant on the agent, a grant without the verb),
+  which is the audit's and not an operational failure, and **not** a shed
+  request, which by design leaves no trace;
+- `lost_contact`: a connection on either plane ending for any reason but the
+  server's own act. Revocation, rotation, retirement and the halt (one
+  reason, "closed by revocation, rotation or halt") and a row naming another
+  connection raise nothing; a duplicate's refusal is never admitted and has
+  no teardown. The connector dropping, a silent peer, a malformed frame, the
+  store unavailable and an admission left incomplete each raise it. An
+  admission of the plane notes the restoration on the open alert, which
+  stays until acknowledged;
+- `save_point_missed`: the prompt of ruling 2, read from admin's object by
+  allow-list: an `unload` refused `save_point_not_taken` whose `missed` is
+  `answer`, `finished` or `member_dead`;
+- `data_at_risk`: a refusal that could have lost data and leaves no web
+  option, `save_point_not_taken` naming `published` and `boundary_unverified`,
+  each explaining the problem and the status, cleared on the box.
+
+**One open alert per agent, kind and subject**: a unique index over the
+three where the alert is unacknowledged, and one insert that resolves its
+conflict on that index, so raisers at once leave one alert counting them all,
+and a flapping link raises one alert and not hundreds. A repeat takes the
+latest reason, moves the last occurrence, the count and the version, and
+clears a restoration; an occurrence after an acknowledgement opens a new
+alert. The subject is in the key so that a refused `load` and a refused
+`stop` stand as two alerts rather than one rewritten.
+
+**Raising never waits.** The connection task, the teardown and an ask hand a
+failure to a bounded queue of 256 and go on; a worker of its own writes the
+alert, its store write bounded at ten seconds, then the operations log's
+line naming it. A full queue drops the failure and counts the drops, the
+count logged at error, so a stalled store or a full disk never holds a
+connection, a teardown or an ask.
+
+**The operations log** is a file the server appends one JSON line to per
+failure: the time, the agent, the plane, the act, the first record, the
+principal, the outcome or refusal, the alert's kind and summary, the
+reason's fields and the alert's identity. Its path is the config's
+`operations_log`, **with no default in the code**: the install sets it under
+`/var/log`, and no host path enters the repository. The server refuses to
+start where it is missing or cannot be opened for appending, and opens it
+per write with append, so a rotation needs no signal. A line that cannot be
+written is logged at error.
+
+**Seen by any grant, acknowledged by `operator`**: the agent page lists the
+agent's alerts, open first, newest first, each with its reason; `GET
+/agents` shows each agent's open count; the reading surfaces' nav shows the
+person's open alerts across the agents they hold a grant on. **An
+acknowledgement names the version it read** (`POST
+/agents/{ag}/alerts/{al}/ack`) and takes the admin writes' order of section
+2.13: the identities parsed; the session; the grant check, no grant answered
+as an unknown agent (404) and a grant without `operator` refused (403), each
+with one refusal record; the alert resolved on that agent (unknown: 404, no
+record); the first record, target kind `alert`, action `acknowledge`; then
+one transaction under the identity exclusion re-checking the session and
+the `operator` grant and acknowledging only where the version still stands
+and nothing acknowledged it first, with its outcome. **A repeat landing
+between the page's read and the acknowledgement is refused as stale**
+(409, the outcome `failed`), so nothing is acknowledged unseen.
+
+**The prompt** is shown on the agent page as a `<dialog open>` with the
+problem, the status and **only the options the person's grants and the
+connection's ceiling carry**, server-rendered with no script, and on the verb
+page that met it, which states the same and sends the person to the agent
+page to choose, the alert landing through the worker. **Choosing an option
+does not acknowledge the alert.** A choice (`POST
+/agents/{ag}/alerts/{al}/choose`) is admitted as any ask, answers a person
+without a grant on the agent as an unknown agent before the alert is
+looked up, resolves the open prompt carrying the option, and runs in a task
+the request cannot cancel:
+
+- **save point, then unload** is the person's two asks through section
+  2.13's path, each admitted, held, recorded and audited as any ask. The
+  `unload` is asked **only on the save point's hash-confirmed answer**:
+  exit 0, kind `save_point_taken`, and a report naming its save point's
+  digest, of at most 256 bytes, no space and no control. Since
+  `toddwbucy/WeaverAgent#158` that answer means the published copy was read
+  back and digests to its manifest line, per the contract's section 5, and
+  **the prompt promises no more**: the read-back is served from the page
+  cache, so durability on the device rests on admin's syncs before it. Any
+  other answer stops the sequence with no `unload`; a refusal or a fault has
+  raised its alert at the door, and an exit 0 without the confirmation
+  raises one of its own;
+- **force-unload** is the person's one ask.
+
+The page shows each step's status, or, past the silence bound, that the
+choice runs on and its outcomes are written when admin answers.
+
+**Residue: `show` cannot tell S9 from S2 on the wire**, a run at rest after
+a missed save point and an idle one both answering `State { state: Idle }`,
+so an S9 entered outside this crate raises no prompt. The operator asked for
+no new WeaverAgent work on 2026-10-14, so no issue is filed.
+
+```graph
+node: web-raising-an-alert-never-waits
+kind: assertion
+tag: perturbation
+
+edge: asserts
+from: weaver-web
+to: web-raising-an-alert-never-waits
+```
+
+```graph
+node: web-one-open-alert-per-agent-kind-and-subject
+kind: assertion
+tag: perturbation
+
+edge: asserts
+from: weaver-web
+to: web-one-open-alert-per-agent-kind-and-subject
+```
+
+```graph
+node: web-an-acknowledgement-names-the-version-it-read
+kind: assertion
+tag: perturbation
+
+edge: asserts
+from: weaver-web
+to: web-an-acknowledgement-names-the-version-it-read
+```
+
+```graph
+node: web-unload-follows-only-a-confirmed-save-point
+kind: assertion
+tag: perturbation
+
+edge: asserts
+from: weaver-web
+to: web-unload-follows-only-a-confirmed-save-point
+```
+
+```graph
+node: web-a-connector-never-acts-on-the-agent
+kind: assertion
+tag: perturbation
+
+edge: asserts
+from: weaver-web
+to: web-a-connector-never-acts-on-the-agent
+```
+
 ## 3. The write path
 
 **Seven writers, and each owns its tables, one table being owned at the member by two
@@ -2994,9 +3189,19 @@ restores, the one the agent's declaration names and never one the caller
 chooses, and `force-unload`, the unload that completes without its leave
 save point and records the loss. **`unload` refuses `ActivityNotAtRest`**
 while a turn runs or gate traffic stands, touching nothing, and
-**`SavePointNotTaken`** where its leave save point did not publish, the run
-having ended and the next load recording the loss, per the contract's
-section 5. **`list` was retired by `toddwbucy/WeaverAgent#45`**,
+**`SavePointNotTaken` naming the leg its leave save point missed**, per the
+contract's section 5 since 2026-10-09: **only `published` ends the run**,
+its save point standing unpublished and the next load recording the loss;
+every other leg leaves the run standing at rest with its gate lowered and
+nothing lost yet (the contract's S9), for a `save-point` and then an
+`unload`, or a `force-unload`, which section 2.14's prompt offers the
+operator. A `save-point` whose publication does not land, or whose copy does
+not read back to its manifest line, refuses `SavePointNotTaken` naming
+`published` too, the run still open. **`BoundaryUnverified` is refused at
+every verb that publishes**, a `load`, an `unload` and a `save-point`, where
+a save point's boundary cannot be verified, until the operator clears it on
+the box (`toddwbucy/WeaverWeb#43`). Both are section 2.14's `data_at_risk`
+alerts, with no web option. **`list` was retired by `toddwbucy/WeaverAgent#45`**,
 because enumerating agents is this crate's register of section 2.12 and
 weaver-admin is one agent's organ. **admin-con runs them, and it is this
 crate's binary**, the management plane's one reach, and the server asks
@@ -3439,8 +3644,8 @@ its caller disappears, so at its bound admin-con leaves the process running,
 answers `unknown`, and the next `show` reads the real state. **The
 invocation slot stays occupied until that process exits and is reaped**,
 even after its caller was answered `unknown`: verbs that arrive meanwhile
-queue behind it under the existing bound and `busy`, and the orderly stop's
-`unload` waits for it too, per section 8. Answering at the bound and freeing
+queue behind it under the existing bound and `busy`, and admin-con's
+orderly stop waits for it too, per section 8. Answering at the bound and freeing
 the slot would end the one-verb-at-a-time span while the verb still ran, so
 the next verb could run beside it. **The slot is admin-con's own, one per
 process, and is held across connection attempts**: a link that drops while
@@ -3878,33 +4083,28 @@ control-group kill and never `KillMode=process`, so the agent's processes
 live and die inside the invoker's containment. The invoker's resource limits
 contain the agent too, so they are sized for it, model loading included, or
 left unset, and an upgrade of admin-con is planned as an unload, the
-upgrade, then a load. **An orderly stop unloads first**: admin-con answers
-its waiting asks `not_started`, waits for the verb in flight, until its
-process exits and is reaped, within the stop's grace, issues `unload`
-through its own granted line, and then exits. A verb whose process
-outlasts the grace means the `unload` is not issued, and the kill that
-follows is an unclean stop, reset at the next load. **The stop's grace is
-a member of admin-con's config**, `stop_grace_secs`, 1080 unless set: the
-box's load bound, the unload bound and a margin, timed from the stop's
-signal. **The stop retries `unload` until rest**, on the operator's ruling
-of 2026-10-08: while `unload` refuses `ActivityNotAtRest`, a turn running,
-admin-con asks it again every five seconds (`REST_RETRY`, a turn's end met
-within five seconds of it, the grace holding at most 216 asks) until it
-answers otherwise or the grace passes, the clock read after each wait and
-immediately before each ask, so no ask starts at or past the grace however
-late the wait wakes, one invocation at a time; if the grace ends first, the agent is left to the
-containment and the next load records the unclean stop. **The stop never
-forces**: it runs no `force-unload`, so no state is thrown away by choice,
-and a `SavePointNotTaken` is not retried, the run having ended and the next
-load recording the loss. The `unload`'s answer is logged, and the events it
-writes reach the server through the trace at admin-con's next connection.
-That `unload` is admin-con's one act on its own initiative. A kill is an unclean stop, whose
-next load resets the agent to its latest save point.
+upgrade, then a load. **admin-con is a conduit, and its stop asks nothing
+of the agent**, on the operator's ruling of 2026-10-14 (section 2.14, ruling
+3), which retired the orderly stop's `unload` and its retry until rest of
+2026-10-08: admin-con answers its waiting asks `not_started`, waits for the
+verb in flight, until its process exits and is reaped, within the stop's
+grace, never killing it, and exits, invoking nothing. It parses no
+refusal class of admin's. A verb whose process outlasts the grace runs on
+unkilled as far as admin-con is concerned. **The stop's grace is a member
+of admin-con's config**, `stop_grace_secs`, 1080 unless set: the box's load
+bound, the unload bound and a margin, timed from the stop's signal, so a
+stop that meets a `load` in flight waits for it. **What the containment does
+at the service's stop is provisioning's**, per the binding below: a kill
+there is an unclean stop, whose next load resets the agent to its latest
+save point, and the server sees the connection end as lost contact, raised
+to the operator, the agent possibly still running. An operator who wants
+the agent at rest before a stop unloads it first, through section 2.14's
+path.
 **The binding is a property of how the box is provisioned, and admin-con
 enforces none of it**, on the operator's ruling of 2026-10-05. admin-con is
 a connector that abstracts the agent's primitives and polices nothing on
-the box: on its own it does exactly three things, runs a granted line when
-asked, reads the relay, and unloads its agent at its own orderly stop. There
+the box: it does exactly two things, runs a granted line when asked and
+reads the relay, and acts on its agent on its own initiative never. There
 is no adversary between admin-con and weaver-admin, both being the
 operator's; the one adversary is a hijacked management plane, which the
 binding answers by provisioning, so a check at runtime would guard only
@@ -3914,7 +4114,7 @@ land inside admin-con's service, per the contract's section 2, and **the
 install owes four things**, named here and built by the install act: the
 unit's control-group kill mode; a stop timeout covering the box's load bound
 plus the unload bound plus a margin, so an orderly stop that meets a `load`
-in flight still unloads; a fixed `PATH` in the unit's environment, since the
+in flight waits for it; a fixed `PATH` in the unit's environment, since the
 invoker finds sudo by it, a path to it being a box path this repository
 does not carry, so the unit's environment is part of what the invocation
 trusts; and **one check, after the first load**, that the
@@ -3923,9 +4123,9 @@ per the contract's section 3, sit inside admin-con's service, failing the
 install by name otherwise. `show`'s pids reach the row as a fact for the
 operator and for that check, per section 2.12, and drive no behaviour of
 admin-con's; `show` carries them on WeaverAgent's side, per
-`weaver-types` `LifecycleAnswer::State`. **Without a cgroup-capable supervisor only the orderly stop
-holds**: a process group does not contain an agent whose worker leaves its
-session, so an admin-con that dies uncleanly there leaves its agent running.
+`weaver-types` `LifecycleAnswer::State`. **Without a cgroup-capable supervisor the binding does
+not hold**: a process group does not contain an agent whose worker leaves its
+session, so an admin-con that stops or dies there leaves its agent running.
 The gap is stated rather than imitated.
 
 **A lost link never unloads an agent**, on the operator's confirmation of
@@ -3934,9 +4134,9 @@ cause an agent failure, so the management plane is admin-con's process and
 not its connection, and a server restart takes no agent down. The trace is
 the record of what the agent did meanwhile, and the server catches up from
 the acknowledged position when the link returns, per section 7.2. **Recovery
-decisions are this crate's**, the operator in the console now and a server
-policy later, and reach admin-con as ordinary verbs, `show` and then
-`unload` and `load`.
+decisions are the operator's**, made through this crate's surfaces and
+never chosen on their own, per section 2.14's ruling 1, and reach admin-con
+as ordinary verbs, `show` and then `unload` and `load`.
 
 **At listener start the server sets every plane recorded as connected to
 disconnected, with the start's date, before it accepts a connection.** A
@@ -4133,7 +4333,7 @@ missing while it was relaying.
 | a role's verbs stay within the vocabulary, and the admin role is never written | perturbation in `src/host_tests.rs` and `src/store/identity_tests.rs`: drop the command's vocabulary check, and a verb outside it reaches the store, refused there only as a fault; drop the command's admin check, and the same; drop the store's vocabulary check, and a role carrying `fly` lands; drop the trigger fixing the admin role, and its verbs are rewritten |
 | a grant names an agent exactly where its role is per agent | perturbation in `src/host_tests.rs` and `src/store/identity_tests.rs`: let a server-wide role name an agent in the command, and an admin grant on an agent is taken as server-wide; drop the store's check, and a per-agent grant naming no agent lands |
 | every identity check is false, never unknown, on a missing value, and the audit's person is a person | perturbation in `src/store/identity_tests.rs`, one row per check with its guarded member missing, each rolled back: drop the guard on a token's ending, and a token ended with no reason lands; drop it on a person target's identity, and a person target naming no row lands; drop the audit's foreign key to the person, and a record naming no person lands. A role's missing verb needs no guard: `<@` is false, not unknown, on a NULL element, so the vocabulary check refuses it as it stands |
-| every target the audit writes is checked by its kind | perturbation in `src/store/identity_tests.rs`, each insert rolled back: drop the passkey target's check, and a passkey target out of its `pk-` shape, or naming none, lands; drop the authority target's, and an authority target naming a row lands; drop the known kinds, and a target of a kind no check covers lands. The agent's, person's, grant's and role's checks stand in the rows of the audit's checks and the identity checks |
+| every target the audit writes is checked by its kind | perturbation in `src/store/identity_tests.rs`, each insert rolled back: drop the passkey target's check, and a passkey target out of its `pk-` shape, or naming none, lands; drop the alert target's, and an alert target out of its `al-` shape, or naming none, lands; drop the authority target's, and an authority target naming a row lands; drop the known kinds, and a target of a kind no check covers lands. The agent's, person's, grant's and role's checks stand in the rows of the audit's checks and the identity checks |
 | every verb a person asks has its first record before its frame, and every refusal of one its record | perturbation, in `src/verbs_tests.rs`: send the frame before the record step, and it reaches admin-con though the audit holds no record of it; drop a refusal's record, and a refused verb leaves no trace. The outcome naming the first is written at the door of the server's asks' row, which a person's answer passes through alike |
 | every turn a person places has its first record before its frame, naming `turn`, and its outcome only by the gate contract's evidence | perturbation, in `src/verbs_tests.rs`: write `ok` for any close, and a stopped turn reads `ok`; write `failed` for `delivery_lost`, and an unknown outcome reads `failed`; drop the door's shape check, and an answer carrying both a close and a fault is taken. The first before the frame is the record step's, shown on the verb's row and the server's asks' |
 | a turn's text is in no audit record and no log line | perturbation, in `src/verbs_tests.rs`: put the text in the first record, and the row carries it; log it at debug in the held section, and the process's capture of every line finds it |
@@ -4168,14 +4368,27 @@ missing while it was relaying.
 | the WebAuthn library links into the server binary alone | measurement and perturbation in `tests/connectors_link.rs`: `ldd` on the connectors as `cargo test` builds them finds no `libcrypto`, and on the server binary finds it, which shows the reading; and the package's normal graph without the default features holds no `openssl-sys` and no `webauthn-rs`, the build CLAUDE.md gives for agent boxes. Make the library a dependency the feature does not carry, and the graph holds it |
 | the admission's `show` is required only where the ceiling grants it | perturbation: ask `show` at every admission, and an agent whose ceiling grants no `show` is closed `admission_incomplete` at every reconnection and never stays admitted; skip it where it is granted, and the row reads the last process's state as current |
 | the ceiling declared in the hello is exactly what the box's sudo rules grant | perturbation, against a fake `sudo` generated at test time in `src/link/sudo_invoker_tests.rs`: answer `grants` from anything but each verb's own `sudo -n -l` line, and a verb the rule refuses is declared, or one it grants is not |
-| the orderly stop retries `unload` until rest, never past its grace and never forcing | perturbation, against a scripted invoker in `src/link/admin_con_tests.rs`: drop the retry, and an `unload` refusing `ActivityNotAtRest` twice before a clean answer is asked once; drop the deadline check, and one refusing past the grace is asked again after the stop returned; check the deadline before the wait rather than after it, and on a paused clock a wait overtaken past the deadline starts one more `unload`; retry on every refusal, and a `SavePointNotTaken` is asked again. The stop runs `unload` alone, never `force-unload`, which each test asserts |
+| a connector never acts on the agent: admin-con's stop invokes nothing | perturbation in `src/link/admin_con_tests.rs`: restore the orderly stop's `unload`, and a shutdown with `unload` in the ceiling invokes it. And against a fake `sudo` in `src/link/sudo_invoker_tests.rs`, where the rules grant `unload`, the stop runs no line, and with a child in flight it waits for the child and runs none |
+| raising an alert never waits on the store or the log | perturbation in `src/alerts_tests.rs`: wait on the full queue in the raise instead of dropping, and with the worker held a refused verb's answer is held behind it and the raises time out |
+| one open alert per agent, kind and subject, its count right under concurrency | perturbation in `src/alerts_tests.rs`: drop the open alert's index and the insert's conflict clause, and sixteen raisers at once leave sixteen alerts; drop the conflict clause alone, and a repeated refusal is never counted on the open alert |
+| an acknowledgement names the version it read, and only a person holding `operator` on the agent acknowledges | perturbation in `src/alerts_tests.rs`: drop the version from the acknowledgement's write, and an acknowledgement naming a version a repeat has moved lands; drop the `operator` check, before the record and in the transaction, and an observer's acknowledgement lands |
+| an authorization refusal raises no alert | perturbation in `src/alerts_tests.rs`: raise a `refused` alert for no grant or a grant without the verb, and a refused person's ask raises one |
+| choosing a prompt's option without a grant answers as an unknown agent | perturbation in `src/alerts_tests.rs`: resolve the alert before the grant check, and a person holding no grant tells a real prompt from an unknown one |
+| the prompt's `unload` follows only a hash-confirmed save point | perturbation in `src/alerts_tests.rs`: ask `unload` on any `save-point` answer, and a `save_point_not_taken`, or a `save_point_taken` with no report, is followed by an unload |
 | no privileged invocation exists outside admin-con's sudo invoker | perturbation, two instruments. A test, `tests/no_privilege.rs`: it reads every tracked file outside `docs/`, never following a symlink, comment lines aside by each file's syntax and Markdown read in its fences only, for a privilege-escalating program named as a word, a setuid family call, a child's user or group set on a command, and a setuid or setgid mode bit, with the program's word allowed in `src/link/sudo_invoker.rs` and its test module alone; shown to fail when one of each family is planted, in Rust and in a README fence, when the program is planted in another file of the invoker's name, and when another family is planted in the invoker's own files. And the argv instrument in `src/link/sudo_invoker_tests.rs`: plant the principal's name from the ask into the command, and the line the fake records is no longer exactly `sudo -n <weaver_admin> <verb> <agent>` |
 
 **A watch that cannot fail is not a test.** For each perturbation above, the
 act that lands it states what removal makes it fail and confirms it does.
 
 **A row marked owed has no instrument and is not counted as enforced.**
-Two stand so marked as of 2026-10-14. Act 11's pull request of a
+Two stand so marked as of 2026-10-14. Act 12's pull request of alerts
+and the operator's decisions of 2026-10-14 stood up alerts raised without
+waiting, one open alert per agent, kind and subject, the acknowledgement at
+its version and by `operator` alone, no alert for an authorization refusal,
+a prompt's choice answered as unknown without a grant, the prompt's
+`unload` only on a hash-confirmed save point, and a connector that never
+acts on the agent, each shown to fail with its guard removed, retiring the
+orderly stop's retry until rest with the stop's `unload`. Act 11's pull request of a
 person's turns of 2026-10-14 stood up the principal check for turns (the
 verb's held ask on the gate plane), the audit of a person's turns (the
 first naming `turn`, the outcome by the gate contract's evidence alone)
@@ -4245,9 +4458,8 @@ refresh, the `Origin` check, sign-out and the author member), each shown to
 fail with its guard removed. Act 11's TLS pull request of 2026-10-08 stood up
 the listener's start refusals, those of the origin and the certificate, and the
 listener that serves TLS alone, each shown to fail with its guard removed, and
-narrowed the start-refusal row to the relying party's two. The alignment with
-WeaverAgent's A3.2 on 2026-10-08 stood up the orderly stop's retry until rest,
-each clause shown to fail with its guard removed. Act 11's persons pull request of 2026-10-07 stood
+narrowed the start-refusal row to the relying party's two.
+Act 11's persons pull request of 2026-10-07 stood
 up the host's identity commands' records, the last admin and the exclusion, the
 roles' vocabulary and the fixed admin role, a grant's agent, the identity checks
 and the audit's person, and the issuing halves of three owed rows, which it

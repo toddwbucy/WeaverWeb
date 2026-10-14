@@ -160,6 +160,7 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
 - **DB-backed unit tests** (`store::read`, `store::plan`, `store::audit_tests`,
   `store::identity_tests`, `host_tests`, `surfaces::record`, `passkeys_tests`,
   `sign_in_tests`, `keys_tests`, `admin_tests`, `grants_tests`, `agents_tests`, `reading_tests`,
+  `verbs_tests`,
   `link::tests`, `link::server_asks_tests`,
   `link::client_tests`, `link::admin_con_tests`, `link::verbs_audit_tests`)
   connect to the database in `DATABASE_URL` and run the migrations. The link's tests run one at
@@ -301,7 +302,13 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
   under the identity exclusion held shared for the check alone; reads are not audited. The
   live view re-checks its session (`gate::session`, as every use) and the grant every
   `reading::RECHECK` (15 s; `reading_tests` set it short through the rig's seams) and closes
-  with its reason at the first failure.
+  with its reason at the first failure. `POST /agents/{ag}/verb` (PR 6b2) asks a lifecycle verb
+  through `Listener::ask_as_person`, offered on the page as plain forms: the slot reserved
+  before the shared hold, the session, the per-agent grants and the ceiling checked under it
+  with each refusal one record (no grant 404 as unknown, no verb 403, ceiling 403, not
+  connected 503), the first record and the enqueue before its commit, all in a task a
+  dropped request cannot cut; at most `HELD_ASKS` (3) hold at once; 202 past the silence
+  bound.
 
 ## The seed tree: what carries forward and what leaves
 

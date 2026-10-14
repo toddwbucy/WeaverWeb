@@ -12,7 +12,7 @@
 use super::authority::{Authority, ClientCredential, client_tls, fingerprint};
 use super::frames::{FromClient, Plane, Position, Refusal, ToClient};
 use super::frames::{VerbFault, VerbOutcome};
-use super::listener::{Listener, VerbError};
+use super::listener::{Asker, Listener, VerbError};
 use super::register::{Agent, CredentialState};
 use crate::store::{AgentId, Store};
 use crate::traceview::TraceEvent;
@@ -43,6 +43,50 @@ pub(super) async fn store() -> Option<Store> {
         return None;
     };
     Some(Store::connect(&url).await.expect("connect and migrate"))
+}
+
+/// **A person who may ask every verb of the agent**: holding `operator`
+/// on it, enabled, with a session opened on a passkey of theirs. The rows
+/// are written directly, a fixture's alone; no name is a real one.
+pub(super) async fn operator(store: &Store, agent: &AgentId) -> Asker {
+    let tag = uuid::Uuid::new_v4().simple().to_string();
+    let name = format!("lab-{tag}");
+    let person_id: String = sqlx::query_scalar(
+        "INSERT INTO person (name, name_key) VALUES ($1, $1) RETURNING person_id",
+    )
+    .bind(&name)
+    .fetch_one(&store.pool)
+    .await
+    .unwrap();
+    let passkey_id: String = sqlx::query_scalar(
+        "INSERT INTO passkey (credential_id, person_id, credential) VALUES ($1, $2, '{}') \
+         RETURNING passkey_id",
+    )
+    .bind(&name)
+    .bind(&person_id)
+    .fetch_one(&store.pool)
+    .await
+    .unwrap();
+    let session_id: i64 = sqlx::query_scalar(
+        "INSERT INTO session (bearer_digest, person_id, passkey_id) VALUES ($1, $2, $3) \
+         RETURNING session_id",
+    )
+    .bind(format!("{tag}{}", uuid::Uuid::new_v4().simple()))
+    .bind(&person_id)
+    .bind(&passkey_id)
+    .fetch_one(&store.pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO role_grant (person_id, role, agent_id) VALUES ($1, 'operator', $2)")
+        .bind(&person_id)
+        .bind(agent.as_str())
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    Asker {
+        session_id,
+        person_id,
+    }
 }
 
 pub(super) fn position(offset: u64) -> Position {

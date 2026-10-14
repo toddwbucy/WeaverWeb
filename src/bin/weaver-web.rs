@@ -452,6 +452,7 @@ async fn serve(cfg: Arc<ServerConfig>) -> anyhow::Result<()> {
                 policy: policy.clone(),
                 windows: link.windows().clone(),
                 recheck: weaver_web::surfaces::reading::RECHECK,
+                asker: link.clone(),
             }),
         ))
         // **The register of agents through the server** (Spec 2.13): the

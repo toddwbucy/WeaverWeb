@@ -10,7 +10,7 @@ use super::client_tests::{FAST, FakeServer};
 use super::fake_relay::FakeRelay;
 use super::frames::{FromClient, Line, Plane, Principal, ToClient, VerbFault, VerbOutcome};
 use super::listener::{Listener, VerbError};
-use super::tests::{Lab, SILENCE, SOON, lab_config};
+use super::tests::{Lab, SILENCE, SOON, lab_config, operator};
 use crate::store::AgentId;
 use crate::traceview::TraceEvent;
 use serde_json::json;
@@ -25,6 +25,10 @@ use tokio::task::JoinHandle;
 
 /// Long enough for anything admin-con would wrongly send to have arrived.
 const SETTLE: Duration = Duration::from_millis(400);
+
+/// A person's identity a fake server's ask frame names: a claim the box
+/// never reads (Spec 8).
+const ADA: &str = "pe-00000000000000ad";
 
 /// The stop's grace in these tests, where the service's default covers a
 /// load at the box's bound and would hold every stop for minutes.
@@ -412,9 +416,9 @@ pub(super) async fn verb(
 ) -> Result<VerbOutcome, VerbError> {
     tokio::time::timeout(
         Duration::from_secs(20),
-        // The tests' driving asks take the test-only person path: the
-        // server asks `show` only (Spec 2.13).
-        listener.verb_for_person(id, verb, Principal::Person { name: "ada".into() }),
+        // The tests' driving asks are a person's, holding `operator` on
+        // the agent: the server asks `show` only (Spec 2.13).
+        listener.verb_for_person(&operator(listener.store(), id).await, id, verb),
     )
     .await
     .unwrap_or_else(|_| panic!("the verb {verb} was never answered"))
@@ -1511,7 +1515,9 @@ async fn an_ordinary_verb_asked_during_the_replay_waits_for_caught_up_and_the_dr
     // too slow to read it on its own.
     trace.append(999_999, "unload");
     let mut asks = Vec::new();
-    let person = Principal::Person { name: "ada".into() };
+    let person = Principal::Person {
+        person_id: ADA.into(),
+    };
     for (id, principal) in [(1u64, Principal::Server), (2, person)] {
         asks.extend(
             serde_json::to_vec(&ToClient::Verb {
@@ -2220,7 +2226,7 @@ async fn a_verb_behind_a_never_idle_writer_runs_at_the_drains_bound() {
     let unloaded = tokio::time::timeout(
         Duration::from_secs(8),
         lab.listener
-            .verb_for_person(&id, "unload", Principal::Person { name: "ada".into() }),
+            .verb_for_person(&operator(&lab.store, &id).await, &id, "unload"),
     )
     .await
     .expect("the unload ran behind the writer");
@@ -2498,11 +2504,11 @@ async fn an_opening_serves_its_show_before_a_verb_queued_at_it() {
     invoker.slow("validate", Duration::from_secs(6));
     let listener = lab.listener.clone();
     let asked = id.clone();
-    let person = Principal::Person { name: "ada".into() };
+    let person = operator(&lab.store, &id).await;
     let validated = tokio::spawn(async move {
         tokio::time::timeout(
             Duration::from_secs(20),
-            listener.verb_for_person(&asked, "validate", person),
+            listener.verb_for_person(&person, &asked, "validate"),
         )
         .await
     });
@@ -2547,17 +2553,21 @@ async fn an_openings_show_is_taken_past_a_full_queue() {
         );
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    let asks: Vec<_> = (0..admin_con::VERB_QUEUE)
-        .map(|n| {
+    // A person per ask, so no person's share of the server's outstanding
+    // asks stops the queue filling.
+    let mut operators = Vec::new();
+    for _ in 0..admin_con::VERB_QUEUE {
+        operators.push(operator(&lab.store, &id).await);
+    }
+    let asks: Vec<_> = operators
+        .into_iter()
+        .map(|person| {
             let listener = lab.listener.clone();
             let asked = id.clone();
-            let person = Principal::Person {
-                name: format!("ada-{n}"),
-            };
             tokio::spawn(async move {
                 tokio::time::timeout(
                     Duration::from_secs(20),
-                    listener.verb_for_person(&asked, "validate", person),
+                    listener.verb_for_person(&person, &asked, "validate"),
                 )
                 .await
             })
@@ -3064,7 +3074,9 @@ async fn an_openings_show_asked_late_is_still_served_first() {
         other => panic!("expected the door opening, got {other:?}"),
     }
     let opened = tokio::time::Instant::now();
-    let person = Principal::Person { name: "ada".into() };
+    let person = Principal::Person {
+        person_id: ADA.into(),
+    };
     write.write_all(&ask(2, "validate", person)).await.unwrap();
     match next(&mut reader, SOON).await {
         Some(FromClient::CaughtUp) => {}
@@ -3193,7 +3205,9 @@ async fn the_openings_hold_covers_the_servers_deadline() {
         other => panic!("expected the door opening, got {other:?}"),
     }
     let opened = tokio::time::Instant::now();
-    let person = Principal::Person { name: "ada".into() };
+    let person = Principal::Person {
+        person_id: ADA.into(),
+    };
     write.write_all(&ask(2, "validate", person)).await.unwrap();
     tokio::time::sleep_until(opened + Duration::from_secs(6)).await;
     write
@@ -3436,7 +3450,9 @@ async fn a_faulting_openings_show_keeps_the_hold() {
         Some(FromClient::Door { open: true, .. }) => {}
         other => panic!("expected the door opening, got {other:?}"),
     }
-    let person = Principal::Person { name: "ada".into() };
+    let person = Principal::Person {
+        person_id: ADA.into(),
+    };
     write.write_all(&ask(2, "load", person)).await.unwrap();
     write
         .write_all(&ask(1, "show", Principal::Server))
@@ -3509,7 +3525,9 @@ async fn a_late_openings_show_still_runs_before_a_queued_verb() {
         other => panic!("expected the door opening, got {other:?}"),
     }
     let opened = tokio::time::Instant::now();
-    let person = Principal::Person { name: "ada".into() };
+    let person = Principal::Person {
+        person_id: ADA.into(),
+    };
     write.write_all(&ask(2, "validate", person)).await.unwrap();
     tokio::time::sleep_until(opened + Duration::from_secs(7)).await;
     assert_eq!(invoker.ran(), ["show"], "the verb ran under the hold");
@@ -3570,7 +3588,9 @@ async fn a_closed_door_hello_holds_ordinary_asks_until_its_show() {
         line.push(b'\n');
         line
     };
-    let person = Principal::Person { name: "ada".into() };
+    let person = Principal::Person {
+        person_id: ADA.into(),
+    };
     write.write_all(&ask(2, "load", person)).await.unwrap();
     write
         .write_all(&ask(1, "show", Principal::Server))
@@ -3653,7 +3673,9 @@ async fn a_show_answered_but_not_landed_keeps_the_hold() {
         .write_all(&ask(1, "show", Principal::Server))
         .await
         .unwrap();
-    let person = Principal::Person { name: "ada".into() };
+    let person = Principal::Person {
+        person_id: ADA.into(),
+    };
     write.write_all(&ask(2, "load", person)).await.unwrap();
     assert_eq!(
         answers(&mut reader, Duration::from_secs(2)).await,
@@ -3723,11 +3745,11 @@ async fn an_openings_show_the_store_does_not_land_keeps_the_hold() {
     lab.listener.stall_next_land();
     let listener = lab.listener.clone();
     let asked = id.clone();
-    let person = Principal::Person { name: "ada".into() };
+    let person = operator(&lab.store, &id).await;
     let loaded = tokio::spawn(async move {
         tokio::time::timeout(
             Duration::from_secs(20),
-            listener.verb_for_person(&asked, "load", person),
+            listener.verb_for_person(&person, &asked, "load"),
         )
         .await
     });

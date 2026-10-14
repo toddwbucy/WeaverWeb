@@ -18,22 +18,37 @@
 //! a minute), and the person's grant, and closes at the first that fails.
 //! It is the listener's live window, what the server holds in memory now,
 //! and says so: not a record.
+//!
+//! **A person asks a lifecycle verb from the agent's page** (Spec 2.13; act
+//! 11, PR 6b2): `POST /agents/{ag}/verb`, the identity and the verb parsed
+//! first (400, no record), an agent the register does not hold answered
+//! as unknown (404, no record), then the ask through the listener
+//! (`Listener::ask_as_person`), which checks the session, the person's
+//! grants on the agent and the connection's ceiling under the identity
+//! exclusion held shared to the enqueue, each refusal one record: no grant
+//! answered exactly as an unknown agent, a grant without the verb 403, the
+//! ceiling 403, no connection 503. The page then waits for admin's answer
+//! to the silence bound and shows it, or answers 202 naming the first
+//! record, its outcome written when admin answers. The page's forms offer
+//! the verbs the person's grants carry and the ceiling grants; hiding one
+//! is presentation, and the ask checks everything again.
 
 use std::convert::Infallible;
 use std::time::Duration;
 
 use askama::Template;
 use axum::Router;
-use axum::extract::{Path, State};
+use axum::extract::{Form, Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::response::{Html, IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use tokio_stream::StreamExt;
 
 use crate::fault::Fault;
+use crate::link::listener::{Asker, Listener, VerbError};
 use crate::link::register::{Agent, CredentialState};
-use crate::store::identity::is_agent_id;
+use crate::store::identity::{VOCABULARY, is_agent_id};
 use crate::store::{AgentId, Store};
 use crate::surfaces::gate::{self, Policy, Session};
 use crate::surfaces::record::NoSession;
@@ -50,17 +65,20 @@ const NO_SUCH_AGENT: &str = "no such agent";
 const LIVE_WINDOW: &str = "the live window: what this server holds in memory of the agent's trace now, not a record; a restart or a full ring loses it";
 
 /// **What the reading surface holds beside the store**: the session's
-/// policy, the listener's live windows, and the re-check's interval.
+/// policy, the listener's live windows, the re-check's interval, and the
+/// listener a person's verb is asked through.
 #[derive(Clone)]
 pub struct Seams {
     pub policy: Policy,
     pub windows: TraceViews,
     pub recheck: Duration,
+    pub asker: Listener,
 }
 
 /// The reading surface, taking its seams as its own argument.
 pub fn routes(seams: Seams) -> Router<Store> {
-    let (list_seams, page_seams, trace_seams) = (seams.clone(), seams.clone(), seams);
+    let (list_seams, page_seams, trace_seams, verb_seams) =
+        (seams.clone(), seams.clone(), seams.clone(), seams);
     Router::new()
         .route(
             "/agents",
@@ -75,6 +93,18 @@ pub fn routes(seams: Seams) -> Router<Store> {
                 move |State(store): State<Store>, headers: HeaderMap, Path(agent): Path<String>| {
                     let seams = page_seams.clone();
                     async move { page(store, &seams, headers, agent).await }
+                },
+            ),
+        )
+        .route(
+            "/agents/{agent}/verb",
+            post(
+                move |State(store): State<Store>,
+                      headers: HeaderMap,
+                      Path(agent): Path<String>,
+                      Form(asked): Form<VerbAsk>| {
+                    let seams = verb_seams.clone();
+                    async move { ask(store, &seams, headers, agent, asked.verb).await }
                 },
             ),
         )
@@ -207,6 +237,7 @@ struct AgentPage {
     tuple: String,
     constituents: String,
     window: &'static str,
+    forms: Vec<&'static str>,
 }
 
 fn stamp(at: Option<chrono::DateTime<chrono::Utc>>) -> String {
@@ -245,6 +276,24 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, agent: String) ->
         Ok(admin) => admin,
         Err(e) => return fault(e),
     };
+    // **The verbs offered**: the person's grants carry them and the live
+    // connection's declared ceiling grants them. Presentation alone: the
+    // ask checks everything again.
+    let granted = match store.verbs_on(&session.person_id, &id).await {
+        Ok(granted) => granted,
+        Err(e) => return fault(e),
+    };
+    let ceiling = row
+        .ceiling
+        .as_ref()
+        .filter(|_| row.admin.connected)
+        .cloned()
+        .unwrap_or_default();
+    let forms: Vec<&'static str> = VOCABULARY
+        .into_iter()
+        .filter(|verb| lifecycle(verb))
+        .filter(|verb| granted.contains(*verb) && ceiling.iter().any(|c| c == verb))
+        .collect();
     let none = || "none held".to_owned();
     let page = AgentPage {
         here: "agents",
@@ -302,9 +351,168 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, agent: String) ->
             })
             .unwrap_or_else(none),
         window: LIVE_WINDOW,
+        forms,
     };
     match page.render() {
         Ok(html) => Html(html).into_response(),
+        Err(e) => fault(e),
+    }
+}
+
+/// A verb asked from the agent's page.
+#[derive(serde::Deserialize)]
+struct VerbAsk {
+    verb: String,
+}
+
+/// **A lifecycle verb**: the roles' vocabulary without `turn`, which is a
+/// turn's and not a verb's.
+fn lifecycle(verb: &str) -> bool {
+    verb != "turn" && VOCABULARY.contains(&verb)
+}
+
+#[derive(Template)]
+#[template(path = "verb_answer.html")]
+struct VerbPage {
+    here: &'static str,
+    who: String,
+    admin: bool,
+    agent_id: String,
+    label: String,
+    verb: String,
+    first: String,
+    kind: &'static str,
+    detail: String,
+}
+
+/// **A person's verb, asked through the server** (Spec 2.13): parsed,
+/// resolved, asked under the listener's hold, and its answer shown, or
+/// 202 past the silence bound naming its first record.
+async fn ask(
+    store: Store,
+    seams: &Seams,
+    headers: HeaderMap,
+    agent: String,
+    verb: String,
+) -> Response {
+    if !is_agent_id(&agent) {
+        return (
+            StatusCode::BAD_REQUEST,
+            "the agent asked for is not of its identity's shape",
+        )
+            .into_response();
+    }
+    if !lifecycle(&verb) {
+        return (StatusCode::BAD_REQUEST, "not a lifecycle verb").into_response();
+    }
+    let id: AgentId = match agent.parse() {
+        Ok(id) => id,
+        Err(e) => return fault(anyhow::Error::msg(e)),
+    };
+    let session = match session_of(&store, &seams.policy, &headers).await {
+        Ok(session) => session,
+        Err(answer) => return answer,
+    };
+    // **Admitted before anything is resolved**: past the server's bound on
+    // outstanding asks, or the person's share of it, the request is not
+    // taken, a known agent and an unknown one alike, and nothing is
+    // recorded, as for a malformed one; a record per shed request would
+    // rebuild the growth the bound prevents.
+    let Some(admission) = seams.asker.admit_ask(&session.person_id) else {
+        return (StatusCode::SERVICE_UNAVAILABLE, VerbError::Shed.to_string()).into_response();
+    };
+    // **Resolved before any record**: an agent the register does not hold
+    // is unknown, and nothing is recorded of it.
+    let row = match store.agent(&id).await {
+        Ok(Some(row)) => row,
+        Ok(None) => return not_found(),
+        Err(e) => return fault(e),
+    };
+    let asker = Asker {
+        session_id: session.session_id,
+        person_id: session.person_id.clone(),
+    };
+    let enqueued = match seams
+        .asker
+        .ask_as_person(admission, &asker, &id, &verb)
+        .await
+    {
+        Ok(enqueued) => enqueued,
+        // **No grant answers as an unknown agent**, so the page is no
+        // oracle for agent identities.
+        Err(VerbError::NoGrant) => return not_found(),
+        Err(refused @ (VerbError::NotGranted { .. } | VerbError::OutsideCeiling { .. })) => {
+            return (StatusCode::FORBIDDEN, refused.to_string()).into_response();
+        }
+        // Not connected, the persons' slots all taken, the connection lost
+        // after the first, or the ask's bound passed on the server's own
+        // waits (logged at error): nothing was asked.
+        Err(
+            refused @ (VerbError::NotConnected
+            | VerbError::Busy
+            | VerbError::Lost
+            | VerbError::Stalled),
+        ) => {
+            return (StatusCode::SERVICE_UNAVAILABLE, refused.to_string()).into_response();
+        }
+        Err(e) => return fault(anyhow::Error::new(e)),
+    };
+    let first = enqueued.first.clone();
+    // **The page's wait is its own**, bounding nothing of the ask: the
+    // outcome is written at the answer whatever this does.
+    let (status, kind, detail) = match tokio::time::timeout(
+        seams.asker.silence(),
+        enqueued.answer(),
+    )
+    .await
+    {
+        Ok(Ok(outcome)) => (
+            StatusCode::OK,
+            if outcome.exit_code == Some(0) {
+                "admin's answer"
+            } else {
+                "admin's refusal"
+            },
+            outcome
+                .answer
+                .as_ref()
+                .map(|a| serde_json::to_string_pretty(a).unwrap_or_default())
+                .unwrap_or_default(),
+        ),
+        Ok(Err(VerbError::Fault(fault))) => (
+            StatusCode::OK,
+            "admin-con's fault",
+            format!("{}: {}", fault.kind, fault.message),
+        ),
+        Ok(Err(VerbError::Unanswered)) => (
+            StatusCode::OK,
+            "the connection ended with the verb in flight: its outcome is unknown here, and the trace and the next show hold it",
+            String::new(),
+        ),
+        Ok(Err(e)) => (StatusCode::OK, "no answer", e.to_string()),
+        Err(_) => (
+            StatusCode::ACCEPTED,
+            "asked, and not answered within the bound: its outcome is written when admin answers",
+            String::new(),
+        ),
+    };
+    let admin = match store.is_admin(&session.person_id).await {
+        Ok(admin) => admin,
+        Err(e) => return fault(e),
+    };
+    let page = VerbPage {
+        here: "agents",
+        who: session.name,
+        admin,
+        agent_id: row.agent_id.as_str().to_owned(),
+        label: format!("{}/{}", row.r#box, row.name),
+        verb,
+        first,
+        kind,
+        detail,
+    };
+    match page.render() {
+        Ok(html) => (status, Html(html)).into_response(),
         Err(e) => fault(e),
     }
 }

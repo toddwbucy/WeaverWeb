@@ -21,4 +21,12 @@
   </tbody>
 </table>
 <p><a href="/agents/{{ agent_id }}/trace">The live trace view</a> (an event stream): {{ window }}.</p>
+<h2>Verbs</h2>
+{% if forms.is_empty() %}
+<p>No verb your roles carry that the connection's ceiling grants.</p>
+{% else %}
+{% for verb in forms %}
+<form method="post" action="/agents/{{ agent_id }}/verb"><input type="hidden" name="verb" value="{{ verb }}"><button type="submit">{{ verb }}</button></form>
+{% endfor %}
+{% endif %}
 {% endblock %}

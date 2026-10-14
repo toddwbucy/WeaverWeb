@@ -1188,16 +1188,30 @@ impl Listener {
         let (plane, subject) = (act.plane(), act.granted().to_owned());
         let task = async move {
             let _admission = admission;
-            inner.ask_held(&asker_, &agent_, act).await
+            let mut authorized = false;
+            let asked = inner.ask_held(&asker_, &agent_, act, &mut authorized).await;
+            (asked, authorized)
         };
-        let asked = match tokio::spawn(task).await {
+        let (asked, authorized) = match tokio::spawn(task).await {
             Ok(asked) => asked,
-            Err(e) => Err(VerbError::Server(format!("the ask's task ended: {e}"))),
+            Err(e) => {
+                tracing::error!("{agent}: a person's {subject} was not asked: its task ended: {e}");
+                (
+                    Err(VerbError::Server(format!("the ask's task ended: {e}"))),
+                    false,
+                )
+            }
         };
-        // **A refusal for a system reason is an alert** (Spec 2.14): not an
-        // authorization refusal, which is the audit's, and not a shed
-        // request, which by design leaves no trace.
-        if let Err(refused) = &asked
+        // **A refusal for a system reason is an alert** (Spec 2.14), **and
+        // only where the act's authorization stood**: the session standing
+        // and a grant carrying the act. A failure before that check is the
+        // server's log line at error and never an alert, so a person holding
+        // no grant on an agent raises nothing on it. Not an authorization
+        // refusal either, which is the audit's, and not a shed request,
+        // which by design leaves no trace. NotConnected, Busy,
+        // OutsideCeiling and Lost are reached only past the check.
+        if authorized
+            && let Err(refused) = &asked
             && matches!(
                 refused,
                 VerbError::NotConnected
@@ -1532,11 +1546,15 @@ impl Inner {
     /// A revocation or a disable either commits before the check or waits
     /// for the enqueue. Store I/O runs under the hold (the checks, the
     /// records); peer I/O never does.
+    /// **`authorized` is set once the act's authorization stands**, the
+    /// session standing and a grant carrying the act, so the caller raises
+    /// an alert only for a failure past that check (Spec 2.14).
     async fn ask_held(
         &self,
         asker: &Asker,
         agent: &AgentId,
         act: Act,
+        authorized: &mut bool,
     ) -> Result<Enqueued, VerbError> {
         let id = self.next_ask.fetch_add(1, Ordering::Relaxed);
         let plane = act.plane();
@@ -1608,7 +1626,10 @@ impl Inner {
                 },
                 "the roles held on the agent do not carry the verb",
             )),
-            Some(_) => self.connection_refusal(agent, plane, &reserved, act.ceilinged()),
+            Some(_) => {
+                *authorized = true;
+                self.connection_refusal(agent, plane, &reserved, act.ceilinged())
+            }
         };
         if let Some((answer, why)) = refusal {
             #[cfg(test)]
@@ -3625,12 +3646,15 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
     // **An act left in flight is an alert, its outcome unknown here**, and
     // **contact lost for any reason but the server's own act** is one too,
     // the agent possibly still running (Spec 2.14), each raised without
-    // waiting.
+    // waiting. **The server's own `show` is left out**: it acts on nothing,
+    // so its outcome cannot matter, and the teardown's lost contact already
+    // stands for the connection.
     let in_flight: Vec<Asked> = asks
         .lock()
         .unwrap()
         .drain()
         .map(|(_, asked)| asked)
+        .filter(|asked| !(asked.principal == "server" && asked.verb == "show"))
         .collect();
     for asked in in_flight {
         inner.alerts.raise(failure_of(

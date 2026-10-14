@@ -15,11 +15,13 @@ use crate::agents_tests::Rig;
 use crate::alerting::Failure;
 use crate::host;
 use crate::link::frames::{FromClient, Plane, VerbOutcome};
+use crate::link::listener::AskPoint;
 use crate::passkeys_tests::authenticator;
 use crate::store::AgentId;
 use crate::store::alerts::{Alert, AlertKind, Raise};
 use crate::verbs_tests::{
-    Operated, SAID, ask, close, dial_gate, no_frame, operated, place, take_turn, take_verb,
+    Operated, SAID, ask, close, dial_gate, no_frame, operated, operated_with, place, take_turn,
+    take_verb,
 };
 
 /// The agent's alerts, open first, newest first.
@@ -236,6 +238,46 @@ async fn a_link_cut_with_a_verb_in_flight_raises_unknown_and_lost_contact() {
     assert!(kinds.contains(&("lost_contact", "admin")), "{kinds:?}");
     let (_, _, page) = asked.await.unwrap();
     assert!(page.contains("unknown here"), "{page}");
+}
+
+/// **The server's own `show` left in flight at a teardown raises no
+/// `unknown`**: it acts on nothing, and the teardown's lost contact stands
+/// for the connection.
+///
+/// Perturbation: keep the server's `show` among the in-flight unknowns, and
+/// the cut raises an `unknown` for it.
+#[tokio::test]
+async fn the_servers_show_in_flight_at_a_cut_raises_no_unknown() {
+    let Some(mut o) = operated(&["show", "load"]).await else {
+        return;
+    };
+    let (listener, id) = (o.rig.listener.clone(), o.karl.parse::<AgentId>().unwrap());
+    let shown = tokio::spawn(async move { listener.verb(&id, "show").await });
+    let (_, verb, _) = take_verb(&mut o.admin_con).await;
+    assert_eq!(verb, "show");
+    let Operated {
+        rig,
+        karl,
+        admin_con,
+        ..
+    } = o;
+    drop(admin_con);
+    let _ = shown.await.unwrap();
+    let found = wait_alerts(&rig, &karl, "lost contact", |a| {
+        a.iter().any(|x| x.kind == "lost_contact")
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let found = if found.len() == 1 {
+        alerts(&rig, &karl).await
+    } else {
+        found
+    };
+    let kinds: Vec<_> = found
+        .iter()
+        .map(|a| (a.kind.as_str(), a.subject.as_str()))
+        .collect();
+    assert_eq!(kinds, [("lost_contact", "admin")]);
 }
 
 /// **Lost contact raises one alert per plane, a flapping link one and not
@@ -623,6 +665,47 @@ async fn an_authorization_refusal_raises_no_alert() {
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert!(alerts(&o.rig, &o.karl).await.is_empty());
     assert!(o.rig.operations_log().is_empty());
+}
+
+/// **A person holding no grant raises no alert, even where the server
+/// fails them before the check**: dan's ask, held before the hold past a
+/// four-second silence bound, is the server's stall, and nothing is raised
+/// on dan's behalf on an agent dan cannot see, no alert and no
+/// operations-log line.
+///
+/// Perturbation: raise a system refusal whether or not the authorization
+/// stood, and dan's stalled ask raises a `refused` alert on karl.
+#[tokio::test]
+async fn a_person_without_a_grant_raises_nothing_though_the_server_stalls() {
+    let Some(o) = operated_with(&["show", "load"], Duration::from_secs(4)).await else {
+        return;
+    };
+    let s = o.rig.store().clone();
+    let (_, dan_session) = signed_in(&o.rig.app, &s, &mut authenticator(), "dan").await;
+    let (reached, release) = o.rig.listener.pause_ask_at(AskPoint::BeforeHold);
+    let asked = ask(&o.rig, &dan_session, &o.karl, "load");
+    reached.notified().await;
+    tokio::time::sleep(Duration::from_millis(4500)).await;
+    release.notify_one();
+    let (status, _, _) = asked.await.unwrap();
+    assert_eq!(
+        status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "the stall answered"
+    );
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    // The fake admin-con, quiet past the four-second bound, is closed as
+    // a silent peer meanwhile: that lost contact is the server's own
+    // observation and may stand. Nothing is raised on dan's behalf.
+    let found = alerts(&o.rig, &o.karl).await;
+    assert!(found.iter().all(|a| a.kind == "lost_contact"), "{found:#?}");
+    let dan: Vec<_> = o
+        .rig
+        .operations_log()
+        .into_iter()
+        .filter(|l| l["principal"] != "server")
+        .collect();
+    assert!(dan.is_empty(), "{dan:?}");
 }
 
 /// **A turn's text reaches no alert and no operations-log line**: a turn

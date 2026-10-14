@@ -45,8 +45,9 @@ use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use tokio_stream::StreamExt;
 
+use crate::adapters::gate::request_line;
 use crate::fault::Fault;
-use crate::link::listener::{Asker, Listener, VerbError};
+use crate::link::listener::{Act, Asker, Enqueued, Listener, TurnError, TurnText, VerbError};
 use crate::link::register::{Agent, CredentialState};
 use crate::store::identity::{VOCABULARY, is_agent_id};
 use crate::store::{AgentId, Store};
@@ -77,8 +78,13 @@ pub struct Seams {
 
 /// The reading surface, taking its seams as its own argument.
 pub fn routes(seams: Seams) -> Router<Store> {
-    let (list_seams, page_seams, trace_seams, verb_seams) =
-        (seams.clone(), seams.clone(), seams.clone(), seams);
+    let (list_seams, page_seams, trace_seams, verb_seams, turn_seams) = (
+        seams.clone(),
+        seams.clone(),
+        seams.clone(),
+        seams.clone(),
+        seams,
+    );
     Router::new()
         .route(
             "/agents",
@@ -104,7 +110,19 @@ pub fn routes(seams: Seams) -> Router<Store> {
                       Path(agent): Path<String>,
                       Form(asked): Form<VerbAsk>| {
                     let seams = verb_seams.clone();
-                    async move { ask(store, &seams, headers, agent, asked.verb).await }
+                    async move { act(store, &seams, headers, agent, Asking::Verb(asked.verb)).await }
+                },
+            ),
+        )
+        .route(
+            "/agents/{agent}/turn",
+            post(
+                move |State(store): State<Store>,
+                      headers: HeaderMap,
+                      Path(agent): Path<String>,
+                      Form(placed): Form<TurnAsk>| {
+                    let seams = turn_seams.clone();
+                    async move { act(store, &seams, headers, agent, Asking::Turn(placed.text)).await }
                 },
             ),
         )
@@ -238,6 +256,8 @@ struct AgentPage {
     constituents: String,
     window: &'static str,
     forms: Vec<&'static str>,
+    turn_form: bool,
+    shared: bool,
 }
 
 fn stamp(at: Option<chrono::DateTime<chrono::Utc>>) -> String {
@@ -289,6 +309,15 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, agent: String) ->
         .filter(|_| row.admin.connected)
         .cloned()
         .unwrap_or_default();
+    // **The turn form** where the person's grants carry `turn` and gate-con
+    // is connected, and **the shared-conversation note** where more than
+    // one enabled person holds `turn` on the agent, by the grants page's
+    // own query, one definition (Spec 2.13).
+    let turn_form = granted.contains("turn") && row.gate.connected;
+    let shared = match store.shared_turn().await {
+        Ok(shared) => shared.iter().any(|agent| agent == id.as_str()),
+        Err(e) => return fault(e),
+    };
     let forms: Vec<&'static str> = VOCABULARY
         .into_iter()
         .filter(|verb| lifecycle(verb))
@@ -352,6 +381,8 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, agent: String) ->
             .unwrap_or_else(none),
         window: LIVE_WINDOW,
         forms,
+        turn_form,
+        shared,
     };
     match page.render() {
         Ok(html) => Html(html).into_response(),
@@ -363,6 +394,19 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, agent: String) ->
 #[derive(serde::Deserialize)]
 struct VerbAsk {
     verb: String,
+}
+
+/// A turn placed from the agent's page: its text, which goes into its
+/// frame and nowhere else.
+#[derive(serde::Deserialize)]
+struct TurnAsk {
+    text: String,
+}
+
+/// What the page asks: a verb, or a turn's text.
+enum Asking {
+    Verb(String),
+    Turn(String),
 }
 
 /// **A lifecycle verb**: the roles' vocabulary without `turn`, which is a
@@ -381,19 +425,19 @@ struct VerbPage {
     label: String,
     verb: String,
     first: String,
-    kind: &'static str,
+    kind: String,
     detail: String,
 }
 
 /// **A person's verb, asked through the server** (Spec 2.13): parsed,
 /// resolved, asked under the listener's hold, and its answer shown, or
 /// 202 past the silence bound naming its first record.
-async fn ask(
+async fn act(
     store: Store,
     seams: &Seams,
     headers: HeaderMap,
     agent: String,
-    verb: String,
+    asking: Asking,
 ) -> Response {
     if !is_agent_id(&agent) {
         return (
@@ -402,8 +446,24 @@ async fn ask(
         )
             .into_response();
     }
-    if !lifecycle(&verb) {
-        return (StatusCode::BAD_REQUEST, "not a lifecycle verb").into_response();
+    // **The payload parsed first**: a turn's text is checked against the
+    // gate's own line bound here, so a `line_too_long` is the ask's fault
+    // and never reaches gate-con. Nothing of the text is answered back.
+    match &asking {
+        Asking::Verb(verb) if !lifecycle(verb) => {
+            return (StatusCode::BAD_REQUEST, "not a lifecycle verb").into_response();
+        }
+        Asking::Turn(text) if text.trim().is_empty() => {
+            return (StatusCode::BAD_REQUEST, "a turn needs its text").into_response();
+        }
+        Asking::Turn(text) if request_line(text).is_err() => {
+            return (
+                StatusCode::BAD_REQUEST,
+                "the turn is longer than the gate's line bound",
+            )
+                .into_response();
+        }
+        _ => {}
     }
     let id: AgentId = match agent.parse() {
         Ok(id) => id,
@@ -432,11 +492,11 @@ async fn ask(
         session_id: session.session_id,
         person_id: session.person_id.clone(),
     };
-    let enqueued = match seams
-        .asker
-        .ask_as_person(admission, &asker, &id, &verb)
-        .await
-    {
+    let (shown, act) = match asking {
+        Asking::Verb(verb) => (verb.clone(), Act::Verb(verb)),
+        Asking::Turn(text) => ("turn".to_owned(), Act::Turn(TurnText::new(text))),
+    };
+    let enqueued = match seams.asker.ask_as_person(admission, &asker, &id, act).await {
         Ok(enqueued) => enqueued,
         // **No grant answers as an unknown agent**, so the page is no
         // oracle for agent identities.
@@ -460,41 +520,11 @@ async fn ask(
     let first = enqueued.first.clone();
     // **The page's wait is its own**, bounding nothing of the ask: the
     // outcome is written at the answer whatever this does.
-    let (status, kind, detail) = match tokio::time::timeout(
-        seams.asker.silence(),
-        enqueued.answer(),
-    )
-    .await
-    {
-        Ok(Ok(outcome)) => (
-            StatusCode::OK,
-            if outcome.exit_code == Some(0) {
-                "admin's answer"
-            } else {
-                "admin's refusal"
-            },
-            outcome
-                .answer
-                .as_ref()
-                .map(|a| serde_json::to_string_pretty(a).unwrap_or_default())
-                .unwrap_or_default(),
-        ),
-        Ok(Err(VerbError::Fault(fault))) => (
-            StatusCode::OK,
-            "admin-con's fault",
-            format!("{}: {}", fault.kind, fault.message),
-        ),
-        Ok(Err(VerbError::Unanswered)) => (
-            StatusCode::OK,
-            "the connection ended with the verb in flight: its outcome is unknown here, and the trace and the next show hold it",
-            String::new(),
-        ),
-        Ok(Err(e)) => (StatusCode::OK, "no answer", e.to_string()),
-        Err(_) => (
-            StatusCode::ACCEPTED,
-            "asked, and not answered within the bound: its outcome is written when admin answers",
-            String::new(),
-        ),
+    let bound = seams.asker.silence();
+    let (status, kind, detail) = if shown == "turn" {
+        turn_shown(bound, enqueued).await
+    } else {
+        verb_shown(bound, enqueued).await
     };
     let admin = match store.is_admin(&session.person_id).await {
         Ok(admin) => admin,
@@ -506,7 +536,7 @@ async fn ask(
         admin,
         agent_id: row.agent_id.as_str().to_owned(),
         label: format!("{}/{}", row.r#box, row.name),
-        verb,
+        verb: shown,
         first,
         kind,
         detail,
@@ -514,6 +544,89 @@ async fn ask(
     match page.render() {
         Ok(html) => (status, Html(html)).into_response(),
         Err(e) => fault(e),
+    }
+}
+
+/// admin's answer to a verb, as the page shows it.
+async fn verb_shown(bound: Duration, enqueued: Enqueued) -> (StatusCode, String, String) {
+    match tokio::time::timeout(bound, enqueued.answer()).await {
+        Ok(Ok(outcome)) => (
+            StatusCode::OK,
+            if outcome.exit_code == Some(0) {
+                "admin's answer"
+            } else {
+                "admin's refusal"
+            }
+            .to_owned(),
+            outcome
+                .answer
+                .as_ref()
+                .map(|a| serde_json::to_string_pretty(a).unwrap_or_default())
+                .unwrap_or_default(),
+        ),
+        Ok(Err(VerbError::Fault(fault))) => (
+            StatusCode::OK,
+            "admin-con's fault".to_owned(),
+            format!("{}: {}", fault.kind, fault.message),
+        ),
+        Ok(Err(VerbError::Unanswered)) => (
+            StatusCode::OK,
+            "the connection ended with the verb in flight: its outcome is unknown here, and the trace and the next show hold it".to_owned(),
+            String::new(),
+        ),
+        Ok(Err(e)) => (StatusCode::OK, "no answer".to_owned(), e.to_string()),
+        Err(_) => (
+            StatusCode::ACCEPTED,
+            "asked, and not answered within the bound: its outcome is written when admin answers".to_owned(),
+            String::new(),
+        ),
+    }
+}
+
+/// **The gate's close of a turn, as the page shows it**, escaped: an
+/// answered close's text, marked truncated where `finish` is `length`; a
+/// stopped or refused close's reason; gate-con's fault; or the connection
+/// ended with the turn in flight.
+async fn turn_shown(bound: Duration, enqueued: Enqueued) -> (StatusCode, String, String) {
+    match tokio::time::timeout(bound, enqueued.close()).await {
+        Ok(Ok(close)) => match close.kind.as_str() {
+            "answered" => (
+                StatusCode::OK,
+                if close.finish.as_deref() == Some("length") {
+                    "the agent's answer, truncated at the turn's token limit"
+                } else {
+                    "the agent's answer"
+                }
+                .to_owned(),
+                close.text.unwrap_or_default(),
+            ),
+            kind @ ("stopped" | "refused") => (
+                StatusCode::OK,
+                format!("the agent {kind} the turn"),
+                close.reason.unwrap_or_default(),
+            ),
+            other => (
+                StatusCode::OK,
+                format!("a close of kind {other}"),
+                close.text.or(close.reason).unwrap_or_default(),
+            ),
+        },
+        Ok(Err(TurnError::Gate(fault))) => (
+            StatusCode::OK,
+            "gate-con's fault".to_owned(),
+            format!("{}: {}", fault.kind, fault.message),
+        ),
+        Ok(Err(TurnError::Unanswered)) => (
+            StatusCode::OK,
+            "the connection ended with the turn in flight: its outcome is unknown here, and the agent's trace holds it".to_owned(),
+            String::new(),
+        ),
+        Ok(Err(e)) => (StatusCode::OK, "no answer".to_owned(), e.to_string()),
+        Err(_) => (
+            StatusCode::ACCEPTED,
+            "placed, and not answered within the bound: its outcome is written when the gate answers".to_owned(),
+            String::new(),
+        ),
     }
 }
 

@@ -1253,12 +1253,22 @@ async fn observations_order_on_the_arrival_sequence_and_the_epoch() {
 async fn asks_are_routed_to_the_plane_that_holds_them() {
     let Some(lab) = Lab::open().await else { return };
     let karl = lab.register("karl").await;
-    assert!(lab.listener.turn(&karl.id, "hello").await.is_err());
+    let asker = operator(&lab.store, &karl.id).await;
+    assert!(
+        lab.listener
+            .turn_for_person(&asker, &karl.id, "hello")
+            .await
+            .is_err()
+    );
 
     let mut gate = lab.admit(&karl, Plane::Gate).await;
     let listener = lab.listener.clone();
     let id = karl.id.clone();
-    let asked = tokio::spawn(async move { listener.turn(&id, "what is the time").await });
+    let asked = tokio::spawn(async move {
+        listener
+            .turn_for_person(&asker, &id, "what is the time")
+            .await
+    });
     match gate.recv().await {
         Some(ToClient::Turn { id, text }) => {
             assert_eq!(text, "what is the time");
@@ -2686,16 +2696,20 @@ async fn a_peer_that_stops_reading_is_torn_down_as_silent() {
             }
         }
     });
-    // Enough asks to fill the socket and the write channel behind it.
+    // Enough turns to fill the socket's buffers behind the writer, each a
+    // person's of its own; past the server's bound on outstanding asks the
+    // rest are shed, which is an error too.
     let text = "x".repeat(1 << 20);
-    let asks: Vec<_> = (0..80)
-        .map(|_| {
-            let listener = lab.listener.clone();
-            let id = karl.id.clone();
-            let text = text.clone();
-            tokio::spawn(async move { listener.turn(&id, &text).await })
-        })
-        .collect();
+    let mut asks = Vec::new();
+    for _ in 0..80 {
+        let asker = operator(&lab.store, &karl.id).await;
+        let listener = lab.listener.clone();
+        let id = karl.id.clone();
+        let text = text.clone();
+        asks.push(tokio::spawn(async move {
+            listener.turn_for_person(&asker, &id, &text).await
+        }));
+    }
     let until = tokio::time::Instant::now() + Duration::from_secs(20);
     loop {
         if !lab.agent(&karl.id).await.gate.connected

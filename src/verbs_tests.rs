@@ -12,11 +12,14 @@ use std::time::Duration;
 use axum::http::StatusCode;
 use serde_json::json;
 
+use crate::adapters::gate::GateClose;
 use crate::admin_tests::{admin, form, send_as, signed_in};
-use crate::agents_tests::{Connector, Rig, rig_silenced};
+use crate::agents_tests::{Captured, Connector, Rig, rig_silenced};
 use crate::host;
-use crate::link::frames::{FromClient, Position, Principal, ToClient, VerbOutcome};
-use crate::link::listener::{AskPoint, Asker, VerbError};
+use crate::link::frames::{
+    FromClient, Position, Principal, Refusal, ToClient, TurnFault, VerbOutcome,
+};
+use crate::link::listener::{Act, AskPoint, Asker, TurnError, TurnText, VerbError};
 use crate::passkeys_tests::authenticator;
 use crate::store::AgentId;
 use crate::store::audit::FAIL_FIRST_RECORD;
@@ -34,6 +37,7 @@ const REFUSED_WITHIN: Duration = Duration::from_secs(10);
 struct Operated {
     rig: Rig,
     karl: String,
+    gate_config: String,
     ada: String,
     ada_session: String,
     bea: String,
@@ -51,6 +55,7 @@ async fn operated_with(ceiling: &[&str], silence: Duration) -> Option<Operated> 
     let (ada, ada_session) = admin(&rig.app, &s, &mut authenticator(), "ada").await;
     let (karl, handles) = rig.register(&ada_session, "box-a", "karl").await;
     let (_, _, config) = rig.take(&handles[1], &ada_session).await;
+    let (_, _, gate_config) = rig.take(&handles[0], &ada_session).await;
     let mut admin_con = Connector::dial_with(&config, ceiling).await;
     assert!(matches!(
         admin_con.recv().await,
@@ -78,6 +83,7 @@ async fn operated_with(ceiling: &[&str], silence: Duration) -> Option<Operated> 
     Some(Operated {
         rig,
         karl,
+        gate_config,
         ada,
         ada_session,
         bea,
@@ -182,7 +188,7 @@ async fn records_on(rig: &Rig, karl: &str) -> Vec<Record> {
         "SELECT audit_id, person_id, method, action, answers, outcome, refusal FROM audit \
          WHERE principal = 'person' AND target_kind = 'agent' AND target_id = $1 \
          AND action IN ('show', 'validate', 'load', 'unload', 'stop', 'save-point', \
-         'restore', 'force-unload') ORDER BY at, audit_id",
+         'restore', 'force-unload', 'turn') ORDER BY at, audit_id",
     )
     .bind(karl)
     .fetch_all(&rig.store().pool)
@@ -677,7 +683,11 @@ async fn persons_asks_never_fill_the_connections_channel() {
             continue;
         };
         let (listener, asker, id) = (o.rig.listener.clone(), asker.clone(), id.clone());
-        tokio::spawn(async move { listener.ask_as_person(admission, &asker, &id, "load").await });
+        tokio::spawn(async move {
+            listener
+                .ask_as_person(admission, &asker, &id, Act::Verb("load".into()))
+                .await
+        });
     }
     for (reached, _) in &pauses {
         reached.notified().await;
@@ -761,9 +771,11 @@ async fn a_stalled_store_answers_within_the_bound_and_frees_its_place() {
             let admission = listener
                 .admit_ask(&asker.person_id)
                 .expect("within bea's share");
-            tokio::spawn(
-                async move { listener.ask_as_person(admission, &asker, &id, "load").await },
-            )
+            tokio::spawn(async move {
+                listener
+                    .ask_as_person(admission, &asker, &id, Act::Verb("load".into()))
+                    .await
+            })
         })
         .collect();
     for (reached, _) in &pauses {
@@ -787,7 +799,7 @@ async fn a_stalled_store_answers_within_the_bound_and_frees_its_place() {
                 .expect("the stalled asks' admissions were released"),
             &asker,
             &id,
-            "load",
+            Act::Verb("load".into()),
         ),
     )
     .await
@@ -892,4 +904,604 @@ async fn asks_past_the_bound_are_shed_with_no_record() {
         );
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
+}
+
+// ---- A person's turns (act 11, PR 6c): the same held ask on the gate plane.
+
+/// A turn's text distinct enough that no other string in a record or a log
+/// line carries it.
+const SAID: &str = "zebra-kumquat-7731";
+
+/// The gate's close of a turn, in the contract's shape.
+fn close(kind: &str, text: Option<&str>, reason: Option<&str>, finish: Option<&str>) -> GateClose {
+    GateClose {
+        kind: kind.into(),
+        run: Some("run-1".into()),
+        turn: Some("t-1".into()),
+        text: text.map(Into::into),
+        finish: finish.map(Into::into),
+        reason: reason.map(Into::into),
+        raw: json!({ "kind": kind }),
+    }
+}
+
+/// gate-con dialed with karl's minted gate config and answered.
+async fn dial_gate(o: &Operated) -> Connector {
+    let mut gate = Connector::dial_with(&o.gate_config, &[]).await;
+    assert!(matches!(
+        gate.recv().await,
+        Some(ToClient::HelloAnswer { .. })
+    ));
+    gate
+}
+
+/// A turn placed from the page, its request running as its own task.
+fn place(
+    rig: &Rig,
+    session: &str,
+    agent: &str,
+    text: &str,
+) -> tokio::task::JoinHandle<(StatusCode, axum::http::HeaderMap, String)> {
+    let (app, session, uri, body) = (
+        rig.app.clone(),
+        session.to_owned(),
+        format!("/agents/{agent}/turn"),
+        form(&[("text", text)]),
+    );
+    tokio::spawn(async move { send_as(&app, "POST", &uri, Some(body), &session).await })
+}
+
+/// A turn placed and its answer awaited, which a refusal gives at once.
+async fn turn_refused(rig: &Rig, session: &str, agent: &str, text: &str) -> (StatusCode, String) {
+    let (status, _, body) = tokio::time::timeout(REFUSED_WITHIN, place(rig, session, agent, text))
+        .await
+        .unwrap_or_else(|_| panic!("the turn was not answered at once: it was placed"))
+        .unwrap();
+    (status, body)
+}
+
+/// The next turn frame gate-con receives: its id and text.
+async fn take_turn(gate: &mut Connector) -> (u64, String) {
+    match gate.recv().await {
+        Some(ToClient::Turn { id, text }) => (id, text),
+        other => panic!("expected a turn frame, got {other:?}"),
+    }
+}
+
+/// No turn frame reaches gate-con within the receive bound.
+async fn no_turn(gate: &mut Connector) {
+    while let Some(frame) = gate.recv().await {
+        assert!(
+            !matches!(frame, ToClient::Turn { .. }),
+            "a turn frame left the server"
+        );
+    }
+}
+
+/// **A person places a turn, and its record holds no part of its text**:
+/// one first record (the person, by session, on the agent, `turn`) whose
+/// whole row names nothing of the text, the frame carrying the text to
+/// gate-con, an `answered` close writing `ok` and shown on the page, and a
+/// close cut at the token limit shown as truncated.
+///
+/// Perturbation: put the text in the first record, and the row carries it.
+#[tokio::test]
+async fn a_person_places_a_turn_and_its_record_holds_no_text() {
+    let Some(o) = operated(&["show"]).await else {
+        return;
+    };
+    let mut gate = dial_gate(&o).await;
+    let placed = place(&o.rig, &o.bea_session, &o.karl, SAID);
+    let (id, text) = take_turn(&mut gate).await;
+    assert_eq!(text, SAID, "the frame carries the text");
+    let rows: Vec<String> = sqlx::query_scalar(
+        "SELECT row_to_json(a)::text FROM audit a WHERE target_id = $1 AND person_id = $2",
+    )
+    .bind(&o.karl)
+    .bind(&o.bea)
+    .fetch_all(&o.rig.store().pool)
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 1, "{rows:#?}");
+    // The text whole and its words; its digits alone would meet a
+    // timestamp or an identity's hex.
+    for part in [SAID, "zebra", "kumquat"] {
+        assert!(
+            !rows[0].contains(part),
+            "the record holds the text: {}",
+            rows[0]
+        );
+    }
+    let first = records(&o).await[0].clone();
+    assert_eq!(first.person_id.as_deref(), Some(o.bea.as_str()));
+    assert_eq!(
+        (first.method.as_str(), first.action.as_str()),
+        ("session", "turn")
+    );
+    gate.send(FromClient::Turn {
+        id,
+        close: Some(close("answered", Some("the tide turns at six"), None, None)),
+        error: None,
+    })
+    .await;
+    let (status, _, page) = placed.await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(
+        page.contains("the agent&#39;s answer") && page.contains("the tide turns at six"),
+        "{page}"
+    );
+    assert!(
+        !page.contains(SAID),
+        "the page shows the answer and not the text"
+    );
+    let answered = wait_records(&o, "the ok outcome", |r| r.len() == 2).await;
+    assert_eq!(outcome_of(&answered, &first), Some("ok"));
+
+    let placed = place(&o.rig, &o.bea_session, &o.karl, "a long one");
+    let (id, _) = take_turn(&mut gate).await;
+    gate.send(FromClient::Turn {
+        id,
+        close: Some(close("answered", Some("and then"), None, Some("length"))),
+        error: None,
+    })
+    .await;
+    let (_, _, page) = placed.await.unwrap();
+    assert!(page.contains("truncated at the turn"), "{page}");
+}
+
+/// A case of a turn's answer: its name, the close or the fault, and the
+/// outcome owed.
+type Evidence = (
+    &'static str,
+    Option<GateClose>,
+    Option<TurnFault>,
+    Option<&'static str>,
+);
+
+/// **Only the gate contract's evidence writes a turn's outcome**: `stopped`
+/// and `refused` closes and the faults of a turn that never reached the
+/// gate (`busy`, `not_started`) write `failed`; `delivery_lost`, a close of
+/// a kind on no list, and a link that ends with the turn in flight write
+/// none.
+///
+/// Perturbations: write `ok` for any close, and the stopped turn reads
+/// `ok`; write `failed` for `delivery_lost`, and an unknown outcome reads
+/// `failed`.
+#[tokio::test]
+async fn each_close_and_fault_writes_only_its_evidence() {
+    let Some(o) = operated(&["show"]).await else {
+        return;
+    };
+    let mut gate = dial_gate(&o).await;
+    let asker = bea_asker(&o).await;
+    let id: AgentId = o.karl.parse().unwrap();
+    let fault = |kind: &str| TurnFault {
+        kind: kind.into(),
+        message: "a fault".into(),
+    };
+    let cases: Vec<Evidence> = vec![
+        (
+            "stopped",
+            Some(close("stopped", None, Some("a hole"), None)),
+            None,
+            Some("failed"),
+        ),
+        (
+            "refused",
+            Some(close("refused", None, Some("not now"), None)),
+            None,
+            Some("failed"),
+        ),
+        ("busy", None, Some(fault("busy")), Some("failed")),
+        (
+            "not_started",
+            None,
+            Some(fault("not_started")),
+            Some("failed"),
+        ),
+        ("delivery_lost", None, Some(fault("delivery_lost")), None),
+        (
+            "a kind on no list",
+            Some(close("dreamt", Some("?"), None, None)),
+            None,
+            None,
+        ),
+    ];
+    for (case, closed, faulted, owed) in cases {
+        let (listener, asker, agent) = (o.rig.listener.clone(), asker.clone(), id.clone());
+        let placed =
+            tokio::spawn(async move { listener.turn_for_person(&asker, &agent, "go").await });
+        let (turn, _) = take_turn(&mut gate).await;
+        gate.send(FromClient::Turn {
+            id: turn,
+            close: closed,
+            error: faulted,
+        })
+        .await;
+        let _ = placed.await.unwrap();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let records = records(&o).await;
+        let first = records
+            .iter()
+            .rev()
+            .find(|r| r.answers.is_none() && r.refusal.is_none())
+            .unwrap()
+            .clone();
+        assert_eq!(outcome_of(&records, &first), owed, "{case}: {records:#?}");
+    }
+    // A link that ends with the turn in flight.
+    let (listener, agent) = (o.rig.listener.clone(), id.clone());
+    let placed = tokio::spawn(async move { listener.turn_for_person(&asker, &agent, "go").await });
+    let _ = take_turn(&mut gate).await;
+    drop(gate);
+    assert!(matches!(placed.await.unwrap(), Err(TurnError::Unanswered)));
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let records = records(&o).await;
+    let last = records.last().unwrap();
+    assert!(
+        last.answers.is_none() && last.refusal.is_none(),
+        "{records:#?}"
+    );
+}
+
+/// **A turn's answer outside the contract's shape is refused at the
+/// door**: one carrying both a close and a fault, or answering no ask, is
+/// malformed, the connection torn down and the first given no outcome.
+///
+/// Perturbation: drop the door's shape check, and a both-members answer
+/// writes an outcome.
+#[tokio::test]
+async fn a_turn_answer_outside_the_shape_is_refused_at_the_door() {
+    let Some(o) = operated(&["show"]).await else {
+        return;
+    };
+    let asker = bea_asker(&o).await;
+    let id: AgentId = o.karl.parse().unwrap();
+    for case in ["both", "no ask"] {
+        let mut gate = dial_gate(&o).await;
+        let (listener, asker, agent) = (o.rig.listener.clone(), asker.clone(), id.clone());
+        let placed =
+            tokio::spawn(async move { listener.turn_for_person(&asker, &agent, "go").await });
+        let (turn, _) = take_turn(&mut gate).await;
+        let frame = match case {
+            "both" => FromClient::Turn {
+                id: turn,
+                close: Some(close("answered", Some("yes"), None, None)),
+                error: Some(TurnFault {
+                    kind: "busy".into(),
+                    message: "busy".into(),
+                }),
+            },
+            _ => FromClient::Turn {
+                id: turn + 1000,
+                close: Some(close("answered", Some("yes"), None, None)),
+                error: None,
+            },
+        };
+        gate.send(frame).await;
+        assert!(
+            matches!(
+                gate.recv().await,
+                Some(ToClient::Refusal {
+                    reason: Refusal::Malformed
+                })
+            ),
+            "{case}: refused as malformed"
+        );
+        assert!(
+            placed.await.unwrap().is_err(),
+            "{case}: the asker reads no answer"
+        );
+        let until = tokio::time::Instant::now() + Duration::from_secs(5);
+        while o
+            .rig
+            .listener
+            .connected(&id, crate::link::frames::Plane::Gate)
+        {
+            assert!(tokio::time::Instant::now() < until, "{case}: torn down");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let records = records(&o).await;
+        let first = records.last().unwrap();
+        assert!(first.answers.is_none() && first.refusal.is_none());
+        assert_eq!(outcome_of(&records, first), None, "{case}: {records:#?}");
+    }
+}
+
+/// **A turn takes a grant carrying `turn`, checked as a verb's is**: an
+/// observer is refused 403 with one record; no grant answers as an unknown
+/// agent, with one record; the server-wide admin grant alone is no grant;
+/// and no frame leaves for any of them.
+///
+/// Perturbation: drop the grant check, and the observer's turn is placed.
+#[tokio::test]
+async fn a_turn_without_its_grant_is_refused_with_one_record() {
+    let Some(o) = operated(&["show"]).await else {
+        return;
+    };
+    let mut gate = dial_gate(&o).await;
+    let s = o.rig.store().clone();
+    let (cara, cara_session) = signed_in(&o.rig.app, &s, &mut authenticator(), "cara").await;
+    let granted = host::grant_add(&s, &cara, "observer", Some(&o.karl), None).await;
+    assert!(granted.ok, "{}", granted.value);
+    let (dan, dan_session) = signed_in(&o.rig.app, &s, &mut authenticator(), "dan").await;
+
+    let (status, _) = turn_refused(&o.rig, &cara_session, &o.karl, SAID).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let unknown = turn_refused(&o.rig, &dan_session, UNKNOWN, SAID).await;
+    assert_eq!(unknown.0, StatusCode::NOT_FOUND);
+    let stranger = turn_refused(&o.rig, &dan_session, &o.karl, SAID).await;
+    assert_eq!(stranger, unknown, "identical to an unknown agent's answer");
+    let (status, _) = turn_refused(&o.rig, &o.ada_session, &o.karl, SAID).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "the admin grant is no grant");
+    let records = records(&o).await;
+    assert_eq!(records.len(), 3, "{records:#?}");
+    let who: Vec<_> = records
+        .iter()
+        .map(|r| r.person_id.clone().unwrap())
+        .collect();
+    assert_eq!(who, [cara, dan, o.ada.clone()]);
+    assert!(
+        records
+            .iter()
+            .all(|r| r.refusal.is_some() && r.action == "turn")
+    );
+    no_turn(&mut gate).await;
+}
+
+/// **A turn's text is parsed first**: empty, or past the gate's line bound,
+/// is 400 with no record and nothing at gate-con; and with no gate-con
+/// connected a turn is 503 with one record.
+#[tokio::test]
+async fn a_malformed_or_unconnected_turn_is_refused() {
+    let Some(o) = operated(&["show"]).await else {
+        return;
+    };
+    let (status, _) = turn_refused(&o.rig, &o.bea_session, &o.karl, "   ").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let long = "x".repeat(crate::adapters::gate::LINE_BOUND);
+    let (status, body) = turn_refused(&o.rig, &o.bea_session, &o.karl, &long).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(!body.contains("xxx"), "the text is not answered back");
+    assert!(records(&o).await.is_empty());
+    let (status, body) = turn_refused(&o.rig, &o.bea_session, &o.karl, SAID).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    let records = records(&o).await;
+    assert_eq!(records.len(), 1);
+    assert!(records[0].refusal.is_some());
+    let mut gate = dial_gate(&o).await;
+    no_turn(&mut gate).await;
+}
+
+/// **Where a turn is placed, the page says the conversation is shared**:
+/// shown where more than one enabled person holds `turn` on the agent, not
+/// with one, and not once the second is disabled.
+#[tokio::test]
+async fn the_turn_form_says_when_the_conversation_is_shared() {
+    let Some(o) = operated(&["show"]).await else {
+        return;
+    };
+    let _gate = dial_gate(&o).await;
+    let note = "your turns interleave";
+    let page = || async {
+        let (status, _, page) = send_as(
+            &o.rig.app,
+            "GET",
+            &format!("/agents/{}", o.karl),
+            None,
+            &o.bea_session,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(page.contains("/turn\""), "the turn form: {page}");
+        page
+    };
+    assert!(!page().await.contains(note), "one holder: no note");
+    let s = o.rig.store().clone();
+    let (cara, _) = signed_in(&o.rig.app, &s, &mut authenticator(), "cara").await;
+    let granted = host::grant_add(&s, &cara, "operator", Some(&o.karl), None).await;
+    assert!(granted.ok, "{}", granted.value);
+    assert!(page().await.contains(note), "two holders: the note");
+    sqlx::query("UPDATE person SET enabled = false, version = version + 1 WHERE person_id = $1")
+        .bind(&cara)
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    assert!(!page().await.contains(note), "the second disabled: no note");
+}
+
+/// **One capture for every thread of the test binary**, installed once as
+/// the process's default: a capture scoped to this test's thread misses
+/// lines when other tests run beside it (measured 2026-10-14: the stall's
+/// own line was absent in every parallel run and present alone), while the
+/// process's default receives every line no scoped capture takes. The
+/// text checked is this test's alone, so every other test's lines in it
+/// only widen the check.
+fn global_capture() -> &'static Captured {
+    static CAPTURE: std::sync::OnceLock<Captured> = std::sync::OnceLock::new();
+    CAPTURE.get_or_init(|| {
+        let captured = Captured::default();
+        let _ = tracing::subscriber::set_global_default(
+            tracing_subscriber::fmt()
+                .with_writer(captured.clone())
+                .with_max_level(tracing::Level::TRACE)
+                .with_ansi(false)
+                .finish(),
+        );
+        captured
+    })
+}
+
+/// **A turn's text appears in no log line**: across a placed turn, a
+/// refused one and a stalled one, the process's capture at every level
+/// holds nothing of it, and does hold the stall's own line for this agent.
+///
+/// Perturbation: log the text at debug in the held section, and the
+/// capture finds it.
+#[tokio::test]
+async fn a_turns_text_is_in_no_log_line() {
+    let captured = global_capture();
+    let Some(o) = operated_with(&["show"], Duration::from_secs(4)).await else {
+        return;
+    };
+    let mut gate = dial_gate(&o).await;
+    let placed = place(&o.rig, &o.bea_session, &o.karl, SAID);
+    let (id, _) = take_turn(&mut gate).await;
+    gate.send(FromClient::Turn {
+        id,
+        close: Some(close("answered", Some("noted"), None, None)),
+        error: None,
+    })
+    .await;
+    assert_eq!(placed.await.unwrap().0, StatusCode::OK);
+
+    let s = o.rig.store().clone();
+    let (cara, cara_session) = signed_in(&o.rig.app, &s, &mut authenticator(), "cara").await;
+    let granted = host::grant_add(&s, &cara, "observer", Some(&o.karl), None).await;
+    assert!(granted.ok, "{}", granted.value);
+    assert_eq!(
+        turn_refused(&o.rig, &cara_session, &o.karl, SAID).await.0,
+        StatusCode::FORBIDDEN
+    );
+
+    let (reached, _release) = o.rig.listener.pause_ask_at(AskPoint::AtGrants);
+    let stalled = place(&o.rig, &o.bea_session, &o.karl, SAID);
+    reached.notified().await;
+    let (status, _, _) = tokio::time::timeout(Duration::from_secs(8), stalled)
+        .await
+        .expect("the stall answers within its bound")
+        .unwrap();
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+
+    let output = String::from_utf8_lossy(&captured.0.lock().unwrap()).into_owned();
+    assert!(
+        output.contains(&format!("{}: a person's turn was not asked", o.karl)),
+        "the capture holds this agent's stall line"
+    );
+    // The text whole and its words; its digits alone would meet a
+    // timestamp or a port in the process's lines.
+    for part in [SAID, "zebra", "kumquat"] {
+        assert!(!output.contains(part), "a log line holds the text: {part}");
+    }
+}
+
+/// **A turn's hold runs from its check to its enqueue**, the same held ask
+/// as a verb's: a revocation of the grant waits until the turn's frame is
+/// in the channel, and the next turn is refused.
+///
+/// Perturbation: release the hold before the enqueue, and the revocation
+/// commits while the turn is still to be sent.
+#[tokio::test]
+async fn a_turns_hold_runs_to_its_enqueue() {
+    let Some(o) = operated(&["show"]).await else {
+        return;
+    };
+    let mut gate = dial_gate(&o).await;
+    let (reached, release) = o.rig.listener.pause_ask_at(AskPoint::UnderHold);
+    let placed = place(&o.rig, &o.bea_session, &o.karl, SAID);
+    reached.notified().await;
+    let (s, bea, karl) = (o.rig.store().clone(), o.bea.clone(), o.karl.clone());
+    let revoke =
+        tokio::spawn(
+            async move { host::grant_remove(&s, &bea, "operator", Some(&karl), None).await },
+        );
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(
+        !revoke.is_finished(),
+        "the revocation committed under the turn's hold"
+    );
+    release.notify_one();
+    let (id, _) = take_turn(&mut gate).await;
+    let revoked = tokio::time::timeout(Duration::from_secs(5), revoke)
+        .await
+        .expect("the revocation commits once the frame is in the channel")
+        .unwrap();
+    assert!(revoked.ok, "{}", revoked.value);
+    gate.send(FromClient::Turn {
+        id,
+        close: Some(close("answered", Some("yes"), None, None)),
+        error: None,
+    })
+    .await;
+    assert_eq!(placed.await.unwrap().0, StatusCode::OK);
+    let (status, _) = turn_refused(&o.rig, &o.bea_session, &o.karl, SAID).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+/// **A turn is admitted, and its slot capped, as a verb's**: with bea's
+/// three turns stopped under their holds and a fourth of hers parked, her
+/// fifth is shed 503 with no record; and with many more parked under
+/// identities of their own, the gate connection's persons' slots stay at
+/// their cap.
+#[tokio::test]
+async fn turns_are_admitted_and_their_slots_capped() {
+    let Some(o) = operated(&["show"]).await else {
+        return;
+    };
+    let _gate = dial_gate(&o).await;
+    let id: AgentId = o.karl.parse().unwrap();
+    let pauses: Vec<_> = (0..3)
+        .map(|_| o.rig.listener.pause_ask_at(AskPoint::UnderHold))
+        .collect();
+    let _held: Vec<_> = (0..4)
+        .map(|_| place(&o.rig, &o.bea_session, &o.karl, "held"))
+        .collect();
+    for (reached, _) in &pauses {
+        reached.notified().await;
+    }
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let before = records(&o).await.len();
+    let (status, _) = turn_refused(&o.rig, &o.bea_session, &o.karl, SAID).await;
+    assert_eq!(
+        status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "bea's fifth is shed"
+    );
+    assert_eq!(
+        records(&o).await.len(),
+        before,
+        "a shed turn records nothing"
+    );
+
+    let asker = bea_asker(&o).await;
+    for n in 0..70 {
+        let Some(admission) = o.rig.listener.admit_ask(&format!("pe-{n:016x}")) else {
+            continue;
+        };
+        let (listener, asker, id) = (o.rig.listener.clone(), asker.clone(), id.clone());
+        tokio::spawn(async move {
+            listener
+                .ask_as_person(admission, &asker, &id, Act::Turn(TurnText::new("parked")))
+                .await
+        });
+    }
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(
+        o.rig
+            .listener
+            .slots_taken(&id, crate::link::frames::Plane::Gate),
+        Some(crate::link::admin_con::VERB_QUEUE),
+        "the gate connection's persons' slots at their cap"
+    );
+}
+
+/// **A turn stalled on the store answers within the bound**, the same
+/// deadline as a verb's: 503, and nothing placed.
+#[tokio::test]
+async fn a_stalled_turn_answers_within_the_bound() {
+    let Some(o) = operated_with(&["show"], Duration::from_secs(4)).await else {
+        return;
+    };
+    let mut gate = dial_gate(&o).await;
+    let (reached, _release) = o.rig.listener.pause_ask_at(AskPoint::AtGrants);
+    let stalled = place(&o.rig, &o.bea_session, &o.karl, SAID);
+    reached.notified().await;
+    let (status, _, _) = tokio::time::timeout(Duration::from_secs(8), stalled)
+        .await
+        .expect("answered within the bound")
+        .unwrap();
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert!(records(&o).await.is_empty());
+    no_turn(&mut gate).await;
 }

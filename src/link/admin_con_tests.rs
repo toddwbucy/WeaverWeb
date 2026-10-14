@@ -412,7 +412,9 @@ pub(super) async fn verb(
 ) -> Result<VerbOutcome, VerbError> {
     tokio::time::timeout(
         Duration::from_secs(20),
-        listener.verb(id, verb, Principal::Server),
+        // The tests' driving asks take the test-only person path: the
+        // server asks `show` only (Spec 2.13).
+        listener.verb_for_person(id, verb, Principal::Person { name: "ada".into() }),
     )
     .await
     .unwrap_or_else(|_| panic!("the verb {verb} was never answered"))
@@ -2217,7 +2219,8 @@ async fn a_verb_behind_a_never_idle_writer_runs_at_the_drains_bound() {
     .await;
     let unloaded = tokio::time::timeout(
         Duration::from_secs(8),
-        lab.listener.verb(&id, "unload", Principal::Server),
+        lab.listener
+            .verb_for_person(&id, "unload", Principal::Person { name: "ada".into() }),
     )
     .await
     .expect("the unload ran behind the writer");
@@ -2499,7 +2502,7 @@ async fn an_opening_serves_its_show_before_a_verb_queued_at_it() {
     let validated = tokio::spawn(async move {
         tokio::time::timeout(
             Duration::from_secs(20),
-            listener.verb(&asked, "validate", person),
+            listener.verb_for_person(&asked, "validate", person),
         )
         .await
     });
@@ -2554,7 +2557,7 @@ async fn an_openings_show_is_taken_past_a_full_queue() {
             tokio::spawn(async move {
                 tokio::time::timeout(
                     Duration::from_secs(20),
-                    listener.verb(&asked, "validate", person),
+                    listener.verb_for_person(&asked, "validate", person),
                 )
                 .await
             })
@@ -3724,7 +3727,7 @@ async fn an_openings_show_the_store_does_not_land_keeps_the_hold() {
     let loaded = tokio::spawn(async move {
         tokio::time::timeout(
             Duration::from_secs(20),
-            listener.verb(&asked, "load", person),
+            listener.verb_for_person(&asked, "load", person),
         )
         .await
     });

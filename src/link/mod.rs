@@ -36,6 +36,8 @@ mod client_tests;
 #[cfg(test)]
 mod fake_relay;
 #[cfg(test)]
+mod server_asks_tests;
+#[cfg(test)]
 mod sudo_invoker_tests;
 #[cfg(test)]
 mod tests;

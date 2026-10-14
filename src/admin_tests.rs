@@ -904,6 +904,7 @@ async fn a_disable_whose_answer_is_lost_lands_though_another_admin_edits_first()
     );
     crate::store::commit::READ_BACK_HOLD.lock().unwrap().push((
         "person disable",
+        std::thread::current().id(),
         read.clone(),
         release.clone(),
     ));

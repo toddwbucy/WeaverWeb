@@ -5,6 +5,7 @@
 //! conforms: web-agent-present-only-when-both-planes-match-one-row
 //! conforms: web-tuple-is-admins-word-and-never-gate-cons
 //! conforms: web-nothing-crosses-the-link-in-the-clear
+//! conforms: web-the-servers-asks-are-audited
 //!
 //! The listener (Spec section 8): the mutual-TLS accept loop, admission
 //! under the row's lock, the heartbeat, the incarnations that bind every
@@ -38,6 +39,7 @@ use crate::link::frames::{
 use crate::link::register::{
     ConstituentsWrite, CredentialState, Observation, REVOCATION_CHANNEL, TupleWrite,
 };
+use crate::store::audit::{self, Target};
 use crate::store::{AgentId, Store};
 use crate::traceview::{TraceEvent, TraceViews};
 use chrono::{DateTime, Utc};
@@ -107,6 +109,90 @@ struct LiveConnection {
     /// reconnection that narrows the ceiling cannot race an ask. The row's
     /// copy is what surfaces read and never the authorization input.
     ceiling: Option<Arc<BTreeSet<String>>>,
+    /// **Each verb ask's record, by its ask** (Spec 2.13, 7.2): the verb
+    /// asked and its first record, where the ask is audited. The
+    /// connection task's own, filled before the frame enters the channel
+    /// and taken by the answer the frame's id names, which is checked
+    /// against it, so an answer is matched to its own ask and record only.
+    /// It goes with the connection, and an entry still in it then is a
+    /// first record with no second, the audit's "unknown".
+    asks: Asks,
+}
+
+/// What the connection holds of one verb ask until its answer.
+struct Asked {
+    verb: String,
+    first: Option<String>,
+}
+
+/// The connection's map from an ask's id to its record.
+type Asks = Arc<Mutex<HashMap<u64, Asked>>>;
+
+/// The connection's map from an ask's id to its asker's reply.
+type Pending = Arc<Mutex<HashMap<u64, oneshot::Sender<FromClient>>>>;
+
+/// **From an ask's first record to its frame in the channel** (Spec 2.13):
+/// whatever ends the ask in between, an error or its future dropped while
+/// the send waits on a full channel, removes the ask's entries and answers
+/// its first record `failed`, since the frame never left. Armed by the
+/// record step before the record's insert and disarmed only once the send
+/// has completed; the one cleanup of `Inner::ask` and `ask_show` alike.
+/// **Drop cannot await**, so the outcome's write is spawned, held to the
+/// silence bound, and waits on the first's outcome lock for its insert's
+/// transaction to end (`Store::audit_unsent`).
+struct Unsent {
+    id: u64,
+    agent: AgentId,
+    first: Option<String>,
+    store: Store,
+    silence: Duration,
+    pending: Option<Pending>,
+    asks: Option<Asks>,
+    armed: bool,
+}
+
+impl Unsent {
+    /// The frame is in the channel: the ask's entries now belong to its
+    /// answer, and its first to the outcome the answer writes.
+    fn disarm(mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for Unsent {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        if let Some(pending) = &self.pending {
+            pending.lock().unwrap().remove(&self.id);
+        }
+        if let Some(asks) = &self.asks {
+            asks.lock().unwrap().remove(&self.id);
+        }
+        let Some(first) = self.first.take() else {
+            return;
+        };
+        let (store, silence, agent) = (self.store.clone(), self.silence, self.agent.clone());
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            tracing::error!("{agent}: no runtime to answer {first} failed, its frame never sent");
+            return;
+        };
+        runtime.spawn(async move {
+            match tokio::time::timeout(silence, store.audit_unsent(&first)).await {
+                Ok(Ok(true)) => {}
+                Ok(Ok(false)) => {
+                    tracing::info!("{agent}: {first} never landed, so it has no outcome to answer")
+                }
+                Ok(Err(e)) => tracing::error!(
+                    "{agent}: the failed outcome of {first}, its frame never sent, could not be written: {e:#}"
+                ),
+                Err(_) => tracing::error!(
+                    "{agent}: the failed outcome of {first}, its frame never sent, was not written within {silence:?}"
+                ),
+            }
+        });
+    }
 }
 
 /// Why an ask did not reach a connection.
@@ -120,6 +206,8 @@ enum AskError {
     /// The verb is outside the connection's ceiling: refused on the server
     /// before any frame left it (Spec 8).
     OutsideCeiling(Vec<String>),
+    /// The verb's first record could not be written: nothing was asked.
+    Audit,
 }
 
 /// Why a verb was not answered with an outcome.
@@ -140,6 +228,13 @@ pub enum VerbError {
     OutsideCeiling { verb: String, ceiling: Vec<String> },
     /// admin-con's typed reason it did not run the verb.
     Fault(VerbFault),
+    /// **The server asks `show` only** (Spec 2.13): any other verb asked
+    /// as the server is refused before any frame leaves, as one refusal
+    /// record.
+    ServerAsksShowOnly { verb: String },
+    /// **The audit could not record the ask**, its first record or its
+    /// refusal: the server's failure, and nothing was asked.
+    Audit,
 }
 
 impl std::fmt::Display for VerbError {
@@ -160,6 +255,14 @@ impl std::fmt::Display for VerbError {
                 }
             ),
             VerbError::Fault(fault) => write!(f, "{}: {}", fault.kind, fault.message),
+            VerbError::ServerAsksShowOnly { verb } => write!(
+                f,
+                "the server asks show only, so {verb} was refused and not asked"
+            ),
+            VerbError::Audit => write!(
+                f,
+                "the audit could not record the ask, so nothing was asked"
+            ),
         }
     }
 }
@@ -239,6 +342,13 @@ struct Inner {
     fault_next_land: std::sync::atomic::AtomicBool,
     #[cfg(test)]
     stall_next_land: std::sync::atomic::AtomicBool,
+    /// The same lever on a verb's first record: the next one never
+    /// completes, so its bound can be watched.
+    #[cfg(test)]
+    stall_next_first: std::sync::atomic::AtomicBool,
+    /// And on a verb's outcome: the next one waits this long first.
+    #[cfg(test)]
+    delay_next_outcome: Mutex<Option<Duration>>,
 }
 
 /// The server's handle on the link: the asks it routes and the window it
@@ -359,6 +469,10 @@ impl Listener {
                 fault_next_land: std::sync::atomic::AtomicBool::new(false),
                 #[cfg(test)]
                 stall_next_land: std::sync::atomic::AtomicBool::new(false),
+                #[cfg(test)]
+                stall_next_first: std::sync::atomic::AtomicBool::new(false),
+                #[cfg(test)]
+                delay_next_outcome: Mutex::new(None),
             }),
         };
         tracing::info!("link listening on {address} under epoch {epoch}");
@@ -577,6 +691,31 @@ impl Listener {
         self.inner.stall_next_land.store(true, Ordering::Relaxed);
     }
 
+    /// Make the next verb's first record never complete, once.
+    #[cfg(test)]
+    pub fn stall_next_first(&self) {
+        self.inner.stall_next_first.store(true, Ordering::Relaxed);
+    }
+
+    /// How many asks the agent's admin connection holds: its pending
+    /// replies and its first records.
+    #[cfg(test)]
+    pub fn held_asks(&self, agent: &AgentId) -> Option<(usize, usize)> {
+        let live = self.inner.live.lock().unwrap();
+        live.get(&(agent.clone(), Plane::Admin)).map(|c| {
+            (
+                c.pending.lock().unwrap().len(),
+                c.asks.lock().unwrap().len(),
+            )
+        })
+    }
+
+    /// Make the next verb's outcome wait `delay` before its write, once.
+    #[cfg(test)]
+    pub fn delay_next_outcome(&self, delay: Duration) {
+        *self.inner.delay_next_outcome.lock().unwrap() = Some(delay);
+    }
+
     /// Make the next teardown's store write fail, once.
     #[cfg(test)]
     pub fn fail_next_teardown(&self) {
@@ -611,7 +750,10 @@ impl Listener {
         let text = text.to_owned();
         match self
             .inner
-            .ask(agent, Plane::Gate, None, |id| ToClient::Turn { id, text })
+            .ask(agent, Plane::Gate, None, None, |id| ToClient::Turn {
+                id,
+                text,
+            })
             .await
         {
             Ok(FromClient::Turn { close: Some(c), .. }) => Ok(c),
@@ -621,24 +763,90 @@ impl Listener {
         }
     }
 
-    /// One verb across the link (Spec 7.2), asked for a principal (Spec
-    /// 8): routed to the agent's admin-con, whose answer lands on the row
-    /// where it is `show` before it is answered here. **A verb outside the
-    /// ceiling the live connection declared is refused here**, before any
-    /// frame leaves the server.
-    pub async fn verb(
+    /// **The server's own verb across the link** (Spec 7.2, 2.13): routed
+    /// to the agent's admin-con, whose answer lands on the row where it is
+    /// `show` before it is answered here, and **audited as the server's**,
+    /// its first record committed before the frame enters the channel and
+    /// its outcome written when the answer lands. **The server asks `show`
+    /// only**: any other verb is refused here, before any frame leaves, as
+    /// one refusal record, and a refusal the audit cannot record answers
+    /// the server's failure instead. **A verb outside the ceiling the live
+    /// connection declared is refused here** too, before any record.
+    pub async fn verb(&self, agent: &AgentId, verb: &str) -> Result<VerbOutcome, VerbError> {
+        if verb != "show" {
+            let refused = tokio::time::timeout(
+                self.inner.silence,
+                self.inner.store.audit_refusal(
+                    audit::Principal::Server,
+                    Target::Agent(agent.as_str()),
+                    verb,
+                    "the server asks show only",
+                ),
+            )
+            .await;
+            return match refused {
+                Ok(Ok(_)) => Err(VerbError::ServerAsksShowOnly {
+                    verb: verb.to_owned(),
+                }),
+                Ok(Err(e)) => {
+                    tracing::error!(
+                        "{agent}: the server's refusal of {verb} could not be recorded: {e:#}"
+                    );
+                    Err(VerbError::Audit)
+                }
+                Err(_) => {
+                    tracing::error!(
+                        "{agent}: the server's refusal of {verb} was not recorded within {:?}",
+                        self.inner.silence
+                    );
+                    Err(VerbError::Audit)
+                }
+            };
+        }
+        self.ask_verb(
+            agent,
+            verb,
+            Principal::Server,
+            Some(audit::Principal::Server),
+        )
+        .await
+    }
+
+    /// **A person's verb, reachable under `cfg(test)` alone until 6b2**
+    /// (Spec 2.13): it writes no record, so no build the server ships can
+    /// enqueue a verb frame without its first. Owed to 6b2, which passes
+    /// the person's `pe-` identity and session into the record step as
+    /// `audit::Principal::Person` and lifts this gate. The tests drive
+    /// admin-con's verbs through it meanwhile.
+    #[cfg(test)]
+    pub async fn verb_for_person(
         &self,
         agent: &AgentId,
         verb: &str,
         principal: Principal,
     ) -> Result<VerbOutcome, VerbError> {
+        self.ask_verb(agent, verb, principal, None).await
+    }
+
+    /// One verb across the link, the frame's principal the claim it
+    /// carries and `record` the audit's principal for its first record,
+    /// `None` on the test-only person path alone.
+    async fn ask_verb(
+        &self,
+        agent: &AgentId,
+        verb: &str,
+        principal: Principal,
+        record: Option<audit::Principal<'_>>,
+    ) -> Result<VerbOutcome, VerbError> {
         let v = verb.to_owned();
         match self
             .inner
-            .ask(agent, Plane::Admin, Some(verb), |id| ToClient::Verb {
-                id,
-                verb: v,
-                principal,
+            .ask(agent, Plane::Admin, Some(verb), record, |id| {
+                ToClient::Verb {
+                    id,
+                    verb: v,
+                    principal,
+                }
             })
             .await
         {
@@ -651,27 +859,121 @@ impl Listener {
                 ceiling,
             }),
             Err(AskError::Unanswered) => Err(VerbError::Unanswered),
+            Err(AskError::Audit) => Err(VerbError::Audit),
             _ => Err(VerbError::NotConnected),
         }
     }
 }
 
 impl Inner {
+    /// **The record step** (Spec 2.13): a verb's first record, written
+    /// before its frame enters the channel, for `Inner::ask` and `ask_show`
+    /// alike. **The duty to answer the first `failed` is owned from before
+    /// its insert until its frame is in the channel**:
+    ///
+    /// - the record's identity is drawn here and the `Unsent` guard armed
+    ///   with it before the insert, which takes the record's outcome lock;
+    /// - the insert runs in a task of its own, which its asker cannot
+    ///   cancel, and hands the armed guard back; a guard dropped anywhere,
+    ///   in the task on an insert error or a lost answer, in the hand-over
+    ///   where the asker is gone, or in the ask before its send completes,
+    ///   answers the first `failed` under the same lock, so only once the
+    ///   insert's transaction has ended, and only where it landed;
+    /// - the asker waits to the silence bound, so a store that stalls never
+    ///   holds an ask, or the connection task asking its own `show`, past
+    ///   it; the task finishes on its own and its guard answers.
+    ///
+    /// 6b2 holds the identity exclusion shared from the person's check
+    /// across this step to the enqueue.
+    async fn record_ask(
+        &self,
+        ask: u64,
+        agent: &AgentId,
+        verb: &str,
+        principal: audit::Principal<'_>,
+    ) -> anyhow::Result<Unsent> {
+        let first = audit::draw_audit_id();
+        let record = audit::FirstRecord::new(principal, Target::Agent(agent.as_str()), verb);
+        let unsent = Unsent {
+            id: ask,
+            agent: agent.clone(),
+            first: Some(first.clone()),
+            store: self.store.clone(),
+            silence: self.silence,
+            pending: None,
+            asks: None,
+            armed: true,
+        };
+        let (store, silence, owner) = (self.store.clone(), self.silence, agent.clone());
+        #[cfg(test)]
+        let stall = self.stall_next_first.swap(false, Ordering::Relaxed);
+        let (hand_over, handed) = oneshot::channel();
+        tokio::spawn(async move {
+            let insert = async {
+                #[cfg(test)]
+                if stall {
+                    std::future::pending::<()>().await;
+                }
+                store.audit_first_as(&first, &record).await
+            };
+            match tokio::time::timeout(silence, insert).await {
+                // A receiver gone hands the guard back here, and it drops.
+                Ok(Ok(())) => {
+                    let _ = hand_over.send(unsent);
+                }
+                Ok(Err(e)) => {
+                    tracing::error!("{owner}: the first record {first} was not written: {e:#}");
+                }
+                Err(_) => tracing::error!(
+                    "{owner}: the first record {first} was not written within {silence:?}"
+                ),
+            }
+        });
+        match tokio::time::timeout(self.silence, handed).await {
+            Ok(Ok(unsent)) => Ok(unsent),
+            Ok(Err(_)) => anyhow::bail!("not written"),
+            Err(_) => anyhow::bail!("not written within {:?}", self.silence),
+        }
+    }
+
+    /// **A verb's outcome, naming its first** (Spec 2.13), bounded. One that
+    /// cannot be written is logged at error and changes nothing else: the
+    /// act already happened, or never left.
+    async fn record_outcome(&self, agent: &AgentId, first: &str, ok: bool) {
+        let outcome = async {
+            #[cfg(test)]
+            {
+                let delay = self.delay_next_outcome.lock().unwrap().take();
+                if let Some(delay) = delay {
+                    tokio::time::sleep(delay).await;
+                }
+            }
+            self.store.audit_outcome(first, ok).await
+        };
+        match tokio::time::timeout(self.silence, outcome).await {
+            Ok(Ok(_)) => {}
+            Ok(Err(e)) => {
+                tracing::error!("{agent}: the outcome of {first} could not be written: {e:#}")
+            }
+            Err(_) => tracing::error!(
+                "{agent}: the outcome of {first} was not written within {:?}",
+                self.silence
+            ),
+        }
+    }
+
     async fn ask(
         &self,
         agent: &AgentId,
         plane: Plane,
         verb: Option<&str>,
+        record: Option<audit::Principal<'_>>,
         make: impl FnOnce(u64) -> ToClient,
     ) -> Result<FromClient, AskError> {
         let id = self.next_ask.fetch_add(1, Ordering::Relaxed);
-        let (reply_tx, reply_rx) = oneshot::channel();
-        // **The sender is inserted in the same critical section that found
-        // the connection**: a teardown then either sees the entry and drops
-        // its pending map, failing this await, or has already removed it and
-        // this finds no connection. Inserted outside the lock, the sender
-        // could land in a map nothing reads and wait forever.
-        let (tx, pending, close, silent) = {
+        // **Checked before any record**: no ready connection, or a verb
+        // outside its ceiling, asks nothing and writes nothing.
+        let incarnation = {
             let live = self.live.lock().unwrap();
             let conn = live
                 .get(&(agent.clone(), plane))
@@ -685,32 +987,94 @@ impl Inner {
                     return Err(AskError::OutsideCeiling(ceiling.into_iter().collect()));
                 }
             }
-            conn.pending.lock().unwrap().insert(id, reply_tx);
-            (
-                conn.tx.clone(),
-                conn.pending.clone(),
-                conn.close.clone(),
-                conn.silent.clone(),
-            )
+            conn.incarnation
         };
+        // **The first record commits before the frame enters the channel**
+        // (Spec 2.13), outside the live map's lock since it awaits the
+        // store.
+        // **Armed from before the record until the frame is in the
+        // channel**; an ask with no record arms it for its entries alone.
+        let mut unsent = match (record, verb) {
+            (Some(principal), Some(verb)) => {
+                match self.record_ask(id, agent, verb, principal).await {
+                    Ok(unsent) => unsent,
+                    Err(e) => {
+                        tracing::error!(
+                            "{agent} ({plane}): the first record of {verb} could not be written, nothing asked: {e:#}"
+                        );
+                        return Err(AskError::Audit);
+                    }
+                }
+            }
+            _ => Unsent {
+                id,
+                agent: agent.clone(),
+                first: None,
+                store: self.store.clone(),
+                silence: self.silence,
+                pending: None,
+                asks: None,
+                armed: true,
+            },
+        };
+        let first = unsent.first.clone();
+        let (reply_tx, reply_rx) = oneshot::channel();
+        // **The sender is inserted in the same critical section that found
+        // the connection**: a teardown then either sees the entry and drops
+        // its pending map, failing this await, or has already removed it and
+        // this finds no connection. Inserted outside the lock, the sender
+        // could land in a map nothing reads and wait forever. **Found again
+        // as the incarnation checked above**, so the ceiling that admitted
+        // the verb is the one it is sent under.
+        let found = {
+            let live = self.live.lock().unwrap();
+            live.get(&(agent.clone(), plane))
+                .filter(|c| c.ready && c.incarnation == incarnation)
+                .map(|conn| {
+                    conn.pending.lock().unwrap().insert(id, reply_tx);
+                    // **Every verb ask is recorded with its verb**, audited
+                    // or not, so its answer is checked against it.
+                    if let Some(verb) = verb {
+                        conn.asks.lock().unwrap().insert(
+                            id,
+                            Asked {
+                                verb: verb.to_owned(),
+                                first: first.clone(),
+                            },
+                        );
+                    }
+                    (
+                        conn.tx.clone(),
+                        conn.pending.clone(),
+                        conn.asks.clone(),
+                        conn.close.clone(),
+                        conn.silent.clone(),
+                    )
+                })
+        };
+        // **A frame that never entered the channel is an act that never
+        // happened**: each return below, and a drop of this future at the
+        // send, leaves `unsent` to answer its first `failed`.
+        let Some((tx, pending, asks, close, silent)) = found else {
+            return Err(AskError::NotConnected);
+        };
+        unsent.pending = Some(pending.clone());
+        unsent.asks = Some(asks);
         // **Bounded like every enqueue, and a bound that passes is the
         // peer gone silent**: a connector that stopped reading fills the
         // write channel, and the connection task, which on the gate plane
         // sends nothing of its own, would otherwise live on while every
         // ask failed. The ask fails and the connection is closed as silent.
+        // A send that does not complete leaves nothing in the channel.
         match tokio::time::timeout(self.silence, tx.send(make(id))).await {
-            Ok(Ok(())) => {}
-            Ok(Err(_)) => {
-                pending.lock().unwrap().remove(&id);
-                return Err(AskError::NotConnected);
-            }
+            Ok(Ok(())) => unsent.disarm(),
+            Ok(Err(_)) => return Err(AskError::NotConnected),
             Err(_) => {
                 tracing::warn!(
                     "{agent} ({plane}): an ask could not be enqueued within the bound, the peer stopped reading"
                 );
                 silent.store(true, Ordering::Relaxed);
                 let _ = close.send(true);
-                pending.lock().unwrap().remove(&id);
                 return Err(AskError::NotConnected);
             }
         }
@@ -718,7 +1082,7 @@ impl Inner {
         // this future is dropped at the await, under the pending map's own
         // lock, so a hung connector that still heartbeats does not collect
         // one entry per cancelled ask. An answered ask finds it gone.
-        struct Unask(Arc<Mutex<HashMap<u64, oneshot::Sender<FromClient>>>>, u64);
+        struct Unask(Pending, u64);
         impl Drop for Unask {
             fn drop(&mut self) {
                 self.0.lock().unwrap().remove(&self.1);
@@ -957,6 +1321,174 @@ async fn send(tx: &mpsc::Sender<ToClient>, frame: ToClient) {
     let _ = tokio::time::timeout(Duration::from_secs(5), tx.send(frame)).await;
 }
 
+/// Why a connection closes when its `show`'s first record could not be
+/// written: the audit's, named so.
+const AUDIT_UNWRITTEN: &str = "the audit could not record the server's show";
+
+/// **The server's own `show`, audited** (Spec 2.13): its first record,
+/// principal and method `server`, committed through the record step before
+/// the frame enters the channel, and the ask's id kept against it in the
+/// connection's map. A record that cannot be written sends no frame, and
+/// the connection closes with the audit's reason, refused as the store
+/// unavailable so admin-con reconnects and the next admission asks again;
+/// a frame that cannot be enqueued has its first answered `failed`, by the
+/// `Unsent` guard.
+async fn ask_show(
+    inner: &Inner,
+    agent: &AgentId,
+    tx: &mpsc::Sender<ToClient>,
+    asks: &Asks,
+    close: &mut watch::Receiver<bool>,
+) -> Result<u64, &'static str> {
+    let id = inner.next_ask.fetch_add(1, Ordering::Relaxed);
+    let mut unsent = match bounded(
+        inner.record_ask(id, agent, "show", audit::Principal::Server),
+        inner.silence,
+        close,
+    )
+    .await
+    {
+        Bounded::Done(Ok(unsent)) => unsent,
+        Bounded::Done(Err(e)) => {
+            tracing::error!("{agent}: the server's show was not asked: its first record: {e:#}");
+            send(
+                tx,
+                ToClient::Refusal {
+                    reason: Refusal::StoreUnavailable,
+                },
+            )
+            .await;
+            return Err(AUDIT_UNWRITTEN);
+        }
+        // The record step holds its own bound; this one is the select's.
+        Bounded::TimedOut => {
+            tracing::error!("{agent}: the server's show was not asked: its first record stalled");
+            send(
+                tx,
+                ToClient::Refusal {
+                    reason: Refusal::StoreUnavailable,
+                },
+            )
+            .await;
+            return Err(AUDIT_UNWRITTEN);
+        }
+        Bounded::Closed => return Err("closed by revocation, rotation or halt"),
+    };
+    let first = unsent
+        .first
+        .clone()
+        .expect("the record step names its first");
+    asks.lock().unwrap().insert(
+        id,
+        Asked {
+            verb: "show".into(),
+            first: Some(first),
+        },
+    );
+    unsent.asks = Some(asks.clone());
+    let frame = ToClient::Verb {
+        id,
+        verb: "show".into(),
+        principal: Principal::Server,
+    };
+    enqueue(tx, frame, inner.silence, close).await?;
+    unsent.disarm();
+    Ok(id)
+}
+
+/// **A verb's answer, classified once**: admin's outcome, or a fault,
+/// admin-con's or the invocation's. A frame outside the contract's shape
+/// is no answer and has no classification.
+enum Answer {
+    Outcome(VerbOutcome),
+    Fault(VerbFault),
+}
+
+impl Answer {
+    /// **The door**: a verb frame checked against the contract and the ask
+    /// it answers, the verb asked and the connection's agent, or why it is
+    /// outside them. Exactly one of an outcome and a fault. An outcome
+    /// names the verb asked and the connection's agent, and has the shape
+    /// the box's invocation answers (`weaver-admin-operator-contract`,
+    /// built by `link::sudo_invoker`): exit 0 or 1 and one answer object,
+    /// with no raw output beside it, which is kept only where no object
+    /// parsed. A fault's kind stays free on the wire; what it means is the
+    /// audit's allow-list.
+    fn of(
+        outcome: Option<VerbOutcome>,
+        error: Option<VerbFault>,
+        asked: &str,
+        agent: &str,
+    ) -> Result<Self, &'static str> {
+        match (outcome, error) {
+            (Some(outcome), None) => {
+                if outcome.verb != asked {
+                    Err("its outcome names another verb than the one asked")
+                } else if outcome.agent != agent {
+                    Err("its outcome names another agent than the connection's")
+                } else if !matches!(outcome.exit_code, Some(0 | 1)) {
+                    Err("its exit status is neither an answer's nor a refusal's")
+                } else if !outcome.answer.as_ref().is_some_and(|a| a.is_object()) {
+                    Err("its outcome carries no answer object")
+                } else if outcome.raw_stdout.is_some() {
+                    Err("its outcome carries raw output beside its answer object")
+                } else {
+                    Ok(Answer::Outcome(outcome))
+                }
+            }
+            (None, Some(fault)) => Ok(Answer::Fault(fault)),
+            _ => Err("it carries both an outcome and a fault, or neither"),
+        }
+    }
+
+    /// **What the answer says of the act**, for its outcome record, and
+    /// **only the contract's evidence writes one**, in every field the
+    /// audit reads from the peer's frame: `weaver-admin-operator-contract`'s
+    /// exit status, 0 a `lifecycle-answer` and so `ok`, 1 a
+    /// `lifecycle-refusal` and so `failed`; any other status, or none, is a
+    /// fault by the contract and writes no outcome, a shape the door
+    /// refuses and kept here as defence. A fault writes `failed` only
+    /// where its kind proves the verb never ran, by an allow-list: `busy`,
+    /// `not_started`, `outside_ceiling`. **Every other kind, known or not,
+    /// writes no outcome** (`None`): `unknown` and `fault`, which leave the
+    /// act unknown, `not_landed`, which is this server's own, and any kind
+    /// a connector of another version invents. The first then stands
+    /// alone, which is the audit's "unknown", as where the connection ends
+    /// with the frame in flight.
+    fn audited(&self) -> Option<bool> {
+        const NEVER_RAN: [&str; 3] = [
+            VerbFault::BUSY,
+            VerbFault::NOT_STARTED,
+            VerbFault::OUTSIDE_CEILING,
+        ];
+        match self {
+            Answer::Outcome(outcome) => match outcome.exit_code {
+                Some(0) => Some(true),
+                Some(1) => Some(false),
+                _ => None,
+            },
+            Answer::Fault(fault) if NEVER_RAN.contains(&fault.kind.as_str()) => Some(false),
+            Answer::Fault(_) => None,
+        }
+    }
+
+    /// The asker's answer, the one classification as a frame.
+    fn into_frame(self, id: u64) -> FromClient {
+        match self {
+            Answer::Outcome(outcome) => FromClient::Verb {
+                id,
+                outcome: Some(outcome),
+                error: None,
+            },
+            Answer::Fault(fault) => FromClient::Verb {
+                id,
+                outcome: None,
+                error: Some(fault),
+            },
+        }
+    }
+}
+
 /// **A send to a peer that stopped reading is the peer gone silent.** The
 /// write channel behind the socket is bounded, so a peer that stops reading
 /// fills it and a plain send would suspend the connection task where the
@@ -1000,8 +1532,20 @@ async fn bounded<T>(
     bound: Duration,
     close: &mut watch::Receiver<bool>,
 ) -> Bounded<T> {
+    bounded_at(landing, tokio::time::Instant::now() + bound, close).await
+}
+
+/// `bounded` to an instant rather than a span: **a deadline kept as an
+/// instant is read at the await it bounds**, and one already past fires
+/// at the first poll, where a remainder of zero computed earlier would
+/// still wait for the timer's next tick.
+async fn bounded_at<T>(
+    landing: impl Future<Output = T>,
+    deadline: tokio::time::Instant,
+    close: &mut watch::Receiver<bool>,
+) -> Bounded<T> {
     tokio::select! {
-        done = tokio::time::timeout(bound, landing) => match done {
+        done = tokio::time::timeout_at(deadline, landing) => match done {
             Ok(value) => Bounded::Done(value),
             Err(_) => Bounded::TimedOut,
         },
@@ -1214,6 +1758,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
 
     let incarnation = (inner.epoch << 32) | inner.next_incarnation.fetch_add(1, Ordering::Relaxed);
     let pending = Arc::new(Mutex::new(HashMap::new()));
+    let asks: Asks = Arc::new(Mutex::new(HashMap::new()));
     let (close_tx, mut close_rx) = watch::channel(false);
     let silent = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let key = (agent.agent_id.clone(), plane);
@@ -1258,6 +1803,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                         silent: silent.clone(),
                         ready: false,
                         ceiling: ceiling.clone(),
+                        asks: asks.clone(),
                     },
                 );
                 Ok(())
@@ -1338,23 +1884,15 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
             // it does not, nothing is asked, admission completes at
             // `caught_up`, and the row's state stands on live events.
             if ceiling.as_deref().is_some_and(|c| c.contains("show")) {
-                let id = inner.next_ask.fetch_add(1, Ordering::Relaxed);
-                if let Err(why) = enqueue(
-                    &tx,
-                    ToClient::Verb {
-                        id,
-                        verb: "show".into(),
-                        principal: Principal::Server,
-                    },
-                    inner.silence,
-                    &mut close_rx,
-                )
-                .await
-                {
-                    reason = why;
-                    break 'serve;
+                match ask_show(&inner, &agent.agent_id, &tx, &asks, &mut close_rx).await {
+                    Ok(id) => {
+                        admission_show = Some((id, tokio::time::Instant::now() + inner.silence))
+                    }
+                    Err(why) => {
+                        reason = why;
+                        break 'serve;
+                    }
                 }
-                admission_show = Some((id, tokio::time::Instant::now() + inner.silence));
             }
         }
         // The hello's answer and, on the admin plane, the admission's show
@@ -1496,22 +2034,76 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                     resolve(&pending, id, FromClient::Turn { id, close, error });
                 }
                 (Plane::Admin, FromClient::Verb { id, outcome, error }) => {
+                    // **An answer's shape is checked once, here at the door,
+                    // against the contract and the ask it answers** (Spec
+                    // 2.13, 7.2, 8), and the audit, the landing and the
+                    // asker all read that one classification. An answer
+                    // outside it, to no ask or of the wrong shape, is the
+                    // peer's protocol violation, refused as malformed as
+                    // any frame of the wrong shape is; its first record
+                    // gets no outcome, since what admin did cannot be said,
+                    // and the asker gets no answer, its ask ending with the
+                    // connection. Nothing past the door sees it.
+                    let asked = asks.lock().unwrap().remove(&id);
+                    let checked = asked.ok_or("it answers no ask").and_then(|asked| {
+                        Answer::of(outcome, error, &asked.verb, &agent.name)
+                            .map(|answer| (asked.first, answer))
+                    });
+                    let (first, answer) = match checked {
+                        Ok(checked) => checked,
+                        Err(why) => {
+                            tracing::warn!(
+                                "link from {peer}: {} (admin) answered ask {id} outside the contract's shape ({why}), refused",
+                                agent.agent_id
+                            );
+                            send(
+                                &tx,
+                                ToClient::Refusal {
+                                    reason: Refusal::Malformed,
+                                },
+                            )
+                            .await;
+                            reason = "refused as malformed";
+                            break;
+                        }
+                    };
+                    let is_admission = admission_show.is_some_and(|(ask, _)| ask == id);
+                    // **The outcome when the answer lands, naming its own
+                    // first** (Spec 2.13): the entry this answer's id names
+                    // was taken at the door, so a second answer to one ask
+                    // finds none.
+                    // Written ahead of the landing, which a store failure
+                    // can cut short after admin has acted. **Once the
+                    // answer is in hand its outcome is written whatever
+                    // closes the connection**: not raced against the close
+                    // signal, since a revocation, rotation or halt landing
+                    // mid-write would leave an answered ask's first alone,
+                    // reading as unknown. Held to the record step's own
+                    // silence bound, and not the admission's deadline, so an
+                    // answer near the deadline still has its outcome. What
+                    // the close costs: it waits at most one silence bound on
+                    // a stalled store, a halt within its grace and aborted
+                    // past it.
+                    let owed = first.zip(answer.audited());
+                    if let Some((first, ok)) = owed {
+                        inner.record_outcome(&agent.agent_id, &first, ok).await;
+                    }
                     // The admission's show is bounded by what remains of
                     // its deadline, not by a fresh bound: a show answered
                     // just before the deadline whose landing stalls would
                     // otherwise leave the connection admitted on stale
-                    // facts for almost two bounds.
-                    let is_admission = admission_show.is_some_and(|(ask, _)| ask == id);
-                    let bound = match admission_show {
-                        Some((ask, deadline)) if ask == id => {
-                            deadline.saturating_duration_since(tokio::time::Instant::now())
-                        }
-                        _ => inner.silence,
+                    // facts for almost two bounds. **The deadline is kept as
+                    // an instant and read here, at the await it bounds**: a
+                    // remainder computed before the outcome's write above
+                    // would be stale by up to a silence bound.
+                    let until = match admission_show {
+                        Some((ask, deadline)) if ask == id => deadline,
+                        _ => tokio::time::Instant::now() + inner.silence,
                     };
-                    let landing = match &outcome {
-                        Some(outcome) => match bounded(
+                    let landing = match &answer {
+                        Answer::Outcome(outcome) => match bounded_at(
                             inner.land_verb(&agent.agent_id, outcome),
-                            bound,
+                            until,
                             &mut close_rx,
                         )
                         .await
@@ -1549,7 +2141,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                                 break;
                             }
                         },
-                        None => Landing::Nothing,
+                        Answer::Fault(_) => Landing::Nothing,
                     };
                     if landing == Landing::Failed {
                         // The answer could not be landed: the ask answers the
@@ -1558,7 +2150,10 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                         tracing::error!(
                             "{}: admin's {} answer could not be landed, closing the connection",
                             agent.agent_id,
-                            outcome.as_ref().map_or("show", |o| o.verb.as_str())
+                            match &answer {
+                                Answer::Outcome(o) => o.verb.as_str(),
+                                Answer::Fault(_) => "show",
+                            }
                         );
                         resolve(
                             &pending,
@@ -1608,9 +2203,10 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                             tracing::warn!(
                                 "{}: the admission's show answered without a usable observation ({}), closed so the reconnect asks again",
                                 agent.agent_id,
-                                error
-                                    .as_ref()
-                                    .map_or("no state in the answer", |e| e.message.as_str())
+                                match &answer {
+                                    Answer::Fault(e) => e.message.as_str(),
+                                    Answer::Outcome(_) => "no state in the answer",
+                                }
                             );
                             send(
                                 &tx,
@@ -1623,7 +2219,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                             break;
                         }
                     }
-                    resolve(&pending, id, FromClient::Verb { id, outcome, error });
+                    resolve(&pending, id, answer.into_frame(id));
                 }
                 (
                     Plane::Admin,
@@ -1724,23 +2320,16 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                     caught_up = !open;
                     boundary = tail;
                     if open && ceiling.as_deref().is_some_and(|c| c.contains("show")) {
-                        let id = inner.next_ask.fetch_add(1, Ordering::Relaxed);
-                        if let Err(why) = enqueue(
-                            &tx,
-                            ToClient::Verb {
-                                id,
-                                verb: "show".into(),
-                                principal: Principal::Server,
-                            },
-                            inner.silence,
-                            &mut close_rx,
-                        )
-                        .await
-                        {
-                            reason = why;
-                            break;
+                        match ask_show(&inner, &agent.agent_id, &tx, &asks, &mut close_rx).await {
+                            Ok(id) => {
+                                admission_show =
+                                    Some((id, tokio::time::Instant::now() + inner.silence))
+                            }
+                            Err(why) => {
+                                reason = why;
+                                break;
+                            }
                         }
-                        admission_show = Some((id, tokio::time::Instant::now() + inner.silence));
                     }
                 }
                 (
@@ -1974,7 +2563,13 @@ impl Inner {
     /// other verb's answer lands nothing. **The date is the receipt's**, a
     /// gap section 2.12 names: admin's answer carries no time of its own.
     async fn land_verb(&self, agent: &AgentId, outcome: &VerbOutcome) -> Landing {
-        let Some(answer) = &outcome.answer else {
+        // **Only admin's answer is an observation**: a refusal (exit 1) is
+        // never admin's word on the state, whatever its object says.
+        let Some(answer) = outcome
+            .answer
+            .as_ref()
+            .filter(|_| outcome.exit_code == Some(0))
+        else {
             return Landing::Nothing;
         };
         let summary = match outcome.verb.as_str() {

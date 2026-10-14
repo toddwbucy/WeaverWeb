@@ -311,7 +311,10 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
   connected 503), the first record and the enqueue before its commit, all in a task a
   dropped request cannot cut; at most `PERSON_SLOTS` (16, admin-con's `VERB_QUEUE`) slots per connection (busy, 503,
   past them) and `HELD_ASKS` (3) holds at once; one deadline, the silence bound, from the
-  place to the commit (a stall answers 503); 202 past the silence bound.
+  place to the commit (a stall answers 503); 202 past the silence bound. `POST
+  /agents/{ag}/turn` (PR 6c) places a turn through the same held ask on the gate plane (the
+  grant must carry `turn`, no ceiling), its text in the frame and in no record, log line or
+  error; the page's turn form says when more than one enabled person holds `turn`.
 
 ## The seed tree: what carries forward and what leaves
 
@@ -363,7 +366,8 @@ the orderly stop's `unload`. **The relay client replaced the file tailer in act 
 (#17): `link::relay`, the door and its openings. The listener holds each connection's
 ceiling, asks `show` only where it is granted and at every opening of the door,
 each `show` audited as the server's (its first record committed before the frame, the
-outcome naming it at the answer; the server asks `show` only, PR 6b1), and records
+outcome naming it at the answer; the server asks `show` only, PR 6b1); every frame on
+either plane, verb or turn, now has its first record before it (6b2, 6c), and records
 the ceiling and the load state's source on the row (migration `0011`), the tuple's own source
 (`0012`, since a turn moves the state and not the tuple), and the run's constituents from
 `show` and the trace door's state (`0013`); `0010` through `0013` are frozen. `traceview.rs` keeps the rings, the listener's live window; its seed

@@ -32,6 +32,7 @@ fn cfg() -> ServerConfig {
         rp_id: None,
         session_idle_secs: 3600,
         session_absolute_secs: 43200,
+        operations_log: None,
     }
 }
 

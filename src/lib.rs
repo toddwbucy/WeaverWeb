@@ -12,6 +12,9 @@ pub mod adapters;
 mod admin_tests;
 #[cfg(all(test, feature = "passkeys"))]
 mod agents_tests;
+pub mod alerting;
+#[cfg(all(test, feature = "passkeys"))]
+mod alerts_tests;
 pub mod config;
 pub mod fault;
 #[cfg(all(test, feature = "passkeys"))]

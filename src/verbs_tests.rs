@@ -25,31 +25,31 @@ use crate::store::AgentId;
 use crate::store::audit::FAIL_FIRST_RECORD;
 use crate::traceview::TraceEvent;
 
-const UNKNOWN: &str = "ag-0123456789abcdef";
+pub(crate) const UNKNOWN: &str = "ag-0123456789abcdef";
 
 /// The bound a refusal is answered within: far under the silence bound, so
 /// an ask that leaves instead of being refused fails here and not later.
-const REFUSED_WITHIN: Duration = Duration::from_secs(10);
+pub(crate) const REFUSED_WITHIN: Duration = Duration::from_secs(10);
 
 /// An agent, `box-a/karl`, registered by ada, its admin-con connected and
 /// admitted with the ceiling given; and bea, signed in and holding
 /// `operator` on it.
-struct Operated {
-    rig: Rig,
-    karl: String,
-    gate_config: String,
-    ada: String,
-    ada_session: String,
-    bea: String,
-    bea_session: String,
-    admin_con: Connector,
+pub(crate) struct Operated {
+    pub(crate) rig: Rig,
+    pub(crate) karl: String,
+    pub(crate) gate_config: String,
+    pub(crate) ada: String,
+    pub(crate) ada_session: String,
+    pub(crate) bea: String,
+    pub(crate) bea_session: String,
+    pub(crate) admin_con: Connector,
 }
 
-async fn operated(ceiling: &[&str]) -> Option<Operated> {
+pub(crate) async fn operated(ceiling: &[&str]) -> Option<Operated> {
     operated_with(ceiling, Duration::from_secs(60)).await
 }
 
-async fn operated_with(ceiling: &[&str], silence: Duration) -> Option<Operated> {
+pub(crate) async fn operated_with(ceiling: &[&str], silence: Duration) -> Option<Operated> {
     let rig = rig_silenced(silence).await?;
     let s = rig.store().clone();
     let (ada, ada_session) = admin(&rig.app, &s, &mut authenticator(), "ada").await;
@@ -93,7 +93,7 @@ async fn operated_with(ceiling: &[&str], silence: Duration) -> Option<Operated> 
 }
 
 /// admin's answer to a verb on karl, in the invocation's shape.
-fn answer(verb: &str, object: serde_json::Value, exit: i32) -> VerbOutcome {
+pub(crate) fn answer(verb: &str, object: serde_json::Value, exit: i32) -> VerbOutcome {
     VerbOutcome {
         verb: verb.into(),
         agent: "karl".into(),
@@ -105,7 +105,7 @@ fn answer(verb: &str, object: serde_json::Value, exit: i32) -> VerbOutcome {
 }
 
 /// A verb asked from the page, its request running as its own task.
-fn ask(
+pub(crate) fn ask(
     rig: &Rig,
     session: &str,
     agent: &str,
@@ -121,7 +121,12 @@ fn ask(
 }
 
 /// A verb asked and its answer awaited, which a refusal gives at once.
-async fn refused(rig: &Rig, session: &str, agent: &str, verb: &str) -> (StatusCode, String) {
+pub(crate) async fn refused(
+    rig: &Rig,
+    session: &str,
+    agent: &str,
+    verb: &str,
+) -> (StatusCode, String) {
     let (status, _, body) = tokio::time::timeout(REFUSED_WITHIN, ask(rig, session, agent, verb))
         .await
         .unwrap_or_else(|_| panic!("{verb} was not answered at once: it was asked"))
@@ -130,7 +135,7 @@ async fn refused(rig: &Rig, session: &str, agent: &str, verb: &str) -> (StatusCo
 }
 
 /// The next verb frame admin-con receives.
-async fn take_verb(c: &mut Connector) -> (u64, String, Principal) {
+pub(crate) async fn take_verb(c: &mut Connector) -> (u64, String, Principal) {
     loop {
         match c.recv().await {
             Some(ToClient::Verb {
@@ -145,7 +150,7 @@ async fn take_verb(c: &mut Connector) -> (u64, String, Principal) {
 }
 
 /// No verb frame reaches admin-con within the receive bound.
-async fn no_frame(c: &mut Connector) {
+pub(crate) async fn no_frame(c: &mut Connector) {
     while let Some(frame) = c.recv().await {
         assert!(
             !matches!(frame, ToClient::Verb { .. }),
@@ -156,14 +161,14 @@ async fn no_frame(c: &mut Connector) {
 
 /// One person-principal audit record.
 #[derive(Debug, Clone)]
-struct Record {
-    audit_id: String,
-    person_id: Option<String>,
-    method: String,
-    action: String,
-    answers: Option<String>,
-    outcome: Option<String>,
-    refusal: Option<String>,
+pub(crate) struct Record {
+    pub(crate) audit_id: String,
+    pub(crate) person_id: Option<String>,
+    pub(crate) method: String,
+    pub(crate) action: String,
+    pub(crate) answers: Option<String>,
+    pub(crate) outcome: Option<String>,
+    pub(crate) refusal: Option<String>,
 }
 
 type Row = (
@@ -178,12 +183,12 @@ type Row = (
 
 /// Every audit record of a person's verb on the agent, oldest first: the
 /// register's own records on it are the admin's acts, not verbs.
-async fn records(o: &Operated) -> Vec<Record> {
+pub(crate) async fn records(o: &Operated) -> Vec<Record> {
     records_on(&o.rig, &o.karl).await
 }
 
 /// Every audit record a person wrote on the agent named, oldest first.
-async fn records_on(rig: &Rig, karl: &str) -> Vec<Record> {
+pub(crate) async fn records_on(rig: &Rig, karl: &str) -> Vec<Record> {
     let rows: Vec<Row> = sqlx::query_as(
         "SELECT audit_id, person_id, method, action, answers, outcome, refusal FROM audit \
          WHERE principal = 'person' AND target_kind = 'agent' AND target_id = $1 \
@@ -210,7 +215,11 @@ async fn records_on(rig: &Rig, karl: &str) -> Vec<Record> {
 }
 
 /// Poll the person's records until a condition holds.
-async fn wait_records(o: &Operated, what: &str, cond: impl Fn(&[Record]) -> bool) -> Vec<Record> {
+pub(crate) async fn wait_records(
+    o: &Operated,
+    what: &str,
+    cond: impl Fn(&[Record]) -> bool,
+) -> Vec<Record> {
     let until = tokio::time::Instant::now() + Duration::from_secs(5);
     loop {
         let records = records(o).await;
@@ -236,7 +245,7 @@ fn one_refusal<'a>(records: &'a [Record], person: &str, verb: &str) -> &'a Recor
     refusal
 }
 
-fn outcome_of<'a>(records: &'a [Record], first: &Record) -> Option<&'a str> {
+pub(crate) fn outcome_of<'a>(records: &'a [Record], first: &Record) -> Option<&'a str> {
     records
         .iter()
         .find(|r| r.answers.as_deref() == Some(first.audit_id.as_str()))
@@ -641,7 +650,7 @@ async fn a_first_record_the_audit_refuses_sends_no_frame() {
 }
 
 /// bea's open session, as the listener's asker.
-async fn bea_asker(o: &Operated) -> Asker {
+pub(crate) async fn bea_asker(o: &Operated) -> Asker {
     let session_id: i64 = sqlx::query_scalar(
         "SELECT session_id FROM session WHERE person_id = $1 AND closed_at IS NULL \
          ORDER BY session_id DESC LIMIT 1",
@@ -910,10 +919,15 @@ async fn asks_past_the_bound_are_shed_with_no_record() {
 
 /// A turn's text distinct enough that no other string in a record or a log
 /// line carries it.
-const SAID: &str = "zebra-kumquat-7731";
+pub(crate) const SAID: &str = "zebra-kumquat-7731";
 
 /// The gate's close of a turn, in the contract's shape.
-fn close(kind: &str, text: Option<&str>, reason: Option<&str>, finish: Option<&str>) -> GateClose {
+pub(crate) fn close(
+    kind: &str,
+    text: Option<&str>,
+    reason: Option<&str>,
+    finish: Option<&str>,
+) -> GateClose {
     GateClose {
         kind: kind.into(),
         run: Some("run-1".into()),
@@ -926,7 +940,7 @@ fn close(kind: &str, text: Option<&str>, reason: Option<&str>, finish: Option<&s
 }
 
 /// gate-con dialed with karl's minted gate config and answered.
-async fn dial_gate(o: &Operated) -> Connector {
+pub(crate) async fn dial_gate(o: &Operated) -> Connector {
     let mut gate = Connector::dial_with(&o.gate_config, &[]).await;
     assert!(matches!(
         gate.recv().await,
@@ -936,7 +950,7 @@ async fn dial_gate(o: &Operated) -> Connector {
 }
 
 /// A turn placed from the page, its request running as its own task.
-fn place(
+pub(crate) fn place(
     rig: &Rig,
     session: &str,
     agent: &str,
@@ -961,7 +975,7 @@ async fn turn_refused(rig: &Rig, session: &str, agent: &str, text: &str) -> (Sta
 }
 
 /// The next turn frame gate-con receives: its id and text.
-async fn take_turn(gate: &mut Connector) -> (u64, String) {
+pub(crate) async fn take_turn(gate: &mut Connector) -> (u64, String) {
     match gate.recv().await {
         Some(ToClient::Turn { id, text }) => (id, text),
         other => panic!("expected a turn frame, got {other:?}"),
@@ -1318,7 +1332,7 @@ async fn the_turn_form_says_when_the_conversation_is_shared() {
 /// process's default receives every line no scoped capture takes. The
 /// text checked is this test's alone, so every other test's lines in it
 /// only widen the check.
-fn global_capture() -> &'static Captured {
+pub(crate) fn global_capture() -> &'static Captured {
     static CAPTURE: std::sync::OnceLock<Captured> = std::sync::OnceLock::new();
     CAPTURE.get_or_init(|| {
         let captured = Captured::default();

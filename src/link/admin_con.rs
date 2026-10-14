@@ -1,3 +1,5 @@
+//! conforms: web-a-connector-never-acts-on-the-agent
+//!
 //! admin-con, the management plane's connector (Spec sections 7.2 and 8):
 //! beside the agent as its own unprivileged service user, a client of the
 //! server's listener over the link with the admin credential the register
@@ -13,7 +15,8 @@
 //! [`Invoker`] trait, whose service implementation is the sudo invoker of
 //! `link::sudo_invoker`, the one privileged invocation in this crate. This
 //! module owns the order around it: the process-wide invocation slot, the
-//! verb bound, and the orderly stop's `unload` (Spec 7.2, 8). No file is
+//! verb bound, and the orderly stop, which invokes nothing (Spec 7.2, 8,
+//! 2.14). No file is
 //! read: the record reaches admin-con through the relay alone.
 //!
 //! **One task owns the door and the connection's outbound stream**, so
@@ -78,7 +81,7 @@ pub const VERB_BOUND: Duration = Duration::from_secs(960);
 pub const VERBS_IN_FLIGHT: usize = 1;
 /// The orderly stop's grace when the config names none (Spec 8): the box's
 /// load bound, 900 seconds, plus the unload's 105, plus a margin, so a stop
-/// that meets a `load` in flight still unloads.
+/// that meets a `load` or an `unload` in flight waits for it.
 pub const STOP_GRACE: Duration = Duration::from_secs(1080);
 
 // ---------- the invoker ----------
@@ -165,8 +168,8 @@ pub struct AdminConConfig {
     )]
     pub verb_bound: Duration,
     /// The orderly stop's grace, `stop_grace_secs` in the file
-    /// (`STOP_GRACE` by default): it covers a verb in flight, a load at its
-    /// bound, and the `unload` after it (Spec 8).
+    /// (`STOP_GRACE` by default): it covers a verb in flight, a load or an
+    /// unload at its bound (Spec 8).
     #[serde(
         rename = "stop_grace_secs",
         default = "default_stop_grace",
@@ -1313,154 +1316,34 @@ pub async fn run<I: Invoker>(
     let asked = stop_asked
         .await
         .unwrap_or_else(|_| tokio::time::Instant::now());
-    orderly_stop(
-        invoker,
-        &slot,
-        &cfg.link.agent,
-        asked + cfg.stop_grace,
-        grants_bound,
-        REST_RETRY,
-    )
-    .await;
+    orderly_stop(&slot, &cfg.link.agent, asked + cfg.stop_grace).await;
     Ok(())
 }
 
-/// **The orderly stop unloads the agent first** (Spec 8), admin-con's one
-/// act on its own initiative: the link's half (asks still waiting answered
-/// `not_started`, the verb in flight's answer sent) is done by the time
-/// this runs; here the verb in flight is waited for until its process exits
-/// and is reaped, then `unload` runs through the invoker where the ceiling
-/// grants it, all within the stop's grace. A process that outlasts the
-/// grace means the `unload` is not issued, and the kill that follows is an
-/// unclean stop, reset at the next load. The stop is the shutdown signal
-/// alone: a lost link never reaches here, since the client loop returns
-/// only on the stop. The `unload`'s answer is logged; its events reach the
-/// server through the trace when admin-con next connects.
-///
-/// **Every wait here ends by the stop's deadline**: the ceiling's ask by
-/// the earlier of the deadline and its own bound, so a slot freed just
-/// before the deadline cannot carry the stop past it. **The `unload` runs
-/// in a task of its own**, which owns the child and both its readers to the
-/// end and reaps it, as an ordinary invocation does: at the deadline the
-/// stop stops waiting and admin-con exits, and the child, in its own
-/// session and never killed, runs on. Its pipes close when admin-con exits,
-/// which the contract covers: admin ignores the broken pipe, finishes, and
-/// records the outcome in its own log on the box.
-///
-/// **The stop retries `unload` until rest** (Spec 8, the operator's ruling
-/// of 2026-10-08): while `unload` refuses `ActivityNotAtRest`, a turn
-/// running, it is asked again every `rest_retry` until it answers otherwise
-/// or the deadline passes, checked after each wait and immediately before
-/// each ask, so no ask starts at or past it; then the agent is left to
-/// the containment, and the next load records the unclean stop. One
-/// invocation at a time, the slot held throughout. **The stop never forces**:
-/// it runs no `force-unload`, so no state is thrown away by choice, and a
-/// `SavePointNotTaken` is not retried, the run having ended and the next
-/// load recording the loss.
-pub(super) async fn orderly_stop<I: Invoker>(
-    invoker: Arc<I>,
-    slot: &Slot,
-    agent: &str,
-    deadline: tokio::time::Instant,
-    grants_bound: Duration,
-    rest_retry: Duration,
-) {
-    let permit = match tokio::time::timeout_at(deadline, slot.permit.clone().acquire_owned()).await
-    {
-        Ok(Ok(permit)) => permit,
-        Ok(Err(_)) => return,
+/// **The stop asks nothing of the agent** (Spec 8; the operator's ruling
+/// of 2026-10-14): admin-con is a conduit, which creates the pipe and passes
+/// the traffic and never acts on the agent, so a shutdown leaves the agent
+/// exactly as it stands, whatever the ceiling grants. The link's half (asks
+/// still waiting answered `not_started`, the verb in flight's answer sent)
+/// is done by the time this runs; here the verb in flight, if any, is
+/// waited for within the stop's grace, so its process is reaped and its
+/// outcome logged before admin-con exits. **The child is never killed**:
+/// past the grace admin-con exits and the child, in its own session, runs
+/// on, its outcome recorded in the box's `admin.log`. To the server, this
+/// exit is lost contact, raised to the operator.
+pub(super) async fn orderly_stop(slot: &Slot, agent: &str, deadline: tokio::time::Instant) {
+    match tokio::time::timeout_at(deadline, slot.permit.clone().acquire_owned()).await {
+        Ok(_) => tracing::info!(
+            "{agent}: admin-con stops, invoking nothing; the agent is left as it stands"
+        ),
         Err(_) => {
             let running = slot.running.lock().unwrap().clone();
-            tracing::error!(
-                "{agent}: {} still runs at the end of the stop's grace; unload not issued, and the stop is unclean",
+            tracing::warn!(
+                "{agent}: {} still runs at the end of the stop's grace; it runs on, never killed, its outcome in the box's admin.log",
                 running.as_deref().unwrap_or("a verb")
             );
-            return;
         }
-    };
-    let asked_until = deadline.min(tokio::time::Instant::now() + grants_bound);
-    let granted = match tokio::time::timeout_at(asked_until, invoker.grants()).await {
-        Ok(Ok(verbs)) => verbs.iter().any(|v| v == "unload"),
-        Ok(Err(e)) => {
-            tracing::warn!("{agent}: the ceiling could not be read at the stop ({e:#})");
-            false
-        }
-        Err(_) => {
-            tracing::warn!(
-                "{agent}: the ceiling was not read within its bound or the stop's grace; the stop issues no unload"
-            );
-            false
-        }
-    };
-    if !granted {
-        tracing::warn!("{agent}: the ceiling grants no unload; the stop issues none");
-        return;
     }
-    tracing::info!("{agent}: the orderly stop unloads the agent");
-    let unload = tokio::spawn({
-        let agent = agent.to_owned();
-        async move {
-            let mut ran = invoker.run(&agent, "unload", &Principal::Server).await;
-            while let Ok(outcome) = &ran
-                && refused_not_at_rest(outcome)
-            {
-                tracing::info!(
-                    "{agent}: unload refused ActivityNotAtRest, a turn running; asking again in {rest_retry:?}"
-                );
-                tokio::time::sleep_until(deadline.min(tokio::time::Instant::now() + rest_retry))
-                    .await;
-                // **The deadline is checked after the wait, immediately
-                // before the invocation**: a runtime that wakes late never
-                // starts an unload at or past the grace, which the stop's
-                // own timeout would only detach from.
-                if tokio::time::Instant::now() >= deadline {
-                    tracing::warn!(
-                        "{agent}: unload still refuses ActivityNotAtRest at the end of the stop's grace; the agent is left to the containment"
-                    );
-                    break;
-                }
-                ran = invoker.run(&agent, "unload", &Principal::Server).await;
-            }
-            drop(permit);
-            ran
-        }
-    });
-    match tokio::time::timeout_at(deadline, unload).await {
-        Ok(Ok(Ok(outcome))) => tracing::info!(
-            "{agent}: the stop's unload answered, exit {:?}: {}",
-            outcome.exit_code,
-            outcome.answer.map(|a| a.to_string()).unwrap_or_default()
-        ),
-        Ok(Ok(Err(fault))) => tracing::error!(
-            "{agent}: the stop's unload faulted ({}): {}",
-            fault.kind,
-            fault.message
-        ),
-        Ok(Err(e)) => tracing::error!("{agent}: the stop's unload ended without an answer: {e}"),
-        Err(_) => tracing::error!(
-            "{agent}: the stop's unload runs on past the stop's grace; its outcome is in the box's admin.log"
-        ),
-    }
-}
-
-/// **How long the orderly stop waits before asking `unload` again** while
-/// it refuses `ActivityNotAtRest`. A turn runs for seconds to minutes, so
-/// its end is met within five seconds of it, and the stop's grace (1080 s
-/// by default) holds at most 216 asks, each a refusal that touches nothing
-/// and one line in the box's `admin.log`.
-pub const REST_RETRY: Duration = Duration::from_secs(5);
-
-/// **`unload` refused because a turn runs**: exit 1 and the floor's
-/// `{"kind": "activity_not_at_rest"}`, per `weaver-admin-operator-contract`
-/// at `toddwbucy/WeaverAgent` `43ba391`.
-fn refused_not_at_rest(outcome: &VerbOutcome) -> bool {
-    outcome.exit_code == Some(1)
-        && outcome
-            .answer
-            .as_ref()
-            .and_then(|answer| answer.get("kind"))
-            .and_then(|kind| kind.as_str())
-            == Some("activity_not_at_rest")
 }
 
 #[derive(Clone)]

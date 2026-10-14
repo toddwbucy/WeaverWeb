@@ -1,6 +1,7 @@
 {% extends "instrument.html" %}
 {% block title %}agents - weaver-web{% endblock %}
 {% block mainclass %}listing{% endblock %}
+{% block alerts_nav %}{% if open_alerts > 0 %}<a href="/agents" class="alerts">{{ open_alerts }} open alert{% if open_alerts != 1 %}s{% endif %}</a>{% endif %}{% endblock %}
 {% block body %}
 {#- The agents this person holds a grant on, and no other. No inline
     script. -#}
@@ -9,13 +10,14 @@
   <p class="destination">The agents you hold a grant on.</p>
 </header>
 <table>
-  <thead><tr><th>Agent</th><th>Gate</th><th>Admin</th></tr></thead>
+  <thead><tr><th>Agent</th><th>Gate</th><th>Admin</th><th>Open alerts</th></tr></thead>
   <tbody>
   {% for row in rows %}
   <tr>
     <td><a href="/agents/{{ row.agent_id }}">{{ row.label }}</a></td>
     <td>{% if row.gate %}connected{% else %}not connected{% endif %}</td>
     <td>{% if row.admin %}connected{% else %}not connected{% endif %}</td>
+    <td>{{ row.alerts }}</td>
   </tr>
   {% endfor %}
   </tbody>

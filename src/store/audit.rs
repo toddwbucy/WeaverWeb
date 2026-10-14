@@ -108,6 +108,8 @@ pub enum Target<'a> {
     Role(&'a str),
     /// A passkey, by its own identity (`pk-`).
     Passkey(&'a str),
+    /// An alert, by its own identity (`al-`), for its acknowledgement.
+    Alert(&'a str),
 }
 
 impl Target<'_> {
@@ -119,6 +121,7 @@ impl Target<'_> {
             Target::Grant(_) => "grant",
             Target::Role(_) => "role",
             Target::Passkey(_) => "passkey",
+            Target::Alert(_) => "alert",
         }
     }
 
@@ -129,7 +132,8 @@ impl Target<'_> {
             | Target::Person(id)
             | Target::Grant(id)
             | Target::Role(id)
-            | Target::Passkey(id) => Some(id),
+            | Target::Passkey(id)
+            | Target::Alert(id) => Some(id),
         }
     }
 }

@@ -6,9 +6,10 @@
 //! answers verb asks through its
 //! sudo invoker, the one privileged invocation in this crate: the fixed
 //! `weaver-admin <verb> <agent>` lines the box's sudo rule grants, with
-//! nothing from the link in the command. On an orderly stop it unloads its
-//! agent first. The config's path has no default: a default would be a box
-//! path in the repository.
+//! nothing from the link in the command. A conduit, it never acts on the
+//! agent on its own: its stop waits for the verb in flight and invokes
+//! nothing. The config's path has no default: a default would be a box path
+//! in the repository.
 
 use clap::Parser;
 use std::path::PathBuf;
@@ -69,7 +70,7 @@ async fn main() -> anyhow::Result<()> {
             } => {}
         }
         tracing::info!(
-            "admin-con stopping: the verb in flight is waited for, then the agent is unloaded"
+            "admin-con stopping: the verb in flight is waited for, and nothing is invoked"
         );
         let _ = stop.send(true);
     });

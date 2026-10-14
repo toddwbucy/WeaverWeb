@@ -413,14 +413,24 @@ async fn serve(cfg: Arc<ServerConfig>) -> anyhow::Result<()> {
     // And the relying party's, where passkeys are on (design section 3).
     weaver_web::listen::relying_party(&cfg)?;
 
+    // **The operations log** (Spec 2.14): named by the config, with no
+    // default, and appendable, or the server does not start.
+    let Some(operations_log) = cfg.operations_log.clone() else {
+        anyhow::bail!(
+            "operations_log is not configured: the server writes each failure's reason there, and the install names it"
+        );
+    };
+    weaver_web::alerting::appendable(&operations_log)?;
+
     let store = store::Store::connect(&cfg.database).await?;
     tracing::info!("store connected, migrations applied");
 
-    let link = Listener::start(
+    let link = Listener::start_with(
         store.clone(),
         &authority,
         &cfg.link_listen,
         Duration::from_secs(cfg.silence_bound_secs),
+        Some(operations_log),
     )
     .await?;
 

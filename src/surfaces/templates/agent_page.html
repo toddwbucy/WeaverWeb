@@ -1,6 +1,7 @@
 {% extends "instrument.html" %}
 {% block title %}{{ label }} - weaver-web{% endblock %}
 {% block mainclass %}listing{% endblock %}
+{% block alerts_nav %}{% if open_alerts > 0 %}<a href="/agents" class="alerts">{{ open_alerts }} open alert{% if open_alerts != 1 %}s{% endif %}</a>{% endif %}{% endblock %}
 {% block body %}
 {#- One agent's register row, for a person holding a grant on it. No inline
     script. -#}
@@ -21,6 +22,39 @@
   </tbody>
 </table>
 <p><a href="/agents/{{ agent_id }}/trace">The live trace view</a> (an event stream): {{ window }}.</p>
+{% if let Some(prompt) = prompt %}
+<dialog open>
+  <h2>A decision is yours</h2>
+  <p>{{ prompt.summary }}</p>
+  {% if prompt.options.is_empty() %}
+  <p>Your roles and the connection's ceiling carry no option here; a person holding them chooses.</p>
+  {% else %}
+  {% for (option, label) in prompt.options %}
+  <form method="post" action="/agents/{{ agent_id }}/alerts/{{ prompt.alert_id }}/choose"><input type="hidden" name="option" value="{{ option }}"><button type="submit">{{ label }}</button></form>
+  {% endfor %}
+  {% endif %}
+  <p>Choosing does not acknowledge the alert: it stays until acknowledged.</p>
+</dialog>
+{% endif %}
+<h2>Alerts</h2>
+{% if alerts.is_empty() %}
+<p>No alert on this agent.</p>
+{% else %}
+<table>
+  <thead><tr><th>Alert</th><th>About</th><th>Why</th><th>When</th><th></th></tr></thead>
+  <tbody>
+  {% for alert in alerts %}
+  <tr>
+    <td>{{ alert.kind }}{% if alert.open %} (open){% endif %}</td>
+    <td>{{ alert.subject }}</td>
+    <td>{{ alert.summary }}{% if !alert.detail.is_empty() %}<pre>{{ alert.detail }}</pre>{% endif %}</td>
+    <td>raised {{ alert.raised }}; {{ alert.occurrences }} time{% if alert.occurrences != 1 %}s{% endif %}, last {{ alert.last }}{% if !alert.restored.is_empty() %}; {{ alert.restored }}{% endif %}{% if !alert.acknowledged.is_empty() %}; {{ alert.acknowledged }}{% endif %}</td>
+    <td>{% if alert.open && can_ack %}<form method="post" action="/agents/{{ agent_id }}/alerts/{{ alert.alert_id }}/ack"><input type="hidden" name="version" value="{{ alert.version }}"><button type="submit">Acknowledge</button></form>{% endif %}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
 <h2>Verbs</h2>
 {% if forms.is_empty() %}
 <p>No verb your roles carry that the connection's ceiling grants.</p>

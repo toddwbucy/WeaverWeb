@@ -10,6 +10,7 @@
 
 pub mod admin;
 pub mod agents;
+pub mod alerts;
 #[cfg(feature = "passkeys")]
 pub mod enroll;
 pub mod gate;

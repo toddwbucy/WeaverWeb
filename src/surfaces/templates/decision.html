@@ -1,0 +1,25 @@
+{% extends "instrument.html" %}
+{% block title %}a decision - weaver-web{% endblock %}
+{% block mainclass %}listing{% endblock %}
+{% block alerts_nav %}{% if open_alerts > 0 %}<a href="/agents" class="alerts">{{ open_alerts }} open alert{% if open_alerts != 1 %}s{% endif %}</a>{% endif %}{% endblock %}
+{% block body %}
+{#- A decision's steps, each the person's own ask. No inline script. -#}
+<header class="listing-head">
+  <h1>{{ option }}</h1>
+  <p class="destination">{{ agent_id }}</p>
+</header>
+{% if pending %}
+<p>The decision runs on past the page's wait: each step's outcome is written when admin answers, and its alerts are on the agent's page.</p>
+{% else %}
+<table>
+  <thead><tr><th>Step</th><th>Recorded as</th><th>Status</th></tr></thead>
+  <tbody>
+  {% for step in steps %}
+  <tr><td>{{ step.verb }}</td><td>{{ step.first }}</td><td>{{ step.status }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+<p>The alert stays until acknowledged.</p>
+<p><a href="/agents/{{ agent_id }}">Back to the agent</a></p>
+{% endblock %}

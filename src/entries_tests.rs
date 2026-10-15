@@ -860,15 +860,19 @@ async fn every_shape_a_connector_sends_passes_the_door() {
     );
     entries.failure("probe", "p".repeat(ENTRY_BOUND));
     entries.failure("link_outage", "down for 3 s");
+    // Every shape so far, before the fillers below push them out.
+    let mut pending = entries.pending();
+    assert_eq!(pending.len(), 6, "{pending:#?}");
     for _ in 0..BACKLOG_ENTRIES + 3 {
         entries.failure("probe", "filler");
     }
     entries.ack(&entries.run(), (BACKLOG_ENTRIES + 3) as u64);
-    let pending = entries.pending();
+    let report = entries.pending();
     assert!(
-        pending.iter().any(|(_, e)| e["kind"] == "entries_dropped"),
-        "{pending:#?}"
+        report.iter().any(|(_, e)| e["kind"] == "entries_dropped"),
+        "{report:#?}"
     );
+    pending.extend(report);
     let gate = Entries::new("gate-con");
     gate.failure("link_outage", "down for 3 s");
     gate.failure("probe", "p".repeat(ENTRY_BOUND));

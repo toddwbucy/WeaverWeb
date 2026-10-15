@@ -110,10 +110,12 @@ fn open_of(found: &[Alert], kind: &str) -> Option<Alert> {
 /// a refused `load` admin-con asked itself lands in the operations log and
 /// raises nothing, its alert having been raised at the door; the same
 /// refusal by another party on the box raises a `failed` alert from the
-/// box.
+/// box, saying admin's refusal and never the line's uid or command line,
+/// which the operations log keeps.
 ///
 /// Perturbation: drop the own check at the server, and the act asked
-/// through WeaverWeb raises its alert again from its line.
+/// through WeaverWeb raises its alert again from its line; put the whole
+/// line back in the alert's detail, and the uid and command are shown.
 #[tokio::test]
 async fn an_own_line_is_logged_and_another_partys_raises_an_alert() {
     let Some(mut o) = operated(&["show"]).await else {
@@ -160,6 +162,24 @@ async fn an_own_line_is_logged_and_another_partys_raises_an_alert() {
     let logged = wait_entries(&o.rig, 2).await;
     assert_eq!(logged[1]["own"], false);
     assert_eq!(logged[1]["alert"], alert.alert_id.as_str());
+    // **The alert says what happened, and the box's facts stay in the
+    // log**: admin's refusal and the verb, never the caller's uid or the
+    // command line, which the operations log's line keeps whole.
+    let shown = format!("{} {}", alert.summary, alert.detail);
+    assert!(shown.contains("config_invalid"), "{shown}");
+    assert!(
+        !shown.contains(&THEIRS.to_string()),
+        "the uid is shown: {shown}"
+    );
+    assert!(
+        !shown.contains("weaver-admin load"),
+        "the command is shown: {shown}"
+    );
+    let line = logged[1]["entry"]["line"].to_string();
+    assert!(
+        line.contains(&THEIRS.to_string()) && line.contains("weaver-admin load"),
+        "{line}"
+    );
 }
 
 /// **An S9 entered on the box raises the save-point prompt**, closing PR 1's
@@ -212,9 +232,14 @@ async fn the_boxs_refusals_are_classified_by_the_doors_rules() {
     let door = open_of(&found, "failed").expect("the relay's refusal");
     assert_eq!(door.subject, "trace door");
     assert!(
-        door.summary.contains(&format!("uid {THEIRS}")),
+        door.summary.contains("a peer other than admin-con"),
         "{}",
         door.summary
+    );
+    let shown = format!("{} {}", door.summary, door.detail);
+    assert!(
+        !shown.contains(&THEIRS.to_string()),
+        "the peer's uid is shown: {shown}"
     );
 }
 

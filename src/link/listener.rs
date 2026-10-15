@@ -2607,23 +2607,33 @@ impl CheckedEntry {
 /// answer; and the relay refusing a peer, another party at the trace's
 /// door. An answer, any other line, and a line of no known shape raise
 /// nothing. The subject and what is raised.
+///
+/// **The alert says what happened and admin's own word on it, and no more**:
+/// the verb, admin's outcome (the refusal object), and admin's time; for
+/// the relay, that a peer other than admin-con was refused. Never the line's
+/// caller uid, command line or boundary digest, facts about the box that
+/// every grant holder's panel has no need of: the operations log on the
+/// server keeps the whole line.
 fn box_line_raised(line: &serde_json::Value) -> Option<(String, Raised)> {
     let text = |member: &str| line.get(member).and_then(|v| v.as_str());
+    let when = line
+        .get("wall_ms")
+        .and_then(|w| w.as_i64())
+        .and_then(chrono::DateTime::<Utc>::from_timestamp_millis)
+        .map(|at| format!("at {} on the box", at.format("%Y-%m-%d %H:%M:%S UTC")))
+        .unwrap_or_default();
     if text("actor") == Some("relay") {
         if text("event") != Some("refused") {
             return None;
         }
-        let peer = line
-            .get("peer_uid")
-            .and_then(|u| u.as_u64())
-            .map_or_else(|| "a peer".to_owned(), |u| format!("uid {u}"));
         return Some((
             "trace door".to_owned(),
             Raised {
                 kind: AlertKind::Failed,
-                summary: format!("the trace relay refused {peer} at the trace's door"),
-                detail: cut(&line.to_string(), 2048),
-                reason: serde_json::json!({ "line": line }),
+                summary: "the trace relay refused a peer other than admin-con at the trace's door"
+                    .to_owned(),
+                detail: when,
+                reason: serde_json::json!({ "relay": "refused" }),
                 options: Vec::new(),
                 outcome: "failed",
             },
@@ -2637,15 +2647,19 @@ fn box_line_raised(line: &serde_json::Value) -> Option<(String, Raised)> {
             if ANSWER_KINDS.contains(&kind) {
                 return None;
             }
-            Some((verb.to_owned(), refusal_raised(verb, &object, "")))
+            let mut raised = refusal_raised(verb, &object, "");
+            if !when.is_empty() {
+                raised.detail = format!("{}\n{when}", raised.detail);
+            }
+            Some((verb.to_owned(), raised))
         }
         _ if outcome.starts_with("refused") || outcome.starts_with("rolled back") => Some((
             verb.to_owned(),
             Raised {
                 kind: AlertKind::Failed,
                 summary: format!("{verb}: {}", cut(outcome, 512)),
-                detail: cut(&line.to_string(), 2048),
-                reason: serde_json::json!({ "line": line }),
+                detail: when,
+                reason: serde_json::json!({ "outcome": cut(outcome, 512) }),
                 options: Vec::new(),
                 outcome: "failed",
             },

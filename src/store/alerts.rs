@@ -185,6 +185,59 @@ impl Store {
     }
 }
 
+/// **A plane of an agent the server cannot reach** (Spec 2.14, the
+/// unavailable banner): state derived from the register at the read, never
+/// a record.
+#[derive(Debug, Clone)]
+pub struct Unavailable {
+    pub agent_id: String,
+    /// The agent's box and name.
+    pub label: String,
+    /// `admin` or `gate`.
+    pub plane: String,
+    /// When the plane's link state last changed, where the row knows it.
+    pub since: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+impl Store {
+    /// **The planes the person cannot reach on the agents they hold a live
+    /// grant on**, an enabled person's, any role: a plane whose credential
+    /// is live and whose link is not connected, a connector that never
+    /// connected since registration included. A retired agent's planes hold
+    /// no live credential and show none; nothing of any other agent.
+    pub async fn unavailable_for(&self, person: &str) -> anyhow::Result<Vec<Unavailable>> {
+        let rows: Vec<(
+            String,
+            String,
+            String,
+            Option<chrono::DateTime<chrono::Utc>>,
+        )> = sqlx::query_as(
+            "SELECT a.agent_id, a.box || '/' || a.name, p.plane, p.since \
+                 FROM agent a CROSS JOIN LATERAL (VALUES \
+                   ('admin', a.admin_state = 'live' AND NOT a.admin_connected, a.admin_link_at), \
+                   ('gate', a.gate_state = 'live' AND NOT a.gate_connected, a.gate_link_at) \
+                 ) AS p (plane, down, since) \
+                 WHERE p.down AND a.agent_id IN ( \
+                   SELECT g.agent_id FROM role_grant g JOIN person e ON e.person_id = g.person_id \
+                   WHERE g.person_id = $1 AND g.agent_id IS NOT NULL AND g.revoked_at IS NULL \
+                   AND e.enabled) \
+                 ORDER BY a.box, a.name, p.plane",
+        )
+        .bind(person)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(agent_id, label, plane, since)| Unavailable {
+                agent_id,
+                label,
+                plane,
+                since,
+            })
+            .collect())
+    }
+}
+
 /// **The acknowledgement's write**, in the caller's transaction: lands only
 /// on the open alert at the version the person read, and answers whether it
 /// did. A repeat or a restoration since that read moved the version, and the

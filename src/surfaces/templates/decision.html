@@ -1,7 +1,6 @@
 {% extends "instrument.html" %}
 {% block title %}a decision - weaver-web{% endblock %}
 {% block mainclass %}listing{% endblock %}
-{% block alerts_nav %}{% if open_alerts > 0 %}<a href="/agents" class="alerts">{{ open_alerts }} open alert{% if open_alerts != 1 %}s{% endif %}</a>{% endif %}{% endblock %}
 {% block body %}
 {#- A decision's steps, each the person's own ask. No inline script. -#}
 <header class="listing-head">

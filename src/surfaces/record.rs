@@ -232,6 +232,7 @@ struct RecordPage {
     who: String,
     /// Whether the navigation offers the admin's page.
     admin: bool,
+    chrome: super::Chrome,
     rows: Vec<Row>,
     /// The chip in force, as a word a reader can see and a link can clear.
     chip_kind: Option<String>,
@@ -269,6 +270,9 @@ async fn record(
         .is_admin(&who.person_id)
         .await
         .map_err(|e| Failure::from(e).into_response())?;
+    let chrome = super::Chrome::of(&store, &who.person_id)
+        .await
+        .map_err(|e| Failure::from(e).into_response())?;
     let chip = ask.chip().map_err(IntoResponse::into_response)?;
     let cursor = ask.cursor().map_err(IntoResponse::into_response)?;
     let page = store
@@ -280,6 +284,7 @@ async fn record(
         here: "record",
         who: who.name,
         admin,
+        chrome,
         rows: page.runs.into_iter().map(Row::from).collect(),
         // Both halves are present or the ask refused above, so these
         // carry the chip in force rather than the chip that was asked for.

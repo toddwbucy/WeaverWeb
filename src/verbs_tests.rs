@@ -38,6 +38,7 @@ pub(crate) struct Operated {
     pub(crate) rig: Rig,
     pub(crate) karl: String,
     pub(crate) gate_config: String,
+    pub(crate) admin_config: String,
     pub(crate) ada: String,
     pub(crate) ada_session: String,
     pub(crate) bea: String,
@@ -56,7 +57,27 @@ pub(crate) async fn operated_with(ceiling: &[&str], silence: Duration) -> Option
     let (karl, handles) = rig.register(&ada_session, "box-a", "karl").await;
     let (_, _, config) = rig.take(&handles[1], &ada_session).await;
     let (_, _, gate_config) = rig.take(&handles[0], &ada_session).await;
-    let mut admin_con = Connector::dial_with(&config, ceiling).await;
+    let admin_con = admitted_admin(&config, ceiling).await;
+    let (bea, bea_session) = signed_in(&rig.app, &s, &mut authenticator(), "bea").await;
+    let granted = host::grant_add(&s, &bea, "operator", Some(&karl), None).await;
+    assert!(granted.ok, "{}", granted.value);
+    Some(Operated {
+        rig,
+        karl,
+        gate_config,
+        admin_config: config,
+        ada,
+        ada_session,
+        bea,
+        bea_session,
+        admin_con,
+    })
+}
+
+/// An admin-con dialed with the config and admitted: the hello, the
+/// admission's `show` answered idle, and `caught_up`.
+pub(crate) async fn admitted_admin(config: &str, ceiling: &[&str]) -> Connector {
+    let mut admin_con = Connector::dial_with(config, ceiling).await;
     assert!(matches!(
         admin_con.recv().await,
         Some(ToClient::HelloAnswer { .. })
@@ -77,19 +98,7 @@ pub(crate) async fn operated_with(ceiling: &[&str], silence: Duration) -> Option
         Some(ToClient::Landed { .. })
     ));
     admin_con.send(FromClient::CaughtUp).await;
-    let (bea, bea_session) = signed_in(&rig.app, &s, &mut authenticator(), "bea").await;
-    let granted = host::grant_add(&s, &bea, "operator", Some(&karl), None).await;
-    assert!(granted.ok, "{}", granted.value);
-    Some(Operated {
-        rig,
-        karl,
-        gate_config,
-        ada,
-        ada_session,
-        bea,
-        bea_session,
-        admin_con,
-    })
+    admin_con
 }
 
 /// admin's answer to a verb on karl, in the invocation's shape.

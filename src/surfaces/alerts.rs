@@ -367,7 +367,7 @@ struct DecisionPage {
     here: &'static str,
     who: String,
     admin: bool,
-    open_alerts: i64,
+    chrome: super::Chrome,
     agent_id: String,
     option: String,
     steps: Vec<Step>,
@@ -474,18 +474,18 @@ pub(super) async fn choose(
         Ok(Err(e)) => return fault(anyhow::anyhow!("the decision's task ended: {e}")),
         Err(_) => (StatusCode::ACCEPTED, Vec::new(), true),
     };
-    let (admin, open_alerts) = match (
+    let (admin, chrome) = match (
         store.is_admin(&session.person_id).await,
-        store.open_alerts_by_agent(&session.person_id).await,
+        super::Chrome::of(&store, &session.person_id).await,
     ) {
-        (Ok(admin), Ok(open)) => (admin, open.iter().map(|(_, n)| n).sum()),
+        (Ok(admin), Ok(chrome)) => (admin, chrome),
         (Err(e), _) | (_, Err(e)) => return fault(e),
     };
     match (DecisionPage {
         here: "agents",
         who: session.name,
         admin,
-        open_alerts,
+        chrome,
         agent_id: agent,
         option,
         steps,

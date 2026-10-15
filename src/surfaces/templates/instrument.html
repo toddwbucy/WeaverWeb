@@ -5,6 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}weaver-web{% endblock %}</title>
   <link rel="stylesheet" href="/assets/surfaces/instrument.css">
+  {#- A 401 to a re-fetched fragment is swapped in, so an ended session's
+      banners go and its sign-in notice shows; every other error leaves the
+      fragment as it stood. Configuration, not script. -#}
+  <meta name="htmx-config" content='{"responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"401","swap":true},{"code":"...","swap":false,"error":true}]}'>
 </head>
 <body>
   <nav class="masthead">
@@ -14,7 +18,9 @@
     <a href="/sign-in"{% if here == "sign-in" %} class="here"{% endif %}>Sign in</a>
     {%- else %}
     <a href="/agents"{% if here == "agents" %} class="here"{% endif %}>Agents</a>
-    {%- block alerts_nav %}{% endblock %}
+    {%- if chrome.open_alerts > 0 %}
+    <a href="/agents" class="alerts">{{ chrome.open_alerts }} open alert{% if chrome.open_alerts != 1 %}s{% endif %}</a>
+    {%- endif %}
     <a href="/passkeys"{% if here == "passkeys" %} class="here"{% endif %}>Passkeys</a>
     {%- if admin %}
     <a href="/admin/persons"{% if here == "admin" %} class="here"{% endif %}>Persons</a>
@@ -25,8 +31,14 @@
     <form method="post" action="/sign-out" class="sign-out"><button type="submit">Sign out</button></form>
     {%- endif %}
   </nav>
+  {%- if !who.is_empty() %}
+  <div id="availability" hx-get="/availability" hx-trigger="every 15s" hx-swap="innerHTML">{% include "availability_banners.html" %}</div>
+  {%- endif %}
   <main class="{% block mainclass %}{% endblock %}">
   {% block body %}{% endblock %}
   </main>
+  {%- if !who.is_empty() %}
+  <script src="/assets/surfaces/htmx.min.js"></script>
+  {%- endif %}
 </body>
 </html>

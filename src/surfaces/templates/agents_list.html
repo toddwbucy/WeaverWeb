@@ -1,7 +1,6 @@
 {% extends "instrument.html" %}
 {% block title %}agents - weaver-web{% endblock %}
 {% block mainclass %}listing{% endblock %}
-{% block alerts_nav %}{% if open_alerts > 0 %}<a href="/agents" class="alerts">{{ open_alerts }} open alert{% if open_alerts != 1 %}s{% endif %}</a>{% endif %}{% endblock %}
 {% block body %}
 {#- The agents this person holds a grant on, and no other. No inline
     script. -#}

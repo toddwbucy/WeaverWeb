@@ -20,8 +20,8 @@ use crate::passkeys_tests::authenticator;
 use crate::store::AgentId;
 use crate::store::alerts::{Alert, AlertKind, Raise};
 use crate::verbs_tests::{
-    Operated, SAID, ask, close, dial_gate, no_frame, operated, operated_with, place, take_turn,
-    take_verb,
+    Operated, SAID, admitted_admin, ask, close, dial_gate, no_frame, operated, operated_with,
+    place, take_turn, take_verb,
 };
 
 /// The agent's alerts, open first, newest first.
@@ -813,4 +813,176 @@ async fn a_full_queue_drops_and_counts_and_never_holds_the_door() {
         "the door's failure was dropped and counted"
     );
     drop(held);
+}
+
+/// Wait until a person's fetch of `uri` answers a body for which `cond`
+/// holds.
+async fn wait_body(
+    app: &axum::Router,
+    session: &str,
+    uri: &str,
+    what: &str,
+    cond: impl Fn(&str) -> bool,
+) -> String {
+    let until = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let (_, _, body) = send_as(app, "GET", uri, None, session).await;
+        if cond(&body) {
+            return body;
+        }
+        assert!(
+            tokio::time::Instant::now() < until,
+            "{uri} never read {what}: {body}"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// **A plane the server cannot reach is a banner on every page of a person
+/// holding a grant on the agent, and on no other person's**: gate-con never
+/// connected shows "turns unavailable, gate-con down" on a page that is not
+/// the agent's; admin-con cut shows "agent unavailable, admin-con down" in
+/// the fragment the page re-fetches; each clears once its plane is
+/// admitted again. A person holding no grant sees none of it.
+///
+/// Perturbation: drop the grant scoping of the unavailable planes, and a
+/// person holding no grant sees karl's banners.
+#[tokio::test]
+async fn an_unreachable_plane_is_a_banner_for_its_grant_holders_alone() {
+    let Some(o) = operated(&["show"]).await else {
+        return;
+    };
+    let s = o.rig.store().clone();
+    let (_, dan) = signed_in(&o.rig.app, &s, &mut authenticator(), "dan").await;
+    let (_, _, page) = send_as(&o.rig.app, "GET", "/passkeys", None, &o.bea_session).await;
+    assert!(
+        page.contains("box-a/karl</a>: turns unavailable, gate-con down (never connected)"),
+        "{page}"
+    );
+    assert!(!page.contains("admin-con down"), "{page}");
+    let (_, _, theirs) = send_as(&o.rig.app, "GET", "/passkeys", None, &dan).await;
+    assert!(!theirs.contains("unavailable"), "{theirs}");
+
+    let gate = dial_gate(&o).await;
+    let app = o.rig.app.clone();
+    let bea = o.bea_session.clone();
+    wait_body(&app, &bea, "/availability", "the gate banner gone", |b| {
+        !b.contains("gate-con down")
+    })
+    .await;
+    let Operated {
+        rig,
+        admin_config,
+        admin_con,
+        ..
+    } = o;
+    drop(admin_con);
+    let down = wait_body(&app, &bea, "/availability", "admin-con down", |b| {
+        b.contains("box-a/karl</a>: agent unavailable, admin-con down (since ")
+    })
+    .await;
+    assert!(!down.contains("<html"), "a fragment: {down}");
+    let (status, _, theirs) = send_as(&app, "GET", "/availability", None, &dan).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(!theirs.contains("unavailable"), "{theirs}");
+    let again = admitted_admin(&admin_config, &["show"]).await;
+    wait_body(&app, &bea, "/availability", "the admin banner gone", |b| {
+        !b.contains("admin-con down")
+    })
+    .await;
+    drop((gate, again, rig));
+}
+
+/// **The agent's connectors as the listener knows them, re-fetched by its
+/// page**: "last heard" counts up while admin-con sends nothing and falls
+/// back when it sends a heartbeat, then reads "admin-con down" once the
+/// link is cut, each by the fragment alone; a person holding no grant is
+/// answered as for an unknown agent.
+///
+/// Perturbation: drop the grant check from the fragment, and a person
+/// holding no grant reads karl's connectors.
+#[tokio::test]
+async fn the_agents_connectors_show_last_heard_and_the_cut() {
+    let Some(mut o) = operated(&["show"]).await else {
+        return;
+    };
+    let s = o.rig.store().clone();
+    let (_, dan) = signed_in(&o.rig.app, &s, &mut authenticator(), "dan").await;
+    let uri = format!("/agents/{}/availability", o.karl);
+    let (app, bea) = (o.rig.app.clone(), o.bea_session.clone());
+    let (_, _, first) = send_as(&app, "GET", &uri, None, &bea).await;
+    assert!(
+        first.contains("admin-con: connected, last heard"),
+        "{first}"
+    );
+    assert!(
+        first.contains("gate-con: turns unavailable, gate-con down, never connected"),
+        "{first}"
+    );
+    let (_, _, page) = send_as(&app, "GET", &format!("/agents/{}", o.karl), None, &bea).await;
+    assert!(page.contains(&format!("hx-get=\"{uri}\"")), "{page}");
+    assert!(page.contains("/assets/surfaces/htmx.min.js"), "{page}");
+    tokio::time::sleep(Duration::from_millis(2200)).await;
+    let (_, _, quiet) = send_as(&app, "GET", &uri, None, &bea).await;
+    assert!(
+        quiet.contains("last heard 2 s ago") || quiet.contains("last heard 3 s ago"),
+        "{quiet}"
+    );
+    o.admin_con.send(FromClient::Heartbeat).await;
+    wait_body(&app, &bea, &uri, "last heard again", |b| {
+        b.contains("last heard 0 s ago")
+    })
+    .await;
+    let (status, _, theirs) = send_as(&app, "GET", &uri, None, &dan).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{theirs}");
+    let Operated { rig, admin_con, .. } = o;
+    drop(admin_con);
+    wait_body(&app, &bea, &uri, "admin-con down", |b| {
+        b.contains("admin-con: agent unavailable, admin-con down since ")
+    })
+    .await;
+    drop(rig);
+}
+
+/// **A re-fetch is not the person's use**: the fragments leave a session's
+/// last use as it was, so an open tab never holds an idle session open;
+/// a page refreshes it.
+///
+/// Perturbation: refresh the last use at a background read, and the poll
+/// moves it.
+#[tokio::test]
+async fn a_poll_leaves_the_sessions_last_use_as_it_was() {
+    let Some(o) = operated(&["show"]).await else {
+        return;
+    };
+    let pool = &o.rig.store().pool;
+    sqlx::query(
+        "UPDATE session SET last_used_at = now() - interval '10 minutes' WHERE person_id = $1",
+    )
+    .bind(&o.bea)
+    .execute(pool)
+    .await
+    .unwrap();
+    let last = || async {
+        sqlx::query_scalar::<_, chrono::DateTime<chrono::Utc>>(
+            "SELECT max(last_used_at) FROM session WHERE person_id = $1",
+        )
+        .bind(&o.bea)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    };
+    let before = last().await;
+    for uri in [
+        "/availability".to_owned(),
+        format!("/agents/{}/availability", o.karl),
+    ] {
+        let (status, _, _) = send_as(&o.rig.app, "GET", &uri, None, &o.bea_session).await;
+        assert_eq!(status, StatusCode::OK, "{uri}");
+    }
+    assert_eq!(last().await, before, "a poll moved the last use");
+    let (status, _, _) = send_as(&o.rig.app, "GET", "/availability", None, "no-such-bearer").await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "an ended session's poll");
+    send_as(&o.rig.app, "GET", "/agents", None, &o.bea_session).await;
+    assert!(last().await > before, "a page refreshes it");
 }

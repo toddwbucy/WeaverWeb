@@ -124,6 +124,10 @@ struct LiveConnection {
     asks: Asks,
     /// The places of `PERSON_SLOTS` on this connection.
     person_slots: Arc<tokio::sync::Semaphore>,
+    /// **When the server last read a frame from this connection**, any
+    /// frame, heartbeats included (Spec 2.14): in memory alone, never
+    /// written per heartbeat, for the surfaces' "last heard".
+    heard: Arc<Mutex<std::time::Instant>>,
 }
 
 /// What the connection holds of one verb ask until its answer.
@@ -980,6 +984,16 @@ impl Listener {
     /// **The alerts' raising half**, for what a surface raises itself.
     pub fn alerts(&self) -> &Alerts {
         &self.inner.alerts
+    }
+
+    /// **How long since the server last read a frame from the agent's live
+    /// connection on the plane** (Spec 2.14), any frame, heartbeats
+    /// included; `None` where no admitted connection stands.
+    pub fn last_heard(&self, agent: &AgentId, plane: Plane) -> Option<Duration> {
+        let live = self.inner.live.lock().unwrap();
+        live.get(&(agent.clone(), plane))
+            .filter(|c| c.ready)
+            .map(|c| c.heard.lock().unwrap().elapsed())
     }
 
     /// **The silence bound**, which a caller waiting for a verb's answer
@@ -2660,6 +2674,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
     let (tx, mut rx) = mpsc::channel::<ToClient>(64);
     let (close_tx, mut close_rx) = watch::channel(false);
     let silent = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let heard = Arc::new(Mutex::new(std::time::Instant::now()));
     // **A write that cannot complete within the silence bound is the peer
     // gone silent**, whatever fills the channel: persons' asks hold few
     // slots and send through permits that never wait, so a peer that
@@ -2869,6 +2884,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                         ceiling: ceiling.clone(),
                         asks: asks.clone(),
                         person_slots: Arc::new(tokio::sync::Semaphore::new(PERSON_SLOTS)),
+                        heard: heard.clone(),
                     },
                 );
                 Ok(())
@@ -3008,7 +3024,10 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                 }
             };
             let line = match line {
-                Ok(Line::Frame(line)) => line,
+                Ok(Line::Frame(line)) => {
+                    *heard.lock().unwrap() = std::time::Instant::now();
+                    line
+                }
                 Ok(Line::Closed) => break,
                 Ok(Line::Malformed(why)) => {
                     tracing::warn!(

@@ -254,6 +254,7 @@ struct PersonsPage {
     here: &'static str,
     who: String,
     admin: bool,
+    chrome: super::Chrome,
     rows: Vec<Row>,
 }
 
@@ -277,10 +278,15 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap) -> Response {
             listed,
         })
         .collect();
+    let chrome = match super::Chrome::of(&store, &session.person_id).await {
+        Ok(chrome) => chrome,
+        Err(e) => return fault(e),
+    };
     match (PersonsPage {
         here: "admin",
         who: session.name,
         admin: true,
+        chrome,
         rows,
     })
     .render()
@@ -296,6 +302,7 @@ struct TokenPage {
     here: &'static str,
     who: String,
     admin: bool,
+    chrome: super::Chrome,
     name: String,
     token: String,
     expires: String,
@@ -303,11 +310,25 @@ struct TokenPage {
 
 /// **The token, shown once**: the one answer that carries it, kept from
 /// every cache.
-fn shown_once(session: Session, name: String, issued: IssuedToken) -> Response {
+async fn shown_once(
+    store: &Store,
+    session: Session,
+    name: String,
+    issued: IssuedToken,
+) -> Response {
+    // **Never at the cost of what is shown once**: the chrome unread is
+    // logged and left empty rather than losing the page.
+    let chrome = super::Chrome::of(store, &session.person_id)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::error!("the page's chrome could not be read: {e:#}");
+            super::Chrome::default()
+        });
     match (TokenPage {
         here: "admin",
         who: session.name,
         admin: true,
+        chrome,
         name,
         token: issued.value,
         expires: issued.expires_at.format("%Y-%m-%d %H:%M UTC").to_string(),
@@ -367,7 +388,7 @@ async fn enroll(store: Store, seams: &Seams, headers: HeaderMap, ask: EnrollAsk)
         Err(answer) => return answer,
     };
     match written {
-        Ok(Ok(issued)) => shown_once(session, ask.name.trim().to_owned(), issued),
+        Ok(Ok(issued)) => shown_once(&store, session, ask.name.trim().to_owned(), issued).await,
         Ok(Err(refusal)) => refused(&refusal),
         Err(e) => fault(e),
     }
@@ -425,7 +446,7 @@ async fn token(store: Store, seams: &Seams, headers: HeaderMap, ask: PersonAsk) 
         Err(answer) => return answer,
     };
     match written {
-        Ok(Ok((issued, name))) => shown_once(session, name, issued),
+        Ok(Ok((issued, name))) => shown_once(&store, session, name, issued).await,
         Ok(Err(refusal)) => refused(&refusal),
         Err(e) => fault(e),
     }

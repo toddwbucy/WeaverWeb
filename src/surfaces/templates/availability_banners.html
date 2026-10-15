@@ -1,0 +1,5 @@
+{#- The unavailable planes of the agents the person holds a grant on, the
+    page's own and the fragment it re-fetches every 15 s. No inline script. -#}
+{%- for banner in chrome.banners %}
+<p class="unavailable" role="status"><a href="/agents/{{ banner.agent_id }}">{{ banner.label }}</a>: {{ banner.says }} ({{ banner.since }})</p>
+{%- endfor %}

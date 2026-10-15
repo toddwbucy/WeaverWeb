@@ -1,0 +1,7 @@
+{#- One agent's two connectors as the listener knows them, the page's own
+    and the fragment it re-fetches every 15 s. No inline script. -#}
+<ul class="planes">
+{%- for plane in planes %}
+  <li>{{ plane.connector }}: {{ plane.status }}</li>
+{%- endfor %}
+</ul>

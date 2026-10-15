@@ -2133,7 +2133,12 @@ raised only for an entry that did not come through WeaverWeb**:
   raise `data_at_risk`, any other refusal `failed`, and the relay's refusal
   of another party `failed` too. An answer, by its kind, raises nothing. An
   own line raises nothing, the act asked through WeaverWeb having raised its
-  alert at the door, so **no act raises twice**;
+  alert at the door, so **no act raises twice**. **The alert says what
+  happened and admin's own word on it, and no more**: the verb, admin's
+  refusal object or outcome, and admin's time, and for the relay that a peer
+  other than admin-con was refused; never the line's caller uid, command
+  line or boundary digest, facts about the box every grant holder's panel
+  has no need of, which the operations log keeps whole;
 - **a connector's own failure** raises `failed` from its source, its subject
   the failure's kind: admin-con's `ceiling_not_read`, `trace_relay_refused`,
   `admin_log_unreadable`, and either connector's `link_outage` (the outage's
@@ -4522,7 +4527,7 @@ missing while it was relaying.
 | a fragment's re-fetch leaves the session's last use as it was | perturbation in `src/alerts_tests.rs`: refresh the last use at a background read, and a poll moves it, so an open tab holds an idle session open |
 | an answer refused at the door leaves its act's outcome unknown, and raises its alert | perturbation in `src/alerts_tests.rs`: leave the refused answer's ask out of the teardown's drain, on the admin plane or on the gate plane, and a `load` answered naming another verb, or a turn answered with both a close and a fault, raises only the lost contact |
 | a plane's loss is ordered before the restoration that follows it | perturbation in `src/alerts_tests.rs`, the teardown held after its row is released: raise the loss after the teardown rather than where the entry comes out, readmit in the gap, and the lost-contact alert ends unrestored while a connection stands |
-| a line of the box's `admin.log` raises an alert only where it did not come through WeaverWeb | perturbation in `src/entries_tests.rs` and `src/link/admin_con_tests.rs`: drop the own check at the server, and a refusal admin-con's own invocation met raises its alert again from its line; take every line as another party's at admin-con, and an own line sent end to end through the real admin-con raises one |
+| a line of the box's `admin.log` raises an alert only where it did not come through WeaverWeb | perturbation in `src/entries_tests.rs` and `src/link/admin_con_tests.rs`: drop the own check at the server, and a refusal admin-con's own invocation met raises its alert again from its line; take every line as another party's at admin-con, and an own line sent end to end through the real admin-con raises one; put the whole line back in the alert's detail, and another party's refusal shows the line's uid and command line to every grant holder |
 | a connector's entry is taken once, though it is sent again | perturbation in `src/entries_tests.rs`: drop the run's mark, and an entry resent on a new connection is logged twice; read on past an entry the store did not take, and the next entry moves the mark past it, so its resend is taken for a duplicate and never logged |
 | a connector's backlog of entries is bounded, its drops counted and reported | perturbation in `src/entries_tests.rs`: drop the bound, and a backlog past it holds every entry |
 | the door checks an entry once, its source on the plane's allow-list | perturbation in `src/entries_tests.rs`: give the gate plane the admin plane's sources, and gate-con's entry claiming `admin_log` is taken and classified rather than refused as malformed |

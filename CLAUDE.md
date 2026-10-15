@@ -332,7 +332,14 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
   `save_point_not_taken` with the run at rest raises the prompt, a `<dialog open>` on the
   agent page and the verb page; `POST /agents/{ag}/alerts/{al}/choose` runs "save point, then
   unload" (the `unload` only on exit 0 `save_point_taken` with its report's digest) or
-  `force-unload` as the person's own asks, and never acknowledges. `alerts_tests` run each
+  `force-unload` as the person's own asks, and never acknowledges. A plane the server cannot
+  reach (live credential, not connected) is a banner on every signed-in page for the agent's
+  grant holders ("agent unavailable, admin-con down", "turns unavailable, gate-con down"),
+  state from the register (`Store::unavailable_for`, `surfaces::Chrome`, which also carries
+  the nav's open-alert count), re-fetched every 15 s through htmx (`GET /availability`, and the
+  agent page's connectors with their in-memory "last heard", `GET /agents/{ag}/availability`);
+  a re-fetch reads the session without refreshing its last use
+  (`gate::session_in_background`). `alerts_tests` run each
   test on a `fresh_store` with a real listener and an operations log in a temporary directory.
 
 ## The seed tree: what carries forward and what leaves
@@ -397,8 +404,8 @@ tailer and `lifecycle.rs` (which ran the verbs through sudo) left the tree.
 left out of the fresh root because it held box paths and a sudoers rule, both of which the
 hard boundaries forbid. Two facts for the
 removal act: `askama.toml` lists `src/web/templates` beside `src/surfaces/templates`, and
-the legacy router in `src/web/mod.rs` is the only thing serving `htmx.min.js` and `sse.js`,
-so the surfaces need their own asset route before `web/` goes. `src/bin/weaver-web.rs`
+the legacy router in `src/web/mod.rs` still serves `htmx.min.js` and `sse.js`; the surfaces
+serve the same vendored htmx at `/assets/surfaces/htmx.min.js` since act 12. `src/bin/weaver-web.rs`
 currently wires both halves together (legacy router, link listener, and trace pump beside
 `surfaces::routes()`), so the removal starts there.
 

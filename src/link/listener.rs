@@ -551,6 +551,9 @@ pub enum AskPoint {
     AtRefusal,
     /// Under the hold, the first record durable, the frame not yet sent.
     UnderHold,
+    /// Not an ask's: a connection's teardown written and its row released,
+    /// its in-flight acts not yet raised.
+    AfterTeardown,
 }
 
 /// A test's stop in a person's ask: reached, then released.
@@ -2071,12 +2074,23 @@ impl Inner {
     /// The cleanup after a store error on a path that already installed:
     /// under the row's lock where the store can be reached, and without it,
     /// logged, where it cannot (the module header's one exception).
-    async fn remove_after_error(&self, key: &(AgentId, Plane), incarnation: i64) -> bool {
+    /// `on_removed` runs where the entry comes out, under the lock where
+    /// it is held.
+    async fn remove_after_error(
+        &self,
+        key: &(AgentId, Plane),
+        incarnation: i64,
+        on_removed: &(dyn Fn() + Sync),
+    ) -> bool {
         let removed = std::sync::atomic::AtomicBool::new(false);
         let locked = self
             .store
             .with_row_lock(&key.0, || {
-                removed.store(self.remove_if_mine(key, incarnation), Ordering::Relaxed);
+                let mine = self.remove_if_mine(key, incarnation);
+                removed.store(mine, Ordering::Relaxed);
+                if mine {
+                    on_removed();
+                }
             })
             .await;
         if let Err(e) = locked {
@@ -2085,7 +2099,11 @@ impl Inner {
                 key.0,
                 key.1
             );
-            removed.store(self.remove_if_mine(key, incarnation), Ordering::Relaxed);
+            let mine = self.remove_if_mine(key, incarnation);
+            removed.store(mine, Ordering::Relaxed);
+            if mine {
+                on_removed();
+            }
         }
         removed.load(Ordering::Relaxed)
     }
@@ -2922,7 +2940,8 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
             // the entry comes out under the lock, so the map agrees with
             // the row that rolled back.
             tracing::error!("link from {peer}: admission could not be written: {e:#}");
-            inner.remove_after_error(&key, incarnation).await;
+            // Never admitted, so no contact was had to lose.
+            inner.remove_after_error(&key, incarnation, &|| {}).await;
             // The commit may have landed before its answer was lost, leaving
             // the row connected under this incarnation with no socket: an
             // incarnation-bound teardown is deferred to the reconciliation,
@@ -3138,11 +3157,20 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                     // with both a close and a fault or neither, is the
                     // peer's protocol violation, refused as malformed, its
                     // first given no outcome and its asker no answer.
+                    // **A refused answer leaves its ask in flight** (Spec
+                    // 2.14): the entry goes back, so the teardown's drain
+                    // raises the act's unknown like any act left in flight.
                     let asked = asks.lock().unwrap().remove(&id);
-                    let checked = asked.ok_or("it answers no ask").and_then(|asked| {
-                        TurnAnswer::of(close, error, &asked.verb)
-                            .map(|answer| (asked.first, asked.principal, answer))
-                    });
+                    let checked = match asked {
+                        None => Err("it answers no ask"),
+                        Some(asked) => match TurnAnswer::of(close, error, &asked.verb) {
+                            Ok(answer) => Ok((asked.first, asked.principal, answer)),
+                            Err(why) => {
+                                asks.lock().unwrap().insert(id, asked);
+                                Err(why)
+                            }
+                        },
+                    };
                     let (first, principal, answer) = match checked {
                         Ok(checked) => checked,
                         Err(why) => {
@@ -3192,11 +3220,21 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                     // gets no outcome, since what admin did cannot be said,
                     // and the asker gets no answer, its ask ending with the
                     // connection. Nothing past the door sees it.
+                    // **A refused answer leaves its ask in flight** (Spec
+                    // 2.14): the entry goes back, so the teardown's drain
+                    // raises the act's unknown, the server's own `show`
+                    // excepted, like any act left in flight.
                     let asked = asks.lock().unwrap().remove(&id);
-                    let checked = asked.ok_or("it answers no ask").and_then(|asked| {
-                        Answer::of(outcome, error, &asked.verb, &agent.name)
-                            .map(|answer| (asked.first, asked.principal, asked.verb, answer))
-                    });
+                    let checked = match asked {
+                        None => Err("it answers no ask"),
+                        Some(asked) => match Answer::of(outcome, error, &asked.verb, &agent.name) {
+                            Ok(answer) => Ok((asked.first, asked.principal, asked.verb, answer)),
+                            Err(why) => {
+                                asks.lock().unwrap().insert(id, asked);
+                                Err(why)
+                            }
+                        },
+                    };
                     let (first, principal, verb, answer) = match checked {
                         Ok(checked) => checked,
                         Err(why) => {
@@ -3624,10 +3662,48 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
         .await;
     }
 
+    // **Contact lost, raised where the entry comes out, under the row's
+    // lock** (Spec 2.14): a new admission of this plane is decided under
+    // that lock too, so its restoration is queued after this loss and the
+    // one worker applies them in that order. Not for the server's own
+    // closes.
+    let removed = std::sync::atomic::AtomicBool::new(false);
+    let lose = || {
+        if SERVERS_OWN_CLOSES.contains(&reason) {
+            return;
+        }
+        let connector = match plane {
+            Plane::Admin => "admin-con",
+            Plane::Gate => "gate-con",
+        };
+        inner.alerts.raise(failure_of(
+            &agent.agent_id,
+            plane,
+            plane.as_str(),
+            None,
+            "server".to_owned(),
+            Raised {
+                kind: AlertKind::LostContact,
+                summary: format!(
+                    "contact with {connector} lost ({reason}); the agent may still be running"
+                ),
+                detail: String::new(),
+                reason: serde_json::json!({ "teardown": reason }),
+                options: Vec::new(),
+                outcome: "lost_contact",
+            },
+        ));
+    };
+    let uninstall = || {
+        let mine = inner.remove_if_mine(&key, incarnation);
+        removed.store(mine, Ordering::Relaxed);
+        if mine {
+            lose();
+        }
+    };
     // **Teardown bound to the incarnation, under the row's lock** (Spec 8):
     // the uninstall runs under the lock on every outcome, and the
     // disconnected write lands only while this incarnation is the live one.
-    let removed = std::sync::atomic::AtomicBool::new(false);
     #[cfg(test)]
     let torn = if inner.fault_next_teardown.swap(false, Ordering::Relaxed) {
         Err(anyhow::anyhow!(
@@ -3636,17 +3712,13 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
     } else {
         inner
             .store
-            .teardown(&agent.agent_id, plane, incarnation, || {
-                removed.store(inner.remove_if_mine(&key, incarnation), Ordering::Relaxed);
-            })
+            .teardown(&agent.agent_id, plane, incarnation, uninstall)
             .await
     };
     #[cfg(not(test))]
     let torn = inner
         .store
-        .teardown(&agent.agent_id, plane, incarnation, || {
-            removed.store(inner.remove_if_mine(&key, incarnation), Ordering::Relaxed);
-        })
+        .teardown(&agent.agent_id, plane, incarnation, uninstall)
         .await;
     match torn {
         Ok(true) => {}
@@ -3661,12 +3733,14 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
             tracing::error!(
                 "link from {peer}: teardown could not be written, deferred until the store answers: {e:#}"
             );
-            if inner.remove_after_error(&key, incarnation).await {
+            if inner.remove_after_error(&key, incarnation, &lose).await {
                 removed.store(true, Ordering::Relaxed);
             }
             inner.defer_teardown(agent.agent_id.clone(), plane, incarnation);
         }
     }
+    #[cfg(test)]
+    inner.pause_at(AskPoint::AfterTeardown).await;
     // **The window is marked whenever this connection actually left the
     // live map**, whatever the row's write answered: a revoked or rotated
     // credential has its incarnation cleared before the close, and a store
@@ -3708,29 +3782,6 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                 reason: serde_json::json!({ "teardown": reason }),
                 options: Vec::new(),
                 outcome: "unknown",
-            },
-        ));
-    }
-    if removed.load(Ordering::Relaxed) && !SERVERS_OWN_CLOSES.contains(&reason) {
-        let connector = match plane {
-            Plane::Admin => "admin-con",
-            Plane::Gate => "gate-con",
-        };
-        inner.alerts.raise(failure_of(
-            &agent.agent_id,
-            plane,
-            plane.as_str(),
-            None,
-            "server".to_owned(),
-            Raised {
-                kind: AlertKind::LostContact,
-                summary: format!(
-                    "contact with {connector} lost ({reason}); the agent may still be running"
-                ),
-                detail: String::new(),
-                reason: serde_json::json!({ "teardown": reason }),
-                options: Vec::new(),
-                outcome: "lost_contact",
             },
         ));
     }

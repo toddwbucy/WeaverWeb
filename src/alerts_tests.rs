@@ -14,7 +14,7 @@ use crate::admin_tests::{form, send_as, signed_in};
 use crate::agents_tests::Rig;
 use crate::alerting::Failure;
 use crate::host;
-use crate::link::frames::{FromClient, Plane, VerbOutcome};
+use crate::link::frames::{FromClient, Plane, TurnFault, VerbOutcome};
 use crate::link::listener::AskPoint;
 use crate::passkeys_tests::authenticator;
 use crate::store::AgentId;
@@ -1053,4 +1053,129 @@ async fn a_poll_leaves_the_sessions_last_use_as_it_was() {
     assert_eq!(status, StatusCode::UNAUTHORIZED, "an ended session's poll");
     send_as(&o.rig.app, "GET", "/agents", None, &o.bea_session).await;
     assert!(last().await > before, "a page refreshes it");
+}
+
+/// **An answer refused at the door leaves its act's outcome unknown, and
+/// raises its alert**: admin-con answers bea's `load` naming another verb,
+/// the server refuses it as malformed and closes, and the `load` is an
+/// `unknown` alert naming its first record, beside the lost contact. The
+/// same on the gate plane, a turn answered with both a close and a fault.
+///
+/// Perturbation: leave the refused answer's ask out of the teardown's
+/// drain, and only the lost contact stands.
+#[tokio::test]
+async fn an_answer_refused_at_the_door_raises_its_acts_unknown() {
+    let Some(mut o) = operated(&["show", "load"]).await else {
+        return;
+    };
+    let mut gate = dial_gate(&o).await;
+    let asked = ask(&o.rig, &o.bea_session, &o.karl, "load");
+    let (id, verb, _) = take_verb(&mut o.admin_con).await;
+    assert_eq!(verb, "load");
+    o.admin_con
+        .send(FromClient::Verb {
+            id,
+            outcome: Some(answered("stop", json!({"kind": "state", "state": "idle"}))),
+            error: None,
+        })
+        .await;
+    let found = wait_alerts(&o.rig, &o.karl, "the load's unknown", |a| {
+        a.iter().any(|x| x.kind == "unknown" && x.subject == "load")
+    })
+    .await;
+    let load = found
+        .iter()
+        .find(|x| x.kind == "unknown" && x.subject == "load")
+        .unwrap();
+    assert!(
+        load.first_record
+            .as_deref()
+            .is_some_and(|f| f.starts_with("au-")),
+        "{load:#?}"
+    );
+    assert!(
+        found
+            .iter()
+            .any(|x| x.kind == "lost_contact" && x.subject == "admin"),
+        "{found:#?}"
+    );
+    let _ = asked.await.unwrap();
+
+    let placed = place(&o.rig, &o.bea_session, &o.karl, "a turn of the test's");
+    let (id, _) = take_turn(&mut gate).await;
+    gate.send(FromClient::Turn {
+        id,
+        close: Some(close("answered", Some("an answer"), None, Some("stop"))),
+        error: Some(TurnFault {
+            kind: "busy".into(),
+            message: "both at once".into(),
+        }),
+    })
+    .await;
+    let found = wait_alerts(&o.rig, &o.karl, "the turn's unknown", |a| {
+        a.iter().any(|x| x.kind == "unknown" && x.subject == "turn")
+    })
+    .await;
+    let turn = found
+        .iter()
+        .find(|x| x.kind == "unknown" && x.subject == "turn")
+        .unwrap();
+    assert!(
+        turn.first_record
+            .as_deref()
+            .is_some_and(|f| f.starts_with("au-")),
+        "{turn:#?}"
+    );
+    assert!(
+        found
+            .iter()
+            .any(|x| x.kind == "lost_contact" && x.subject == "gate"),
+        "{found:#?}"
+    );
+    let _ = placed.await.unwrap();
+}
+
+/// **A plane's loss is ordered before the restoration that follows it**:
+/// admin-con is cut, its teardown held after the row is released, and a
+/// new admin-con admitted in that gap; the lost-contact alert ends
+/// restored, the loss having been raised where the entry came out.
+///
+/// Perturbation: raise the loss after the teardown, and the restoration
+/// is applied to no alert first and the loss raised unrestored after it.
+#[tokio::test]
+async fn a_loss_is_ordered_before_the_restoration_after_it() {
+    let Some(o) = operated(&["show"]).await else {
+        return;
+    };
+    let (reached, release) = o.rig.listener.pause_ask_at(AskPoint::AfterTeardown);
+    let Operated {
+        rig,
+        karl,
+        admin_config,
+        admin_con,
+        ..
+    } = o;
+    drop(admin_con);
+    reached.notified().await;
+    let again = admitted_admin(&admin_config, &["show"]).await;
+    release.notify_one();
+    let found = wait_alerts(&rig, &karl, "the loss restored", |a| {
+        a.iter()
+            .any(|x| x.kind == "lost_contact" && x.restored_at.is_some())
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let found = if found.len() == 1 {
+        alerts(&rig, &karl).await
+    } else {
+        found
+    };
+    assert!(
+        found
+            .iter()
+            .filter(|x| x.kind == "lost_contact")
+            .all(|x| x.restored_at.is_some()),
+        "{found:#?}"
+    );
+    drop(again);
 }

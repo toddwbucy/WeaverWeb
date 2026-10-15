@@ -334,6 +334,8 @@ struct AgentPage {
 struct AlertRow {
     alert_id: String,
     kind: String,
+    /// Where it came from, said for the page (Spec 2.14).
+    from: &'static str,
     subject: String,
     summary: String,
     detail: String,
@@ -608,6 +610,13 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, agent: String) ->
                 .unwrap_or_default(),
             raised: when(a.raised_at),
             last: when(a.last_at),
+            from: match a.source.as_str() {
+                "admin" => "the box, not through WeaverWeb",
+                "admin-con" => "admin-con",
+                "gate-con" => "gate-con",
+                "trace" => "the agent's trace",
+                _ => "WeaverWeb",
+            },
             alert_id: a.alert_id,
             kind: a.kind,
             subject: a.subject,

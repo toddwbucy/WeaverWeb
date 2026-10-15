@@ -51,8 +51,23 @@ pub struct Failure {
     pub reason: serde_json::Value,
 }
 
+/// **A connector's entry, as the server took it** (Spec 2.14; act 12, PR
+/// 2): one line of the operations log, and the alert it raises where it
+/// raises one.
+#[derive(Debug, Clone)]
+pub struct Entry {
+    pub agent: AgentId,
+    pub plane: &'static str,
+    pub source: String,
+    /// For a line of `admin.log`, whether admin-con found it its own.
+    pub own: Option<bool>,
+    pub entry: serde_json::Value,
+    pub raise: Option<Raise>,
+}
+
 enum Note {
     Failure(Box<Failure>),
+    Entry(Box<Entry>),
     Restored { agent: AgentId, plane: &'static str },
 }
 
@@ -93,6 +108,17 @@ impl Alerts {
             let dropped = self.dropped.fetch_add(1, Ordering::Relaxed) + 1;
             tracing::error!(
                 "the alerts' queue is full or gone: a failure dropped, {dropped} dropped in all"
+            );
+        }
+    }
+
+    /// **A connector's entry, never waiting**: dropped and counted like a
+    /// failure where the queue is full.
+    pub fn entry(&self, entry: Entry) {
+        if self.tx.try_send(Note::Entry(Box::new(entry))).is_err() {
+            let dropped = self.dropped.fetch_add(1, Ordering::Relaxed) + 1;
+            tracing::error!(
+                "the alerts' queue is full or gone: an entry dropped, {dropped} dropped in all"
             );
         }
     }
@@ -151,32 +177,47 @@ async fn work(
                 }
             }
             Note::Failure(failure) => {
-                let alert = match tokio::time::timeout(
-                    STORE_BOUND,
-                    store.raise_alert(&failure.raise),
-                )
-                .await
-                {
-                    Ok(Ok(id)) => Some(id),
-                    Ok(Err(e)) => {
-                        tracing::error!(
-                            "{}: an alert could not be raised: {e:#}",
-                            failure.raise.agent
-                        );
-                        None
-                    }
-                    Err(_) => {
-                        tracing::error!(
-                            "{}: an alert was not raised within {STORE_BOUND:?}",
-                            failure.raise.agent
-                        );
-                        None
-                    }
-                };
+                let alert = raised(&store, &failure.raise).await;
                 if let Some(path) = &log {
                     write_line(path, &failure, alert.as_deref()).await;
                 }
             }
+            Note::Entry(entry) => {
+                let alert = match &entry.raise {
+                    Some(raise) => raised(&store, raise).await,
+                    None => None,
+                };
+                if let Some(path) = &log {
+                    let line = serde_json::json!({
+                        "time": chrono::Utc::now().to_rfc3339(),
+                        "agent": entry.agent.as_str(),
+                        "plane": entry.plane,
+                        "source": entry.source,
+                        "own": entry.own,
+                        "entry": entry.entry,
+                        "alert": alert,
+                    });
+                    append(path, line).await;
+                }
+            }
+        }
+    }
+}
+
+/// The alert raised, bounded; its identity, none where nothing was raised.
+async fn raised(store: &Store, raise: &Raise) -> Option<String> {
+    match tokio::time::timeout(STORE_BOUND, store.raise_alert(raise)).await {
+        Ok(Ok(id)) => id,
+        Ok(Err(e)) => {
+            tracing::error!("{}: an alert could not be raised: {e:#}", raise.agent);
+            None
+        }
+        Err(_) => {
+            tracing::error!(
+                "{}: an alert was not raised within {STORE_BOUND:?}",
+                raise.agent
+            );
+            None
         }
     }
 }
@@ -198,6 +239,11 @@ async fn write_line(path: &PathBuf, failure: &Failure, alert: Option<&str>) {
         "reason": failure.reason,
         "alert": alert,
     });
+    append(path, line).await;
+}
+
+/// One line appended to the operations log.
+async fn append(path: &PathBuf, line: serde_json::Value) {
     let mut bytes = line.to_string().into_bytes();
     bytes.push(b'\n');
     let written = async {

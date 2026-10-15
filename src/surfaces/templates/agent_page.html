@@ -42,12 +42,13 @@
 <p>No alert on this agent.</p>
 {% else %}
 <table>
-  <thead><tr><th>Alert</th><th>About</th><th>Why</th><th>When</th><th></th></tr></thead>
+  <thead><tr><th>Alert</th><th>About</th><th>From</th><th>Why</th><th>When</th><th></th></tr></thead>
   <tbody>
   {% for alert in alerts %}
   <tr>
     <td>{{ alert.kind }}{% if alert.open %} (open){% endif %}</td>
     <td>{{ alert.subject }}</td>
+    <td>{{ alert.from }}</td>
     <td>{{ alert.summary }}{% if !alert.detail.is_empty() %}<pre>{{ alert.detail }}</pre>{% endif %}</td>
     <td>raised {{ alert.raised }}; {{ alert.occurrences }} time{% if alert.occurrences != 1 %}s{% endif %}, last {{ alert.last }}{% if !alert.restored.is_empty() %}; {{ alert.restored }}{% endif %}{% if !alert.acknowledged.is_empty() %}; {{ alert.acknowledged }}{% endif %}</td>
     <td>{% if alert.open && can_ack %}<form method="post" action="/agents/{{ agent_id }}/alerts/{{ alert.alert_id }}/ack"><input type="hidden" name="version" value="{{ alert.version }}"><button type="submit">Acknowledge</button></form>{% endif %}</td>

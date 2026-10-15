@@ -306,6 +306,8 @@ pub async fn save_point_then_unload(
                     detail: outcome.answer.as_ref().map(|a| a.to_string()).unwrap_or_default(),
                     first: Some(first.clone()),
                     options: Vec::new(),
+                    source: "server",
+                    once: false,
                 },
                 plane: "admin",
                 principal: asker.person_id.clone(),

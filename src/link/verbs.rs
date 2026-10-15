@@ -363,6 +363,7 @@ fn box_facts(plane: Plane) -> &'static str {
             "\n# The box's facts, added on the box by the install:\n\
              # trace_socket = \"<the agent's trace relay socket>\"\n\
              # weaver_admin = \"<weaver-admin's absolute path, as the box's rule names it>\"\n\
+             # admin_log = \"<the agent's admin.log, absolute>\"\n\
              # verb_bound_secs = 960    # past the box's load bound\n\
              # stop_grace_secs = 1080   # the load bound, the unload bound and a margin\n"
         }

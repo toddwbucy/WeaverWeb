@@ -37,7 +37,8 @@ pub fn bounded(text: &str, bound: usize) -> String {
 }
 
 /// What an alert is about: `failed`, `unknown`, `refused`, `lost_contact`,
-/// `save_point_missed` (the decision prompt of ruling 2) or `data_at_risk`.
+/// `save_point_missed` (the decision prompt of ruling 2), `data_at_risk`, or
+/// `data_lost` (a loss that already happened, migration `0020`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AlertKind {
     Failed,
@@ -46,6 +47,7 @@ pub enum AlertKind {
     LostContact,
     SavePointMissed,
     DataAtRisk,
+    DataLost,
 }
 
 impl AlertKind {
@@ -57,6 +59,7 @@ impl AlertKind {
             AlertKind::LostContact => "lost_contact",
             AlertKind::SavePointMissed => "save_point_missed",
             AlertKind::DataAtRisk => "data_at_risk",
+            AlertKind::DataLost => "data_lost",
         }
     }
 }
@@ -74,6 +77,13 @@ pub struct Raise {
     pub first: Option<String>,
     /// A decision prompt's options.
     pub options: Vec<String>,
+    /// **Where it came from** (migration `0020`): `server`, `admin` (the
+    /// box's `admin.log`), `admin-con`, `gate-con` or `trace`.
+    pub source: &'static str,
+    /// **Raised once ever, never repeated or reopened**: a loss that
+    /// already happened, named by its subject, read again from a replay
+    /// or a backfill of the trace raises nothing.
+    pub once: bool,
 }
 
 /// An alert as the pages read it.
@@ -103,15 +113,18 @@ impl Store {
     /// once leave one alert whose count holds both. A repeat takes the
     /// latest reason, moves the version, and clears a restoration, contact
     /// being lost again. Answers the alert's identity.
-    pub async fn raise_alert(&self, raise: &Raise) -> anyhow::Result<String> {
+    pub async fn raise_alert(&self, raise: &Raise) -> anyhow::Result<Option<String>> {
+        if raise.once {
+            return self.raise_once(raise).await;
+        }
         let id: String = sqlx::query_scalar(
             "INSERT INTO alert (agent_id, kind, subject, source, summary, detail, \
-             first_record, options) VALUES ($1, $2, $3, 'server', $4, $5, $6, $7) \
+             first_record, options) VALUES ($1, $2, $3, $8, $4, $5, $6, $7) \
              ON CONFLICT (agent_id, kind, subject) WHERE acknowledged_at IS NULL \
              DO UPDATE SET last_at = now(), occurrences = alert.occurrences + 1, \
              version = alert.version + 1, summary = EXCLUDED.summary, \
              detail = EXCLUDED.detail, first_record = EXCLUDED.first_record, \
-             options = EXCLUDED.options, restored_at = NULL \
+             options = EXCLUDED.options, source = EXCLUDED.source, restored_at = NULL \
              RETURNING alert_id",
         )
         .bind(raise.agent.as_str())
@@ -121,9 +134,64 @@ impl Store {
         .bind(bounded(&raise.detail, DETAIL_BOUND))
         .bind(&raise.first)
         .bind(&raise.options)
+        .bind(raise.source)
         .fetch_one(&self.pool)
         .await?;
-        Ok(id)
+        Ok(Some(id))
+    }
+
+    /// **An alert raised once ever** for its agent, kind and subject: none
+    /// where one stands, open or acknowledged, and one of two raisers at
+    /// once resolved by the open alert's index. `None` where nothing was
+    /// raised.
+    async fn raise_once(&self, raise: &Raise) -> anyhow::Result<Option<String>> {
+        Ok(sqlx::query_scalar(
+            "INSERT INTO alert (agent_id, kind, subject, source, summary, detail, \
+             first_record, options) \
+             SELECT $1, $2, $3, $8, $4, $5, $6, $7 WHERE NOT EXISTS ( \
+               SELECT 1 FROM alert WHERE agent_id = $1 AND kind = $2 AND subject = $3) \
+             ON CONFLICT (agent_id, kind, subject) WHERE acknowledged_at IS NULL DO NOTHING \
+             RETURNING alert_id",
+        )
+        .bind(raise.agent.as_str())
+        .bind(raise.kind.as_str())
+        .bind(bounded(&raise.subject, 64))
+        .bind(bounded(&raise.summary, SUMMARY_BOUND))
+        .bind(bounded(&raise.detail, DETAIL_BOUND))
+        .bind(&raise.first)
+        .bind(&raise.options)
+        .bind(raise.source)
+        .fetch_optional(&self.pool)
+        .await?)
+    }
+
+    /// **Take a connector's entry once** (Spec 2.14, migration `0020`):
+    /// true where its sequence is past the highest taken of its run, which
+    /// moves to it; false for a resend. A run is the agent's and the
+    /// plane's it was first met on, and an entry of it from another is
+    /// taken as a resend, never as new.
+    pub async fn take_entry(
+        &self,
+        run: &str,
+        agent: &AgentId,
+        plane: &str,
+        seq: u64,
+    ) -> anyhow::Result<bool> {
+        let seq = i64::try_from(seq).map_err(|_| anyhow::anyhow!("a sequence past i64"))?;
+        let taken: Option<i32> = sqlx::query_scalar(
+            "INSERT INTO entry_run (run_id, agent_id, plane, last_seq) VALUES ($1, $2, $3, $4) \
+             ON CONFLICT (run_id) DO UPDATE SET last_seq = EXCLUDED.last_seq, last_at = now() \
+             WHERE entry_run.last_seq < EXCLUDED.last_seq \
+             AND entry_run.agent_id = EXCLUDED.agent_id AND entry_run.plane = EXCLUDED.plane \
+             RETURNING 1",
+        )
+        .bind(run)
+        .bind(agent.as_str())
+        .bind(plane)
+        .bind(seq)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(taken.is_some())
     }
 
     /// **Contact restored**: the open lost-contact alert on the plane, if

@@ -25,9 +25,11 @@
 //! relay's heartbeat and before anything read after the invocation, and
 //! only one verb runs at a time.
 
+use crate::link::admin_log;
 use crate::link::client::{
     self, Backoff, Connection, Ended, Incoming, Link, LinkConfig, LinkStatus,
 };
+use crate::link::entries::Entries;
 use crate::link::frames::{
     FromClient, LINE_BOUND, Plane, Position, Principal, ToClient, VerbFault, VerbOutcome,
 };
@@ -152,6 +154,10 @@ pub struct AdminConConfig {
     /// one config value in a privileged command line beside the agent's
     /// name (Spec 7.2).
     pub weaver_admin: PathBuf,
+    /// **The agent's `admin.log`, absolute** (Spec 2.14, 8): a box fact
+    /// with no default, read line by line from admin-con's start and sent
+    /// upstream as entries (`link::admin_log`).
+    pub admin_log: PathBuf,
     /// How much of the file's tail is relayed after a server restart, and
     /// how much of what an opening read it holds to replay without reading
     /// again.
@@ -237,6 +243,7 @@ const MEMBERS: &[&str] = &[
     "key",
     "trace_socket",
     "weaver_admin",
+    "admin_log",
     "backfill_bytes",
     "verb_bound_secs",
     "stop_grace_secs",
@@ -274,6 +281,13 @@ impl AdminConConfig {
                 "{}: trace_socket {} is not an absolute path",
                 path.display(),
                 cfg.trace_socket.display()
+            );
+        }
+        if !cfg.admin_log.is_absolute() {
+            anyhow::bail!(
+                "{}: admin_log {} is not an absolute path",
+                path.display(),
+                cfg.admin_log.display()
             );
         }
         Ok(cfg)
@@ -781,11 +795,14 @@ struct Door {
     /// Openings failed since the last success, for the backoff.
     failures: u32,
     next_try: tokio::time::Instant,
+    /// The connector's entries, for the relay's refusal of admin-con.
+    entries: Entries,
 }
 
 impl Door {
-    fn closed(socket: PathBuf, backoff: Backoff, at: Position) -> Self {
+    fn closed(socket: PathBuf, backoff: Backoff, at: Position, entries: Entries) -> Self {
         Self {
+            entries,
             socket,
             backoff,
             open: false,
@@ -1049,6 +1066,10 @@ impl Door {
                 tracing::error!(
                     "the trace relay refused a request from offset zero; the door is taken as closed"
                 );
+                self.entries.failure(
+                    "trace_relay_refused",
+                    "the trace relay refused admin-con's request from offset zero; the trace door is taken as closed",
+                );
                 self.close(false);
                 step.closed = true;
             }
@@ -1215,7 +1236,19 @@ pub async fn run<I: Invoker>(
     let hello_invoker = invoker.clone();
     let serve_shutdown = shutdown.clone();
     let slot = Arc::new(Slot::new());
+    // **The connector's entries** (Spec 2.14): its own failures, and the
+    // box's admin.log read on a thread of its own, sent upstream by the
+    // connection's pump.
+    let entries = Entries::new("admin-con");
+    let _tail = admin_log::tail(
+        cfg.admin_log.clone(),
+        entries.clone(),
+        admin_log::my_uid(),
+        shutdown.clone(),
+    );
+    let hello_entries = entries.clone();
     let opts = ServeOptions {
+        entries: entries.clone(),
         agent: cfg.link.agent.clone(),
         socket: cfg.trace_socket.clone(),
         backoff,
@@ -1246,6 +1279,7 @@ pub async fn run<I: Invoker>(
             let shared = hello_shared.clone();
             let invoker = hello_invoker.clone();
             let socket = socket.clone();
+            let entries = hello_entries.clone();
             async move {
                 // **The ceiling is exactly what `grants` answers** (Spec 8);
                 // an ask that fails declares nothing rather than guessing.
@@ -1260,11 +1294,19 @@ pub async fn run<I: Invoker>(
                             tracing::warn!(
                                 "the grants ask failed ({e:#}); declaring an empty ceiling"
                             );
+                            entries.failure(
+                                "ceiling_not_read",
+                                format!("the grants ask failed ({e:#}); the hello declares an empty ceiling"),
+                            );
                             BTreeSet::new()
                         }
                         Err(_) => {
                             tracing::warn!(
                                 "the grants ask passed its {grants_bound:?} bound; declaring an empty ceiling"
+                            );
+                            entries.failure(
+                                "ceiling_not_read",
+                                format!("the grants ask passed its {grants_bound:?} bound; the hello declares an empty ceiling"),
                             );
                             BTreeSet::new()
                         }
@@ -1302,6 +1344,7 @@ pub async fn run<I: Invoker>(
         backoff,
         shutdown,
         status,
+        Some(entries),
         |conn| {
             serve(
                 conn,
@@ -1348,6 +1391,7 @@ pub(super) async fn orderly_stop(slot: &Slot, agent: &str, deadline: tokio::time
 
 #[derive(Clone)]
 struct ServeOptions {
+    entries: Entries,
     agent: String,
     /// The trace relay's socket.
     socket: PathBuf,
@@ -1658,7 +1702,12 @@ async fn relay<I: Invoker>(
         Some(acknowledged) => Resume::Ack(acknowledged),
         None => Resume::Backfill,
     };
-    let mut door = Door::closed(opts.socket.clone(), opts.backoff, shared.cursor.clone());
+    let mut door = Door::closed(
+        opts.socket.clone(),
+        opts.backoff,
+        shared.cursor.clone(),
+        opts.entries.clone(),
+    );
     // **The replay's frames wait here and go out one at a time**, the
     // connection read and any ask served between each (Spec 7.2), so an ask
     // waits behind at most one frame and never behind a whole step, which

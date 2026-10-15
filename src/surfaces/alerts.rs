@@ -25,7 +25,7 @@ use askama::Template;
 
 use crate::link::frames::VerbOutcome;
 use crate::link::listener::{
-    Act, Asker, FORCE_UNLOAD, Listener, SAVE_POINT_THEN_UNLOAD, VerbError,
+    Act, Admission, Asker, FORCE_UNLOAD, Listener, SAVE_POINT_THEN_UNLOAD, VerbError,
 };
 use crate::store::alerts::{AlertKind, Raise, acknowledge_in};
 use crate::store::audit::{PersonMethod, Principal, Target};
@@ -248,20 +248,26 @@ pub struct Step {
 /// `unload`; a confirmation missing from an answer that was otherwise
 /// admin's raises its own alert, a refusal or a fault having raised theirs
 /// at the door.
-pub async fn save_point_then_unload(listener: Listener, asker: Asker, agent: AgentId) -> Vec<Step> {
+///
+/// **One place for the whole sequence**: the choice's one admission is
+/// handed to each ask and back ([`Listener::ask_under`]), and held across
+/// the waits for each answer, so a recovery takes exactly one of the
+/// person's places for its whole life. Released at an ask's enqueue, the
+/// sequence would wait on the save point's answer, unbounded, holding
+/// nothing, and a person could pile up such waits past their share;
+/// admitted again for the unload, one recovery would take two places, and
+/// a person's other asks could shed its own steps.
+pub async fn save_point_then_unload(
+    listener: Listener,
+    admission: Admission,
+    asker: Asker,
+    agent: AgentId,
+) -> Vec<Step> {
     let mut steps = Vec::new();
-    let Some(admission) = listener.admit_ask(&asker.person_id) else {
-        steps.push(Step {
-            verb: "save-point".into(),
-            first: String::new(),
-            status: VerbError::Shed.to_string(),
-        });
-        return steps;
-    };
-    let saved = match listener
-        .ask_as_person(admission, &asker, &agent, Act::Verb("save-point".into()))
-        .await
-    {
+    let (admission, asked) = listener
+        .ask_under(admission, &asker, &agent, Act::Verb("save-point".into()))
+        .await;
+    let saved = match asked {
         Ok(enqueued) => {
             let first = enqueued.first.clone();
             (first, enqueued.answer().await)
@@ -319,18 +325,18 @@ pub async fn save_point_then_unload(listener: Listener, asker: Asker, agent: Age
         first,
         status: format!("taken and read back to its manifest line, {digest}"),
     });
-    let Some(admission) = listener.admit_ask(&asker.person_id) else {
+    let Some(admission) = admission else {
         steps.push(Step {
             verb: "unload".into(),
             first: String::new(),
-            status: VerbError::Shed.to_string(),
+            status: "not asked: the save point's ask ended abnormally".into(),
         });
         return steps;
     };
-    match listener
-        .ask_as_person(admission, &asker, &agent, Act::Verb("unload".into()))
-        .await
-    {
+    let (_admission, asked) = listener
+        .ask_under(admission, &asker, &agent, Act::Verb("unload".into()))
+        .await;
+    match asked {
         Ok(enqueued) => {
             let first = enqueued.first.clone();
             let status = match enqueued.answer().await {
@@ -432,18 +438,16 @@ pub(super) async fn choose(
     let listener = seams.asker.clone();
     let sequence = if option == SAVE_POINT_THEN_UNLOAD {
         let (listener, asker, agent) = (listener.clone(), asker.clone(), id.clone());
-        tokio::spawn(async move {
-            let _admission = admission;
-            save_point_then_unload(listener, asker, agent).await
-        })
+        tokio::spawn(async move { save_point_then_unload(listener, admission, asker, agent).await })
     } else {
         let (listener, asker, agent) = (listener.clone(), asker.clone(), id.clone());
         tokio::spawn(async move {
             let mut steps = Vec::new();
-            match listener
-                .ask_as_person(admission, &asker, &agent, Act::Verb("force-unload".into()))
-                .await
-            {
+            // The one place held to the answer, as the sequence holds it.
+            let (_admission, asked) = listener
+                .ask_under(admission, &asker, &agent, Act::Verb("force-unload".into()))
+                .await;
+            match asked {
                 Ok(enqueued) => {
                     let first = enqueued.first.clone();
                     let status = match enqueued.answer().await {

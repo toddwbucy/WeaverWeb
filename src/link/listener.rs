@@ -1198,21 +1198,37 @@ impl Listener {
         agent: &AgentId,
         act: Act,
     ) -> Result<Enqueued, VerbError> {
+        self.ask_under(admission, asker, agent, act).await.1
+    }
+
+    /// **[`Listener::ask_as_person`], its admission handed back once the
+    /// ask's task ends** (Spec 2.14), so a caller that goes on waiting, a
+    /// decision's sequence through its answers and its next ask, holds its
+    /// one place throughout and asks again under it rather than admitting
+    /// twice. `None` where the ask's task itself ended abnormally, the
+    /// admission going with it.
+    pub async fn ask_under(
+        &self,
+        admission: Admission,
+        asker: &Asker,
+        agent: &AgentId,
+        act: Act,
+    ) -> (Option<Admission>, Result<Enqueued, VerbError>) {
         let (inner, asker_, agent_) = (self.inner.clone(), asker.clone(), agent.clone());
         let (plane, subject) = (act.plane(), act.granted().to_owned());
         let task = async move {
-            let _admission = admission;
             let mut authorized = false;
             let asked = inner.ask_held(&asker_, &agent_, act, &mut authorized).await;
-            (asked, authorized)
+            (asked, authorized, admission)
         };
-        let (asked, authorized) = match tokio::spawn(task).await {
-            Ok(asked) => asked,
+        let (asked, authorized, admission) = match tokio::spawn(task).await {
+            Ok((asked, authorized, admission)) => (asked, authorized, Some(admission)),
             Err(e) => {
                 tracing::error!("{agent}: a person's {subject} was not asked: its task ended: {e}");
                 (
                     Err(VerbError::Server(format!("the ask's task ended: {e}"))),
                     false,
+                    None,
                 )
             }
         };
@@ -1253,7 +1269,7 @@ impl Listener {
                 },
             ));
         }
-        asked
+        (admission, asked)
     }
 
     /// A person's verb, admitted, asked, and its answer awaited without a

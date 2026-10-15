@@ -526,6 +526,74 @@ async fn save_point_then_unload_asks_unload_only_on_a_confirmed_save_point() {
     );
 }
 
+/// **One recovery holds exactly one place for its whole life**: bea holds
+/// three asks' places and chooses "save point, then unload"; the choice
+/// takes the fourth and its save-point and its unload are both asked under
+/// it, bea never holding more than her share of four, and the place is
+/// given back once the sequence ends.
+///
+/// Perturbation: admit again inside the sequence, and with bea's share
+/// full the save-point is shed.
+#[tokio::test]
+async fn one_recovery_holds_one_place_for_its_whole_life() {
+    let Some(mut o) = operated(&["show", "unload", "save-point", "force-unload"]).await else {
+        return;
+    };
+    let prompt = a_prompt(&mut o).await;
+    let listener = o.rig.listener.clone();
+    let held: Vec<_> = (0..3)
+        .map(|_| listener.admit_ask(&o.bea).expect("a place of bea's share"))
+        .collect();
+
+    let chosen = choose(&o, &prompt, "save_point_then_unload");
+    let (id, verb, _) = take_verb(&mut o.admin_con).await;
+    assert_eq!(verb, "save-point", "the save-point is asked, not shed");
+    assert!(
+        listener.admit_ask(&o.bea).is_none(),
+        "the choice holds the fourth"
+    );
+    let report = json!({"save_point": "d0c0ffee", "name": "n-1", "run": "r-1",
+        "sequence": 1, "turn": 1, "event_run": "r-1", "position": 9});
+    o.admin_con
+        .send(FromClient::Verb {
+            id,
+            outcome: Some(answered(
+                "save-point",
+                json!({"kind": "save_point_taken", "report": report}),
+            )),
+            error: None,
+        })
+        .await;
+    let (id, verb, _) = take_verb(&mut o.admin_con).await;
+    assert_eq!(verb, "unload", "the unload is asked under the same place");
+    assert!(
+        listener.admit_ask(&o.bea).is_none(),
+        "the place is held across the wait"
+    );
+    o.admin_con
+        .send(FromClient::Verb {
+            id,
+            outcome: Some(answered(
+                "unload",
+                json!({"kind": "state", "state": "unloaded"}),
+            )),
+            error: None,
+        })
+        .await;
+    let (status, _, page) = chosen.await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains("d0c0ffee"), "{page}");
+    let until = tokio::time::Instant::now() + Duration::from_secs(5);
+    while listener.admit_ask(&o.bea).is_none() {
+        assert!(
+            tokio::time::Instant::now() < until,
+            "the place is given back once the sequence ends"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    drop(held);
+}
+
 /// **Choosing without a grant answers as an unknown agent**, an alert that
 /// stands and one that does not alike, and asks nothing, so the page is no
 /// oracle for alert identities.

@@ -3931,3 +3931,70 @@ async fn a_window_whose_acks_were_dropped_is_sent_again() {
     }
     con.stop().await;
 }
+
+/// **A steady stream of entries never postpones the resend**: with the
+/// server dropping a full window's acknowledgements and admin-con pushing
+/// a line every quarter of the silence bound, the window is sent again
+/// within a bound of its last progress, while the stream goes on.
+///
+/// Perturbation: restart the resend's timer at every wake, and the stream
+/// postpones it for as long as it lasts.
+#[tokio::test]
+async fn a_steady_stream_never_postpones_the_resend() {
+    let Some(lab) = Lab::open_with(Duration::from_secs(4)).await else {
+        return;
+    };
+    let trace = Trace::new();
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
+    let invoker = FakeInvoker::new(&["show"], "idle");
+    let mut con = Running::start(config(&path), invoker.clone());
+    con.wait("admitted", |s| s.admitted).await;
+    tokio::time::sleep(crate::link::admin_log::POLL * 3).await;
+    let window = crate::link::entries::WINDOW;
+    lab.listener.drop_entry_acks(window);
+    let me = u64::from(crate::link::admin_log::my_uid());
+    let line = move |n: usize| {
+        json!({"wall_ms": n, "uid": me, "verb": "show", "agent": "karl",
+            "outcome": json!({"kind": "state", "state": "idle"}).to_string()})
+        .to_string()
+    };
+    let admin_log = trace.admin_log.clone();
+    let append = move |n: usize| {
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&admin_log)
+            .unwrap();
+        writeln!(f, "{}", line(n)).unwrap();
+    };
+    for n in 0..window {
+        append(n);
+    }
+    let started = tokio::time::Instant::now();
+    // A line every quarter of the bound, for three bounds.
+    let stream = tokio::spawn(async move {
+        for n in window..window + 12 {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            append(n);
+        }
+    });
+    let until = started + Duration::from_secs(8);
+    loop {
+        let taken: Option<i64> =
+            sqlx::query_scalar("SELECT max(last_seq) FROM entry_run WHERE agent_id = $1")
+                .bind(id.as_str())
+                .fetch_one(&lab.store.pool)
+                .await
+                .unwrap();
+        if taken.unwrap_or(0) > window as i64 {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < until,
+            "the stream postponed the resend: taken through {taken:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    stream.abort();
+    con.stop().await;
+}

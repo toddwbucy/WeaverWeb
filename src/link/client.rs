@@ -548,16 +548,29 @@ impl Connection {
         let cadence = self.cadence;
         entries.reconnected();
         let pumped = entries.clone();
-        // **What was sent and not acknowledged is sent again** after a
-        // silence bound (four cadences) with nothing acknowledged or pushed:
-        // the server sends an acknowledgement without waiting and drops it
-        // where its write queue is full, and a full window sends nothing
-        // more to draw a later one. The server's mark takes a resend once
-        // and acknowledges it again.
+        // **What was sent and not acknowledged is sent again** a silence
+        // bound (four cadences) after the last progress, an acknowledgement
+        // taken or a resend: the server sends an acknowledgement without
+        // waiting and drops it where its write queue is full, and a full
+        // window sends nothing more to draw a later one. The server's mark
+        // takes a resend once and acknowledges it again. **The deadline is an
+        // instant, read at each wake**: a push wakes the pump and moves it
+        // not, so a steady stream of entries never postpones the resend.
         let resend_after = cadence * 4;
         self.pump = Some(tokio::spawn(async move {
             let mut sent = 0u64;
+            let mut acks = pumped.acks();
+            let mut since = tokio::time::Instant::now();
             loop {
+                let now_acks = pumped.acks();
+                if now_acks != acks || !pumped.unacknowledged(sent) {
+                    acks = now_acks;
+                    since = tokio::time::Instant::now();
+                }
+                if tokio::time::Instant::now() >= since + resend_after {
+                    sent = 0;
+                    since = tokio::time::Instant::now();
+                }
                 match pumped.next_after(sent) {
                     Some((seq, frame)) => {
                         match tokio::time::timeout(cadence, tx.send(frame)).await {
@@ -570,9 +583,9 @@ impl Connection {
                         }
                     }
                     None => {
-                        let woken = tokio::time::timeout(resend_after, pumped.changed()).await;
-                        if woken.is_err() && pumped.unacknowledged(sent) {
-                            sent = 0;
+                        tokio::select! {
+                            () = pumped.changed() => {}
+                            () = tokio::time::sleep_until(since + resend_after) => {}
                         }
                     }
                 }

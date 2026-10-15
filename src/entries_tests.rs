@@ -925,3 +925,87 @@ async fn an_alert_and_its_record_on_the_row_are_one() {
     assert_eq!(found.len(), 1, "{found:#?}");
     assert_eq!(found[0].occurrences, 1, "{found:#?}");
 }
+
+/// **The drain is fair**: a row that failed is never chosen ahead of a row
+/// not tried since. Seventy rows whose every failure is slow, a batch of
+/// them outlasting the first backoffs, sit ahead of another run's entry,
+/// which is applied within a few batches.
+///
+/// Perturbation: choose due rows by their identity alone, and the slow
+/// failures are chosen again ahead of it, batch after batch.
+#[tokio::test]
+async fn the_drain_is_fair_to_a_row_behind_slow_failures() {
+    let Some(mut o) = operated(&["show"]).await else {
+        return;
+    };
+    o.rig
+        .listener
+        .alerts()
+        .poison_run_slowly(RUN, Duration::from_millis(80));
+    for seq in 1..=70 {
+        send_entry(
+            &mut o.admin_con,
+            seq,
+            "admin-con",
+            json!({"kind": "probe", "message": format!("slow {seq}")}),
+        )
+        .await;
+    }
+    o.admin_con
+        .send(FromClient::Entry {
+            run: "fedcba9876543210".into(),
+            seq: 1,
+            source: "admin-con".into(),
+            entry: json!({"kind": "probe", "message": "fresh"}),
+        })
+        .await;
+    let until = tokio::time::Instant::now() + Duration::from_secs(10);
+    while entry_lines(&o.rig).is_empty() {
+        assert!(
+            tokio::time::Instant::now() < until,
+            "the fresh entry starved behind the slow failures"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(entry_lines(&o.rig)[0]["entry"]["message"], "fresh");
+}
+
+/// **A baseline in the middle of a line skips through its end**: started
+/// on a file ending with half a record, admin-con sends nothing of it when
+/// the writer finishes it, and the next line whole.
+///
+/// Perturbation: take the baseline at the file's end with no skip, and the
+/// half record's rest is sent as a line of its own.
+#[test]
+fn admin_log_started_mid_line_skips_its_rest() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("admin.log");
+    let first = line("load", THEIRS, json!({"kind": "config_invalid"})).to_string();
+    let (head, rest) = first.split_at(first.len() / 2);
+    std::fs::write(
+        &path,
+        format!("{}\n{head}", line("show", MINE, json!({"kind": "state"}))),
+    )
+    .unwrap();
+    let entries = Entries::new("admin-con");
+    let (stop, shutdown) = tokio::sync::watch::channel(false);
+    let tail = admin_log::tail(path.clone(), entries.clone(), MINE as u32, shutdown);
+    let mut f = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap();
+    write!(
+        f,
+        "{rest}\n{}\n",
+        line("stop", THEIRS, json!({"kind": "at_rest"}))
+    )
+    .unwrap();
+    drop(f);
+    let pending = wait_pending(&entries, 1);
+    std::thread::sleep(admin_log::POLL * 2);
+    let pending_after = entries.pending();
+    stop.send_replace(true);
+    tail.join().unwrap();
+    assert_eq!(pending_after.len(), 1, "{pending_after:#?}");
+    assert_eq!(pending[0].1["line"]["verb"], "stop", "{pending:#?}");
+}

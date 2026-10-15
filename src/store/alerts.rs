@@ -272,12 +272,13 @@ impl Store {
         Ok(true)
     }
 
-    /// The inbox's oldest rows due a try, at most `limit`: a row backed
-    /// off after a failure waits its turn and holds no other.
+    /// The inbox's rows due a try, at most `limit`, **fairly**: by when
+    /// each is due, a fresh row's take or a failed row's backed-off try, so
+    /// a row that failed is never chosen ahead of one not tried since.
     pub async fn inbox(&self, limit: i64) -> anyhow::Result<Vec<InboxRow>> {
         Ok(sqlx::query_as(
             "SELECT inbox_id, run_id, seq, agent_id, plane, source, entry, alert_id \
-             FROM entry_inbox WHERE next_try <= now() ORDER BY inbox_id LIMIT $1",
+             FROM entry_inbox WHERE next_try <= now() ORDER BY next_try, inbox_id LIMIT $1",
         )
         .bind(limit)
         .fetch_all(&self.pool)

@@ -176,7 +176,13 @@ impl Tail {
         self.offset = if self.at_start { meta.len() } else { 0 };
         self.had_file = true;
         self.partial.clear();
-        self.skipping = false;
+        // **A baseline in the middle of a line skips through its end**: a
+        // record admin was writing as admin-con started is history, its
+        // rest never sent as a line of its own.
+        self.skipping = self.offset > 0 && {
+            let mut last = [0u8; 1];
+            !matches!(file.read_at(&mut last, self.offset - 1), Ok(1) if last[0] == b'\n')
+        };
         self.seen = span_digest(&file, self.offset);
         self.file = Some((file, (meta.dev(), meta.ino())));
     }

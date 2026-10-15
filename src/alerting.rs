@@ -82,9 +82,10 @@ pub struct Alerts {
     /// A test's lever: the drainer's next line fails once.
     #[cfg(test)]
     fail_line: Arc<std::sync::atomic::AtomicBool>,
-    /// A test's lever: every row of this run fails.
+    /// A test's lever: every row of this run fails, each failure taking
+    /// the time given.
     #[cfg(test)]
-    poisoned: Arc<std::sync::Mutex<Option<String>>>,
+    poisoned: Arc<std::sync::Mutex<Option<(String, Duration)>>>,
     /// A test's lever: the next row's record of its alert fails, after the
     /// raise, inside their transaction.
     #[cfg(test)]
@@ -129,7 +130,13 @@ impl Alerts {
     /// Every row of `run` fails, as a row that never applies would.
     #[cfg(test)]
     pub fn poison_run(&self, run: &str) {
-        *self.poisoned.lock().unwrap() = Some(run.to_owned());
+        self.poison_run_slowly(run, Duration::ZERO);
+    }
+
+    /// Every row of `run` fails, each failure taking `slow`.
+    #[cfg(test)]
+    pub fn poison_run_slowly(&self, run: &str, slow: Duration) {
+        *self.poisoned.lock().unwrap() = Some((run.to_owned(), slow));
     }
 
     /// The next row's record of its alert fails once, after the raise.
@@ -320,9 +327,15 @@ async fn drain(store: Store, log: Option<PathBuf>, alerts: Alerts) {
 /// One row applied, or false where a step failed and it stays.
 async fn apply(store: &Store, log: Option<&PathBuf>, alerts: &Alerts, row: &InboxRow) -> bool {
     #[cfg(test)]
-    if alerts.poisoned.lock().unwrap().as_deref() == Some(row.run_id.as_str()) {
-        tracing::error!("a test fault failed the rows of run {}", row.run_id);
-        return false;
+    {
+        let poisoned = alerts.poisoned.lock().unwrap().clone();
+        if let Some((run, slow)) = poisoned
+            && run == row.run_id
+        {
+            tokio::time::sleep(slow).await;
+            tracing::error!("a test fault failed the rows of run {}", row.run_id);
+            return false;
+        }
     }
     let Some(effect) = crate::link::listener::entry_effect(row) else {
         tracing::error!(

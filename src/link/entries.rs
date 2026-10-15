@@ -54,6 +54,8 @@ struct Inner {
     dropped: u64,
     /// The connector's own source, for its reports.
     source: &'static str,
+    /// Acknowledgements taken, the pump's measure of progress.
+    acks: u64,
 }
 
 /// **The connector's backlog of entries**, cloned wherever an entry is met.
@@ -78,6 +80,7 @@ impl Entries {
                 bytes: 0,
                 dropped: 0,
                 source,
+                acks: 0,
             })),
             wake: Arc::new(tokio::sync::Notify::new()),
         }
@@ -113,6 +116,7 @@ impl Entries {
         if inner.run != run {
             return;
         }
+        inner.acks += 1;
         while inner.backlog.front().is_some_and(|w| w.seq <= seq) {
             let gone = inner.backlog.pop_front().expect("a front");
             inner.bytes -= gone.bytes;
@@ -149,6 +153,12 @@ impl Entries {
     /// Wait for an entry pushed or acknowledged since.
     pub(crate) async fn changed(&self) {
         self.wake.notified().await;
+    }
+
+    /// How many acknowledgements were taken: the pump's measure of
+    /// progress.
+    pub(crate) fn acks(&self) -> u64 {
+        self.inner.lock().unwrap().acks
     }
 
     /// Whether any entry sent on a connection, through `sent`, still

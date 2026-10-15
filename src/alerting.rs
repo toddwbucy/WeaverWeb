@@ -25,7 +25,7 @@ use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 
-use crate::store::alerts::Raise;
+use crate::store::alerts::{Claimed, Raise};
 use crate::store::{AgentId, Store};
 
 /// **How many failures wait for the worker** before a raise drops one.
@@ -51,9 +51,68 @@ pub struct Failure {
     pub reason: serde_json::Value,
 }
 
+/// **A connector's entry, as the server took it** (Spec 2.14; act 12, PR
+/// 2): one line of the operations log, and the alert it raises where it
+/// raises one.
+#[derive(Debug, Clone)]
+pub struct Entry {
+    pub agent: AgentId,
+    pub plane: &'static str,
+    pub source: String,
+    /// For a line of `admin.log`, whether admin-con found it its own.
+    pub own: Option<bool>,
+    pub entry: serde_json::Value,
+    pub raise: Option<Raise>,
+}
+
 enum Note {
     Failure(Box<Failure>),
-    Restored { agent: AgentId, plane: &'static str },
+    Restored {
+        agent: AgentId,
+        plane: &'static str,
+    },
+    /// The listener stops: what was queued before this is written, then
+    /// the worker ends.
+    Stop,
+}
+
+/// **The worker and the drainer**, tracked by their listener and ended at
+/// its stop in the order the work flows: the worker once the connections'
+/// teardowns have raised and it has written what was queued, then the
+/// drainer, whose rows are durable and stand for the next start.
+pub struct AlertTasks {
+    worker: tokio::task::JoinHandle<()>,
+    drainer: tokio::task::JoinHandle<()>,
+}
+
+/// How long the stop gives the worker to write what was queued.
+const STOP_BOUND: Duration = Duration::from_secs(10);
+
+impl AlertTasks {
+    /// **Stop in order**: the worker writes what was queued before the
+    /// stop, held to a bound, and ends; then the drainer is ended, an
+    /// unfinished row rolling back to stand for the next start.
+    pub async fn stop(self, alerts: &Alerts) {
+        let asked = tokio::time::timeout(STOP_BOUND, alerts.tx.send(Note::Stop)).await;
+        let mut worker = self.worker;
+        if !matches!(asked, Ok(Ok(())))
+            || tokio::time::timeout(STOP_BOUND, &mut worker).await.is_err()
+        {
+            tracing::error!(
+                "the alerts' worker did not write its queue within {STOP_BOUND:?}; ended"
+            );
+            worker.abort();
+            let _ = worker.await;
+        }
+        self.drainer.abort();
+        let _ = self.drainer.await;
+    }
+
+    /// Both ended at once, nothing drained: a stop that cannot await.
+    pub fn abort(&self) {
+        self.worker.abort();
+        self.drainer.abort();
+    }
 }
 
 /// **The raising half**, cloned wherever a failure is met.
@@ -61,29 +120,85 @@ enum Note {
 pub struct Alerts {
     tx: mpsc::Sender<Note>,
     dropped: Arc<AtomicU64>,
+    /// Wakes the inbox's drainer: an entry was taken.
+    inbox: Arc<tokio::sync::Notify>,
     #[cfg(test)]
     stall: Arc<tokio::sync::Mutex<()>>,
+    /// A test's lever: the drainer's next line fails once.
+    #[cfg(test)]
+    fail_line: Arc<std::sync::atomic::AtomicBool>,
+    /// A test's lever: every row of this run fails, each failure taking
+    /// the time given.
+    #[cfg(test)]
+    poisoned: Arc<std::sync::Mutex<Option<(String, Duration)>>>,
+    /// A test's lever: the next row's record of its alert fails, after the
+    /// raise, inside their transaction.
+    #[cfg(test)]
+    fail_record: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Alerts {
     /// Start the worker, which writes alerts to the store and lines to the
     /// operations log where one is configured.
-    pub fn start(store: Store, log: Option<PathBuf>) -> Self {
+    pub fn start(store: Store, log: Option<PathBuf>) -> (Self, AlertTasks) {
         let (tx, rx) = mpsc::channel(QUEUE);
         let alerts = Self {
             tx,
             dropped: Arc::new(AtomicU64::new(0)),
+            inbox: Arc::new(tokio::sync::Notify::new()),
             #[cfg(test)]
             stall: Arc::new(tokio::sync::Mutex::new(())),
-        };
-        tokio::spawn(work(
-            store,
-            log,
-            rx,
             #[cfg(test)]
-            alerts.stall.clone(),
-        ));
-        alerts
+            fail_line: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            #[cfg(test)]
+            poisoned: Arc::new(std::sync::Mutex::new(None)),
+            #[cfg(test)]
+            fail_record: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        };
+        // **The worker and the drainer live and die with their listener**,
+        // which tracks the handles answered here with its own tasks and
+        // ends them at its stop, before its lock is released.
+        let tasks = AlertTasks {
+            worker: tokio::spawn(work(
+                store.clone(),
+                log.clone(),
+                rx,
+                #[cfg(test)]
+                alerts.stall.clone(),
+            )),
+            drainer: tokio::spawn(drain(store, log, alerts.clone())),
+        };
+        (alerts, tasks)
+    }
+
+    /// **An entry was taken into the inbox**: the drainer is woken, never
+    /// waited on.
+    pub fn wake_inbox(&self) {
+        self.inbox.notify_one();
+    }
+
+    /// Every row of `run` fails, as a row that never applies would.
+    #[cfg(test)]
+    pub fn poison_run(&self, run: &str) {
+        self.poison_run_slowly(run, Duration::ZERO);
+    }
+
+    /// Every row of `run` fails, each failure taking `slow`.
+    #[cfg(test)]
+    pub fn poison_run_slowly(&self, run: &str, slow: Duration) {
+        *self.poisoned.lock().unwrap() = Some((run.to_owned(), slow));
+    }
+
+    /// The next row's record of its alert fails once, after the raise.
+    #[cfg(test)]
+    pub fn fail_next_record(&self) {
+        self.fail_record.store(true, Ordering::Relaxed);
+    }
+
+    /// The drainer's next line fails once.
+    #[cfg(test)]
+    pub fn fail_next_line(&self) {
+        self.fail_line.store(true, Ordering::Relaxed);
     }
 
     /// **Raise a failure, never waiting**: a full queue drops it, counts
@@ -134,9 +249,13 @@ async fn work(
     #[cfg(test)] stall: Arc<tokio::sync::Mutex<()>>,
 ) {
     while let Some(note) = rx.recv().await {
+        if matches!(note, Note::Stop) {
+            return;
+        }
         #[cfg(test)]
         drop(stall.lock().await);
         match note {
+            Note::Stop => return,
             Note::Restored { agent, plane } => {
                 match tokio::time::timeout(STORE_BOUND, store.alert_contact_restored(&agent, plane))
                     .await
@@ -151,32 +270,29 @@ async fn work(
                 }
             }
             Note::Failure(failure) => {
-                let alert = match tokio::time::timeout(
-                    STORE_BOUND,
-                    store.raise_alert(&failure.raise),
-                )
-                .await
-                {
-                    Ok(Ok(id)) => Some(id),
-                    Ok(Err(e)) => {
-                        tracing::error!(
-                            "{}: an alert could not be raised: {e:#}",
-                            failure.raise.agent
-                        );
-                        None
-                    }
-                    Err(_) => {
-                        tracing::error!(
-                            "{}: an alert was not raised within {STORE_BOUND:?}",
-                            failure.raise.agent
-                        );
-                        None
-                    }
-                };
+                let alert = raised(&store, &failure.raise).await;
                 if let Some(path) = &log {
                     write_line(path, &failure, alert.as_deref()).await;
                 }
             }
+        }
+    }
+}
+
+/// The alert raised, bounded; its identity, none where nothing was raised.
+async fn raised(store: &Store, raise: &Raise) -> Option<String> {
+    match tokio::time::timeout(STORE_BOUND, store.raise_alert(raise)).await {
+        Ok(Ok(id)) => id,
+        Ok(Err(e)) => {
+            tracing::error!("{}: an alert could not be raised: {e:#}", raise.agent);
+            None
+        }
+        Err(_) => {
+            tracing::error!(
+                "{}: an alert was not raised within {STORE_BOUND:?}",
+                raise.agent
+            );
+            None
         }
     }
 }
@@ -198,19 +314,157 @@ async fn write_line(path: &PathBuf, failure: &Failure, alert: Option<&str>) {
         "reason": failure.reason,
         "alert": alert,
     });
+    append(path, line).await;
+}
+
+/// One line appended to the operations log, a failure logged at error.
+async fn append(path: &PathBuf, line: serde_json::Value) {
+    if let Err(e) = appended(path, line).await {
+        tracing::error!("the operations log could not be written: {e}");
+    }
+}
+
+/// One line appended to the operations log, or why not.
+async fn appended(path: &PathBuf, line: serde_json::Value) -> std::io::Result<()> {
     let mut bytes = line.to_string().into_bytes();
     bytes.push(b'\n');
-    let written = async {
-        let mut file = tokio::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-            .await?;
-        file.write_all(&bytes).await?;
-        file.flush().await
+    let mut file = tokio::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .await?;
+    file.write_all(&bytes).await?;
+    file.flush().await
+}
+
+/// How often the drainer looks at the inbox with nothing woken it: a
+/// restart's rows, and a row whose line or alert failed, are taken again.
+const DRAIN_PERIOD: Duration = Duration::from_secs(1);
+
+/// **The inbox's drainer** (Spec 2.14): each entry taken, claimed in a
+/// transaction of its own and applied from its durable copy, its alert
+/// raised and kept on its row, then its operations-log line written, then
+/// the row deleted, all in the claim's transaction, **held to the store's
+/// bound**. A line not written backs the row off, its alert kept. A raise
+/// that fails, a bound that passes, or a drainer that dies ends the
+/// transaction uncommitted: the claim and any raise roll back, the row is
+/// backed off by a statement of its own where the drainer still runs, and
+/// is due again. The alert is never raised twice; the line is written at
+/// least once.
+async fn drain(store: Store, log: Option<PathBuf>, alerts: Alerts) {
+    loop {
+        #[cfg(test)]
+        drop(alerts.stall.lock().await);
+        let claimed = match tokio::time::timeout(STORE_BOUND, store.claim_entry()).await {
+            Ok(Ok(claimed)) => claimed,
+            Ok(Err(e)) => {
+                tracing::error!("the entries' inbox could not be read: {e:#}");
+                None
+            }
+            Err(_) => {
+                tracing::error!("the entries' inbox was not read within {STORE_BOUND:?}");
+                None
+            }
+        };
+        let Some(claimed) = claimed else {
+            tokio::select! {
+                () = alerts.inbox.notified() => {}
+                () = tokio::time::sleep(DRAIN_PERIOD) => {}
+            }
+            continue;
+        };
+        let inbox_id = claimed.row.inbox_id;
+        let applied =
+            tokio::time::timeout(STORE_BOUND, apply(claimed, log.as_ref(), &alerts)).await;
+        let failed = match applied {
+            Ok(Ok(())) => false,
+            Ok(Err(e)) => {
+                tracing::error!("an inbox row ({inbox_id}) was not applied: {e:#}");
+                true
+            }
+            Err(_) => {
+                tracing::error!("an inbox row ({inbox_id}) was not applied within {STORE_BOUND:?}");
+                true
+            }
+        };
+        if failed {
+            let _ = bounded(store.inbox_failed(inbox_id)).await;
+        }
+    }
+}
+
+/// One claimed row applied in its claim's transaction: committed with its
+/// effects, or backed off where its line was not written; an error leaves
+/// the transaction to roll back.
+async fn apply(mut claimed: Claimed, log: Option<&PathBuf>, alerts: &Alerts) -> anyhow::Result<()> {
+    #[cfg(test)]
+    {
+        let poisoned = alerts.poisoned.lock().unwrap().clone();
+        if let Some((run, slow)) = poisoned
+            && run == claimed.row.run_id
+        {
+            tokio::time::sleep(slow).await;
+            anyhow::bail!("a test fault failed the rows of run {}", claimed.row.run_id);
+        }
+    }
+    let Some(effect) = crate::link::listener::entry_effect(&claimed.row) else {
+        anyhow::bail!(
+            "the row ({} {}) no longer passes the door's check; kept and backed off",
+            claimed.row.run_id,
+            claimed.row.seq
+        );
     };
-    if let Err(e) = written.await {
-        tracing::error!("the operations log could not be written: {e}");
+    let mut alert = claimed.row.alert_id.clone();
+    if alert.is_none()
+        && let Some(raise) = &effect.raise
+    {
+        #[cfg(test)]
+        let fail_record = alerts.fail_record.swap(false, Ordering::Relaxed);
+        #[cfg(not(test))]
+        let fail_record = false;
+        alert = claimed.raise(raise, fail_record).await?;
+    }
+    if let Some(path) = log {
+        let line = serde_json::json!({
+            "time": chrono::Utc::now().to_rfc3339(),
+            "agent": effect.agent.as_str(),
+            "plane": effect.plane,
+            "source": effect.source,
+            "own": effect.own,
+            "entry": effect.entry,
+            "alert": alert,
+        });
+        #[cfg(test)]
+        let written = if alerts.fail_line.swap(false, Ordering::Relaxed) {
+            Err(std::io::Error::other("a test fault failed an entry's line"))
+        } else {
+            appended(path, line).await
+        };
+        #[cfg(not(test))]
+        let written = appended(path, line).await;
+        // **A line not written backs its row off**, its alert kept on the
+        // row, to be written at a later try.
+        if let Err(e) = written {
+            tracing::error!("an entry's operations-log line could not be written: {e}");
+            return claimed.failed().await;
+        }
+    }
+    let _ = alerts;
+    claimed.done().await
+}
+
+/// A store step bounded, true where it completed.
+async fn bounded(step: impl std::future::Future<Output = anyhow::Result<()>>) -> bool {
+    match tokio::time::timeout(STORE_BOUND, step).await {
+        Ok(Ok(())) => true,
+        Ok(Err(e)) => {
+            tracing::error!("the entries' inbox could not be written: {e:#}");
+            false
+        }
+        Err(_) => {
+            tracing::error!("the entries' inbox was not written within {STORE_BOUND:?}");
+            false
+        }
     }
 }
 

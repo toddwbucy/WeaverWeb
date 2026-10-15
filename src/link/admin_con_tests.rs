@@ -46,6 +46,8 @@ pub(super) struct Trace {
     pub(super) relay: FakeRelay,
     /// The relay's socket, the config's `trace_socket`.
     pub(super) socket: PathBuf,
+    /// An empty `admin.log` beside the socket, the config's `admin_log`.
+    pub(super) admin_log: PathBuf,
 }
 
 /// One trace record: its kind, and `n` in its payload to tell events apart.
@@ -83,11 +85,15 @@ impl Trace {
         std::fs::write(&path, "").unwrap();
         let relay = shape(FakeRelay::new(&path));
         let socket = relay.socket.clone();
+        // Beside the socket, where `installed` names it.
+        let admin_log = socket.with_file_name("admin.log");
+        std::fs::write(&admin_log, "").unwrap();
         Self {
             _dir: dir,
             path,
             relay,
             socket,
+            admin_log,
         }
     }
 
@@ -332,9 +338,10 @@ async fn installed_as(
     let path = PathBuf::from(answer.value["configs"][1].as_str().unwrap());
     assert!(path.ends_with("admin-con.toml"));
     let mut extra = format!(
-        "trace_socket = {}\nweaver_admin = {}\n",
+        "trace_socket = {}\nweaver_admin = {}\nadmin_log = {}\n",
         toml::Value::String(socket.display().to_string()),
-        toml::Value::String(NO_WEAVER_ADMIN.to_owned())
+        toml::Value::String(NO_WEAVER_ADMIN.to_owned()),
+        toml::Value::String(socket.with_file_name("admin.log").display().to_string())
     );
     if let Some(bytes) = backfill {
         extra.push_str(&format!("backfill_bytes = {bytes}\n"));
@@ -570,6 +577,7 @@ async fn admin_con_answers_an_ask_outside_its_ceiling_and_keeps_the_connection()
         link: server.link(Plane::Admin),
         trace_socket: trace.socket.clone(),
         weaver_admin: PathBuf::from(NO_WEAVER_ADMIN),
+        admin_log: trace.admin_log.clone(),
         backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
         verb_bound: admin_con::VERB_BOUND,
         stop_grace: GRACE,
@@ -978,7 +986,7 @@ async fn an_admin_con_config_that_is_not_trusted_is_refused_at_start() {
         "good.toml",
         text(
             Plane::Admin,
-            "trace_socket = \"/trace.sock\"\nweaver_admin = \"/w\"\n",
+            "trace_socket = \"/trace.sock\"\nweaver_admin = \"/w\"\nadmin_log = \"/admin.log\"\n",
         ),
     );
     let cfg = AdminConConfig::load(&good).unwrap();
@@ -988,7 +996,7 @@ async fn an_admin_con_config_that_is_not_trusted_is_refused_at_start() {
         "gate.toml",
         text(
             Plane::Gate,
-            "trace_socket = \"/trace.sock\"\nweaver_admin = \"/w\"\n",
+            "trace_socket = \"/trace.sock\"\nweaver_admin = \"/w\"\nadmin_log = \"/admin.log\"\n",
         ),
     );
     assert!(refused(&gate).contains("gate plane"));
@@ -998,15 +1006,23 @@ async fn an_admin_con_config_that_is_not_trusted_is_refused_at_start() {
         "relative.toml",
         text(
             Plane::Admin,
-            "trace_socket = \"trace.sock\"\nweaver_admin = \"/w\"\n",
+            "trace_socket = \"trace.sock\"\nweaver_admin = \"/w\"\nadmin_log = \"/admin.log\"\n",
         ),
     );
     assert!(refused(&relative).contains("trace_socket"));
+    let relative_log = write(
+        "relative-log.toml",
+        text(
+            Plane::Admin,
+            "trace_socket = \"/trace.sock\"\nweaver_admin = \"/w\"\nadmin_log = \"admin.log\"\n",
+        ),
+    );
+    assert!(refused(&relative_log).contains("admin_log"));
     let unnamed = write(
         "unnamed.toml",
         text(
             Plane::Admin,
-            "trace_socket = \"/trace.sock\"\nweaver_admin = \"/w\"\n",
+            "trace_socket = \"/trace.sock\"\nweaver_admin = \"/w\"\nadmin_log = \"/admin.log\"\n",
         )
         .lines()
         .filter(|l| !l.starts_with("agent_id"))
@@ -1019,7 +1035,7 @@ async fn an_admin_con_config_that_is_not_trusted_is_refused_at_start() {
         text(
             Plane::Admin,
             &format!(
-                "trace_socket = \"/trace.sock\"\nweaver_admin = \"/w\"\nbackfill_bytes = {}\n",
+                "trace_socket = \"/trace.sock\"\nweaver_admin = \"/w\"\nadmin_log = \"/admin.log\"\nbackfill_bytes = {}\n",
                 admin_con::MAX_BACKFILL_BYTES + 1
             ),
         ),
@@ -1406,6 +1422,7 @@ async fn an_ask_during_the_replay_waits_behind_one_frame_not_a_step() {
         link: server.link(Plane::Admin),
         trace_socket: trace.socket.clone(),
         weaver_admin: PathBuf::from(NO_WEAVER_ADMIN),
+        admin_log: trace.admin_log.clone(),
         backfill_bytes: 16 * 1024 * 1024,
         verb_bound: admin_con::VERB_BOUND,
         stop_grace: GRACE,
@@ -1502,6 +1519,7 @@ async fn an_ordinary_verb_asked_during_the_replay_waits_for_caught_up_and_the_dr
         link: server.link(Plane::Admin),
         trace_socket: trace.socket.clone(),
         weaver_admin: PathBuf::from(NO_WEAVER_ADMIN),
+        admin_log: trace.admin_log.clone(),
         backfill_bytes: 4 * 1024 * 1024,
         verb_bound: admin_con::VERB_BOUND,
         stop_grace: GRACE,
@@ -1603,6 +1621,7 @@ async fn a_stop_against_a_server_that_stopped_reading_returns_within_the_grace()
         link: server.link(Plane::Admin),
         trace_socket: trace.socket.clone(),
         weaver_admin: PathBuf::from(NO_WEAVER_ADMIN),
+        admin_log: trace.admin_log.clone(),
         backfill_bytes: 32 * 1024 * 1024,
         verb_bound: admin_con::VERB_BOUND,
         stop_grace: GRACE,
@@ -1647,6 +1666,7 @@ async fn a_stop_during_an_opening_that_waits_on_its_heartbeat_returns_within_the
         link: server.link(Plane::Admin),
         trace_socket: trace.socket.clone(),
         weaver_admin: PathBuf::from(NO_WEAVER_ADMIN),
+        admin_log: trace.admin_log.clone(),
         backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
         verb_bound: admin_con::VERB_BOUND,
         stop_grace: GRACE,
@@ -2837,6 +2857,7 @@ async fn no_opening_is_taken_while_an_openings_hold_stands() {
         link: server.link(Plane::Admin),
         trace_socket: trace.socket.clone(),
         weaver_admin: PathBuf::from(NO_WEAVER_ADMIN),
+        admin_log: trace.admin_log.clone(),
         backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
         verb_bound: admin_con::VERB_BOUND,
         stop_grace: GRACE,
@@ -3037,6 +3058,7 @@ async fn an_openings_show_asked_late_is_still_served_first() {
         link: server.link(Plane::Admin),
         trace_socket: trace.socket.clone(),
         weaver_admin: PathBuf::from(NO_WEAVER_ADMIN),
+        admin_log: trace.admin_log.clone(),
         backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
         verb_bound: admin_con::VERB_BOUND,
         stop_grace: GRACE,
@@ -3168,6 +3190,7 @@ async fn the_openings_hold_covers_the_servers_deadline() {
         link: server.link(Plane::Admin),
         trace_socket: trace.socket.clone(),
         weaver_admin: PathBuf::from(NO_WEAVER_ADMIN),
+        admin_log: trace.admin_log.clone(),
         backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
         verb_bound: admin_con::VERB_BOUND,
         stop_grace: GRACE,
@@ -3276,6 +3299,7 @@ async fn a_hello_answered_late_still_leaves_the_verification_its_reserve() {
         link: server.link(Plane::Admin),
         trace_socket: trace.socket.clone(),
         weaver_admin: PathBuf::from(NO_WEAVER_ADMIN),
+        admin_log: trace.admin_log.clone(),
         backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
         verb_bound: admin_con::VERB_BOUND,
         stop_grace: GRACE,
@@ -3413,6 +3437,7 @@ async fn a_faulting_openings_show_keeps_the_hold() {
         link: server.link(Plane::Admin),
         trace_socket: trace.socket.clone(),
         weaver_admin: PathBuf::from(NO_WEAVER_ADMIN),
+        admin_log: trace.admin_log.clone(),
         backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
         verb_bound: admin_con::VERB_BOUND,
         stop_grace: GRACE,
@@ -3488,6 +3513,7 @@ async fn a_late_openings_show_still_runs_before_a_queued_verb() {
         link: server.link(Plane::Admin),
         trace_socket: trace.socket.clone(),
         weaver_admin: PathBuf::from(NO_WEAVER_ADMIN),
+        admin_log: trace.admin_log.clone(),
         backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
         verb_bound: admin_con::VERB_BOUND,
         stop_grace: GRACE,
@@ -3569,6 +3595,7 @@ async fn a_closed_door_hello_holds_ordinary_asks_until_its_show() {
         link: server.link(Plane::Admin),
         trace_socket: trace.socket.clone(),
         weaver_admin: PathBuf::from(NO_WEAVER_ADMIN),
+        admin_log: trace.admin_log.clone(),
         backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
         verb_bound: admin_con::VERB_BOUND,
         stop_grace: GRACE,
@@ -3633,6 +3660,7 @@ async fn a_show_answered_but_not_landed_keeps_the_hold() {
         link: server.link(Plane::Admin),
         trace_socket: trace.socket.clone(),
         weaver_admin: PathBuf::from(NO_WEAVER_ADMIN),
+        admin_log: trace.admin_log.clone(),
         backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
         verb_bound: admin_con::VERB_BOUND,
         stop_grace: GRACE,
@@ -3786,4 +3814,187 @@ async fn a_shutdown_invokes_nothing_though_the_ceiling_grants_unload() {
     assert_eq!(invoker.ran(), ["show"]);
     con.stop().await;
     assert_eq!(invoker.ran(), ["show"], "the shutdown invoked nothing");
+}
+
+/// **admin-con sends the box's `admin.log` upstream, end to end** (Spec
+/// 2.14): a line another party's act appended reaches the server through
+/// admin-con's tailer, its backlog and its connection's pump, and raises
+/// its alert from the box, an `unload` stopped at its save point raising
+/// the prompt; a line of admin-con's own uid raises nothing.
+#[tokio::test]
+async fn admin_con_sends_another_partys_line_upstream() {
+    let Some(lab) = Lab::open().await else { return };
+    let trace = Trace::new();
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
+    let invoker = FakeInvoker::new(&["show"], "idle");
+    let mut con = Running::start(config(&path), invoker.clone());
+    con.wait("admitted", |s| s.admitted).await;
+    // The tailer starts at the file's end: let it find the file first.
+    tokio::time::sleep(crate::link::admin_log::POLL * 3).await;
+    let me = u64::from(crate::link::admin_log::my_uid());
+    let line = |verb: &str, uid: u64, outcome: serde_json::Value| {
+        json!({"wall_ms": 1, "command": format!("weaver-admin {verb} karl"), "uid": uid,
+            "verb": verb, "agent": "karl", "outcome": outcome.to_string()})
+    };
+    let mut f = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&trace.admin_log)
+        .unwrap();
+    writeln!(f, "{}", line("load", me, json!({"kind": "config_invalid"}))).unwrap();
+    writeln!(
+        f,
+        "{}",
+        line(
+            "unload",
+            me + 1,
+            json!({"kind": "save_point_not_taken", "missed": "finished"})
+        )
+    )
+    .unwrap();
+    drop(f);
+    let until = tokio::time::Instant::now() + Duration::from_secs(10);
+    let found = loop {
+        let found = lab.store.alerts_on(&id, 10).await.unwrap();
+        if !found.is_empty() {
+            break found;
+        }
+        assert!(tokio::time::Instant::now() < until, "no alert from the box");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let found = if found.len() == 1 {
+        lab.store.alerts_on(&id, 10).await.unwrap()
+    } else {
+        found
+    };
+    let kinds: Vec<_> = found
+        .iter()
+        .map(|a| (a.kind.as_str(), a.subject.as_str(), a.source.as_str()))
+        .collect();
+    assert_eq!(kinds, [("save_point_missed", "unload", "admin")]);
+    con.stop().await;
+}
+
+/// **No window waits for good on an acknowledgement the server dropped**:
+/// with the server dropping the acknowledgements of a full window, as a
+/// full write queue does, admin-con's pump sends that window again after
+/// a silence bound, the server takes it once and acknowledges it, and the
+/// entries behind it follow.
+///
+/// Perturbation: drop the resend, and the pump stalls on its full window.
+#[tokio::test]
+async fn a_window_whose_acks_were_dropped_is_sent_again() {
+    let Some(lab) = Lab::open_with(Duration::from_secs(4)).await else {
+        return;
+    };
+    let trace = Trace::new();
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
+    let invoker = FakeInvoker::new(&["show"], "idle");
+    let mut con = Running::start(config(&path), invoker.clone());
+    con.wait("admitted", |s| s.admitted).await;
+    tokio::time::sleep(crate::link::admin_log::POLL * 3).await;
+    lab.listener.drop_entry_acks(crate::link::entries::WINDOW);
+    let me = u64::from(crate::link::admin_log::my_uid());
+    let mut f = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&trace.admin_log)
+        .unwrap();
+    let lines = crate::link::entries::WINDOW as i64 + 8;
+    for n in 0..lines {
+        writeln!(
+            f,
+            "{}",
+            json!({"wall_ms": n, "uid": me, "verb": "show", "agent": "karl",
+                "outcome": json!({"kind": "state", "state": "idle"}).to_string()})
+        )
+        .unwrap();
+    }
+    drop(f);
+    let until = tokio::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        let taken: Option<i64> =
+            sqlx::query_scalar("SELECT max(last_seq) FROM entry_run WHERE agent_id = $1")
+                .bind(id.as_str())
+                .fetch_one(&lab.store.pool)
+                .await
+                .unwrap();
+        if taken.unwrap_or(0) >= lines {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < until,
+            "the pump stalled at {taken:?} of {lines}"
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    con.stop().await;
+}
+
+/// **A steady stream of entries never postpones the resend**: with the
+/// server dropping a full window's acknowledgements and admin-con pushing
+/// a line every quarter of the silence bound, the window is sent again
+/// within a bound of its last progress, while the stream goes on.
+///
+/// Perturbation: restart the resend's timer at every wake, and the stream
+/// postpones it for as long as it lasts.
+#[tokio::test]
+async fn a_steady_stream_never_postpones_the_resend() {
+    let Some(lab) = Lab::open_with(Duration::from_secs(4)).await else {
+        return;
+    };
+    let trace = Trace::new();
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
+    let invoker = FakeInvoker::new(&["show"], "idle");
+    let mut con = Running::start(config(&path), invoker.clone());
+    con.wait("admitted", |s| s.admitted).await;
+    tokio::time::sleep(crate::link::admin_log::POLL * 3).await;
+    let window = crate::link::entries::WINDOW;
+    lab.listener.drop_entry_acks(window);
+    let me = u64::from(crate::link::admin_log::my_uid());
+    let line = move |n: usize| {
+        json!({"wall_ms": n, "uid": me, "verb": "show", "agent": "karl",
+            "outcome": json!({"kind": "state", "state": "idle"}).to_string()})
+        .to_string()
+    };
+    let admin_log = trace.admin_log.clone();
+    let append = move |n: usize| {
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&admin_log)
+            .unwrap();
+        writeln!(f, "{}", line(n)).unwrap();
+    };
+    for n in 0..window {
+        append(n);
+    }
+    let started = tokio::time::Instant::now();
+    // A line every quarter of the bound, for three bounds.
+    let stream = tokio::spawn(async move {
+        for n in window..window + 12 {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            append(n);
+        }
+    });
+    let until = started + Duration::from_secs(8);
+    loop {
+        let taken: Option<i64> =
+            sqlx::query_scalar("SELECT max(last_seq) FROM entry_run WHERE agent_id = $1")
+                .bind(id.as_str())
+                .fetch_one(&lab.store.pool)
+                .await
+                .unwrap();
+        if taken.unwrap_or(0) > window as i64 {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < until,
+            "the stream postponed the resend: taken through {taken:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    stream.abort();
+    con.stop().await;
 }

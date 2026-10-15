@@ -17,6 +17,7 @@
 //! connection outlives it.
 
 use crate::link::authority::client_tls;
+use crate::link::entries::Entries;
 use crate::link::frames::{
     CADENCE_MAX_SECS, FromClient, Line, LineReader, Plane, Position, Refusal, ToClient,
 };
@@ -354,6 +355,7 @@ pub fn to_client_name(frame: &ToClient) -> &'static str {
         ToClient::Verb { .. } => "verb",
         ToClient::Ack { .. } => "ack",
         ToClient::Landed { .. } => "landed",
+        ToClient::EntryAck { .. } => "entry_ack",
         ToClient::Refusal { .. } => "refusal",
     }
 }
@@ -440,6 +442,10 @@ pub struct Connection {
     failed: watch::Receiver<Option<String>>,
     writer: Option<JoinHandle<()>>,
     heartbeat: Option<JoinHandle<()>>,
+    /// The connector's entries, where it sends them (Spec 2.14), and the
+    /// pump that sends them on this connection.
+    entries: Option<Entries>,
+    pump: Option<JoinHandle<()>>,
 }
 
 /// What the server sent, or why the connection is over.
@@ -517,6 +523,8 @@ impl Connection {
             failed,
             writer: Some(writer),
             heartbeat: Some(heartbeat),
+            entries: None,
+            pump: None,
         }
     }
 
@@ -527,23 +535,93 @@ impl Connection {
             .unwrap_or_else(|| "the write path ended".to_owned())
     }
 
+    /// **Send the connector's entries on this connection** (Spec 2.14):
+    /// a pump of its own resends what the server has not acknowledged, then
+    /// sends each entry as it is pushed, at most [`crate::link::entries::WINDOW`]
+    /// unacknowledged at once, each send held to the cadence like every
+    /// write. The connector's own loop never waits on it, and
+    /// [`Connection::recv`] takes the acknowledgements.
+    pub fn carry(&mut self, entries: Entries) {
+        let Some(tx) = self.tx.clone() else {
+            return;
+        };
+        let cadence = self.cadence;
+        entries.reconnected();
+        let pumped = entries.clone();
+        // **What was sent and not acknowledged is sent again** a silence
+        // bound (four cadences) after the last progress, an acknowledgement
+        // taken or a resend: the server sends an acknowledgement without
+        // waiting and drops it where its write queue is full, and a full
+        // window sends nothing more to draw a later one. The server's mark
+        // takes a resend once and acknowledges it again. **The deadline is an
+        // instant, read at each wake**: a push wakes the pump and moves it
+        // not, so a steady stream of entries never postpones the resend.
+        let resend_after = cadence * 4;
+        self.pump = Some(tokio::spawn(async move {
+            let mut sent = 0u64;
+            let mut acks = pumped.acks();
+            let mut since = tokio::time::Instant::now();
+            loop {
+                let now_acks = pumped.acks();
+                if now_acks != acks || !pumped.unacknowledged(sent) {
+                    acks = now_acks;
+                    since = tokio::time::Instant::now();
+                }
+                if tokio::time::Instant::now() >= since + resend_after {
+                    sent = 0;
+                    since = tokio::time::Instant::now();
+                }
+                match pumped.next_after(sent) {
+                    Some((seq, frame)) => {
+                        match tokio::time::timeout(cadence, tx.send(frame)).await {
+                            Ok(Ok(())) => sent = seq,
+                            // The writer ended or stopped taking frames:
+                            // the connection ends on its own account, and
+                            // what was not acknowledged is resent on the
+                            // next.
+                            _ => return,
+                        }
+                    }
+                    None => {
+                        tokio::select! {
+                            () = pumped.changed() => {}
+                            () = tokio::time::sleep_until(since + resend_after) => {}
+                        }
+                    }
+                }
+            }
+        }));
+        self.entries = Some(entries);
+    }
+
     /// The next frame from the server, or why the connection is over.
-    /// Cancel-safe: the line reader is, and so is the watch.
+    /// Cancel-safe: the line reader is, and so is the watch. **An entry's
+    /// acknowledgement is taken here** and never surfaces.
     pub async fn recv(&mut self) -> Incoming {
-        if self.failed.borrow().is_some() {
-            return Incoming::Lost(self.lost());
-        }
-        tokio::select! {
-            line = self.reader.next() => match line {
-                Line::Frame(line) => match serde_json::from_str::<ToClient>(&line) {
-                    Ok(ToClient::Refusal { reason }) => Incoming::Refused(reason),
-                    Ok(frame) => Incoming::Frame(frame),
-                    Err(e) => Incoming::Lost(format!("a frame from the server did not parse: {e}")),
+        loop {
+            if self.failed.borrow().is_some() {
+                return Incoming::Lost(self.lost());
+            }
+            let incoming = tokio::select! {
+                line = self.reader.next() => match line {
+                    Line::Frame(line) => match serde_json::from_str::<ToClient>(&line) {
+                        Ok(ToClient::Refusal { reason }) => Incoming::Refused(reason),
+                        Ok(frame) => Incoming::Frame(frame),
+                        Err(e) => Incoming::Lost(format!("a frame from the server did not parse: {e}")),
+                    },
+                    Line::Closed => Incoming::Lost("the server closed the connection".to_owned()),
+                    Line::Malformed(why) => Incoming::Lost(format!("the server sent {why}")),
                 },
-                Line::Closed => Incoming::Lost("the server closed the connection".to_owned()),
-                Line::Malformed(why) => Incoming::Lost(format!("the server sent {why}")),
-            },
-            _ = self.failed.changed() => Incoming::Lost(self.lost()),
+                _ = self.failed.changed() => Incoming::Lost(self.lost()),
+            };
+            match incoming {
+                Incoming::Frame(ToClient::EntryAck { run, seq }) => {
+                    if let Some(entries) = &self.entries {
+                        entries.ack(&run, seq);
+                    }
+                }
+                other => return other,
+            }
         }
     }
 
@@ -573,6 +651,10 @@ impl Connection {
     /// cadence: shutdown passes what remains of its grace, so a server that
     /// stopped taking bytes cannot hold a stop a cadence past the grace.
     pub async fn close_within(mut self, bound: Duration) {
+        if let Some(pump) = self.pump.take() {
+            pump.abort();
+            let _ = pump.await;
+        }
         if let Some(heartbeat) = self.heartbeat.take() {
             heartbeat.abort();
             let _ = heartbeat.await;
@@ -591,6 +673,9 @@ impl Drop for Connection {
     /// A connection dropped without `close` (a cancelled future) leaves no
     /// task behind: both are aborted, which drops the socket's halves.
     fn drop(&mut self) {
+        if let Some(pump) = self.pump.take() {
+            pump.abort();
+        }
         if let Some(heartbeat) = self.heartbeat.take() {
             heartbeat.abort();
         }
@@ -608,6 +693,19 @@ pub enum Ended {
     Untrusted(String),
     Lost(String),
     Shutdown,
+}
+
+/// Why an attempt or a connection ended, as the status and an outage's
+/// entry say it.
+fn why_ended(ended: &Ended) -> String {
+    match ended {
+        Ended::Refused(r) => format!("refused {r}"),
+        Ended::Untrusted(why) => {
+            format!("{why}: the server's authority is not the one this config pins")
+        }
+        Ended::Lost(why) => why.clone(),
+        Ended::Shutdown => "shutdown".to_owned(),
+    }
 }
 
 /// **The reconnect policy of Spec section 8's client paragraph**:
@@ -690,6 +788,7 @@ pub struct LinkStatus {
 /// is what never exiting requires. `malformed` and `wrong_plane` are this
 /// connector's own defect and say so; every other end retries on the normal
 /// backoff. It returns only on shutdown.
+#[allow(clippy::too_many_arguments)]
 pub async fn run<S, F, H, HF>(
     mut link: Link,
     mut hello: H,
@@ -697,6 +796,7 @@ pub async fn run<S, F, H, HF>(
     backoff: Backoff,
     mut shutdown: watch::Receiver<bool>,
     status: &watch::Sender<LinkStatus>,
+    entries: Option<Entries>,
     mut serve: S,
 ) where
     S: FnMut(Connection) -> F,
@@ -707,6 +807,9 @@ pub async fn run<S, F, H, HF>(
     const REINSTALL: &str = "Re-install this agent's config at the path this connector was started with, from `weaver-web register` or `weaver-web rotate`: it is re-read before each retry at the cap, so no restart is needed";
     let mut failures: u32 = 0;
     let mut reload_due = false;
+    // **Since when the link has been down, and why** (Spec 2.14): an
+    // outage's length is the connector's own entry once it is back.
+    let mut down: Option<(tokio::time::Instant, String)> = None;
     loop {
         if *shutdown.borrow_and_update() {
             return;
@@ -766,7 +869,19 @@ pub async fn run<S, F, H, HF>(
             _ = shutdown.changed() => return,
         };
         let ended = match attempt {
-            Connect::Admitted(conn) => {
+            Connect::Admitted(mut conn) => {
+                if let Some(entries) = &entries {
+                    if let Some((since, why)) = down.take() {
+                        entries.failure(
+                            "link_outage",
+                            format!(
+                                "the link to the server was down for {} s ({why})",
+                                since.elapsed().as_secs()
+                            ),
+                        );
+                    }
+                    conn.carry(entries.clone());
+                }
                 tracing::info!(
                     "{agent} ({plane}): admitted by {}, cadence {:?}",
                     link.config().server,
@@ -791,6 +906,9 @@ pub async fn run<S, F, H, HF>(
             Connect::Untrusted(why) => Ended::Untrusted(why),
             Connect::Failed(why) => Ended::Lost(why),
         };
+        if down.is_none() && !matches!(ended, Ended::Shutdown) {
+            down = Some((tokio::time::Instant::now(), why_ended(&ended)));
+        }
         let delay = match &ended {
             Ended::Shutdown => return,
             Ended::Refused(reason @ (Refusal::NotLive | Refusal::RosterMismatch)) => {
@@ -840,14 +958,7 @@ pub async fn run<S, F, H, HF>(
                 Ended::Refused(r) => Some(*r),
                 _ => None,
             };
-            s.last_end = Some(match &ended {
-                Ended::Refused(r) => format!("refused {r}"),
-                Ended::Untrusted(why) => {
-                    format!("{why}: the server's authority is not the one this config pins")
-                }
-                Ended::Lost(why) => why.clone(),
-                Ended::Shutdown => "shutdown".to_owned(),
-            });
+            s.last_end = Some(why_ended(&ended));
             s.next_delay = Some(delay);
         });
         tokio::select! {

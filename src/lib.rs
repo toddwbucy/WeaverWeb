@@ -16,6 +16,8 @@ pub mod alerting;
 #[cfg(all(test, feature = "passkeys"))]
 mod alerts_tests;
 pub mod config;
+#[cfg(all(test, feature = "passkeys"))]
+mod entries_tests;
 pub mod fault;
 #[cfg(all(test, feature = "passkeys"))]
 mod grants_tests;

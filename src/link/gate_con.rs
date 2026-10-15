@@ -21,6 +21,7 @@ use crate::adapters::gate::{self, GateAdapter, GateError};
 use crate::link::client::{
     self, Backoff, Connection, Ended, Incoming, Link, LinkConfig, LinkStatus,
 };
+use crate::link::entries::Entries;
 use crate::link::frames::{FromClient, Plane, ToClient, TurnFault};
 use serde::Deserialize;
 use std::collections::VecDeque;
@@ -192,6 +193,10 @@ pub async fn run(
         backoff,
         shutdown,
         status,
+        // **gate-con's own entries** (Spec 2.14): an outage of the link with
+        // its length, and drops of the backlog. A turn's failure is its
+        // answer's, raised at the server's door, and is not sent again.
+        Some(Entries::new("gate-con")),
         |conn| {
             serve(
                 conn,

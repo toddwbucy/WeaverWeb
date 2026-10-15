@@ -19,8 +19,10 @@
 //! that lock, which is what makes it agree with the row.
 
 pub mod admin_con;
+pub mod admin_log;
 pub mod authority;
 pub mod client;
+pub mod entries;
 pub mod frames;
 pub mod gate_con;
 pub mod listener;

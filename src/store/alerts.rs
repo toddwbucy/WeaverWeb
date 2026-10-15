@@ -24,8 +24,12 @@ use crate::store::{AgentId, Store};
 const SUMMARY_BOUND: usize = 1024;
 const DETAIL_BOUND: usize = 8192;
 
-/// A string cut to at most `bound` bytes, at a character boundary.
+/// A string cut to at most `bound` bytes, at a character boundary, **a NUL
+/// replaced** by U+FFFD: PostgreSQL's text holds none, and a reason that
+/// carries one, an entry's message among them, would otherwise fail its
+/// write at every try.
 pub fn bounded(text: &str, bound: usize) -> String {
+    let text = &text.replace('\0', "\u{fffd}");
     if text.len() <= bound {
         return text.to_owned();
     }
@@ -37,7 +41,8 @@ pub fn bounded(text: &str, bound: usize) -> String {
 }
 
 /// What an alert is about: `failed`, `unknown`, `refused`, `lost_contact`,
-/// `save_point_missed` (the decision prompt of ruling 2) or `data_at_risk`.
+/// `save_point_missed` (the decision prompt of ruling 2), `data_at_risk`, or
+/// `data_lost` (a loss that already happened, migration `0020`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AlertKind {
     Failed,
@@ -46,6 +51,7 @@ pub enum AlertKind {
     LostContact,
     SavePointMissed,
     DataAtRisk,
+    DataLost,
 }
 
 impl AlertKind {
@@ -57,6 +63,7 @@ impl AlertKind {
             AlertKind::LostContact => "lost_contact",
             AlertKind::SavePointMissed => "save_point_missed",
             AlertKind::DataAtRisk => "data_at_risk",
+            AlertKind::DataLost => "data_lost",
         }
     }
 }
@@ -74,6 +81,150 @@ pub struct Raise {
     pub first: Option<String>,
     /// A decision prompt's options.
     pub options: Vec<String>,
+    /// **Where it came from** (migration `0020`): `server`, `admin` (the
+    /// box's `admin.log`), `admin-con`, `gate-con` or `trace`.
+    pub source: &'static str,
+    /// **Raised once ever, never repeated or reopened**: a loss that
+    /// already happened, named by its subject, read again from a replay
+    /// or a backfill of the trace raises nothing.
+    pub once: bool,
+}
+
+/// **Raise an alert, or repeat the open one**, on the connection given: a
+/// pool's for a raise of its own, a transaction's for an inbox row's.
+async fn raise_in(conn: &mut sqlx::PgConnection, raise: &Raise) -> anyhow::Result<Option<String>> {
+    if raise.once {
+        return raise_once_in(conn, raise).await;
+    }
+    let id: String = sqlx::query_scalar(
+        "INSERT INTO alert (agent_id, kind, subject, source, summary, detail, \
+         first_record, options) VALUES ($1, $2, $3, $8, $4, $5, $6, $7) \
+         ON CONFLICT (agent_id, kind, subject) WHERE acknowledged_at IS NULL \
+         DO UPDATE SET last_at = now(), occurrences = alert.occurrences + 1, \
+         version = alert.version + 1, summary = EXCLUDED.summary, \
+         detail = EXCLUDED.detail, first_record = EXCLUDED.first_record, \
+         options = EXCLUDED.options, source = EXCLUDED.source, restored_at = NULL \
+         RETURNING alert_id",
+    )
+    .bind(raise.agent.as_str())
+    .bind(raise.kind.as_str())
+    .bind(bounded(&raise.subject, 64))
+    .bind(bounded(&raise.summary, SUMMARY_BOUND))
+    .bind(bounded(&raise.detail, DETAIL_BOUND))
+    .bind(&raise.first)
+    .bind(&raise.options)
+    .bind(raise.source)
+    .fetch_one(&mut *conn)
+    .await?;
+    Ok(Some(id))
+}
+
+/// **An alert raised once ever** for its agent, kind and subject: none where
+/// one stands, open or acknowledged, and one of two raisers at once resolved
+/// by the open alert's index. `None` where nothing was raised.
+async fn raise_once_in(
+    conn: &mut sqlx::PgConnection,
+    raise: &Raise,
+) -> anyhow::Result<Option<String>> {
+    Ok(sqlx::query_scalar(
+        "INSERT INTO alert (agent_id, kind, subject, source, summary, detail, \
+         first_record, options) \
+         SELECT $1, $2, $3, $8, $4, $5, $6, $7 WHERE NOT EXISTS ( \
+           SELECT 1 FROM alert WHERE agent_id = $1 AND kind = $2 AND subject = $3) \
+         ON CONFLICT (agent_id, kind, subject) WHERE acknowledged_at IS NULL DO NOTHING \
+         RETURNING alert_id",
+    )
+    .bind(raise.agent.as_str())
+    .bind(raise.kind.as_str())
+    .bind(bounded(&raise.subject, 64))
+    .bind(bounded(&raise.summary, SUMMARY_BOUND))
+    .bind(bounded(&raise.detail, DETAIL_BOUND))
+    .bind(&raise.first)
+    .bind(&raise.options)
+    .bind(raise.source)
+    .fetch_optional(&mut *conn)
+    .await?)
+}
+
+/// **An entry as the door took it**, for the inbox.
+pub struct TakenEntry<'a> {
+    pub run: &'a str,
+    pub seq: u64,
+    pub agent: &'a AgentId,
+    pub plane: &'a str,
+    pub source: &'a str,
+    pub entry: &'a serde_json::Value,
+}
+
+/// **An inbox row claimed**, its transaction holding the claim.
+pub struct Claimed {
+    tx: Transaction<'static, Postgres>,
+    pub row: InboxRow,
+}
+
+impl Claimed {
+    /// **The row's alert, raised and kept on its row in the claim's
+    /// transaction**: never committed without its record, so a retry raises
+    /// it no second time. `fail_record` is a test's lever: the record fails
+    /// after the raise.
+    pub async fn raise(
+        &mut self,
+        raise: &Raise,
+        fail_record: bool,
+    ) -> anyhow::Result<Option<String>> {
+        let id = raise_in(&mut self.tx, raise).await?;
+        if fail_record {
+            anyhow::bail!("a test fault failed the row's record of its alert");
+        }
+        if let Some(id) = &id {
+            sqlx::query("UPDATE entry_inbox SET alert_id = $2 WHERE inbox_id = $1")
+                .bind(self.row.inbox_id)
+                .bind(id)
+                .execute(&mut *self.tx)
+                .await?;
+        }
+        Ok(id)
+    }
+
+    /// The row applied, its line written: gone, and the claim committed.
+    pub async fn done(mut self) -> anyhow::Result<()> {
+        sqlx::query("DELETE FROM entry_inbox WHERE inbox_id = $1")
+            .bind(self.row.inbox_id)
+            .execute(&mut *self.tx)
+            .await?;
+        self.tx.commit().await?;
+        Ok(())
+    }
+
+    /// The row's line not written: backed off, with any alert it raised
+    /// kept, and the claim committed.
+    pub async fn failed(mut self) -> anyhow::Result<()> {
+        sqlx::query(BACK_OFF)
+            .bind(self.row.inbox_id)
+            .execute(&mut *self.tx)
+            .await?;
+        self.tx.commit().await?;
+        Ok(())
+    }
+}
+
+/// A row's next try, its wait doubling from a second to five minutes.
+const BACK_OFF: &str = "UPDATE entry_inbox SET attempts = attempts + 1, \
+     next_try = now() + make_interval(secs => least(power(2, attempts), 300)) \
+     WHERE inbox_id = $1";
+
+/// **An inbox row**: an entry taken and not yet applied.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct InboxRow {
+    pub inbox_id: i64,
+    pub run_id: String,
+    pub seq: i64,
+    pub agent_id: String,
+    pub plane: String,
+    pub source: String,
+    /// The entry's JSON, as the door's parser rendered it.
+    pub entry: String,
+    pub alert_id: Option<String>,
 }
 
 /// An alert as the pages read it.
@@ -103,27 +254,82 @@ impl Store {
     /// once leave one alert whose count holds both. A repeat takes the
     /// latest reason, moves the version, and clears a restoration, contact
     /// being lost again. Answers the alert's identity.
-    pub async fn raise_alert(&self, raise: &Raise) -> anyhow::Result<String> {
-        let id: String = sqlx::query_scalar(
-            "INSERT INTO alert (agent_id, kind, subject, source, summary, detail, \
-             first_record, options) VALUES ($1, $2, $3, 'server', $4, $5, $6, $7) \
-             ON CONFLICT (agent_id, kind, subject) WHERE acknowledged_at IS NULL \
-             DO UPDATE SET last_at = now(), occurrences = alert.occurrences + 1, \
-             version = alert.version + 1, summary = EXCLUDED.summary, \
-             detail = EXCLUDED.detail, first_record = EXCLUDED.first_record, \
-             options = EXCLUDED.options, restored_at = NULL \
-             RETURNING alert_id",
+    pub async fn raise_alert(&self, raise: &Raise) -> anyhow::Result<Option<String>> {
+        let mut conn = self.pool.acquire().await?;
+        raise_in(&mut conn, raise).await
+    }
+
+    /// **Take a connector's entry once, durably** (Spec 2.14, migration
+    /// `0020`): in one transaction, the run's mark moves to the sequence
+    /// where it is past the highest taken, and the entry's row enters the
+    /// inbox, so an entry acknowledged after this is durable here. True
+    /// where it was taken; false for a resend. A run is the agent's and
+    /// the plane's it was first met on, and an entry of it from another is
+    /// taken as a resend, never as new.
+    pub async fn take_entry(&self, taken: &TakenEntry<'_>) -> anyhow::Result<bool> {
+        let seq = i64::try_from(taken.seq).map_err(|_| anyhow::anyhow!("a sequence past i64"))?;
+        let mut tx = self.pool.begin().await?;
+        let moved: Option<i32> = sqlx::query_scalar(
+            "INSERT INTO entry_run (run_id, agent_id, plane, last_seq) VALUES ($1, $2, $3, $4) \
+             ON CONFLICT (run_id) DO UPDATE SET last_seq = EXCLUDED.last_seq, last_at = now() \
+             WHERE entry_run.last_seq < EXCLUDED.last_seq \
+             AND entry_run.agent_id = EXCLUDED.agent_id AND entry_run.plane = EXCLUDED.plane \
+             RETURNING 1",
         )
-        .bind(raise.agent.as_str())
-        .bind(raise.kind.as_str())
-        .bind(bounded(&raise.subject, 64))
-        .bind(bounded(&raise.summary, SUMMARY_BOUND))
-        .bind(bounded(&raise.detail, DETAIL_BOUND))
-        .bind(&raise.first)
-        .bind(&raise.options)
-        .fetch_one(&self.pool)
+        .bind(taken.run)
+        .bind(taken.agent.as_str())
+        .bind(taken.plane)
+        .bind(seq)
+        .fetch_optional(&mut *tx)
         .await?;
-        Ok(id)
+        if moved.is_none() {
+            tx.rollback().await?;
+            return Ok(false);
+        }
+        sqlx::query(
+            "INSERT INTO entry_inbox (run_id, seq, agent_id, plane, source, entry) \
+             VALUES ($1, $2, $3, $4, $5, $6)",
+        )
+        .bind(taken.run)
+        .bind(seq)
+        .bind(taken.agent.as_str())
+        .bind(taken.plane)
+        .bind(taken.source)
+        .bind(taken.entry.to_string())
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(true)
+    }
+
+    /// **Claim the inbox's next row due a try**, fairly (by when each is
+    /// due, a fresh row's take or a failed row's backed-off try, so a row
+    /// that failed is never chosen ahead of one not tried since), **in a
+    /// transaction of its own that holds the claim**: `FOR UPDATE SKIP
+    /// LOCKED`, so no two drainers, of one process or two, ever apply one
+    /// row. The claim ends with the transaction: committed with the row's
+    /// effects, or rolled back where the drainer fails or dies, the row then
+    /// due again.
+    pub async fn claim_entry(&self) -> anyhow::Result<Option<Claimed>> {
+        let mut tx = self.pool.begin().await?;
+        let row: Option<InboxRow> = sqlx::query_as(
+            "SELECT inbox_id, run_id, seq, agent_id, plane, source, entry, alert_id \
+             FROM entry_inbox WHERE next_try <= now() ORDER BY next_try, inbox_id \
+             LIMIT 1 FOR UPDATE SKIP LOCKED",
+        )
+        .fetch_optional(&mut *tx)
+        .await?;
+        Ok(row.map(|row| Claimed { tx, row }))
+    }
+
+    /// **A row whose effect failed** is tried again later, its wait
+    /// doubling from a second to five minutes, never deleted.
+    pub async fn inbox_failed(&self, inbox_id: i64) -> anyhow::Result<()> {
+        sqlx::query(BACK_OFF)
+            .bind(inbox_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
     }
 
     /// **Contact restored**: the open lost-contact alert on the plane, if

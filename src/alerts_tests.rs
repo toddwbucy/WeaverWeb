@@ -25,13 +25,13 @@ use crate::verbs_tests::{
 };
 
 /// The agent's alerts, open first, newest first.
-async fn alerts(rig: &Rig, karl: &str) -> Vec<Alert> {
+pub(crate) async fn alerts(rig: &Rig, karl: &str) -> Vec<Alert> {
     let id: AgentId = karl.parse().unwrap();
     rig.store().alerts_on(&id, 50).await.unwrap()
 }
 
 /// Poll the agent's alerts until a condition holds.
-async fn wait_alerts(
+pub(crate) async fn wait_alerts(
     rig: &Rig,
     karl: &str,
     what: &str,
@@ -52,7 +52,7 @@ async fn wait_alerts(
 }
 
 /// Poll the operations log until it holds `lines` lines.
-async fn wait_log(rig: &Rig, lines: usize) -> Vec<serde_json::Value> {
+pub(crate) async fn wait_log(rig: &Rig, lines: usize) -> Vec<serde_json::Value> {
     let until = tokio::time::Instant::now() + Duration::from_secs(5);
     loop {
         let log = rig.operations_log();
@@ -200,6 +200,8 @@ async fn raisers_at_once_leave_one_alert_counting_them_all() {
                         detail: String::new(),
                         first: None,
                         options: Vec::new(),
+                        source: "server",
+                        once: false,
                     })
                     .await
             })
@@ -846,6 +848,8 @@ async fn a_full_queue_drops_and_counts_and_never_holds_the_door() {
                             detail: String::new(),
                             first: None,
                             options: Vec::new(),
+                            source: "server",
+                            once: false,
                         },
                         plane: "admin",
                         principal: "server".into(),

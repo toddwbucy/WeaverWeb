@@ -42,7 +42,7 @@ use crate::link::register::{
     ConstituentsWrite, CredentialState, Observation, REVOCATION_CHANNEL, TupleWrite,
 };
 use crate::store::access::{shared_hold, verbs_granted_in};
-use crate::store::alerts::{AlertKind, Raise, bounded as cut};
+use crate::store::alerts::{AlertKind, InboxRow, Raise, TakenEntry, bounded as cut};
 use crate::store::audit::{self, PersonMethod, Target};
 use crate::store::identity::session_stands;
 use crate::store::{AgentId, Store};
@@ -602,6 +602,9 @@ struct Inner {
     /// The accept loop and the notification task, aborted by `stop` and
     /// by `halt`.
     tasks: Mutex<Vec<tokio::task::JoinHandle<()>>>,
+    /// **The alerts' worker and drainer**, ended at the stop after the
+    /// connections' teardowns have raised (Spec 2.14).
+    alert_tasks: Mutex<Option<crate::alerting::AlertTasks>>,
     /// Every connection task, handshaking or admitted, so `halt` and
     /// `stop` abort and drain them all before the lock's session ends: a
     /// replacement listener must not take the lock while an old task can
@@ -634,6 +637,13 @@ struct Inner {
     shares: Arc<Mutex<HashMap<String, usize>>>,
     #[cfg(test)]
     fault_next_teardown: std::sync::atomic::AtomicBool,
+    /// A test's lever: the next entry's take fails once.
+    #[cfg(test)]
+    fault_next_entry: std::sync::atomic::AtomicBool,
+    /// A test's lever: this many entry acknowledgements are dropped, as a
+    /// full write queue drops them.
+    #[cfg(test)]
+    drop_entry_acks: std::sync::atomic::AtomicUsize,
     /// A test's one lever on the store: the next landing fails once, so
     /// the ack's dependence on the write can be watched.
     #[cfg(test)]
@@ -757,7 +767,7 @@ impl Listener {
         let epoch = store.listener_start().await?;
         let mut notifications = sqlx::postgres::PgListener::connect_with(&store.pool).await?;
         notifications.listen(REVOCATION_CHANNEL).await?;
-        let alerts = Alerts::start(store.clone(), operations_log);
+        let (alerts, alert_tasks) = Alerts::start(store.clone(), operations_log);
         let listener = Self {
             inner: Arc::new(Inner {
                 store,
@@ -776,6 +786,7 @@ impl Listener {
                 cadence: silence / 4,
                 halted,
                 tasks: Mutex::new(Vec::new()),
+                alert_tasks: Mutex::new(Some(alert_tasks)),
                 connections: Mutex::new(tokio::task::JoinSet::new()),
                 closed: std::sync::atomic::AtomicBool::new(false),
                 monitor: Mutex::new(None),
@@ -788,6 +799,10 @@ impl Listener {
                 shares: Arc::new(Mutex::new(HashMap::new())),
                 #[cfg(test)]
                 fault_next_teardown: std::sync::atomic::AtomicBool::new(false),
+                #[cfg(test)]
+                fault_next_entry: std::sync::atomic::AtomicBool::new(false),
+                #[cfg(test)]
+                drop_entry_acks: std::sync::atomic::AtomicUsize::new(0),
                 #[cfg(test)]
                 fault_next_land: std::sync::atomic::AtomicBool::new(false),
                 #[cfg(test)]
@@ -967,6 +982,9 @@ impl Listener {
     /// drained. The lock's release may then precede a connection task's
     /// end by the moment it takes to drop.
     pub fn stop_now(&self) {
+        if let Some(alert_tasks) = self.inner.alert_tasks.lock().unwrap().take() {
+            alert_tasks.abort();
+        }
         for task in self.inner.tasks.lock().unwrap().drain(..) {
             task.abort();
         }
@@ -1085,6 +1103,18 @@ impl Listener {
     #[cfg(test)]
     pub fn delay_next_outcome(&self, delay: Duration) {
         *self.inner.delay_next_outcome.lock().unwrap() = Some(delay);
+    }
+
+    /// Drop the next `n` entry acknowledgements, as a full queue would.
+    #[cfg(test)]
+    pub fn drop_entry_acks(&self, n: usize) {
+        self.inner.drop_entry_acks.store(n, Ordering::Relaxed);
+    }
+
+    /// Make the next entry's take fail, once.
+    #[cfg(test)]
+    pub fn fail_next_entry(&self) {
+        self.inner.fault_next_entry.store(true, Ordering::Relaxed);
     }
 
     /// Make the next teardown's store write fail, once.
@@ -2049,6 +2079,13 @@ impl Inner {
             set.abort_all();
             while set.join_next().await.is_some() {}
         }
+        // **Then the alerts, in the order the work flows** (Spec 2.14): the
+        // teardowns above have raised; the worker writes what was queued
+        // and ends, then the drainer; the lock is released after this.
+        let alert_tasks = self.alert_tasks.lock().unwrap().take();
+        if let Some(alert_tasks) = alert_tasks {
+            alert_tasks.stop(&self.alerts).await;
+        }
     }
 
     fn next_arrival(&self) -> i64 {
@@ -2400,11 +2437,284 @@ fn failure_of(
             detail: raised.detail,
             first,
             options: raised.options,
+            source: "server",
+            once: false,
         },
         plane: plane.as_str(),
         principal,
         outcome: raised.outcome,
         reason: raised.reason,
+    }
+}
+
+/// **The sources an entry may name, by plane** (Spec 2.14): the box's
+/// `admin.log` and admin-con's own failures on the admin plane, gate-con's
+/// own on the gate plane.
+const ADMIN_ENTRY_SOURCES: [&str; 2] = [crate::link::admin_log::SOURCE, "admin-con"];
+const GATE_ENTRY_SOURCES: [&str; 1] = ["gate-con"];
+
+/// **The kinds of admin's answer** (`weaver-types` `LifecycleAnswer`, at
+/// `toddwbucy/WeaverAgent` `ba3eb4e`), disjoint from the refusal's by the
+/// floor's own rule: a box line whose outcome is one of these is a success
+/// and the log's alone, and any other is a refusal.
+const ANSWER_KINDS: [&str; 14] = [
+    "ready",
+    "left",
+    "save_point_taken",
+    "restore_named",
+    "turn_aborted",
+    "at_rest",
+    "admitted",
+    "released",
+    "gate_ready",
+    "gate_stopped",
+    "gate_quiesced",
+    "validated",
+    "in_transition",
+    "state",
+];
+
+/// What an entry is, as the door checked it.
+#[derive(Debug)]
+enum EntryShape {
+    /// A line of `admin.log`, as admin wrote it, and whether admin-con found
+    /// it its own.
+    Line { own: bool },
+    /// A discontinuity of the file, or a line past the bound.
+    Marked,
+    /// A connector's own failure: its kind, the alert's subject.
+    Failure { kind: String, message: String },
+}
+
+/// **An entry the door checked** (Spec 2.14).
+#[derive(Debug)]
+struct CheckedEntry {
+    source: &'static str,
+    shape: EntryShape,
+    entry: serde_json::Value,
+}
+
+impl CheckedEntry {
+    /// The door's one check: the run drawn as a connector draws it, a
+    /// sequence from one, the source on the plane's allow-list, an object
+    /// within the bound, and the source's own shape.
+    fn of(
+        plane: Plane,
+        run: &str,
+        seq: u64,
+        source: &str,
+        entry: serde_json::Value,
+    ) -> Result<Self, &'static str> {
+        if run.len() != 16 || !run.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+            return Err("a run not drawn as a connector draws one");
+        }
+        if seq == 0 || i64::try_from(seq).is_err() {
+            return Err("a sequence outside its range");
+        }
+        let allowed: &[&str] = match plane {
+            Plane::Admin => &ADMIN_ENTRY_SOURCES,
+            Plane::Gate => &GATE_ENTRY_SOURCES,
+        };
+        let Some(source) = allowed.iter().copied().find(|s| *s == source) else {
+            return Err("a source not on the plane's allow-list");
+        };
+        let Some(object) = entry.as_object() else {
+            return Err("an entry that is not an object");
+        };
+        if serde_json::to_string(&entry).map_or(usize::MAX, |s| s.len())
+            > crate::link::frames::ENTRY_BOUND
+        {
+            return Err("an entry past the bound");
+        }
+        let text = |member: &str| object.get(member).and_then(|v| v.as_str());
+        let shape = if source == crate::link::admin_log::SOURCE {
+            match (
+                object.get("line"),
+                object.get("own").and_then(|o| o.as_bool()),
+                text("discontinuity"),
+                text("oversized"),
+            ) {
+                (Some(line), Some(own), None, None) if line.is_object() || line.is_string() => {
+                    EntryShape::Line { own }
+                }
+                (None, _, Some(_), None) | (None, _, None, Some(_)) => EntryShape::Marked,
+                _ => return Err("a line of admin.log outside its shape"),
+            }
+        } else {
+            match (text("kind"), text("message")) {
+                (Some(kind), Some(message))
+                    if !kind.is_empty()
+                        && kind.len() <= 64
+                        && kind.bytes().all(|b| b.is_ascii_lowercase() || b == b'_') =>
+                {
+                    EntryShape::Failure {
+                        kind: kind.to_owned(),
+                        message: message.to_owned(),
+                    }
+                }
+                _ => return Err("a connector's failure outside its shape"),
+            }
+        };
+        Ok(Self {
+            source,
+            shape,
+            entry,
+        })
+    }
+
+    /// **The entry as the operations log takes it, with the alert it
+    /// raises** (Spec 2.14): every entry is a line; an alert only for a
+    /// line of `admin.log` that is not admin-con's own, an act on the box
+    /// that did not come through WeaverWeb, classified by the doors'
+    /// allow-lists, and for a connector's own failure. **Never twice**: an
+    /// act asked through WeaverWeb raised its alert at the door, and its
+    /// own line raises nothing here.
+    fn into_entry(self, agent: &AgentId, plane: Plane) -> crate::alerting::Entry {
+        let raise = |kind, subject: &str, summary: String, detail: String, options, source| Raise {
+            agent: agent.clone(),
+            kind,
+            subject: subject.to_owned(),
+            summary,
+            detail,
+            first: None,
+            options,
+            source,
+            once: false,
+        };
+        let (own, raise) = match &self.shape {
+            EntryShape::Line { own } => (
+                Some(*own),
+                if *own {
+                    None
+                } else {
+                    self.entry
+                        .get("line")
+                        .and_then(box_line_raised)
+                        .map(|(subject, raised)| {
+                            raise(
+                                raised.kind,
+                                &subject,
+                                format!("on the box, not through WeaverWeb: {}", raised.summary),
+                                raised.detail,
+                                raised.options,
+                                "admin",
+                            )
+                        })
+                },
+            ),
+            EntryShape::Marked => (None, None),
+            EntryShape::Failure { kind, message } => (
+                None,
+                Some(raise(
+                    AlertKind::Failed,
+                    kind,
+                    format!("{}: {message}", self.source),
+                    String::new(),
+                    Vec::new(),
+                    self.source,
+                )),
+            ),
+        };
+        crate::alerting::Entry {
+            agent: agent.clone(),
+            plane: plane.as_str(),
+            source: self.source.to_owned(),
+            own,
+            entry: self.entry,
+            raise,
+        }
+    }
+}
+
+/// **Whether the door takes an entry** of `source` on `plane`, for the
+/// tests that every shape a connector sends passes it.
+#[cfg(all(test, feature = "passkeys"))]
+pub(crate) fn entry_passes(plane: Plane, source: &str, entry: serde_json::Value) -> bool {
+    CheckedEntry::of(plane, "0123456789abcdef", 1, source, entry).is_ok()
+}
+
+/// **What an inbox row causes** (Spec 2.14): its entry checked again by the
+/// door's own check from its durable copy, its operations-log line and the
+/// alert it raises; `None` for a row that no longer passes.
+pub(crate) fn entry_effect(row: &InboxRow) -> Option<crate::alerting::Entry> {
+    let plane = match row.plane.as_str() {
+        "admin" => Plane::Admin,
+        "gate" => Plane::Gate,
+        _ => return None,
+    };
+    let agent: AgentId = row.agent_id.parse().ok()?;
+    let seq = u64::try_from(row.seq).ok()?;
+    let entry = serde_json::from_str(&row.entry).ok()?;
+    CheckedEntry::of(plane, &row.run_id, seq, &row.source, entry)
+        .ok()
+        .map(|checked| checked.into_entry(&agent, plane))
+}
+
+/// **What a line of `admin.log` that is not admin-con's own raises**, by
+/// allow-list (Spec 2.14): an invocation's refusal, by the doors' own rules
+/// (the save-point prompt where an `unload` stopped at its save point with
+/// the run at rest); a load rolled back or a verb refused before its
+/// answer; and the relay refusing a peer, another party at the trace's
+/// door. An answer, any other line, and a line of no known shape raise
+/// nothing. The subject and what is raised.
+///
+/// **The alert says what happened and admin's own word on it, and no more**:
+/// the verb, admin's outcome (the refusal object), and admin's time; for
+/// the relay, that a peer other than admin-con was refused. Never the line's
+/// caller uid, command line or boundary digest, facts about the box that
+/// every grant holder's panel has no need of: the operations log on the
+/// server keeps the whole line.
+fn box_line_raised(line: &serde_json::Value) -> Option<(String, Raised)> {
+    let text = |member: &str| line.get(member).and_then(|v| v.as_str());
+    let when = line
+        .get("wall_ms")
+        .and_then(|w| w.as_i64())
+        .and_then(chrono::DateTime::<Utc>::from_timestamp_millis)
+        .map(|at| format!("at {} on the box", at.format("%Y-%m-%d %H:%M:%S UTC")))
+        .unwrap_or_default();
+    if text("actor") == Some("relay") {
+        if text("event") != Some("refused") {
+            return None;
+        }
+        return Some((
+            "trace door".to_owned(),
+            Raised {
+                kind: AlertKind::Failed,
+                summary: "the trace relay refused a peer other than admin-con at the trace's door"
+                    .to_owned(),
+                detail: when,
+                reason: serde_json::json!({ "relay": "refused" }),
+                options: Vec::new(),
+                outcome: "failed",
+            },
+        ));
+    }
+    let verb = text("verb")?;
+    let outcome = text("outcome")?;
+    match serde_json::from_str::<serde_json::Value>(outcome) {
+        Ok(object) if object.is_object() => {
+            let kind = object.get("kind").and_then(|k| k.as_str()).unwrap_or("");
+            if ANSWER_KINDS.contains(&kind) {
+                return None;
+            }
+            let mut raised = refusal_raised(verb, &object, "");
+            if !when.is_empty() {
+                raised.detail = format!("{}\n{when}", raised.detail);
+            }
+            Some((verb.to_owned(), raised))
+        }
+        _ if outcome.starts_with("refused") || outcome.starts_with("rolled back") => Some((
+            verb.to_owned(),
+            Raised {
+                kind: AlertKind::Failed,
+                summary: format!("{verb}: {}", cut(outcome, 512)),
+                detail: when,
+                reason: serde_json::json!({ "outcome": cut(outcome, 512) }),
+                options: Vec::new(),
+                outcome: "failed",
+            },
+        )),
+        _ => None,
     }
 }
 
@@ -2420,13 +2730,77 @@ const LEGS_AT_REST: [&str; 3] = ["answer", "finished", "member_dead"];
 /// `unload`, naming a leg of [`LEGS_AT_REST`]. The door's prompt and the
 /// verb page read it alike.
 pub fn stopped_at_save_point<'a>(verb: &str, outcome: &'a VerbOutcome) -> Option<&'a str> {
-    let object = outcome.answer.as_ref()?;
+    if outcome.exit_code != Some(1) {
+        return None;
+    }
+    missed_at_rest(verb, outcome.answer.as_ref()?)
+}
+
+/// The leg of an `unload`'s refusal object that left the run at rest.
+fn missed_at_rest<'a>(verb: &str, object: &'a serde_json::Value) -> Option<&'a str> {
     let leg = object.get("missed").and_then(|m| m.as_str())?;
     (verb == "unload"
-        && outcome.exit_code == Some(1)
         && object.get("kind").and_then(|k| k.as_str()) == Some("save_point_not_taken")
         && LEGS_AT_REST.contains(&leg))
     .then_some(leg)
+}
+
+/// **What admin's refusal of `verb` raises**, by allow-list (Spec 2.14):
+/// the decision prompt where an `unload` stopped at its save point with the
+/// run at rest, an explaining alert where a refusal could have lost data
+/// (`save_point_not_taken` naming `published`, `boundary_unverified`), and
+/// a failure otherwise, each carrying the refusal object and admin's
+/// stderr, bounded. The door's and a box line's alike.
+fn refusal_raised(verb: &str, object: &serde_json::Value, stderr: &str) -> Raised {
+    let kind = object
+        .get("kind")
+        .and_then(|k| k.as_str())
+        .unwrap_or("unnamed")
+        .to_owned();
+    let missed = object.get("missed").and_then(|m| m.as_str());
+    let stderr = cut(stderr, 2048);
+    let detail = if stderr.is_empty() {
+        object.to_string()
+    } else {
+        format!("{object}\nstderr: {stderr}")
+    };
+    let reason = serde_json::json!({ "refusal": object, "stderr": stderr });
+    let (alert, summary, options) = match (missed_at_rest(verb, object), kind.as_str(), missed) {
+        (Some(leg), _, _) => (
+            AlertKind::SavePointMissed,
+            format!(
+                "unload stopped at its save point (missed: {leg}): the run stands at rest, its gate lowered, and nothing is lost yet"
+            ),
+            vec![SAVE_POINT_THEN_UNLOAD.to_owned(), FORCE_UNLOAD.to_owned()],
+        ),
+        (None, "save_point_not_taken", Some("published")) => (
+            AlertKind::DataAtRisk,
+            format!(
+                "{verb} refused: a save point was taken and did not publish; what it holds is not in the published save points"
+            ),
+            Vec::new(),
+        ),
+        (None, "boundary_unverified", _) => (
+            AlertKind::DataAtRisk,
+            format!(
+                "{verb} refused: a save point's boundary could not be verified; it is cleared on the box"
+            ),
+            Vec::new(),
+        ),
+        _ => (
+            AlertKind::Failed,
+            format!("{verb} refused by admin: {kind}"),
+            Vec::new(),
+        ),
+    };
+    Raised {
+        kind: alert,
+        summary,
+        detail,
+        reason,
+        options,
+        outcome: "failed",
+    }
 }
 
 /// The decision prompt's two options for an unload stopped at its save point.
@@ -2447,56 +2821,11 @@ impl Answer {
             Answer::Outcome(outcome) if outcome.exit_code == Some(0) => None,
             Answer::Outcome(outcome) => {
                 let object = outcome.answer.clone().unwrap_or(serde_json::Value::Null);
-                let kind = object
-                    .get("kind")
-                    .and_then(|k| k.as_str())
-                    .unwrap_or("unnamed")
-                    .to_owned();
-                let missed = object.get("missed").and_then(|m| m.as_str());
-                let at_rest = stopped_at_save_point(verb, outcome);
-                let stderr = cut(outcome.stderr.as_deref().unwrap_or(""), 2048);
-                let detail = if stderr.is_empty() {
-                    object.to_string()
-                } else {
-                    format!("{object}\nstderr: {stderr}")
-                };
-                let reason = serde_json::json!({ "refusal": object, "stderr": stderr });
-                let (alert, summary, options) = match (at_rest, kind.as_str(), missed) {
-                    (Some(leg), _, _) => (
-                        AlertKind::SavePointMissed,
-                        format!(
-                            "unload stopped at its save point (missed: {leg}): the run stands at rest, its gate lowered, and nothing is lost yet"
-                        ),
-                        vec![SAVE_POINT_THEN_UNLOAD.to_owned(), FORCE_UNLOAD.to_owned()],
-                    ),
-                    (None, "save_point_not_taken", Some("published")) => (
-                        AlertKind::DataAtRisk,
-                        format!(
-                            "{verb} refused: a save point was taken and did not publish; what it holds is not in the published save points"
-                        ),
-                        Vec::new(),
-                    ),
-                    (None, "boundary_unverified", _) => (
-                        AlertKind::DataAtRisk,
-                        format!(
-                            "{verb} refused: a save point's boundary could not be verified; it is cleared on the box"
-                        ),
-                        Vec::new(),
-                    ),
-                    _ => (
-                        AlertKind::Failed,
-                        format!("{verb} refused by admin: {kind}"),
-                        Vec::new(),
-                    ),
-                };
-                Some(Raised {
-                    kind: alert,
-                    summary,
-                    detail,
-                    reason,
-                    options,
-                    outcome: "failed",
-                })
+                Some(refusal_raised(
+                    verb,
+                    &object,
+                    outcome.stderr.as_deref().unwrap_or(""),
+                ))
             }
             Answer::Fault(fault) => {
                 let reason = serde_json::json!({ "fault": fault.kind, "message": fault.message });
@@ -3630,6 +3959,125 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                         break;
                     }
                 }
+                (
+                    plane,
+                    FromClient::Entry {
+                        run,
+                        seq,
+                        source,
+                        entry,
+                    },
+                ) => {
+                    // **An entry is checked once, here at the door** (Spec
+                    // 2.14): its identity, its source on the plane's
+                    // allow-list and its shape and bound; anything else is
+                    // the peer's protocol violation, refused as malformed
+                    // as any frame of the wrong shape is. Nothing past the
+                    // door sees an unchecked entry.
+                    let checked = match CheckedEntry::of(plane, &run, seq, &source, entry) {
+                        Ok(checked) => checked,
+                        Err(why) => {
+                            tracing::warn!(
+                                "link from {peer}: {} ({plane}) sent an entry outside its shape ({why}), refused",
+                                agent.agent_id
+                            );
+                            send(
+                                &tx,
+                                ToClient::Refusal {
+                                    reason: Refusal::Malformed,
+                                },
+                            )
+                            .await;
+                            reason = "refused as malformed";
+                            break;
+                        }
+                    };
+                    // **Taken once** (Spec 2.14): a resend, after a lost
+                    // acknowledgement, a reconnection or a server restart,
+                    // is acknowledged and nothing more. **An entry the
+                    // store did not take closes the connection**, as an
+                    // event's failed landing does: a later entry taken past
+                    // it would move the run's mark beyond it, and its
+                    // resend would be taken for a duplicate. Closed, every
+                    // entry not acknowledged is resent in order.
+                    let take = async {
+                        #[cfg(test)]
+                        if inner.fault_next_entry.swap(false, Ordering::Relaxed) {
+                            return Err(anyhow::anyhow!(
+                                "a test fault made this entry's take fail"
+                            ));
+                        }
+                        inner
+                            .store
+                            .take_entry(&TakenEntry {
+                                run: &run,
+                                seq,
+                                agent: &agent.agent_id,
+                                plane: plane.as_str(),
+                                source: checked.source,
+                                entry: &checked.entry,
+                            })
+                            .await
+                    };
+                    let taken = tokio::time::timeout(inner.silence, take).await;
+                    match taken {
+                        Ok(Ok(new)) => {
+                            // **Acknowledged only once durable** (Spec
+                            // 2.14): the entry stands in the inbox, written
+                            // with its run's mark, before the ack leaves;
+                            // the drainer, woken and never waited on,
+                            // applies it from that copy.
+                            if new {
+                                inner.alerts.wake_inbox();
+                            }
+                            // **An acknowledgement never blocks the read
+                            // loop**, as an event's, and is dropped where the
+                            // write queue is full. A connector whose window
+                            // then waits a silence bound unacknowledged sends
+                            // its entries again, which the mark takes once
+                            // and acknowledges again: no window waits for
+                            // good on an acknowledgement dropped here.
+                            #[cfg(test)]
+                            let dropped = inner
+                                .drop_entry_acks
+                                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+                                    n.checked_sub(1)
+                                })
+                                .is_ok();
+                            #[cfg(not(test))]
+                            let dropped = false;
+                            if !dropped
+                                && let Err(mpsc::error::TrySendError::Closed(_)) =
+                                    tx.try_send(ToClient::EntryAck { run, seq })
+                            {
+                                reason = "the write path is gone";
+                                break;
+                            }
+                        }
+                        failed => {
+                            match failed {
+                                Ok(Err(e)) => tracing::error!(
+                                    "{}: an entry could not be taken, closing so it is resent in order: {e:#}",
+                                    agent.agent_id
+                                ),
+                                _ => tracing::error!(
+                                    "{}: an entry was not taken within {:?}, closing so it is resent in order",
+                                    agent.agent_id,
+                                    inner.silence
+                                ),
+                            }
+                            send(
+                                &tx,
+                                ToClient::Refusal {
+                                    reason: Refusal::StoreUnavailable,
+                                },
+                            )
+                            .await;
+                            reason = "the store was unavailable";
+                            break;
+                        }
+                    }
+                }
                 (_, other) => {
                     // **A frame on the wrong plane is refused and logged
                     // against the row** (Spec 8): a tuple or load state can
@@ -3803,6 +4251,7 @@ fn frame_name(frame: &FromClient) -> &'static str {
         FromClient::Verb { .. } => "verb",
         FromClient::Door { .. } => "door",
         FromClient::Event { .. } => "event",
+        FromClient::Entry { .. } => "entry",
     }
 }
 
@@ -3941,6 +4390,48 @@ impl Inner {
         }
         let kind = event.kind.clone();
         let payload = event.raw.get("payload").cloned();
+        // **A loss that already happened** (Spec 2.14, the operator's ruling
+        // of 2026-10-15): the trace's `load` event carries `reset` where the
+        // agent's last run did not end in a clean unload, the load having
+        // reset it to its latest save point (`weaver-trace` `event.rs` at
+        // `toddwbucy/WeaverAgent` `ba3eb4e`). Read by allow-list, live or
+        // replayed, and raised **once ever per prior run**, so a replay or a
+        // backfill of the same event raises nothing again.
+        if kind.as_deref() == Some("load")
+            && let Some(reset) = payload.as_ref().and_then(|p| p.get("reset"))
+            && let Some(prior) = reset.get("prior_run").and_then(|r| r.as_str())
+        {
+            let why = reset
+                .get("reason")
+                .and_then(|r| r.as_str())
+                .unwrap_or("unnamed");
+            let said = match why {
+                "forced-unload" => {
+                    "the prior run was ended by a forced unload, without its leave save point"
+                }
+                "no-clean-unload" => "the prior run did not end in a clean unload",
+                _ => "the prior run did not end cleanly",
+            };
+            self.alerts.raise(Failure {
+                raise: Raise {
+                    agent: agent.clone(),
+                    kind: AlertKind::DataLost,
+                    subject: format!("reset of {}", cut(prior, 48)),
+                    summary: format!(
+                        "the load reset the agent to its latest save point ({why}): {said}, and its state since that save point is lost"
+                    ),
+                    detail: reset.to_string(),
+                    first: None,
+                    options: Vec::new(),
+                    source: "trace",
+                    once: true,
+                },
+                plane: "admin",
+                principal: "server".to_owned(),
+                outcome: "data_lost",
+                reason: serde_json::json!({ "reset": reset }),
+            });
+        }
         // **Admin's date** (Spec 2.12): the event's own time, and the
         // receipt's only where the record carries none.
         let at = event_time(&event).unwrap_or_else(|| {

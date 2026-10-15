@@ -200,6 +200,11 @@ pub struct TurnFault {
     pub message: String,
 }
 
+/// **The bound on one entry's object**, rendered (Spec 2.14): the
+/// connector replaces a larger one with an entry saying so, and the
+/// server's door refuses one past it.
+pub const ENTRY_BOUND: usize = 16 * 1024;
+
 /// Frames a connector sends the server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "svc", rename_all = "snake_case")]
@@ -269,6 +274,16 @@ pub enum FromClient {
         replayed: bool,
         event: TraceEvent,
     },
+    /// **One log entry the connector met, sent upstream** (Spec 2.14, 8):
+    /// a line of the box's `admin.log`, or the connector's own failure,
+    /// identified by the connector's run (drawn at its start) and a
+    /// sequence, delivered at least once and acknowledged by `entry_ack`.
+    Entry {
+        run: String,
+        seq: u64,
+        source: String,
+        entry: serde_json::Value,
+    },
 }
 
 /// Frames the server sends a connector.
@@ -309,6 +324,12 @@ pub enum ToClient {
     /// end.
     Landed {
         id: u64,
+    },
+    /// **The server took the connector's entries of the run through the
+    /// sequence** (Spec 2.14): logged, or met before as a resend.
+    EntryAck {
+        run: String,
+        seq: u64,
     },
     /// Typed, before the connection closes.
     Refusal {

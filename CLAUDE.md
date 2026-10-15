@@ -340,7 +340,8 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
   and each connector's own failure is an `entry` frame (run drawn at start, sequence),
   sent by the connection's pump (`Connection::carry`, 16 unacknowledged at most), kept
   until `entry_ack` (1024 entries, 1 MiB, oldest dropped and counted), taken once by the
-  run's mark (`entry_run`); every entry is a line of the operations log, and an alert
+  run's mark (`entry_run`) and acknowledged only once its row is in `entry_inbox`, which a
+  drainer in `src/alerting.rs` applies and deletes; every entry is a line of the operations log, and an alert
   only for a line not own (the doors' allow-lists: the S9 prompt from the box too) or a
   connector's failure; a trace `load` event carrying `reset` raises `data_lost` once per
   prior run. `entries_tests` run against the real listener and fake connectors. A plane the server cannot

@@ -2122,7 +2122,12 @@ the connector's run, drawn at its start, and a sequence, and acknowledged by
 raised only for an entry that did not come through WeaverWeb**:
 
 - **admin-con reads the box's `admin.log`**, the box fact `admin_log` of
-  section 8, from its start (no history), each line passed along as admin
+  section 8, from its start (no history: the file as it stands when
+  admin-con starts, its baseline taken before the first look; a file absent
+  or unreadable then is read from its start once it opens; a size below what
+  was read, a replacement, or the digest of the last 4 KiB read no longer
+  matching, a copy-truncate regrown between two looks among them, is a
+  discontinuity read from its start, never resumed mid-line), each line passed along as admin
   wrote it beside one field admin-con judges: **`own`, true where the line's
   caller uid is admin-con's own**, the `uid` admin writes for an invocation
   (the uid sudo reported) or the `peer_uid` the relay writes for a peer. A
@@ -2149,7 +2154,14 @@ backlog until acknowledged, and is resent on the next connection; the
 server holds the highest sequence it took of each run (migration `0020`), so
 a resend after a lost acknowledgement, a reconnection or its own restart is
 acknowledged and taken no more, and **an entry the store did not take closes
-the connection**, so no later entry moves the run's mark past it. The
+the connection**, so no later entry moves the run's mark past it. **An entry
+is acknowledged only once durable**: its row enters an inbox in the
+transaction that moves its run's mark, and a worker applies it from that
+copy, its alert raised and kept on the row, then its line written, then the
+row deleted; a step that fails leaves the row for the next look, the alert
+never raised twice, the line written at least once, and a restart drains
+what stands. The server's own raises from the doors and teardowns stay
+best-effort, dropped and counted, being its observations and no delivery. The
 backlog holds at most 1024 entries and 1 MiB, the oldest dropped first, the
 drops counted and reported as one entry once there is room. **Nothing on a
 connector waits on an entry**: `admin.log` is read on a thread of its own,
@@ -4528,7 +4540,8 @@ missing while it was relaying.
 | an answer refused at the door leaves its act's outcome unknown, and raises its alert | perturbation in `src/alerts_tests.rs`: leave the refused answer's ask out of the teardown's drain, on the admin plane or on the gate plane, and a `load` answered naming another verb, or a turn answered with both a close and a fault, raises only the lost contact |
 | a plane's loss is ordered before the restoration that follows it | perturbation in `src/alerts_tests.rs`, the teardown held after its row is released: raise the loss after the teardown rather than where the entry comes out, readmit in the gap, and the lost-contact alert ends unrestored while a connection stands |
 | a line of the box's `admin.log` raises an alert only where it did not come through WeaverWeb | perturbation in `src/entries_tests.rs` and `src/link/admin_con_tests.rs`: drop the own check at the server, and a refusal admin-con's own invocation met raises its alert again from its line; take every line as another party's at admin-con, and an own line sent end to end through the real admin-con raises one; put the whole line back in the alert's detail, and another party's refusal shows the line's uid and command line to every grant holder |
-| a connector's entry is taken once, though it is sent again | perturbation in `src/entries_tests.rs`: drop the run's mark, and an entry resent on a new connection is logged twice; read on past an entry the store did not take, and the next entry moves the mark past it, so its resend is taken for a duplicate and never logged |
+| a connector's entry is taken once, though it is sent again, and acknowledged only once durable | perturbation in `src/entries_tests.rs`: drop the run's mark, and an entry resent on a new connection is logged twice; read on past an entry the store did not take, and the next entry moves the mark past it, so its resend is taken for a duplicate and never logged; acknowledge without writing the entry's row, and 1,000 entries acknowledged while the drainer is held are never logged; delete a row whose line failed, and that entry's line is lost |
+| admin-con reads `admin.log` from its start's baseline, a truncation or a regrowth seen | perturbation in `src/entries_tests.rs`: take every first open as the start's baseline, and lines written to a file absent at the start are skipped; drop the digest of the last bytes read, and a copy-truncate regrown between two looks is resumed mid-line |
 | a connector's backlog of entries is bounded, its drops counted and reported | perturbation in `src/entries_tests.rs`: drop the bound, and a backlog past it holds every entry |
 | the door checks an entry once, its source on the plane's allow-list | perturbation in `src/entries_tests.rs`: give the gate plane the admin plane's sources, and gate-con's entry claiming `admin_log` is taken and classified rather than refused as malformed |
 | a load that reset the agent is a `data_lost` alert, raised once | perturbation in `src/entries_tests.rs`: drop the reset check, and the trace's `load` event carrying `reset` raises nothing |

@@ -607,3 +607,154 @@ fn admin_log_refuses_a_link_and_a_fifo() {
         );
     }
 }
+
+/// **An entry is acknowledged only once durable, and applied from that
+/// copy**: on a new connection, 1,000 entries are sent and acknowledged
+/// while the drainer is held; once it resumes, each is one line of the log.
+/// A line that fails is written on the drainer's next look.
+///
+/// Perturbation: acknowledge without writing the entry's row, and the
+/// entries acknowledged are never logged.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn entries_acknowledged_are_applied_from_their_durable_copy() {
+    let Some(o) = operated(&["show"]).await else {
+        return;
+    };
+    let alerts = o.rig.listener.alerts().clone();
+    let Operated {
+        rig,
+        admin_config,
+        admin_con,
+        ..
+    } = o;
+    drop(admin_con);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let mut again = admitted_admin(&admin_config, &["show"]).await;
+    let held = alerts.stall_worker().await;
+    let count = 1000u64;
+    for seq in 1..=count {
+        send_entry(
+            &mut again,
+            seq,
+            "admin-con",
+            json!({"kind": "probe", "message": format!("{seq}")}),
+        )
+        .await;
+    }
+    loop {
+        let (_, seq) = entry_ack(&mut again).await;
+        if seq == count {
+            break;
+        }
+    }
+    assert!(entry_lines(&rig).is_empty(), "nothing applied while held");
+    drop(held);
+    let until = tokio::time::Instant::now() + Duration::from_secs(60);
+    while entry_lines(&rig).len() < count as usize {
+        assert!(
+            tokio::time::Instant::now() < until,
+            "only {} of {count} lines",
+            entry_lines(&rig).len()
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(entry_lines(&rig).len(), count as usize);
+
+    alerts.fail_next_line();
+    send_entry(
+        &mut again,
+        count + 1,
+        "admin-con",
+        json!({"kind": "probe", "message": "retried"}),
+    )
+    .await;
+    let lines = wait_entries(&rig, count as usize + 1).await;
+    assert_eq!(lines.last().unwrap()["entry"]["message"], "retried");
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    assert_eq!(entry_lines(&rig).len(), count as usize + 1, "once");
+}
+
+/// **A file absent at admin-con's start is read from its start once it
+/// appears**: its absence is a failure, once, and both lines written to it
+/// are sent.
+///
+/// Perturbation: take every first open as the start's baseline, and the
+/// lines written before the file was found are skipped.
+#[test]
+fn admin_log_absent_at_the_start_is_read_from_its_start() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("admin.log");
+    let entries = Entries::new("admin-con");
+    let (stop, shutdown) = tokio::sync::watch::channel(false);
+    let tail = admin_log::tail(path.clone(), entries.clone(), MINE as u32, shutdown);
+    let failed = wait_pending(&entries, 1);
+    assert_eq!(failed[0].1["kind"], "admin_log_unreadable");
+    std::fs::write(
+        &path,
+        format!(
+            "{}\n{}\n",
+            line("load", THEIRS, json!({"kind": "config_invalid"})),
+            line("stop", THEIRS, json!({"kind": "at_rest"}))
+        ),
+    )
+    .unwrap();
+    let pending = wait_pending(&entries, 3);
+    assert_eq!(pending[1].1["line"]["verb"], "load");
+    assert_eq!(pending[2].1["line"]["verb"], "stop");
+    stop.send_replace(true);
+    tail.join().unwrap();
+}
+
+/// **A copy-truncate regrown past the offset between two looks is seen**:
+/// the digest of the last bytes read no longer matches, the discontinuity
+/// is marked, and the new content is read from its start, whole, never
+/// resumed mid-line.
+///
+/// Perturbation: drop the digest check, and the regrown file is resumed
+/// at the old offset, mid-line.
+#[test]
+fn admin_log_truncated_and_regrown_between_looks_is_reread_whole() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("admin.log");
+    std::fs::write(&path, "").unwrap();
+    let entries = Entries::new("admin-con");
+    let (stop, shutdown) = tokio::sync::watch::channel(false);
+    let tail = admin_log::tail(path.clone(), entries.clone(), MINE as u32, shutdown);
+    let mut f = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap();
+    writeln!(f, "{}", line("show", MINE, json!({"kind": "state"}))).unwrap();
+    drop(f);
+    wait_pending(&entries, 1);
+    // Truncated in place and regrown past the offset in one write, well
+    // inside a look's interval.
+    let long = line(
+        "load",
+        THEIRS,
+        json!({"kind": "config_invalid", "pad": "p".repeat(400)}),
+    );
+    std::fs::write(
+        &path,
+        format!(
+            "{long}\n{}\n",
+            line("stop", THEIRS, json!({"kind": "at_rest"}))
+        ),
+    )
+    .unwrap();
+    let pending = wait_pending(&entries, 4);
+    assert!(
+        pending[1].1["discontinuity"]
+            .as_str()
+            .is_some_and(|d| d.contains("truncated")),
+        "{pending:#?}"
+    );
+    assert_eq!(pending[2].1["line"]["verb"], "load", "{pending:#?}");
+    assert_eq!(pending[3].1["line"]["verb"], "stop");
+    assert!(
+        pending.iter().all(|(_, e)| e["unparsed"] != true),
+        "no line read from its middle: {pending:#?}"
+    );
+    stop.send_replace(true);
+    tail.join().unwrap();
+}

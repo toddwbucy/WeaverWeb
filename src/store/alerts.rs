@@ -86,6 +86,29 @@ pub struct Raise {
     pub once: bool,
 }
 
+/// **An entry as the door took it**, for the inbox.
+pub struct TakenEntry<'a> {
+    pub run: &'a str,
+    pub seq: u64,
+    pub agent: &'a AgentId,
+    pub plane: &'a str,
+    pub source: &'a str,
+    pub entry: &'a serde_json::Value,
+}
+
+/// **An inbox row**: an entry taken and not yet applied.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct InboxRow {
+    pub inbox_id: i64,
+    pub run_id: String,
+    pub seq: i64,
+    pub agent_id: String,
+    pub plane: String,
+    pub source: String,
+    pub entry: serde_json::Value,
+    pub alert_id: Option<String>,
+}
+
 /// An alert as the pages read it.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct Alert {
@@ -165,33 +188,77 @@ impl Store {
         .await?)
     }
 
-    /// **Take a connector's entry once** (Spec 2.14, migration `0020`):
-    /// true where its sequence is past the highest taken of its run, which
-    /// moves to it; false for a resend. A run is the agent's and the
-    /// plane's it was first met on, and an entry of it from another is
+    /// **Take a connector's entry once, durably** (Spec 2.14, migration
+    /// `0020`): in one transaction, the run's mark moves to the sequence
+    /// where it is past the highest taken, and the entry's row enters the
+    /// inbox, so an entry acknowledged after this is durable here. True
+    /// where it was taken; false for a resend. A run is the agent's and
+    /// the plane's it was first met on, and an entry of it from another is
     /// taken as a resend, never as new.
-    pub async fn take_entry(
-        &self,
-        run: &str,
-        agent: &AgentId,
-        plane: &str,
-        seq: u64,
-    ) -> anyhow::Result<bool> {
-        let seq = i64::try_from(seq).map_err(|_| anyhow::anyhow!("a sequence past i64"))?;
-        let taken: Option<i32> = sqlx::query_scalar(
+    pub async fn take_entry(&self, taken: &TakenEntry<'_>) -> anyhow::Result<bool> {
+        let seq = i64::try_from(taken.seq).map_err(|_| anyhow::anyhow!("a sequence past i64"))?;
+        let mut tx = self.pool.begin().await?;
+        let moved: Option<i32> = sqlx::query_scalar(
             "INSERT INTO entry_run (run_id, agent_id, plane, last_seq) VALUES ($1, $2, $3, $4) \
              ON CONFLICT (run_id) DO UPDATE SET last_seq = EXCLUDED.last_seq, last_at = now() \
              WHERE entry_run.last_seq < EXCLUDED.last_seq \
              AND entry_run.agent_id = EXCLUDED.agent_id AND entry_run.plane = EXCLUDED.plane \
              RETURNING 1",
         )
-        .bind(run)
-        .bind(agent.as_str())
-        .bind(plane)
+        .bind(taken.run)
+        .bind(taken.agent.as_str())
+        .bind(taken.plane)
         .bind(seq)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *tx)
         .await?;
-        Ok(taken.is_some())
+        if moved.is_none() {
+            tx.rollback().await?;
+            return Ok(false);
+        }
+        sqlx::query(
+            "INSERT INTO entry_inbox (run_id, seq, agent_id, plane, source, entry) \
+             VALUES ($1, $2, $3, $4, $5, $6)",
+        )
+        .bind(taken.run)
+        .bind(seq)
+        .bind(taken.agent.as_str())
+        .bind(taken.plane)
+        .bind(taken.source)
+        .bind(taken.entry)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(true)
+    }
+
+    /// The inbox's oldest rows, at most `limit`.
+    pub async fn inbox(&self, limit: i64) -> anyhow::Result<Vec<InboxRow>> {
+        Ok(sqlx::query_as(
+            "SELECT inbox_id, run_id, seq, agent_id, plane, source, entry, alert_id \
+             FROM entry_inbox ORDER BY inbox_id LIMIT $1",
+        )
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?)
+    }
+
+    /// The alert a row raised, kept so a retry raises it no second time.
+    pub async fn inbox_raised(&self, inbox_id: i64, alert: &str) -> anyhow::Result<()> {
+        sqlx::query("UPDATE entry_inbox SET alert_id = $2 WHERE inbox_id = $1")
+            .bind(inbox_id)
+            .bind(alert)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// A row applied, its line written and its alert raised: gone.
+    pub async fn inbox_done(&self, inbox_id: i64) -> anyhow::Result<()> {
+        sqlx::query("DELETE FROM entry_inbox WHERE inbox_id = $1")
+            .bind(inbox_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
     }
 
     /// **Contact restored**: the open lost-contact alert on the plane, if

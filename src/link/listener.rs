@@ -42,7 +42,7 @@ use crate::link::register::{
     ConstituentsWrite, CredentialState, Observation, REVOCATION_CHANNEL, TupleWrite,
 };
 use crate::store::access::{shared_hold, verbs_granted_in};
-use crate::store::alerts::{AlertKind, Raise, bounded as cut};
+use crate::store::alerts::{AlertKind, InboxRow, Raise, TakenEntry, bounded as cut};
 use crate::store::audit::{self, PersonMethod, Target};
 use crate::store::identity::session_stands;
 use crate::store::{AgentId, Store};
@@ -2600,6 +2600,22 @@ impl CheckedEntry {
     }
 }
 
+/// **What an inbox row causes** (Spec 2.14): its entry checked again by the
+/// door's own check from its durable copy, its operations-log line and the
+/// alert it raises; `None` for a row that no longer passes.
+pub(crate) fn entry_effect(row: &InboxRow) -> Option<crate::alerting::Entry> {
+    let plane = match row.plane.as_str() {
+        "admin" => Plane::Admin,
+        "gate" => Plane::Gate,
+        _ => return None,
+    };
+    let agent: AgentId = row.agent_id.parse().ok()?;
+    let seq = u64::try_from(row.seq).ok()?;
+    CheckedEntry::of(plane, &row.run_id, seq, &row.source, row.entry.clone())
+        .ok()
+        .map(|checked| checked.into_entry(&agent, plane))
+}
+
 /// **What a line of `admin.log` that is not admin-con's own raises**, by
 /// allow-list (Spec 2.14): an invocation's refusal, by the doors' own rules
 /// (the save-point prompt where an `unload` stopped at its save point with
@@ -3959,16 +3975,26 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                         }
                         inner
                             .store
-                            .take_entry(&run, &agent.agent_id, plane.as_str(), seq)
+                            .take_entry(&TakenEntry {
+                                run: &run,
+                                seq,
+                                agent: &agent.agent_id,
+                                plane: plane.as_str(),
+                                source: checked.source,
+                                entry: &checked.entry,
+                            })
                             .await
                     };
                     let taken = tokio::time::timeout(inner.silence, take).await;
                     match taken {
                         Ok(Ok(new)) => {
+                            // **Acknowledged only once durable** (Spec
+                            // 2.14): the entry stands in the inbox, written
+                            // with its run's mark, before the ack leaves;
+                            // the drainer, woken and never waited on,
+                            // applies it from that copy.
                             if new {
-                                inner
-                                    .alerts
-                                    .entry(checked.into_entry(&agent.agent_id, plane));
+                                inner.alerts.wake_inbox();
                             }
                             // **An acknowledgement never blocks the read
                             // loop**, as an event's: acknowledgements are

@@ -40,3 +40,28 @@ CREATE TABLE entry_run (
   CONSTRAINT entry_run_plane_is_known CHECK (plane IS NOT NULL AND plane IN ('admin', 'gate')),
   CONSTRAINT entry_run_sequence_is_positive CHECK (last_seq IS NOT NULL AND last_seq >= 1)
 );
+
+-- **The entries taken and not yet applied** (Spec 2.14): an entry's row is
+-- written in the transaction that moves its run's mark, before the
+-- connector is acknowledged, so an acknowledged entry is durable here; a
+-- worker applies it from this copy, its operations-log line and the alert
+-- it raises, and deletes the row once both are done. The alert's identity
+-- is kept on the row once raised, so a retry after a failed line raises it
+-- no second time. A server's restart drains what stands.
+CREATE TABLE entry_inbox (
+  inbox_id  BIGSERIAL PRIMARY KEY,
+  run_id    TEXT NOT NULL REFERENCES entry_run (run_id),
+  seq       BIGINT NOT NULL,
+  agent_id  agent_id NOT NULL REFERENCES agent (agent_id),
+  plane     TEXT NOT NULL,
+  source    TEXT NOT NULL,
+  entry     JSONB NOT NULL,
+  alert_id  alert_id,
+  taken_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+  CONSTRAINT entry_inbox_once UNIQUE (run_id, seq),
+  CONSTRAINT entry_inbox_plane_is_known CHECK (plane IS NOT NULL AND plane IN ('admin', 'gate')),
+  CONSTRAINT entry_inbox_source_is_given CHECK (
+    source IS NOT NULL AND source <> '' AND octet_length(source) <= 64
+  )
+);

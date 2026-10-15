@@ -3875,3 +3875,59 @@ async fn admin_con_sends_another_partys_line_upstream() {
     assert_eq!(kinds, [("save_point_missed", "unload", "admin")]);
     con.stop().await;
 }
+
+/// **No window waits for good on an acknowledgement the server dropped**:
+/// with the server dropping the acknowledgements of a full window, as a
+/// full write queue does, admin-con's pump sends that window again after
+/// a silence bound, the server takes it once and acknowledges it, and the
+/// entries behind it follow.
+///
+/// Perturbation: drop the resend, and the pump stalls on its full window.
+#[tokio::test]
+async fn a_window_whose_acks_were_dropped_is_sent_again() {
+    let Some(lab) = Lab::open_with(Duration::from_secs(4)).await else {
+        return;
+    };
+    let trace = Trace::new();
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
+    let invoker = FakeInvoker::new(&["show"], "idle");
+    let mut con = Running::start(config(&path), invoker.clone());
+    con.wait("admitted", |s| s.admitted).await;
+    tokio::time::sleep(crate::link::admin_log::POLL * 3).await;
+    lab.listener.drop_entry_acks(crate::link::entries::WINDOW);
+    let me = u64::from(crate::link::admin_log::my_uid());
+    let mut f = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&trace.admin_log)
+        .unwrap();
+    let lines = crate::link::entries::WINDOW as i64 + 8;
+    for n in 0..lines {
+        writeln!(
+            f,
+            "{}",
+            json!({"wall_ms": n, "uid": me, "verb": "show", "agent": "karl",
+                "outcome": json!({"kind": "state", "state": "idle"}).to_string()})
+        )
+        .unwrap();
+    }
+    drop(f);
+    let until = tokio::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        let taken: Option<i64> =
+            sqlx::query_scalar("SELECT max(last_seq) FROM entry_run WHERE agent_id = $1")
+                .bind(id.as_str())
+                .fetch_one(&lab.store.pool)
+                .await
+                .unwrap();
+        if taken.unwrap_or(0) >= lines {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < until,
+            "the pump stalled at {taken:?} of {lines}"
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    con.stop().await;
+}

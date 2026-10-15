@@ -85,6 +85,10 @@ pub struct Alerts {
     /// A test's lever: every row of this run fails.
     #[cfg(test)]
     poisoned: Arc<std::sync::Mutex<Option<String>>>,
+    /// A test's lever: the next row's record of its alert fails, after the
+    /// raise, inside their transaction.
+    #[cfg(test)]
+    fail_record: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Alerts {
@@ -102,6 +106,8 @@ impl Alerts {
             fail_line: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             #[cfg(test)]
             poisoned: Arc::new(std::sync::Mutex::new(None)),
+            #[cfg(test)]
+            fail_record: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         };
         tokio::spawn(work(
             store.clone(),
@@ -124,6 +130,12 @@ impl Alerts {
     #[cfg(test)]
     pub fn poison_run(&self, run: &str) {
         *self.poisoned.lock().unwrap() = Some(run.to_owned());
+    }
+
+    /// The next row's record of its alert fails once, after the raise.
+    #[cfg(test)]
+    pub fn fail_next_record(&self) {
+        self.fail_record.store(true, Ordering::Relaxed);
     }
 
     /// The drainer's next line fails once.
@@ -324,13 +336,17 @@ async fn apply(store: &Store, log: Option<&PathBuf>, alerts: &Alerts, row: &Inbo
     if alert.is_none()
         && let Some(raise) = &effect.raise
     {
-        match tokio::time::timeout(STORE_BOUND, store.raise_alert(raise)).await {
-            Ok(Ok(Some(id))) => {
-                if !bounded(store.inbox_raised(row.inbox_id, &id)).await {
-                    return false;
-                }
-                alert = Some(id);
-            }
+        #[cfg(test)]
+        let fail_record = alerts.fail_record.swap(false, Ordering::Relaxed);
+        #[cfg(not(test))]
+        let fail_record = false;
+        match tokio::time::timeout(
+            STORE_BOUND,
+            store.raise_for_row(raise, row.inbox_id, fail_record),
+        )
+        .await
+        {
+            Ok(Ok(Some(id))) => alert = Some(id),
             Ok(Ok(None)) => {}
             Ok(Err(e)) => {
                 tracing::error!(

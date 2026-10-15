@@ -548,6 +548,13 @@ impl Connection {
         let cadence = self.cadence;
         entries.reconnected();
         let pumped = entries.clone();
+        // **What was sent and not acknowledged is sent again** after a
+        // silence bound (four cadences) with nothing acknowledged or pushed:
+        // the server sends an acknowledgement without waiting and drops it
+        // where its write queue is full, and a full window sends nothing
+        // more to draw a later one. The server's mark takes a resend once
+        // and acknowledges it again.
+        let resend_after = cadence * 4;
         self.pump = Some(tokio::spawn(async move {
             let mut sent = 0u64;
             loop {
@@ -562,7 +569,12 @@ impl Connection {
                             _ => return,
                         }
                     }
-                    None => pumped.changed().await,
+                    None => {
+                        let woken = tokio::time::timeout(resend_after, pumped.changed()).await;
+                        if woken.is_err() && pumped.unacknowledged(sent) {
+                            sent = 0;
+                        }
+                    }
                 }
             }
         }));

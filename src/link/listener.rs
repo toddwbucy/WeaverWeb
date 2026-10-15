@@ -637,6 +637,10 @@ struct Inner {
     /// A test's lever: the next entry's take fails once.
     #[cfg(test)]
     fault_next_entry: std::sync::atomic::AtomicBool,
+    /// A test's lever: this many entry acknowledgements are dropped, as a
+    /// full write queue drops them.
+    #[cfg(test)]
+    drop_entry_acks: std::sync::atomic::AtomicUsize,
     /// A test's one lever on the store: the next landing fails once, so
     /// the ack's dependence on the write can be watched.
     #[cfg(test)]
@@ -793,6 +797,8 @@ impl Listener {
                 fault_next_teardown: std::sync::atomic::AtomicBool::new(false),
                 #[cfg(test)]
                 fault_next_entry: std::sync::atomic::AtomicBool::new(false),
+                #[cfg(test)]
+                drop_entry_acks: std::sync::atomic::AtomicUsize::new(0),
                 #[cfg(test)]
                 fault_next_land: std::sync::atomic::AtomicBool::new(false),
                 #[cfg(test)]
@@ -1090,6 +1096,12 @@ impl Listener {
     #[cfg(test)]
     pub fn delay_next_outcome(&self, delay: Duration) {
         *self.inner.delay_next_outcome.lock().unwrap() = Some(delay);
+    }
+
+    /// Drop the next `n` entry acknowledgements, as a full queue would.
+    #[cfg(test)]
+    pub fn drop_entry_acks(&self, n: usize) {
+        self.inner.drop_entry_acks.store(n, Ordering::Relaxed);
     }
 
     /// Make the next entry's take fail, once.
@@ -2600,6 +2612,13 @@ impl CheckedEntry {
     }
 }
 
+/// **Whether the door takes an entry** of `source` on `plane`, for the
+/// tests that every shape a connector sends passes it.
+#[cfg(all(test, feature = "passkeys"))]
+pub(crate) fn entry_passes(plane: Plane, source: &str, entry: serde_json::Value) -> bool {
+    CheckedEntry::of(plane, "0123456789abcdef", 1, source, entry).is_ok()
+}
+
 /// **What an inbox row causes** (Spec 2.14): its entry checked again by the
 /// door's own check from its durable copy, its operations-log line and the
 /// alert it raises; `None` for a row that no longer passes.
@@ -3998,12 +4017,24 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                                 inner.alerts.wake_inbox();
                             }
                             // **An acknowledgement never blocks the read
-                            // loop**, as an event's: acknowledgements are
-                            // cumulative, so a dropped one is covered by
-                            // the next, or by the resend and its dedupe
-                            // after a reconnection.
-                            if let Err(mpsc::error::TrySendError::Closed(_)) =
-                                tx.try_send(ToClient::EntryAck { run, seq })
+                            // loop**, as an event's, and is dropped where the
+                            // write queue is full. A connector whose window
+                            // then waits a silence bound unacknowledged sends
+                            // its entries again, which the mark takes once
+                            // and acknowledges again: no window waits for
+                            // good on an acknowledgement dropped here.
+                            #[cfg(test)]
+                            let dropped = inner
+                                .drop_entry_acks
+                                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+                                    n.checked_sub(1)
+                                })
+                                .is_ok();
+                            #[cfg(not(test))]
+                            let dropped = false;
+                            if !dropped
+                                && let Err(mpsc::error::TrySendError::Closed(_)) =
+                                    tx.try_send(ToClient::EntryAck { run, seq })
                             {
                                 reason = "the write path is gone";
                                 break;

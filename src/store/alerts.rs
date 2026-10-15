@@ -90,6 +90,62 @@ pub struct Raise {
     pub once: bool,
 }
 
+/// **Raise an alert, or repeat the open one**, on the connection given: a
+/// pool's for a raise of its own, a transaction's for an inbox row's.
+async fn raise_in(conn: &mut sqlx::PgConnection, raise: &Raise) -> anyhow::Result<Option<String>> {
+    if raise.once {
+        return raise_once_in(conn, raise).await;
+    }
+    let id: String = sqlx::query_scalar(
+        "INSERT INTO alert (agent_id, kind, subject, source, summary, detail, \
+         first_record, options) VALUES ($1, $2, $3, $8, $4, $5, $6, $7) \
+         ON CONFLICT (agent_id, kind, subject) WHERE acknowledged_at IS NULL \
+         DO UPDATE SET last_at = now(), occurrences = alert.occurrences + 1, \
+         version = alert.version + 1, summary = EXCLUDED.summary, \
+         detail = EXCLUDED.detail, first_record = EXCLUDED.first_record, \
+         options = EXCLUDED.options, source = EXCLUDED.source, restored_at = NULL \
+         RETURNING alert_id",
+    )
+    .bind(raise.agent.as_str())
+    .bind(raise.kind.as_str())
+    .bind(bounded(&raise.subject, 64))
+    .bind(bounded(&raise.summary, SUMMARY_BOUND))
+    .bind(bounded(&raise.detail, DETAIL_BOUND))
+    .bind(&raise.first)
+    .bind(&raise.options)
+    .bind(raise.source)
+    .fetch_one(&mut *conn)
+    .await?;
+    Ok(Some(id))
+}
+
+/// **An alert raised once ever** for its agent, kind and subject: none where
+/// one stands, open or acknowledged, and one of two raisers at once resolved
+/// by the open alert's index. `None` where nothing was raised.
+async fn raise_once_in(
+    conn: &mut sqlx::PgConnection,
+    raise: &Raise,
+) -> anyhow::Result<Option<String>> {
+    Ok(sqlx::query_scalar(
+        "INSERT INTO alert (agent_id, kind, subject, source, summary, detail, \
+         first_record, options) \
+         SELECT $1, $2, $3, $8, $4, $5, $6, $7 WHERE NOT EXISTS ( \
+           SELECT 1 FROM alert WHERE agent_id = $1 AND kind = $2 AND subject = $3) \
+         ON CONFLICT (agent_id, kind, subject) WHERE acknowledged_at IS NULL DO NOTHING \
+         RETURNING alert_id",
+    )
+    .bind(raise.agent.as_str())
+    .bind(raise.kind.as_str())
+    .bind(bounded(&raise.subject, 64))
+    .bind(bounded(&raise.summary, SUMMARY_BOUND))
+    .bind(bounded(&raise.detail, DETAIL_BOUND))
+    .bind(&raise.first)
+    .bind(&raise.options)
+    .bind(raise.source)
+    .fetch_optional(&mut *conn)
+    .await?)
+}
+
 /// **An entry as the door took it**, for the inbox.
 pub struct TakenEntry<'a> {
     pub run: &'a str,
@@ -142,55 +198,35 @@ impl Store {
     /// latest reason, moves the version, and clears a restoration, contact
     /// being lost again. Answers the alert's identity.
     pub async fn raise_alert(&self, raise: &Raise) -> anyhow::Result<Option<String>> {
-        if raise.once {
-            return self.raise_once(raise).await;
-        }
-        let id: String = sqlx::query_scalar(
-            "INSERT INTO alert (agent_id, kind, subject, source, summary, detail, \
-             first_record, options) VALUES ($1, $2, $3, $8, $4, $5, $6, $7) \
-             ON CONFLICT (agent_id, kind, subject) WHERE acknowledged_at IS NULL \
-             DO UPDATE SET last_at = now(), occurrences = alert.occurrences + 1, \
-             version = alert.version + 1, summary = EXCLUDED.summary, \
-             detail = EXCLUDED.detail, first_record = EXCLUDED.first_record, \
-             options = EXCLUDED.options, source = EXCLUDED.source, restored_at = NULL \
-             RETURNING alert_id",
-        )
-        .bind(raise.agent.as_str())
-        .bind(raise.kind.as_str())
-        .bind(bounded(&raise.subject, 64))
-        .bind(bounded(&raise.summary, SUMMARY_BOUND))
-        .bind(bounded(&raise.detail, DETAIL_BOUND))
-        .bind(&raise.first)
-        .bind(&raise.options)
-        .bind(raise.source)
-        .fetch_one(&self.pool)
-        .await?;
-        Ok(Some(id))
+        let mut conn = self.pool.acquire().await?;
+        raise_in(&mut conn, raise).await
     }
 
-    /// **An alert raised once ever** for its agent, kind and subject: none
-    /// where one stands, open or acknowledged, and one of two raisers at
-    /// once resolved by the open alert's index. `None` where nothing was
-    /// raised.
-    async fn raise_once(&self, raise: &Raise) -> anyhow::Result<Option<String>> {
-        Ok(sqlx::query_scalar(
-            "INSERT INTO alert (agent_id, kind, subject, source, summary, detail, \
-             first_record, options) \
-             SELECT $1, $2, $3, $8, $4, $5, $6, $7 WHERE NOT EXISTS ( \
-               SELECT 1 FROM alert WHERE agent_id = $1 AND kind = $2 AND subject = $3) \
-             ON CONFLICT (agent_id, kind, subject) WHERE acknowledged_at IS NULL DO NOTHING \
-             RETURNING alert_id",
-        )
-        .bind(raise.agent.as_str())
-        .bind(raise.kind.as_str())
-        .bind(bounded(&raise.subject, 64))
-        .bind(bounded(&raise.summary, SUMMARY_BOUND))
-        .bind(bounded(&raise.detail, DETAIL_BOUND))
-        .bind(&raise.first)
-        .bind(&raise.options)
-        .bind(raise.source)
-        .fetch_optional(&self.pool)
-        .await?)
+    /// **An inbox row's alert, raised and kept on its row in one
+    /// transaction** (Spec 2.14): a raise is never committed without its
+    /// record on the row, so a retry after a failure raises it no second
+    /// time. `fail_record` is a test's lever: the record fails after the
+    /// raise, inside the transaction.
+    pub async fn raise_for_row(
+        &self,
+        raise: &Raise,
+        inbox_id: i64,
+        fail_record: bool,
+    ) -> anyhow::Result<Option<String>> {
+        let mut tx = self.pool.begin().await?;
+        let id = raise_in(&mut tx, raise).await?;
+        if fail_record {
+            anyhow::bail!("a test fault failed the row's record of its alert");
+        }
+        if let Some(id) = &id {
+            sqlx::query("UPDATE entry_inbox SET alert_id = $2 WHERE inbox_id = $1")
+                .bind(inbox_id)
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
+        Ok(id)
     }
 
     /// **Take a connector's entry once, durably** (Spec 2.14, migration
@@ -246,16 +282,6 @@ impl Store {
         .bind(limit)
         .fetch_all(&self.pool)
         .await?)
-    }
-
-    /// The alert a row raised, kept so a retry raises it no second time.
-    pub async fn inbox_raised(&self, inbox_id: i64, alert: &str) -> anyhow::Result<()> {
-        sqlx::query("UPDATE entry_inbox SET alert_id = $2 WHERE inbox_id = $1")
-            .bind(inbox_id)
-            .bind(alert)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
     }
 
     /// **A row whose effect failed** is tried again later, its wait

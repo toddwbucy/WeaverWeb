@@ -100,7 +100,7 @@ pub fn entry_of(raw: &[u8], me: u32) -> serde_json::Value {
 }
 
 /// A discontinuity, as an entry.
-fn discontinuity(why: &str) -> serde_json::Value {
+pub(crate) fn discontinuity(why: &str) -> serde_json::Value {
     json!({ "discontinuity": why, "read_at": now_ms() })
 }
 

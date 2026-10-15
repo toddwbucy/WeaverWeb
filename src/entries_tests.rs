@@ -829,3 +829,95 @@ async fn an_entry_holding_a_nul_is_taken_and_logged() {
         found[0].summary
     );
 }
+
+/// **Every shape a connector sends is one the door takes for its source**,
+/// its fallbacks included: a line of `admin.log` and its discontinuity, its
+/// oversized marker, an `admin_log` entry past the bound (an 8 KiB line of
+/// invalid UTF-8 grows past it through the lossy reading), a connector's
+/// failure, its oversized failure, and its report of drops; and the reported
+/// case is acknowledged through the real door.
+///
+/// Perturbation: replace an oversized `admin_log` entry with the failure
+/// shape again, and the door refuses it, at every resend.
+#[tokio::test]
+async fn every_shape_a_connector_sends_passes_the_door() {
+    use crate::link::frames::Plane;
+    use crate::link::listener::entry_passes;
+    let entries = Entries::new("admin-con");
+    let invalid = vec![0xffu8; 8 * 1024];
+    entries.push(
+        admin_log::SOURCE,
+        admin_log::entry_of(&invalid, MINE as u32),
+    );
+    entries.push(
+        admin_log::SOURCE,
+        admin_log::entry_of(br#"{"verb":"show","uid":1}"#, MINE as u32),
+    );
+    entries.push(admin_log::SOURCE, admin_log::discontinuity("truncated"));
+    entries.push(
+        admin_log::SOURCE,
+        json!({"oversized": "a line past the bound", "own": false, "read_at": 1}),
+    );
+    entries.failure("probe", "p".repeat(ENTRY_BOUND));
+    entries.failure("link_outage", "down for 3 s");
+    for _ in 0..BACKLOG_ENTRIES + 3 {
+        entries.failure("probe", "filler");
+    }
+    entries.ack(&entries.run(), (BACKLOG_ENTRIES + 3) as u64);
+    let pending = entries.pending();
+    assert!(
+        pending.iter().any(|(_, e)| e["kind"] == "entries_dropped"),
+        "{pending:#?}"
+    );
+    let gate = Entries::new("gate-con");
+    gate.failure("link_outage", "down for 3 s");
+    gate.failure("probe", "p".repeat(ENTRY_BOUND));
+    for (plane, sent) in [(Plane::Admin, pending), (Plane::Gate, gate.pending())] {
+        for (source, entry) in sent {
+            assert!(
+                entry_passes(plane, &source, entry.clone()),
+                "the {plane} door refuses {source}: {entry}"
+            );
+        }
+    }
+
+    // The reported case, through the real door: the invalid line is sent
+    // as `admin_log`'s own oversized marker, and acknowledged.
+    let Some(mut o) = operated(&["show"]).await else {
+        return;
+    };
+    let fresh = Entries::new("admin-con");
+    fresh.push(
+        admin_log::SOURCE,
+        admin_log::entry_of(&invalid, MINE as u32),
+    );
+    let (source, entry) = fresh.pending().remove(0);
+    assert!(entry.get("oversized").is_some(), "{entry}");
+    send_entry(&mut o.admin_con, 1, &source, entry).await;
+    assert_eq!(entry_ack(&mut o.admin_con).await, (RUN.to_owned(), 1));
+}
+
+/// **An alert and its record on the row are one transaction**: the row's
+/// record failing after the raise rolls the raise back with it, and the
+/// retry leaves one alert of one occurrence.
+///
+/// Perturbation: raise the alert in a transaction of its own, and the
+/// retry raises it again, two occurrences.
+#[tokio::test]
+async fn an_alert_and_its_record_on_the_row_are_one() {
+    let Some(mut o) = operated(&["show"]).await else {
+        return;
+    };
+    o.rig.listener.alerts().fail_next_record();
+    send_entry(
+        &mut o.admin_con,
+        1,
+        "admin-con",
+        json!({"kind": "probe", "message": "once"}),
+    )
+    .await;
+    wait_entries(&o.rig, 1).await;
+    let found = alerts(&o.rig, &o.karl).await;
+    assert_eq!(found.len(), 1, "{found:#?}");
+    assert_eq!(found[0].occurrences, 1, "{found:#?}");
+}

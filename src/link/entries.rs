@@ -151,6 +151,17 @@ impl Entries {
         self.wake.notified().await;
     }
 
+    /// Whether any entry sent on a connection, through `sent`, still
+    /// waits for its acknowledgement.
+    pub(crate) fn unacknowledged(&self, sent: u64) -> bool {
+        self.inner
+            .lock()
+            .unwrap()
+            .backlog
+            .front()
+            .is_some_and(|w| w.seq <= sent)
+    }
+
     /// The entries waiting, by source and object, oldest first.
     #[cfg(test)]
     pub fn pending(&self) -> Vec<(String, serde_json::Value)> {
@@ -175,12 +186,28 @@ impl Entries {
     }
 }
 
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 fn push_in(inner: &mut Inner, source: &str, entry: serde_json::Value) {
     let rendered = serde_json::to_string(&entry)
         .map(|s| s.len())
         .unwrap_or(usize::MAX);
+    // **Every shape sent is one the door takes for its source**, the
+    // fallback's included: `admin_log` has its own `oversized` marker, and
+    // a connector's own source the failure shape.
     let entry = if rendered > ENTRY_BOUND {
-        json!({ "kind": "entry_oversized", "message": format!("an entry of {rendered} bytes, past the bound of {ENTRY_BOUND}, was not sent") })
+        let said =
+            format!("an entry of {rendered} bytes, past the bound of {ENTRY_BOUND}, was not sent");
+        if source == crate::link::admin_log::SOURCE {
+            json!({ "oversized": said, "own": false, "read_at": now_ms() })
+        } else {
+            json!({ "kind": "entry_oversized", "message": said })
+        }
     } else {
         entry
     };

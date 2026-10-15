@@ -2065,8 +2065,9 @@ written or at the teardown:
   turn, or a save point answered without its confirmation in the prompt's
   sequence below;
 - `unknown`: a fault or a cut connection leaving the act's outcome unknown,
-  each act still in flight at a teardown among them, **the server's own
-  `show` excepted**: it acts on nothing, and the teardown's lost contact
+  each act still in flight at a teardown among them, **an act whose answer
+  the door refused as malformed included** (its ask stays in flight, since
+  what the agent did cannot be said), **the server's own `show` excepted**: it acts on nothing, and the teardown's lost contact
   stands for the connection;
 - `refused`: a person's ask refused for a system reason, no connection, the
   persons' slots taken, a stalled wait, the audit unwritable, the connection
@@ -2087,7 +2088,11 @@ written or at the teardown:
   no teardown. The connector dropping, a silent peer, a malformed frame, the
   store unavailable and an admission left incomplete each raise it. An
   admission of the plane notes the restoration on the open alert, which
-  stays until acknowledged;
+  stays until acknowledged. **The loss is raised where the connection's
+  entry comes out, under the row's lock**, and a new admission of the plane
+  is decided under that lock too, so a restoration is queued after the loss
+  it restores and the one worker applies them in that order; a note dropped
+  on a full queue drops alone and reorders nothing;
 - `save_point_missed`: the prompt of ruling 2, read from admin's object by
   allow-list: an `unload` refused `save_point_not_taken` whose `missed` is
   `answer`, `finished` or `member_dead`;
@@ -4424,6 +4429,8 @@ missing while it was relaying.
 | choosing a prompt's option without a grant answers as an unknown agent | perturbation in `src/alerts_tests.rs`: resolve the alert before the grant check, and a person holding no grant tells a real prompt from an unknown one |
 | a plane the server cannot reach is a banner for the agent's grant holders alone, re-read by the page | perturbation in `src/alerts_tests.rs`: drop the grant scoping of the unavailable planes, and a person holding no grant sees another agent's banners; drop the grant check from the connectors' fragment, and such a person reads its connectors and their last-heard time |
 | a fragment's re-fetch leaves the session's last use as it was | perturbation in `src/alerts_tests.rs`: refresh the last use at a background read, and a poll moves it, so an open tab holds an idle session open |
+| an answer refused at the door leaves its act's outcome unknown, and raises its alert | perturbation in `src/alerts_tests.rs`: leave the refused answer's ask out of the teardown's drain, on the admin plane or on the gate plane, and a `load` answered naming another verb, or a turn answered with both a close and a fault, raises only the lost contact |
+| a plane's loss is ordered before the restoration that follows it | perturbation in `src/alerts_tests.rs`, the teardown held after its row is released: raise the loss after the teardown rather than where the entry comes out, readmit in the gap, and the lost-contact alert ends unrestored while a connection stands |
 | a recovery holds exactly one of the person's places for its whole life | perturbation in `src/alerts_tests.rs`: admit again inside the sequence, and with the person's other three asks outstanding the choice's save-point is shed |
 | the prompt's `unload` follows only a hash-confirmed save point | perturbation in `src/alerts_tests.rs`: ask `unload` on any `save-point` answer, and a `save_point_not_taken`, or a `save_point_taken` with no report, is followed by an unload |
 | no privileged invocation exists outside admin-con's sudo invoker | perturbation, two instruments. A test, `tests/no_privilege.rs`: it reads every tracked file outside `docs/`, never following a symlink, comment lines aside by each file's syntax and Markdown read in its fences only, for a privilege-escalating program named as a word, a setuid family call, a child's user or group set on a command, and a setuid or setgid mode bit, with the program's word allowed in `src/link/sudo_invoker.rs` and its test module alone; shown to fail when one of each family is planted, in Rust and in a README fence, when the program is planted in another file of the invoker's name, and when another family is planted in the invoker's own files. And the argv instrument in `src/link/sudo_invoker_tests.rs`: plant the principal's name from the ask into the command, and the line the fake records is no longer exactly `sudo -n <weaver_admin> <verb> <agent>` |
@@ -4439,7 +4446,8 @@ its version and by `operator` alone, no alert for an authorization refusal
 or on behalf of a person holding no grant, none for the server's own `show`
 in flight at a teardown, the unreachable plane's banner for grant holders
 alone, a fragment's re-fetch that is not the person's use, a recovery
-holding one place for its whole life,
+holding one place for its whole life, an answer refused at the door raising
+its act's unknown, a loss ordered before its restoration,
 a prompt's choice answered as unknown without a grant, the prompt's
 `unload` only on a hash-confirmed save point, and a connector that never
 acts on the agent, each shown to fail with its guard removed, retiring the

@@ -160,7 +160,7 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
 - **DB-backed unit tests** (`store::read`, `store::plan`, `store::audit_tests`,
   `store::identity_tests`, `host_tests`, `surfaces::record`, `passkeys_tests`,
   `sign_in_tests`, `keys_tests`, `admin_tests`, `grants_tests`, `agents_tests`, `reading_tests`,
-  `verbs_tests`, `alerts_tests`,
+  `verbs_tests`, `alerts_tests`, `entries_tests`,
   `link::tests`, `link::server_asks_tests`,
   `link::client_tests`, `link::admin_con_tests`, `link::verbs_audit_tests`)
   connect to the database in `DATABASE_URL` and run the migrations. The link's tests run one at
@@ -216,9 +216,11 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
   0600 or tighter, opened without following a symlink, or one minted for the admin plane. Its
   tests (`link::client_tests`) run it in-process against a fake gate and the real listener;
   no test reaches an agent.
-- **admin-con** reads the file `register` wrote plus two required box facts with no default,
-  `trace_socket` (the agent's trace relay, absolute) and `weaver_admin` (the absolute path
-  the box's rule names), and optional `backfill_bytes` (1 MiB, at most 256 MiB, the tail
+- **admin-con** reads the file `register` wrote plus three required box facts with no default,
+  `trace_socket` (the agent's trace relay, absolute), `weaver_admin` (the absolute path
+  the box's rule names) and `admin_log` (the agent's `admin.log`, absolute, read from
+  admin-con's start by `link::admin_log` on a thread of its own, O_NOFOLLOW, a regular
+  file, a truncation or replacement read from its start), and optional `backfill_bytes` (1 MiB, at most 256 MiB, the tail
   relayed after a server restart and what an opening holds to replay without reading again),
   `verb_bound_secs` (960, set above the box's load bound) and `stop_grace_secs` (1080, the
   load bound, the unload bound and a margin). Same trust rule as gate-con's. It reads the
@@ -332,7 +334,16 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
   `save_point_not_taken` with the run at rest raises the prompt, a `<dialog open>` on the
   agent page and the verb page; `POST /agents/{ag}/alerts/{al}/choose` runs "save point, then
   unload" (the `unload` only on exit 0 `save_point_taken` with its report's digest) or
-  `force-unload` as the person's own asks, and never acknowledges. A plane the server cannot
+  `force-unload` as the person's own asks, and never acknowledges. **The connectors'
+  entries** (act 12, PR 2; `src/link/entries.rs`, migration `0020`): each line of
+  `admin.log` (with `own`, the line's `uid` or `peer_uid` against admin-con's `getuid()`)
+  and each connector's own failure is an `entry` frame (run drawn at start, sequence),
+  sent by the connection's pump (`Connection::carry`, 16 unacknowledged at most), kept
+  until `entry_ack` (1024 entries, 1 MiB, oldest dropped and counted), taken once by the
+  run's mark (`entry_run`); every entry is a line of the operations log, and an alert
+  only for a line not own (the doors' allow-lists: the S9 prompt from the box too) or a
+  connector's failure; a trace `load` event carrying `reset` raises `data_lost` once per
+  prior run. `entries_tests` run against the real listener and fake connectors. A plane the server cannot
   reach (live credential, not connected) is a banner on every signed-in page for the agent's
   grant holders ("agent unavailable, admin-con down", "turns unavailable, gate-con down"),
   state from the register (`Store::unavailable_for`, `surfaces::Chrome`, which also carries

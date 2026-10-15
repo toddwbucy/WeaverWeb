@@ -2046,7 +2046,9 @@ binding this crate:
 **An alert** is a row of its own (migration `0019`), its identity `al-` under
 the convention section 2 opens with: the agent, its kind, its subject (the
 act, a verb or `turn`, or the plane for lost contact), its source (the
-server; the connectors' entries join in the next act), a summary of at most
+server's own door and teardown, `admin` for a line of the box's `admin.log`,
+`admin-con` or `gate-con` for a connector's own failure, `trace` for the
+agent's trace, migration `0020`), a summary of at most
 1024 bytes and a detail of at most 8192, the first record of the act it
 concerns where there is one, the options of a prompt, when it was raised and
 last occurred, how many times, when contact was restored where it was lost,
@@ -2098,7 +2100,60 @@ written or at the teardown:
   `answer`, `finished` or `member_dead`;
 - `data_at_risk`: a refusal that could have lost data and leaves no web
   option, `save_point_not_taken` naming `published` and `boundary_unverified`,
-  each explaining the problem and the status, cleared on the box.
+  each explaining the problem and the status, cleared on the box;
+- `data_lost`: **a loss that already happened**, on the operator's ruling of
+  2026-10-15, with no options: the trace's `load` event carrying `reset`,
+  the load having reset the agent to its latest save point, its reason
+  (`no-clean-unload`, or `forced-unload` where a forced unload ended the prior
+  run without its leave save point) named. Read by allow-list from the
+  event's payload, live or replayed, and **raised once ever per prior run**,
+  so a replay or a backfill of the same event raises nothing again. The load
+  verb's own answer carries no reset, and the trace's `unload` event's
+  `forced` says by its own definition nothing of a save point lost, so a
+  forced unload's loss is the `forced-unload` reset of the load after it and
+  is not inferred from the unload.
+
+**The connectors' entries** (act 12, PR 2; the operator's rulings of
+2026-10-14 and 2026-10-15): a connector sends log entries, not logs, so
+that alerts can be generated for the operator; what it meets is written to
+its own log first and then sent upstream as an `entry` frame, identified by
+the connector's run, drawn at its start, and a sequence, and acknowledged by
+`entry_ack`. **Every entry is one line of the operations log**; **an alert is
+raised only for an entry that did not come through WeaverWeb**:
+
+- **admin-con reads the box's `admin.log`**, the box fact `admin_log` of
+  section 8, from its start (no history), each line passed along as admin
+  wrote it beside one field admin-con judges: **`own`, true where the line's
+  caller uid is admin-con's own**, the `uid` admin writes for an invocation
+  (the uid sudo reported) or the `peer_uid` the relay writes for a peer. A
+  line that is not own is an act on the box by another party, the operator
+  using admin directly, and its refusal is classified by the doors' own
+  allow-lists: **an `unload` stopped at its save point on a leg at rest
+  raises the save-point prompt**, `published` and `boundary_unverified`
+  raise `data_at_risk`, any other refusal `failed`, and the relay's refusal
+  of another party `failed` too. An answer, by its kind, raises nothing. An
+  own line raises nothing, the act asked through WeaverWeb having raised its
+  alert at the door, so **no act raises twice**;
+- **a connector's own failure** raises `failed` from its source, its subject
+  the failure's kind: admin-con's `ceiling_not_read`, `trace_relay_refused`,
+  `admin_log_unreadable`, and either connector's `link_outage` (the outage's
+  length, once the link is back) and `entries_dropped`.
+
+**At least once, taken once, bounded.** An entry stays in the connector's
+backlog until acknowledged, and is resent on the next connection; the
+server holds the highest sequence it took of each run (migration `0020`), so
+a resend after a lost acknowledgement, a reconnection or its own restart is
+acknowledged and taken no more, and **an entry the store did not take closes
+the connection**, so no later entry moves the run's mark past it. The
+backlog holds at most 1024 entries and 1 MiB, the oldest dropped first, the
+drops counted and reported as one entry once there is room. **Nothing on a
+connector waits on an entry**: `admin.log` is read on a thread of its own,
+an entry is queued without waiting, and the connection's pump sends at most
+sixteen unacknowledged at once on the write path every frame takes. **The
+door checks an entry once**: its run and sequence, its source on the
+plane's allow-list (`admin_log` and `admin-con` on the admin plane,
+`gate-con` on the gate plane), an object within 16 KiB, and its source's
+shape; anything else is refused as malformed.
 
 **One open alert per agent, kind and subject**: a unique index over the
 three where the alert is unacknowledged, and one insert that resolves its
@@ -2209,10 +2264,11 @@ two places, and the person's other asks could shed its own steps.
 The page shows each step's status, or, past the silence bound, that the
 choice runs on and its outcomes are written when admin answers.
 
-**Residue: `show` cannot tell S9 from S2 on the wire**, a run at rest after
-a missed save point and an idle one both answering `State { state: Idle }`,
-so an S9 entered outside this crate raises no prompt. The operator asked for
-no new WeaverAgent work on 2026-10-14, so no issue is filed.
+**`show` cannot tell S9 from S2 on the wire**, a run at rest after a missed
+save point and an idle one both answering `State { state: Idle }`; **an S9
+entered on the box raises the prompt from its `admin.log` line** since act
+12's PR 2, the refusal of another party's `unload` being classified by the
+same allow-list as the door's.
 
 ```graph
 node: web-raising-an-alert-never-waits
@@ -2252,6 +2308,26 @@ tag: perturbation
 edge: asserts
 from: weaver-web
 to: web-unload-follows-only-a-confirmed-save-point
+```
+
+```graph
+node: web-an-alert-only-for-what-did-not-come-through-weaverweb
+kind: assertion
+tag: perturbation
+
+edge: asserts
+from: weaver-web
+to: web-an-alert-only-for-what-did-not-come-through-weaverweb
+```
+
+```graph
+node: web-a-connectors-entry-is-taken-once
+kind: assertion
+tag: perturbation
+
+edge: asserts
+from: weaver-web
+to: web-a-connectors-entry-is-taken-once
 ```
 
 ```graph
@@ -3257,7 +3333,13 @@ alerts, with no web option. **`list` was retired by `toddwbucy/WeaverAgent#45`**
 because enumerating agents is this crate's register of section 2.12 and
 weaver-admin is one agent's organ. **admin-con runs them, and it is this
 crate's binary**, the management plane's one reach, and the server asks
-admin-con over the link of section 8 rather than running anything.
+admin-con over the link of section 8 rather than running anything. **admin-con
+also reads the agent's `admin.log`**, admin's NDJSON record of the
+boundary's activity (`weaver-admin-Spec` section 8: refused and read-only
+verbs, `show`, a `stop` at rest, the relay's connects and refusals, each
+line naming its caller's uid and its outcome as the answer or refusal
+object), from the absolute path its config names as the box fact
+`admin_log`, no default; each line it reads is an entry of section 2.14.
 
 **Access to the verbs is the box's sudo rule, and this crate holds exactly
 one privileged invocation: admin-con's sudo invoker**, on the operator's
@@ -4019,6 +4101,14 @@ that ends admin-con's hold on ordinary asks, per section 7.2, since a
 connector's own send of the answer only queues it and says nothing of
 whether the server took it. admin-con ignores a `landed` for any other id.
 
+**A connector's entries ride the link as their own frames** (section 2.14):
+`entry`, from either connector, carrying its run, drawn at the connector's
+start, a sequence from one, its source and the entry's object, and
+`entry_ack` from the server, naming the run and the sequence it took
+through. An entry is resent until acknowledged and taken once; its pump is
+the connection's own task, so no read of the trace, no answer and no turn
+waits on it, and an acknowledgement never blocks the server's read loop.
+
 ```graph
 node: web-server-never-asks-a-verb-outside-the-ceiling
 kind: assertion
@@ -4155,8 +4245,9 @@ path.
 **The binding is a property of how the box is provisioned, and admin-con
 enforces none of it**, on the operator's ruling of 2026-10-05. admin-con is
 a connector that abstracts the agent's primitives and polices nothing on
-the box: it does exactly two things, runs a granted line when asked and
-reads the relay, and acts on its agent on its own initiative never. There
+the box: it does exactly three things, runs a granted line when asked,
+reads the relay, and passes the lines of `admin.log` and its own failures
+upstream as entries, and acts on its agent on its own initiative never. There
 is no adversary between admin-con and weaver-admin, both being the
 operator's; the one adversary is a hijacked management plane, which the
 binding answers by provisioning, so a check at runtime would guard only
@@ -4431,6 +4522,11 @@ missing while it was relaying.
 | a fragment's re-fetch leaves the session's last use as it was | perturbation in `src/alerts_tests.rs`: refresh the last use at a background read, and a poll moves it, so an open tab holds an idle session open |
 | an answer refused at the door leaves its act's outcome unknown, and raises its alert | perturbation in `src/alerts_tests.rs`: leave the refused answer's ask out of the teardown's drain, on the admin plane or on the gate plane, and a `load` answered naming another verb, or a turn answered with both a close and a fault, raises only the lost contact |
 | a plane's loss is ordered before the restoration that follows it | perturbation in `src/alerts_tests.rs`, the teardown held after its row is released: raise the loss after the teardown rather than where the entry comes out, readmit in the gap, and the lost-contact alert ends unrestored while a connection stands |
+| a line of the box's `admin.log` raises an alert only where it did not come through WeaverWeb | perturbation in `src/entries_tests.rs` and `src/link/admin_con_tests.rs`: drop the own check at the server, and a refusal admin-con's own invocation met raises its alert again from its line; take every line as another party's at admin-con, and an own line sent end to end through the real admin-con raises one |
+| a connector's entry is taken once, though it is sent again | perturbation in `src/entries_tests.rs`: drop the run's mark, and an entry resent on a new connection is logged twice; read on past an entry the store did not take, and the next entry moves the mark past it, so its resend is taken for a duplicate and never logged |
+| a connector's backlog of entries is bounded, its drops counted and reported | perturbation in `src/entries_tests.rs`: drop the bound, and a backlog past it holds every entry |
+| the door checks an entry once, its source on the plane's allow-list | perturbation in `src/entries_tests.rs`: give the gate plane the admin plane's sources, and gate-con's entry claiming `admin_log` is taken and classified rather than refused as malformed |
+| a load that reset the agent is a `data_lost` alert, raised once | perturbation in `src/entries_tests.rs`: drop the reset check, and the trace's `load` event carrying `reset` raises nothing |
 | a recovery holds exactly one of the person's places for its whole life | perturbation in `src/alerts_tests.rs`: admit again inside the sequence, and with the person's other three asks outstanding the choice's save-point is shed |
 | the prompt's `unload` follows only a hash-confirmed save point | perturbation in `src/alerts_tests.rs`: ask `unload` on any `save-point` answer, and a `save_point_not_taken`, or a `save_point_taken` with no report, is followed by an unload |
 | no privileged invocation exists outside admin-con's sudo invoker | perturbation, two instruments. A test, `tests/no_privilege.rs`: it reads every tracked file outside `docs/`, never following a symlink, comment lines aside by each file's syntax and Markdown read in its fences only, for a privilege-escalating program named as a word, a setuid family call, a child's user or group set on a command, and a setuid or setgid mode bit, with the program's word allowed in `src/link/sudo_invoker.rs` and its test module alone; shown to fail when one of each family is planted, in Rust and in a README fence, when the program is planted in another file of the invoker's name, and when another family is planted in the invoker's own files. And the argv instrument in `src/link/sudo_invoker_tests.rs`: plant the principal's name from the ask into the command, and the line the fake records is no longer exactly `sudo -n <weaver_admin> <verb> <agent>` |
@@ -4439,7 +4535,11 @@ missing while it was relaying.
 act that lands it states what removal makes it fail and confirms it does.
 
 **A row marked owed has no instrument and is not counted as enforced.**
-Two stand so marked as of 2026-10-14. Act 12's pull request of alerts
+Two stand so marked as of 2026-10-15. Act 12's pull request of the
+connectors' entries of 2026-10-15 stood up an alert only for a box line that
+did not come through WeaverWeb, an entry taken once, the backlog's bound,
+the door's per-plane sources and `data_lost` for a reset load, each shown to
+fail with its guard removed. Act 12's pull request of alerts
 and the operator's decisions of 2026-10-14 stood up alerts raised without
 waiting, one open alert per agent, kind and subject, the acknowledgement at
 its version and by `operator` alone, no alert for an authorization refusal

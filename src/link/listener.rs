@@ -602,6 +602,9 @@ struct Inner {
     /// The accept loop and the notification task, aborted by `stop` and
     /// by `halt`.
     tasks: Mutex<Vec<tokio::task::JoinHandle<()>>>,
+    /// **The alerts' worker and drainer**, ended at the stop after the
+    /// connections' teardowns have raised (Spec 2.14).
+    alert_tasks: Mutex<Option<crate::alerting::AlertTasks>>,
     /// Every connection task, handshaking or admitted, so `halt` and
     /// `stop` abort and drain them all before the lock's session ends: a
     /// replacement listener must not take the lock while an old task can
@@ -782,7 +785,8 @@ impl Listener {
                 prove: prove_tx,
                 cadence: silence / 4,
                 halted,
-                tasks: Mutex::new(alert_tasks),
+                tasks: Mutex::new(Vec::new()),
+                alert_tasks: Mutex::new(Some(alert_tasks)),
                 connections: Mutex::new(tokio::task::JoinSet::new()),
                 closed: std::sync::atomic::AtomicBool::new(false),
                 monitor: Mutex::new(None),
@@ -978,6 +982,9 @@ impl Listener {
     /// drained. The lock's release may then precede a connection task's
     /// end by the moment it takes to drop.
     pub fn stop_now(&self) {
+        if let Some(alert_tasks) = self.inner.alert_tasks.lock().unwrap().take() {
+            alert_tasks.abort();
+        }
         for task in self.inner.tasks.lock().unwrap().drain(..) {
             task.abort();
         }
@@ -2071,6 +2078,13 @@ impl Inner {
             tracing::warn!("connection tasks still running after the grace period are aborted");
             set.abort_all();
             while set.join_next().await.is_some() {}
+        }
+        // **Then the alerts, in the order the work flows** (Spec 2.14): the
+        // teardowns above have raised; the worker writes what was queued
+        // and ends, then the drainer; the lock is released after this.
+        let alert_tasks = self.alert_tasks.lock().unwrap().take();
+        if let Some(alert_tasks) = alert_tasks {
+            alert_tasks.stop(&self.alerts).await;
         }
     }
 

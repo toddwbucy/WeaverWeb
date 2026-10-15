@@ -1112,7 +1112,78 @@ async fn two_drainers_apply_disjoint_rows() {
     seen.sort();
     seen.dedup();
     assert_eq!((lines, seen.len()), (200, 200), "each row's line once");
-    for task in one.into_iter().chain(two) {
-        task.abort();
-    }
+    one.abort();
+    two.abort();
+}
+
+/// **The stop runs in the order the work flows**: stopped with a person's
+/// verb in flight, the listener's teardown raises its unknown, and the
+/// alert and its operations-log line are written before the stop returns.
+///
+/// Perturbation: end the alerts' worker before the connections, and the
+/// teardown's alert and line are lost.
+#[tokio::test]
+async fn a_stop_writes_its_teardowns_alerts_before_it_returns() {
+    let Some(mut o) = operated(&["show", "load"]).await else {
+        return;
+    };
+    let asked = crate::verbs_tests::ask(&o.rig, &o.bea_session, &o.karl, "load");
+    let (_, verb, _) = crate::verbs_tests::take_verb(&mut o.admin_con).await;
+    assert_eq!(verb, "load");
+    o.rig.listener.stop().await;
+    let found = alerts(&o.rig, &o.karl).await;
+    assert!(
+        found
+            .iter()
+            .any(|a| a.kind == "unknown" && a.subject == "load"),
+        "{found:#?}"
+    );
+    let lines = o.rig.operations_log();
+    assert!(
+        lines
+            .iter()
+            .any(|l| l["act"] == "load" && l["outcome"] == "unknown"),
+        "{lines:#?}"
+    );
+    let _ = asked.await;
+}
+
+/// **Every line after the baseline is an entry, a blank one too**: a
+/// blank line between two records is sent marked unparsed and empty.
+///
+/// Perturbation: skip a blank line again, and two entries come where three
+/// are owed.
+#[test]
+fn admin_log_sends_a_blank_line_as_unparsed() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("admin.log");
+    std::fs::write(&path, "").unwrap();
+    let entries = Entries::new("admin-con");
+    let (stop, shutdown) = tokio::sync::watch::channel(false);
+    let tail = admin_log::tail(path.clone(), entries.clone(), MINE as u32, shutdown);
+    let mut f = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap();
+    write!(
+        f,
+        "{}\n\n{}\n",
+        line("load", THEIRS, json!({"kind": "config_invalid"})),
+        line("stop", THEIRS, json!({"kind": "at_rest"}))
+    )
+    .unwrap();
+    drop(f);
+    let pending = wait_pending(&entries, 2);
+    std::thread::sleep(admin_log::POLL * 2);
+    let pending = if pending.len() < 3 {
+        entries.pending()
+    } else {
+        pending
+    };
+    stop.send_replace(true);
+    tail.join().unwrap();
+    assert_eq!(pending.len(), 3, "{pending:#?}");
+    assert_eq!(pending[1].1["unparsed"], true);
+    assert_eq!(pending[1].1["line"], "");
+    assert_eq!(pending[2].1["line"]["verb"], "stop");
 }

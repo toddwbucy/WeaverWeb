@@ -67,7 +67,52 @@ pub struct Entry {
 
 enum Note {
     Failure(Box<Failure>),
-    Restored { agent: AgentId, plane: &'static str },
+    Restored {
+        agent: AgentId,
+        plane: &'static str,
+    },
+    /// The listener stops: what was queued before this is written, then
+    /// the worker ends.
+    Stop,
+}
+
+/// **The worker and the drainer**, tracked by their listener and ended at
+/// its stop in the order the work flows: the worker once the connections'
+/// teardowns have raised and it has written what was queued, then the
+/// drainer, whose rows are durable and stand for the next start.
+pub struct AlertTasks {
+    worker: tokio::task::JoinHandle<()>,
+    drainer: tokio::task::JoinHandle<()>,
+}
+
+/// How long the stop gives the worker to write what was queued.
+const STOP_BOUND: Duration = Duration::from_secs(10);
+
+impl AlertTasks {
+    /// **Stop in order**: the worker writes what was queued before the
+    /// stop, held to a bound, and ends; then the drainer is ended, an
+    /// unfinished row rolling back to stand for the next start.
+    pub async fn stop(self, alerts: &Alerts) {
+        let asked = tokio::time::timeout(STOP_BOUND, alerts.tx.send(Note::Stop)).await;
+        let mut worker = self.worker;
+        if !matches!(asked, Ok(Ok(())))
+            || tokio::time::timeout(STOP_BOUND, &mut worker).await.is_err()
+        {
+            tracing::error!(
+                "the alerts' worker did not write its queue within {STOP_BOUND:?}; ended"
+            );
+            worker.abort();
+            let _ = worker.await;
+        }
+        self.drainer.abort();
+        let _ = self.drainer.await;
+    }
+
+    /// Both ended at once, nothing drained: a stop that cannot await.
+    pub fn abort(&self) {
+        self.worker.abort();
+        self.drainer.abort();
+    }
 }
 
 /// **The raising half**, cloned wherever a failure is met.
@@ -95,7 +140,7 @@ pub struct Alerts {
 impl Alerts {
     /// Start the worker, which writes alerts to the store and lines to the
     /// operations log where one is configured.
-    pub fn start(store: Store, log: Option<PathBuf>) -> (Self, Vec<tokio::task::JoinHandle<()>>) {
+    pub fn start(store: Store, log: Option<PathBuf>) -> (Self, AlertTasks) {
         let (tx, rx) = mpsc::channel(QUEUE);
         let alerts = Self {
             tx,
@@ -113,16 +158,16 @@ impl Alerts {
         // **The worker and the drainer live and die with their listener**,
         // which tracks the handles answered here with its own tasks and
         // ends them at its stop, before its lock is released.
-        let tasks = vec![
-            tokio::spawn(work(
+        let tasks = AlertTasks {
+            worker: tokio::spawn(work(
                 store.clone(),
                 log.clone(),
                 rx,
                 #[cfg(test)]
                 alerts.stall.clone(),
             )),
-            tokio::spawn(drain(store, log, alerts.clone())),
-        ];
+            drainer: tokio::spawn(drain(store, log, alerts.clone())),
+        };
         (alerts, tasks)
     }
 
@@ -204,9 +249,13 @@ async fn work(
     #[cfg(test)] stall: Arc<tokio::sync::Mutex<()>>,
 ) {
     while let Some(note) = rx.recv().await {
+        if matches!(note, Note::Stop) {
+            return;
+        }
         #[cfg(test)]
         drop(stall.lock().await);
         match note {
+            Note::Stop => return,
             Note::Restored { agent, plane } => {
                 match tokio::time::timeout(STORE_BOUND, store.alert_contact_restored(&agent, plane))
                     .await

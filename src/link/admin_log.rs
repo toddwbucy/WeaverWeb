@@ -243,7 +243,9 @@ impl Tail {
         self.seen = span_digest(file, self.offset);
         for byte in buf {
             if byte == b'\n' {
-                if !self.skipping && !self.partial.is_empty() {
+                // **Every line after the baseline is an entry**, a blank
+                // one too: it does not parse, and is sent marked unparsed.
+                if !self.skipping {
                     let line = std::mem::take(&mut self.partial);
                     self.entries.push(SOURCE, entry_of(&line, self.me));
                 }

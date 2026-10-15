@@ -764,7 +764,7 @@ impl Listener {
         let epoch = store.listener_start().await?;
         let mut notifications = sqlx::postgres::PgListener::connect_with(&store.pool).await?;
         notifications.listen(REVOCATION_CHANNEL).await?;
-        let alerts = Alerts::start(store.clone(), operations_log);
+        let (alerts, alert_tasks) = Alerts::start(store.clone(), operations_log);
         let listener = Self {
             inner: Arc::new(Inner {
                 store,
@@ -782,7 +782,7 @@ impl Listener {
                 prove: prove_tx,
                 cadence: silence / 4,
                 halted,
-                tasks: Mutex::new(Vec::new()),
+                tasks: Mutex::new(alert_tasks),
                 connections: Mutex::new(tokio::task::JoinSet::new()),
                 closed: std::sync::atomic::AtomicBool::new(false),
                 monitor: Mutex::new(None),

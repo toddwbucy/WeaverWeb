@@ -141,11 +141,31 @@ async fn rig_of(handover: Handover, silence: Duration) -> Option<Rig> {
 }
 
 impl Rig {
+    /// **Another listener on the same store, authority and operations
+    /// log**, started after the running one stops: the next server process.
+    /// The surfaces keep the stopped one.
+    pub(crate) async fn next_listener(&self) -> Listener {
+        self.listener.stop().await;
+        Listener::start_with(
+            self.fresh.store.clone(),
+            &self.authority,
+            "127.0.0.1:0",
+            Duration::from_secs(60),
+            Some(self.dir.path().join("operations.log")),
+        )
+        .await
+        .unwrap()
+    }
+
     pub(crate) fn store(&self) -> &Store {
         &self.fresh.store
     }
 
     /// The operations log's lines, as the listener wrote them.
+    pub(crate) fn operations_log_path(&self) -> std::path::PathBuf {
+        self.dir.path().join("operations.log")
+    }
+
     pub(crate) fn operations_log(&self) -> Vec<serde_json::Value> {
         std::fs::read_to_string(self.dir.path().join("operations.log"))
             .unwrap_or_default()

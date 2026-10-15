@@ -1009,3 +1009,110 @@ fn admin_log_started_mid_line_skips_its_rest() {
     assert_eq!(pending_after.len(), 1, "{pending_after:#?}");
     assert_eq!(pending[0].1["line"]["verb"], "stop", "{pending:#?}");
 }
+
+/// **The drainer lives and dies with its listener, and the next one drains
+/// what stands, once**: entries taken while a listener's drainer is held
+/// stay in the inbox when it stops, its drainer applying nothing after the
+/// stop though released; the next listener on the store applies each, one
+/// line each.
+///
+/// Perturbation: leave the drainer out of the listener's tasks, and the
+/// stopped listener's drainer applies the rows once released.
+#[tokio::test]
+async fn the_drainer_stops_with_its_listener_and_the_next_drains_once() {
+    let Some(mut o) = operated(&["show"]).await else {
+        return;
+    };
+    let held = o.rig.listener.alerts().stall_worker().await;
+    for seq in 1..=5 {
+        send_entry(
+            &mut o.admin_con,
+            seq,
+            "admin-con",
+            json!({"kind": "probe", "message": format!("{seq}")}),
+        )
+        .await;
+    }
+    loop {
+        if entry_ack(&mut o.admin_con).await.1 == 5 {
+            break;
+        }
+    }
+    let next = o.rig.next_listener().await;
+    // The next listener's own drainer held too, so what is watched is the
+    // stopped one's.
+    let next_held = next.alerts().stall_worker().await;
+    drop(held);
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let standing: i64 = sqlx::query_scalar("SELECT count(*) FROM entry_inbox")
+        .fetch_one(&o.rig.store().pool)
+        .await
+        .unwrap();
+    assert_eq!(standing, 5, "the stopped listener's drainer applied rows");
+    drop(next_held);
+    wait_entries(&o.rig, 5).await;
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    assert_eq!(entry_lines(&o.rig).len(), 5, "{:#?}", entry_lines(&o.rig));
+    next.stop().await;
+}
+
+/// **No two drainers ever apply one row**: two drainers on one store, the
+/// listener's own held, apply two hundred rows between them, each row's
+/// line once.
+///
+/// Perturbation: drop the claim, and both apply the same rows, lines
+/// written twice.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn two_drainers_apply_disjoint_rows() {
+    use crate::alerting::Alerts;
+    use crate::store::alerts::TakenEntry;
+    let Some(o) = operated(&["show"]).await else {
+        return;
+    };
+    let _held = o.rig.listener.alerts().stall_worker().await;
+    let store = o.rig.store().clone();
+    let id: AgentId = o.karl.parse().unwrap();
+    for seq in 1..=200u64 {
+        let entry = json!({"kind": "probe", "message": format!("{seq}")});
+        assert!(
+            store
+                .take_entry(&TakenEntry {
+                    run: RUN,
+                    seq,
+                    agent: &id,
+                    plane: "admin",
+                    source: "admin-con",
+                    entry: &entry,
+                })
+                .await
+                .unwrap()
+        );
+    }
+    let log = o.rig.operations_log_path();
+    let (_one, one) = Alerts::start(store.clone(), Some(log.clone()));
+    let (_two, two) = Alerts::start(store.clone(), Some(log));
+    let until = tokio::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        let standing: i64 = sqlx::query_scalar("SELECT count(*) FROM entry_inbox")
+            .fetch_one(&store.pool)
+            .await
+            .unwrap();
+        if standing == 0 {
+            break;
+        }
+        assert!(tokio::time::Instant::now() < until, "{standing} rows stand");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let mut seen: Vec<String> = entry_lines(&o.rig)
+        .iter()
+        .map(|l| l["entry"]["message"].as_str().unwrap().to_owned())
+        .collect();
+    let lines = seen.len();
+    seen.sort();
+    seen.dedup();
+    assert_eq!((lines, seen.len()), (200, 200), "each row's line once");
+    for task in one.into_iter().chain(two) {
+        task.abort();
+    }
+}

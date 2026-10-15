@@ -156,6 +156,63 @@ pub struct TakenEntry<'a> {
     pub entry: &'a serde_json::Value,
 }
 
+/// **An inbox row claimed**, its transaction holding the claim.
+pub struct Claimed {
+    tx: Transaction<'static, Postgres>,
+    pub row: InboxRow,
+}
+
+impl Claimed {
+    /// **The row's alert, raised and kept on its row in the claim's
+    /// transaction**: never committed without its record, so a retry raises
+    /// it no second time. `fail_record` is a test's lever: the record fails
+    /// after the raise.
+    pub async fn raise(
+        &mut self,
+        raise: &Raise,
+        fail_record: bool,
+    ) -> anyhow::Result<Option<String>> {
+        let id = raise_in(&mut self.tx, raise).await?;
+        if fail_record {
+            anyhow::bail!("a test fault failed the row's record of its alert");
+        }
+        if let Some(id) = &id {
+            sqlx::query("UPDATE entry_inbox SET alert_id = $2 WHERE inbox_id = $1")
+                .bind(self.row.inbox_id)
+                .bind(id)
+                .execute(&mut *self.tx)
+                .await?;
+        }
+        Ok(id)
+    }
+
+    /// The row applied, its line written: gone, and the claim committed.
+    pub async fn done(mut self) -> anyhow::Result<()> {
+        sqlx::query("DELETE FROM entry_inbox WHERE inbox_id = $1")
+            .bind(self.row.inbox_id)
+            .execute(&mut *self.tx)
+            .await?;
+        self.tx.commit().await?;
+        Ok(())
+    }
+
+    /// The row's line not written: backed off, with any alert it raised
+    /// kept, and the claim committed.
+    pub async fn failed(mut self) -> anyhow::Result<()> {
+        sqlx::query(BACK_OFF)
+            .bind(self.row.inbox_id)
+            .execute(&mut *self.tx)
+            .await?;
+        self.tx.commit().await?;
+        Ok(())
+    }
+}
+
+/// A row's next try, its wait doubling from a second to five minutes.
+const BACK_OFF: &str = "UPDATE entry_inbox SET attempts = attempts + 1, \
+     next_try = now() + make_interval(secs => least(power(2, attempts), 300)) \
+     WHERE inbox_id = $1";
+
 /// **An inbox row**: an entry taken and not yet applied.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct InboxRow {
@@ -202,33 +259,6 @@ impl Store {
         raise_in(&mut conn, raise).await
     }
 
-    /// **An inbox row's alert, raised and kept on its row in one
-    /// transaction** (Spec 2.14): a raise is never committed without its
-    /// record on the row, so a retry after a failure raises it no second
-    /// time. `fail_record` is a test's lever: the record fails after the
-    /// raise, inside the transaction.
-    pub async fn raise_for_row(
-        &self,
-        raise: &Raise,
-        inbox_id: i64,
-        fail_record: bool,
-    ) -> anyhow::Result<Option<String>> {
-        let mut tx = self.pool.begin().await?;
-        let id = raise_in(&mut tx, raise).await?;
-        if fail_record {
-            anyhow::bail!("a test fault failed the row's record of its alert");
-        }
-        if let Some(id) = &id {
-            sqlx::query("UPDATE entry_inbox SET alert_id = $2 WHERE inbox_id = $1")
-                .bind(inbox_id)
-                .bind(id)
-                .execute(&mut *tx)
-                .await?;
-        }
-        tx.commit().await?;
-        Ok(id)
-    }
-
     /// **Take a connector's entry once, durably** (Spec 2.14, migration
     /// `0020`): in one transaction, the run's mark moves to the sequence
     /// where it is past the highest taken, and the entry's row enters the
@@ -272,36 +302,30 @@ impl Store {
         Ok(true)
     }
 
-    /// The inbox's rows due a try, at most `limit`, **fairly**: by when
-    /// each is due, a fresh row's take or a failed row's backed-off try, so
-    /// a row that failed is never chosen ahead of one not tried since.
-    pub async fn inbox(&self, limit: i64) -> anyhow::Result<Vec<InboxRow>> {
-        Ok(sqlx::query_as(
+    /// **Claim the inbox's next row due a try**, fairly (by when each is
+    /// due, a fresh row's take or a failed row's backed-off try, so a row
+    /// that failed is never chosen ahead of one not tried since), **in a
+    /// transaction of its own that holds the claim**: `FOR UPDATE SKIP
+    /// LOCKED`, so no two drainers, of one process or two, ever apply one
+    /// row. The claim ends with the transaction: committed with the row's
+    /// effects, or rolled back where the drainer fails or dies, the row then
+    /// due again.
+    pub async fn claim_entry(&self) -> anyhow::Result<Option<Claimed>> {
+        let mut tx = self.pool.begin().await?;
+        let row: Option<InboxRow> = sqlx::query_as(
             "SELECT inbox_id, run_id, seq, agent_id, plane, source, entry, alert_id \
-             FROM entry_inbox WHERE next_try <= now() ORDER BY next_try, inbox_id LIMIT $1",
+             FROM entry_inbox WHERE next_try <= now() ORDER BY next_try, inbox_id \
+             LIMIT 1 FOR UPDATE SKIP LOCKED",
         )
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await?)
+        .fetch_optional(&mut *tx)
+        .await?;
+        Ok(row.map(|row| Claimed { tx, row }))
     }
 
     /// **A row whose effect failed** is tried again later, its wait
     /// doubling from a second to five minutes, never deleted.
     pub async fn inbox_failed(&self, inbox_id: i64) -> anyhow::Result<()> {
-        sqlx::query(
-            "UPDATE entry_inbox SET attempts = attempts + 1, \
-             next_try = now() + make_interval(secs => least(power(2, attempts), 300)) \
-             WHERE inbox_id = $1",
-        )
-        .bind(inbox_id)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
-    }
-
-    /// A row applied, its line written and its alert raised: gone.
-    pub async fn inbox_done(&self, inbox_id: i64) -> anyhow::Result<()> {
-        sqlx::query("DELETE FROM entry_inbox WHERE inbox_id = $1")
+        sqlx::query(BACK_OFF)
             .bind(inbox_id)
             .execute(&self.pool)
             .await?;

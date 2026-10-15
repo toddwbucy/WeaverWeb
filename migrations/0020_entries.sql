@@ -47,7 +47,12 @@ CREATE TABLE entry_run (
 -- worker applies it from this copy, its operations-log line and the alert
 -- it raises, and deletes the row once both are done. The alert's identity
 -- is kept on the row once raised, so a retry after a failed line raises it
--- no second time. A server's restart drains what stands.
+-- no second time. A server's restart drains what stands. **The entry is
+-- kept as the text of its JSON**, as the door's own parser rendered it, so no
+-- second parser can refuse what the door took (`jsonb` refuses a NUL
+-- escape the door's parser takes). **A row whose effect fails is retried
+-- later, not first**: its next try backs off, so one row that keeps failing
+-- holds no other.
 CREATE TABLE entry_inbox (
   inbox_id  BIGSERIAL PRIMARY KEY,
   run_id    TEXT NOT NULL REFERENCES entry_run (run_id),
@@ -55,9 +60,11 @@ CREATE TABLE entry_inbox (
   agent_id  agent_id NOT NULL REFERENCES agent (agent_id),
   plane     TEXT NOT NULL,
   source    TEXT NOT NULL,
-  entry     JSONB NOT NULL,
+  entry     TEXT NOT NULL,
   alert_id  alert_id,
   taken_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  attempts  INTEGER NOT NULL DEFAULT 0,
+  next_try  TIMESTAMPTZ NOT NULL DEFAULT now(),
 
   CONSTRAINT entry_inbox_once UNIQUE (run_id, seq),
   CONSTRAINT entry_inbox_plane_is_known CHECK (plane IS NOT NULL AND plane IN ('admin', 'gate')),

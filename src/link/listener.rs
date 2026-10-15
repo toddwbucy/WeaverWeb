@@ -2611,7 +2611,8 @@ pub(crate) fn entry_effect(row: &InboxRow) -> Option<crate::alerting::Entry> {
     };
     let agent: AgentId = row.agent_id.parse().ok()?;
     let seq = u64::try_from(row.seq).ok()?;
-    CheckedEntry::of(plane, &row.run_id, seq, &row.source, row.entry.clone())
+    let entry = serde_json::from_str(&row.entry).ok()?;
+    CheckedEntry::of(plane, &row.run_id, seq, &row.source, entry)
         .ok()
         .map(|checked| checked.into_entry(&agent, plane))
 }

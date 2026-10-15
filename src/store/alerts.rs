@@ -24,8 +24,12 @@ use crate::store::{AgentId, Store};
 const SUMMARY_BOUND: usize = 1024;
 const DETAIL_BOUND: usize = 8192;
 
-/// A string cut to at most `bound` bytes, at a character boundary.
+/// A string cut to at most `bound` bytes, at a character boundary, **a NUL
+/// replaced** by U+FFFD: PostgreSQL's text holds none, and a reason that
+/// carries one, an entry's message among them, would otherwise fail its
+/// write at every try.
 pub fn bounded(text: &str, bound: usize) -> String {
+    let text = &text.replace('\0', "\u{fffd}");
     if text.len() <= bound {
         return text.to_owned();
     }
@@ -105,7 +109,8 @@ pub struct InboxRow {
     pub agent_id: String,
     pub plane: String,
     pub source: String,
-    pub entry: serde_json::Value,
+    /// The entry's JSON, as the door's parser rendered it.
+    pub entry: String,
     pub alert_id: Option<String>,
 }
 
@@ -224,18 +229,19 @@ impl Store {
         .bind(taken.agent.as_str())
         .bind(taken.plane)
         .bind(taken.source)
-        .bind(taken.entry)
+        .bind(taken.entry.to_string())
         .execute(&mut *tx)
         .await?;
         tx.commit().await?;
         Ok(true)
     }
 
-    /// The inbox's oldest rows, at most `limit`.
+    /// The inbox's oldest rows due a try, at most `limit`: a row backed
+    /// off after a failure waits its turn and holds no other.
     pub async fn inbox(&self, limit: i64) -> anyhow::Result<Vec<InboxRow>> {
         Ok(sqlx::query_as(
             "SELECT inbox_id, run_id, seq, agent_id, plane, source, entry, alert_id \
-             FROM entry_inbox ORDER BY inbox_id LIMIT $1",
+             FROM entry_inbox WHERE next_try <= now() ORDER BY inbox_id LIMIT $1",
         )
         .bind(limit)
         .fetch_all(&self.pool)
@@ -249,6 +255,20 @@ impl Store {
             .bind(alert)
             .execute(&self.pool)
             .await?;
+        Ok(())
+    }
+
+    /// **A row whose effect failed** is tried again later, its wait
+    /// doubling from a second to five minutes, never deleted.
+    pub async fn inbox_failed(&self, inbox_id: i64) -> anyhow::Result<()> {
+        sqlx::query(
+            "UPDATE entry_inbox SET attempts = attempts + 1, \
+             next_try = now() + make_interval(secs => least(power(2, attempts), 300)) \
+             WHERE inbox_id = $1",
+        )
+        .bind(inbox_id)
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 

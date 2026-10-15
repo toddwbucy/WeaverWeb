@@ -82,6 +82,9 @@ pub struct Alerts {
     /// A test's lever: the drainer's next line fails once.
     #[cfg(test)]
     fail_line: Arc<std::sync::atomic::AtomicBool>,
+    /// A test's lever: every row of this run fails.
+    #[cfg(test)]
+    poisoned: Arc<std::sync::Mutex<Option<String>>>,
 }
 
 impl Alerts {
@@ -97,6 +100,8 @@ impl Alerts {
             stall: Arc::new(tokio::sync::Mutex::new(())),
             #[cfg(test)]
             fail_line: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            #[cfg(test)]
+            poisoned: Arc::new(std::sync::Mutex::new(None)),
         };
         tokio::spawn(work(
             store.clone(),
@@ -113,6 +118,12 @@ impl Alerts {
     /// waited on.
     pub fn wake_inbox(&self) {
         self.inbox.notify_one();
+    }
+
+    /// Every row of `run` fails, as a row that never applies would.
+    #[cfg(test)]
+    pub fn poison_run(&self, run: &str) {
+        *self.poisoned.lock().unwrap() = Some(run.to_owned());
     }
 
     /// The drainer's next line fails once.
@@ -277,14 +288,15 @@ async fn drain(store: Store, log: Option<PathBuf>, alerts: Alerts) {
                 Vec::new()
             }
         };
-        let mut stuck = rows.is_empty();
+        let idle = rows.is_empty();
+        // **A row that fails holds no other**: it is backed off and the
+        // drain goes on to the next.
         for row in rows {
             if !apply(&store, log.as_ref(), &alerts, &row).await {
-                stuck = true;
-                break;
+                let _ = bounded(store.inbox_failed(row.inbox_id)).await;
             }
         }
-        if stuck {
+        if idle {
             tokio::select! {
                 () = alerts.inbox.notified() => {}
                 () = tokio::time::sleep(DRAIN_PERIOD) => {}
@@ -295,13 +307,18 @@ async fn drain(store: Store, log: Option<PathBuf>, alerts: Alerts) {
 
 /// One row applied, or false where a step failed and it stays.
 async fn apply(store: &Store, log: Option<&PathBuf>, alerts: &Alerts, row: &InboxRow) -> bool {
+    #[cfg(test)]
+    if alerts.poisoned.lock().unwrap().as_deref() == Some(row.run_id.as_str()) {
+        tracing::error!("a test fault failed the rows of run {}", row.run_id);
+        return false;
+    }
     let Some(effect) = crate::link::listener::entry_effect(row) else {
         tracing::error!(
-            "an inbox row ({} {}) no longer passes the door's check; removed",
+            "an inbox row ({} {}) no longer passes the door's check; kept and backed off",
             row.run_id,
             row.seq
         );
-        return bounded(store.inbox_done(row.inbox_id)).await;
+        return false;
     };
     let mut alert = row.alert_id.clone();
     if alert.is_none()

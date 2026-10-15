@@ -758,3 +758,74 @@ fn admin_log_truncated_and_regrown_between_looks_is_reread_whole() {
     stop.send_replace(true);
     tail.join().unwrap();
 }
+
+/// **A row that keeps failing holds no other**: entries of one run whose
+/// rows never apply are backed off and kept, and another run's entry behind
+/// them is applied.
+///
+/// Perturbation: stop the drain at a failed row and try it first again with
+/// no backoff, and the entry behind it is never applied.
+#[tokio::test]
+async fn a_row_that_keeps_failing_holds_no_other() {
+    let Some(mut o) = operated(&["show"]).await else {
+        return;
+    };
+    let other = "fedcba9876543210";
+    o.rig.listener.alerts().poison_run(RUN);
+    for seq in 1..=70 {
+        send_entry(
+            &mut o.admin_con,
+            seq,
+            "admin-con",
+            json!({"kind": "probe", "message": format!("poisoned {seq}")}),
+        )
+        .await;
+    }
+    o.admin_con
+        .send(FromClient::Entry {
+            run: other.into(),
+            seq: 1,
+            source: "admin-con".into(),
+            entry: json!({"kind": "probe", "message": "behind"}),
+        })
+        .await;
+    let lines = wait_entries(&o.rig, 1).await;
+    assert_eq!(lines[0]["entry"]["message"], "behind");
+    let stuck: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM entry_inbox WHERE run_id = $1 AND attempts >= 1")
+            .bind(RUN)
+            .fetch_one(&o.rig.store().pool)
+            .await
+            .unwrap();
+    assert!(stuck >= 1, "the failing rows are kept and backed off");
+}
+
+/// **An entry the door's parser took is kept whatever it holds**: a string
+/// carrying a NUL, which `jsonb` refuses, is taken, acknowledged and logged,
+/// and the link stands; its alert's text carries U+FFFD for the NUL, which
+/// PostgreSQL's text holds none of.
+///
+/// Perturbation: keep the entry as `jsonb`, and its take fails, the
+/// connection closing, and the connector's resend would close it again.
+#[tokio::test]
+async fn an_entry_holding_a_nul_is_taken_and_logged() {
+    let Some(mut o) = operated(&["show"]).await else {
+        return;
+    };
+    send_entry(
+        &mut o.admin_con,
+        1,
+        "admin-con",
+        json!({"kind": "probe", "message": "a\u{0}b"}),
+    )
+    .await;
+    assert_eq!(entry_ack(&mut o.admin_con).await, (RUN.to_owned(), 1));
+    let lines = wait_entries(&o.rig, 1).await;
+    assert_eq!(lines[0]["entry"]["message"], "a\u{0}b");
+    let found = wait_alerts(&o.rig, &o.karl, "its alert", |a| !a.is_empty()).await;
+    assert!(
+        found[0].summary.contains("a\u{fffd}b"),
+        "{}",
+        found[0].summary
+    );
+}

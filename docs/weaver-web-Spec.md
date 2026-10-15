@@ -2193,6 +2193,14 @@ the request cannot cancel:
   raises one of its own;
 - **force-unload** is the person's one ask.
 
+**A recovery holds exactly one of the person's places for its whole life**:
+the choice's one admission is handed to each of its asks and back, held
+across the wait for each answer and the next ask, and given back when the
+choice ends. Released at an ask's enqueue, a choice would wait on its
+answer, unbounded, holding nothing, and a person could pile such waits up
+past their share; admitted again for each step, one recovery would take
+two places, and the person's other asks could shed its own steps.
+
 The page shows each step's status, or, past the silence bound, that the
 choice runs on and its outcomes are written when admin answers.
 
@@ -4416,6 +4424,7 @@ missing while it was relaying.
 | choosing a prompt's option without a grant answers as an unknown agent | perturbation in `src/alerts_tests.rs`: resolve the alert before the grant check, and a person holding no grant tells a real prompt from an unknown one |
 | a plane the server cannot reach is a banner for the agent's grant holders alone, re-read by the page | perturbation in `src/alerts_tests.rs`: drop the grant scoping of the unavailable planes, and a person holding no grant sees another agent's banners; drop the grant check from the connectors' fragment, and such a person reads its connectors and their last-heard time |
 | a fragment's re-fetch leaves the session's last use as it was | perturbation in `src/alerts_tests.rs`: refresh the last use at a background read, and a poll moves it, so an open tab holds an idle session open |
+| a recovery holds exactly one of the person's places for its whole life | perturbation in `src/alerts_tests.rs`: admit again inside the sequence, and with the person's other three asks outstanding the choice's save-point is shed |
 | the prompt's `unload` follows only a hash-confirmed save point | perturbation in `src/alerts_tests.rs`: ask `unload` on any `save-point` answer, and a `save_point_not_taken`, or a `save_point_taken` with no report, is followed by an unload |
 | no privileged invocation exists outside admin-con's sudo invoker | perturbation, two instruments. A test, `tests/no_privilege.rs`: it reads every tracked file outside `docs/`, never following a symlink, comment lines aside by each file's syntax and Markdown read in its fences only, for a privilege-escalating program named as a word, a setuid family call, a child's user or group set on a command, and a setuid or setgid mode bit, with the program's word allowed in `src/link/sudo_invoker.rs` and its test module alone; shown to fail when one of each family is planted, in Rust and in a README fence, when the program is planted in another file of the invoker's name, and when another family is planted in the invoker's own files. And the argv instrument in `src/link/sudo_invoker_tests.rs`: plant the principal's name from the ask into the command, and the line the fake records is no longer exactly `sudo -n <weaver_admin> <verb> <agent>` |
 
@@ -4429,7 +4438,8 @@ waiting, one open alert per agent, kind and subject, the acknowledgement at
 its version and by `operator` alone, no alert for an authorization refusal
 or on behalf of a person holding no grant, none for the server's own `show`
 in flight at a teardown, the unreachable plane's banner for grant holders
-alone, a fragment's re-fetch that is not the person's use,
+alone, a fragment's re-fetch that is not the person's use, a recovery
+holding one place for its whole life,
 a prompt's choice answered as unknown without a grant, the prompt's
 `unload` only on a hash-confirmed save point, and a connector that never
 acts on the agent, each shown to fail with its guard removed, retiring the

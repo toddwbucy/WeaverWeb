@@ -32,6 +32,7 @@
 //! is acknowledged that did not land and no lifecycle update is lost.
 
 use crate::adapters::gate::GateClose;
+use crate::alerting::{Alerts, Failure};
 use crate::link::authority::{Authority, fingerprint};
 use crate::link::frames::{
     FromClient, Line, LineReader, Plane, Position, Principal, Refusal, ToClient, TurnFault,
@@ -41,6 +42,7 @@ use crate::link::register::{
     ConstituentsWrite, CredentialState, Observation, REVOCATION_CHANNEL, TupleWrite,
 };
 use crate::store::access::{shared_hold, verbs_granted_in};
+use crate::store::alerts::{AlertKind, Raise, bounded as cut};
 use crate::store::audit::{self, PersonMethod, Target};
 use crate::store::identity::session_stands;
 use crate::store::{AgentId, Store};
@@ -122,12 +124,19 @@ struct LiveConnection {
     asks: Asks,
     /// The places of `PERSON_SLOTS` on this connection.
     person_slots: Arc<tokio::sync::Semaphore>,
+    /// **When the server last read a frame from this connection**, any
+    /// frame, heartbeats included (Spec 2.14): in memory alone, never
+    /// written per heartbeat, for the surfaces' "last heard".
+    heard: Arc<Mutex<std::time::Instant>>,
 }
 
 /// What the connection holds of one verb ask until its answer.
 struct Asked {
     verb: String,
     first: Option<String>,
+    /// The act's principal, `server` or a person's `pe-`, for an alert's
+    /// operations-log line.
+    principal: String,
 }
 
 /// The connection's map from an ask's id to its record.
@@ -542,6 +551,9 @@ pub enum AskPoint {
     AtRefusal,
     /// Under the hold, the first record durable, the frame not yet sent.
     UnderHold,
+    /// Not an ask's: a connection's teardown written and its row released,
+    /// its in-flight acts not yet raised.
+    AfterTeardown,
 }
 
 /// A test's stop in a person's ask: reached, then released.
@@ -615,6 +627,8 @@ struct Inner {
     reconciling: std::sync::atomic::AtomicBool,
     /// The places of `HELD_ASKS`.
     held: tokio::sync::Semaphore,
+    /// **The alerts' raising half** (Spec 2.14): never waited on.
+    alerts: Alerts,
     /// The places of `OUTSTANDING_ASKS`, and each person's count of them.
     outstanding: Arc<tokio::sync::Semaphore>,
     shares: Arc<Mutex<HashMap<String, usize>>>,
@@ -692,6 +706,19 @@ impl Listener {
         listen: &str,
         silence: Duration,
     ) -> anyhow::Result<Self> {
+        Self::start_with(store, authority, listen, silence, None).await
+    }
+
+    /// **Start, writing the operations log** (Spec 2.14) at the path the
+    /// config names: each failure the listener raises as an alert is also a
+    /// line there.
+    pub async fn start_with(
+        store: Store,
+        authority: &Authority,
+        listen: &str,
+        silence: Duration,
+        operations_log: Option<std::path::PathBuf>,
+    ) -> anyhow::Result<Self> {
         if silence.as_secs() < LEAST_SILENCE_SECS {
             anyhow::bail!(
                 "the silence bound is {silence:?}, under the {LEAST_SILENCE_SECS} s the cadence rule admits"
@@ -730,6 +757,7 @@ impl Listener {
         let epoch = store.listener_start().await?;
         let mut notifications = sqlx::postgres::PgListener::connect_with(&store.pool).await?;
         notifications.listen(REVOCATION_CHANNEL).await?;
+        let alerts = Alerts::start(store.clone(), operations_log);
         let listener = Self {
             inner: Arc::new(Inner {
                 store,
@@ -755,6 +783,7 @@ impl Listener {
                 failed_teardowns: Mutex::new(Vec::new()),
                 reconciling: std::sync::atomic::AtomicBool::new(false),
                 held: tokio::sync::Semaphore::new(HELD_ASKS),
+                alerts,
                 outstanding: Arc::new(tokio::sync::Semaphore::new(OUTSTANDING_ASKS)),
                 shares: Arc::new(Mutex::new(HashMap::new())),
                 #[cfg(test)]
@@ -953,6 +982,21 @@ impl Listener {
 
     pub fn epoch(&self) -> i64 {
         self.inner.epoch
+    }
+
+    /// **The alerts' raising half**, for what a surface raises itself.
+    pub fn alerts(&self) -> &Alerts {
+        &self.inner.alerts
+    }
+
+    /// **How long since the server last read a frame from the agent's live
+    /// connection on the plane** (Spec 2.14), any frame, heartbeats
+    /// included; `None` where no admitted connection stands.
+    pub fn last_heard(&self, agent: &AgentId, plane: Plane) -> Option<Duration> {
+        let live = self.inner.live.lock().unwrap();
+        live.get(&(agent.clone(), plane))
+            .filter(|c| c.ready)
+            .map(|c| c.heard.lock().unwrap().elapsed())
     }
 
     /// **The silence bound**, which a caller waiting for a verb's answer
@@ -1157,15 +1201,78 @@ impl Listener {
         agent: &AgentId,
         act: Act,
     ) -> Result<Enqueued, VerbError> {
-        let (inner, asker, agent) = (self.inner.clone(), asker.clone(), agent.clone());
+        self.ask_under(admission, asker, agent, act).await.1
+    }
+
+    /// **[`Listener::ask_as_person`], its admission handed back once the
+    /// ask's task ends** (Spec 2.14), so a caller that goes on waiting, a
+    /// decision's sequence through its answers and its next ask, holds its
+    /// one place throughout and asks again under it rather than admitting
+    /// twice. `None` where the ask's task itself ended abnormally, the
+    /// admission going with it.
+    pub async fn ask_under(
+        &self,
+        admission: Admission,
+        asker: &Asker,
+        agent: &AgentId,
+        act: Act,
+    ) -> (Option<Admission>, Result<Enqueued, VerbError>) {
+        let (inner, asker_, agent_) = (self.inner.clone(), asker.clone(), agent.clone());
+        let (plane, subject) = (act.plane(), act.granted().to_owned());
         let task = async move {
-            let _admission = admission;
-            inner.ask_held(&asker, &agent, act).await
+            let mut authorized = false;
+            let asked = inner.ask_held(&asker_, &agent_, act, &mut authorized).await;
+            (asked, authorized, admission)
         };
-        match tokio::spawn(task).await {
-            Ok(asked) => asked,
-            Err(e) => Err(VerbError::Server(format!("the ask's task ended: {e}"))),
+        let (asked, authorized, admission) = match tokio::spawn(task).await {
+            Ok((asked, authorized, admission)) => (asked, authorized, Some(admission)),
+            Err(e) => {
+                tracing::error!("{agent}: a person's {subject} was not asked: its task ended: {e}");
+                (
+                    Err(VerbError::Server(format!("the ask's task ended: {e}"))),
+                    false,
+                    None,
+                )
+            }
+        };
+        // **A refusal for a system reason is an alert** (Spec 2.14), **and
+        // only where the act's authorization stood**: the session standing
+        // and a grant carrying the act. A failure before that check is the
+        // server's log line at error and never an alert, so a person holding
+        // no grant on an agent raises nothing on it. Not an authorization
+        // refusal either, which is the audit's, and not a shed request,
+        // which by design leaves no trace. NotConnected, Busy,
+        // OutsideCeiling and Lost are reached only past the check.
+        if authorized
+            && let Err(refused) = &asked
+            && matches!(
+                refused,
+                VerbError::NotConnected
+                    | VerbError::Busy
+                    | VerbError::Stalled
+                    | VerbError::Audit
+                    | VerbError::Lost
+                    | VerbError::OutsideCeiling { .. }
+                    | VerbError::Server(_)
+            )
+        {
+            self.inner.alerts.raise(failure_of(
+                agent,
+                plane,
+                &subject,
+                None,
+                asker.person_id.clone(),
+                Raised {
+                    kind: AlertKind::Refused,
+                    summary: format!("{subject} was not asked: {refused}"),
+                    detail: String::new(),
+                    reason: serde_json::json!({ "refusal": refused.to_string() }),
+                    options: Vec::new(),
+                    outcome: "refused",
+                },
+            ));
         }
+        (admission, asked)
     }
 
     /// A person's verb, admitted, asked, and its answer awaited without a
@@ -1397,6 +1504,7 @@ impl Inner {
                         Asked {
                             verb: verb.to_owned(),
                             first: first.clone(),
+                            principal: "server".to_owned(),
                         },
                     );
                     (
@@ -1471,11 +1579,15 @@ impl Inner {
     /// A revocation or a disable either commits before the check or waits
     /// for the enqueue. Store I/O runs under the hold (the checks, the
     /// records); peer I/O never does.
+    /// **`authorized` is set once the act's authorization stands**, the
+    /// session standing and a grant carrying the act, so the caller raises
+    /// an alert only for a failure past that check (Spec 2.14).
     async fn ask_held(
         &self,
         asker: &Asker,
         agent: &AgentId,
         act: Act,
+        authorized: &mut bool,
     ) -> Result<Enqueued, VerbError> {
         let id = self.next_ask.fetch_add(1, Ordering::Relaxed);
         let plane = act.plane();
@@ -1547,7 +1659,10 @@ impl Inner {
                 },
                 "the roles held on the agent do not carry the verb",
             )),
-            Some(_) => self.connection_refusal(agent, plane, &reserved, act.ceilinged()),
+            Some(_) => {
+                *authorized = true;
+                self.connection_refusal(agent, plane, &reserved, act.ceilinged())
+            }
         };
         if let Some((answer, why)) = refusal {
             #[cfg(test)]
@@ -1614,6 +1729,7 @@ impl Inner {
                         Asked {
                             verb: verb.to_owned(),
                             first: Some(first.clone()),
+                            principal: asker.person_id.clone(),
                         },
                     );
                     (conn.pending.clone(), conn.asks.clone())
@@ -1958,12 +2074,23 @@ impl Inner {
     /// The cleanup after a store error on a path that already installed:
     /// under the row's lock where the store can be reached, and without it,
     /// logged, where it cannot (the module header's one exception).
-    async fn remove_after_error(&self, key: &(AgentId, Plane), incarnation: i64) -> bool {
+    /// `on_removed` runs where the entry comes out, under the lock where
+    /// it is held.
+    async fn remove_after_error(
+        &self,
+        key: &(AgentId, Plane),
+        incarnation: i64,
+        on_removed: &(dyn Fn() + Sync),
+    ) -> bool {
         let removed = std::sync::atomic::AtomicBool::new(false);
         let locked = self
             .store
             .with_row_lock(&key.0, || {
-                removed.store(self.remove_if_mine(key, incarnation), Ordering::Relaxed);
+                let mine = self.remove_if_mine(key, incarnation);
+                removed.store(mine, Ordering::Relaxed);
+                if mine {
+                    on_removed();
+                }
             })
             .await;
         if let Err(e) = locked {
@@ -1972,7 +2099,11 @@ impl Inner {
                 key.0,
                 key.1
             );
-            removed.store(self.remove_if_mine(key, incarnation), Ordering::Relaxed);
+            let mine = self.remove_if_mine(key, incarnation);
+            removed.store(mine, Ordering::Relaxed);
+            if mine {
+                on_removed();
+            }
         }
         removed.load(Ordering::Relaxed)
     }
@@ -2047,6 +2178,7 @@ async fn ask_show(
         Asked {
             verb: "show".into(),
             first: Some(first),
+            principal: "server".to_owned(),
         },
     );
     unsent.asks = Some(asks.clone());
@@ -2227,6 +2359,232 @@ impl TurnAnswer {
     }
 }
 
+/// **The teardown reasons that are the server's own act**, which raise no
+/// lost contact (Spec 2.14): a revocation, a rotation or a retirement
+/// closing the credential's connection, the listener's halt, and a row that
+/// names another connection, a rotation landed before its close. A
+/// duplicate's refusal never admits, so it has no teardown to raise from.
+/// Every other reason, the connector dropping, a silent peer, a malformed
+/// frame, a store unavailable, an admission incomplete, is lost contact.
+const SERVERS_OWN_CLOSES: [&str; 2] = [
+    "closed by revocation, rotation or halt",
+    "the row names another connection",
+];
+
+/// **What an alert says of a failure**, before it is raised.
+struct Raised {
+    kind: AlertKind,
+    summary: String,
+    detail: String,
+    reason: serde_json::Value,
+    options: Vec<String>,
+    /// `failed`, `unknown`, `refused` or `lost_contact`, for the log line.
+    outcome: &'static str,
+}
+
+/// A failure on the agent's plane, as the alerts' queue takes it.
+fn failure_of(
+    agent: &AgentId,
+    plane: Plane,
+    subject: &str,
+    first: Option<String>,
+    principal: String,
+    raised: Raised,
+) -> Failure {
+    Failure {
+        raise: Raise {
+            agent: agent.clone(),
+            kind: raised.kind,
+            subject: subject.to_owned(),
+            summary: raised.summary,
+            detail: raised.detail,
+            first,
+            options: raised.options,
+        },
+        plane: plane.as_str(),
+        principal,
+        outcome: raised.outcome,
+        reason: raised.reason,
+    }
+}
+
+/// **The legs of a save point an unload can miss with the run left standing
+/// at rest, its gate lowered** (`weaver-admin-operator-contract` section 5,
+/// S9, at `toddwbucy/WeaverAgent` `55fbc66`), by allow-list: a miss naming
+/// any of these is the decision prompt's; `published` ends the run, and a
+/// leg on no list is a plain failure.
+const LEGS_AT_REST: [&str; 3] = ["answer", "finished", "member_dead"];
+
+/// **The leg an `unload` stopped at its save point missed**, the run left
+/// standing at rest (S9): admin's refusal `save_point_not_taken` to an
+/// `unload`, naming a leg of [`LEGS_AT_REST`]. The door's prompt and the
+/// verb page read it alike.
+pub fn stopped_at_save_point<'a>(verb: &str, outcome: &'a VerbOutcome) -> Option<&'a str> {
+    let object = outcome.answer.as_ref()?;
+    let leg = object.get("missed").and_then(|m| m.as_str())?;
+    (verb == "unload"
+        && outcome.exit_code == Some(1)
+        && object.get("kind").and_then(|k| k.as_str()) == Some("save_point_not_taken")
+        && LEGS_AT_REST.contains(&leg))
+    .then_some(leg)
+}
+
+/// The decision prompt's two options for an unload stopped at its save point.
+pub const SAVE_POINT_THEN_UNLOAD: &str = "save_point_then_unload";
+pub const FORCE_UNLOAD: &str = "force_unload";
+
+impl Answer {
+    /// **What admin's answer raises** (Spec 2.14): nothing for its answer
+    /// (exit 0); for its refusal (exit 1), the decision prompt where an
+    /// `unload` stopped at its save point with the run at rest, an
+    /// explaining alert where a refusal could have lost data
+    /// (`save_point_not_taken` naming `published`, `boundary_unverified`),
+    /// and a failure otherwise, each carrying the refusal object and
+    /// admin's stderr, bounded; for a fault, a failure or an unknown
+    /// outcome by the door's own allow-list.
+    fn raised(&self, verb: &str) -> Option<Raised> {
+        match self {
+            Answer::Outcome(outcome) if outcome.exit_code == Some(0) => None,
+            Answer::Outcome(outcome) => {
+                let object = outcome.answer.clone().unwrap_or(serde_json::Value::Null);
+                let kind = object
+                    .get("kind")
+                    .and_then(|k| k.as_str())
+                    .unwrap_or("unnamed")
+                    .to_owned();
+                let missed = object.get("missed").and_then(|m| m.as_str());
+                let at_rest = stopped_at_save_point(verb, outcome);
+                let stderr = cut(outcome.stderr.as_deref().unwrap_or(""), 2048);
+                let detail = if stderr.is_empty() {
+                    object.to_string()
+                } else {
+                    format!("{object}\nstderr: {stderr}")
+                };
+                let reason = serde_json::json!({ "refusal": object, "stderr": stderr });
+                let (alert, summary, options) = match (at_rest, kind.as_str(), missed) {
+                    (Some(leg), _, _) => (
+                        AlertKind::SavePointMissed,
+                        format!(
+                            "unload stopped at its save point (missed: {leg}): the run stands at rest, its gate lowered, and nothing is lost yet"
+                        ),
+                        vec![SAVE_POINT_THEN_UNLOAD.to_owned(), FORCE_UNLOAD.to_owned()],
+                    ),
+                    (None, "save_point_not_taken", Some("published")) => (
+                        AlertKind::DataAtRisk,
+                        format!(
+                            "{verb} refused: a save point was taken and did not publish; what it holds is not in the published save points"
+                        ),
+                        Vec::new(),
+                    ),
+                    (None, "boundary_unverified", _) => (
+                        AlertKind::DataAtRisk,
+                        format!(
+                            "{verb} refused: a save point's boundary could not be verified; it is cleared on the box"
+                        ),
+                        Vec::new(),
+                    ),
+                    _ => (
+                        AlertKind::Failed,
+                        format!("{verb} refused by admin: {kind}"),
+                        Vec::new(),
+                    ),
+                };
+                Some(Raised {
+                    kind: alert,
+                    summary,
+                    detail,
+                    reason,
+                    options,
+                    outcome: "failed",
+                })
+            }
+            Answer::Fault(fault) => {
+                let reason = serde_json::json!({ "fault": fault.kind, "message": fault.message });
+                Some(match self.audited() {
+                    Some(_) => Raised {
+                        kind: AlertKind::Failed,
+                        summary: format!("{verb} was not run: {}", fault.kind),
+                        detail: fault.message.clone(),
+                        reason,
+                        options: Vec::new(),
+                        outcome: "failed",
+                    },
+                    None => Raised {
+                        kind: AlertKind::Unknown,
+                        summary: format!("{verb}: whether admin acted is unknown ({})", fault.kind),
+                        detail: fault.message.clone(),
+                        reason,
+                        options: Vec::new(),
+                        outcome: "unknown",
+                    },
+                })
+            }
+        }
+    }
+}
+
+impl TurnAnswer {
+    /// **What the gate's answer raises** (Spec 2.14): nothing for an
+    /// `answered` close; a failure for a `stopped` or `refused` close, with
+    /// the agent's reason, and for a fault proving the turn never reached
+    /// the gate; an unknown outcome otherwise. Never the turn's text, which
+    /// no answer carries.
+    fn raised(&self) -> Option<Raised> {
+        match self {
+            TurnAnswer::Close(close) if close.kind == "answered" => None,
+            TurnAnswer::Close(close) => {
+                let reason_text = close.reason.clone().unwrap_or_default();
+                let reason = serde_json::json!({ "close": close.kind, "reason": reason_text });
+                Some(match self.audited() {
+                    Some(_) => Raised {
+                        kind: AlertKind::Failed,
+                        summary: format!("the turn was {}: {reason_text}", close.kind),
+                        detail: reason_text,
+                        reason,
+                        options: Vec::new(),
+                        outcome: "failed",
+                    },
+                    None => Raised {
+                        kind: AlertKind::Unknown,
+                        summary: format!(
+                            "the turn closed as {}, which says nothing of it",
+                            close.kind
+                        ),
+                        detail: reason_text,
+                        reason,
+                        options: Vec::new(),
+                        outcome: "unknown",
+                    },
+                })
+            }
+            TurnAnswer::Fault(fault) => {
+                let reason = serde_json::json!({ "fault": fault.kind, "message": fault.message });
+                Some(match self.audited() {
+                    Some(_) => Raised {
+                        kind: AlertKind::Failed,
+                        summary: format!("the turn was not placed: {}", fault.kind),
+                        detail: fault.message.clone(),
+                        reason,
+                        options: Vec::new(),
+                        outcome: "failed",
+                    },
+                    None => Raised {
+                        kind: AlertKind::Unknown,
+                        summary: format!(
+                            "the turn: whether the agent answered is unknown ({})",
+                            fault.kind
+                        ),
+                        detail: fault.message.clone(),
+                        reason,
+                        options: Vec::new(),
+                        outcome: "unknown",
+                    },
+                })
+            }
+        }
+    }
+}
+
 /// **A send to a peer that stopped reading is the peer gone silent.** The
 /// write channel behind the socket is bounded, so a peer that stops reading
 /// fills it and a plain send would suspend the connection task where the
@@ -2350,6 +2708,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
     let (tx, mut rx) = mpsc::channel::<ToClient>(64);
     let (close_tx, mut close_rx) = watch::channel(false);
     let silent = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let heard = Arc::new(Mutex::new(std::time::Instant::now()));
     // **A write that cannot complete within the silence bound is the peer
     // gone silent**, whatever fills the channel: persons' asks hold few
     // slots and send through permits that never wait, so a peer that
@@ -2559,6 +2918,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                         ceiling: ceiling.clone(),
                         asks: asks.clone(),
                         person_slots: Arc::new(tokio::sync::Semaphore::new(PERSON_SLOTS)),
+                        heard: heard.clone(),
                     },
                 );
                 Ok(())
@@ -2580,7 +2940,8 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
             // the entry comes out under the lock, so the map agrees with
             // the row that rolled back.
             tracing::error!("link from {peer}: admission could not be written: {e:#}");
-            inner.remove_after_error(&key, incarnation).await;
+            // Never admitted, so no contact was had to lose.
+            inner.remove_after_error(&key, incarnation, &|| {}).await;
             // The commit may have landed before its answer was lost, leaving
             // the row connected under this incarnation with no socket: an
             // incarnation-bound teardown is deferred to the reconciliation,
@@ -2596,6 +2957,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
         "link from {peer}: {} ({plane}) admitted as incarnation {incarnation}",
         agent.agent_id
     );
+    inner.alerts.restored(&agent.agent_id, plane.as_str());
 
     // The hello is answered, then on the admin plane `show` is asked
     // before the connection's first event is read (Spec 7.2, 2.12).
@@ -2697,7 +3059,10 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                 }
             };
             let line = match line {
-                Ok(Line::Frame(line)) => line,
+                Ok(Line::Frame(line)) => {
+                    *heard.lock().unwrap() = std::time::Instant::now();
+                    line
+                }
                 Ok(Line::Closed) => break,
                 Ok(Line::Malformed(why)) => {
                     tracing::warn!(
@@ -2792,12 +3157,21 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                     // with both a close and a fault or neither, is the
                     // peer's protocol violation, refused as malformed, its
                     // first given no outcome and its asker no answer.
+                    // **A refused answer leaves its ask in flight** (Spec
+                    // 2.14): the entry goes back, so the teardown's drain
+                    // raises the act's unknown like any act left in flight.
                     let asked = asks.lock().unwrap().remove(&id);
-                    let checked = asked.ok_or("it answers no ask").and_then(|asked| {
-                        TurnAnswer::of(close, error, &asked.verb)
-                            .map(|answer| (asked.first, answer))
-                    });
-                    let (first, answer) = match checked {
+                    let checked = match asked {
+                        None => Err("it answers no ask"),
+                        Some(asked) => match TurnAnswer::of(close, error, &asked.verb) {
+                            Ok(answer) => Ok((asked.first, asked.principal, answer)),
+                            Err(why) => {
+                                asks.lock().unwrap().insert(id, asked);
+                                Err(why)
+                            }
+                        },
+                    };
+                    let (first, principal, answer) = match checked {
                         Ok(checked) => checked,
                         Err(why) => {
                             tracing::warn!(
@@ -2818,8 +3192,20 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                     // **The outcome when the answer lands**, by the
                     // contract's evidence alone, written whatever closes
                     // the connection, as a verb's.
-                    if let Some((first, ok)) = first.zip(answer.audited()) {
+                    if let Some((first, ok)) = first.clone().zip(answer.audited()) {
                         inner.record_outcome(&agent.agent_id, &first, ok).await;
+                    }
+                    // **A failed or unknown outcome is an alert**, raised
+                    // without waiting (Spec 2.14).
+                    if let Some(raised) = answer.raised() {
+                        inner.alerts.raise(failure_of(
+                            &agent.agent_id,
+                            plane,
+                            "turn",
+                            first,
+                            principal,
+                            raised,
+                        ));
                     }
                     resolve(&pending, id, answer.into_frame(id));
                 }
@@ -2834,12 +3220,22 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                     // gets no outcome, since what admin did cannot be said,
                     // and the asker gets no answer, its ask ending with the
                     // connection. Nothing past the door sees it.
+                    // **A refused answer leaves its ask in flight** (Spec
+                    // 2.14): the entry goes back, so the teardown's drain
+                    // raises the act's unknown, the server's own `show`
+                    // excepted, like any act left in flight.
                     let asked = asks.lock().unwrap().remove(&id);
-                    let checked = asked.ok_or("it answers no ask").and_then(|asked| {
-                        Answer::of(outcome, error, &asked.verb, &agent.name)
-                            .map(|answer| (asked.first, answer))
-                    });
-                    let (first, answer) = match checked {
+                    let checked = match asked {
+                        None => Err("it answers no ask"),
+                        Some(asked) => match Answer::of(outcome, error, &asked.verb, &agent.name) {
+                            Ok(answer) => Ok((asked.first, asked.principal, asked.verb, answer)),
+                            Err(why) => {
+                                asks.lock().unwrap().insert(id, asked);
+                                Err(why)
+                            }
+                        },
+                    };
+                    let (first, principal, verb, answer) = match checked {
                         Ok(checked) => checked,
                         Err(why) => {
                             tracing::warn!(
@@ -2874,9 +3270,22 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                     // the close costs: it waits at most one silence bound on
                     // a stalled store, a halt within its grace and aborted
                     // past it.
-                    let owed = first.zip(answer.audited());
+                    let owed = first.clone().zip(answer.audited());
                     if let Some((first, ok)) = owed {
                         inner.record_outcome(&agent.agent_id, &first, ok).await;
+                    }
+                    // **A failed or unknown outcome is an alert**, and a
+                    // refusal that could lose data a prompt or an
+                    // explaining alert, raised without waiting (Spec 2.14).
+                    if let Some(raised) = answer.raised(&verb) {
+                        inner.alerts.raise(failure_of(
+                            &agent.agent_id,
+                            plane,
+                            &verb,
+                            first,
+                            principal,
+                            raised,
+                        ));
                     }
                     // The admission's show is bounded by what remains of
                     // its deadline, not by a fresh bound: a show answered
@@ -3253,10 +3662,48 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
         .await;
     }
 
+    // **Contact lost, raised where the entry comes out, under the row's
+    // lock** (Spec 2.14): a new admission of this plane is decided under
+    // that lock too, so its restoration is queued after this loss and the
+    // one worker applies them in that order. Not for the server's own
+    // closes.
+    let removed = std::sync::atomic::AtomicBool::new(false);
+    let lose = || {
+        if SERVERS_OWN_CLOSES.contains(&reason) {
+            return;
+        }
+        let connector = match plane {
+            Plane::Admin => "admin-con",
+            Plane::Gate => "gate-con",
+        };
+        inner.alerts.raise(failure_of(
+            &agent.agent_id,
+            plane,
+            plane.as_str(),
+            None,
+            "server".to_owned(),
+            Raised {
+                kind: AlertKind::LostContact,
+                summary: format!(
+                    "contact with {connector} lost ({reason}); the agent may still be running"
+                ),
+                detail: String::new(),
+                reason: serde_json::json!({ "teardown": reason }),
+                options: Vec::new(),
+                outcome: "lost_contact",
+            },
+        ));
+    };
+    let uninstall = || {
+        let mine = inner.remove_if_mine(&key, incarnation);
+        removed.store(mine, Ordering::Relaxed);
+        if mine {
+            lose();
+        }
+    };
     // **Teardown bound to the incarnation, under the row's lock** (Spec 8):
     // the uninstall runs under the lock on every outcome, and the
     // disconnected write lands only while this incarnation is the live one.
-    let removed = std::sync::atomic::AtomicBool::new(false);
     #[cfg(test)]
     let torn = if inner.fault_next_teardown.swap(false, Ordering::Relaxed) {
         Err(anyhow::anyhow!(
@@ -3265,17 +3712,13 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
     } else {
         inner
             .store
-            .teardown(&agent.agent_id, plane, incarnation, || {
-                removed.store(inner.remove_if_mine(&key, incarnation), Ordering::Relaxed);
-            })
+            .teardown(&agent.agent_id, plane, incarnation, uninstall)
             .await
     };
     #[cfg(not(test))]
     let torn = inner
         .store
-        .teardown(&agent.agent_id, plane, incarnation, || {
-            removed.store(inner.remove_if_mine(&key, incarnation), Ordering::Relaxed);
-        })
+        .teardown(&agent.agent_id, plane, incarnation, uninstall)
         .await;
     match torn {
         Ok(true) => {}
@@ -3290,12 +3733,14 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
             tracing::error!(
                 "link from {peer}: teardown could not be written, deferred until the store answers: {e:#}"
             );
-            if inner.remove_after_error(&key, incarnation).await {
+            if inner.remove_after_error(&key, incarnation, &lose).await {
                 removed.store(true, Ordering::Relaxed);
             }
             inner.defer_teardown(agent.agent_id.clone(), plane, incarnation);
         }
     }
+    #[cfg(test)]
+    inner.pause_at(AskPoint::AfterTeardown).await;
     // **The window is marked whenever this connection actually left the
     // live map**, whatever the row's write answered: a revoked or rotated
     // credential has its incarnation cleared before the close, and a store
@@ -3306,6 +3751,39 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
             agent.agent_id.as_str(),
             &format!("link to admin-con lost: {reason}"),
         );
+    }
+    // **An act left in flight is an alert, its outcome unknown here**, and
+    // **contact lost for any reason but the server's own act** is one too,
+    // the agent possibly still running (Spec 2.14), each raised without
+    // waiting. **The server's own `show` is left out**: it acts on nothing,
+    // so its outcome cannot matter, and the teardown's lost contact already
+    // stands for the connection.
+    let in_flight: Vec<Asked> = asks
+        .lock()
+        .unwrap()
+        .drain()
+        .map(|(_, asked)| asked)
+        .filter(|asked| !(asked.principal == "server" && asked.verb == "show"))
+        .collect();
+    for asked in in_flight {
+        inner.alerts.raise(failure_of(
+            &agent.agent_id,
+            plane,
+            &asked.verb,
+            asked.first,
+            asked.principal,
+            Raised {
+                kind: AlertKind::Unknown,
+                summary: format!(
+                    "{}: the connection ended with it in flight, so whether it ran is unknown here",
+                    asked.verb
+                ),
+                detail: reason.to_owned(),
+                reason: serde_json::json!({ "teardown": reason }),
+                options: Vec::new(),
+                outcome: "unknown",
+            },
+        ));
     }
     pending.lock().unwrap().clear();
     drop(tx);

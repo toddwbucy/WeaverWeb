@@ -10,6 +10,7 @@
 
 pub mod admin;
 pub mod agents;
+pub mod alerts;
 #[cfg(feature = "passkeys")]
 pub mod enroll;
 pub mod gate;
@@ -30,6 +31,61 @@ use axum::routing::{get, post};
 
 use crate::store::Store;
 
+/// **What every signed-in page carries above its body** (Spec 2.14): the
+/// person's open alerts across the agents they hold a grant on, for the
+/// nav, and a banner for each plane of those agents the server cannot
+/// reach, both read from the store at the request, so a banner shows while
+/// its plane is down and is gone at the next page after it reconnects. A
+/// page without a session carries none.
+#[derive(Debug, Default)]
+pub(crate) struct Chrome {
+    pub(crate) open_alerts: i64,
+    pub(crate) banners: Vec<Banner>,
+}
+
+/// One unavailable plane, as its banner says it.
+#[derive(Debug)]
+pub(crate) struct Banner {
+    pub(crate) agent_id: String,
+    pub(crate) label: String,
+    pub(crate) says: &'static str,
+    pub(crate) since: String,
+}
+
+impl Chrome {
+    /// The person's chrome, scoped by their grants as the alerts are.
+    pub(crate) async fn of(store: &Store, person: &str) -> anyhow::Result<Self> {
+        let open_alerts = store
+            .open_alerts_by_agent(person)
+            .await?
+            .iter()
+            .map(|(_, n)| n)
+            .sum();
+        let banners = store
+            .unavailable_for(person)
+            .await?
+            .into_iter()
+            .map(|u| Banner {
+                says: if u.plane == "admin" {
+                    "agent unavailable, admin-con down"
+                } else {
+                    "turns unavailable, gate-con down"
+                },
+                since: u
+                    .since
+                    .map(|at| format!("since {}", at.format("%Y-%m-%d %H:%M:%S UTC")))
+                    .unwrap_or_else(|| "never connected".to_owned()),
+                agent_id: u.agent_id,
+                label: u.label,
+            })
+            .collect();
+        Ok(Self {
+            open_alerts,
+            banners,
+        })
+    }
+}
+
 /// Every surface this tree serves, mounted on the store and nothing else.
 ///
 /// **The state is the store because a surface that renders what is kept
@@ -40,7 +96,8 @@ pub fn routes(policy: gate::Policy) -> Router<Store> {
     let router = Router::new()
         .merge(record::routes(policy))
         .route("/sign-out", post(gate::sign_out))
-        .route("/assets/surfaces/instrument.css", get(stylesheet));
+        .route("/assets/surfaces/instrument.css", get(stylesheet))
+        .route("/assets/surfaces/htmx.min.js", get(htmx));
     #[cfg(feature = "passkeys")]
     let router = router.route("/assets/surfaces/passkeys.js", get(passkeys_module));
     script_policy(router)
@@ -75,6 +132,17 @@ async fn passkeys_module() -> impl IntoResponse {
         StatusCode::OK,
         [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
         include_str!("../../assets/surfaces/passkeys.js"),
+    )
+}
+
+/// **The vendored htmx, served from the surfaces' own route** (Spec 2.14):
+/// the availability fragments are re-fetched by its `hx-trigger`, no
+/// inline script, under the script policy above.
+async fn htmx() -> impl IntoResponse {
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
+        include_bytes!("../../assets/htmx.min.js").as_slice(),
     )
 }
 

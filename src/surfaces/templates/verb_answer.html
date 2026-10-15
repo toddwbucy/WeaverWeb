@@ -10,5 +10,16 @@
 </header>
 <p>{{ kind }}</p>
 {% if !detail.is_empty() %}<pre>{{ detail }}</pre>{% endif %}
+{% if let Some(missed) = missed %}
+<dialog open>
+  <h2>A decision is yours</h2>
+  <p>The unload stopped at its save point (missed: {{ missed }}). The run stands at rest, its gate lowered, and nothing is lost yet.</p>
+  <ul>
+    <li>Save point, then unload: the unload is asked only once the save point is taken and read back to its manifest line.</li>
+    <li>Force-unload: loses the state since the last published save point.</li>
+  </ul>
+  <p><a href="/agents/{{ agent_id }}">Choose on {{ label }}'s page</a>, where its alert stands and the options your roles and the connection's ceiling carry are offered. Choosing does not acknowledge the alert.</p>
+</dialog>
+{% endif %}
 <p><a href="/agents/{{ agent_id }}">Back to {{ label }}</a></p>
 {% endblock %}

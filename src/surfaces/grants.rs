@@ -157,6 +157,7 @@ struct GrantsPage {
     here: &'static str,
     who: String,
     admin: bool,
+    chrome: super::Chrome,
     grants: Vec<GrantRow>,
     roles: Vec<RoleRow>,
     agents: Vec<AgentRow>,
@@ -190,10 +191,15 @@ async fn page(store: Store, policy: &Policy, headers: HeaderMap) -> Response {
         Ok(read) => read,
         Err(e) => return fault(e),
     };
+    let chrome = match super::Chrome::of(&store, &session.person_id).await {
+        Ok(chrome) => chrome,
+        Err(e) => return fault(e),
+    };
     let page = GrantsPage {
         here: "grants",
         who: session.name.clone(),
         admin: true,
+        chrome,
         grants: grants
             .into_iter()
             .map(|listed| GrantRow {

@@ -71,6 +71,7 @@ struct EnrollPage {
     here: &'static str,
     who: String,
     admin: bool,
+    chrome: super::Chrome,
     configured: bool,
 }
 
@@ -79,6 +80,7 @@ async fn page(configured: bool) -> Response {
         here: "enroll",
         who: String::new(),
         admin: false,
+        chrome: super::Chrome::default(),
         configured,
     })
     .render()

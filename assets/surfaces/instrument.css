@@ -58,3 +58,9 @@ table.record tr:last-child td { border-bottom: 0; }
 .empty { color: var(--dim); padding: 2rem 0; }
 .more { margin-top: 1rem; }
 .more a { font-family: var(--mono); font-size: .86rem; }
+
+/* A plane the server cannot reach, on every signed-in page (Spec 2.14). */
+.unavailable { margin: 0; padding: .5rem 1.4rem; background: var(--accent-soft);
+  border-bottom: 1px solid var(--line); }
+.unavailable a { color: var(--fg); }
+.planes { margin: 0 0 1rem; }

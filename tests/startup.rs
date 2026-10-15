@@ -79,6 +79,16 @@ impl Server {
             "authority_dir".into(),
             authority.display().to_string().into(),
         );
+        // The operations log, at a temporary path: the server refuses to
+        // start without one.
+        values.insert(
+            "operations_log".into(),
+            directory
+                .join("operations.log")
+                .display()
+                .to_string()
+                .into(),
+        );
         fs::write(&config, toml::to_string(&values).unwrap()).unwrap();
         let init = Command::new(env!("CARGO_BIN_EXE_weaver-web"))
             .arg("--config")

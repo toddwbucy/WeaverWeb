@@ -622,24 +622,19 @@ async fn the_slot_is_held_across_a_reconnection() {
     running.stop().await;
 }
 
-/// **The orderly stop unloads the agent**, admin-con's one act on its own
-/// initiative: on the stop, `unload` runs through the invoker on its exact
-/// line.
+/// **The stop invokes nothing, though the rules grant `unload`** (Spec 8;
+/// the operator's ruling of 2026-10-14): admin-con is a conduit, and a
+/// shutdown leaves the agent exactly as it stands.
+///
+/// Perturbation: restore the orderly stop's `unload`, and the stop runs it.
 #[tokio::test]
-async fn the_stop_unloads_the_agent() {
+async fn the_stop_invokes_nothing_though_the_rules_grant_unload() {
     let Some(con) = Con::open(&["show", "unload"]).await else {
         return;
     };
     let running = con.start(GRACE).await;
     running.stop().await;
-    assert_eq!(
-        con.fake.runs(),
-        ["start show", "end show", "start unload", "end unload"]
-    );
-    assert_eq!(
-        con.fake.argvs().last(),
-        Some(&con.fake.line("unload", false))
-    );
+    assert_eq!(con.fake.runs(), ["start show", "end show"]);
     con.fake.assert_every_line_ran_the_fake();
 }
 
@@ -656,9 +651,9 @@ async fn a_stop_without_unload_granted_issues_none() {
 }
 
 /// **The stop waits for the verb in flight until its child is reaped**,
-/// then unloads: the `unload` never runs beside it.
+/// within its grace, and invokes nothing after it.
 #[tokio::test]
-async fn the_stop_waits_for_the_child_in_flight_then_unloads() {
+async fn the_stop_waits_for_the_child_in_flight_and_invokes_nothing() {
     let Some(con) = Con::open(&["show", "validate", "unload"]).await else {
         return;
     };
@@ -668,23 +663,16 @@ async fn the_stop_waits_for_the_child_in_flight_then_unloads() {
     running.stop().await;
     assert_eq!(
         con.fake.runs(),
-        [
-            "start show",
-            "end show",
-            "start validate",
-            "end validate",
-            "start unload",
-            "end unload"
-        ]
+        ["start show", "end show", "start validate", "end validate"]
     );
     con.fake.assert_every_line_ran_the_fake();
 }
 
-/// **A child that outlasts the stop's grace means the `unload` is not
-/// issued**, and the child is not killed: it runs to its own end after
-/// admin-con has stopped.
+/// **A child that outlasts the stop's grace is not killed**: the stop ends
+/// at its grace and the child runs to its own end after admin-con has
+/// stopped, with nothing invoked after it.
 #[tokio::test]
-async fn a_child_that_outlasts_the_grace_leaves_the_unload_unissued() {
+async fn a_child_that_outlasts_the_grace_runs_on_unkilled() {
     let Some(con) = Con::open(&["show", "validate", "unload"]).await else {
         return;
     };
@@ -700,61 +688,8 @@ async fn a_child_that_outlasts_the_grace_leaves_the_unload_unissued() {
         stopped.elapsed()
     );
     con.fake.wait_run("end validate").await;
-    // Long enough for an unload the stop wrongly left behind to start.
+    // Long enough for anything the stop wrongly left behind to start.
     tokio::time::sleep(Duration::from_millis(300)).await;
-    assert_eq!(
-        con.fake.runs(),
-        ["start show", "end show", "start validate", "end validate"]
-    );
-    con.fake.assert_every_line_ran_the_fake();
-}
-
-/// **The stop's `unload` runs on past the grace, owned to its end**: the
-/// stop ends at its deadline, and the child, still read and reaped by its
-/// task, writes its whole answer rather than into a closed pipe.
-#[tokio::test]
-async fn the_stops_unload_runs_on_past_the_grace_unbroken() {
-    let Some(con) = Con::open(&["show", "unload"]).await else {
-        return;
-    };
-    con.fake.delay("unload", Duration::from_millis(2000));
-    let grace = Duration::from_millis(1000);
-    let running = con.start(grace).await;
-    let stopped = tokio::time::Instant::now();
-    running.stop().await;
-    assert!(
-        stopped.elapsed() < Duration::from_millis(1800),
-        "the stop kept to its grace: {:?}",
-        stopped.elapsed()
-    );
-    con.fake.wait_run("end unload").await;
-    assert_eq!(
-        con.fake.runs(),
-        ["start show", "end show", "start unload", "end unload"]
-    );
-    con.fake.assert_every_line_ran_the_fake();
-}
-
-/// **The stop's ceiling ask ends by the stop's deadline**: a slot freed a
-/// second before the deadline, then a listing that hangs, and the stop
-/// ends at the deadline with no `unload`, not a hello's bound after it.
-#[tokio::test]
-async fn the_stops_ceiling_ask_ends_by_the_deadline() {
-    let Some(con) = Con::open(&["show", "validate", "unload"]).await else {
-        return;
-    };
-    con.fake.delay("validate", Duration::from_millis(1300));
-    let grace = Duration::from_millis(2000);
-    let running = con.start(grace).await;
-    con.ask_past_the_bound("validate").await;
-    con.fake.delay("list", Duration::from_secs(5));
-    let stopped = tokio::time::Instant::now();
-    running.stop().await;
-    assert!(
-        stopped.elapsed() < Duration::from_millis(2600),
-        "the stop ended by its deadline: {:?}",
-        stopped.elapsed()
-    );
     assert_eq!(
         con.fake.runs(),
         ["start show", "end show", "start validate", "end validate"]

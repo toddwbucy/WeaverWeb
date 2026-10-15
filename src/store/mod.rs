@@ -14,6 +14,7 @@
 
 pub mod access;
 pub mod admin;
+pub mod alerts;
 pub mod audit;
 #[cfg(test)]
 mod audit_tests;

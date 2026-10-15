@@ -2051,6 +2051,7 @@ pub(super) fn lab_config(lab: &Lab) -> crate::config::ServerConfig {
         rp_id: None,
         session_idle_secs: 3600,
         session_absolute_secs: 43200,
+        operations_log: None,
     }
 }
 
@@ -3083,6 +3084,7 @@ fn a_staging_entry_swapped_before_the_publish_is_refused() {
         rp_id: None,
         session_idle_secs: 3600,
         session_absolute_secs: 43200,
+        operations_log: None,
     };
     let out = tmp.path().join("out");
     std::fs::create_dir(&out).unwrap();

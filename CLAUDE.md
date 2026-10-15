@@ -160,7 +160,7 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
 - **DB-backed unit tests** (`store::read`, `store::plan`, `store::audit_tests`,
   `store::identity_tests`, `host_tests`, `surfaces::record`, `passkeys_tests`,
   `sign_in_tests`, `keys_tests`, `admin_tests`, `grants_tests`, `agents_tests`, `reading_tests`,
-  `verbs_tests`,
+  `verbs_tests`, `alerts_tests`,
   `link::tests`, `link::server_asks_tests`,
   `link::client_tests`, `link::admin_con_tests`, `link::verbs_audit_tests`)
   connect to the database in `DATABASE_URL` and run the migrations. The link's tests run one at
@@ -202,7 +202,10 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
   origin's host or a domain it is under; `session_idle_secs` (3600) and
   `session_absolute_secs` (43200) are a session's limits, the idle one never under 300, since
   the last use is written at most once a minute, and the absolute never over 604800 (seven
-  days). The start refusals are
+  days). `operations_log` is required, with no default: the file the server appends one JSON
+  line per failure to (`src/alerting.rs`; the install sets it under `/var/log`, and no path
+  enters the repository); the server refuses to start where it cannot be opened for appending.
+  The start refusals are
   `src/listen.rs`'s, design section 3. Keep configs, certificates, keys,
   authorities and client configs out of the repository. Logging uses `RUST_LOG`,
   which defaults to `weaver_web=info,sqlx=warn`.
@@ -227,10 +230,9 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
   through `link::sudo_invoker`, the repository's one privileged invocation: `sudo -n
   <weaver_admin> <verb> <agent>`, the hello's ceiling from `sudo -n -l` on each line, stdin
   null, the child in its own session, never killed, and holding admin-con's one invocation
-  slot across reconnections until it is reaped. An orderly stop waits for that child within
-  the grace, then unloads the agent where the ceiling grants `unload`, asking again every
-  5 s (`REST_RETRY`) while it refuses `ActivityNotAtRest` until the grace runs out, and
-  never runs `force-unload`. A writer that never
+  slot across reconnections until it is reaped. **A conduit** (Spec 2.14, ruling 3, of
+  2026-10-14): an orderly stop waits for that child within the grace and invokes nothing,
+  `unload` granted or not, and admin-con parses no refusal class of admin's. A writer that never
   idles gives the relay no heartbeat, so an opening takes its boundary at 30 s and a drain
   invokes at 10 s (`BOUNDARY_BOUND`, `DRAIN_BOUND`; `toddwbucy/WeaverAgent#88`). Its tests (`link::admin_con_tests`) run it against a fake
   relay (`link::fake_relay`) serving a temporary trace file, the real listener and a fake
@@ -316,6 +318,30 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
   grant must carry `turn`, no ceiling), its text in the frame and in no record, log line or
   error; the page's turn form says when more than one enabled person holds `turn`.
 
+- **Alerts and the operator's decisions** (`src/alerting.rs`, `src/store/alerts.rs`,
+  `src/surfaces/alerts.rs`, migration `0019`; act 12, PR 1; Spec 2.14): the listener raises
+  an alert for a failed or unknown outcome at either door (not the server's own `show` in
+  flight at a teardown), a person's ask refused for a system reason once its authorization
+  stood (never before the grant check, an authorization refusal or a shed request), and lost contact (any teardown
+  but revocation, rotation, retirement, the halt or a replaced row), through a bounded queue
+  (256, `try_send`, drops counted and logged at error) to a worker that upserts the alert (one
+  open per agent, kind and subject) and appends the operations log's line. Every grant holder
+  sees an agent's alerts on its page, `GET /agents` counts them, and the reading pages' nav
+  shows the person's total; `POST /agents/{ag}/alerts/{al}/ack` takes the version read, by an
+  `operator` holder alone, in the admin writes' order, stale 409. An `unload` refusing
+  `save_point_not_taken` with the run at rest raises the prompt, a `<dialog open>` on the
+  agent page and the verb page; `POST /agents/{ag}/alerts/{al}/choose` runs "save point, then
+  unload" (the `unload` only on exit 0 `save_point_taken` with its report's digest) or
+  `force-unload` as the person's own asks, and never acknowledges. A plane the server cannot
+  reach (live credential, not connected) is a banner on every signed-in page for the agent's
+  grant holders ("agent unavailable, admin-con down", "turns unavailable, gate-con down"),
+  state from the register (`Store::unavailable_for`, `surfaces::Chrome`, which also carries
+  the nav's open-alert count), re-fetched every 15 s through htmx (`GET /availability`, and the
+  agent page's connectors with their in-memory "last heard", `GET /agents/{ag}/availability`);
+  a re-fetch reads the session without refreshing its last use
+  (`gate::session_in_background`). `alerts_tests` run each
+  test on a `fresh_store` with a real listener and an operations log in a temporary directory.
+
 ## The seed tree: what carries forward and what leaves
 
 The handoff's step 1 (decided 2026-09-30) splits the roughly 5.5k lines of Rust in two.
@@ -361,8 +387,8 @@ shared client half `link::client` (dial, verify, hello, heartbeat, bounded reads
 the reconnect policy of Spec 8). **admin-con landed on 2026-10-02** (act 6):
 `src/bin/admin-con.rs` over `link::admin_con`: the replay and `caught_up`, and the verb
 plane, one verb at a time with its answer placed at the invocation, behind an `Invoker`.
-**The sudo invoker landed in act 9a** (#17): `link::sudo_invoker`, the process-wide slot and
-the orderly stop's `unload`. **The relay client replaced the file tailer in act 9b**
+**The sudo invoker landed in act 9a** (#17): `link::sudo_invoker` and the process-wide
+slot; act 12 made the orderly stop invoke nothing. **The relay client replaced the file tailer in act 9b**
 (#17): `link::relay`, the door and its openings. The listener holds each connection's
 ceiling, asks `show` only where it is granted and at every opening of the door,
 each `show` audited as the server's (its first record committed before the frame, the
@@ -378,8 +404,8 @@ tailer and `lifecycle.rs` (which ran the verbs through sudo) left the tree.
 left out of the fresh root because it held box paths and a sudoers rule, both of which the
 hard boundaries forbid. Two facts for the
 removal act: `askama.toml` lists `src/web/templates` beside `src/surfaces/templates`, and
-the legacy router in `src/web/mod.rs` is the only thing serving `htmx.min.js` and `sse.js`,
-so the surfaces need their own asset route before `web/` goes. `src/bin/weaver-web.rs`
+the legacy router in `src/web/mod.rs` still serves `htmx.min.js` and `sse.js`; the surfaces
+serve the same vendored htmx at `/assets/surfaces/htmx.min.js` since act 12. `src/bin/weaver-web.rs`
 currently wires both halves together (legacy router, link listener, and trace pump beside
 `surfaces::routes()`), so the removal starts there.
 

@@ -88,6 +88,13 @@ pub struct ServerConfig {
     /// [`SESSION_ABSOLUTE_MAX_SECS`].
     #[serde(default = "default_session_absolute_secs")]
     pub session_absolute_secs: u64,
+    /// **The operations log's path** (Spec 2.14): where the server appends
+    /// one line per failure it raises as an alert. **No default here**: the
+    /// install names it, and `serve` refuses to start without it or where
+    /// it cannot be opened for appending. The host's commands do not write
+    /// it.
+    #[serde(default)]
+    pub operations_log: Option<PathBuf>,
 }
 
 // Read by the upstream adapter once it is implemented. **No standing

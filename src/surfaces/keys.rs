@@ -150,6 +150,7 @@ struct PasskeysPage {
     who: String,
     /// Whether the navigation offers the admin's page.
     admin: bool,
+    chrome: super::Chrome,
     rows: Vec<Row>,
     only_one: bool,
 }
@@ -184,10 +185,15 @@ async fn page(store: Store, policy: &Policy, headers: HeaderMap) -> Response {
         Ok(admin) => admin,
         Err(e) => return fault(e),
     };
+    let chrome = match super::Chrome::of(&store, &session.person_id).await {
+        Ok(chrome) => chrome,
+        Err(e) => return fault(e),
+    };
     match (PasskeysPage {
         here: "passkeys",
         who: session.name,
         admin,
+        chrome,
         rows,
         only_one,
     })

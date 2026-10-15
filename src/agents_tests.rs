@@ -68,6 +68,7 @@ fn server_config(dir: &std::path::Path, link: std::net::SocketAddr) -> crate::co
         rp_id: None,
         session_idle_secs: 3600,
         session_absolute_secs: 43200,
+        operations_log: None,
     }
 }
 
@@ -89,9 +90,15 @@ async fn rig_of(handover: Handover, silence: Duration) -> Option<Rig> {
     let dir = tempfile::tempdir().unwrap();
     let authority =
         Arc::new(Authority::init(&dir.path().join("authority"), "weaver-web", &[]).unwrap());
-    let listener = Listener::start(fresh.store.clone(), &authority, "127.0.0.1:0", silence)
-        .await
-        .unwrap();
+    let listener = Listener::start_with(
+        fresh.store.clone(),
+        &authority,
+        "127.0.0.1:0",
+        silence,
+        Some(dir.path().join("operations.log")),
+    )
+    .await
+    .unwrap();
     let cfg = Arc::new(server_config(dir.path(), listener.address()));
     let policy = gate::Policy {
         origin: Some(ORIGIN.to_owned()),
@@ -136,6 +143,15 @@ async fn rig_of(handover: Handover, silence: Duration) -> Option<Rig> {
 impl Rig {
     pub(crate) fn store(&self) -> &Store {
         &self.fresh.store
+    }
+
+    /// The operations log's lines, as the listener wrote them.
+    pub(crate) fn operations_log(&self) -> Vec<serde_json::Value> {
+        std::fs::read_to_string(self.dir.path().join("operations.log"))
+            .unwrap_or_default()
+            .lines()
+            .map(|l| serde_json::from_str(l).expect("a JSON line"))
+            .collect()
     }
 
     async fn post(

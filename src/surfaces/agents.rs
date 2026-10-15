@@ -254,6 +254,7 @@ struct AgentsPage {
     here: &'static str,
     who: String,
     admin: bool,
+    chrome: super::Chrome,
     rows: Vec<AgentRow>,
 }
 
@@ -285,10 +286,15 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap) -> Response {
                 || matches!(a.admin.state, CredentialState::Live),
         })
         .collect();
+    let chrome = match super::Chrome::of(&store, &session.person_id).await {
+        Ok(chrome) => chrome,
+        Err(e) => return fault(e),
+    };
     match (AgentsPage {
         here: "register",
         who: session.name,
         admin: true,
+        chrome,
         rows,
     })
     .render()
@@ -320,6 +326,7 @@ struct HandoverPage {
     here: &'static str,
     who: String,
     admin: bool,
+    chrome: super::Chrome,
     verb: &'static str,
     agent: String,
     waiting: Vec<Waiting>,
@@ -329,13 +336,22 @@ struct HandoverPage {
 /// **The two client configs held for the session, and the page that
 /// offers them**, under `no-store`. The page carries the handles, never the
 /// configs.
-fn hand_over(
+async fn hand_over(
+    store: &Store,
     seams: &Seams,
     mut reservation: Reservation,
     session: Session,
     verb: &'static str,
     minted: Minted,
 ) -> Response {
+    // **Never at the cost of what is shown once**: the chrome unread is
+    // logged and left empty rather than losing the page.
+    let chrome = super::Chrome::of(store, &session.person_id)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::error!("the page's chrome could not be read: {e:#}");
+            super::Chrome::default()
+        });
     let mut waiting = Vec::new();
     for (plane, credential) in [(Plane::Gate, &minted.gate), (Plane::Admin, &minted.admin)] {
         let content = client_config(
@@ -358,6 +374,7 @@ fn hand_over(
         here: "register",
         who: session.name,
         admin: true,
+        chrome,
         verb,
         agent: format!("{}/{} ({})", minted.r#box, minted.name, minted.agent_id),
         waiting,
@@ -464,19 +481,23 @@ async fn register(store: Store, seams: &Seams, headers: HeaderMap, ask: Register
     let written = write.await;
     settled(&store, &first, &written).await;
     match written {
-        Ok(Ok((id, gate, admin))) => hand_over(
-            seams,
-            reservation,
-            session,
-            "registered",
-            Minted {
-                agent_id: id.as_str().to_owned(),
-                r#box: ask.r#box,
-                name: ask.name,
-                gate,
-                admin,
-            },
-        ),
+        Ok(Ok((id, gate, admin))) => {
+            hand_over(
+                &store,
+                seams,
+                reservation,
+                session,
+                "registered",
+                Minted {
+                    agent_id: id.as_str().to_owned(),
+                    r#box: ask.r#box,
+                    name: ask.name,
+                    gate,
+                    admin,
+                },
+            )
+            .await
+        }
         Ok(Err(refusal)) => refused(&refusal),
         Err(e) => fault(e),
     }
@@ -572,19 +593,23 @@ async fn rotate(store: Store, seams: &Seams, headers: HeaderMap, ask: RotateAsk)
     let written = write.await;
     settled(&store, &first, &written).await;
     match written {
-        Ok(Ok((gate, admin))) => hand_over(
-            seams,
-            reservation,
-            session,
-            "rotated",
-            Minted {
-                agent_id: agent.agent_id.as_str().to_owned(),
-                r#box: agent.r#box,
-                name: agent.name,
-                gate,
-                admin,
-            },
-        ),
+        Ok(Ok((gate, admin))) => {
+            hand_over(
+                &store,
+                seams,
+                reservation,
+                session,
+                "rotated",
+                Minted {
+                    agent_id: agent.agent_id.as_str().to_owned(),
+                    r#box: agent.r#box,
+                    name: agent.name,
+                    gate,
+                    admin,
+                },
+            )
+            .await
+        }
         Ok(Err(refusal)) => refused(&refusal),
         Err(e) => fault(e),
     }

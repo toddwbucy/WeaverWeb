@@ -151,6 +151,21 @@ pub async fn session(
     Ok(at_use(store, policy, &bearer).await?.ok())
 }
 
+/// **The session a background read names, its last use left as it was**
+/// (Spec 2.14, the availability fragments the page re-fetches by itself):
+/// every end is checked and closed as at any use, but a poll is not the
+/// person's use, so an open tab never holds an idle session open.
+pub async fn session_in_background(
+    store: &Store,
+    policy: &Policy,
+    headers: &HeaderMap,
+) -> anyhow::Result<Option<Session>> {
+    let Some(bearer) = bearer(headers) else {
+        return Ok(None);
+    };
+    Ok(checked(store, policy, &bearer, false).await?.ok())
+}
+
 /// **A session checked at this use** (design section 6): the session where
 /// it serves, why it ended where it has, or `Err(None)` where the bearer
 /// names no session. **Each end is checked at every use**: closed, its
@@ -166,13 +181,25 @@ pub(crate) async fn at_use(
     policy: &Policy,
     bearer: &str,
 ) -> anyhow::Result<Result<Session, Option<Ended>>> {
+    checked(store, policy, bearer, true).await
+}
+
+/// [`at_use`], refreshing the last use only where `used`.
+async fn checked(
+    store: &Store,
+    policy: &Policy,
+    bearer: &str,
+    used: bool,
+) -> anyhow::Result<Result<Session, Option<Ended>>> {
     let digest = digest(bearer);
     for again in [false, true] {
         let Some((session, ended)) = read(store, policy, &digest).await? else {
             return Ok(Err(None));
         };
         let Some(ended) = ended else {
-            refresh(store, session.session_id).await?;
+            if used {
+                refresh(store, session.session_id).await?;
+            }
             return Ok(Ok(session));
         };
         if ended == Ended::Closed {

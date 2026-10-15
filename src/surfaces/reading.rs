@@ -78,13 +78,16 @@ pub struct Seams {
 
 /// The reading surface, taking its seams as its own argument.
 pub fn routes(seams: Seams) -> Router<Store> {
-    let (list_seams, page_seams, trace_seams, verb_seams, turn_seams) = (
+    let (list_seams, page_seams, trace_seams, verb_seams, turn_seams, ack_seams) = (
         seams.clone(),
         seams.clone(),
         seams.clone(),
         seams.clone(),
-        seams,
+        seams.clone(),
+        seams.clone(),
     );
+    let choose_seams = seams.clone();
+    let (banner_seams, planes_seams) = (seams.clone(), seams);
     Router::new()
         .route(
             "/agents",
@@ -92,6 +95,22 @@ pub fn routes(seams: Seams) -> Router<Store> {
                 let seams = list_seams.clone();
                 async move { list(store, &seams, headers).await }
             }),
+        )
+        .route(
+            "/availability",
+            get(move |State(store): State<Store>, headers: HeaderMap| {
+                let seams = banner_seams.clone();
+                async move { availability(store, &seams, headers).await }
+            }),
+        )
+        .route(
+            "/agents/{agent}/availability",
+            get(
+                move |State(store): State<Store>, headers: HeaderMap, Path(agent): Path<String>| {
+                    let seams = planes_seams.clone();
+                    async move { agent_availability(store, &seams, headers, agent).await }
+                },
+            ),
         )
         .route(
             "/agents/{agent}",
@@ -127,6 +146,35 @@ pub fn routes(seams: Seams) -> Router<Store> {
             ),
         )
         .route(
+            "/agents/{agent}/alerts/{alert}/ack",
+            post(
+                move |State(store): State<Store>,
+                      headers: HeaderMap,
+                      Path((agent, alert)): Path<(String, String)>,
+                      Form(form): Form<super::alerts::AckForm>| {
+                    let seams = ack_seams.clone();
+                    async move {
+                        super::alerts::acknowledge(store, &seams, headers, agent, alert, form.version)
+                            .await
+                    }
+                },
+            ),
+        )
+        .route(
+            "/agents/{agent}/alerts/{alert}/choose",
+            post(
+                move |State(store): State<Store>,
+                      headers: HeaderMap,
+                      Path((agent, alert)): Path<(String, String)>,
+                      Form(form): Form<super::alerts::ChoiceForm>| {
+                    let seams = choose_seams.clone();
+                    async move {
+                        super::alerts::choose(store, &seams, headers, agent, alert, form.option).await
+                    }
+                },
+            ),
+        )
+        .route(
             "/agents/{agent}/trace",
             get(
                 move |State(store): State<Store>, headers: HeaderMap, Path(agent): Path<String>| {
@@ -137,15 +185,15 @@ pub fn routes(seams: Seams) -> Router<Store> {
         )
 }
 
-fn fault(e: impl Into<anyhow::Error>) -> Response {
+pub(super) fn fault(e: impl Into<anyhow::Error>) -> Response {
     Fault::from(e.into()).into_response()
 }
 
-fn not_found() -> Response {
+pub(super) fn not_found() -> Response {
     (StatusCode::NOT_FOUND, NO_SUCH_AGENT).into_response()
 }
 
-async fn session_of(
+pub(super) async fn session_of(
     store: &Store,
     policy: &Policy,
     headers: &HeaderMap,
@@ -190,6 +238,8 @@ struct ListRow {
     label: String,
     gate: bool,
     admin: bool,
+    /// Its open alerts.
+    alerts: i64,
 }
 
 #[derive(Template)]
@@ -198,6 +248,7 @@ struct ListPage {
     here: &'static str,
     who: String,
     admin: bool,
+    chrome: super::Chrome,
     rows: Vec<ListRow>,
 }
 
@@ -215,6 +266,11 @@ async fn list(store: Store, seams: &Seams, headers: HeaderMap) -> Response {
         (Ok(agents), Ok(admin)) => (agents, admin),
         (Err(e), _) | (_, Err(e)) => return fault(e),
     };
+    let open = match store.open_alerts_by_agent(&session.person_id).await {
+        Ok(open) => open,
+        Err(e) => return fault(e),
+    };
+    let open_on = |agent: &str| open.iter().find(|(a, _)| a == agent).map_or(0, |(_, n)| *n);
     let rows = agents
         .into_iter()
         .map(|a| ListRow {
@@ -222,12 +278,18 @@ async fn list(store: Store, seams: &Seams, headers: HeaderMap) -> Response {
             label: format!("{}/{}", a.r#box, a.name),
             gate: a.gate.connected,
             admin: a.admin.connected,
+            alerts: open_on(a.agent_id.as_str()),
         })
         .collect();
+    let chrome = match super::Chrome::of(&store, &session.person_id).await {
+        Ok(chrome) => chrome,
+        Err(e) => return fault(e),
+    };
     match (ListPage {
         here: "agents",
         who: session.name,
         admin,
+        chrome,
         rows,
     })
     .render()
@@ -258,6 +320,176 @@ struct AgentPage {
     forms: Vec<&'static str>,
     turn_form: bool,
     shared: bool,
+    chrome: super::Chrome,
+    /// The two connectors, re-fetched every 15 s.
+    planes: Vec<PlaneView>,
+    alerts: Vec<AlertRow>,
+    /// Whether the person holds `operator` here, and so acknowledges.
+    can_ack: bool,
+    /// The open decision prompt, with the options the person may choose.
+    prompt: Option<PromptView>,
+}
+
+/// An alert as the agent page lists it.
+struct AlertRow {
+    alert_id: String,
+    kind: String,
+    subject: String,
+    summary: String,
+    detail: String,
+    occurrences: i32,
+    raised: String,
+    last: String,
+    restored: String,
+    acknowledged: String,
+    version: i64,
+    open: bool,
+}
+
+/// One of an agent's two connectors, as the listener knows it.
+struct PlaneView {
+    connector: &'static str,
+    status: String,
+}
+
+/// **An agent's two connectors** (Spec 2.14): a live connection's last
+/// frame read, any frame, heartbeats included, from the listener's memory;
+/// a plane down since its link state last changed, where the row knows it;
+/// a plane whose credential is not live, as such.
+fn planes_of(listener: &Listener, row: &Agent) -> Vec<PlaneView> {
+    use crate::link::frames::Plane;
+    [
+        (
+            Plane::Admin,
+            &row.admin,
+            "admin-con",
+            "agent unavailable, admin-con down",
+        ),
+        (
+            Plane::Gate,
+            &row.gate,
+            "gate-con",
+            "turns unavailable, gate-con down",
+        ),
+    ]
+    .into_iter()
+    .map(|(plane, credential, connector, down)| PlaneView {
+        connector,
+        status: if credential.state != CredentialState::Live {
+            "its credential is not live".to_owned()
+        } else if let Some(heard) = listener.last_heard(&row.agent_id, plane) {
+            format!("connected, last heard {} s ago", heard.as_secs())
+        } else {
+            match credential.link_at {
+                Some(at) if !credential.connected => format!("{down} since {}", when(at)),
+                None if !credential.connected => format!("{down}, never connected"),
+                _ => format!("{down}: its connection is not admitted here"),
+            }
+        },
+    })
+    .collect()
+}
+
+#[derive(Template)]
+#[template(path = "availability_banners.html")]
+struct BannersFragment {
+    chrome: super::Chrome,
+}
+
+#[derive(Template)]
+#[template(path = "agent_planes.html")]
+struct PlanesFragment {
+    planes: Vec<PlaneView>,
+}
+
+/// A fragment, kept from every cache.
+fn fragment(rendered: askama::Result<String>) -> Response {
+    match rendered {
+        Ok(html) => (
+            [(axum::http::header::CACHE_CONTROL, "no-store")],
+            Html(html),
+        )
+            .into_response(),
+        Err(e) => fault(e),
+    }
+}
+
+/// **The session a fragment re-fetch names, its last use left as it was**:
+/// a poll is not the person's use.
+async fn background_session(
+    store: &Store,
+    policy: &Policy,
+    headers: &HeaderMap,
+) -> Result<Session, Response> {
+    match gate::session_in_background(store, policy, headers).await {
+        Ok(Some(session)) => Ok(session),
+        Ok(None) => Err(NoSession.into_response()),
+        Err(e) => Err(fault(e)),
+    }
+}
+
+/// **The banners, re-fetched every 15 s by the page itself** (Spec 2.14):
+/// through the session gate and the grant scoping as at the page's load.
+async fn availability(store: Store, seams: &Seams, headers: HeaderMap) -> Response {
+    let session = match background_session(&store, &seams.policy, &headers).await {
+        Ok(session) => session,
+        Err(answer) => return answer,
+    };
+    match super::Chrome::of(&store, &session.person_id).await {
+        Ok(chrome) => fragment(BannersFragment { chrome }.render()),
+        Err(e) => fault(e),
+    }
+}
+
+/// **One agent's connectors, re-fetched every 15 s by its page**: an agent
+/// without a grant answers as an unknown one.
+async fn agent_availability(
+    store: Store,
+    seams: &Seams,
+    headers: HeaderMap,
+    agent: String,
+) -> Response {
+    if !is_agent_id(&agent) {
+        return (
+            StatusCode::BAD_REQUEST,
+            "the agent asked for is not of its identity's shape",
+        )
+            .into_response();
+    }
+    let id: AgentId = match agent.parse() {
+        Ok(id) => id,
+        Err(e) => return fault(anyhow::Error::msg(e)),
+    };
+    let session = match background_session(&store, &seams.policy, &headers).await {
+        Ok(session) => session,
+        Err(answer) => return answer,
+    };
+    match store.roles_on(&session.person_id, &id).await {
+        Ok(roles) if roles.is_empty() => return not_found(),
+        Ok(_) => {}
+        Err(e) => return fault(e),
+    }
+    match store.agent(&id).await {
+        Ok(Some(row)) => fragment(
+            PlanesFragment {
+                planes: planes_of(&seams.asker, &row),
+            }
+            .render(),
+        ),
+        Ok(None) => not_found(),
+        Err(e) => fault(e),
+    }
+}
+
+/// An open decision prompt, as its `<dialog open>` shows it.
+struct PromptView {
+    alert_id: String,
+    summary: String,
+    options: Vec<(&'static str, &'static str)>,
+}
+
+fn when(at: chrono::DateTime<chrono::Utc>) -> String {
+    at.format("%Y-%m-%d %H:%M:%S UTC").to_string()
 }
 
 fn stamp(at: Option<chrono::DateTime<chrono::Utc>>) -> String {
@@ -323,6 +555,68 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, agent: String) ->
         .filter(|verb| lifecycle(verb))
         .filter(|verb| granted.contains(*verb) && ceiling.iter().any(|c| c == verb))
         .collect();
+    // **The agent's alerts** (Spec 2.14): seen by every grant holder,
+    // acknowledged by an `operator` holder; the open prompt offers only the
+    // options the person's grants and the connection's ceiling carry, and
+    // each choice is checked again as the person's asks.
+    let stored = match store.alerts_on(&id, 50).await {
+        Ok(stored) => stored,
+        Err(e) => return fault(e),
+    };
+    let chrome = match super::Chrome::of(&store, &session.person_id).await {
+        Ok(chrome) => chrome,
+        Err(e) => return fault(e),
+    };
+    let can_ack = roles.iter().any(|r| r == "operator");
+    let carries = |verb: &str| granted.contains(verb) && ceiling.iter().any(|c| c == verb);
+    let prompt = stored
+        .iter()
+        .find(|a| a.acknowledged_at.is_none() && a.kind == "save_point_missed")
+        .map(|a| PromptView {
+            alert_id: a.alert_id.clone(),
+            summary: a.summary.clone(),
+            options: [
+                (
+                    crate::link::listener::SAVE_POINT_THEN_UNLOAD,
+                    "Save point, then unload (the unload only once the save point is taken and read back to its manifest line)",
+                    carries("save-point") && carries("unload"),
+                ),
+                (
+                    crate::link::listener::FORCE_UNLOAD,
+                    "Force-unload (loses the state since the last published save point)",
+                    carries("force-unload"),
+                ),
+            ]
+            .into_iter()
+            .filter(|(option, _, offered)| {
+                *offered && a.options.iter().any(|o| o == option)
+            })
+            .map(|(option, label, _)| (option, label))
+            .collect(),
+        });
+    let alerts = stored
+        .into_iter()
+        .map(|a| AlertRow {
+            open: a.acknowledged_at.is_none(),
+            acknowledged: match (a.acknowledged_at, &a.acknowledged_by) {
+                (Some(at), Some(by)) => format!("acknowledged {} by {by}", when(at)),
+                _ => String::new(),
+            },
+            restored: a
+                .restored_at
+                .map(|at| format!("contact restored {}", when(at)))
+                .unwrap_or_default(),
+            raised: when(a.raised_at),
+            last: when(a.last_at),
+            alert_id: a.alert_id,
+            kind: a.kind,
+            subject: a.subject,
+            summary: a.summary,
+            detail: a.detail,
+            occurrences: a.occurrences,
+            version: a.version,
+        })
+        .collect();
     let none = || "none held".to_owned();
     let page = AgentPage {
         here: "agents",
@@ -383,6 +677,11 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, agent: String) ->
         forms,
         turn_form,
         shared,
+        chrome,
+        planes: planes_of(&seams.asker, &row),
+        alerts,
+        can_ack,
+        prompt,
     };
     match page.render() {
         Ok(html) => Html(html).into_response(),
@@ -427,6 +726,11 @@ struct VerbPage {
     first: String,
     kind: String,
     detail: String,
+    chrome: super::Chrome,
+    /// **The leg an `unload` stopped at its save point missed** (Spec
+    /// 2.14), whose prompt the page states, its options chosen on the
+    /// agent's page, where the alert stands.
+    missed: Option<String>,
 }
 
 /// **A person's verb, asked through the server** (Spec 2.13): parsed,
@@ -521,14 +825,18 @@ async fn act(
     // **The page's wait is its own**, bounding nothing of the ask: the
     // outcome is written at the answer whatever this does.
     let bound = seams.asker.silence();
-    let (status, kind, detail) = if shown == "turn" {
-        turn_shown(bound, enqueued).await
+    let (status, kind, detail, missed) = if shown == "turn" {
+        let (status, kind, detail) = turn_shown(bound, enqueued).await;
+        (status, kind, detail, None)
     } else {
-        verb_shown(bound, enqueued).await
+        verb_shown(bound, &shown, enqueued).await
     };
-    let admin = match store.is_admin(&session.person_id).await {
-        Ok(admin) => admin,
-        Err(e) => return fault(e),
+    let (admin, chrome) = match (
+        store.is_admin(&session.person_id).await,
+        super::Chrome::of(&store, &session.person_id).await,
+    ) {
+        (Ok(admin), Ok(chrome)) => (admin, chrome),
+        (Err(e), _) | (_, Err(e)) => return fault(e),
     };
     let page = VerbPage {
         here: "agents",
@@ -540,6 +848,8 @@ async fn act(
         first,
         kind,
         detail,
+        chrome,
+        missed,
     };
     match page.render() {
         Ok(html) => (status, Html(html)).into_response(),
@@ -547,8 +857,13 @@ async fn act(
     }
 }
 
-/// admin's answer to a verb, as the page shows it.
-async fn verb_shown(bound: Duration, enqueued: Enqueued) -> (StatusCode, String, String) {
+/// admin's answer to a verb, as the page shows it, with the leg an
+/// `unload` stopped at its save point missed.
+async fn verb_shown(
+    bound: Duration,
+    verb: &str,
+    enqueued: Enqueued,
+) -> (StatusCode, String, String, Option<String>) {
     match tokio::time::timeout(bound, enqueued.answer()).await {
         Ok(Ok(outcome)) => (
             StatusCode::OK,
@@ -563,22 +878,26 @@ async fn verb_shown(bound: Duration, enqueued: Enqueued) -> (StatusCode, String,
                 .as_ref()
                 .map(|a| serde_json::to_string_pretty(a).unwrap_or_default())
                 .unwrap_or_default(),
+            crate::link::listener::stopped_at_save_point(verb, &outcome).map(str::to_owned),
         ),
         Ok(Err(VerbError::Fault(fault))) => (
             StatusCode::OK,
             "admin-con's fault".to_owned(),
             format!("{}: {}", fault.kind, fault.message),
+            None,
         ),
         Ok(Err(VerbError::Unanswered)) => (
             StatusCode::OK,
             "the connection ended with the verb in flight: its outcome is unknown here, and the trace and the next show hold it".to_owned(),
             String::new(),
+            None,
         ),
-        Ok(Err(e)) => (StatusCode::OK, "no answer".to_owned(), e.to_string()),
+        Ok(Err(e)) => (StatusCode::OK, "no answer".to_owned(), e.to_string(), None),
         Err(_) => (
             StatusCode::ACCEPTED,
             "asked, and not answered within the bound: its outcome is written when admin answers".to_owned(),
             String::new(),
+            None,
         ),
     }
 }

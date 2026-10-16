@@ -240,6 +240,33 @@ struct ListRow {
     admin: bool,
     /// Its open alerts.
     alerts: i64,
+    /// The transition standing, said; empty where none stands.
+    transition: String,
+}
+
+/// **A transition standing, as the pages say it** (Spec 2.12): with no
+/// constituents, another command is in progress; with them, the processes
+/// still stand, a run starting or ending or an ended run's processes still
+/// being ended, which the wire does not tell apart, so the page names both
+/// and picks neither. **Never "loading."** Empty where none stands.
+fn transition_said(row: &Agent) -> String {
+    let Some(at) = row.in_transition_at else {
+        return String::new();
+    };
+    match row.constituents.as_deref() {
+        Some(pids) if !pids.is_empty() => {
+            let pids: Vec<String> = pids.iter().map(i32::to_string).collect();
+            format!(
+                "In transition since {}: processes {} still stand: a run starting or ending, or an ended run's processes still being ended",
+                when(at),
+                pids.join(" ")
+            )
+        }
+        _ => format!(
+            "In transition since {}: another command is in progress",
+            when(at)
+        ),
+    }
 }
 
 #[derive(Template)]
@@ -279,6 +306,7 @@ async fn list(store: Store, seams: &Seams, headers: HeaderMap) -> Response {
             gate: a.gate.connected,
             admin: a.admin.connected,
             alerts: open_on(a.agent_id.as_str()),
+            transition: transition_said(&a),
         })
         .collect();
     let chrome = match super::Chrome::of(&store, &session.person_id).await {
@@ -316,6 +344,9 @@ struct AgentPage {
     load_state: String,
     tuple: String,
     constituents: String,
+    /// The transition standing beside the last state, said; empty where
+    /// none stands.
+    transition: String,
     window: &'static str,
     forms: Vec<&'static str>,
     turn_form: bool,
@@ -682,6 +713,7 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, agent: String) ->
                 format!("{}{}", pids.join(" "), stamp(row.constituents_at))
             })
             .unwrap_or_else(none),
+        transition: transition_said(&row),
         window: LIVE_WINDOW,
         forms,
         turn_form,

@@ -4289,10 +4289,30 @@ impl Inner {
         else {
             return Landing::Nothing;
         };
+        let kind = answer.get("kind").and_then(|k| k.as_str());
+        // **A `show` in transition claims no state** (Spec 2.12, 7.2;
+        // `toddwbucy/WeaverWeb#38`): another invocation holds the agent, a
+        // run starting or ending, or an ended run's processes still being
+        // ended, which the wire does not tell apart. The row keeps its last
+        // state, its source and its tuple, and records the transition beside
+        // them, with the constituents the answer names, read as a state's.
+        if outcome.verb == "show" && kind == Some("in_transition") {
+            let observation = Observation {
+                load_state: None,
+                tuple: TupleWrite::Keep,
+                at: Utc::now(),
+                source: "show",
+                constituents: ConstituentsWrite::Write(Self::constituents_of(answer)),
+                transition: true,
+            };
+            return if self.land(agent, observation).await {
+                Landing::Observation
+            } else {
+                Landing::Failed
+            };
+        }
         let summary = match outcome.verb.as_str() {
-            "show" if answer.get("kind").and_then(|k| k.as_str()) == Some("state") => {
-                Some(answer.clone())
-            }
+            "show" if kind == Some("state") => Some(answer.clone()),
             _ => None,
         };
         let Some(summary) = summary else {
@@ -4312,6 +4332,7 @@ impl Inner {
             // does not fit the column is not a pid, and the answer's
             // constituents are then recorded as none rather than guessed.
             constituents: ConstituentsWrite::Write(Self::constituents_of(&summary)),
+            transition: false,
         };
         if self.land(agent, observation).await {
             Landing::Observation
@@ -4448,6 +4469,7 @@ impl Inner {
                 at,
                 source: "event",
                 constituents: ConstituentsWrite::Keep,
+                transition: false,
             }),
             Some("unload") if !behind => Some(Observation {
                 load_state: Some("unloaded".into()),
@@ -4455,6 +4477,7 @@ impl Inner {
                 at,
                 source: "event",
                 constituents: ConstituentsWrite::Keep,
+                transition: false,
             }),
             // **A turn's start and close refresh the load state** (Spec
             // 2.12): an unclean stop writes no `unload`, so a state from an
@@ -4468,6 +4491,7 @@ impl Inner {
                 at,
                 source: "event",
                 constituents: ConstituentsWrite::Keep,
+                transition: false,
             }),
             Some("turn.closed") if !behind => Some(Observation {
                 load_state: Some("idle".into()),
@@ -4475,6 +4499,7 @@ impl Inner {
                 at,
                 source: "event",
                 constituents: ConstituentsWrite::Keep,
+                transition: false,
             }),
             _ => None,
         };

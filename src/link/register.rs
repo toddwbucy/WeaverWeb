@@ -94,6 +94,11 @@ pub struct Agent {
     /// the act that builds the relay client.
     pub trace_door: Option<bool>,
     pub trace_door_at: Option<DateTime<Utc>>,
+    /// **When a `show` answering `in_transition` was seen** (Spec 2.12),
+    /// the transition standing beside the last state until an observation
+    /// writes a state; none where none stands. Its constituents are
+    /// `constituents`.
+    pub in_transition_at: Option<DateTime<Utc>>,
 }
 
 impl Agent {
@@ -278,6 +283,11 @@ pub struct Observation {
     pub source: &'static str,
     /// What the observation does to the run's constituents.
     pub constituents: ConstituentsWrite,
+    /// **A `show` answering `in_transition`** (Spec 2.12, 7.2): it claims no
+    /// state, so the load state, its source and the tuple are kept, and the
+    /// transition is recorded beside them with its constituents. Every
+    /// other observation writes a state and ends a transition standing.
+    pub transition: bool,
 }
 
 /// What an observation does to the row's constituents (Spec 2.12). **Only
@@ -306,7 +316,7 @@ const COLUMNS: &str = "agent_id, name, box, author, version, registered_at, \
     admin_fingerprint, admin_authority, admin_state, admin_state_at, admin_connected, admin_link_at, \
     admin_incarnation, admin_address, admin_address_at, \
     tuple, tuple_at, tuple_source, load_state, load_state_at, state_source, admin_ceiling, \
-    admin_ceiling_at, constituents, constituents_at, trace_door, trace_door_at";
+    admin_ceiling_at, constituents, constituents_at, trace_door, trace_door_at, in_transition_at";
 
 fn credential_from_row(row: &PgRow, plane: &str) -> anyhow::Result<Credential> {
     let col = |s: &str| format!("{plane}_{s}");
@@ -346,6 +356,7 @@ fn agent_from_row(row: &PgRow) -> anyhow::Result<Agent> {
         constituents_at: row.try_get("constituents_at")?,
         trace_door: row.try_get("trace_door")?,
         trace_door_at: row.try_get("trace_door_at")?,
+        in_transition_at: row.try_get("in_transition_at")?,
     })
 }
 
@@ -1246,7 +1257,10 @@ impl Store {
 
     /// **Land an observation** (Spec 2.12): the tuple and the load state as
     /// admin reported them, each taking this observation only where its
-    /// arrival sequence (epoch, arrival) is higher than the stored one. The
+    /// arrival sequence (epoch, arrival) is higher than the stored one. **A
+    /// transition moves the load's sequence and keeps its state**, so it
+    /// stands only over states older than itself, and the next state, newer
+    /// by the same sequence, ends it. The
     /// source date is kept for display and decides nothing. Answers whether
     /// the row took it.
     pub async fn land_observation(
@@ -1258,7 +1272,10 @@ impl Store {
     ) -> anyhow::Result<bool> {
         let affected = sqlx::query(
             "UPDATE agent SET \
-               load_state = $2, load_state_at = $3, load_epoch = $4, load_arrival = $5, \
+               load_state = CASE WHEN $11 THEN load_state ELSE $2 END, \
+               load_state_at = CASE WHEN $11 THEN load_state_at ELSE $3 END, \
+               load_epoch = $4, load_arrival = $5, \
+               in_transition_at = CASE WHEN $11 THEN $3 ELSE NULL END, \
                tuple = CASE WHEN $8 THEN tuple ELSE $6 END, \
                tuple_at = CASE WHEN $8 THEN tuple_at ELSE $3 END, \
                tuple_epoch = CASE WHEN $8 THEN tuple_epoch ELSE $4 END, \
@@ -1266,7 +1283,7 @@ impl Store {
                tuple_source = CASE WHEN $8 THEN tuple_source ELSE $7 END, \
                constituents = CASE WHEN $9 THEN constituents ELSE $10 END, \
                constituents_at = CASE WHEN $9 THEN constituents_at ELSE $3 END, \
-               state_source = $7 \
+               state_source = CASE WHEN $11 THEN state_source ELSE $7 END \
              WHERE agent_id = $1 \
                AND (load_epoch IS NULL OR (load_epoch, load_arrival) < ($4, $5)) \
                AND (tuple_epoch IS NULL OR (tuple_epoch, tuple_arrival) < ($4, $5))",
@@ -1287,6 +1304,7 @@ impl Store {
             ConstituentsWrite::Write(pids) => pids.clone(),
             ConstituentsWrite::Keep => None,
         })
+        .bind(observation.transition)
         .execute(&self.pool)
         .await?
         .rows_affected();

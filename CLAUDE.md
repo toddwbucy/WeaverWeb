@@ -160,7 +160,7 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
 - **DB-backed unit tests** (`store::read`, `store::plan`, `store::audit_tests`,
   `store::identity_tests`, `host_tests`, `surfaces::record`, `passkeys_tests`,
   `sign_in_tests`, `keys_tests`, `admin_tests`, `grants_tests`, `agents_tests`, `reading_tests`,
-  `verbs_tests`, `alerts_tests`, `entries_tests`,
+  `verbs_tests`, `alerts_tests`, `entries_tests`, `transition_tests`,
   `link::tests`, `link::server_asks_tests`,
   `link::client_tests`, `link::admin_con_tests`, `link::verbs_audit_tests`)
   connect to the database in `DATABASE_URL` and run the migrations. The link's tests run one at
@@ -409,7 +409,10 @@ outcome naming it at the answer; the server asks `show` only, PR 6b1); every fra
 either plane, verb or turn, now has its first record before it (6b2, 6c), and records
 the ceiling and the load state's source on the row (migration `0011`), the tuple's own source
 (`0012`, since a turn moves the state and not the tuple), and the run's constituents from
-`show` and the trace door's state (`0013`); `0010` through `0013` are frozen. `traceview.rs` keeps the rings, the listener's live window; its seed
+`show` and the trace door's state (`0013`); `0010` through `0013` are frozen. A `show`
+answering `in_transition` claims no state: the row keeps its last state and tuple and
+records the transition beside them (`in_transition_at`, migration `0021`, its constituents
+in `constituents`), ended by the next observation that writes a state. `traceview.rs` keeps the rings, the listener's live window; its seed
 tailer and `lifecycle.rs` (which ran the verbs through sudo) left the tree.
 
 **Still leaves: `web/`**, the legacy `/admin` routes, already answering 503, and

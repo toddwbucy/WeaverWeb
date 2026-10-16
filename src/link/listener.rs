@@ -39,7 +39,8 @@ use crate::link::frames::{
     VerbFault, VerbOutcome,
 };
 use crate::link::register::{
-    ConstituentsWrite, CredentialState, Observation, REVOCATION_CHANNEL, TupleWrite,
+    ConstituentsWrite, CredentialState, Observation, REVOCATION_CHANNEL, TransitionWrite,
+    TupleWrite,
 };
 use crate::store::access::{shared_hold, verbs_granted_in};
 use crate::store::alerts::{AlertKind, InboxRow, Raise, TakenEntry, bounded as cut};
@@ -4303,7 +4304,7 @@ impl Inner {
                 at: Utc::now(),
                 source: "show",
                 constituents: ConstituentsWrite::Write(Self::constituents_of(answer)),
-                transition: true,
+                transition: TransitionWrite::Record,
             };
             return if self.land(agent, observation).await {
                 Landing::Observation
@@ -4332,7 +4333,7 @@ impl Inner {
             // does not fit the column is not a pid, and the answer's
             // constituents are then recorded as none rather than guessed.
             constituents: ConstituentsWrite::Write(Self::constituents_of(&summary)),
-            transition: false,
+            transition: TransitionWrite::End,
         };
         if self.land(agent, observation).await {
             Landing::Observation
@@ -4469,7 +4470,7 @@ impl Inner {
                 at,
                 source: "event",
                 constituents: ConstituentsWrite::Keep,
-                transition: false,
+                transition: TransitionWrite::End,
             }),
             Some("unload") if !behind => Some(Observation {
                 load_state: Some("unloaded".into()),
@@ -4477,7 +4478,7 @@ impl Inner {
                 at,
                 source: "event",
                 constituents: ConstituentsWrite::Keep,
-                transition: false,
+                transition: TransitionWrite::End,
             }),
             // **A turn's start and close refresh the load state** (Spec
             // 2.12): an unclean stop writes no `unload`, so a state from an
@@ -4491,7 +4492,7 @@ impl Inner {
                 at,
                 source: "event",
                 constituents: ConstituentsWrite::Keep,
-                transition: false,
+                transition: TransitionWrite::Keep,
             }),
             Some("turn.closed") if !behind => Some(Observation {
                 load_state: Some("idle".into()),
@@ -4499,7 +4500,7 @@ impl Inner {
                 at,
                 source: "event",
                 constituents: ConstituentsWrite::Keep,
-                transition: false,
+                transition: TransitionWrite::Keep,
             }),
             _ => None,
         };

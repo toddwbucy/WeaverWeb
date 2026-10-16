@@ -283,11 +283,33 @@ pub struct Observation {
     pub source: &'static str,
     /// What the observation does to the run's constituents.
     pub constituents: ConstituentsWrite,
-    /// **A `show` answering `in_transition`** (Spec 2.12, 7.2): it claims no
-    /// state, so the load state, its source and the tuple are kept, and the
-    /// transition is recorded beside them with its constituents. Every
-    /// other observation writes a state and ends a transition standing.
-    pub transition: bool,
+    /// What the observation does to a transition standing (Spec 2.12).
+    pub transition: TransitionWrite,
+}
+
+/// **What an observation does to a transition** (Spec 2.12, 7.2). A `show`
+/// answering `in_transition` records one: it claims no state, so the load
+/// state, its source and the tuple are kept, and the transition stands
+/// beside them with its constituents. **Only a lifecycle state ends one**,
+/// a `show` answering `state` or a live load or unload. A turn's start or
+/// close moves the load state and keeps the transition: it says where the
+/// turn stands, not that the invocation holding the agent ended (a graceful
+/// unload waiting for a turn, S3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransitionWrite {
+    Record,
+    End,
+    Keep,
+}
+
+impl TransitionWrite {
+    fn as_str(self) -> &'static str {
+        match self {
+            TransitionWrite::Record => "record",
+            TransitionWrite::End => "end",
+            TransitionWrite::Keep => "keep",
+        }
+    }
 }
 
 /// What an observation does to the row's constituents (Spec 2.12). **Only
@@ -1272,10 +1294,11 @@ impl Store {
     ) -> anyhow::Result<bool> {
         let affected = sqlx::query(
             "UPDATE agent SET \
-               load_state = CASE WHEN $11 THEN load_state ELSE $2 END, \
-               load_state_at = CASE WHEN $11 THEN load_state_at ELSE $3 END, \
+               load_state = CASE WHEN $11 = 'record' THEN load_state ELSE $2 END, \
+               load_state_at = CASE WHEN $11 = 'record' THEN load_state_at ELSE $3 END, \
                load_epoch = $4, load_arrival = $5, \
-               in_transition_at = CASE WHEN $11 THEN $3 ELSE NULL END, \
+               in_transition_at = CASE $11 WHEN 'record' THEN $3 WHEN 'end' THEN NULL \
+                 ELSE in_transition_at END, \
                tuple = CASE WHEN $8 THEN tuple ELSE $6 END, \
                tuple_at = CASE WHEN $8 THEN tuple_at ELSE $3 END, \
                tuple_epoch = CASE WHEN $8 THEN tuple_epoch ELSE $4 END, \
@@ -1283,7 +1306,7 @@ impl Store {
                tuple_source = CASE WHEN $8 THEN tuple_source ELSE $7 END, \
                constituents = CASE WHEN $9 THEN constituents ELSE $10 END, \
                constituents_at = CASE WHEN $9 THEN constituents_at ELSE $3 END, \
-               state_source = CASE WHEN $11 THEN state_source ELSE $7 END \
+               state_source = CASE WHEN $11 = 'record' THEN state_source ELSE $7 END \
              WHERE agent_id = $1 \
                AND (load_epoch IS NULL OR (load_epoch, load_arrival) < ($4, $5)) \
                AND (tuple_epoch IS NULL OR (tuple_epoch, tuple_arrival) < ($4, $5))",
@@ -1304,7 +1327,7 @@ impl Store {
             ConstituentsWrite::Write(pids) => pids.clone(),
             ConstituentsWrite::Keep => None,
         })
-        .bind(observation.transition)
+        .bind(observation.transition.as_str())
         .execute(&self.pool)
         .await?
         .rows_affected();

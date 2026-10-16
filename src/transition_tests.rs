@@ -238,3 +238,75 @@ async fn an_admission_meeting_a_transition_completes() {
     let (_, _, list) = send_as(&rig.app, "GET", "/agents", None, &bea_session).await;
     assert!(list.contains("processes 4100 still stand"), "{list}");
 }
+
+/// A live trace event of `kind` at `seq`.
+fn live(seq: u64, kind: &str) -> FromClient {
+    FromClient::Event {
+        position: Position {
+            generation: "g-1".into(),
+            offset: seq * 100,
+            digest: format!("d{seq}"),
+        },
+        replayed: false,
+        event: TraceEvent {
+            seq,
+            mark: None,
+            run: Some("run-1".into()),
+            turn: Some("t-1".into()),
+            kind: Some(kind.into()),
+            raw: json!({"kind": kind, "run": "run-1", "wall_ms": seq, "payload": {}}),
+        },
+    }
+}
+
+/// Wait for karl's row to meet `cond`.
+async fn wait_row(o: &Operated, what: &str, cond: impl Fn(&Agent) -> bool) -> Agent {
+    let id: AgentId = o.karl.parse().unwrap();
+    let until = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let row = o.rig.store().agent(&id).await.unwrap().unwrap();
+        if cond(&row) {
+            return row;
+        }
+        assert!(
+            tokio::time::Instant::now() < until,
+            "never {what}: {row:#?}"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+}
+
+/// **A turn's close moves the state and keeps the transition**: a graceful
+/// unload waiting for a turn (S3) answers `show` in transition, the turn's
+/// close writes `idle` and the transition still stands, and the unload's
+/// event then ends it.
+///
+/// Perturbation: let a turn's close end the transition, and the page reads
+/// `idle` with no transition while the unload still runs.
+#[tokio::test]
+async fn a_turns_close_keeps_the_transition_and_the_unload_ends_it() {
+    let Some(mut o) = operated(&["show"]).await else {
+        return;
+    };
+    let row = shown(&mut o, json!({"kind": "in_transition"}), 0).await;
+    let since = row.in_transition_at.expect("a transition stands");
+    o.admin_con.send(live(1, "turn.started")).await;
+    wait_row(&o, "active", |r| r.load_state.as_deref() == Some("active")).await;
+    o.admin_con.send(live(2, "turn.closed")).await;
+    let row = wait_row(&o, "idle", |r| {
+        r.load_state.as_deref() == Some("idle") && r.state_source.as_deref() == Some("event")
+    })
+    .await;
+    assert_eq!(
+        row.in_transition_at,
+        Some(since),
+        "the turn keeps the transition"
+    );
+    assert!(page(&o).await.contains("another command is in progress"));
+    o.admin_con.send(live(3, "unload")).await;
+    let row = wait_row(&o, "unloaded", |r| {
+        r.load_state.as_deref() == Some("unloaded")
+    })
+    .await;
+    assert_eq!(row.in_transition_at, None, "the unload ends it");
+}

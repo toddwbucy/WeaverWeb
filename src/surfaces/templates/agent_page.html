@@ -18,6 +18,9 @@
   <tr><th>Ceiling</th><td>{{ ceiling }}</td></tr>
   <tr><th>Trace door</th><td>{{ door }}</td></tr>
   <tr><th>Load state</th><td>{{ load_state }}</td></tr>
+  {%- if !transition.is_empty() %}
+  <tr><th>Transition</th><td>{{ transition }}</td></tr>
+  {%- endif %}
   <tr><th>Tuple</th><td>{{ tuple }}</td></tr>
   <tr><th>Constituents</th><td>{{ constituents }}</td></tr>
   </tbody>

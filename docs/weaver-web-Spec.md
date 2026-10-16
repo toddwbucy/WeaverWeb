@@ -1258,9 +1258,11 @@ never a bare socket's. Each row carries:
   answering `in_transition` was seen (migration `0021`), its constituents
   in the member above. **`in_transition` claims no state**: the load state,
   its source, the tuple and its source are kept as they were, and the
-  transition is recorded beside them; **the next observation that writes a
-  state ends it**, a `show` answering `state` or a live event that writes
-  the load state (a load, an unload, a turn's start or close). A transition
+  transition is recorded beside them; **only a lifecycle state ends it**, a
+  `show` answering `state` or a live load or unload event. A turn's start
+  or close moves the load state and keeps the transition, neither set nor
+  cleared: it says where the turn stands, not that the invocation holding
+  the agent ended, a graceful unload waiting for a turn (S3) among them. A transition
   takes the load's arrival sequence and leaves its state, so it stands only
   over states older than itself and the next state, newer by the same
   sequence, ends it. The surfaces say it as it is: with no constituents,
@@ -4595,7 +4597,7 @@ missing while it was relaying.
 | a connector's backlog of entries is bounded, its drops counted and reported | perturbation in `src/entries_tests.rs`: drop the bound, and a backlog past it holds every entry |
 | the door checks an entry once, its source on the plane's allow-list | perturbation in `src/entries_tests.rs`: give the gate plane the admin plane's sources, and gate-con's entry claiming `admin_log` is taken and classified rather than refused as malformed |
 | a load that reset the agent is a `data_lost` alert, raised once | perturbation in `src/entries_tests.rs`: drop the reset check, and the trace's `load` event carrying `reset` raises nothing |
-| a `show` answering `in_transition` claims no state, and the next state ends it | perturbation in `src/transition_tests.rs`: write the load state from an `in_transition` answer, and the row reads a state admin never claimed; let a state leave the transition standing, and the page shows a transition over a newer state; drop the constituents from the transition, and the leftovers' pids vanish from the row and the page |
+| a `show` answering `in_transition` claims no state, and the next state ends it | perturbation in `src/transition_tests.rs`: write the load state from an `in_transition` answer, and the row reads a state admin never claimed; let a state leave the transition standing, and the page shows a transition over a newer state; let a turn's close end it, and the page reads `idle` with no transition while the unload still runs; drop the constituents from the transition, and the leftovers' pids vanish from the row and the page |
 | a recovery holds exactly one of the person's places for its whole life | perturbation in `src/alerts_tests.rs`: admit again inside the sequence, and with the person's other three asks outstanding the choice's save-point is shed |
 | the prompt's `unload` follows only a hash-confirmed save point | perturbation in `src/alerts_tests.rs`: ask `unload` on any `save-point` answer, and a `save_point_not_taken`, or a `save_point_taken` with no report, is followed by an unload |
 | no privileged invocation exists outside admin-con's sudo invoker | perturbation, two instruments. A test, `tests/no_privilege.rs`: it reads every tracked file outside `docs/`, never following a symlink, comment lines aside by each file's syntax and Markdown read in its fences only, for a privilege-escalating program named as a word, a setuid family call, a child's user or group set on a command, and a setuid or setgid mode bit, with the program's word allowed in `src/link/sudo_invoker.rs` and its test module alone; shown to fail when one of each family is planted, in Rust and in a README fence, when the program is planted in another file of the invoker's name, and when another family is planted in the invoker's own files. And the argv instrument in `src/link/sudo_invoker_tests.rs`: plant the principal's name from the ask into the command, and the line the fake records is no longer exactly `sudo -n <weaver_admin> <verb> <agent>` |

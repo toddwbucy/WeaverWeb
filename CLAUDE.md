@@ -412,7 +412,8 @@ the ceiling and the load state's source on the row (migration `0011`), the tuple
 `show` and the trace door's state (`0013`); `0010` through `0013` are frozen. A `show`
 answering `in_transition` claims no state: the row keeps its last state and tuple and
 records the transition beside them (`in_transition_at`, migration `0021`, its constituents
-in `constituents`), ended by the next observation that writes a state. `traceview.rs` keeps the rings, the listener's live window; its seed
+in `constituents`), ended only by a `show` answering `state` or a live load or unload, a
+turn's events keeping it. `traceview.rs` keeps the rings, the listener's live window; its seed
 tailer and `lifecycle.rs` (which ran the verbs through sudo) left the tree.
 
 **Still leaves: `web/`**, the legacy `/admin` routes, already answering 503, and

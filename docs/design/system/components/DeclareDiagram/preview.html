@@ -1,0 +1,145 @@
+<!-- @dsCard group="Proofs" height=660 width=1100 subtitle="Stage 1 Declare, unbuilt: the diagram as a view of agent.yaml, with the pieces menu, a refused wire and the configure pop-up" -->
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="../../components/bundle.css">
+<style>
+  .declare { display: grid; grid-template-columns: 200px 1fr 236px; gap: 0; }
+  .declare > * { min-width: 0; }
+  .col { border-right: 1px solid var(--line); padding: 12px; display: grid; gap: 8px; align-content: start; font-size: 12.6px; }
+  .col h3 { margin: 0; font-size: 12.6px; font-weight: 500; color: var(--dim); }
+  .piece { display: flex; justify-content: space-between; align-items: center; gap: 8px; height: 30px; padding: 0 8px; border: 1px solid var(--line); border-radius: 4px; background: var(--inset); font-family: var(--font-mono); font-size: 11.7px; cursor: grab; }
+  .piece .grip { color: var(--faint); }
+  .yaml { margin: 0; padding: 8px; background: var(--inset); border: 1px solid var(--line); border-radius: 4px; font: 400 10px/1.45 var(--font-mono); white-space: pre; overflow: hidden; }
+  .popup { border-left: 1px solid var(--accent); padding: 0; display: grid; align-content: start; }
+  .popup h3 { margin: 0; padding: 8px 12px; background: var(--inset); border-bottom: 1px solid var(--line); font-size: 13.2px; font-weight: 600; }
+  .popup .fields { padding: 12px; display: grid; gap: 10px; }
+  .popup input, .popup select, .popup textarea { width: 100%; }
+  .path { display: flex; align-items: center; gap: 12px; }
+  .path .step { display: inline-flex; align-items: center; gap: 6px; }
+  .path .step.now { color: var(--fg); font-weight: 600; }
+  .path .arrow { color: var(--faint); }
+</style></head><body>
+<section class="pane" style="border-radius:0;border:0">
+  <header><span class="stage"><b>1</b> Declare</span><h2>Diagram</h2><span class="backing unbuilt">unbuilt</span><span class="source">a view of <code>agent.yaml</code>, saved v3</span></header>
+  <div class="body flush declare">
+    <div class="col">
+      <h3>Pieces that exist today</h3>
+      <div class="piece">decoder <span class="note">mandatory</span><span class="grip">&#8942;</span></div>
+      <div class="piece">state <span class="note">SQLite</span><span class="grip">&#8942;</span></div>
+      <div class="piece">classifier <span class="note">optional</span><span class="grip">&#8942;</span></div>
+      <div class="piece">LoRA adapter<span class="grip">&#8942;</span></div>
+      <p class="note" style="margin:0">Kinds arrive as charters land. No encoder is offered because none is chartered. The two connectors are not pieces: they are minted at Provision.</p>
+      <h3 style="margin-top:8px">agent.yaml <span class="note">saved document &#183; v3 &#183; 14:00:12</span></h3>
+<pre class="yaml">agent: hb-01
+user: sample-user
+edge:
+  gate: {admits: gate-con}
+  admin: {admits: admin-con}
+organs:
+  decoder:
+    model: qwen3-8b-q4
+    prompt: ./system.md
+    adapter: lora/hb-v2
+  state: {sqlite, memory}
+  classifier:
+    adapter: lora/hb-v2
+tuple: {seed: 41, temp: 0.7}</pre>
+    </div>
+    <div class="diagram">
+      <svg viewBox="0 0 660 490" xmlns="http://www.w3.org/2000/svg" aria-label="The agent hb-01 declared as a diagram">
+        <!-- the agent's edge -->
+        <rect class="edge" x="130" y="36" width="380" height="408" rx="10"/>
+        <text class="m d" x="144" y="56">agent hb-01 &#183; kernel user sample-user</text>
+        <!-- sockets on the edge -->
+        <rect class="socket" x="118" y="196" width="24" height="44"/>
+        <text class="m" x="74" y="190" text-anchor="middle">gate</text>
+        <text class="m d" x="74" y="252" text-anchor="middle">unix socket</text>
+        <text class="m d" x="74" y="266" text-anchor="middle">admits by uid</text>
+        <rect class="socket" x="498" y="116" width="24" height="44"/>
+        <text class="m" x="566" y="110" text-anchor="middle">admin</text>
+        <text class="m d" x="566" y="172" text-anchor="middle">unix socket</text>
+        <text class="m d" x="566" y="186" text-anchor="middle">admits by uid</text>
+        <!-- connectors outside -->
+        <rect class="node connector" x="0" y="128" width="116" height="54"/>
+        <text class="t b" x="10" y="146">GateCon</text>
+        <text class="m d" x="70" y="146">fixed</text>
+        <rect class="net" x="8" y="154" width="100" height="20"/>
+        <text class="m a s" x="13" y="167">net &#8594; weaver-web</text>
+        <path class="wire" d="M60 182 V196 H118" />
+        <rect class="node connector" x="536" y="28" width="112" height="54"/>
+        <text class="t b" x="544" y="46">AdminCon</text>
+        <text class="m d" x="612" y="46">fixed</text>
+        <rect class="net" x="542" y="54" width="100" height="20"/>
+        <text class="m a s" x="547" y="67">net &#8594; weaver-web</text>
+        <path class="wire" d="M592 82 V138 H522" />
+        <text class="m d" x="656" y="290" text-anchor="middle" transform="rotate(-90 656 290)">connectors: fixed, minted at Provision</text>
+        <!-- decoder on the input path -->
+        <path class="wire" d="M142 210 H190" marker-end="url(#arr)"/>
+        <path class="wire" d="M190 236 H160 V232 H142" marker-end="url(#arr)"/>
+        <text class="m d" x="150" y="204">in</text>
+        <text class="m d" x="150" y="250">out</text>
+        <rect class="node selected" x="190" y="166" width="190" height="134"/>
+        <text class="t b" x="200" y="186">decoder</text>
+        <text class="m d" x="258" y="186">mandatory</text>
+        <rect class="field" x="200" y="196" width="170" height="20"/>
+        <text class="m" x="206" y="210">model: qwen3-8b-q4</text>
+        <rect class="field" x="200" y="222" width="170" height="20"/>
+        <text class="m" x="206" y="236">system prompt: ./system.md</text>
+        <rect class="field" x="200" y="248" width="170" height="20"/>
+        <text class="m" x="206" y="262">adapter: lora/hb-v2</text>
+        <rect class="tunable" x="200" y="274" width="58" height="18"/><text class="m s" x="206" y="286">seed 41</text>
+        <rect class="tunable" x="264" y="274" width="62" height="18"/><text class="m s" x="270" y="286">temp 0.7</text>
+        <rect class="tunable" x="332" y="274" width="38" height="18"/><text class="m s" x="338" y="286">4k</text>
+        <!-- LoRA adapter on the model -->
+        <rect class="node" x="400" y="196" width="96" height="66"/>
+        <text class="t b" x="408" y="214">LoRA adapter</text>
+        <text class="m d" x="408" y="232">lora/hb-v2</text>
+        <rect class="tunable" x="408" y="240" width="66" height="18"/><text class="m s" x="414" y="252">scale 1.0</text>
+        <path class="wire" d="M400 220 H380"/>
+        <!-- state and the classifier it pulls in -->
+        <rect class="node" x="190" y="330" width="150" height="62"/>
+        <text class="t b" x="200" y="348">state</text>
+        <text class="m d" x="200" y="364">SQLite, in memory only</text>
+        <rect class="tunable" x="200" y="370" width="78" height="18"/><text class="m s" x="206" y="382">memory: on</text>
+        <path class="wire" d="M265 300 V330" marker-end="url(#arr)"/>
+        <rect class="node" x="370" y="330" width="126" height="62"/>
+        <text class="t b" x="380" y="348">classifier</text>
+        <text class="m h" x="380" y="364">pulled in by state</text>
+        <rect class="tunable" x="380" y="370" width="90" height="18"/><text class="m s" x="386" y="382">threshold 0.6</text>
+        <path class="wire pulled" d="M340 358 H370" marker-end="url(#arr)"/>
+        <path class="wire pulled" d="M448 330 V262" marker-end="url(#arr)"/>
+        <text class="m d" x="454" y="296">may point at</text>
+        <text class="m d" x="454" y="310">the adapter</text>
+        <!-- the refused wire -->
+        <path class="wire refused" d="M536 70 C 470 90, 420 150, 380 180"/>
+        <text class="m f" x="486" y="112" text-anchor="middle">&#215;</text>
+        <rect class="refuse" x="146" y="398" width="350" height="42"/>
+        <text class="m f" x="154" y="410">does not attach: AdminCon reaches the agent</text>
+        <text class="m f" x="154" y="423">only through the admin socket</text>
+        <text class="m f" x="154" y="436">(weaver-admin-operator-contract)</text>
+        <!-- legend -->
+        <text class="m d" x="8" y="470">edge: kernel identity &#183; solid: wired &#183; dashed: pulled in &#183; red: refused &#183; chips: tunables</text>
+        <defs>
+          <marker id="arr" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L8 4 L0 8 z" fill="var(--dim)"/></marker>
+        </defs>
+      </svg>
+    </div>
+    <div class="popup">
+      <h3>Configure: decoder</h3>
+      <div class="fields">
+        <div class="field"><label>model artifact <span class="when load"></span></label><select><option>qwen3-8b-q4 (sha256 9f1c&#8230;)</option></select></div>
+        <div class="field"><label>system prompt <span class="when now"></span></label><textarea rows="4">You are hb-01. Answer the benchmark's task in order, and name each file you change.</textarea></div>
+        <div class="field"><label>adapter <span class="when load"></span></label><select><option>lora/hb-v2</option><option>none</option></select></div>
+        <label style="margin-top:2px">tunables, shown on the node</label>
+        <div class="row"><div class="field" style="flex:1"><label>seed <span class="when now"></span></label><input type="text" value="41"></div><div class="field" style="flex:1"><label>temperature <span class="when now"></span></label><input type="text" value="0.7"></div></div>
+        <p class="note read" style="margin:0">The artifact is checked only at load, when the organ reads it under the agent's identity. Everything else admin checks now.</p>
+        <div class="row"><button type="button" class="primary">Save to agent.yaml</button><button type="button">Close</button></div>
+      </div>
+    </div>
+  </div>
+  <footer class="path">
+    <span class="step now"><span class="stage"><b>1</b></span> Declare: you are here</span><span class="arrow">&#8594;</span>
+    <span class="step">saved as <code>agent.yaml</code>, a document; every save a valid declaration</span><span class="arrow">&#8594;</span>
+    <span class="step"><span class="stage"><b>2</b></span> Provision: stage, account, register, mint; <code>validate</code> closes it and gates Run</span>
+    <span style="margin-left:auto" class="note read">The form refuses on its own only a missing field or an unconfigured piece.</span>
+  </footer>
+</section>
+</body></html>

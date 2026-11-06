@@ -115,8 +115,8 @@ Ten, in two groups. **Every surface has a direction**: you enter somewhere,
 you end somewhere, and the screen says where you are on that path. The
 failure to avoid is the interface that exposes its graph before it shows the
 artifact, so that nothing on screen says what you came to produce. Each
-surface below states its destination in its own header, and the top bar
-carries the whole path on every screen.
+surface below states its destination in its own header, and the stage rail
+under the masthead carries the whole path on every page about an agent.
 
 Clean does not mean barren. A screen with nothing on it is not clean, it is
 empty. Clean means the next step is obvious and the numbers appear when
@@ -127,6 +127,126 @@ asked for.
 that box, and they are a reading aid rather than an authority: where a
 figure and this text disagree, this text governs and the figure is owed a
 redraw.
+
+### 3.0 The lifecycle frame
+
+The design session of 2026-11-06, the design seat working with the operator and the
+architecture seat, framed this crate's front end as **the agent's whole lifecycle**:
+create it, deploy it, run it, watch it, preserve it, diagnose it, retire it. The ten
+surfaces below are read through that frame, and the path the stage rail carries under
+the masthead, on every page about an agent, is the frame's own: seven stages in order, each a mark on a stage rail, the
+current one underlined, with what is left said at the rail's end. The frame binds the
+surfaces; the surfaces' own text below is unchanged where it does not conflict.
+
+**The first principle is that the unit is the agent, not the model.** A local developer
+arrives from LM Studio, Ollama and vLLM, where one picks a model, loads it, gets an
+endpoint and chats. None of that holds here. An agent is a set of processes under a
+kernel-enforced user identity; it is declared, provisioned and loaded, and its trace is
+the artifact. The model is one field inside the declaration. The design teaches the
+difference rather than hiding it: the agent is named first everywhere, a verb is a
+verb and a state is a state and each is set as an identifier, and there is no
+endpoint, since the gate and admin are Unix sockets on the agent's edge and the network
+belongs to the two connectors outside it and to nothing else.
+
+**The standing positions of this charter hold on every surface**, and the design gives
+each a visible mechanism: this crate is a consumer outside the agent's boundary, so a
+pane that shows the agent names in its source line the plane, the connector and the
+verb it heard through; the browser is a display engine holding no key and no protocol
+state, so nothing is computed in the page that the server did not send; answers render
+as they came, a verb's answer being admin's JSON verbatim and a state word the agent's
+own, with a friendlier shape beside it and never instead of it; a gap in a record
+surfaces as a mark, never smoothed; and a missing contract is an ask upward, never a
+workaround, so a pane whose backing is not built says so and names what it waits on.
+
+**The seven stages, in order, with what backs each on 2026-11-06.** Multi-agent
+management comes later and is built from the same pieces, so nothing here assumes one
+agent in a way that blocks many.
+
+| stage | what it holds | backing |
+| --- | --- | --- |
+| 1 Declare | compose the binding: boundary, organs, models, adapters, tuple | unbuilt |
+| 2 Provision | first the operator's work on the box, which this server never reaches: stage the binaries, create the kernel account, install the declaration Declare saved; then this server's: register the agent, mint its two connector credentials; then `validate`, which reads the installed declaration | partly: the register page and the one-time config handover are built; the box steps and the validate step are not |
+| 3 Run | load, serve turns through the gate, unload | built; `load` from the front end is refused upstream for now (`toddwbucy/WeaverAgent#166`: admin refuses a load whose invoking cgroup is not root-owned, which parks connector-managed loads) |
+| 4 Observe | availability, alerts, the live trace | built |
+| 5 Preserve | `save-point`, `restore`, the decision on a missed save point | partly: both verbs are offered where a role carries them and the ceiling grants them; no list of save points is served, and `restore` carries no argument (the invoker's fixed line `sudo -n <weaver_admin> <verb> <agent>`, Spec 7.2), so the page names no save point |
+| 6 Diagnose | reload under a diagnostic binding with the gate shut (WeaverAgent's `diagnostic-replay-loop` section 1: under a diagnostic binding there is no gate; `weaver-diagnostic-PRD` section 3), the analysis feed, stepped replay, counterfactual branches | unbuilt; waits on weaver-analysis |
+| 7 Retire | revoke planes, retire the row, archive | partly: revoke and retire are built; archive is not |
+
+The ten surfaces by stage. On the path: Compose is stage 1, Live is stages 3 and 4, and
+Measure, Open a trace and Stage are stage 6. The five on the list side feed a stage
+rather than being a stage's page: Agents feeds stages 2 and 7, Models is the artifact
+side of stage 2, and Experiments and Record feed stage 6, as does the Experiment view,
+the detail surface Experiments opens into.
+
+**One visual language and one layout grammar**, for every later surface: agents, state,
+analysis, chat, hardware. Every surface is composed from panes in a grid, never from
+detached windows. A pane's header carries its stage mark, its title, a backing badge
+(built, partly, unbuilt) and its source line; its footer says how it stays current or
+what it waits on. A mark is a word in a pill and never a bare color: absence (`absent`,
+`not served`, `no state`, `none`), status (`connected`, `in transition`, `revoked`, each
+beside its dot and word), backing, and the hatched discontinuity row in a stream. A
+verb that does not apply is disabled with its reason, never hidden. Every pane is marked
+with its stage and whether it has backing today, so a drawing is never mistaken for a
+surface.
+
+**The Declare diagram is the core interaction of stage 1**, and the design's proof that
+the grammar holds for an unbuilt stage, Observe being its proof for a built one.
+
+- It is a view of `agent.yaml`, Visio-style: drag a piece from the menu, click a piece
+  to configure it in a pop-up. Every state it can reach is a valid declaration. It is
+  never a free canvas, and it is a saved document: the diagram is the file and the file
+  is the diagram, with a version and a last save, and reopening the document reopens the
+  same graph.
+- The agent's edge is drawn. On it sit the two Unix sockets, gate and admin, neither on
+  the network; configuring the gate sets which peer it admits, by kernel identity and
+  never by port. Outside the edge sit GateCon and AdminCon as their own fixed nodes:
+  they are not pieces of the menu, since they are not declared but minted at register in
+  Provision, and the network settings live on them only. They are drawn separately
+  because access attaches per connector. No access-control screen in this pass.
+- Inside: the decoder on the input path with its system prompt attached and the model as
+  one field inside it (the agent config's `decoder`, `weaver-types-Spec` section 2);
+  state management, today SQLite in memory only; adding state pulls in a classifier on
+  the SPU (both `weaver-state-PRD` section 1). The classifier pointing at a LoRA adapter
+  on the model is the design session's assumption, and waits on a WeaverAgent document
+  that charters an adapter. Each node carries its
+  tunables on itself, read on the node and edited in the pop-up.
+- Adding a piece pulls in its requirements. A wire the contracts do not permit does not
+  attach and says why, naming the contract. Only pieces that exist today appear in the
+  menu, which is section 3.1's roster rule applied: a kind is a charter act before it is
+  a row.
+- Take ComfyUI's experience and drop its free wiring. Kept: a node graph composed by
+  hand, a menu of pieces, click a node to configure it, the node's tunables visible on
+  the node. Dropped: wire anything to anything, and a canvas with no visible destination.
+  The path under the diagram always says where you are and what is left.
+
+**`validate` closes Provision and gates Run** (the operator's ruling of 2026-11-06). It
+asks admin, through admin-con, whether every element the installed declaration names
+that admin holds custody of is on the box, so it has nothing to ask before the agent is
+provisioned. Declare keeps only what its form can refuse on its own: a missing required
+field, a piece with no configuration. A clean `validate` is acceptance for filing:
+nothing admin holds custody of stands in the way of a load, and what only the organ can
+judge is answered at admission. It is not a promise the load succeeds. Section 3.1's
+sentence that Compose "asks `validate`" is amended below to say where the verb is asked.
+
+**The palette** (the operator's rulings of 2026-11-06). The purple of
+`assets/surfaces/instrument.css` was rejected as a default, not a ruling. From the
+proposals that followed, six themes were chosen: Slate as the default, Graphite and
+Umber as the other darks, and Chalk, Mist and Paper as the lights. Each keeps the same
+roles (bg, panel, inset, line, fg, dim, faint, accent, ok, hold, fail), the same
+contrast floors (4.5:1 for text on bg and panel, 3:1 for faint and for the accent as a
+ring, measured for every pair in every theme), and hue reserved for meaning: the accent
+is the one action hue, green, amber and red belong to status and always stand beside
+their word, and emphasis is weight and luminance. The hex values and measurements are
+in `docs/design/system/palettes.md`, which also carries the six themes in the built
+stylesheet's shape for the planner to write into `instrument.css`. A browser preferring
+light gets Mist under the default, Slate's partner, both blue-biased neutrals.
+
+**The record.** The design system (tokens, the brand book, the pane grammar, the stage
+rail, the marks, the controls, and the Declare and Observe proofs) is kept under
+`docs/design/system/`, its README the brand book and `tokens.json` the six themes. The
+working copies are two private artifacts, the system itself and the palette comparison,
+named in `docs/design/README.md`. Where a file there and this text disagree, this text
+governs.
 
 ### 3.1 Compose, ends with a runnable declaration
 
@@ -152,10 +272,12 @@ Offering a kind the framework will not load is therefore the failure to
 avoid, not offering too few.
 
 **Whether a given declaration will load is not this crate's judgment
-either.** It writes the draft and asks `validate`, which transitions
-nothing, refuses an incoherent declaration naming the field, and reaches the
-box facts admin holds custody of. Composition-time refusal is that verb one
-hop from this surface, and it cannot drift because it is **the contract
+either.** It writes the draft, refusing on its own only a missing required field
+and a piece with no configuration, and `validate` is asked at the end of
+Provision once the agent stands on a box (section 3.0, the ruling of
+2026-11-06). The verb transitions nothing, refuses an incoherent declaration
+naming the field, and reaches the box facts admin holds custody of. The refusal is
+that verb at the end of Provision, and it cannot drift because it is **the contract
 chain's own shape at a pinned commit** rather than a second copy of it.
 
 **A clean `validate` is acceptance for filing and not approval to load**,
@@ -225,7 +347,8 @@ operator walks upstream watching the mass move until the position where the
 fork was decided is found, which is usually earlier than the spike.
 
 The lens readout is the deep view and it is elected rather than free. It
-requires a reload under the diagnostic binding and captures at every
+requires a reload under the diagnostic binding (`weaver-diagnostic-PRD` section 3) and
+captures at every
 position of the prefix, because the choice at position N was built by
 everything before N. The cheap signal tells the operator where to spend the
 expensive one, and that funnel is the honest reason diagnostics are off by

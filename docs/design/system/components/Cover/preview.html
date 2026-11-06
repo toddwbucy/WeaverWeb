@@ -1,0 +1,37 @@
+<!-- @dsCard height=288 -->
+<!doctype html><html><head><meta charset="utf-8">
+<style>
+  html, body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font-sans); }
+  .cover { position: relative; width: 960px; height: 288px; overflow: hidden; }
+  .cover svg { position: absolute; inset: 0; }
+  .name { position: absolute; left: 40px; bottom: 64px; margin: 0; font: 600 72px/0.95 var(--font-sans); letter-spacing: -0.01em; max-width: 440px; color: var(--fg); }
+  .tag { position: absolute; left: 42px; bottom: 36px; margin: 0; font-size: 13.8px; color: var(--dim); max-width: 440px; }
+  .accent { fill: var(--accent); }
+  .ink { fill: var(--fg); }
+  .relief { fill: var(--dim); }
+  .hold { fill: var(--hold); }
+  .tile { fill: var(--inset); stroke: var(--line); stroke-width: 1; }
+</style></head><body>
+<div class="cover">
+<!-- derivation
+  blocks: accent 176x240 rx radius-md (the one action hue, tall slab); fg 112x112 rx radius-md (ink); dim 116x112 rx radius-md (relief); hold 48x48 rx radius-sm (status, small)
+  arrangement: one tall slab with satellites, flush, right of x=480, gaps space-4
+  pattern: geometric, modular, dense UI -> tiles cut by the radius tokens, some merged two-wide like panes; "every surface is composed from panes in a grid"
+  scales: tile 24 (space-6), pitch 32 (tile + space-2), rx radius-sm; blocks' gaps space-4 (16)
+-->
+<svg viewBox="0 0 960 288" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <rect class="accent" x="500" y="24" width="176" height="240" rx="10"/>
+  <rect class="ink" x="692" y="24" width="112" height="112" rx="10"/>
+  <rect class="relief" x="820" y="24" width="116" height="112" rx="10"/>
+  <rect class="hold" x="692" y="152" width="48" height="48" rx="4"/>
+  <g>
+    <rect class="tile" x="756" y="152" width="24" height="24" rx="4"/><rect class="tile" x="788" y="152" width="56" height="24" rx="4"/><rect class="tile" x="852" y="152" width="24" height="24" rx="4"/><rect class="tile" x="884" y="152" width="24" height="24" rx="4"/>
+    <rect class="tile" x="756" y="184" width="24" height="24" rx="4"/><rect class="tile" x="788" y="184" width="24" height="24" rx="4"/><rect class="tile" x="820" y="184" width="24" height="24" rx="4"/><rect class="tile" x="852" y="184" width="56" height="24" rx="4"/>
+    <rect class="tile" x="692" y="216" width="56" height="24" rx="4"/><rect class="tile" x="756" y="216" width="24" height="24" rx="4"/><rect class="tile" x="788" y="216" width="24" height="24" rx="4"/><rect class="tile" x="820" y="216" width="24" height="24" rx="4"/><rect class="tile" x="852" y="216" width="24" height="24" rx="4"/><rect class="tile" x="884" y="216" width="24" height="24" rx="4"/>
+    <rect class="tile" x="692" y="248" width="24" height="24" rx="4"/><rect class="tile" x="724" y="248" width="56" height="24" rx="4"/><rect class="tile" x="788" y="248" width="24" height="24" rx="4"/><rect class="tile" x="820" y="248" width="56" height="24" rx="4"/><rect class="tile" x="884" y="248" width="24" height="24" rx="4"/>
+  </g>
+</svg>
+<h1 class="name">Weaver-Web</h1>
+<p class="tag">One agent, seven stages, one pane grammar.</p>
+</div>
+</body></html>

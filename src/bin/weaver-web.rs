@@ -382,7 +382,6 @@ async fn serve(cfg: Arc<ServerConfig>) -> anyhow::Result<()> {
                 .unwrap_or_else(|_| "weaver_web=info,sqlx=warn".into()),
         )
         .init();
-    tracing::info!("config loaded: {} provider(s)", cfg.providers.len());
 
     // **The authority is loaded before anything listens, and never
     // minted here** (Spec section 8): absent, the server refuses to start.

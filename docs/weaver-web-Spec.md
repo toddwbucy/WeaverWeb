@@ -4484,12 +4484,13 @@ installed would find nothing to close, and the admission would complete on
 a revoked credential and relay until the next hello. No interleaving leaves
 a revoked credential relaying. **The exclusion is the store's own row lock,
 and the revoking act's close rides the store's notification**, as built on
-2026-10-01: the register verbs run as the operator's process and the
-listener as the server's, and the one exclusion two processes share without
-a second channel is the row they both write, so every admission, teardown
-and revocation takes the agent's row for update and mutates the listener's
-live set while it holds it, and the revoking transaction raises a
-notification the listener hears and closes on. A second channel between the
+2026-10-01: the host's register verbs run as the operator's process, the
+page's in the server's own, and the listener as the server's, and the one
+exclusion every path shares without a second channel is the agent's row
+they all write, so every admission, teardown and revocation takes the
+agent's row for update and mutates the listener's live set while it holds
+it, and every revocation raises the notification the listener hears and
+closes on. A second channel between the
 two processes would be a second thing to configure and secure for one
 message the store already carries.
 

@@ -21,7 +21,7 @@ Each row is one pane the grammar expects, with its stage mark, its backing today
 | Register | box and name, the row minted with two credentials | `POST /admin/agents/register` | built |
 | Handover | the two client configs, offered once, five minutes, this session only | `agents::Handover` | built |
 | Declaration | the operator installs the file Declare saved; validate reads the installed declaration, never a draft (Spec 7.2, WeaverAgent #59) | nothing yet | unbuilt |
-| Validate | closes Provision and gates Run: asks admin whether every element the declaration names exists on the box and can load; a refusal names the field; a clean answer is acceptance to load, not a promise the load succeeds | admin through admin-con | unbuilt as a step; the verb itself is built on the agent page |
+| Validate | closes Provision and gates Run: asks admin whether every element the installed declaration names that admin holds custody of is on the box; a refusal names the field; a clean answer is acceptance for filing: nothing admin holds custody of stands in the way of a load, and what only the organ can judge is answered at admission; it is not a promise the load succeeds | admin through admin-con | unbuilt as a step; the verb itself is built on the agent page |
 
 ## 3 Run, built
 

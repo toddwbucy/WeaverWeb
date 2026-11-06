@@ -215,12 +215,13 @@ the grammar holds for an unbuilt stage, Observe being its proof for a built one.
   The path under the diagram always says where you are and what is left.
 
 **`validate` closes Provision and gates Run** (the operator's ruling of 2026-11-06). It
-asks admin, through admin-con, whether every element the declaration names exists on
-the box and can load, so it has nothing to ask before the agent is provisioned. Declare
-keeps only what its form can refuse on its own: a missing required field, a piece with
-no configuration. A clean `validate` is acceptance to load, not a promise the load
-succeeds. Section 3.1's sentence that Compose "asks `validate`" is amended below to say
-where the verb is asked.
+asks admin, through admin-con, whether every element the installed declaration names
+that admin holds custody of is on the box, so it has nothing to ask before the agent is
+provisioned. Declare keeps only what its form can refuse on its own: a missing required
+field, a piece with no configuration. A clean `validate` is acceptance for filing:
+nothing admin holds custody of stands in the way of a load, and what only the organ can
+judge is answered at admission. It is not a promise the load succeeds. Section 3.1's
+sentence that Compose "asks `validate`" is amended below to say where the verb is asked.
 
 **The palette** (the operator's rulings of 2026-11-06). The purple of
 `assets/surfaces/instrument.css` was rejected as a default, not a ruling. From the
@@ -271,8 +272,8 @@ either.** It writes the draft, refusing on its own only a missing required field
 and a piece with no configuration, and `validate` is asked at the end of
 Provision once the agent stands on a box (section 3.0, the ruling of
 2026-11-06). The verb transitions nothing, refuses an incoherent declaration
-naming the field, and reaches the box facts admin holds custody of. Composition-time refusal is that verb one
-hop from this surface, and it cannot drift because it is **the contract
+naming the field, and reaches the box facts admin holds custody of. The refusal is
+that verb at the end of Provision, and it cannot drift because it is **the contract
 chain's own shape at a pinned commit** rather than a second copy of it.
 
 **A clean `validate` is acceptance for filing and not approval to load**,
@@ -283,10 +284,7 @@ admission under the agent's identity. **This surface therefore owes the
 engineer, per field, whether a mistake there is caught now or at load**, and
 that annotation is derived rather than authored: caught now where admin
 holds custody or can ask synchronously, caught at load where only the organ
-can answer. The artifact is the clearest field of the second kind. **On
-2026-11-06 the operator ruled that a clean `validate` is acceptance to load and
-not a promise the load succeeds**; whether that amends the 2026-09-05 wording
-above or restates it is a cell of section 9.
+can answer. The artifact is the clearest field of the second kind.
 
 <!-- figure: Main | Compose -->
 
@@ -873,12 +871,6 @@ this crate designs around the gap until it closes.
   3.0's rulings chose Slate as the default and three lights, and did not pair them.
   The design record pairs Mist with Slate, both blue-biased neutrals, and says so as
   its own election; the operator's word closes it.
-- **Whether the two wordings of a clean `validate` are one.** Section 3.1 carries
-  the 2026-09-05 ruling, acceptance for filing and not approval to load, and the
-  2026-11-06 ruling, acceptance to load and not a promise the load succeeds. The
-  second is the later and governs where they differ; whether the first is amended
-  or restated is the operator's to say, and `weaver-admin-PRD` section 4.3 is where
-  the first stands.
 - **The name and the placement of these papers**, decisions one and two of
   #439.
 - **Whether this crate scores a correctness verdict.** Reproduction is not

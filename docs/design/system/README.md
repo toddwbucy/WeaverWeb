@@ -67,7 +67,7 @@ The stages, in order, with what backs each today:
 
 Every pane is marked with its stage and its backing, in its header, so a person reading an unbuilt pane knows it is a drawing.
 
-`validate` closes Provision and gates Run (ruling of 2026-11-06). It asks admin, through admin-con, whether every element the declaration names exists on the box and can load, so it has nothing to ask before the agent is provisioned. Declare keeps only what its form can refuse on its own: a missing required field, a piece with no configuration. A clean `validate` is acceptance to load, not a promise the load succeeds.
+`validate` closes Provision and gates Run (ruling of 2026-11-06). It asks admin, through admin-con, whether every element the installed declaration names that admin holds custody of is on the box, so it has nothing to ask before the agent is provisioned. Declare keeps only what its form can refuse on its own: a missing required field, a piece with no configuration. A clean `validate` is acceptance for filing: nothing admin holds custody of stands in the way of a load, and what only the organ can judge is answered at admission. It is not a promise the load succeeds.
 
 ## Marks
 

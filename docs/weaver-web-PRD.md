@@ -128,7 +128,7 @@ that box, and they are a reading aid rather than an authority: where a
 figure and this text disagree, this text governs and the figure is owed a
 redraw.
 
-### 3.0 The lifecycle frame, 2026-11-06
+### 3.0 The lifecycle frame
 
 The design session of 2026-11-06, the design seat working with the operator and the
 architecture seat, framed this crate's front end as **the agent's whole lifecycle**:

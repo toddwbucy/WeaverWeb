@@ -1,4 +1,4 @@
-# The frontend design, 2026-09-30
+# The frontend design
 
 This directory holds the design of the Weaver-Web surfaces as drawn on 2026-09-30 in a
 Claude Design canvas, together with the decisions the drawing made. The canvas is the
@@ -19,27 +19,32 @@ Six surfaces, each in a light and a dark artboard, at 1440 px wide:
 
 | artboard | surface | what it shows |
 | --- | --- | --- |
-| `Main` | Open a trace (HeroBench Replay), the operator's "Replay surface"; act 10 builds it | a landed run as a replay: the tuple strip, the agent-visible map with the fog toggle, the turns with the interview in or out, one position's alternatives (read 1), the entropy and surprisal timeline (read 2) |
+| `Main` | Open a trace (HeroBench Replay), the operator's "Replay surface"; unbuilt, waiting on WeaverAnalysis | a landed run as a replay: the tuple strip, the agent-visible map with the fog toggle, the turns with the interview in or out, one position's alternatives (read 1), the entropy and surprisal timeline (read 2) |
 | `Live` | Live | an agent playing now: state and the lifecycle verbs over admin-con, turns as they land, score by task, the interview composer under an interrupt identifier |
 | `Record` | Record | every run and branch with its tuple, chips as query clauses (read 5) |
 | `Matrix` | the ablation matrix | one parent's arms side by side: swept value, parting position, outcome, exemplar tags (reads 4 and 6) |
 | `Agents` | Agents | the roster of registered agents with their client, key fingerprint, link and load state, and the four-step registration of a client |
 | `Foundations` | none | the palette, type, the absence vocabulary, control states, and the table of all eight surfaces with what each reads and reaches |
 
-`Main` is the surface act 10 builds (brief
-`docs/project/brief-2026-10-06-act-10-the-replay-surface.md`), named Open a trace as the
-PRD's section 3.4 names it. The other five are future acts.
+`Main` is Open a trace, as the PRD's section 3.4 names it. It is unbuilt and waits on
+WeaverAnalysis. Of the other boards, Record, Live and Agents are served today as plain
+pages and are redrawn under the design system's grammar as they are built out, the
+matrix is unbuilt, and Foundations is no surface.
 
 Run identifiers, turn text and scores on the boards are sample data in the shape of
 the HeroBench deposits of 2026-09-29 and 2026-09-30. None is a reading from the store.
 
 ## Elections made in the drawing
 
-- **One look, a research instrument.** IBM Plex Sans for text and IBM Plex Mono for
-  every identifier, token, position and tuple value. A near-white ground with white
-  panels; one action color (a teal-blue) for links, buttons and the surprisal series;
-  amber for the entropy series and the quiesced state; green and red for pass and fail,
-  each always carrying its word. No gradients, no emoji, no icon fonts.
+- **One look, a research instrument.** The system sans for text and the system
+  monospace for every identifier, token, position and tuple value, the stacks named in
+  `system/README.md`. Six themes, Slate the default, Graphite and Umber the other darks,
+  Chalk, Mist and Paper the lights, each with its own accent as the one action hue:
+  Slate sky, Graphite cyan, Umber teal, Chalk deep cyan, Mist steel blue, Paper deep
+  teal. Green, amber and red belong to status, each always carrying its word. No
+  gradients, no emoji, no icon fonts. The artboards under `canvas/` draw an earlier look,
+  IBM Plex on a near-white ground, and are redrawn under the grammar when their surfaces
+  are built.
 - **Absence is a word, never a blank.** The Spec's section 6 rule is drawn as a dashed
   outline pill carrying one of four words: `absent` (the record did not carry the
   member), `no run` (a staged value that never produced a run), `not served` (a seam
@@ -52,8 +57,8 @@ the HeroBench deposits of 2026-09-29 and 2026-09-30. None is a reading from the 
   override persisted on the session row, so a page never flashes the wrong theme on
   load. The dark palette keeps each color's role and lightness order: the two series
   still differ in lightness, primary buttons flip to a light fill with dark text, and
-  the absence pill keeps its dashed outline. The dark hex values are in
-  `Foundations-dark.dc.html`.
+  the absence pill keeps its dashed outline. The hex values are in
+  `system/palettes.md`.
 - **A chip is a query.** Record's filter chips are clauses; clearing one widens the
   list in place. No surface exists only as a pre-applied chip.
 - **A verb that does not apply is disabled, not hidden.** Load state is admin's own
@@ -96,14 +101,10 @@ and the reversal is recorded here first so the seed is not deleted before it is:
 
 The third arrow on the whiteboard, weaver-analysis into the store, is untouched.
 
-**Superseded by acts 1 to 9** (PRs #3 to #21, 2026-10-01 to 2026-10-06), which built
-what this section asked for and more. The seed's link (`src/wire.rs`,
-`src/bin/weaver-web-connector.rs`, plain TCP) left the tree; in its place stand the
-register of agents with two server-minted credentials per agent, a mutually
-authenticated link, and two connectors, gate-con and admin-con (web-con is the
-whiteboard's name for gate-con). The Spec's sections 7 and 8 and `CLAUDE.md` are the
-text. The section above stays as the dated record of the ruling, and the design's
-drawing of Agents stands.
+The ruling holds, and acts 1 to 9 built it: the register of agents with two
+server-minted credentials per agent, a mutually authenticated link, and the two
+connectors gate-con and admin-con (web-con is the whiteboard's name for gate-con), whose
+text is the Spec's sections 7 and 8.
 
 ## The design system, 2026-11-06
 
@@ -131,14 +132,6 @@ The working copies are two private artifacts, shared from their own pages:
 
 The comparison shows each theme on the Observe pane set and the Declare diagram side by
 side, with the two proposals not chosen, Carbon and Frost, kept for the record.
-
-**What this supersedes in the elections of 2026-09-30 above.** The look is no longer IBM
-Plex on a near-white ground with one teal-blue: the type is the system sans and the
-system monospace, the ground is one of six themes, and the accent is each theme's own.
-The absence vocabulary, the dark-and-light rule, "a chip is a query", "a verb that does
-not apply is disabled, not hidden", and "load state is admin's own word" all carry into
-the system unchanged. The 2026-09-30 artboards stay as the dated record of that session
-and are owed a redraw under the grammar when their surfaces are built.
 
 ## Reviewing and changing the design
 

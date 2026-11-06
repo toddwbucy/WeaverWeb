@@ -233,9 +233,8 @@ ring, measured for every pair in every theme), and hue reserved for meaning: the
 is the one action hue, green, amber and red belong to status and always stand beside
 their word, and emphasis is weight and luminance. The hex values and measurements are
 in `docs/design/system/palettes.md`, which also carries the six themes in the built
-stylesheet's shape for the planner to write into `instrument.css`. Which light a browser
-preferring light gets under the default is the one election the rulings did not make,
-and is a cell of section 9.
+stylesheet's shape for the planner to write into `instrument.css`. A browser preferring
+light gets Mist under the default, Slate's partner, both blue-biased neutrals.
 
 **The record.** The design system (tokens, the brand book, the pane grammar, the stage
 rail, the marks, the controls, and the Declare and Observe proofs) is kept under
@@ -867,10 +866,6 @@ this crate designs around the gap until it closes.
 
 ## 9. Open cells, each named rather than implied
 
-- **Which light theme a browser preferring light gets under the default.** Section
-  3.0's rulings chose Slate as the default and three lights, and did not pair them.
-  The design record pairs Mist with Slate, both blue-biased neutrals, and says so as
-  its own election; the operator's word closes it.
 - **The name and the placement of these papers**, decisions one and two of
   #439.
 - **Whether this crate scores a correctness verdict.** Reproduction is not

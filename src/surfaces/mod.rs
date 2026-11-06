@@ -1,8 +1,9 @@
 //! The instrument's surfaces, one module per surface of the charter's
 //! section 3, per `weaver-web-Spec` section 1.
 //!
-//! They are the server's whole browser-facing app: every route and asset
-//! a browser reaches is mounted here, under the `Origin` check.
+//! Every route and asset a browser reaches is one of this tree's modules;
+//! the server's binary merges them into one router and lays the `Origin`
+//! check over it.
 //!
 //! **None of them writes the recorded half**, per Spec section 6: a position
 //! and a run land by the ingest of section 3.1 alone.

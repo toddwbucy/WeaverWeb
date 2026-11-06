@@ -31,36 +31,45 @@ silence settle it.
 
 ```text
 src/
-  store/        the registry: schema, migrations, the reads of section 4
-  ingest/       section 3.1, a consumer of the analysis stream
-  authoring/    section 3.2, the writes a surface makes to its own table
-  queue/        staged experiments and their states
-  surfaces/     one module per surface of charter section 3
-  seams/        the box-bound reaches of section 7, the gate client, the
-                admin verbs and the trace relay's reader, beside the
-                analysis stream reader of section 7.3
+  store/        the store: schema, migrations, the reads of section 4, the
+                identities, the audit and the alerts
+  surfaces/     the browser surfaces of section 6 and 2.13, one module each
   link/         the link of section 8, both halves: the listener and the
                 register verbs the server runs, and the client each
-                connector runs. The link of this entry is a connection and
+                connector runs, admin-con's relay client and sudo invoker
+                among them. The link of this entry is a connection and
                 not the seam kind the clause below names
+  adapters/     gate.rs, gate-con's client of the gate (section 7.1);
+                upstream.rs (leaving)
   bin/          weaver-web, the server, and gate-con and admin-con, the two
                 connectors of section 8
+  web/          the legacy router (leaving)
+  alerting.rs   the alerts' worker and the operations log of section 2.14
+  config.rs     each process's configuration
+  fault.rs      the one answer to a fault, shared by every surface
+  host.rs       the host's identity commands of section 2.13
+  listen.rs     the browser's listener of section 2.13
+  passkeys.rs   the passkey ceremonies' server half of section 2.13
+  traceview.rs  the live window of the trace
+  registry.rs   the legacy participant model (leaving)
+  *_tests.rs    the tests beside the modules they exercise
 ```
 
-**Two entries changed on 2026-10-01 and one was added, and the reason is the
-same for all three.** `seams/` had named the gate client and the admin verbs
-without saying which binary runs them, and `link/` had described one dialed
-link between two processes, which section 8 no longer says. The two
-connectors are named as binaries under `bin/` because the split between them
-is a split of posture and not of module: admin-con runs as a service user
-the box's sudo rule grants the agent's fixed command lines and the trace
-relay admits as its one reader, per section 7.2, and gate-con as one the
-gate admits, per section 7.1. admin-con's sudo invoker is the one
-privileged invocation in this crate, per section 7.2, and a module tree
-cannot say which process carries which. **The box-bound
-reaches are linked by the two connector binaries and never by the server**,
-which is how the server's never reaching an agent is a build fact rather
-than a sentence.
+**The box-bound reaches are linked by the two connector binaries and never
+by the server**, which is how the server's never reaching an agent is a
+build fact rather than a sentence. The reaches live in `adapters/gate.rs`,
+gate-con's client of the gate socket per section 7.1, and in
+`link/relay.rs` and `link/sudo_invoker.rs`, admin-con's reader of the trace
+relay and its invoker of admin's verbs per section 7.2. The two connectors
+are named as binaries under `bin/` because the split between them is a
+split of posture and not of module: admin-con runs as a service user the
+box's sudo rule grants the agent's fixed command lines and the trace relay
+admits as its one reader, and gate-con as one the gate admits, and a module
+tree cannot say which process carries which. admin-con's sudo invoker is
+the one privileged invocation in this crate, per section 7.2. The ingest of
+section 3.1 and the staged experiments' queue of section 5 are unbuilt and
+hold no module; the authored writes of section 3.2 that are built, section
+2.13's, are `store/`'s.
 
 **This crate links no crate of the agent** and reaches it exactly as an
 outside consumer does: a socket dialed by path, a binary run by the

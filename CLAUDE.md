@@ -356,12 +356,9 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
   (`gate::session_in_background`). `alerts_tests` run each
   test on a `fresh_store` with a real listener and an operations log in a temporary directory.
 
-## The seed tree: what carries forward and what leaves
+## The tree
 
-The handoff's step 1 (decided 2026-09-30) splits the roughly 5.5k lines of Rust in two.
-
-**Carries forward (about 3k lines): the store and the read path.** This is where
-weaver-analysis's arrow lands.
+**The store and the read path.** This is where weaver-analysis's arrow lands.
 - `src/store/` is Postgres through `sqlx` runtime queries, not compile-time macros.
   `Store::connect` applies `migrations/` at startup. sqlx checksums every applied migration, so
   editing a migration that has already run makes the server refuse to start on that database.
@@ -386,7 +383,7 @@ weaver-analysis's arrow lands.
   (`passkeys::count`, a locked read, merge and write committed first), then `gate::open`. Per `docs/project/design-2026-10-07-iam.md`
   section 6 and Spec 2.8.
 - The rendering approach is server-rendered askama templates (dirs in `askama.toml`) with htmx
-  and SSE vendored into the binary via `include_bytes!`. There is no node toolchain and no
+  vendored into the binary via `include_bytes!`. There is no node toolchain and no
   SPA, and the browser is a display engine. This is inherited. The handoff leaves the stack to
   this repository, so treat it as the current choice, not a ruling.
 
@@ -417,15 +414,8 @@ in `constituents`), ended only by a `show` answering `state` or a live load or u
 turn's events keeping it. `traceview.rs` keeps the rings, the listener's live window; its seed
 tailer and `lifecycle.rs` (which ran the verbs through sudo) left the tree.
 
-**Still leaves: `web/`**, the legacy `/admin` routes, already answering 503, and
-`src/registry.rs`, the legacy participant model (not the register of agents). `deploy/` was
-left out of the fresh root because it held box paths and a sudoers rule, both of which the
-hard boundaries forbid. Two facts for the
-removal act: `askama.toml` lists `src/web/templates` beside `src/surfaces/templates`, and
-the legacy router in `src/web/mod.rs` still serves `htmx.min.js` and `sse.js`; the surfaces
-serve the same vendored htmx at `/assets/surfaces/htmx.min.js` since act 12. `src/bin/weaver-web.rs`
-currently wires both halves together (legacy router, link listener, and trace pump beside
-`surfaces::routes()`), so the removal starts there.
+`deploy/` was left out of the fresh root because it held box paths and a sudoers rule, both
+of which the hard boundaries forbid.
 
 ## Inherited documents
 

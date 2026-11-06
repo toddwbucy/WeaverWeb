@@ -43,8 +43,9 @@ Weaver-Web has three inputs and no others:
 - **gate (the data plane)** carries the work entering an agent and the answers leaving it.
   Contract: `weaver-gate-world-contract`. Reached only through **gate-con**.
 - **admin (the management plane)** carries the lifecycle verbs (`show`, `validate`, `load`,
-  `unload`, `stop`, and since WeaverAgent's A3.2 `save-point`, `restore` and `force-unload`,
-  which the server does not yet ask) and the agent's trace, which lands in
+  `unload`, `stop`, `save-point`, `restore` and `force-unload`, each offered on the agent's
+  page where the person's grants and the connection's ceiling carry it) and the agent's
+  trace, which lands in
   the sink admin opens at load and is read through the relay the agent's start step
   launches. Contract: `weaver-admin-operator-contract`. Reached only through **admin-con**.
   There is no admin socket; the verbs are fixed command lines the box's sudo rule grants,

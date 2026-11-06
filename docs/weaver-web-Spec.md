@@ -3414,10 +3414,12 @@ with no argument the caller chooses, nothing read on standard input, and no
 login session opened for them, per `weaver-admin-operator-contract` sections
 1 and 2. An observer's rule grants `show`, and an operator's adds
 `validate`, `load`, `unload`, `stop`, `save-point`, `restore` and
-`force-unload`. **The server asks none of the last three yet**: admin-con's
-ceiling reports them where the rule grants them, and the listener carries
-such a ceiling, but no surface reaches a verb before the authorization of
-section 2.13 stands. **The operator's reason for the old
+`force-unload`. **The agent's page offers each lifecycle verb that both the
+person's grants on the agent and the connection's ceiling carry**,
+`save-point`, `restore` and `force-unload` among them; the prompt of section
+2.14 asks `save-point` then `unload`, or `force-unload`, as the person's own
+asks; and every ask is authorized per section 2.13 before it is sent.
+**The operator's reason for the old
 rule still holds**, that a root process parsing arguments which arrived over
 a network is where a CVE comes from, because nothing that crossed the link
 reaches the command. The server sends admin-con an abstract verb and never a

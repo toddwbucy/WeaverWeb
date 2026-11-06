@@ -10,8 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use weaver_web::config::ServerConfig;
 use weaver_web::link::{Authority, Listener, Plane, verbs};
-use weaver_web::traceview::TraceViews;
-use weaver_web::{host, store, web};
+use weaver_web::{host, store};
 
 #[derive(Parser)]
 #[command(
@@ -436,8 +435,8 @@ async fn serve(cfg: Arc<ServerConfig>) -> anyhow::Result<()> {
 
     // **The instrument's surfaces are mounted on the store alone**, per
     // Spec section 6: a surface that renders what is kept reads the store
-    // and nothing else. They carry their own state rather than the
-    // legacy admin `AppState`, keeping record reads independent of the link.
+    // and nothing else. A surface that needs a seam takes it as its own
+    // argument, keeping record reads independent of the link.
     let policy = weaver_web::surfaces::gate::Policy::from_config(&cfg);
     // **Enrollment by token** where passkeys are on (design section 7): the
     // relying party from `rp_id` and `origin`, checked above.
@@ -485,19 +484,10 @@ async fn serve(cfg: Arc<ServerConfig>) -> anyhow::Result<()> {
     }
     .with_state(store.clone());
 
-    // The legacy admin routes answer 503 and reach no agent; their trace
-    // views are the listener's live window, so the one ring per agent is
-    // shared rather than duplicated until act 5 removes them.
-    let state = web::AppState {
-        cfg: cfg.clone(),
-        traces: TraceViews::clone(link.windows()),
-    };
-
     let listener = tokio::net::TcpListener::bind(&cfg.listen).await?;
     // **The `Origin` check over the whole app** (design section 6), so no
-    // route that changes state, the legacy routes' included, stands outside
-    // it.
-    let app = weaver_web::surfaces::gate::guard(web::router(state).merge(instrument), policy);
+    // route that changes state stands outside it.
+    let app = weaver_web::surfaces::gate::guard(instrument, policy);
     // The listener halting itself (its lock session lost) ends the process,
     // so the operator's supervisor restarts it into a clean start.
     let halting = link.clone();

@@ -46,4 +46,3 @@ pub mod traceview;
 mod transition_tests;
 #[cfg(all(test, feature = "passkeys"))]
 mod verbs_tests;
-pub mod web;

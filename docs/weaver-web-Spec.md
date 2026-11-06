@@ -923,8 +923,8 @@ five minutes is that with margin.
 
 **Every request that changes state carries an `Origin` equal to the
 configured origin**, exactly one such header, or is refused before its
-handler: every method but `GET` and `HEAD`, over the whole app, the legacy
-routes included, beside `SameSite=Strict`. **With no origin configured,
+handler: every method but `GET` and `HEAD`, over the whole app, the
+fallback included, beside `SameSite=Strict`. **With no origin configured,
 nothing that changes state is served**, since nothing can sign in without
 one. **Sign-out** is a `POST` that closes the session's row, clears the
 cookie and sends the browser to the sign-in page. **A signed-in page's

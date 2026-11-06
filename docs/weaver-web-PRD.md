@@ -172,9 +172,11 @@ agent in a way that blocks many.
 | 6 Diagnose | reload under a diagnostic binding with the gate shut, the analysis feed, stepped replay, counterfactual branches | unbuilt; waits on weaver-analysis |
 | 7 Retire | revoke planes, retire the row, archive | partly: revoke and retire are built; archive is not |
 
-Compose is stage 1. Live is stages 3 and 4. Measure, Open a trace, Stage and the matrix
-are stage 6 and the list side that feeds it. The Agents surface is stages 2 and 7.
-Models is the artifact side of stage 2.
+The ten surfaces by stage. On the path: Compose is stage 1, Live is stages 3 and 4, and
+Measure, Open a trace and Stage are stage 6. The five on the list side feed a stage
+rather than being a stage's page: Agents feeds stages 2 and 7, Models is the artifact
+side of stage 2, and Experiments and Record feed stage 6, as does the Experiment view,
+the detail surface Experiments opens into.
 
 **One visual language and one layout grammar**, for every later surface: agents, state,
 analysis, chat, hardware. Every surface is composed from panes in a grid, never from

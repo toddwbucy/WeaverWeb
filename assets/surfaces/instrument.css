@@ -9,20 +9,66 @@
  * Hue is reserved for meaning, per the epic's ruling 11: status owns green,
  * amber and red, and emphasis is weight and luminance. */
 :root {
-  --bg: #1a161d; --panel: #211c26; --inset: #282230;
-  --line: #362e3f; --line-soft: #2c2533;
-  --fg: #e6e1e9; --dim: #9a8fa5; --faint: #6b6175;
-  --accent: #c9527e; --accent-soft: #c9527e2e;
-  --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
-  --mono: ui-monospace, "SF Mono", "Menlo", "Consolas", monospace;
+  --bg: #15181d; --panel: #1b1f25; --inset: #22272f;
+  --line: #303742; --line-soft: #272d36;
+  --fg: #e6e9ed; --dim: #9ba4ae; --faint: #6c7580;
+  --accent: #7cb8e0; --accent-soft: #7cb8e02e;
+  --ok: #8ad39c; --hold: #e2ab4e; --fail: #ee8a7c;
 }
 @media (prefers-color-scheme: light) {
   :root {
-    --bg: #faf9fb; --panel: #ffffff; --inset: #f0ecf4;
-    --line: #ddd5e3; --line-soft: #e9e3ef;
-    --fg: #26212b; --dim: #5f5669; --faint: #90869b;
-    --accent: #a63d68; --accent-soft: #a63d6822;
+    --bg: #f3f5f8; --panel: #ffffff; --inset: #e8ecf1;
+    --line: #cdd4dc; --line-soft: #dde2e9;
+    --fg: #1c2128; --dim: #59636e; --faint: #7e8b98;
+    --accent: #1c6ea6; --accent-soft: #1c6ea622;
+    --ok: #1e7a3a; --hold: #87580a; --fail: #b0392d;
   }
+}
+:root[data-theme="slate"] {
+  --bg: #15181d; --panel: #1b1f25; --inset: #22272f;
+  --line: #303742; --line-soft: #272d36;
+  --fg: #e6e9ed; --dim: #9ba4ae; --faint: #6c7580;
+  --accent: #7cb8e0; --accent-soft: #7cb8e02e;
+  --ok: #8ad39c; --hold: #e2ab4e; --fail: #ee8a7c;
+}
+:root[data-theme="graphite"] {
+  --bg: #121212; --panel: #191919; --inset: #212121;
+  --line: #2f2f2f; --line-soft: #262626;
+  --fg: #e8e8e8; --dim: #a0a0a0; --faint: #6e6e6e;
+  --accent: #5fc6da; --accent-soft: #5fc6da2e;
+  --ok: #8ed49a; --hold: #e3aa49; --fail: #ef8a7b;
+}
+:root[data-theme="umber"] {
+  --bg: #191613; --panel: #201c18; --inset: #28231e;
+  --line: #38312a; --line-soft: #2e2823;
+  --fg: #ebe6df; --dim: #a69d92; --faint: #746b61;
+  --accent: #62c4b3; --accent-soft: #62c4b32e;
+  --ok: #8fd49b; --hold: #e4ab4a; --fail: #ee8b7b;
+}
+:root[data-theme="chalk"] {
+  --bg: #f5f5f5; --panel: #ffffff; --inset: #ebebeb;
+  --line: #d2d2d2; --line-soft: #e3e3e3;
+  --fg: #1f1f1f; --dim: #5e5e5e; --faint: #858585;
+  --accent: #0c7a8a; --accent-soft: #0c7a8a22;
+  --ok: #1e7a3a; --hold: #87580a; --fail: #b0392d;
+}
+:root[data-theme="mist"] {
+  --bg: #f3f5f8; --panel: #ffffff; --inset: #e8ecf1;
+  --line: #cdd4dc; --line-soft: #dde2e9;
+  --fg: #1c2128; --dim: #59636e; --faint: #7e8b98;
+  --accent: #1c6ea6; --accent-soft: #1c6ea622;
+  --ok: #1e7a3a; --hold: #87580a; --fail: #b0392d;
+}
+:root[data-theme="paper"] {
+  --bg: #f7f4ee; --panel: #fffdf9; --inset: #eee9e0;
+  --line: #d8d0c4; --line-soft: #e5dfd4;
+  --fg: #25211c; --dim: #625a4f; --faint: #8a8176;
+  --accent: #0f7c6d; --accent-soft: #0f7c6d22;
+  --ok: #1e7a3a; --hold: #87580a; --fail: #b0392d;
+}
+:root {
+  --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: ui-monospace, "SF Mono", "Menlo", "Consolas", monospace;
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.55 var(--sans); }

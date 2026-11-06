@@ -3208,8 +3208,9 @@ turn to the gate and reads the measurement that comes back. Agents drives
 the lifecycle verbs and reads the observation exchange. Section 7 names
 each of those reaches. The gate is section 7.1 and the charter carries no seam
 record for it, and `validate`, the lifecycle verbs and the observation
-exchange are section 7.2's, the operator's own program run as a
-subprocess and carrying no record either. Section 7's third is the analysis
+exchange are section 7.2's, reaching admin through admin-con's sudo
+invoker on the agent's box as fixed command lines, never as a process the
+server runs, and carrying no record either. Section 7's third is the analysis
 stream, which no surface reaches and section 3.1's ingest does, and the
 charter records no seam for it either: the reach is into this crate rather
 than one of its own, so the record is the emitter's and sits in
@@ -4873,8 +4874,9 @@ a `web-` assertion beside `weaver-admin`'s.
 - **What section 7 is called, now that one of its three is not a seam**,
   opened 2026-09-16 by the act that deleted this crate's seam record to
   `weaver-admin`. The heading reads "The seams", and 7.2's admin verbs are
-  the operator's own program run as a subprocess under a contract that
-  binds this crate to nothing. Renaming the heading, moving 7.2 out from
+  reached through admin-con's sudo invoker on the agent's box, as fixed
+  command lines and never as a process the server runs, under a contract
+  that binds this crate to nothing. Renaming the heading, moving 7.2 out from
   under it, and widening the word are three answers and this document
   elects none of them. Nothing in the section's content is wrong and no
   read is blocked on the choice, so it is named here rather than settled.

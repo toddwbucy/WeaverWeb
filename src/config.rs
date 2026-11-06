@@ -44,17 +44,6 @@ pub struct ServerConfig {
     /// registration.
     #[serde(default = "default_server_name")]
     pub server_name: String,
-    /// Participant names holding the admin role. v1 role assignment is
-    /// the operator's declaration; IAM later changes how a session
-    /// proves it is a participant, not where roles live.
-    #[serde(default)]
-    pub admins: Vec<String>,
-    /// The retired conversation router's agent-hop budget. Retained for
-    /// config compatibility; W2 removed its consumer.
-    #[serde(default = "default_agent_hop_budget")]
-    pub agent_hop_budget: u32,
-    #[serde(default)]
-    pub providers: Vec<ProviderConfig>,
     /// **How long an enrollment token lives**, in hours (design section 7):
     /// 24 by default, long enough to hand a printed token to its person and
     /// short enough that a lost one dies; refused at load at 0 or past
@@ -97,22 +86,6 @@ pub struct ServerConfig {
     pub operations_log: Option<PathBuf>,
 }
 
-// Read by the upstream adapter once it is implemented. **No standing
-// section charters one**: the retired Spec's section 10 did and the
-// rewrite carried nothing forward, which is why `adapters/upstream.rs`
-// still cites a number that now means open elections. That module
-// retires, so its citation is left where it stands and this one does
-// not repeat it. Providers are the server's business alone: nothing
-// upstream-facing touches the agents' box.
-#[allow(dead_code)]
-#[derive(Debug, Clone, Deserialize)]
-pub struct ProviderConfig {
-    pub name: String,
-    pub api: String,
-    pub model: String,
-    pub key_env: String,
-}
-
 fn default_link_listen() -> String {
     "127.0.0.1:8081".into()
 }
@@ -130,10 +103,6 @@ impl ServerConfig {
     pub fn link_address(&self) -> &str {
         self.link_address.as_deref().unwrap_or(&self.link_listen)
     }
-}
-
-fn default_agent_hop_budget() -> u32 {
-    8
 }
 
 fn default_enrollment_token_hours() -> u32 {

@@ -96,7 +96,6 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 futures = "0.3"
 anyhow = "1"
 uuid = { version = "1", features = ["v4"] }
-pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
 # **The link of Spec section 8 is mutual TLS with the server as its own
 # authority**, added 2026-10-01 by the act that built the listener. `rustls`
 # is the TLS implementation, `tokio-rustls` its async adapter, `rcgen` mints

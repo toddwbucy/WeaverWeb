@@ -1,9 +1,9 @@
 //! The instrument's surfaces, one module per surface of the charter's
 //! section 3, per `weaver-web-Spec` section 1.
 //!
-//! These stand apart from the legacy admin routes in `web/`. The
-//! conversation modules named by `docs/project/inventory-weaver-web-code.md`
-//! retired under W2; this tree retains its own layout and routes.
+//! Every route and asset a browser reaches is one of this tree's modules;
+//! the server's binary merges them into one router and lays the `Origin`
+//! check over it.
 //!
 //! **None of them writes the recorded half**, per Spec section 6: a position
 //! and a run land by the ingest of section 3.1 alone.
@@ -146,8 +146,7 @@ async fn htmx() -> impl IntoResponse {
     )
 }
 
-/// The instrument keeps its own stylesheet, independent of the legacy
-/// assets retained by `web/` after the conversation routes retired.
+/// The instrument's stylesheet, served from this binary.
 async fn stylesheet() -> impl IntoResponse {
     (
         StatusCode::OK,

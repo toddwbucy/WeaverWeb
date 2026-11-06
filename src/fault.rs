@@ -2,15 +2,12 @@
 //!
 //! **The chain goes to the log and the response stays generic.** A query's
 //! text, a filesystem path, or an upstream's detail is a thing an operator
-//! reads in a log and never a thing a browser is handed, which is the
-//! posture `web/mod.rs` held for the conversation half and which this type
-//! carries for every half.
+//! reads in a log and never a thing a browser is handed, and this type
+//! carries that posture for every surface.
 //!
-//! It lives at the crate root because it outlives both: the conversation
-//! half retires per the register at
-//! `docs/project/inventory-weaver-web-code.md` and the surfaces tree does
-//! not, and two copies of one posture drift apart the first time either is
-//! touched.
+//! It lives at the crate root so that one posture serves every module that
+//! answers a browser, since two copies of one posture drift apart the first
+//! time either is touched.
 
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};

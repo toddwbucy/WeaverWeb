@@ -237,8 +237,8 @@ contrast floors (4.5:1 for text on bg and panel, 3:1 for faint and for the accen
 ring, measured for every pair in every theme), and hue reserved for meaning: the accent
 is the one action hue, green, amber and red belong to status and always stand beside
 their word, and emphasis is weight and luminance. The hex values and measurements are
-in `docs/design/system/palettes.md`, which also carries the six themes in the built
-stylesheet's shape for the planner to write into `instrument.css`. A browser preferring
+in `docs/design/system/palettes.md`, which also carries the six themes in the shape
+`instrument.css` carries them. A browser preferring
 light gets Mist under the default, Slate's partner, both blue-biased neutrals.
 
 **The record.** The design system (tokens, the brand book, the pane grammar, the stage

@@ -40,11 +40,9 @@ src/
                 connector runs, admin-con's relay client and sudo invoker
                 among them. The link of this entry is a connection and
                 not the seam kind the clause below names
-  adapters/     gate.rs, gate-con's client of the gate (section 7.1);
-                upstream.rs (leaving)
+  adapters/     gate.rs, gate-con's client of the gate (section 7.1)
   bin/          weaver-web, the server, and gate-con and admin-con, the two
                 connectors of section 8
-  web/          the legacy router (leaving)
   alerting.rs   the alerts' worker and the operations log of section 2.14
   config.rs     each process's configuration
   fault.rs      the one answer to a fault, shared by every surface
@@ -52,7 +50,6 @@ src/
   listen.rs     the browser's listener of section 2.13
   passkeys.rs   the passkey ceremonies' server half of section 2.13
   traceview.rs  the live window of the trace
-  registry.rs   the legacy participant model (leaving)
   *_tests.rs    the tests beside the modules they exercise
 ```
 

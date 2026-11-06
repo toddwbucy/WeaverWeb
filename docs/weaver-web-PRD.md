@@ -166,10 +166,10 @@ agent in a way that blocks many.
 | --- | --- | --- |
 | 1 Declare | compose the binding: boundary, organs, models, adapters, tuple | unbuilt |
 | 2 Provision | first the operator's work on the box, which this server never reaches: stage the binaries, create the kernel account, install the declaration Declare saved; then this server's: register the agent, mint its two connector credentials; then `validate`, which reads the installed declaration | partly: the register page and the one-time config handover are built; the box steps and the validate step are not |
-| 3 Run | load, serve turns through the gate, unload | built; `load` from the front end is refused upstream for now |
+| 3 Run | load, serve turns through the gate, unload | built; `load` from the front end is refused upstream for now (`toddwbucy/WeaverAgent#166`: admin refuses a load whose invoking cgroup is not root-owned, which parks connector-managed loads) |
 | 4 Observe | availability, alerts, the live trace | built |
-| 5 Preserve | `save-point`, `restore`, the decision on a missed save point | partly: both verbs are offered where a role carries them and the ceiling grants them; no list of save points is served, and `restore` carries no argument, so the page names no save point |
-| 6 Diagnose | reload under a diagnostic binding with the gate shut, the analysis feed, stepped replay, counterfactual branches | unbuilt; waits on weaver-analysis |
+| 5 Preserve | `save-point`, `restore`, the decision on a missed save point | partly: both verbs are offered where a role carries them and the ceiling grants them; no list of save points is served, and `restore` carries no argument (the invoker's fixed line `sudo -n <weaver_admin> <verb> <agent>`, Spec 7.2), so the page names no save point |
+| 6 Diagnose | reload under a diagnostic binding with the gate shut (WeaverAgent's `diagnostic-replay-loop` section 1: under a diagnostic binding there is no gate; `weaver-diagnostic-PRD` section 3), the analysis feed, stepped replay, counterfactual branches | unbuilt; waits on weaver-analysis |
 | 7 Retire | revoke planes, retire the row, archive | partly: revoke and retire are built; archive is not |
 
 The ten surfaces by stage. On the path: Compose is stage 1, Live is stages 3 and 4, and
@@ -204,8 +204,11 @@ the grammar holds for an unbuilt stage, Observe being its proof for a built one.
   Provision, and the network settings live on them only. They are drawn separately
   because access attaches per connector. No access-control screen in this pass.
 - Inside: the decoder on the input path with its system prompt attached and the model as
-  one field inside it; state management, today SQLite in memory only; adding state pulls
-  in a classifier, which can point at a LoRA adapter on the model. Each node carries its
+  one field inside it (the agent config's `decoder`, `weaver-types-Spec` section 2);
+  state management, today SQLite in memory only; adding state pulls in a classifier on
+  the SPU (both `weaver-state-PRD` section 1). The classifier pointing at a LoRA adapter
+  on the model is the design session's assumption, and waits on a WeaverAgent document
+  that charters an adapter. Each node carries its
   tunables on itself, read on the node and edited in the pop-up.
 - Adding a piece pulls in its requirements. A wire the contracts do not permit does not
   attach and says why, naming the contract. Only pieces that exist today appear in the
@@ -344,7 +347,8 @@ operator walks upstream watching the mass move until the position where the
 fork was decided is found, which is usually earlier than the spike.
 
 The lens readout is the deep view and it is elected rather than free. It
-requires a reload under the diagnostic binding and captures at every
+requires a reload under the diagnostic binding (`weaver-diagnostic-PRD` section 3) and
+captures at every
 position of the prefix, because the choice at position N was built by
 everything before N. The cheap signal tells the operator where to spend the
 expensive one, and that funnel is the honest reason diagnostics are off by

@@ -13,7 +13,7 @@ Teach the difference, never hide it. A local developer arrives from LM Studio, O
 - Weaver-Web is a consumer outside the agent's boundary. The server never reaches the agent; the connectors do. A pane that shows the agent names the plane and the connector it heard through, in its source line (`label`, `dim`): "as admin answered `show` at 14:02:11", "through admin-con, last heard 3 s ago".
 - The browser is a display engine. It holds no key and no protocol state. Nothing is computed in the page that the server did not send; a re-fetch is a fetch, every 15 s, and says so in the pane's footer.
 - Answers render as they came. A verb's answer is admin's JSON object verbatim, in `pre.raw`. A state word is the agent's word. A refusal's kind is its kind. Nothing is interpreted into a friendlier shape; a friendlier shape may stand beside it, never instead of it.
-- A gap in a record surfaces as a mark, never smoothed. A discontinuity in a trace is a hatched row with its reason (`.stream li.mark`); an absent member is an `absent` pill; a replayed event says `replayed`.
+- A gap in a record surfaces as a mark, never smoothed. A discontinuity in a trace is a hatched row with its reason (`.stream li.mark`); an absent member is an `absent` pill; a replayed event is to say `replayed`, which waits on the listener: it classifies each event against the opening's boundary, and the window it serves does not yet carry which.
 - A missing contract is an ask upward, never a workaround. A pane whose backing is not built says so with the `unbuilt` badge and names the contract or the act it waits on, in its footer.
 
 ## Color
@@ -59,10 +59,10 @@ The stages, in order, with what backs each today:
 | --- | --- | --- |
 | 1 Declare | the diagram with its tunables on the nodes, the configure pop-up, the saved `agent.yaml`, the form's own refusals | unbuilt |
 | 2 Provision | the operator's work on the box, which this server never reaches (staging the binaries, the kernel account, installing the declaration Declare saved), then the register row, the one-time config handover, then `validate`, which reads the installed declaration, closes the stage and gates Run | partly: the register page and the handover are built; the box steps and the validate step are not |
-| 3 Run | the verb forms, the turn form, the load state | built; `load` from the front end is refused upstream for now |
+| 3 Run | the verb forms, the turn form, the load state | built; `load` from the front end is refused upstream for now (`toddwbucy/WeaverAgent#166`: admin refuses a load whose invoking cgroup is not root-owned, which parks connector-managed loads) |
 | 4 Observe | availability, the two connectors, alerts, the live trace | built |
-| 5 Preserve | `save-point`, `restore`, the decision on a missed save point | partly: both verbs are offered on the agent page where the role carries them and the ceiling grants them; no list of save points is served, and `restore` names none |
-| 6 Diagnose | the diagnostic binding, the analysis feed, stepped replay, counterfactual branches | unbuilt; waits on weaver-analysis |
+| 5 Preserve | `save-point`, `restore`, the decision on a missed save point | partly: both verbs are offered on the agent page where the role carries them and the ceiling grants them; no list of save points is served, and `restore` names none, carrying no argument (the invoker's fixed line `sudo -n <weaver_admin> <verb> <agent>`, Spec 7.2) |
+| 6 Diagnose | the diagnostic binding, a reload with no gate (WeaverAgent's `diagnostic-replay-loop` section 1: under a diagnostic binding there is no gate; `weaver-diagnostic-PRD` section 3), the analysis feed, stepped replay, counterfactual branches | unbuilt; waits on weaver-analysis |
 | 7 Retire | revoke a plane, retire the row, archive | partly: revoke and retire are built; archive is not |
 
 Every pane is marked with its stage and its backing, in its header, so a person reading an unbuilt pane knows it is a drawing.
@@ -77,7 +77,7 @@ A mark is a word in a pill, never a bare color and never a blank.
 - Status (`.status`): `connected`, `live`, `loaded`, `answered` in `ok`; `in transition`, `waiting`, `replayed`, `decision standing` in `hold`; `not connected`, `revoked`, `retired`, `failed`, `lost contact` in `fail`. Each carries a dot and its word.
 - Backing (`.backing`): `built` (solid, filled), `partly` (half filled), `unbuilt` (dashed). These say whether a pane's backing exists today and nothing about the agent.
 - Query (`.pill.query`): a chip on Record is a query clause; clearing it widens the list in place.
-- A discontinuity in a stream is a hatched row (`.stream li.mark`) carrying the mark's reason as it came: `link_outage`, `truncated`, `rotation`, `parse_failure`.
+- A discontinuity in a stream is a hatched row (`.stream li.mark`) carrying the mark's reason as admin-con or the server wrote it, a sentence naming what was not relayed and why: a record past the relay's bound, a backfill begun inside the file, a file truncated, rewritten or replaced, admin-con reconnected, the link to admin-con lost (`src/link/admin_con.rs`, `src/link/listener.rs`).
 
 A zero, a blank cell and an empty string are values. None of them stands in for an absence.
 

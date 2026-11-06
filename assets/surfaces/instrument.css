@@ -1,13 +1,17 @@
 /* The instrument's surfaces, per weaver-web-PRD section 3.
  *
- * This is the surfaces tree's own stylesheet and is served by the surfaces
- * tree's own route. The conversation half's `style.css` is served by
- * `web/`'s router, which retires with that half, so a surface linking it
- * would lose its stylesheet on the day the register's retirement lands -
- * the exact coupling this tree's own layout exists to avoid.
+ * The surfaces' own stylesheet, a file of the binary served by their own
+ * route, `/assets/surfaces/instrument.css` (`src/surfaces/mod.rs`, Spec
+ * section 6).
  *
- * Hue is reserved for meaning, per the epic's ruling 11: status owns green,
- * amber and red, and emphasis is weight and luminance. */
+ * The palette is the six themes of PRD section 3.0: Slate at `:root`, Mist
+ * for a browser preferring light, and the other four under `data-theme`.
+ * The hex values and the measured pairs are in
+ * `docs/design/system/palettes.md`.
+ *
+ * Hue is reserved for meaning (PRD 3.0): the accent is the one action hue,
+ * `ok`, `hold` and `fail` belong to status and stand beside their word, and
+ * emphasis is weight and luminance. */
 :root {
   --bg: #15181d; --panel: #1b1f25; --inset: #22272f;
   --line: #303742; --line-soft: #272d36;

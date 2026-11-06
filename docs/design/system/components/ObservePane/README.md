@@ -1,0 +1,7 @@
+The Observe pane set is stage 4, built today, and the proof that the grammar holds for a built stage: the availability banner, the two connectors, the alerts and the live trace, composed as a main stream and a side stack.
+
+- The consumer provides the listener's window for the agent (events and marks, each replayed or live), the two connectors' status and last heard, the alerts with their kind, subject, summary, detail, occurrences and version, and whether the person may acknowledge.
+- The live trace is a `.stream` in `id`: sequence, time, then the event's fields as they came. A replayed row is `dim` with `replayed` in `hold`. A discontinuity is a hatched `.mark` row at the gap with its reason. An absent member in a row is an `absent` pill, never a blank. The raw event stands in `pre.raw` beneath.
+- The header's source line names the relay, the door's state and the boundary; the footer says the stream is the listener's window and not a record, and that the session and grant are re-checked every 15 s.
+- Connectors show each plane's word from the listener: `connected` or `not connected`, last heard, and admin-con's ceiling. Presence is derived from both planes and said in words.
+- An alert row carries its kind in `id`, its state as a status mark, its reason verbatim and its count. Acknowledge is a form with the version read; a decision standing links to the decision pane rather than resolving here.

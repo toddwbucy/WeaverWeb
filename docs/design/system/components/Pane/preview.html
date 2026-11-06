@@ -1,0 +1,25 @@
+<!-- @dsCard group="Layout" height=330 subtitle="The pane: header with stage mark, title, backing and source line; body; footer" -->
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="../../components/bundle.css"></head><body style="padding:16px 20px">
+<div class="grid two">
+  <section class="pane">
+    <header><span class="stage"><b>3</b> Run</span><h2>Load state</h2><span class="backing built">built</span><span class="source">as admin answered <code>show</code> at 2026-11-06 14:02:11</span></header>
+    <div class="body flush"><table><tbody>
+      <tr><th>Load state</th><td><span class="status ok">loaded</span> <span class="note read">source: show</span></td></tr>
+      <tr><th>Transition</th><td><span class="status hold">in transition</span> <span class="note read">since 14:02:11; the row keeps its last state beside it</span></td></tr>
+      <tr><th>Tuple</th><td class="mono">{"model":"qwen3-8b-q4","device":"cuda:0","engine":"spu 0.9.2","seed":41}</td></tr>
+      <tr><th>Constituents</th><td class="mono">41822 41823 41830</td></tr>
+      <tr><th>Ceiling</th><td class="mono">show validate load unload stop</td></tr>
+      <tr><th>Trace door</th><td><span class="absent">no state</span></td></tr>
+    </tbody></table></div>
+    <footer>The row's facts, each with its own date. Nothing here is inferred from the link being up.</footer>
+  </section>
+  <section class="pane decision">
+    <header><span class="stage"><b>5</b> Preserve</span><h2>A decision is yours</h2><span class="backing built">built</span></header>
+    <div class="body">
+      <p style="margin:0 0 12px">The unload stopped at its save point (missed: <code>save_point_not_taken</code>). The run stands at rest, its gate lowered, and nothing is lost yet.</p>
+      <div class="row"><form><button type="button" class="verb">Save point, then unload</button></form><form><button type="button" class="verb">Force-unload</button></form></div>
+    </div>
+    <footer>Choosing does not acknowledge the alert: it stays until acknowledged.</footer>
+  </section>
+</div>
+</body></html>

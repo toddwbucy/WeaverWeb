@@ -105,6 +105,40 @@ whiteboard's name for gate-con). The Spec's sections 7 and 8 and `CLAUDE.md` are
 text. The section above stays as the dated record of the ruling, and the design's
 drawing of Agents stands.
 
+## The design system, 2026-11-06
+
+The design session of 2026-11-06, the design seat with the operator and the architecture
+seat, produced the design system: tokens, the brand book, the pane grammar, the stage rail
+across the seven lifecycle stages, the marks and controls, and two proofs that the grammar
+holds, the Declare diagram for an unbuilt stage and the Observe pane set for a built one.
+The rulings it took are recorded in `weaver-web-PRD` section 3.0. The files are the record
+and sit under `system/`, laid out as the artifact keeps them:
+
+| path | what |
+| --- | --- |
+| `system/README.md` | the brand book: the first principle, the standing positions as mechanisms, color, type, spacing, the pane grammar, navigation across the seven stages, marks, controls |
+| `system/tokens.json` | the tokens: six themes (Slate the default, Graphite, Umber; Chalk, Mist, Paper), the type scale on the system stacks, spacing, radius, sizes |
+| `system/palettes.md` | the palette rulings, every hex and measured contrast pair, and the six themes in `instrument.css`'s shape for the planner |
+| `system/stages.md` | the seven stages pane by pane, each with its backing on 2026-11-06 |
+| `system/declare.md` | the Declare diagram's rules |
+| `system/components/` | the pane grammar's stylesheet (`bundle.css`) and one preview with guidelines per piece: Cover, Masthead, StageRail, Marks, Controls, Pane, Workspace, DeclareDiagram, ObservePane |
+
+The working copies are two private artifacts, shared from their own pages:
+
+    the design system      https://claude.ai/artifact/LSyMXnKexZfsX7EAWnNj97
+    the palette comparison https://claude.ai/artifact/VPCENsZE1rkKvbnGDbt3on
+
+The comparison shows each theme on the Observe pane set and the Declare diagram side by
+side, with the two proposals not chosen, Carbon and Frost, kept for the record.
+
+**What this supersedes in the elections of 2026-09-30 above.** The look is no longer IBM
+Plex on a near-white ground with one teal-blue: the type is the system sans and the
+system monospace, the ground is one of six themes, and the accent is each theme's own.
+The absence vocabulary, the dark-and-light rule, "a chip is a query", "a verb that does
+not apply is disabled, not hidden", and "load state is admin's own word" all carry into
+the system unchanged. The 2026-09-30 artboards stay as the dated record of that session
+and are owed a redraw under the grammar when their surfaces are built.
+
 ## Reviewing and changing the design
 
 Review on the canvas; comments there reach the design session. To change an artboard,

@@ -436,6 +436,11 @@ currently wires both halves together (legacy router, link listener, and trace pu
   with the handoffs or the brief, the later document wins.
   `README.md` and `docs/technical/` describe the older chat/lifecycle/trace product and are
   stale.
+- `docs/design/` holds the frontend design: the 2026-09-30 canvas under `canvas/`, and since
+  2026-11-06 the design system under `system/`, whose README is the brand book, `tokens.json`
+  the six themes (Slate the default) and `palettes.md` the palette rulings with the
+  `instrument.css` block. The rulings are PRD section 3.0. Its two working copies are
+  private artifacts named in `docs/design/README.md`.
 - `docs/project/inventory-weaver-web-code.md` is a register of the code against the Spec.
   `docs/project/issues-carried-2026-09-26.md` holds five frontend issues carried whole from
   WeaverTools.

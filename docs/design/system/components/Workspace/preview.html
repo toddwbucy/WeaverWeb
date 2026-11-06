@@ -1,0 +1,25 @@
+<!-- @dsCard group="Layout" height=420 subtitle="How a stage's page composes: masthead, rail, a main column and a side stack of panes" -->
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="../../components/bundle.css"></head><body>
+<nav class="masthead"><a class="brand" href="#">weaver-web</a><span class="agent-switch">hb-01 <span class="caret">&#9662;</span></span><a href="#" class="here">Agents</a><a href="#">Register</a><a href="#">Persons</a><a href="#">Grants</a><span class="who">todd &middot; admin</span><form class="sign-out"><button type="button">Sign out</button></form></nav>
+<nav class="rail"><a href="#"><span class="stage"><b>1</b> Declare</span></a><a href="#"><span class="stage"><b>2</b> Provision</span></a><a href="#" class="here"><span class="stage"><b>3</b> Run</span></a><a href="#"><span class="stage"><b>4</b> Observe</span></a><a href="#"><span class="stage"><b>5</b> Preserve</span></a><a href="#"><span class="stage"><b>6</b> Diagnose</span></a><a href="#"><span class="stage"><b>7</b> Retire</span></a><span class="left">3 of 7 &middot; Observe next</span></nav>
+<main class="workspace" style="padding-bottom:24px">
+  <h1 style="font:600 20.25px/1.3 var(--font-sans);margin:0 0 4px">hb-01 on thinkpad</h1>
+  <p class="note read" style="margin:0 0 16px;font-size:13.8px">ag-0c3f9e2a; your roles: operator</p>
+  <div class="grid two">
+    <div class="stack">
+      <section class="pane"><header><span class="stage"><b>3</b> Run</span><h2>Verbs</h2><span class="backing built">built</span><span class="source">through admin-con, ceiling of 14:01:50</span></header>
+        <div class="body row"><button type="button" class="verb">show</button><button type="button" class="verb">validate</button><button type="button" class="verb" disabled>load</button><button type="button" class="verb">unload</button><button type="button" class="verb">stop</button></div>
+        <footer>load: refused upstream for now</footer></section>
+      <section class="pane"><header><span class="stage"><b>3</b> Run</span><h2>Turn</h2><span class="backing built">built</span><span class="source">through gate-con</span></header>
+        <div class="body"><textarea rows="2" style="width:100%">Summarize the last three turns.</textarea><div class="row" style="margin-top:8px"><button type="button" class="verb primary">Place the turn</button></div></div></section>
+    </div>
+    <div class="stack">
+      <section class="pane"><header><span class="stage"><b>3</b> Run</span><h2>Load state</h2><span class="backing built">built</span></header>
+        <div class="body flush"><table><tbody><tr><th>State</th><td><span class="status ok">loaded</span></td></tr><tr><th>Door</th><td><span class="status ok">open</span></td></tr><tr><th>Tuple</th><td class="mono">qwen3-8b-q4 &middot; cuda:0 &middot; seed 41</td></tr></tbody></table></div></section>
+      <section class="pane"><header><span class="stage"><b>4</b> Observe</span><h2>Connectors</h2><span class="backing built">built</span></header>
+        <div class="body flush"><table><tbody><tr><th>gate-con</th><td><span class="status ok">connected</span> <span class="note read">heard 2 s ago</span></td></tr><tr><th>admin-con</th><td><span class="status ok">connected</span> <span class="note read">heard 4 s ago</span></td></tr></tbody></table></div>
+        <footer>re-fetched every 15 s</footer></section>
+    </div>
+  </div>
+</main>
+</body></html>

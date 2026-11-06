@@ -1,0 +1,48 @@
+<!-- @dsCard group="Proofs" height=600 width=1100 subtitle="Stage 4 Observe, built: availability, the two connectors, alerts and the live trace with its marks" -->
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="../../components/bundle.css"></head><body>
+<p class="unavailable" role="status"><a href="#">hb-01</a>: turns unavailable, gate-con down (since 2026-11-06 14:02:11)</p>
+<div class="workspace" style="padding:16px 20px 20px">
+<div class="grid two">
+  <section class="pane">
+    <header><span class="stage"><b>4</b> Observe</span><h2>Live trace</h2><span class="backing built">built</span><span class="source">through admin-con's relay &#183; door open &#183; boundary at 14:01:52</span></header>
+    <div class="body flush">
+      <ul class="stream">
+        <li class="replayed"><span class="seq">1039</span><span>14:01:48.120</span><span>load run:hb-2026-11-06-03 tuple:{model:qwen3-8b-q4,seed:41} <span class="status hold">replayed</span></span></li>
+        <li class="replayed"><span class="seq">1040</span><span>14:01:50.207</span><span>gate_ready run:hb-2026-11-06-03 <span class="status hold">replayed</span></span></li>
+        <li class="replayed"><span class="seq">1041</span><span>14:02:09.311</span><span>turn_start run:hb-2026-11-06-03 turn:17 <span class="status hold">replayed</span></span></li>
+        <li class="mark"><span class="seq"></span><span>14:02:11</span><span>link_outage: no heartbeat for 29 s; the window has a hole here and says so</span></li>
+        <li><span class="seq">1042</span><span>14:02:40.004</span><span>token turn:17 ordinal:212 token:"the" entropy:1.84 surprisal:0.91</span></li>
+        <li><span class="seq">1043</span><span>14:02:40.061</span><span>token turn:17 ordinal:213 token:"manifest" entropy:3.02 surprisal:4.17</span></li>
+        <li><span class="seq">1044</span><span>14:02:40.118</span><span>token turn:17 ordinal:214 token:"." entropy:0.21 surprisal:0.05 forced:<span class="absent">absent</span></span></li>
+        <li><span class="seq">1045</span><span>14:02:41.390</span><span>turn_close turn:17 kind:answered</span></li>
+        <li><span class="seq">1046</span><span>14:02:41.402</span><span>at_rest run:hb-2026-11-06-03</span></li>
+      </ul>
+      <pre class="raw">{"seq":1046,"mark":null,"run":"hb-2026-11-06-03","turn":null,"kind":"at_rest","raw":{"ts":"2026-11-06T14:02:41.402Z","kind":"at_rest","run":"hb-2026-11-06-03"}}</pre>
+    </div>
+    <footer>An SSE stream of the listener's window, not a record. Session and grant re-checked every 15 s; the stream closes with its reason at the first failure. A raw row is the event as it came.</footer>
+  </section>
+  <div class="stack">
+    <section class="pane">
+      <header><span class="stage"><b>4</b> Observe</span><h2>Connectors</h2><span class="backing built">built</span></header>
+      <div class="body flush"><table><tbody>
+        <tr><th>gate-con</th><td><span class="status fail">not connected</span> <span class="note read">last heard 14:02:11</span></td></tr>
+        <tr><th>admin-con</th><td><span class="status ok">connected</span> <span class="note read">heard 3 s ago &#183; ceiling: show validate load unload stop</span></td></tr>
+        <tr><th>Present</th><td><span class="status fail">not present</span> <span class="note read">both planes must be connected</span></td></tr>
+      </tbody></table></div>
+      <footer>re-fetched every 15 s from the listener's memory</footer>
+    </section>
+    <section class="pane">
+      <header><span class="stage"><b>4</b> Observe</span><h2>Alerts</h2><span class="backing built">built</span><span class="source">2 open</span></header>
+      <div class="body flush"><table>
+        <thead><tr><th style="width:46%">Alert</th><th>Why</th></tr></thead>
+        <tbody>
+        <tr><td><code>lost_contact</code><br><span class="status fail">open</span><br><span class="note read mono">14:02:11 &#183; 1 time</span></td><td>gate plane: teardown, silence past 60 s<br><form style="margin-top:8px"><button type="button">Acknowledge</button></form></td></tr>
+        <tr><td><code>save_point_missed</code><br><span class="status hold">decision standing</span><br><span class="note read mono">13:41:08 &#183; 1 time</span></td><td><code>unload</code> refused <code>save_point_not_taken</code>, run at rest<br><a href="#" style="display:inline-block;margin-top:8px">Choose</a></td></tr>
+        <tr><td><code>failed</code><br><span class="status ok">acknowledged</span><br><span class="note read mono">13:12:50 &#183; 2 times</span></td><td><code>validate</code> exit 2: <code>config_invalid</code> at <code>organs.classifier.adapter</code><br><span class="note read">acknowledged by todd at 13:15</span></td></tr>
+        </tbody></table></div>
+      <footer>Acknowledge takes the version read; an <code>operator</code> holder alone; stale answers 409.</footer>
+    </section>
+  </div>
+</div>
+</div>
+</body></html>

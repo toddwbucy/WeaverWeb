@@ -3189,15 +3189,17 @@ One module each, the Experiment view and Models included: each is a surface
 with its own destination rather than a mode of a list beside it. Their
 destinations are the charter's section 3 and are not restated.
 
+**The surfaces serve their own assets from `/assets/surfaces/`**: the
+stylesheet `instrument.css`, the vendored htmx and the passkey module. Each
+is a file of the binary, each is served under section 2.13's
+`Content-Security-Policy: script-src 'self'`, and no other asset route
+stands.
+
 **A surface that renders what is kept reads the store and nothing else** - Open a trace,
 Record, Experiments, the matrix, and the returned half of Stage. **Section 4's six reads
 serve Open a trace, Record, the matrix and the returned half of Stage, and not
 Experiments.** That surface is a list and read four takes an experiment's identity, so
-it has no query, and its read is owed at the act that builds it. **This sentence counted
-four reads and named every surface served until 2026-09-11**, and it was wrong twice:
-about Record, which the fifth read answers, and about Experiments, which is named as
-owed rather than served. The matrix joined the served on the same day, the sixth read
-landing with the plan's schema.
+it has no query, and its read is owed at the act that builds it.
 
 **Three surfaces author, and one of them writes more than one table.** Compose writes a
 declaration and Models writes an artifact row on import, each one table. Stage writes

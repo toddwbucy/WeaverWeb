@@ -3585,8 +3585,8 @@ would close a normal long load's connection as incomplete and answer its
 caller unknown. Nothing is lost by waiting: what the agent wrote meanwhile
 stands behind the opening's boundary, and the opening's `show`, asked once
 the load has answered, reads the state the load left. This is the admission rule below applied at every opening, not a
-new mechanism, and the boundary's measure is the one elected below while
-the relay names no length (`toddwbucy/WeaverAgent#88`). **A hello while the door is closed carries no
+new mechanism, and the boundary's measure is the one elected below, since
+admin-con does not read the relay's `length`. **A hello while the door is closed carries no
 boundary**: the server admits it with the replay ended at once, `caught_up`
 with nothing behind it, serves verbs per the ceiling, and their answers land
 at receipt. So `load` is askable while the agent is unloaded, and nothing
@@ -3690,7 +3690,8 @@ marked discontinuity, and the new file is relayed from its start. That is
 the contract's rule in section 3 that nothing is shed silently. **Three
 measures, each "everything the file held at that moment", are taken on the
 relay's heartbeat**, the election of the act that built the relay client
-on 2026-10-05, since admin-con reads no file and the relay names no length.
+on 2026-10-05, since admin-con reads no file and does not read the
+`length` the relay's header names.
 The heartbeat comes only once the relay has sent everything the file held
 and has stood idle, so the position at it is that moment's. **The
 opening's boundary**, the hello's or a later opening's, is the position at
@@ -3741,11 +3742,13 @@ last state per section 2.12); a turn's event
 ordered behind an answer is a transient the next event corrects. So a
 writer that never idles never holds the link down or a verb back, and the
 operator can always unload a runaway agent. **The residue narrows to the
-order inside those windows.** **This crate has asked WeaverAgent for the
-file's length in the relay's header at the moment of the request**, on
-`toddwbucy/WeaverAgent#88`, which would make the boundary and the
-backfill's start exact. The drain's moment in the middle of a stream would
-still rest on the heartbeat and its bound either way. Section 8's one-connection
+order inside those windows.** **The relay's header names
+`length`**, a required member (`toddwbucy/WeaverAgent` PR #174): the byte
+offset of the end of the last complete record at the relay's acceptance of
+the request. admin-con does not read it, so the boundary and the drain keep
+the bounds this section elects. With the length, the boundary and the
+backfill's start would be exact; the drain's moment in the middle of a
+stream rests on the heartbeat either way. Section 8's one-connection
 paragraph refers here for what a reconnection carries. **Every event
 relayed from behind the file's tail at a reconnection is marked as replayed
 on the link, and the replay ends with a frame admin-con sends when it

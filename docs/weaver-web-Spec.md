@@ -4008,9 +4008,9 @@ client certificate and never the key, per section 2.12. The client holds the
 server's identity and the server holds the client's, which is the operator's
 two-way confirmation, and the traffic is encrypted by the same handshake, so
 **nothing crosses the link in the clear** and no plaintext accept path
-exists. The charter's section 6 defers transport encryption on the browser's
-listener to a named trigger; this listener is a different one, crossing
-machines by construction, and is not under that deferral.
+exists. Where a certificate and key are configured, the browser's listener
+serves TLS only, per section 2.13; the link's encryption is its own and
+holds without configuration.
 
 **The server's authority is durable state and is never minted at start.**
 Its key and certificate are created once by an explicit register verb, the

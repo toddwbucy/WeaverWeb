@@ -4436,8 +4436,9 @@ to: web-tuple-is-admins-word-and-never-gate-cons
 ```
 
 **Revocation is per credential and server-side, and rotation mints a fresh
-pair.** Both are register verbs run on the server rather than surface
-edits, and each is an authored edit under section 3.2, ordered on the
+pair.** Both are register verbs, run as the host's commands or through the
+admin's register page per section 2.13, and retire runs through the page
+alone; each is an authored edit under section 3.2, ordered on the
 row's version, so a concurrent revoke, rotate or re-registration refuses on
 a stale version rather than overwriting a fingerprint or a state. Revoking
 sets one credential's state in section 2.12 and the next hello on it is

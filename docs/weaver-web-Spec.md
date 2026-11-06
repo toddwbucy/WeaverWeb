@@ -33,7 +33,8 @@ silence settle it.
 src/
   store/        the store: schema, migrations, the reads of section 4, the
                 identities, the audit and the alerts
-  surfaces/     the browser surfaces of section 6 and 2.13, one module each
+  surfaces/     the browser surfaces of sections 6, 2.13 and 2.14, one module
+                each
   link/         the link of section 8, both halves: the listener and the
                 register verbs the server runs, and the client each
                 connector runs, admin-con's relay client and sudo invoker
@@ -68,8 +69,9 @@ admits as its one reader, and gate-con as one the gate admits, and a module
 tree cannot say which process carries which. admin-con's sudo invoker is
 the one privileged invocation in this crate, per section 7.2. The ingest of
 section 3.1 and the staged experiments' queue of section 5 are unbuilt and
-hold no module; the authored writes of section 3.2 that are built, section
-2.13's, are `store/`'s.
+hold no module. The authored writes of section 3.2 that are built are
+section 2.13's identity writes, which are `store/`'s, and section 2.12's
+register writes, which are `link/register.rs`'s.
 
 **This crate links no crate of the agent** and reaches it exactly as an
 outside consumer does: a socket dialed by path, a binary run by the

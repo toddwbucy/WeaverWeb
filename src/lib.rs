@@ -36,7 +36,6 @@ pub mod passkeys;
 mod passkeys_tests;
 #[cfg(all(test, feature = "passkeys"))]
 mod reading_tests;
-pub mod registry;
 #[cfg(all(test, feature = "passkeys"))]
 mod sign_in_tests;
 pub mod store;

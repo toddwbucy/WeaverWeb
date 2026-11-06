@@ -43,8 +43,9 @@ Weaver-Web has three inputs and no others:
 - **gate (the data plane)** carries the work entering an agent and the answers leaving it.
   Contract: `weaver-gate-world-contract`. Reached only through **gate-con**.
 - **admin (the management plane)** carries the lifecycle verbs (`show`, `validate`, `load`,
-  `unload`, `stop`, and since WeaverAgent's A3.2 `save-point`, `restore` and `force-unload`,
-  which the server does not yet ask) and the agent's trace, which lands in
+  `unload`, `stop`, `save-point`, `restore` and `force-unload`, each offered on the agent's
+  page where the person's grants and the connection's ceiling carry it) and the agent's
+  trace, which lands in
   the sink admin opens at load and is read through the relay the agent's start step
   launches. Contract: `weaver-admin-operator-contract`. Reached only through **admin-con**.
   There is no admin socket; the verbs are fixed command lines the box's sudo rule grants,
@@ -355,12 +356,9 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
   (`gate::session_in_background`). `alerts_tests` run each
   test on a `fresh_store` with a real listener and an operations log in a temporary directory.
 
-## The seed tree: what carries forward and what leaves
+## The tree
 
-The handoff's step 1 (decided 2026-09-30) splits the roughly 5.5k lines of Rust in two.
-
-**Carries forward (about 3k lines): the store and the read path.** This is where
-weaver-analysis's arrow lands.
+**The store and the read path.** This is where weaver-analysis's arrow lands.
 - `src/store/` is Postgres through `sqlx` runtime queries, not compile-time macros.
   `Store::connect` applies `migrations/` at startup. sqlx checksums every applied migration, so
   editing a migration that has already run makes the server refuse to start on that database.
@@ -385,7 +383,7 @@ weaver-analysis's arrow lands.
   (`passkeys::count`, a locked read, merge and write committed first), then `gate::open`. Per `docs/project/design-2026-10-07-iam.md`
   section 6 and Spec 2.8.
 - The rendering approach is server-rendered askama templates (dirs in `askama.toml`) with htmx
-  and SSE vendored into the binary via `include_bytes!`. There is no node toolchain and no
+  vendored into the binary via `include_bytes!`. There is no node toolchain and no
   SPA, and the browser is a display engine. This is inherited. The handoff leaves the stack to
   this repository, so treat it as the current choice, not a ruling.
 
@@ -416,15 +414,8 @@ in `constituents`), ended only by a `show` answering `state` or a live load or u
 turn's events keeping it. `traceview.rs` keeps the rings, the listener's live window; its seed
 tailer and `lifecycle.rs` (which ran the verbs through sudo) left the tree.
 
-**Still leaves: `web/`**, the legacy `/admin` routes, already answering 503, and
-`src/registry.rs`, the legacy participant model (not the register of agents). `deploy/` was
-left out of the fresh root because it held box paths and a sudoers rule, both of which the
-hard boundaries forbid. Two facts for the
-removal act: `askama.toml` lists `src/web/templates` beside `src/surfaces/templates`, and
-the legacy router in `src/web/mod.rs` still serves `htmx.min.js` and `sse.js`; the surfaces
-serve the same vendored htmx at `/assets/surfaces/htmx.min.js` since act 12. `src/bin/weaver-web.rs`
-currently wires both halves together (legacy router, link listener, and trace pump beside
-`surfaces::routes()`), so the removal starts there.
+`deploy/` was left out of the fresh root because it held box paths and a sudoers rule, both
+of which the hard boundaries forbid.
 
 ## Inherited documents
 
@@ -434,13 +425,8 @@ currently wires both halves together (legacy router, link listener, and trace pu
   The handoff's step 2 rewrites the charter for this repository and trims the Spec to the
   store, the read path and the link. Until then, use them as reference; where they conflict
   with the handoffs or the brief, the later document wins.
-  `README.md` and `docs/technical/` describe the older chat/lifecycle/trace product and are
-  stale.
-- `docs/design/` holds the frontend design: the 2026-09-30 canvas under `canvas/`, and since
-  2026-11-06 the design system under `system/`, whose README is the brand book, `tokens.json`
-  the six themes (Slate the default) and `palettes.md` the palette rulings with the
-  `instrument.css` block. The rulings are PRD section 3.0. Its two working copies are
-  private artifacts named in `docs/design/README.md`.
+  `README.md` is a pre-release stub. The repository's standing positions are in
+  `docs/project/positions-weaver-web.md`.
 - `docs/project/inventory-weaver-web-code.md` is a register of the code against the Spec.
   `docs/project/issues-carried-2026-09-26.md` holds five frontend issues carried whole from
   WeaverTools.

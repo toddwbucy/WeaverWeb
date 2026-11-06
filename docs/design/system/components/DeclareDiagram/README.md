@@ -7,3 +7,5 @@ The Declare diagram is stage 1's working pane and the proof that the grammar hol
 - A wire the contracts do not permit is drawn in `fail`, dashed, with a `.refuse` box naming the contract. A piece pulled in by another arrives on a `.wire.pulled` until it is configured.
 - The footer is the path: where you are, that the graph saves as `agent.yaml`, and that Provision ends with `validate`. ComfyUI's experience is kept, the node graph, the menu, click-to-configure, tunables on the node; its free wiring is dropped, and the destination is always visible.
 - Nothing here reaches an agent. The form refuses on its own only a missing required field and a piece with no configuration. Drawing a declaration saves a document; `validate` closes Provision and gates Run, and is admin's word on whether every element of the installed declaration that admin holds custody of is on the box: acceptance for filing, not a promise the load succeeds.
+
+The agent, kernel user, model and adapter names in the preview are sample data, not the shape of any box's accounts.

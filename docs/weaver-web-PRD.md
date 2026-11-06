@@ -115,8 +115,8 @@ Ten, in two groups. **Every surface has a direction**: you enter somewhere,
 you end somewhere, and the screen says where you are on that path. The
 failure to avoid is the interface that exposes its graph before it shows the
 artifact, so that nothing on screen says what you came to produce. Each
-surface below states its destination in its own header, and the top bar
-carries the whole path on every screen.
+surface below states its destination in its own header, and the stage rail
+under the masthead carries the whole path on every page about an agent.
 
 Clean does not mean barren. A screen with nothing on it is not clean, it is
 empty. Clean means the next step is obvious and the numbers appear when
@@ -133,8 +133,8 @@ redraw.
 The design session of 2026-11-06, the design seat working with the operator and the
 architecture seat, framed this crate's front end as **the agent's whole lifecycle**:
 create it, deploy it, run it, watch it, preserve it, diagnose it, retire it. The ten
-surfaces below are read through that frame, and the path the top bar carries on every
-screen is the frame's own: seven stages in order, each a mark on a stage rail, the
+surfaces below are read through that frame, and the path the stage rail carries under
+the masthead, on every page about an agent, is the frame's own: seven stages in order, each a mark on a stage rail, the
 current one underlined, with what is left said at the rail's end. The frame binds the
 surfaces; the surfaces' own text below is unchanged where it does not conflict.
 

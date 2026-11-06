@@ -435,8 +435,8 @@ currently wires both halves together (legacy router, link listener, and trace pu
   The handoff's step 2 rewrites the charter for this repository and trims the Spec to the
   store, the read path and the link. Until then, use them as reference; where they conflict
   with the handoffs or the brief, the later document wins.
-  `README.md` and `docs/technical/` describe the older chat/lifecycle/trace product and are
-  stale.
+  `README.md` is a pre-release stub. The repository's standing positions are in
+  `docs/project/positions-weaver-web.md`.
 - `docs/project/inventory-weaver-web-code.md` is a register of the code against the Spec.
   `docs/project/issues-carried-2026-09-26.md` holds five frontend issues carried whole from
   WeaverTools.

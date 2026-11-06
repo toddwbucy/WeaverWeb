@@ -256,38 +256,48 @@ async fn real_server_starts_on_current_schema() {
         body.contains("startup-check"),
         "record must render the session's person: {body}"
     );
-    let (status, body) = server.get("/admin", None);
-    eprintln!("W2 /admin measurement: status={status}, body={body:?}");
-    // The subsequent W2 ruling holds every retained handler behind 503.
-    for (method, path) in [
-        ("GET", "/admin/lifecycle"),
-        ("POST", "/admin/lifecycle/startup-check/start"),
-        ("GET", "/admin/agents/startup-check/config"),
-        ("GET", "/admin/trace/startup-check"),
-        ("GET", "/admin/trace/startup-check/stream"),
+    // **A request that changes state meets the `Origin` check first** (act
+    // 11, PR 4a), and this server has no origin configured: `POST
+    // /sign-out`, always mounted, is refused there with the session's
+    // cookie or without it, before any handler work.
+    let refused = (
+        403,
+        "no origin is configured, so this server serves no request that changes state".to_owned(),
+    );
+    for cookie in [None, Some(token.as_str())] {
+        assert_eq!(
+            server.request("POST", "/sign-out", cookie),
+            refused,
+            "POST /sign-out must be refused at the Origin check"
+        );
+        // A POST to an unrouted path meets the same check: the guard is a
+        // layer over the whole router, the fallback included, so it never
+        // reaches a handler or the fallback's 404.
+        assert_eq!(
+            server.request("POST", "/admin/lifecycle/startup-check/start", cookie),
+            refused,
+            "a POST to an unrouted path must be refused at the Origin check"
+        );
+    }
+    // **No route outside the surfaces stands**: these paths answer 404,
+    // while the surfaces' own asset route serves htmx.
+    for path in [
+        "/admin",
+        "/admin/lifecycle",
+        "/admin/agents/startup-check/config",
+        "/admin/trace/startup-check",
+        "/admin/trace/startup-check/stream",
+        "/assets/htmx.min.js",
     ] {
-        // A request that changes state meets the `Origin` check first (act
-        // 11, PR 4a), and this server has no origin configured.
-        let refused = if method == "POST" {
-            (
-                403,
-                "no origin is configured, so this server serves no request that changes state"
-                    .into(),
-            )
-        } else {
-            (
-                503,
-                "the legacy admin surface is unavailable until the session/IAM act.".into(),
-            )
-        };
         for cookie in [None, Some(token.as_str())] {
             assert_eq!(
-                server.request(method, path, cookie),
-                refused,
-                "legacy route {method} {path} must refuse before any handler work"
+                server.request("GET", path, cookie).0,
+                404,
+                "GET {path} must answer 404"
             );
         }
     }
+    assert_eq!(server.get("/assets/surfaces/htmx.min.js", None).0, 200);
 
     drop(server);
 

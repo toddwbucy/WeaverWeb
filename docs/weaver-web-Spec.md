@@ -3954,12 +3954,12 @@ of this section stands.
 
 **The series is addressed by the ordinal and this crate's store by the
 position**, per section 2.1, and the conversion is this crate's to make at
-ingest. **What it converts from is owed and does not cross yet**,
-issue #461: the contract's section 3 asks the emitter for the resident count
-at a generation's close and its output token count, on the summary stream,
-and until that lands this seam carries the ordinal alone. **A reader in that
-state cannot key its store** and stores what crosses without converting,
-rather than deriving an address from a figure that does not answer.
+ingest, section 3.1's, which is unbuilt. **What it converts from crosses on
+the summary stream**: the contract's summary carries the resident count at
+a generation's close and its output token count, and the emitter writes
+both. **Where a generation's resident count is absent, its positions cannot
+be keyed**, and what crosses is stored without an address derived from a
+figure that did not answer.
 
 **A diagnostic record whose bracket did not close certified is not drawn**,
 the refusal naming the outcome. A serving record has no gate and none is

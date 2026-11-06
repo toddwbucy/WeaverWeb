@@ -427,6 +427,11 @@ of which the hard boundaries forbid.
   with the handoffs or the brief, the later document wins.
   `README.md` is a pre-release stub. The repository's standing positions are in
   `docs/project/positions-weaver-web.md`.
+- `docs/design/` holds the frontend design: the 2026-09-30 canvas under `canvas/`, and since
+  2026-11-06 the design system under `system/`, whose README is the brand book, `tokens.json`
+  the six themes (Slate the default), `tokens.css` the same as custom properties, and
+  `palettes.md` the palette rulings with the `instrument.css` block. The rulings are PRD
+  section 3.0. Its two working copies are private artifacts named in `docs/design/README.md`.
 - `docs/project/inventory-weaver-web-code.md` is a register of the code against the Spec.
   `docs/project/issues-carried-2026-09-26.md` holds five frontend issues carried whole from
   WeaverTools.

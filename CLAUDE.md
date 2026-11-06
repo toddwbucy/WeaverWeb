@@ -43,8 +43,9 @@ Weaver-Web has three inputs and no others:
 - **gate (the data plane)** carries the work entering an agent and the answers leaving it.
   Contract: `weaver-gate-world-contract`. Reached only through **gate-con**.
 - **admin (the management plane)** carries the lifecycle verbs (`show`, `validate`, `load`,
-  `unload`, `stop`, and since WeaverAgent's A3.2 `save-point`, `restore` and `force-unload`,
-  which the server does not yet ask) and the agent's trace, which lands in
+  `unload`, `stop`, `save-point`, `restore` and `force-unload`, each offered on the agent's
+  page where the person's grants and the connection's ceiling carry it) and the agent's
+  trace, which lands in
   the sink admin opens at load and is read through the relay the agent's start step
   launches. Contract: `weaver-admin-operator-contract`. Reached only through **admin-con**.
   There is no admin socket; the verbs are fixed command lines the box's sudo rule grants,
@@ -434,8 +435,8 @@ currently wires both halves together (legacy router, link listener, and trace pu
   The handoff's step 2 rewrites the charter for this repository and trims the Spec to the
   store, the read path and the link. Until then, use them as reference; where they conflict
   with the handoffs or the brief, the later document wins.
-  `README.md` and `docs/technical/` describe the older chat/lifecycle/trace product and are
-  stale.
+  `README.md` is a pre-release stub. The repository's standing positions are in
+  `docs/project/positions-weaver-web.md`.
 - `docs/project/inventory-weaver-web-code.md` is a register of the code against the Spec.
   `docs/project/issues-carried-2026-09-26.md` holds five frontend issues carried whole from
   WeaverTools.

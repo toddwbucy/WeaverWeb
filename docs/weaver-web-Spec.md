@@ -31,36 +31,47 @@ silence settle it.
 
 ```text
 src/
-  store/        the registry: schema, migrations, the reads of section 4
-  ingest/       section 3.1, a consumer of the analysis stream
-  authoring/    section 3.2, the writes a surface makes to its own table
-  queue/        staged experiments and their states
-  surfaces/     one module per surface of charter section 3
-  seams/        the box-bound reaches of section 7, the gate client, the
-                admin verbs and the trace relay's reader, beside the
-                analysis stream reader of section 7.3
+  store/        the store: schema, migrations, the reads of section 4, the
+                identities, the audit and the alerts
+  surfaces/     the browser surfaces of sections 6, 2.13 and 2.14, one module
+                each
   link/         the link of section 8, both halves: the listener and the
                 register verbs the server runs, and the client each
-                connector runs. The link of this entry is a connection and
+                connector runs, admin-con's relay client and sudo invoker
+                among them. The link of this entry is a connection and
                 not the seam kind the clause below names
+  adapters/     gate.rs, gate-con's client of the gate (section 7.1);
+                upstream.rs (leaving)
   bin/          weaver-web, the server, and gate-con and admin-con, the two
                 connectors of section 8
+  web/          the legacy router (leaving)
+  alerting.rs   the alerts' worker and the operations log of section 2.14
+  config.rs     each process's configuration
+  fault.rs      the one answer to a fault, shared by every surface
+  host.rs       the host's identity commands of section 2.13
+  listen.rs     the browser's listener of section 2.13
+  passkeys.rs   the passkey ceremonies' server half of section 2.13
+  traceview.rs  the live window of the trace
+  registry.rs   the legacy participant model (leaving)
+  *_tests.rs    the tests beside the modules they exercise
 ```
 
-**Two entries changed on 2026-10-01 and one was added, and the reason is the
-same for all three.** `seams/` had named the gate client and the admin verbs
-without saying which binary runs them, and `link/` had described one dialed
-link between two processes, which section 8 no longer says. The two
-connectors are named as binaries under `bin/` because the split between them
-is a split of posture and not of module: admin-con runs as a service user
-the box's sudo rule grants the agent's fixed command lines and the trace
-relay admits as its one reader, per section 7.2, and gate-con as one the
-gate admits, per section 7.1. admin-con's sudo invoker is the one
-privileged invocation in this crate, per section 7.2, and a module tree
-cannot say which process carries which. **The box-bound
-reaches are linked by the two connector binaries and never by the server**,
-which is how the server's never reaching an agent is a build fact rather
-than a sentence.
+**The box-bound reaches are linked by the two connector binaries and never
+by the server**, which is how the server's never reaching an agent is a
+build fact rather than a sentence. The reaches live in `adapters/gate.rs`,
+gate-con's client of the gate socket per section 7.1, and in
+`link/relay.rs` and `link/sudo_invoker.rs`, admin-con's reader of the trace
+relay and its invoker of admin's verbs per section 7.2. The two connectors
+are named as binaries under `bin/` because the split between them is a
+split of posture and not of module: admin-con runs as a service user the
+box's sudo rule grants the agent's fixed command lines and the trace relay
+admits as its one reader, and gate-con as one the gate admits, and a module
+tree cannot say which process carries which. admin-con's sudo invoker is
+the one privileged invocation in this crate, per section 7.2. The ingest of
+section 3.1 and the staged experiments' queue of section 5 are unbuilt and
+hold no module. The authored writes of section 3.2 that are built are
+section 2.13's identity writes, which are `store/`'s, and section 2.12's
+register writes, which are `link/register.rs`'s.
 
 **This crate links no crate of the agent** and reaches it exactly as an
 outside consumer does: a socket dialed by path, a binary run by the
@@ -1715,7 +1726,7 @@ it decides are stated here and in section 2.8, and the reasons are there.
   this a person could grant themselves the operator role and pass the first
   gate. **The first admin is the bootstrap**, written by the host principal
   above, by an operator command on the server's host, authorized as the
-  register verbs are today, by access to the store and the authority's
+  host's register verbs are, by access to the store and the authority's
   directory; no surface can create it. **No person writes a grant whose
   grantee is themselves**, granting or removing, so an
   admin cannot widen their own grants and the last admin cannot remove their
@@ -3208,8 +3219,9 @@ turn to the gate and reads the measurement that comes back. Agents drives
 the lifecycle verbs and reads the observation exchange. Section 7 names
 each of those reaches. The gate is section 7.1 and the charter carries no seam
 record for it, and `validate`, the lifecycle verbs and the observation
-exchange are section 7.2's, the operator's own program run as a
-subprocess and carrying no record either. Section 7's third is the analysis
+exchange are section 7.2's, reaching admin through admin-con's sudo
+invoker on the agent's box as fixed command lines, never as a process the
+server runs, and carrying no record either. Section 7's third is the analysis
 stream, which no surface reaches and section 3.1's ingest does, and the
 charter records no seam for it either: the reach is into this crate rather
 than one of its own, so the record is the emitter's and sits in
@@ -3414,10 +3426,12 @@ with no argument the caller chooses, nothing read on standard input, and no
 login session opened for them, per `weaver-admin-operator-contract` sections
 1 and 2. An observer's rule grants `show`, and an operator's adds
 `validate`, `load`, `unload`, `stop`, `save-point`, `restore` and
-`force-unload`. **The server asks none of the last three yet**: admin-con's
-ceiling reports them where the rule grants them, and the listener carries
-such a ceiling, but no surface reaches a verb before the authorization of
-section 2.13 stands. **The operator's reason for the old
+`force-unload`. **The agent's page offers each lifecycle verb that both the
+person's grants on the agent and the connection's ceiling carry**,
+`save-point`, `restore` and `force-unload` among them; the prompt of section
+2.14 asks `save-point` then `unload`, or `force-unload`, as the person's own
+asks; and every ask is authorized per section 2.13 before it is sent.
+**The operator's reason for the old
 rule still holds**, that a root process parsing arguments which arrived over
 a network is where a CVE comes from, because nothing that crossed the link
 reaches the command. The server sends admin-con an abstract verb and never a
@@ -3582,8 +3596,8 @@ would close a normal long load's connection as incomplete and answer its
 caller unknown. Nothing is lost by waiting: what the agent wrote meanwhile
 stands behind the opening's boundary, and the opening's `show`, asked once
 the load has answered, reads the state the load left. This is the admission rule below applied at every opening, not a
-new mechanism, and the boundary's measure is the one elected below while
-the relay names no length (`toddwbucy/WeaverAgent#88`). **A hello while the door is closed carries no
+new mechanism, and the boundary's measure is the one elected below, since
+admin-con does not read the relay's `length`. **A hello while the door is closed carries no
 boundary**: the server admits it with the replay ended at once, `caught_up`
 with nothing behind it, serves verbs per the ceiling, and their answers land
 at receipt. So `load` is askable while the agent is unloaded, and nothing
@@ -3687,7 +3701,8 @@ marked discontinuity, and the new file is relayed from its start. That is
 the contract's rule in section 3 that nothing is shed silently. **Three
 measures, each "everything the file held at that moment", are taken on the
 relay's heartbeat**, the election of the act that built the relay client
-on 2026-10-05, since admin-con reads no file and the relay names no length.
+on 2026-10-05, since admin-con reads no file and does not read the
+`length` the relay's header names.
 The heartbeat comes only once the relay has sent everything the file held
 and has stood idle, so the position at it is that moment's. **The
 opening's boundary**, the hello's or a later opening's, is the position at
@@ -3738,11 +3753,13 @@ last state per section 2.12); a turn's event
 ordered behind an answer is a transient the next event corrects. So a
 writer that never idles never holds the link down or a verb back, and the
 operator can always unload a runaway agent. **The residue narrows to the
-order inside those windows.** **This crate has asked WeaverAgent for the
-file's length in the relay's header at the moment of the request**, on
-`toddwbucy/WeaverAgent#88`, which would make the boundary and the
-backfill's start exact. The drain's moment in the middle of a stream would
-still rest on the heartbeat and its bound either way. Section 8's one-connection
+order inside those windows.** **The relay's header names
+`length`**, a required member (`toddwbucy/WeaverAgent` PR #174): the byte
+offset of the end of the last complete record at the relay's acceptance of
+the request. admin-con does not read it, so the boundary and the drain keep
+the bounds this section elects. With the length, the boundary and the
+backfill's start would be exact; the drain's moment in the middle of a
+stream rests on the heartbeat either way. Section 8's one-connection
 paragraph refers here for what a reconnection carries. **Every event
 relayed from behind the file's tail at a reconnection is marked as replayed
 on the link, and the replay ends with a frame admin-con sends when it
@@ -3948,12 +3965,12 @@ of this section stands.
 
 **The series is addressed by the ordinal and this crate's store by the
 position**, per section 2.1, and the conversion is this crate's to make at
-ingest. **What it converts from is owed and does not cross yet**,
-issue #461: the contract's section 3 asks the emitter for the resident count
-at a generation's close and its output token count, on the summary stream,
-and until that lands this seam carries the ordinal alone. **A reader in that
-state cannot key its store** and stores what crosses without converting,
-rather than deriving an address from a figure that does not answer.
+ingest, section 3.1's, which is unbuilt. **What it converts from crosses on
+the summary stream**: the contract's summary carries the resident count at
+a generation's close and its output token count, and the emitter writes
+both. **Where a generation's resident count is absent, its positions cannot
+be keyed**, and what crosses is stored without an address derived from a
+figure that did not answer.
 
 **A diagnostic record whose bracket did not close certified is not drawn**,
 the refusal naming the outcome. A serving record has no gate and none is
@@ -4005,9 +4022,9 @@ client certificate and never the key, per section 2.12. The client holds the
 server's identity and the server holds the client's, which is the operator's
 two-way confirmation, and the traffic is encrypted by the same handshake, so
 **nothing crosses the link in the clear** and no plaintext accept path
-exists. The charter's section 6 defers transport encryption on the browser's
-listener to a named trigger; this listener is a different one, crossing
-machines by construction, and is not under that deferral.
+exists. Where a certificate and key are configured, the browser's listener
+serves TLS only, per section 2.13; the link's encryption is its own and
+holds without configuration.
 
 **The server's authority is durable state and is never minted at start.**
 Its key and certificate are created once by an explicit register verb, the
@@ -4434,8 +4451,9 @@ to: web-tuple-is-admins-word-and-never-gate-cons
 ```
 
 **Revocation is per credential and server-side, and rotation mints a fresh
-pair.** Both are register verbs run on the server rather than surface
-edits, and each is an authored edit under section 3.2, ordered on the
+pair.** Both are register verbs, run as the host's commands or through the
+admin's register page per section 2.13, and retire runs through the page
+alone; each is an authored edit under section 3.2, ordered on the
 row's version, so a concurrent revoke, rotate or re-registration refuses on
 a stale version rather than overwriting a fingerprint or a state. Revoking
 sets one credential's state in section 2.12 and the next hello on it is
@@ -4466,12 +4484,13 @@ installed would find nothing to close, and the admission would complete on
 a revoked credential and relay until the next hello. No interleaving leaves
 a revoked credential relaying. **The exclusion is the store's own row lock,
 and the revoking act's close rides the store's notification**, as built on
-2026-10-01: the register verbs run as the operator's process and the
-listener as the server's, and the one exclusion two processes share without
-a second channel is the row they both write, so every admission, teardown
-and revocation takes the agent's row for update and mutates the listener's
-live set while it holds it, and the revoking transaction raises a
-notification the listener hears and closes on. A second channel between the
+2026-10-01: the host's register verbs run as the operator's process, the
+page's in the server's own, and the listener as the server's, and the one
+exclusion every path shares without a second channel is the agent's row
+they all write, so every admission, teardown and revocation takes the
+agent's row for update and mutates the listener's live set while it holds
+it, and every revocation raises the notification the listener hears and
+closes on. A second channel between the
 two processes would be a second thing to configure and secure for one
 message the store already carries.
 
@@ -4870,8 +4889,9 @@ a `web-` assertion beside `weaver-admin`'s.
 - **What section 7 is called, now that one of its three is not a seam**,
   opened 2026-09-16 by the act that deleted this crate's seam record to
   `weaver-admin`. The heading reads "The seams", and 7.2's admin verbs are
-  the operator's own program run as a subprocess under a contract that
-  binds this crate to nothing. Renaming the heading, moving 7.2 out from
+  reached through admin-con's sudo invoker on the agent's box, as fixed
+  command lines and never as a process the server runs, under a contract
+  that binds this crate to nothing. Renaming the heading, moving 7.2 out from
   under it, and widening the word are three answers and this document
   elects none of them. Nothing in the section's content is wrong and no
   read is blocked on the choice, so it is named here rather than settled.

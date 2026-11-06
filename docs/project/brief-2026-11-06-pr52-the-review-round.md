@@ -73,7 +73,7 @@ Every claim names its source. Add, in the sentence or as a parenthesis:
 
 - "`load` from the front end is refused upstream for now" (PRD 169, `stages.md:30`): `toddwbucy/WeaverAgent#166` (admin refuses a load whose invoking cgroup is not root-owned, which parks connector-managed loads).
 - "`restore` carries no argument" (PRD 171, `stages.md:49`): the invoker's fixed line `sudo -n <weaver_admin> <verb> <agent>`, Spec 7.2.
-- "state management, today SQLite in memory only", the decoder/classifier/LoRA roster (PRD 204-206, `stages.md:10`), and "reload under a diagnostic binding with the gate shut" (PRD 172, 348, `stages.md:55, 57`, system README 65): name the WeaverAgent document and section each is read from. Read them under `/home/todd/Projects/WeaverTools_Project/WeaverAgents/docs/crates/` (read only; edit nothing there). If a claim has no source there, the sentence says it is the design session's assumption and waits on the document.
+- "state management, today SQLite in memory only", the decoder/classifier/LoRA roster (PRD 204-206, `stages.md:10`), and "reload under a diagnostic binding with the gate shut" (PRD 172, 348, `stages.md:55, 57`, system README 65): name the WeaverAgent document and section each is read from. Read them under WeaverAgent's `docs/crates/` (read only; edit nothing there). If a claim has no source there, the sentence says it is the design session's assumption and waits on the document.
 - `Marks/README.md:7`: "carries the mark's reason as the relay or the server wrote it" lists reasons. The code's reasons are `link_outage` (`src/link/client.rs`) and `truncation` (`src/traceview.rs`, `src/link/admin_con.rs`); `rotation` and `parse_failure` are not in `src/`. List the two the code writes. "A replayed row ... carries `replayed`": `replayed` appears in `src/link/tests.rs` only. Grep `src/` for how a replayed row reaches the live window; if nothing in non-test code marks it, the sentence says the mark is not yet carried and waits on the listener.
 
 ## 7. The surface mapping (PRD 175-177)
@@ -92,7 +92,7 @@ Every claim names its source. Add, in the sentence or as a parenthesis:
 ## 9. Vocabulary and a sample name
 
 - PRD 118 and 136, "the top bar": the system's names are the masthead (the server's) and the stage rail under it (the agent's path). Use them.
-- `DeclareDiagram/preview.html:50` labels the edge "kernel user weaver-hb-01". `DeclareDiagram/README.md` says the names in the preview are sample data, as the canvas README does for its boards. If `weaver-<agent>` is how a real box names accounts, change the sample to a shape that is not; no posture enters the repository.
+- `DeclareDiagram/preview.html:50` labels the edge with a sample kernel user. `DeclareDiagram/README.md` says the names in the preview are sample data, as the canvas README does for its boards. If the sample is in the shape a real box names accounts, change it to a shape that is not; no posture enters the repository.
 
 ## 10. The Mist-with-Slate cell (PRD 874) - PENDING
 

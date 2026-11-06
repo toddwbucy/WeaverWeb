@@ -16,10 +16,11 @@ Each row is one pane the grammar expects, with its stage mark, its backing today
 
 | pane | shows | source | backing |
 | --- | --- | --- | --- |
-| Host | localhost or a remote host over SSH; stage the binaries | nothing yet | unbuilt |
-| Kernel account | create the agent's user and the connectors' service users | nothing yet | unbuilt |
+| Host | localhost or a remote host; staging the binaries is the operator's work on the box, which this server never reaches, and the pane shows what is done and what remains | nothing yet | unbuilt |
+| Kernel account | the agent's user and the connectors' service users; creating them is the operator's work on the box, and the pane shows what is done and what remains | nothing yet | unbuilt |
 | Register | box and name, the row minted with two credentials | `POST /admin/agents/register` | built |
 | Handover | the two client configs, offered once, five minutes, this session only | `agents::Handover` | built |
+| Declaration | the operator installs the file Declare saved; validate reads the installed declaration, never a draft (Spec 7.2, WeaverAgent #59) | nothing yet | unbuilt |
 | Validate | closes Provision and gates Run: asks admin whether every element the declaration names exists on the box and can load; a refusal names the field; a clean answer is acceptance to load, not a promise the load succeeds | admin through admin-con | unbuilt as a step; the verb itself is built on the agent page |
 
 ## 3 Run, built

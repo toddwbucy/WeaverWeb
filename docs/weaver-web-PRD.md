@@ -165,7 +165,7 @@ agent in a way that blocks many.
 | stage | what it holds | backing |
 | --- | --- | --- |
 | 1 Declare | compose the binding: boundary, organs, models, adapters, tuple | unbuilt |
-| 2 Provision | stage binaries on the host, create the kernel account, register the agent, mint its two connector credentials, then `validate` | partly: the register page and the one-time config handover are built; staging, SSH, the account and the validate step are not |
+| 2 Provision | first the operator's work on the box, which this server never reaches: stage the binaries, create the kernel account, install the declaration Declare saved; then this server's: register the agent, mint its two connector credentials; then `validate`, which reads the installed declaration | partly: the register page and the one-time config handover are built; the box steps and the validate step are not |
 | 3 Run | load, serve turns through the gate, unload | built; `load` from the front end is refused upstream for now |
 | 4 Observe | availability, alerts, the live trace | built |
 | 5 Preserve | `save-point`, `restore`, the decision on a missed save point | partly: both verbs are offered where a role carries them and the ceiling grants them; no list of save points is served, and `restore` carries no argument, so the page names no save point |

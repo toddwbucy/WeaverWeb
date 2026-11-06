@@ -58,7 +58,7 @@ The stages, in order, with what backs each today:
 | stage | the pane kinds | backing today |
 | --- | --- | --- |
 | 1 Declare | the diagram with its tunables on the nodes, the configure pop-up, the saved `agent.yaml`, the form's own refusals | unbuilt |
-| 2 Provision | staging on the host, the kernel account, the register row, the one-time config handover, then `validate`, which closes the stage and gates Run | partly: the register page and the handover are built; staging, SSH, the account and the validate step are not |
+| 2 Provision | the operator's work on the box, which this server never reaches (staging the binaries, the kernel account, installing the declaration Declare saved), then the register row, the one-time config handover, then `validate`, which reads the installed declaration, closes the stage and gates Run | partly: the register page and the handover are built; the box steps and the validate step are not |
 | 3 Run | the verb forms, the turn form, the load state | built; `load` from the front end is refused upstream for now |
 | 4 Observe | availability, the two connectors, alerts, the live trace | built |
 | 5 Preserve | `save-point`, `restore`, the decision on a missed save point | partly: both verbs are offered on the agent page where the role carries them and the ceiling grants them; no list of save points is served, and `restore` names none |

@@ -1726,7 +1726,7 @@ it decides are stated here and in section 2.8, and the reasons are there.
   this a person could grant themselves the operator role and pass the first
   gate. **The first admin is the bootstrap**, written by the host principal
   above, by an operator command on the server's host, authorized as the
-  register verbs are today, by access to the store and the authority's
+  host's register verbs are, by access to the store and the authority's
   directory; no surface can create it. **No person writes a grant whose
   grantee is themselves**, granting or removing, so an
   admin cannot widen their own grants and the last admin cannot remove their

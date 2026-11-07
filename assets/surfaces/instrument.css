@@ -257,6 +257,8 @@ label { font-size: 12.6px; font-weight: 500; color: var(--dim); }
 /* A header whose title, badge and source do not fit wraps, the source line to a row of its own at narrow width, rather than clipping (Pane). */
 .pane > header { flex-wrap: wrap; }
 @media (max-width: 760px) { .pane > header .source { margin-left: 0; white-space: normal; } }
+/* A source line longer than its pane's width, the Live trace's relay, door and boundary in the side column, wraps at any width rather than running past the frame (Pane). */
+.pane > header .source { white-space: normal; }
 /* A button's words wrap within it, a long decision option or a config's file name, its height growing from the control's rather than fixed (Controls). */
 .pane button { height: auto; min-height: var(--control-h); }
 .pane button.verb { min-height: var(--control-h-verb); }
@@ -270,3 +272,7 @@ input[type=password] { height: var(--control-h); padding: 0 var(--space-2); bord
 .pane.decision dialog { position: static; display: block; width: auto; max-width: none; margin: 0; padding: 0; border: 0; background: transparent; color: inherit; }
 /* A turn's text fills its pane's width (Controls). */
 .pane textarea { width: 100%; }
+/* A stream row's time is the trace record's `wall_ms` as it came, thirteen digits; a monospace digit is 0.6em, so its column is 8em (ObservePane). */
+.stream li { grid-template-columns: 56px 8em 1fr; }
+/* The Live trace pane bounds its stream, which holds what the window sends, up to the ring's 10 000 events, and scrolls it within the pane (ObservePane). */
+.pane .stream { max-height: 60vh; overflow-y: auto; }

@@ -112,24 +112,38 @@ Two Claude Code sessions share this workspace, and the operator (Todd) closes ev
 - **Thinkpad-WeaverWeb-Executor** implements what the planner directs. It works on a branch
   and opens a **draft** PR when the work is done.
 
-Each unit of work goes through this loop:
+An act is a **stack**: one branch off `main` that reaches `main` through one PR, built up
+from sub-PRs the operator merges into it one at a time (the operator's ruling of
+2026-11-07). Two reviewers read the repository's PRs: **Codex** reviews every PR when it
+leaves draft, and **CodeRabbit** reviews only a PR whose base is `main`, so a stack costs
+one CodeRabbit pass however many sub-PRs it holds. Each act goes through this loop:
 
-1. The planner sends the executor a task brief covering scope, acceptance, and the documents
-   and boundaries that apply.
-2. The executor branches from `main`, implements, verifies, pushes, and opens a **draft PR**.
-   Then it tells the planner.
-3. The planner reviews the draft. Findings go to the executor, which fixes them on the same
-   branch. Repeat until the planner clears it.
-4. Once it is cleared, the planner marks the PR ready (`gh pr ready`). That triggers **Codex's**
-   third-party review.
-5. The planner monitors the PR for Codex's comments and verifies each one against the code. A
-   real finding goes to the executor to fix. A comment that does not hold up gets a reply on
-   the PR saying why.
-6. When Codex's comments are resolved, the planner hands the PR to the operator. **Only the
-   operator does the final review and merges.**
+1. The planner sends the executor a task brief covering scope, acceptance, the sub-PRs and
+   their order, and the documents and boundaries that apply. The brief lands in
+   `docs/project/` as the stack's first commit.
+2. The executor branches the stack from `main` (`act/<name>`) and opens the **stack PR as a
+   draft against `main`**. Each sub-PR is a branch from the stack's head, opened as a
+   **draft against the stack branch** when its work is done. Then it tells the planner.
+3. The planner reviews the sub-PR. Findings go to the executor, which fixes them on the same
+   branch, one push per round. Repeat until the planner clears it.
+4. Once it is cleared, the planner marks the sub-PR ready (`gh pr ready`). That triggers
+   Codex's review, which the planner watches: a real finding goes to the executor to fix, and
+   a comment that does not hold up gets a reply on the PR saying why.
+5. The operator reviews each cleared sub-PR and **merges it into the stack**. Those merges
+   are the operator's review of the act as it grows; nothing else merges into the stack.
+   The executor rebases the next sub-PR on the stack's new head.
+6. When every sub-PR is in, the operator undrafts the stack PR. CodeRabbit reviews it once;
+   the planner verifies every finding against the code and routes the fixes to the executor
+   as one push on the stack branch. **Only the operator merges the stack into `main`.**
 
-The executor never undrafts or merges. The planner never merges. Nobody pushes directly to
-`main` after the initial seed.
+The planner undrafts sub-PRs and never the stack PR, nor any other PR whose base is `main`:
+a planner's own docs PR is opened as a draft, and the operator undrafts it. The executor
+never undrafts or merges. Nobody pushes directly to `main` after the initial seed. A stack
+stays well under 200 files touched, since a bigger diff gets a shallower review; an act that
+would approach it is split into two stacks. When `main` moves under a stack, the stack
+branch merges `main` in. CodeRabbit's allowance is minded: at most one PR leaves draft an
+hour, and a push to a PR already out of draft counts as a pass, so a round's fixes go in one
+push.
 
 ## Commands
 

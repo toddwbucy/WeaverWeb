@@ -1,4 +1,4 @@
-Weaver-Web is the front end for an agent's whole lifecycle: declare it, provision it, run it, watch it, preserve it, diagnose it, retire it. One agent at a time, done to a finished standard, from pieces that do not assume one agent. This book is the one visual language and the one layout grammar every later surface uses: agents, state, analysis, chat, hardware.
+Weaver-Web is the front end for an agent's whole lifecycle: declare it, provision it, run it, watch it, preserve it, diagnose it, train it, retire it. One agent at a time, done to a finished standard, from pieces that do not assume one agent. This book is the one visual language and the one layout grammar every later surface uses: agents, state, analysis, chat, hardware.
 
 ## The first principle: the unit is the agent
 
@@ -49,9 +49,9 @@ Every surface is composed from panes in a grid, never from detached windows. A p
 
 Compose with `.grid.two` (a main column and a side stack) for a stage's working view, `.grid.three` for a row of equal panes, and `.stack` inside a column. Nothing floats, nothing overlaps, and the pane that owns a fact is the one whose header names its source.
 
-## Navigation across the seven stages
+## Navigation across the eight stages
 
-The masthead (`.masthead`) is the server's: brand, the agent switcher (`.agent-switch`, the current agent's name in `id`), the server pages (Agents, Register, Persons, Grants, Passkeys), the open-alert count, who is signed in, sign out. Under it the stage rail (`.rail`) is the agent's: the seven stages in order, each a stage mark, the current one underlined in `accent`, and at the right what is left ("4 of 7, Preserve next"). The rail is the path: it always shows where you are and what remains, so a person never has to know the stages to find the next one.
+The masthead (`.masthead`) is the server's: brand, the agent switcher (`.agent-switch`, the current agent's name in `id`), the server pages (Agents, Register, Persons, Grants, Passkeys), the open-alert count, who is signed in, sign out. Under it the stage rail (`.rail`) is the agent's: the eight stages in order, each a stage mark, the current one underlined in `accent`, and at the right what is left ("4 of 8, Preserve next"). The rail is the path: it always shows where you are and what remains, so a person never has to know the stages to find the next one.
 
 The stages, in order, with what backs each today:
 
@@ -63,9 +63,12 @@ The stages, in order, with what backs each today:
 | 4 Observe | availability, the two connectors, alerts, the live trace | built |
 | 5 Preserve | `save-point`, `restore`, the decision on a missed save point | partly: both verbs are offered on the agent page where the role carries them and the ceiling grants them; no list of save points is served, and `restore` names none, carrying no argument (the invoker's fixed line `sudo -n <weaver_admin> <verb> <agent>`, Spec 7.2) |
 | 6 Diagnose | the diagnostic binding, a reload with no gate (WeaverAgent's `diagnostic-replay-loop` section 1: under a diagnostic binding there is no gate; `weaver-diagnostic-PRD` section 3), the analysis feed, stepped replay, counterfactual branches | unbuilt; waits on weaver-analysis |
-| 7 Retire | revoke a plane, retire the row, archive | partly: revoke and retire are built; archive is not |
+| 7 Train | the selection from the trace, the dataset, the training run, the adapter handed back to Declare | unbuilt; training runs in WeaverTrain, reached through a contract that does not exist yet |
+| 8 Retire | revoke a plane, retire the row, archive | partly: revoke and retire are built; archive is not |
 
 Every pane is marked with its stage and its backing, in its header, so a person reading an unbuilt pane knows it is a drawing.
+
+The trace is the record of the whole lifecycle and no stage's own (ruling of 2026-11-07): Observe reads it live, Diagnose and Train read it landed. Train selects from it, builds a dataset from the selection, trains an adapter and hands it back to Declare; gathering is part of Train; no frontier-model or reviewer text enters a dataset; the adapter enters through Declare and Provision at the load boundary.
 
 `validate` closes Provision and gates Run (ruling of 2026-11-06). It asks admin, through admin-con, whether every element the installed declaration names that admin holds custody of is on the box, so it has nothing to ask before the agent is provisioned. Declare keeps only what its form can refuse on its own: a missing required field, a piece with no configuration. A clean `validate` is acceptance for filing: nothing admin holds custody of stands in the way of a load, and what only the organ can judge is answered at admission. It is not a promise the load succeeds.
 

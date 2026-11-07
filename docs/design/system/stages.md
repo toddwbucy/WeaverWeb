@@ -1,4 +1,4 @@
-# The seven stages, pane by pane
+# The eight stages, pane by pane
 
 Each row is one pane the grammar expects, with its stage mark, its backing today and where its facts come from. A pane with `unbuilt` backing is a drawing; a pane with `partly` names what is missing in its footer.
 
@@ -58,7 +58,16 @@ Each row is one pane the grammar expects, with its stage mark, its backing today
 | Stepped replay | the trace replayed one position at a time under the diagnostic binding, the gate shut (as above), each step's series beside it | the landed record and the diagnostic binding | unbuilt |
 | Branches | counterfactual branches of a position, side by side | the store's reads | unbuilt |
 
-## 7 Retire, partly
+## 7 Train, unbuilt
+
+| pane | shows | source | backing |
+| --- | --- | --- | --- |
+| Select | the turns and positions selected from the trace, the record of the whole lifecycle and no stage's own; gathering is part of this stage | the landed record | unbuilt |
+| Dataset | the dataset built from the selection; no frontier-model or reviewer text enters it | the selection | unbuilt |
+| Train | the adapter's training run and its result | WeaverTrain (`toddwbucy/WeaverTrain`), through a contract that does not exist yet | unbuilt |
+| Hand back | the trained adapter offered to Declare; it enters through Declare and Provision at the load boundary | nothing yet | unbuilt |
+
+## 8 Retire, partly
 
 | pane | shows | source | backing |
 | --- | --- | --- | --- |

@@ -791,6 +791,67 @@ async fn a_server_restart_relays_a_bounded_tail_with_a_mark() {
     con.stop().await;
 }
 
+/// **After a server restart the backfill is bounded at the header's
+/// length** (Spec 7.2): the hello's opening dials at admin-con's position,
+/// the length, and reads nothing; a `load` completed after the relay's
+/// size read lies past it; the tail relayed is the records within
+/// `backfill_bytes` before the length, the mark at its front, and the
+/// `load` is not replayed but lands live.
+///
+/// Perturbation: `measure` ignoring the header's length, and the `load` is
+/// read into the backfill and never writes the row.
+#[tokio::test]
+async fn a_server_restart_bounds_its_backfill_at_the_length() {
+    use std::sync::atomic::Ordering;
+    let Some(mut lab) = Lab::open().await else {
+        return;
+    };
+    let trace = Trace::new();
+    for n in 1..=30 {
+        trace.append(n, "turn");
+    }
+    let out = tempfile::tempdir().unwrap();
+    let bound = 5 * record(30, "turn").len() as u64;
+    let (id, path) = installed(&lab, &trace.socket, out.path(), Some(bound)).await;
+    let mut con = Running::start(config(&path), Arc::new(NoVerbs));
+    con.wait("admitted", |s| s.admitted).await;
+    wait_window(&lab, &id, "the bounded tail", |e| ns(e).last() == Some(&30)).await;
+    wait_acknowledged(&lab, &id, &trace).await;
+
+    let counts = trace.relay.counts.clone();
+    let sized = counts.sized.load(Ordering::SeqCst);
+    restart_on_its_address(&mut lab, || {
+        counts.header_delay_ms.store(1_000, Ordering::SeqCst);
+    })
+    .await;
+    let until = tokio::time::Instant::now() + SOON;
+    while counts.sized.load(Ordering::SeqCst) == sized {
+        assert!(
+            tokio::time::Instant::now() < until,
+            "the hello's opening never dialed"
+        );
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    trace.append(31, "load");
+    counts.header_delay_ms.store(0, Ordering::SeqCst);
+    con.wait("admitted again", |s| s.admitted && s.admissions >= 2)
+        .await;
+    let row = lab
+        .wait_for(&id, "the load past the length, live", |a| {
+            a.load_state.as_deref() == Some("idle")
+        })
+        .await;
+    assert_eq!(row.state_source.as_deref(), Some("event"), "{row:?}");
+    let second = window(&lab, &id);
+    assert_eq!(ns(&second), [26, 27, 28, 29, 30, 31]);
+    assert!(
+        marks(&second).iter().any(|m| m.contains("backfill starts")),
+        "{:?}",
+        marks(&second)
+    );
+    con.stop().await;
+}
+
 /// The server stopped and started again on its address, so admin-con's
 /// config still reaches it; `between` runs while it is down.
 pub(super) async fn restart_on_its_address(lab: &mut Lab, between: impl FnOnce()) {
@@ -820,9 +881,10 @@ pub(super) async fn restart_on_its_address(lab: &mut Lab, between: impl FnOnce()
 /// is left until its delimiter lands, then relayed once, and never as half
 /// a record that fails to parse. The record is longer than the relay's
 /// chunk, so the relay sends its first part mid-line and admin-con's reader
-/// holds it. (The relay heartbeats only at the file's end, so an opening
-/// taken while the file ends in a fragment waits for the fragment's end:
-/// the record is written here once the link stands.)
+/// holds it. (Under a header naming no length the relay heartbeats only
+/// at the file's end, so an opening taken while the file ends in a
+/// fragment waits for the fragment's end: the record is written here once
+/// the link stands.)
 #[tokio::test]
 async fn an_unterminated_record_is_relayed_only_whole() {
     let Some(lab) = Lab::open().await else { return };
@@ -1652,12 +1714,13 @@ async fn a_stop_against_a_server_that_stopped_reading_returns_within_the_grace()
     drop(write);
 }
 
-/// **An opening that waits on its heartbeat is interrupted by a stop**:
-/// the relay sends its header and then nothing, so the hello's opening
-/// waits, within its bound; the runtime stays free, and a stop asked
-/// meanwhile returns within the grace, nothing admitted.
+/// **An opening that waits on its read is interrupted by a stop**: the
+/// relay sends its header, naming a length past the opening's position,
+/// and then nothing, so the hello's opening waits, within its bound; the
+/// runtime stays free, and a stop asked meanwhile returns within the grace,
+/// nothing admitted.
 #[tokio::test]
-async fn a_stop_during_an_opening_that_waits_on_its_heartbeat_returns_within_the_grace() {
+async fn a_stop_during_an_opening_that_waits_on_its_read_returns_within_the_grace() {
     let server = FakeServer::start().await;
     let trace = Trace::new();
     trace.append(1, "turn");
@@ -2184,6 +2247,11 @@ async fn a_relay_that_drops_every_stream_is_redialed_on_the_backoff() {
 /// A writer that never idles: a record every 20 ms, faster than the fake
 /// relay's heartbeat, so the relay never heartbeats while it runs.
 fn never_idle(trace: &Trace) -> JoinHandle<()> {
+    never_idle_as(trace, "turn")
+}
+
+/// As `never_idle`, each record of the given kind.
+fn never_idle_as(trace: &Trace, kind: &'static str) -> JoinHandle<()> {
     let path = trace.path.clone();
     tokio::spawn(async move {
         for n in 1_000.. {
@@ -2191,20 +2259,23 @@ fn never_idle(trace: &Trace) -> JoinHandle<()> {
                 .append(true)
                 .open(&path)
                 .unwrap();
-            f.write_all(record(n, "turn").as_bytes()).unwrap();
+            f.write_all(record(n, kind).as_bytes()).unwrap();
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     })
 }
 
-/// **A writer that never idles is admitted at the boundary's bound** (Spec
-/// 7.2): no heartbeat comes, the opening takes its boundary at the position
-/// read so far once its bound passes, and the link comes up with the trace
-/// relayed live behind it.
+/// **Under an older relay's header, naming no length, a writer that never
+/// idles is admitted at the boundary's bound** (Spec 7.2): no heartbeat
+/// comes, the opening takes its boundary at the position read so far once
+/// its bound passes, and the link comes up with the trace relayed live
+/// behind it.
 #[tokio::test]
 async fn a_never_idle_writer_is_admitted_at_the_boundarys_bound() {
+    use std::sync::atomic::Ordering;
     let Some(lab) = Lab::open().await else { return };
     let trace = Trace::new();
+    trace.relay.counts.omit_length.store(true, Ordering::SeqCst);
     let writer = never_idle(&trace);
     let out = tempfile::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
@@ -2256,27 +2327,226 @@ async fn a_verb_behind_a_never_idle_writer_runs_at_the_drains_bound() {
     con.stop().await;
 }
 
+/// **A writer that never idles is admitted at the header's length** (Spec
+/// 7.2): the relay never heartbeats, and the opening ends its read at the
+/// length, well inside its bound, the record behind it replayed and the
+/// writer's records after the size read live, each relayed once, in order.
+///
+/// Perturbation: `measure` ignoring the header's length, and the admission
+/// waits to the bound.
+#[tokio::test]
+async fn a_never_idle_writer_is_admitted_at_the_length() {
+    let Some(lab) = Lab::open().await else { return };
+    let trace = Trace::new();
+    trace.append(1, "turn");
+    let writer = never_idle_as(&trace, "turn.started");
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
+    let mut cfg = config(&path);
+    cfg.boundary_bound = Duration::from_secs(10);
+    let mut con = Running::start(cfg, Arc::new(NoVerbs));
+    con.wait_for(Duration::from_secs(3), "admitted inside the bound", |s| {
+        s.admitted
+    })
+    .await;
+    let row = lab
+        .wait_for(&id, "a live record of the writer's", |a| {
+            a.load_state.as_deref() == Some("active")
+        })
+        .await;
+    assert_eq!(row.state_source.as_deref(), Some("event"), "{row:?}");
+    writer.abort();
+    let seen = ns(&window(&lab, &id));
+    assert_eq!(seen.first(), Some(&1), "{seen:?}");
+    assert!(
+        seen.windows(2).all(|w| w[0] < w[1]),
+        "each record once, in order: {seen:?}"
+    );
+    assert!(marks(&window(&lab, &id)).is_empty());
+    con.stop().await;
+}
+
+/// Start admin-con over a relay held between its size read and its
+/// header, and append `kind` as record 2 in that gap, once the hello's
+/// opening has taken its size read.
+async fn start_with_a_record_in_the_gap(
+    lab: &Lab,
+    trace: &Trace,
+    kind: &str,
+) -> (AgentId, Running, tempfile::TempDir) {
+    use std::sync::atomic::Ordering;
+    let counts = &trace.relay.counts;
+    counts.header_delay_ms.store(1_000, Ordering::SeqCst);
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(lab, &trace.socket, out.path(), None).await;
+    let con = Running::start(config(&path), Arc::new(NoVerbs));
+    let until = tokio::time::Instant::now() + SOON;
+    while counts.sized.load(Ordering::SeqCst) == 0 {
+        assert!(
+            tokio::time::Instant::now() < until,
+            "the opening never dialed"
+        );
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    trace.append(2, kind);
+    counts.header_delay_ms.store(0, Ordering::SeqCst);
+    (id, con, out)
+}
+
+/// **A record completed after the relay's size read is live** (Spec 7.2;
+/// the length is a lower bound): the relay is held between its size read
+/// and its header, a `load` appended in that gap lies past the header's
+/// length, and it lands on the row as a live event, so `caught_up` went
+/// before it; the record behind the length is replayed.
+///
+/// Perturbation: `measure` ignoring the header's length, and the `load` is
+/// read to the heartbeat behind the boundary and never writes the row.
+#[tokio::test]
+async fn a_record_completed_after_the_size_read_is_live() {
+    let Some(lab) = Lab::open().await else { return };
+    let trace = Trace::new();
+    trace.append(1, "turn");
+    let (id, mut con, _out) = start_with_a_record_in_the_gap(&lab, &trace, "load").await;
+    con.wait("admitted", |s| s.admitted).await;
+    let row = lab
+        .wait_for(&id, "the load in the gap, live", |a| {
+            a.load_state.as_deref() == Some("idle")
+        })
+        .await;
+    assert_eq!(row.state_source.as_deref(), Some("event"), "{row:?}");
+    assert_eq!(ns(&window(&lab, &id)), [1, 2]);
+    assert!(marks(&window(&lab, &id)).is_empty());
+    con.stop().await;
+}
+
+/// **A header naming no length takes the boundary at the heartbeat** (Spec
+/// 7.2), as an older relay's does: under the same gap as the test above,
+/// the `load` appended after the size read is read before the first
+/// heartbeat, so it is replayed and writes nothing; a record after the
+/// heartbeat is live and does.
+///
+/// Perturbation: a header naming no length read as one at the dialed
+/// position, and the `load` is live and writes the row.
+#[tokio::test]
+async fn a_header_naming_no_length_takes_the_boundary_at_the_heartbeat() {
+    use std::sync::atomic::Ordering;
+    let Some(lab) = Lab::open().await else { return };
+    let trace = Trace::new();
+    trace.relay.counts.omit_length.store(true, Ordering::SeqCst);
+    trace.append(1, "turn");
+    let (id, mut con, _out) = start_with_a_record_in_the_gap(&lab, &trace, "load").await;
+    con.wait("admitted", |s| s.admitted).await;
+    wait_window(&lab, &id, "both, replayed", |e| ns(e) == [1, 2]).await;
+    wait_door(&lab, &id, true).await;
+    tokio::time::sleep(SETTLE).await;
+    let row = lab.agent(&id).await;
+    assert_eq!(
+        row.load_state, None,
+        "the load behind the heartbeat wrote the row: {row:?}"
+    );
+    trace.append(3, "unload");
+    lab.wait_for(&id, "the live unload", |a| {
+        a.load_state.as_deref() == Some("unloaded")
+    })
+    .await;
+    con.stop().await;
+}
+
+/// **An opening whose position is at the header's length is admitted with
+/// nothing read** (Spec 7.2): the door closes with the relay's run and
+/// opens again at admin-con's position, the file's end, while the relay
+/// holds its stream, sending neither a record nor a heartbeat; the opening
+/// takes its boundary there at once, `caught_up` behind its door frame,
+/// and the next record is live.
+///
+/// Perturbation: `measure` ignoring the header's length, and the held
+/// relay keeps the opening waiting to its bound.
+#[tokio::test]
+async fn an_opening_at_the_length_is_admitted_with_nothing_read() {
+    let Some(lab) = Lab::open().await else { return };
+    let mut trace = Trace::new();
+    for n in 1..=3 {
+        trace.append(n, "turn");
+    }
+    let out = tempfile::tempdir().unwrap();
+    let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
+    let mut cfg = config(&path);
+    cfg.boundary_bound = Duration::from_secs(10);
+    let mut con = Running::start(cfg, Arc::new(NoVerbs));
+    con.wait("admitted", |s| s.admitted).await;
+    wait_window(&lab, &id, "the first three", |e| ns(e) == [1, 2, 3]).await;
+    wait_acknowledged(&lab, &id, &trace).await;
+    let opened_at = wait_door(&lab, &id, true).await.trace_door_at;
+
+    trace.relay.stop().await;
+    wait_door(&lab, &id, false).await;
+    trace.relay.hold(true);
+    trace.relay.start();
+    let until = tokio::time::Instant::now() + Duration::from_secs(3);
+    loop {
+        let row = lab.agent(&id).await;
+        if row.trace_door == Some(true) && row.trace_door_at > opened_at {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < until,
+            "the opening at the length waited on the held relay: {row:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    trace.relay.hold(false);
+    trace.append(4, "load");
+    lab.wait_for(&id, "the live load", |a| {
+        a.load_state.as_deref() == Some("idle")
+    })
+    .await;
+    assert_eq!(ns(&window(&lab, &id)), [1, 2, 3, 4]);
+    assert!(marks(&window(&lab, &id)).is_empty());
+    assert_eq!(con.status().admissions, 1);
+    con.stop().await;
+}
+
 /// **A truncation met during an opening's read is marked** (Spec 7.2,
-/// nothing is smoothed): with no position on the server, the relay answers
-/// `truncated` as the opening reaches the file's end, the opening reads
-/// the file again from its start, and the backfill it relays carries the
+/// nothing is smoothed): with no position on the server, the opening reads
+/// a long file toward the header's length, a chunk at a time, and the file
+/// is truncated below the opening's offset and rewritten short; the relay
+/// answers `truncated`, the opening reads the new file from its start to
+/// the new header's length, and the backfill it relays carries the
 /// truncation's mark at its front.
 #[tokio::test]
 async fn a_truncation_during_an_opening_is_marked_at_the_replays_front() {
     use std::sync::atomic::Ordering;
     let Some(lab) = Lab::open().await else { return };
     let trace = Trace::new();
-    for n in 1..=3 {
-        trace.append(n, "turn");
+    let mut body = String::new();
+    let mut n = 1_000;
+    while body.len() < 4 * 64 * 1024 {
+        n += 1;
+        body.push_str(&record(n, "turn"));
     }
+    trace.append_raw(body.as_bytes());
     trace
         .relay
         .counts
-        .truncate_next
-        .store(true, Ordering::SeqCst);
+        .chunk_pause_ms
+        .store(300, Ordering::SeqCst);
     let out = tempfile::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let mut con = Running::start(config(&path), Arc::new(NoVerbs));
+    let until = tokio::time::Instant::now() + SOON;
+    while trace.relay.counts.sent.load(Ordering::Relaxed) == 0 {
+        assert!(
+            tokio::time::Instant::now() < until,
+            "the opening never read"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    // Rewritten short while the relay holds, so it meets the whole of it.
+    trace.relay.hold(true);
+    let short: String = (1..=3).map(|n| record(n, "turn")).collect();
+    std::fs::write(&trace.path, short).unwrap();
+    trace.relay.counts.chunk_pause_ms.store(0, Ordering::SeqCst);
+    trace.relay.hold(false);
     con.wait("admitted", |s| s.admitted).await;
     wait_window(&lab, &id, "the file", |e| ns(e) == [1, 2, 3]).await;
     let events = window(&lab, &id);
@@ -2508,8 +2778,10 @@ async fn an_opening_serves_its_show_before_a_verb_queued_at_it() {
     })
     .await;
 
-    // The relay comes up holding its stream, so the opening waits on its
-    // heartbeat while the person's ask arrives.
+    // The relay comes up holding its stream over a record, so the opening
+    // waits on its read to the header's length while the person's ask
+    // arrives.
+    trace.append(1, "turn");
     trace.relay.hold(true);
     trace.relay.start();
     let until = tokio::time::Instant::now() + SOON;
@@ -2563,6 +2835,9 @@ async fn an_openings_show_is_taken_past_a_full_queue() {
     })
     .await;
 
+    // The relay comes up holding its stream over a record, so the opening
+    // waits on its read to the header's length while the asks arrive.
+    trace.append(1, "turn");
     trace.relay.hold(true);
     trace.relay.start();
     let until = tokio::time::Instant::now() + SOON;
@@ -3758,8 +4033,10 @@ async fn an_openings_show_the_store_does_not_land_keeps_the_hold() {
     })
     .await;
 
-    // The relay comes up holding its stream, so the opening waits on its
-    // heartbeat while the person's ask arrives.
+    // The relay comes up holding its stream over a record, so the opening
+    // waits on its read to the header's length while the person's ask
+    // arrives.
+    trace.append(1, "turn");
     trace.relay.hold(true);
     trace.relay.start();
     let until = tokio::time::Instant::now() + SOON;

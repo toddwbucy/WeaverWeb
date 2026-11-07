@@ -74,7 +74,7 @@ Frost (bg `#fafbfd`, cobalt accent `#2a5bd7`) was proposed beside them and not c
 
 ## For instrument.css
 
-The six themes in the built stylesheet's shape. Slate is `:root`; a browser preferring light gets Mist, Slate's partner; a `data-theme` on the root names any of the six. `focus` is `var(--accent)`.
+The six themes as `instrument.css` carries them. Slate is `:root`; a browser preferring light gets Mist, Slate's partner; a `data-theme` on the root names any of the six. `focus` is `var(--accent)`.
 
 ```css
 :root {

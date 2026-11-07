@@ -2,9 +2,10 @@
 //! agent's record, through the door the agent's start step opens, per
 //! `weaver-types-Spec` section 3.1. admin-con reads no file: it dials the
 //! relay's socket, sends one `TraceRequest` line naming a position, and
-//! reads a `TraceHeader` line naming the file's identity, then the trace's
-//! own lines byte for byte, a heartbeat while the relay is idle, and
-//! `truncated` before the stream ends where the file shrank below it.
+//! reads a `TraceHeader` line naming the file's identity and, from a
+//! current relay, its length, then the trace's own lines byte for byte, a
+//! heartbeat while the relay is idle, and `truncated` before the stream
+//! ends where the file shrank below it.
 //!
 //! **The shapes are re-declared here, never linked**: this crate links none
 //! of the agent's crates, so the request and the stream's own lines are
@@ -76,6 +77,12 @@ enum TraceControl {
 struct TraceHeader {
     device: u64,
     inode: u64,
+    /// **The end of the last record complete at the relay's size read for
+    /// this request**, read once the position verified: a record boundary,
+    /// and a lower bound, since a record completed after the size read is
+    /// relayed past it. Optional because an older relay names none.
+    #[serde(default)]
+    length: Option<u64>,
     #[serde(default)]
     birth_ns: Option<i128>,
 }
@@ -142,6 +149,7 @@ pub async fn dial(socket: &Path, from: &Position) -> Dial {
     let mut stream = Stream {
         reader: BufReader::new(stream),
         identity: String::new(),
+        length: None,
         line: Vec::new(),
         over: None,
     };
@@ -156,6 +164,7 @@ pub async fn dial(socket: &Path, from: &Position) -> Dial {
         Ok(Raw::Ended { why, .. }) => Dial::Closed(why),
         Ok(Raw::Control(TraceControl::Header(header))) => {
             stream.identity = identity(&header);
+            stream.length = header.length;
             Dial::Open(Box::new(stream))
         }
         Ok(_) => Dial::Closed("the trace relay's first line was not a header".to_owned()),
@@ -197,6 +206,10 @@ pub struct Stream {
     reader: BufReader<UnixStream>,
     /// The file's identity, from the header.
     pub identity: String,
+    /// The header's length, where the relay names one: everything the file
+    /// held, in whole records, when the relay read its size for this
+    /// request (`weaver-types-Spec` section 3.1).
+    pub length: Option<u64>,
     /// The record read so far, while it is within `RECORD_BOUND`.
     line: Vec<u8>,
     /// A record past the bound, being hashed through: its hash and length.

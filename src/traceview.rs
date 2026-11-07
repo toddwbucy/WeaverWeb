@@ -1,9 +1,18 @@
 //! The trace view (Spec section 6), split across the link (Spec
-//! section 8): admin-con tails the agent's NDJSON file and streams every
-//! event and mark over the link (`link::admin_con`), and the server holds
-//! the bounded rings and the per-agent broadcast the views render from.
-//! Rotation, truncation, and link loss all surface as discontinuity marks,
-//! never smoothed.
+//! section 8): admin-con reads the agent's trace through the relay's door
+//! (`link::relay`) and streams every event and mark over the link
+//! (`link::admin_con`), and the server holds the bounded rings and the
+//! per-agent broadcast the views render from. Every discontinuity is a
+//! mark, never smoothed, its reason a sentence naming what was not relayed
+//! and why:
+//!
+//! - admin-con's (`Item::Mark` and `frame_of` in `link::admin_con`): a
+//!   record past the relay's bound, or one whose frame would pass the line
+//!   bound; a backfill begun inside the file; a file truncated, rewritten
+//!   or replaced, and a position the relay refused; a record that is not
+//!   UTF-8, or a line that did not parse as JSON (`parse_line` below);
+//! - the server's (`TraceViews::mark`, called in `link::listener`): admin-con
+//!   reconnected, and the link to admin-con lost.
 //!
 //! **Section 8 charters the link and names none of its frames**, so the
 //! roster below and the discontinuity mark cite it for the link and not
@@ -20,9 +29,9 @@ const RING_CAP: usize = 10_000;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TraceEvent {
     pub seq: u64,
-    /// None for real events; Some(reason) for discontinuity marks the
-    /// tailer or the server inserted (rotation, truncation, parse
-    /// failure, link loss).
+    /// None for real events; Some(reason) for a discontinuity mark, the
+    /// sentence admin-con or the server wrote (the module's header lists
+    /// what they report).
     pub mark: Option<String>,
     pub run: Option<String>,
     pub turn: Option<String>,

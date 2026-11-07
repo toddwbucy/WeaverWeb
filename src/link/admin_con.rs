@@ -54,12 +54,14 @@ pub use crate::link::relay::RECORD_BOUND;
 pub const VERB_QUEUE: usize = 16;
 /// **The floor under an opening's boundary** (Spec 7.2), covering the
 /// opening whole, its dials and its verification included, the last
-/// `VERIFY_RESERVE` of it kept for the verification: where no heartbeat
-/// comes this long, less that reserve, after the opening's start, as under
-/// a writer that never idles, the boundary is taken at the position read so
-/// far, and a dial that reaches no header by then leaves the door closed,
-/// retried on the backoff. The heartbeat stays the measure; this is what
-/// keeps the link up without it.
+/// `VERIFY_RESERVE` of it kept for the verification: where the read has
+/// not reached its measure this long, less that reserve, after the
+/// opening's start, the boundary is taken at the position read so far, and
+/// a dial that reaches no header by then leaves the door closed, retried on
+/// the backoff. The measure is the header's length where the header names
+/// one and the relay's heartbeat where it does not; this floor stands under
+/// both, for a relay that stalls mid-read and for a header naming no length
+/// under a writer that never idles.
 pub const BOUNDARY_BOUND: Duration = Duration::from_secs(30);
 /// **The last part of an opening's bound, kept for verifying the server's
 /// position** past the boundary: the opening's read takes its fallback
@@ -420,25 +422,40 @@ struct Opened {
     /// The opening's one deadline, taken before its first dial: its
     /// verification gets only what remains of it.
     until: tokio::time::Instant,
+    /// Whether `stream` carried anything after its header during the read.
+    /// A stream an opening at the header's length kept unread has not, and
+    /// the door takes it as it takes a redialed one (`Door::fresh`).
+    carried: bool,
 }
 
-/// **An opening's boundary is the position at the first heartbeat after
-/// its request** (Spec 7.2), this act's election while the relay names no
-/// length (`toddwbucy/WeaverAgent#88`): the relay heartbeats only while
-/// idle, once everything the file held has been sent, so the position
-/// there is everything the file held at that moment. The read starts at
-/// `from`, admin-con's last relayed position, or at offset zero where the
-/// relay refuses it or serves another file, and keeps the last `cap` bytes
-/// of what it read. **One deadline, `bound` from the opening's start,
-/// covers the opening whole**, its dials and reads alike: a dial that
-/// reaches no header by then is a closed door, retried on the backoff, and
-/// where no heartbeat comes by then, as under a writer that never idles or
-/// a file that ends inside a record, the boundary is taken at the position
-/// read so far: an earlier
+/// **An opening's boundary is everything the file held when the relay
+/// read its size for the request** (Spec 7.2), measured two ways:
+///
+/// - **Where the header names a length**, the boundary is the position the
+///   read reaches when its offset is at or past it, and the dialed position
+///   itself where that is already there, nothing read. The length is a
+///   record boundary and a lower bound (`weaver-types-Spec` section 3.1):
+///   a record completed after the size read lies past it and is live.
+///   A heartbeat before the length is the relay's word that the file ended
+///   first; the boundary is taken there, logged.
+/// - **Where it names none**, as an older relay's does, the boundary is the
+///   position at the first heartbeat: the relay heartbeats only while idle,
+///   once everything the file held has been sent.
+///
+/// A redial after a truncation reads under the new header's length. The
+/// read starts at `from`, admin-con's last relayed position, or at offset
+/// zero where the relay refuses it or serves another file, and keeps the
+/// last `cap` bytes of what it read, so the backfill's start is the first
+/// record boundary within `cap` of the boundary. **One deadline, `bound`
+/// from the opening's start, covers the opening whole**, its dials and
+/// reads alike: a dial that reaches no header by then is a closed door,
+/// retried on the backoff, and where the read has not reached its measure
+/// by then, as under a relay that stalls mid-read, or a header naming no
+/// length under a writer that never idles or over a file that ends inside
+/// a record, the boundary is taken at the position read so far: an earlier
 /// boundary only makes more of the backlog live, the agent's own record in
 /// order, so the row converges to the trace's tail and the opening's `show`
-/// re-establishes it. The header's length (#88) would make the boundary
-/// exact.
+/// re-establishes it.
 async fn measure(
     socket: &Path,
     from: &Position,
@@ -462,27 +479,45 @@ async fn measure(
             "the trace relay gave no header within {bound:?} of the opening's start"
         )),
     };
+    // The read standing at its boundary, `carried` whether the stream
+    // carried anything after its header.
+    let finish = |stream, boundary, ring, marks, carried| Opened {
+        stream,
+        boundary,
+        ring,
+        marks,
+        resumed: None,
+        until: deadline,
+        carried,
+    };
     let (mut stream, mut at) = dial(from, &mut marks).await?;
     let mut ring = Ring::new(at.clone(), cap);
+    let mut carried = false;
     loop {
+        // **At or past the header's length, everything the file held at the
+        // size read is behind the position**: checked after every dial and
+        // every record, so a dial already there reads nothing. Past is a
+        // well-formed relay's lower bound met by a record that completed
+        // later, never refused.
+        if stream.length.is_some_and(|length| at.offset >= length) {
+            return Ok(finish(stream, at, ring, marks, carried));
+        }
         // The stream's read is cancel-safe, so the bound drops nothing.
         let Ok(read) = tokio::time::timeout_at(until, stream.next()).await else {
+            let measure = match stream.length {
+                Some(length) => format!("the header's length {length}"),
+                None => "a heartbeat".to_owned(),
+            };
             tracing::warn!(
-                "no heartbeat from the trace relay within {bound:?} of the opening's start; the boundary is taken at {}:{}, read so far",
+                "the trace relay's stream did not reach {measure} within {bound:?} of the opening's start; the boundary is taken at {}:{}, read so far",
                 at.generation,
                 at.offset
             );
-            return Ok(Opened {
-                stream,
-                boundary: at,
-                ring,
-                marks,
-                resumed: None,
-                until: deadline,
-            });
+            return Ok(finish(stream, at, ring, marks, carried));
         };
         match read {
             Read::Record { line, digest } => {
+                carried = true;
                 let len = line.len() as u64;
                 at.offset += len;
                 at.digest = digest;
@@ -495,19 +530,20 @@ async fn measure(
                 );
             }
             Read::Oversized { len, digest } => {
+                carried = true;
                 at.offset += len;
                 at.digest = digest;
                 ring.push(oversized(at.clone(), len), len);
             }
             Read::Heartbeat { .. } => {
-                return Ok(Opened {
-                    stream,
-                    boundary: at,
-                    ring,
-                    marks,
-                    resumed: None,
-                    until: deadline,
-                });
+                if let Some(length) = stream.length {
+                    tracing::warn!(
+                        "the trace relay heartbeat at offset {} of {}, short of the header's length {length}; the boundary is taken there",
+                        at.offset,
+                        at.generation
+                    );
+                }
+                return Ok(finish(stream, at, ring, marks, true));
             }
             Read::Truncated { size } => {
                 let reason = format!(
@@ -521,6 +557,8 @@ async fn measure(
                 });
                 (stream, at) = dial(&relay::zero(&at.generation), &mut marks).await?;
                 ring = Ring::new(at.clone(), cap);
+                // The redial's stream has carried nothing yet.
+                carried = false;
             }
             Read::Ended(why) => return Err(why),
         }
@@ -699,7 +737,9 @@ fn plan(ring: Ring, boundary: &Position, resume: &Resume, backfill: u64) -> Repl
         },
         // **A position the server holds past the boundary is caught up
         // already**: a boundary taken at its bound can stand short of what
-        // a previous connection relayed. Nothing is behind it, `caught_up`
+        // a previous connection relayed, and so can one taken at the
+        // header's length, a lower bound past which a record may have
+        // completed before the header arrived. Nothing is behind it, `caught_up`
         // goes at once, and the stream resumes live from the server's
         // position, which the relay verifies as any resumption.
         Resume::Ack(acked)
@@ -788,11 +828,18 @@ struct Door {
     target: Option<Target>,
     /// The newest heartbeat's time, for the drain.
     heartbeat: Option<u64>,
-    /// A redialed stream that has carried nothing yet: one that ends so is
-    /// a relay that admits and drops at once, taken as a closed door on the
-    /// backoff rather than redialed without pause.
+    /// **A stream that has carried nothing yet**, a redialed one or the one
+    /// an opening at the header's length kept unread: one that ends so is a
+    /// relay that admits and drops at once, taken as a closed door on the
+    /// backoff, which grows with each, rather than redialed without pause.
+    /// The verification's stream is not fresh: the opening's read before
+    /// it already proved the relay. **A relay that accepts and drops before
+    /// carrying anything opens and closes the door on the backoff**, each
+    /// opening asking `show`: the flap is the relay's own doing, and the
+    /// backoff bounds its rate.
     fresh: bool,
-    /// Openings failed since the last success, for the backoff.
+    /// Openings failed, and fresh streams ended, since a stream last
+    /// carried something, for the backoff.
     failures: u32,
     next_try: tokio::time::Instant,
     /// The connector's entries, for the relay's refusal of admin-con.
@@ -843,6 +890,7 @@ impl Door {
             ring,
             marks,
             resumed,
+            carried,
             ..
         } = opened;
         // **One mark per discontinuity**: where the opening's read already
@@ -855,8 +903,9 @@ impl Door {
         };
         let replay = plan(ring, &boundary, &resume, backfill);
         self.open = true;
-        self.failures = 0;
         self.heartbeat = None;
+        // Whether the door keeps the opening's stream, carrying nothing.
+        let mut unread = false;
         match (replay.again, replay.live_from) {
             // The server's position, verified by the opening: the door
             // reads the stream that verified it, so position and stream
@@ -870,6 +919,7 @@ impl Door {
                 self.target = None;
             }
             (None, None) => {
+                unread = !carried;
                 self.stream = Some(stream);
                 self.at = boundary;
                 self.target = None;
@@ -884,6 +934,13 @@ impl Door {
                     first: true,
                 });
             }
+        }
+        // **An unread stream proves nothing of the relay** until it carries
+        // something: the backoff stands, so a relay that sends a header at
+        // the length and drops is not reopened without pause.
+        self.fresh = unread;
+        if !unread {
+            self.failures = 0;
         }
         // The read's own marks lead, ahead of the plan's and of any
         // second read.
@@ -902,6 +959,9 @@ impl Door {
         let before = self.at.clone();
         let read = stream.next().await;
         let fresh = std::mem::take(&mut self.fresh);
+        if fresh && !matches!(read, Read::Ended(_)) {
+            self.failures = 0;
+        }
         match read {
             Read::Record { line, digest } => {
                 let len = line.len() as u64;
@@ -947,8 +1007,9 @@ impl Door {
             }
             Read::Ended(why) if fresh => {
                 tracing::info!(
-                    "the trace relay ended a redialed stream before it carried anything ({why}); the door is taken as closed"
+                    "the trace relay ended a stream before it carried anything ({why}); the door is taken as closed"
                 );
+                self.failures = self.failures.saturating_add(1);
                 self.close(false);
                 step.closed = true;
             }
@@ -1313,9 +1374,10 @@ pub async fn run<I: Invoker>(
                     };
                 // **The hello reports the door, and an open door's boundary**
                 // (Spec 7.2): an opening taken now, before any verb of this
-                // connection, its boundary the position at the relay's first
-                // heartbeat. A door that does not open is reported closed,
-                // with no boundary, and redialed on the backoff.
+                // connection, its boundary measured at the header's length
+                // or the relay's first heartbeat (`measure`). A door that
+                // does not open is reported closed, with no boundary, and
+                // redialed on the backoff.
                 let mut shared = shared.lock().await;
                 let from = shared.cursor.clone();
                 let opened = match measure(&socket, &from, backfill, boundary_bound).await {
@@ -2148,11 +2210,14 @@ fn not_started(id: u64, verb: &str) -> FromClient {
 /// **The drain before a verb** (Spec 7.2): every record the file held when
 /// the drain began is emitted ahead of the answer, so an unread older event
 /// cannot follow a newer answer. **The measure is the relay's heartbeat**,
-/// this act's election while the relay names no length
-/// (`toddwbucy/WeaverAgent#88`): a heartbeat dated at or after the drain's
-/// start says everything written before it was sent, so the door is read
-/// until one comes. A heartbeat already in flight, dated before, says
-/// nothing of what was written since. **Where none comes within `bound`**,
+/// by the contract's rule that a reader bounding an act of its own places
+/// it by the trace's own events, never by the length alone: the header's
+/// length is a lower bound read once per request, and a boundary
+/// mid-stream would need a new request, which replaces the live stream. A
+/// heartbeat dated at or after the drain's start says everything written
+/// before it was sent, so the door is read until one comes. A heartbeat
+/// already in flight, dated before, says nothing of what was written
+/// since. **Where none comes within `bound`**,
 /// as under a writer that never idles, the verb is invoked anyway: what is
 /// unread then is read after the answer and ordered behind it. The
 /// inversion that matters, an unload written before a `show`'s snapshot and

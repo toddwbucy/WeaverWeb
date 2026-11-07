@@ -844,7 +844,10 @@ struct Door {
     /// relay that admits and drops at once, taken as a closed door on the
     /// backoff, which grows with each, rather than redialed without pause.
     /// The verification's stream is not fresh: the opening's read before
-    /// it already proved the relay.
+    /// it already proved the relay. **A relay that accepts and drops before
+    /// carrying anything opens and closes the door on the backoff**, each
+    /// opening asking `show`: the flap is the relay's own doing, and the
+    /// backoff bounds its rate.
     fresh: bool,
     /// Openings failed, and fresh streams ended, since a stream last
     /// carried something, for the backoff.

@@ -3537,7 +3537,9 @@ serves every run**: each run appends to the same file and opens with its
 `load` event, and a stream resumes across runs within the file, per
 `weaver-admin-Spec` section 6. **The relay runs only while the agent
 runs**, so the door is closed while it is unloaded, which is the normal
-state: admin-con redials on its backoff. **The door's state is admin-con's
+state: admin-con redials on its backoff. A relay that accepts a request
+and drops it before carrying anything opens and closes the door on that
+backoff, each opening asking `show`. **The door's state is admin-con's
 word at admission and at every change**: the hello carries it at
 admission, and because the connection outlives loads and unloads, every
 change after crosses on the live connection as a frame from admin-con with

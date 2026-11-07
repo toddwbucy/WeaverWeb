@@ -869,6 +869,9 @@ struct VerbPage {
     first: String,
     kind: String,
     detail: String,
+    /// admin's exit status where it answered; `None` where it was not run
+    /// or not answered, and for a turn.
+    exit: Option<i32>,
     chrome: super::Chrome,
     /// **The leg an `unload` stopped at its save point missed** (Spec
     /// 2.14), whose prompt the page states, its options chosen on the
@@ -968,9 +971,9 @@ async fn act(
     // **The page's wait is its own**, bounding nothing of the ask: the
     // outcome is written at the answer whatever this does.
     let bound = seams.asker.silence();
-    let (status, kind, detail, missed) = if shown == "turn" {
+    let (status, kind, detail, exit, missed) = if shown == "turn" {
         let (status, kind, detail) = turn_shown(bound, enqueued).await;
-        (status, kind, detail, None)
+        (status, kind, detail, None, None)
     } else {
         verb_shown(bound, &shown, enqueued).await
     };
@@ -991,6 +994,7 @@ async fn act(
         first,
         kind,
         detail,
+        exit,
         chrome,
         missed,
     };
@@ -1000,13 +1004,13 @@ async fn act(
     }
 }
 
-/// admin's answer to a verb, as the page shows it, with the leg an
-/// `unload` stopped at its save point missed.
+/// admin's answer to a verb, as the page shows it, with its exit status
+/// and the leg an `unload` stopped at its save point missed.
 async fn verb_shown(
     bound: Duration,
     verb: &str,
     enqueued: Enqueued,
-) -> (StatusCode, String, String, Option<String>) {
+) -> (StatusCode, String, String, Option<i32>, Option<String>) {
     match tokio::time::timeout(bound, enqueued.answer()).await {
         Ok(Ok(outcome)) => (
             StatusCode::OK,
@@ -1021,6 +1025,7 @@ async fn verb_shown(
                 .as_ref()
                 .map(|a| serde_json::to_string_pretty(a).unwrap_or_default())
                 .unwrap_or_default(),
+            outcome.exit_code,
             crate::link::listener::stopped_at_save_point(verb, &outcome).map(str::to_owned),
         ),
         Ok(Err(VerbError::Fault(fault))) => (
@@ -1028,18 +1033,27 @@ async fn verb_shown(
             "admin-con's fault".to_owned(),
             format!("{}: {}", fault.kind, fault.message),
             None,
+            None,
         ),
         Ok(Err(VerbError::Unanswered)) => (
             StatusCode::OK,
             "the connection ended with the verb in flight: its outcome is unknown here, and the trace and the next show hold it".to_owned(),
             String::new(),
             None,
+            None,
         ),
-        Ok(Err(e)) => (StatusCode::OK, "no answer".to_owned(), e.to_string(), None),
+        Ok(Err(e)) => (
+            StatusCode::OK,
+            "no answer".to_owned(),
+            e.to_string(),
+            None,
+            None,
+        ),
         Err(_) => (
             StatusCode::ACCEPTED,
             "asked, and not answered within the bound: its outcome is written when admin answers".to_owned(),
             String::new(),
+            None,
             None,
         ),
     }

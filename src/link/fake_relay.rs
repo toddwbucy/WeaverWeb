@@ -195,6 +195,10 @@ fn now_ms() -> u64 {
 /// newline; a last line still being written is not counted. Read backward
 /// from `size` a chunk at a time.
 fn complete_length(file: &std::fs::File, size: u64) -> u64 {
+    let mut last = [0u8; 1];
+    if size > 0 && file.read_exact_at(&mut last, size - 1).is_ok() && last[0] == b'\n' {
+        return size;
+    }
     let mut end = size;
     while end > 0 {
         let start = end.saturating_sub(CHUNK as u64);

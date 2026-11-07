@@ -479,6 +479,17 @@ async fn measure(
             "the trace relay gave no header within {bound:?} of the opening's start"
         )),
     };
+    // The read standing at its boundary, `carried` whether the stream
+    // carried anything after its header.
+    let finish = |stream, boundary, ring, marks, carried| Opened {
+        stream,
+        boundary,
+        ring,
+        marks,
+        resumed: None,
+        until: deadline,
+        carried,
+    };
     let (mut stream, mut at) = dial(from, &mut marks).await?;
     let mut ring = Ring::new(at.clone(), cap);
     let mut carried = false;
@@ -489,15 +500,7 @@ async fn measure(
         // well-formed relay's lower bound met by a record that completed
         // later, never refused.
         if stream.length.is_some_and(|length| at.offset >= length) {
-            return Ok(Opened {
-                stream,
-                boundary: at,
-                ring,
-                marks,
-                resumed: None,
-                until: deadline,
-                carried,
-            });
+            return Ok(finish(stream, at, ring, marks, carried));
         }
         // The stream's read is cancel-safe, so the bound drops nothing.
         let Ok(read) = tokio::time::timeout_at(until, stream.next()).await else {
@@ -510,15 +513,7 @@ async fn measure(
                 at.generation,
                 at.offset
             );
-            return Ok(Opened {
-                stream,
-                boundary: at,
-                ring,
-                marks,
-                resumed: None,
-                until: deadline,
-                carried,
-            });
+            return Ok(finish(stream, at, ring, marks, carried));
         };
         match read {
             Read::Record { line, digest } => {
@@ -548,15 +543,7 @@ async fn measure(
                         at.generation
                     );
                 }
-                return Ok(Opened {
-                    stream,
-                    boundary: at,
-                    ring,
-                    marks,
-                    resumed: None,
-                    until: deadline,
-                    carried: true,
-                });
+                return Ok(finish(stream, at, ring, marks, true));
             }
             Read::Truncated { size } => {
                 let reason = format!(

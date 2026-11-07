@@ -246,6 +246,9 @@ label { font-size: 12.6px; font-weight: 500; color: var(--dim); }
 .workspace.narrow { max-width: 560px; }
 /* The open-alert count is a status pill among the masthead's links, whose padding and underline would distort it (Masthead). */
 .masthead a.status { padding: 1px var(--space-2); border-bottom-width: 1px; }
+/* The brand and the sign-out button keep their one line; at phone width the masthead's row wraps, its links to a second line, rather than running past the page's edge (Masthead). */
+.masthead .brand, .masthead .sign-out button { white-space: nowrap; }
+@media (max-width: 760px) { .masthead { flex-wrap: wrap; height: auto; min-height: var(--masthead-h); row-gap: 0; padding-block: var(--space-1); } }
 /* The body's padding is the pane's spacing, so its first and last child carry no margin of their own (Pane). */
 .pane > .body > :first-child { margin-top: 0; }
 .pane > .body > :last-child { margin-bottom: 0; }

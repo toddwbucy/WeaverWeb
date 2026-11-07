@@ -570,6 +570,7 @@ async fn an_ask_waiting_on_a_full_channel_holds_nothing() {
                     turn: None,
                     kind: Some("turn".into()),
                     raw: json!({"kind": "turn", "run": "run-1", "payload": {}}),
+                    replayed: false,
                 },
             })
             .await;

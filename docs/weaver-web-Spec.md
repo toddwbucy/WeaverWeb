@@ -3595,8 +3595,8 @@ would close a normal long load's connection as incomplete and answer its
 caller unknown. Nothing is lost by waiting: what the agent wrote meanwhile
 stands behind the opening's boundary, and the opening's `show`, asked once
 the load has answered, reads the state the load left. This is the admission rule below applied at every opening, not a
-new mechanism, and the boundary's measure is the one elected below, since
-admin-con does not read the relay's `length`. **A hello while the door is closed carries no
+new mechanism, and the boundary's measure is the one elected below, the
+header's `length` where the header names one. **A hello while the door is closed carries no
 boundary**: the server admits it with the replay ended at once, `caught_up`
 with nothing behind it, serves verbs per the ceiling, and their answers land
 at receipt. So `load` is askable while the agent is unloaded, and nothing

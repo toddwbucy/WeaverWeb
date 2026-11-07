@@ -520,10 +520,9 @@ async fn measure(
                 carried,
             });
         };
-        // A truncation's redial below starts a stream that carried nothing.
-        carried = !matches!(read, Read::Truncated { .. } | Read::Ended(_));
         match read {
             Read::Record { line, digest } => {
+                carried = true;
                 let len = line.len() as u64;
                 at.offset += len;
                 at.digest = digest;
@@ -536,6 +535,7 @@ async fn measure(
                 );
             }
             Read::Oversized { len, digest } => {
+                carried = true;
                 at.offset += len;
                 at.digest = digest;
                 ring.push(oversized(at.clone(), len), len);
@@ -555,7 +555,7 @@ async fn measure(
                     marks,
                     resumed: None,
                     until: deadline,
-                    carried,
+                    carried: true,
                 });
             }
             Read::Truncated { size } => {
@@ -570,6 +570,8 @@ async fn measure(
                 });
                 (stream, at) = dial(&relay::zero(&at.generation), &mut marks).await?;
                 ring = Ring::new(at.clone(), cap);
+                // The redial's stream has carried nothing yet.
+                carried = false;
             }
             Read::Ended(why) => return Err(why),
         }

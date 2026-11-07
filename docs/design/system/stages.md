@@ -39,7 +39,7 @@ Each row is one pane the grammar expects, with its stage mark, its backing today
 | Availability | a plane the server cannot reach, as a banner on every signed-in page | `Store::unavailable_for`, every 15 s | built |
 | Connectors | gate-con and admin-con, each with its status and last heard | the listener's memory, every 15 s | built |
 | Alerts | every alert on the agent: kind, subject, from, why, when, occurrences; acknowledge by an `operator` holder | `store::alerts` | built |
-| Live trace | the listener's window as an SSE stream: trace events and marks; the listener classifies each event as replayed or live against the opening's boundary, and the window does not yet carry which | `GET /agents/{ag}/trace` | built |
+| Live trace | the listener's window as an SSE stream: trace events and marks, each carrying `replayed`, the listener's verdict against the opening's boundary | `GET /agents/{ag}/trace` | built |
 | Decision | a `<dialog open>` where `unload` refused `save_point_not_taken` with the run at rest | the alert's prompt | built |
 
 ## 5 Preserve, partly

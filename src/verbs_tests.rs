@@ -297,6 +297,7 @@ async fn an_operator_asks_load_and_the_page_shows_admins_answer() {
         .await;
     let (status, _, page) = asked.await.unwrap();
     assert_eq!(status, StatusCode::OK, "{page}");
+    crate::surfaces::assert_framed(&page);
     assert!(page.contains("admin&#39;s answer"), "{page}");
     assert!(
         page.contains("loaded") && page.contains(&first.audit_id),

@@ -155,6 +155,20 @@ async fn stylesheet() -> impl IntoResponse {
     )
 }
 
+/// **What every served page carries** (the pane grammar,
+/// `docs/design/system/components/Workspace`): the masthead, the workspace
+/// and the stylesheet. Each test that renders a page asserts it of that page.
+#[cfg(test)]
+pub(crate) fn assert_framed(page: &str) {
+    for mark in [
+        r#"<nav class="masthead">"#,
+        r#"<main class="workspace"#,
+        r#"<link rel="stylesheet" href="/assets/surfaces/instrument.css">"#,
+    ] {
+        assert!(page.contains(mark), "a served page carries {mark}: {page}");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     /// **The served stylesheet is the design system's, byte for byte**:

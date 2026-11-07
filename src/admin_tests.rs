@@ -269,6 +269,7 @@ async fn the_page_lists_every_person_and_no_write_on_ones_own_row() {
 
     let (status, headers, page) = send_as(&app, "GET", "/admin/persons", None, &session).await;
     assert_eq!(status, StatusCode::OK, "{page}");
+    crate::surfaces::assert_framed(&page);
     assert_eq!(
         headers[header::CONTENT_SECURITY_POLICY],
         "script-src 'self'"
@@ -293,6 +294,7 @@ async fn the_page_lists_every_person_and_no_write_on_ones_own_row() {
         "the navigation reaches it"
     );
     let (_, _, passkeys_page) = send_as(&app, "GET", "/passkeys", None, &session).await;
+    crate::surfaces::assert_framed(&passkeys_page);
     assert!(passkeys_page.contains("href=\"/admin/persons\""));
     let (_, _, theirs) = send_as(&app, "GET", "/passkeys", None, &observer).await;
     assert!(
@@ -361,6 +363,7 @@ async fn each_write_lands_with_its_audit_pair() {
     .await;
     assert_eq!(status, StatusCode::OK, "{shown}");
     assert_eq!(headers[header::CACHE_CONTROL], "no-store");
+    crate::surfaces::assert_framed(&shown);
     let second_token = token_in(&shown);
     assert_ne!(first_token, second_token);
     assert_eq!(audited(s, &ada, &bea, "person token").await, (1, 1, 0));

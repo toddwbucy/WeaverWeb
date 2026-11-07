@@ -1,26 +1,28 @@
 {% extends "instrument.html" %}
 {% block title %}agents - weaver-web{% endblock %}
-{% block mainclass %}listing{% endblock %}
 {% block body %}
 {#- The agents this person holds a grant on, and no other. No inline
     script. -#}
-<header class="listing-head">
-  <h1>Agents</h1>
-  <p class="destination">The agents you hold a grant on.</p>
-</header>
-<table>
-  <thead><tr><th>Agent</th><th>Gate</th><th>Admin</th><th>Open alerts</th><th>Transition</th></tr></thead>
-  <tbody>
-  {% for row in rows %}
-  <tr>
-    <td><a href="/agents/{{ row.agent_id }}">{{ row.label }}</a></td>
-    <td>{% if row.gate %}connected{% else %}not connected{% endif %}</td>
-    <td>{% if row.admin %}connected{% else %}not connected{% endif %}</td>
-    <td>{{ row.alerts }}</td>
-    <td>{{ row.transition }}</td>
-  </tr>
-  {% endfor %}
-  </tbody>
-</table>
-{% if rows.is_empty() %}<p class="chip-note">You hold no grant on any agent.</p>{% endif %}
+<h1>Agents</h1>
+<p class="lede">The agents you hold a grant on.</p>
+<section class="pane">
+  <header><h2>Agents</h2><span class="backing built">built</span><span class="source">the register, scoped by your grants</span></header>
+  <div class="body flush">
+  <table>
+    <thead><tr><th>Agent</th><th>Gate</th><th>Admin</th><th>Open alerts</th><th>Transition</th></tr></thead>
+    <tbody>
+    {% for row in rows %}
+    <tr>
+      <td><a href="/agents/{{ row.agent_id }}">{{ row.label }}</a></td>
+      <td>{% if row.gate %}connected{% else %}not connected{% endif %}</td>
+      <td>{% if row.admin %}connected{% else %}not connected{% endif %}</td>
+      <td>{{ row.alerts }}</td>
+      <td>{% if row.transition.is_empty() %}<span class="absent">none</span>{% else %}{{ row.transition }}{% endif %}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% if rows.is_empty() %}<footer>You hold no grant on any agent.</footer>{% endif %}
+</section>
 {% endblock %}

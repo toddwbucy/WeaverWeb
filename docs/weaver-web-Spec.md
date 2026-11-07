@@ -3195,7 +3195,12 @@ with its own destination rather than a mode of a list beside it. Their
 destinations are the charter's section 3 and are not restated.
 
 **The surfaces serve their own assets from `/assets/surfaces/`**: the
-stylesheet `instrument.css`, the vendored htmx and the passkey module. Each
+stylesheet `instrument.css`, the vendored htmx and the passkey module. The
+stylesheet is the design system's: `docs/design/system/tokens.css` followed
+by `docs/design/system/components/bundle.css` without its import line, and
+nothing else, pinned byte for byte by a test in `src/surfaces/mod.rs`, so
+the served pages wear the pane grammar of PRD section 3.0 and the copy
+served cannot drift from the copy that is the record. Each
 is a file of the binary, each is served under section 2.13's
 `Content-Security-Policy: script-src 'self'`, and no other asset route
 stands.

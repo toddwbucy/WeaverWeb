@@ -5,4 +5,6 @@ The pane is the unit of every surface. The consumer provides a stage, a title, a
 - Footer: how the body stays current, or what the pane waits on.
 - A decision pane (`.pane.decision`, `hold` border) offers each option as its own form and never acknowledges the alert. It is pinned first in the main column.
 
+On a served page the body's first and last child carry no margin of their own, and a `.flush` body scrolls a table wider than the pane rather than clipping it, both rules of `bundle.css`'s served-surfaces section.
+
 Do not nest panes. Do not float a pane over another. Do not give a pane a title that names a model where it means the agent.

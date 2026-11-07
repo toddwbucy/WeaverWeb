@@ -62,7 +62,6 @@ pub const RECHECK: Duration = Duration::from_secs(15);
 /// for an agent that does not exist.
 const NO_SUCH_AGENT: &str = "no such agent";
 
-/// What the live view says it is.
 /// **The eight stages and their backing today**, as
 /// `docs/design/system/stages.md` states them, its source (a test below
 /// reads that file's headings against this table). No stage's backing is
@@ -114,6 +113,7 @@ fn left() -> String {
     format!("{CURRENT_STAGE} of {} \u{b7} {next} next", STAGES.len())
 }
 
+/// What the live view says it is.
 const LIVE_WINDOW: &str = "the live window: what this server holds in memory of the agent's trace now, not a record; a restart or a full ring loses it";
 
 /// **What the reading surface holds beside the store**: the session's

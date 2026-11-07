@@ -68,7 +68,9 @@
     {%- endmatch %}
     {%- endfor %}
     </div>
-    {%- if !offered %}
+    {%- if offered %}
+    <footer>A verb is asked of admin-con and answered on a page of its own; the box's own rule decides last.</footer>
+    {%- else %}
     <footer>No verb your roles carry that the connection's ceiling grants.</footer>
     {%- endif %}
   </section>
@@ -77,9 +79,7 @@
     <div class="body">
     {% if turn_form %}
     <form method="post" action="/agents/{{ agent_id }}/turn" class="field">
-      {%- if shared %}
-      <label for="turn-text">More than one person holds turn on this agent: your turns interleave with theirs in the agent's one conversation, and each of you reads the other's.</label>
-      {%- endif %}
+      <label for="turn-text">Your turn{% if shared %}. More than one person holds turn on this agent: your turns interleave with theirs in the agent's one conversation, and each of you reads the other's.{% endif %}</label>
       <textarea id="turn-text" name="text" rows="4" required></textarea>
       <div class="row"><button type="submit" class="verb primary">Place the turn</button></div>
     </form>
@@ -87,6 +87,7 @@
     <p>No turn: your roles do not carry turn on this agent, or gate-con is not connected.</p>
     {% endif %}
     </div>
+    <footer>A turn goes to gate-con as your held ask and is answered on a page of its own; its text is carried in the frame and kept in no record or log line.</footer>
   </section>
 </div>
 <div class="stack">
@@ -127,12 +128,14 @@
     </table>
     </div>
     {% endif %}
+    <footer>The alerts as this page loaded them. Acknowledging, an operator's, takes the version read; an alert changed since is refused as stale.</footer>
   </section>
   <section class="pane">
     <header><span class="stage"><b>4</b> Observe</span><h2>Live trace</h2><span class="backing built">built</span><span class="source">admin-con, through the listener's window</span></header>
     <div class="body">
-    <p><a href="/agents/{{ agent_id }}/trace">The live trace view</a> (an event stream): {{ window }}.</p>
+    <p><a href="/agents/{{ agent_id }}/trace">The live trace view</a>, an event stream from admin-con through the listener.</p>
     </div>
+    <footer>This is {{ window }}.</footer>
   </section>
 </div>
 </div>

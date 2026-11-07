@@ -4544,6 +4544,7 @@ missing while it was relaying.
 | an absent surprisal renders as absent | perturbation: zero-fill, the view is wrong |
 | the position is stored at ingest | perturbation: after ingest, alter the summary's counts and reread, the stored position is unchanged |
 | an uncertified diagnostic record is not drawn | perturbation: drop the outcome check, an unknown run renders |
+| the served stylesheet is the design system's and every served page wears the frame | the byte-for-byte pin `the_stylesheet_is_the_design_systems` in `src/surfaces/mod.rs`, perturbation: append a rule to `bundle.css` without regenerating `instrument.css`, and the pin fails "has drifted"; and `assert_framed` (`src/surfaces/mod.rs`) in each page's test, perturbation: drop `workspace` from the base template's `main`, and 94 tests fail, every page's among them, each on the frame's assertion |
 | no surface writes a position or a run | compile-fail: a doctest constructing a recorded-table writer from an authoring path does not compile |
 | an authored edit against a stale version refuses | perturbation: drop the version check, the second edit silently wins |
 | an authored row names its author or names none | perturbation: default the null to the operator, a row nobody can attribute reads as attributed and is uncorrectable |

@@ -154,3 +154,44 @@ async fn stylesheet() -> impl IntoResponse {
         include_str!("../../assets/surfaces/instrument.css"),
     )
 }
+
+/// **What every served page carries** (the pane grammar,
+/// `docs/design/system/components/Workspace`): the masthead, the workspace
+/// and the stylesheet. Each test that renders a page asserts it of that page.
+#[cfg(test)]
+pub(crate) fn assert_framed(page: &str) {
+    for mark in [
+        r#"<nav class="masthead">"#,
+        r#"<main class="workspace"#,
+        r#"<link rel="stylesheet" href="/assets/surfaces/instrument.css">"#,
+    ] {
+        assert!(page.contains(mark), "a served page carries {mark}: {page}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// **The served stylesheet is the design system's, byte for byte**:
+    /// `tokens.css`, then `bundle.css` without its import line, and nothing
+    /// else, so the copy served cannot drift from the copy that is the
+    /// record.
+    #[test]
+    fn the_stylesheet_is_the_design_systems() {
+        let tokens = include_str!("../../docs/design/system/tokens.css");
+        let bundle = include_str!("../../docs/design/system/components/bundle.css");
+        let derived: String = std::iter::once(tokens)
+            .chain(
+                bundle
+                    .split_inclusive('\n')
+                    .filter(|l| !l.starts_with("@import ")),
+            )
+            .collect();
+        assert!(
+            derived == include_str!("../../assets/surfaces/instrument.css"),
+            "assets/surfaces/instrument.css has drifted from the design system; regenerate it \
+             from the repository's root with: {{ cat docs/design/system/tokens.css; sed \
+             '/^@import /d' docs/design/system/components/bundle.css; }} > \
+             assets/surfaces/instrument.css"
+        );
+    }
+}

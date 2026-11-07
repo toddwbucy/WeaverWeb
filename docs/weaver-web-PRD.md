@@ -195,7 +195,8 @@ what it waits on. A mark is a word in a pill and never a bare color: absence (`a
 beside its dot and word), backing, and the hatched discontinuity row in a stream. A
 verb that does not apply is disabled with its reason, never hidden. Every pane is marked
 with its stage and whether it has backing today, so a drawing is never mistaken for a
-surface.
+surface. The served pages are composed in this grammar, and the stylesheet they load is
+the design system's own (Spec section 6).
 
 **The Declare diagram is the core interaction of stage 1**, and the design's proof that
 the grammar holds for an unbuilt stage, Observe being its proof for a built one.

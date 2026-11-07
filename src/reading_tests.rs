@@ -47,6 +47,7 @@ async fn a_person_reads_only_the_agents_they_hold_a_grant_on() {
     };
     let (status, _, list) = send_as(&rig.app, "GET", "/agents", None, &session).await;
     assert_eq!(status, StatusCode::OK, "{list}");
+    crate::surfaces::assert_framed(&list);
     assert!(list.contains("box-a/karl"), "{list}");
     assert!(!list.contains("jane") && !list.contains(&jane), "{list}");
 
@@ -110,6 +111,7 @@ async fn the_page_shows_the_rows_facts_and_the_persons_roles() {
     let (status, _, page) =
         send_as(&rig.app, "GET", &format!("/agents/{karl}"), None, &session).await;
     assert_eq!(status, StatusCode::OK, "{page}");
+    crate::surfaces::assert_framed(&page);
     for fact in [
         "box-a/karl",
         "your roles: observer",

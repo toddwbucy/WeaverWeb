@@ -478,6 +478,7 @@ async fn save_point_then_unload_asks_unload_only_on_a_confirmed_save_point() {
         .await;
     let (status, _, page) = chosen.await.unwrap();
     assert_eq!(status, StatusCode::OK, "{page}");
+    crate::surfaces::assert_framed(&page);
     assert!(
         page.contains("d0c0ffee") && page.contains("admin&#39;s answer"),
         "{page}"

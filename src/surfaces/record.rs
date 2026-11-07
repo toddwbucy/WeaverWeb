@@ -128,13 +128,15 @@ pub struct Row {
     /// the record spells it. **It is not the display string**: a chip
     /// carrying the words a surface chose would match no row at all.
     pub record_identity_key: Option<String>,
-    pub device: String,
+    /// `None` where the record carried no device, drawn as the absence
+    /// mark; the view decides absence from the member, as for the session.
+    pub device: Option<String>,
     /// The engine's libraries by name, as the tuple carries them. **A column
     /// headed `engine` that rendered a constant would say neither what the
     /// member is nor that it is absent**, which is the whole of what a
     /// tuple is for.
-    pub engine: String,
-    pub seed: String,
+    pub engine: Option<String>,
+    pub seed: Option<String>,
     /// The record's session, kept as an option so the view decides absence
     /// from the member rather than from a word it compares against.
     pub session: Option<String>,
@@ -144,21 +146,20 @@ pub struct Row {
     pub ingested_at: String,
 }
 
-/// The word a surface uses where the record carried nothing. **It is a word
-/// and not a blank**, so a reader can tell a member nobody recorded from one
-/// this surface failed to draw.
-const ABSENT: &str = "absent";
+/// The absence mark `record.html` draws where the record carried nothing,
+/// as the watch below counts it. **It is a word and not a blank**, so a
+/// reader can tell a member nobody recorded from one this surface failed
+/// to draw.
+#[cfg(test)]
+const ABSENT: &str = r#"<span class="absent">absent</span>"#;
 
 /// **An empty string is an absence too, and the schema does not forbid it.**
 /// `run.device` and `run.seed` are nullable text with no `<> ''` check, so a
 /// member the record sent empty reaches here and would draw a blank cell -
 /// the one rendering section 6 forbids, arriving through the member the rule
 /// was broadened to cover.
-fn absent_or(value: Option<&str>) -> String {
-    match value {
-        Some(v) if !v.trim().is_empty() => v.to_owned(),
-        _ => ABSENT.to_string(),
-    }
+fn absent_or(value: Option<&str>) -> Option<String> {
+    value.filter(|v| !v.trim().is_empty()).map(str::to_owned)
 }
 
 /// The engine's libraries, drawn by name. **The member is a JSON object and
@@ -166,15 +167,13 @@ fn absent_or(value: Option<&str>) -> String {
 /// left to the run's own surface, which is a rendering choice rather than a
 /// member discarded: a reader sees which libraries a run went through and
 /// two runs through different ones read differently.
-fn engine_libraries(engine: Option<&serde_json::Value>) -> String {
+fn engine_libraries(engine: Option<&serde_json::Value>) -> Option<String> {
     // **JSON null is not a member the record carried.** The column is
     // nullable JSONB and nothing forbids the value `null` in it, which is
     // the gap between two meanings of the word that migration 0009 spells
     // out for the plan's entries. Read as carried, it would draw "recorded,
     // unnamed" for a member nobody sent.
-    let Some(engine) = engine.filter(|e| !e.is_null()) else {
-        return ABSENT.to_string();
-    };
+    let engine = engine.filter(|e| !e.is_null())?;
     let names: Vec<&str> = engine
         .as_object()
         .map(|o| o.keys().map(String::as_str).collect())
@@ -182,9 +181,9 @@ fn engine_libraries(engine: Option<&serde_json::Value>) -> String {
     if names.is_empty() {
         // A member the record carried and this surface cannot name is not
         // an absent member, so it says which it is.
-        "recorded, unnamed".to_string()
+        Some("recorded, unnamed".to_string())
     } else {
-        names.join(", ")
+        Some(names.join(", "))
     }
 }
 
@@ -399,6 +398,7 @@ mod tests {
         let (bearer, name) = a_session(&store).await;
         let (status, body) = ask(&store, "/record", Some(&bearer)).await;
         assert_eq!(status, StatusCode::OK);
+        crate::surfaces::assert_framed(&body);
         assert!(body.contains(&name), "the person the page was drawn under");
         assert!(
             body.contains(r#"<a href="/passkeys""#),

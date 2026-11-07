@@ -839,11 +839,12 @@ struct Door {
     target: Option<Target>,
     /// The newest heartbeat's time, for the drain.
     heartbeat: Option<u64>,
-    /// **A stream that has carried nothing yet**, a redialed one, the one an
-    /// opening at the header's length kept unread, or the verification's:
-    /// one that ends so is a relay that admits and drops at once, taken as
-    /// a closed door on the backoff, which grows with each, rather than
-    /// redialed without pause.
+    /// **A stream that has carried nothing yet**, a redialed one or the one
+    /// an opening at the header's length kept unread: one that ends so is a
+    /// relay that admits and drops at once, taken as a closed door on the
+    /// backoff, which grows with each, rather than redialed without pause.
+    /// The verification's stream is not fresh: the opening's read before
+    /// it already proved the relay.
     fresh: bool,
     /// Openings failed, and fresh streams ended, since a stream last
     /// carried something, for the backoff.
@@ -911,7 +912,7 @@ impl Door {
         let replay = plan(ring, &boundary, &resume, backfill);
         self.open = true;
         self.heartbeat = None;
-        // Whether the door keeps a stream that has carried nothing.
+        // Whether the door keeps the opening's stream, carrying nothing.
         let mut unread = false;
         match (replay.again, replay.live_from) {
             // The server's position, verified by the opening: the door
@@ -921,8 +922,6 @@ impl Door {
             // which nothing in service does.
             (None, Some(from)) => {
                 drop(stream);
-                // The verification's dial, which has carried nothing.
-                unread = true;
                 self.stream = resumed;
                 self.at = from;
                 self.target = None;

@@ -3,7 +3,8 @@
 //! `weaver-trace-relay` behaves. It holds the run's file by descriptor, opened
 //! at its start, so a rotation is seen only by the next run, a restart of the
 //! fake; it verifies a position by the record's digest before a byte is sent,
-//! refusing by closing before a header; it sends whole lines, a heartbeat
+//! refusing by closing before a header; its header names the file's length
+//! at a size read taken once the position verified; it sends whole lines, a heartbeat
 //! while idle, and `truncated` then the end where the file shrank below the
 //! stream's position; and the newest connection replaces the old. No agent
 //! is reached: the file is a temporary one the test writes.
@@ -72,6 +73,12 @@ pub(super) struct Counts {
     /// Every stream started before this count last moved ends at its next
     /// step: a relay dropping its reader without stopping its run.
     pub(super) kicks: AtomicUsize,
+    /// While set, the header names no `length`: an older relay's header.
+    pub(super) omit_length: std::sync::atomic::AtomicBool,
+    /// Size reads taken for a header, one per request admitted: a test
+    /// waits on it to write into the gap between the size read and the
+    /// header that `header_delay_ms` holds open.
+    pub(super) sized: AtomicUsize,
 }
 
 /// The fake relay for one trace file.
@@ -183,6 +190,24 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
+/// **The header's length**: the end of the last complete record at or
+/// below `size`, the byte after its newline, 0 where the file holds no
+/// newline; a last line still being written is not counted. Read backward
+/// from `size` a chunk at a time.
+fn complete_length(file: &std::fs::File, size: u64) -> u64 {
+    let mut end = size;
+    while end > 0 {
+        let start = end.saturating_sub(CHUNK as u64);
+        let mut buf = vec![0u8; (end - start) as usize];
+        file.read_exact_at(&mut buf, start).unwrap();
+        if let Some(i) = buf.iter().rposition(|&b| b == b'\n') {
+            return start + i as u64 + 1;
+        }
+        end = start;
+    }
+    0
+}
+
 /// **A position verifies** where it is zero with no digest, or falls just
 /// after a newline inside the file with the record ending there hashing to
 /// its digest, the record's bytes from its line's start through its newline.
@@ -235,6 +260,11 @@ async fn serve(
         counts.refused.fetch_add(1, Ordering::Relaxed);
         return;
     }
+    // **The size read, once the position verified**: the header's length
+    // is what the file held then, in whole records, and a record completed
+    // during the delay below lies past it.
+    let length = complete_length(&file, file.metadata().unwrap().len());
+    counts.sized.fetch_add(1, Ordering::SeqCst);
     let mut delay = counts.header_delay_ms.load(Ordering::SeqCst);
     if offset > 0 {
         delay += counts.resume_header_delay_ms.load(Ordering::SeqCst);
@@ -242,6 +272,9 @@ async fn serve(
     tokio::time::sleep(Duration::from_millis(delay)).await;
     let meta = file.metadata().unwrap();
     let mut header = serde_json::json!({"device": meta.dev(), "inode": meta.ino()});
+    if !counts.omit_length.load(Ordering::SeqCst) {
+        header["length"] = serde_json::json!(length);
+    }
     if birth && let Ok(created) = meta.created() {
         let ns = created
             .duration_since(std::time::UNIX_EPOCH)

@@ -5,6 +5,6 @@ The pane is the unit of every surface. The consumer provides a stage, a title, a
 - Footer: how the body stays current, or what the pane waits on.
 - A decision pane (`.pane.decision`, `hold` border) offers each option as its own form and never acknowledges the alert. It is pinned first in the main column.
 
-On a served page the body's first and last child carry no margin of their own, and a `.flush` body scrolls a table wider than the pane rather than clipping it, both rules of `bundle.css`'s served-surfaces section. An identifier in a pane or a lede (an enrollment token, an agent id, a digest in a verb's answer) is one unbroken run, so `code`, `.mono` and `pre` in a pane, and the lede, wrap anywhere rather than clip at phone width.
+On a served page nothing in a pane is clipped by the frame's hidden overflow, by rules of `bundle.css`'s served-surfaces section: every body scrolls what is wider than it (a table's columns, a long select or pill), `.flush` being its padding alone; a header that does not fit wraps, its source line to a row of its own at narrow width; an identifier (an enrollment token, an agent id, a digest in a verb's answer) wraps anywhere, as `code`, `.mono` and `pre` in a pane and the lede do, and a `pre` wraps its lines; and a body's first and last child carry no margin of their own.
 
 Do not nest panes. Do not float a pane over another. Do not give a pane a title that names a model where it means the agent.

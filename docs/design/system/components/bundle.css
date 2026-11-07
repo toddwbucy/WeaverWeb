@@ -78,8 +78,9 @@ button, input, select, textarea { font: inherit; color: var(--fg); }
 table { border-collapse: collapse; width: 100%; font-size: 13.2px; }
 th, td { text-align: left; padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--line-soft); vertical-align: top; }
 tbody th { white-space: nowrap; }
-/* An identifier in a pane or a lede, a token, an agent id, a digest in an answer, is one unbroken run; it wraps anywhere rather than clipping inside the pane. */
+/* An identifier in a pane or a lede, a token, an agent id, a digest in an answer, is one unbroken run; it wraps anywhere rather than clipping inside the pane, and a preformatted detail wraps its lines. */
 .pane code, .pane .mono, .pane pre, .lede { overflow-wrap: anywhere; }
+.pane pre { white-space: pre-wrap; }
 th { font-weight: 500; color: var(--dim); font-size: 12.6px; background: var(--inset); }
 tr:last-child td { border-bottom: 0; }
 .stream { margin: 0; padding: 0; list-style: none; font-family: var(--font-mono); font-size: 12.9px; line-height: 1.5; }
@@ -151,8 +152,14 @@ label { font-size: 12.6px; font-weight: 500; color: var(--dim); }
 /* The body's padding is the pane's spacing, so its first and last child carry no margin of their own (Pane). */
 .pane > .body > :first-child { margin-top: 0; }
 .pane > .body > :last-child { margin-bottom: 0; }
-/* A table wider than its pane, Record's eight columns at phone width, scrolls inside the pane rather than being clipped (Pane). */
-.pane > .body.flush { overflow-x: auto; }
+/* The pane hides its overflow for its rounded frame, so every body scrolls what is wider than it, a table's columns, a long select or pill, rather than clipping it; .flush is its padding alone (Pane). */
+.pane > .body { overflow-x: auto; }
+/* A header whose title, badge and source do not fit wraps, the source line to a row of its own at narrow width, rather than clipping (Pane). */
+.pane > header { flex-wrap: wrap; }
+@media (max-width: 760px) { .pane > header .source { margin-left: 0; white-space: normal; } }
+/* A button's words wrap within it, a long decision option or a config's file name, its height growing from the control's rather than fixed (Controls). */
+.pane button { height: auto; min-height: var(--control-h); }
+.pane button.verb { min-height: var(--control-h-verb); }
 /* A row's several actions are forms side by side in its cell (Controls). */
 td > form { display: inline-flex; gap: var(--space-2); align-items: center; margin: 0 var(--space-2) var(--space-1) 0; }
 /* A secret, the enrollment token, is typed in a password input, drawn as the text input is (Controls). */

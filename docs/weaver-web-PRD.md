@@ -132,9 +132,9 @@ redraw.
 
 The design session of 2026-11-06, the design seat working with the operator and the
 architecture seat, framed this crate's front end as **the agent's whole lifecycle**:
-create it, deploy it, run it, watch it, preserve it, diagnose it, retire it. The ten
-surfaces below are read through that frame, and the path the stage rail carries under
-the masthead, on every page about an agent, is the frame's own: seven stages in order, each a mark on a stage rail, the
+create it, deploy it, run it, watch it, preserve it, diagnose it, train it, retire it.
+The ten surfaces below are read through that frame, and the path the stage rail carries
+under the masthead, on every page about an agent, is the frame's own: eight stages in order, each a mark on a stage rail, the
 current one underlined, with what is left said at the rail's end. The frame binds the
 surfaces; the surfaces' own text below is unchanged where it does not conflict.
 
@@ -158,7 +158,7 @@ own, with a friendlier shape beside it and never instead of it; a gap in a recor
 surfaces as a mark, never smoothed; and a missing contract is an ask upward, never a
 workaround, so a pane whose backing is not built says so and names what it waits on.
 
-**The seven stages, in order, with what backs each on 2026-11-06.** Multi-agent
+**The eight stages, in order, with what backs each on 2026-11-07.** Multi-agent
 management comes later and is built from the same pieces, so nothing here assumes one
 agent in a way that blocks many.
 
@@ -170,11 +170,19 @@ agent in a way that blocks many.
 | 4 Observe | availability, alerts, the live trace | built |
 | 5 Preserve | `save-point`, `restore`, the decision on a missed save point | partly: both verbs are offered where a role carries them and the ceiling grants them; no list of save points is served, and `restore` carries no argument (the invoker's fixed line `sudo -n <weaver_admin> <verb> <agent>`, Spec 7.2), so the page names no save point |
 | 6 Diagnose | reload under a diagnostic binding with the gate shut (WeaverAgent's `diagnostic-replay-loop` section 1: under a diagnostic binding there is no gate; `weaver-diagnostic-PRD` section 3), the analysis feed, stepped replay, counterfactual branches | unbuilt; waits on weaver-analysis |
-| 7 Retire | revoke planes, retire the row, archive | partly: revoke and retire are built; archive is not |
+| 7 Train | select from the trace, build a dataset, train an adapter, hand it back to Declare; gathering is part of the stage | unbuilt; training runs in WeaverTrain (`toddwbucy/WeaverTrain`), reached through a contract that does not exist yet |
+| 8 Retire | revoke planes, retire the row, archive | partly: revoke and retire are built; archive is not |
+
+**The trace is the record of the whole lifecycle, not a stage** (the operator's ruling of
+2026-11-07, #54): Observe reads it live, Diagnose and Train read it landed, and no stage
+owns it. Train draws its selection from it, builds the dataset from the selection, and no
+frontier-model or reviewer text enters a dataset. The adapter Train hands back is a piece
+of the declaration like any other: it enters through Declare and Provision at the load
+boundary, never by a path of its own into a running agent.
 
 The ten surfaces by stage. On the path: Compose is stage 1, Live is stages 3 and 4, and
 Measure, Open a trace and Stage are stage 6. The five on the list side feed a stage
-rather than being a stage's page: Agents feeds stages 2 and 7, Models is the artifact
+rather than being a stage's page: Agents feeds stages 2 and 8, Models is the artifact
 side of stage 2, and Experiments and Record feed stage 6, as does the Experiment view,
 the detail surface Experiments opens into.
 

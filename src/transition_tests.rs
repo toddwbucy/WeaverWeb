@@ -144,6 +144,7 @@ async fn a_live_unload_ends_a_transition() {
                 turn: None,
                 kind: Some("unload".into()),
                 raw: json!({"kind": "unload", "run": "run-1", "wall_ms": 1, "payload": {"forced": false}}),
+                replayed: false,
             },
         })
         .await;
@@ -255,6 +256,7 @@ fn live(seq: u64, kind: &str) -> FromClient {
             turn: Some("t-1".into()),
             kind: Some(kind.into()),
             raw: json!({"kind": kind, "run": "run-1", "wall_ms": seq, "payload": {}}),
+            replayed: false,
         },
     }
 }

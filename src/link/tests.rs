@@ -127,6 +127,7 @@ pub(super) fn trace_event(seq: u64, kind: &str, payload: serde_json::Value) -> T
         turn: None,
         kind: Some(kind.into()),
         raw: json!({ "kind": kind, "run": "run-1", "wall_ms": WALL_MS + seq as i64, "payload": payload }),
+        replayed: false,
     }
 }
 

@@ -377,6 +377,16 @@ fn ns(events: &[TraceEvent]) -> Vec<u64> {
         .collect()
 }
 
+/// The `n` of every relayed record with the listener's verdict on it, in
+/// window order.
+fn verdicts(events: &[TraceEvent]) -> Vec<(u64, bool)> {
+    events
+        .iter()
+        .filter(|e| e.mark.is_none())
+        .filter_map(|e| e.raw["payload"]["n"].as_u64().map(|n| (n, e.replayed)))
+        .collect()
+}
+
 /// admin-con's own marks: the server's reconnect and link-loss marks are
 /// left out.
 fn marks(events: &[TraceEvent]) -> Vec<String> {
@@ -844,6 +854,25 @@ async fn a_server_restart_bounds_its_backfill_at_the_length() {
     assert_eq!(row.state_source.as_deref(), Some("event"), "{row:?}");
     let second = window(&lab, &id);
     assert_eq!(ns(&second), [26, 27, 28, 29, 30, 31]);
+    assert_eq!(
+        verdicts(&second),
+        [
+            (26, true),
+            (27, true),
+            (28, true),
+            (29, true),
+            (30, true),
+            (31, false)
+        ]
+    );
+    assert!(
+        second.iter().any(|e| e
+            .mark
+            .as_deref()
+            .is_some_and(|m| m.contains("backfill starts"))
+            && e.replayed),
+        "the backfill's mark is the replay's"
+    );
     assert!(
         marks(&second).iter().any(|m| m.contains("backfill starts")),
         "{:?}",
@@ -2415,6 +2444,7 @@ async fn a_record_completed_after_the_size_read_is_live() {
         .await;
     assert_eq!(row.state_source.as_deref(), Some("event"), "{row:?}");
     assert_eq!(ns(&window(&lab, &id)), [1, 2]);
+    assert_eq!(verdicts(&window(&lab, &id)), [(1, true), (2, false)]);
     assert!(marks(&window(&lab, &id)).is_empty());
     con.stop().await;
 }

@@ -414,6 +414,7 @@ fn load_event(seq: u64, reset: Option<serde_json::Value>) -> FromClient {
             turn: None,
             kind: Some("load".into()),
             raw: json!({"kind": "load", "run": "run-2", "wall_ms": 1, "payload": payload}),
+            replayed: false,
         },
     }
 }

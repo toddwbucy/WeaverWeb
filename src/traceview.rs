@@ -37,6 +37,14 @@ pub struct TraceEvent {
     pub turn: Option<String>,
     pub kind: Option<String>,
     pub raw: serde_json::Value,
+    /// **Whether the event was the replay's**: the listener's verdict
+    /// against the opening's boundary, set where it lands the frame
+    /// (`land_event` in `link::listener`) and never taken from admin-con's
+    /// flag. False for the server's own marks and wherever else an event is
+    /// built, since only the listener knows; a frame from a connector that
+    /// sends no such member reads it false, and the listener sets it.
+    #[serde(default)]
+    pub replayed: bool,
 }
 
 // ---------- server half: rings and broadcast ----------
@@ -122,6 +130,7 @@ impl TraceViews {
             turn: None,
             kind: None,
             raw: serde_json::Value::Null,
+            replayed: false,
         };
         self.ingest(agent, ev);
     }
@@ -169,6 +178,7 @@ pub(crate) fn parse_line(seq: u64, line: &str) -> TraceEvent {
                 turn: get("turn"),
                 kind: get("kind"),
                 raw,
+                replayed: false,
             }
         }
         Err(e) => TraceEvent {
@@ -178,6 +188,7 @@ pub(crate) fn parse_line(seq: u64, line: &str) -> TraceEvent {
             turn: None,
             kind: None,
             raw: serde_json::Value::String(line.to_owned()),
+            replayed: false,
         },
     }
 }

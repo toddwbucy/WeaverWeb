@@ -4367,7 +4367,7 @@ impl Inner {
         caught_up: bool,
         position: &Position,
         replayed: bool,
-        event: TraceEvent,
+        mut event: TraceEvent,
     ) -> Result<bool, Refusal> {
         // **The frame decides** (Spec 7.2): before `caught_up` an event is
         // the replay's, after it live. The boundary's offset rule and the
@@ -4379,6 +4379,10 @@ impl Inner {
         // leave every live event of the new generation looking like an
         // older generation's tail.
         let behind = !caught_up;
+        // **The window carries the verdict**, this one and no other: a mark
+        // rides the same frame and is the replay's where a record would be,
+        // and the event's own member, as admin-con sent it, is overwritten.
+        event.replayed = behind;
         // **Marks are held to the offset rule as records are**: a mark
         // carries the position relaying resumes at, never past the
         // boundary before `caught_up`.

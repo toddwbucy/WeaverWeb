@@ -268,7 +268,14 @@ pub enum FromClient {
         tail: Option<Position>,
     },
     /// One trace event from admin-con with its position and whether it
-    /// was relayed from behind the file's tail (Spec 7.2).
+    /// was relayed from behind the file's tail (Spec 7.2). **`replayed`
+    /// appears twice on the wire.** The frame's own flag is admin-con's
+    /// word, a check the listener logs against its verdict, which the
+    /// replay's end (`caught_up`) decides. The `replayed` member inside
+    /// `event` is the window's, set by the listener when it lands the
+    /// frame; its value on the wire carries nothing, admin-con leaving it
+    /// false, and `serde(default)` keeps a connector that omits it
+    /// readable.
     Event {
         position: Position,
         replayed: bool,

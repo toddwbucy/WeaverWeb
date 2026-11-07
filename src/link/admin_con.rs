@@ -1153,6 +1153,7 @@ fn mark_event(seq: u64, reason: String) -> TraceEvent {
         turn: None,
         kind: None,
         raw: serde_json::Value::Null,
+        replayed: false,
     }
 }
 
@@ -1194,6 +1195,7 @@ fn frame_of(item: Item, replayed: bool, seq: &mut u64) -> Option<FromClient> {
                     raw: serde_json::Value::String(
                         String::from_utf8_lossy(&line).trim_end().to_owned(),
                     ),
+                    replayed: false,
                 },
             };
             let frame = FromClient::Event {

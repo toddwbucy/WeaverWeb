@@ -1,4 +1,8 @@
-/* Weaver-Web pane grammar. Every value is a token from tokens.css, imported here. */
+/* Weaver-Web pane grammar. Every value is a token from tokens.css, imported here.
+   The server serves tokens.css and this file, without its import line, as
+   assets/surfaces/instrument.css, pinned byte for byte by a test in
+   src/surfaces/mod.rs. Regenerate it from the repository's root with:
+   { cat docs/design/system/tokens.css; sed '/^@import /d' docs/design/system/components/bundle.css; } > assets/surfaces/instrument.css */
 @import url("../tokens.css");
 *, *::before, *::after { box-sizing: border-box; }
 html, body { margin: 0; }
@@ -134,3 +138,21 @@ label { font-size: 12.6px; font-weight: 500; color: var(--dim); }
 .diagram .popup-head { fill: var(--inset); }
 .diagram .grid-line { stroke: var(--line-soft); }
 .diagram .hatch { fill: url(#hatch); }
+
+/* ---- served surfaces: rules the served pages need that no preview draws ---- */
+/* The page's title and lede (Workspace): the title in the title type, the lede in dim. */
+.workspace > h1 { margin: 0 0 var(--space-1); font: var(--type-title); }
+.workspace > .lede { margin: 0 0 var(--space-4); font: var(--type-lede); color: var(--dim); }
+/* A page of one short form, sign-in and enroll, narrows its workspace so the field is not stranded across the content width (Workspace). */
+.workspace.narrow { max-width: 560px; }
+/* The open-alert count is a status pill among the masthead's links, whose padding and underline would distort it (Masthead). */
+.masthead a.status { padding: 1px var(--space-2); border-bottom-width: 1px; }
+/* The body's padding is the pane's spacing, so its first and last child carry no margin of their own (Pane). */
+.pane > .body > :first-child { margin-top: 0; }
+.pane > .body > :last-child { margin-bottom: 0; }
+/* A table wider than its pane, Record's eight columns at phone width, scrolls inside the pane rather than being clipped (Pane). */
+.pane > .body.flush { overflow-x: auto; }
+/* A row's several actions are forms side by side in its cell (Controls). */
+td > form { display: inline-flex; gap: var(--space-2); align-items: center; margin: 0 var(--space-2) var(--space-1) 0; }
+/* A secret, the enrollment token, is typed in a password input, drawn as the text input is (Controls). */
+input[type=password] { height: var(--control-h); padding: 0 var(--space-2); border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--inset); }

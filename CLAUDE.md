@@ -227,7 +227,9 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
   load bound, the unload bound and a margin). Same trust rule as gate-con's. It reads the
   trace through the relay (`link::relay`: one request line, the header's identity, the
   whole-record digest), reports the trace door in its hello and in `door` frames, takes every
-  opening as an admission of the trace (boundary at the relay's first heartbeat, replay,
+  opening as an admission of the trace (boundary at the first position at or past the
+  header's `length`, or at the relay's first heartbeat under a header naming none, an earlier
+  heartbeat or the read's deadline ending it sooner; then replay,
   `show`, `caught_up`; only while no invocation is in flight), drains to a heartbeat before a
   verb, relays with replay and marked discontinuities, and runs verbs
   through `link::sudo_invoker`, the repository's one privileged invocation: `sudo -n
@@ -235,9 +237,16 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
   null, the child in its own session, never killed, and holding admin-con's one invocation
   slot across reconnections until it is reaped. **A conduit** (Spec 2.14, ruling 3, of
   2026-10-14): an orderly stop waits for that child within the grace and invokes nothing,
-  `unload` granted or not, and admin-con parses no refusal class of admin's. A writer that never
-  idles gives the relay no heartbeat, so an opening takes its boundary at 30 s and a drain
-  invokes at 10 s (`BOUNDARY_BOUND`, `DRAIN_BOUND`; `toddwbucy/WeaverAgent#88`). Its tests (`link::admin_con_tests`) run it against a fake
+  `unload` granted or not, and admin-con parses no refusal class of admin's. **The trace
+  header's `length`** (`toddwbucy/WeaverAgent#174`, read as optional so one admin-con serves
+  an older relay too) is the measure of an opening's boundary, from which the backfill's start
+  is taken (the first record boundary within `backfill_bytes` of it); the
+  drain before a verb stays on the heartbeat, since the contract places a reader's own act by
+  the trace's events and never by the length. A writer that never idles gives the relay no
+  heartbeat, so under a header naming no length an opening takes its boundary when its read's
+  deadline passes, 25 s after its start (the 30 s opening bound less the 5 s reserved for
+  verifying the server's position), and a
+  drain invokes at 10 s (`BOUNDARY_BOUND`, `VERIFY_RESERVE`, `DRAIN_BOUND`; `toddwbucy/WeaverAgent#88`). Its tests (`link::admin_con_tests`) run it against a fake
   relay (`link::fake_relay`) serving a temporary trace file, the real listener and a fake
   invoker, and
   `link::sudo_invoker_tests` against a fake `sudo` generated at test time and first on the

@@ -2231,6 +2231,9 @@ async fn a_second_registration_does_not_overwrite_the_firsts_configs() {
 /// **A teardown the store refused is reconciled**: the row still records
 /// the incarnation as connected, so the disconnected write is retried
 /// until it lands, and presence is not asserted for a socket that is gone.
+/// The reconciliation commits the row's write and only then takes the
+/// entry off its list, so the counter is waited for after the row, never
+/// asserted at once (#35).
 #[tokio::test]
 async fn a_teardown_the_store_refused_is_reconciled() {
     let Some(lab) = Lab::open().await else { return };
@@ -2254,7 +2257,14 @@ async fn a_teardown_the_store_refused_is_reconciled() {
         !a.gate.connected
     })
     .await;
-    assert_eq!(lab.listener.failed_teardowns(), 0);
+    let until = tokio::time::Instant::now() + SOON;
+    while lab.listener.failed_teardowns() != 0 {
+        assert!(
+            tokio::time::Instant::now() < until,
+            "the reconciled teardown never left the list"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
 }
 
 /// **The lock's session is monitored, and its loss halts the listener**:

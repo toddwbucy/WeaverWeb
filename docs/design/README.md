@@ -117,11 +117,11 @@ and sit under `system/`, laid out as the artifact keeps them:
 
 | path | what |
 | --- | --- |
-| `system/README.md` | the brand book: the first principle, the standing positions as mechanisms, color, type, spacing, the pane grammar, navigation across the seven stages, marks, controls |
+| `system/README.md` | the brand book: the first principle, the standing positions as mechanisms, color, type, spacing, the pane grammar, navigation across the eight stages, marks, controls |
 | `system/tokens.json` | the tokens: six themes (Slate the default, Graphite, Umber; Chalk, Mist, Paper), the type scale on the system stacks, spacing, radius, sizes |
 | `system/tokens.css` | the tokens of `tokens.json` as CSS custom properties, the file `components/bundle.css` imports: the six themes' color blocks as `palettes.md` states them, and the type, spacing, radius and size tokens |
 | `system/palettes.md` | the palette rulings, every hex and measured contrast pair, and the six themes in `instrument.css`'s shape |
-| `system/stages.md` | the seven stages pane by pane, each with its backing on 2026-11-06 |
+| `system/stages.md` | the eight stages pane by pane, each with its backing on 2026-11-07 |
 | `system/declare.md` | the Declare diagram's rules |
 | `system/components/` | the pane grammar's stylesheet (`bundle.css`) and one preview with guidelines per piece: Cover, Masthead, StageRail, Marks, Controls, Pane, Workspace, DeclareDiagram, ObservePane |
 

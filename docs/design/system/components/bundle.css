@@ -31,10 +31,10 @@ button, input, select, textarea { font: inherit; color: var(--fg); }
 /* ---- stage rail: the eight stages for one agent ---- */
 .rail { display: flex; align-items: stretch; height: var(--rail-h); padding: 0 var(--space-5);
   border-bottom: 1px solid var(--line); background: var(--panel); overflow-x: auto; }
-.rail a { display: inline-flex; align-items: center; gap: var(--space-2); padding: 0 var(--space-3);
+.rail a, .rail .step { display: inline-flex; align-items: center; gap: var(--space-2); padding: 0 var(--space-3);
   color: var(--dim); text-decoration: none; font-size: 13.8px; border-bottom: 2px solid transparent; white-space: nowrap; }
-.rail a.here { color: var(--fg); border-bottom-color: var(--accent); }
-.rail a + a::before { content: ""; width: 1px; height: 16px; background: var(--line); margin-right: var(--space-3); }
+.rail a.here, .rail .step.here { color: var(--fg); border-bottom-color: var(--accent); }
+.rail a + a::before, .rail .step + .step::before { content: ""; width: 1px; height: 16px; background: var(--line); margin-right: var(--space-3); }
 .rail .left { margin-left: auto; color: var(--dim); font-size: 12.6px; align-self: center; }
 
 /* The stage mark: a boxed numeral and the stage's name. */
@@ -149,6 +149,9 @@ label { font-size: 12.6px; font-weight: 500; color: var(--dim); }
 .workspace.narrow { max-width: 560px; }
 /* The open-alert count is a status pill among the masthead's links, whose padding and underline would distort it (Masthead). */
 .masthead a.status { padding: 1px var(--space-2); border-bottom-width: 1px; }
+/* The brand and the sign-out button keep their one line; at phone width the masthead's row wraps, its links to a second line, rather than running past the page's edge (Masthead). */
+.masthead .brand, .masthead .sign-out button { white-space: nowrap; }
+@media (max-width: 760px) { .masthead { flex-wrap: wrap; height: auto; min-height: var(--masthead-h); row-gap: 0; padding-block: var(--space-1); } }
 /* The body's padding is the pane's spacing, so its first and last child carry no margin of their own (Pane). */
 .pane > .body > :first-child { margin-top: 0; }
 .pane > .body > :last-child { margin-bottom: 0; }
@@ -164,3 +167,9 @@ label { font-size: 12.6px; font-weight: 500; color: var(--dim); }
 td > form { display: inline-flex; gap: var(--space-2); align-items: center; margin: 0 var(--space-2) var(--space-1) 0; }
 /* A secret, the enrollment token, is typed in a password input, drawn as the text input is (Controls). */
 input[type=password] { height: var(--control-h); padding: 0 var(--space-2); border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--inset); }
+/* At phone width a grid's columns stack, the main column first (Workspace). */
+@media (max-width: 760px) { .grid.two, .grid.three { grid-template-columns: 1fr; } }
+/* A decision pane's prompt is a dialog open in place, drawn as the pane's body and not as the browser's floating box (Pane). */
+.pane.decision dialog { position: static; display: block; width: auto; max-width: none; margin: 0; padding: 0; border: 0; background: transparent; color: inherit; }
+/* A turn's text fills its pane's width (Controls). */
+.pane textarea { width: 100%; }

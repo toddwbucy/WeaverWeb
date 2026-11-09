@@ -1,7 +1,10 @@
 {#- One agent's two connectors as the listener knows them, the page's own
-    and the fragment it re-fetches every 15 s. No inline script. -#}
-<ul>
-{%- for plane in planes %}
-  <li>{{ plane.connector }}: {{ plane.status }}</li>
-{%- endfor %}
-</ul>
+    and the fragment it re-fetches every 15 s: each a status mark whose word
+    says it, beside what the word does not say. No inline script. -#}
+<table>
+  <tbody>
+  {%- for plane in planes %}
+  <tr><th>{{ plane.connector }}</th><td><span class="status {{ plane.hue }}">{{ plane.word }}</span> <span class="note read">{{ plane.detail }}</span></td></tr>
+  {%- endfor %}
+  </tbody>
+</table>

@@ -1,82 +1,142 @@
 {% extends "instrument.html" %}
 {% block title %}{{ label }} - weaver-web{% endblock %}
+{% block rail %}
+{#- The agent's eight stages, Run current; the marks are not links until a
+    stage has a page of its own. -#}
+<nav class="rail" aria-label="Stages of {{ label }}">
+  {%- for stage in stages %}
+  <span class="step{% if stage.here %} here{% endif %}"><span class="stage"><b>{{ stage.number }}</b> {{ stage.name }}</span><span class="backing {{ stage.backing }}">{{ stage.backing }}</span></span>
+  {%- endfor %}
+  <span class="left">{{ left }}</span>
+</nav>
+{% endblock %}
 {% block body %}
-{#- One agent's register row, for a person holding a grant on it. No inline
-    script. -#}
+{#- One agent, for a person holding a grant on it: Run's panes in the main
+    column, Observe's in the side stack, each with its own stage mark. No
+    inline script. -#}
 <h1>{{ label }}</h1>
-<p class="lede">{{ agent_id }}; your roles: {{ roles }}</p>
-<section class="pane">
-  <header><h2>The agent</h2><span class="backing built">built</span><span class="source">the register row, and the listener's memory every 15 s</span></header>
-  <div class="body">
-<h3>Connectors</h3>
-<div id="planes" hx-get="/agents/{{ agent_id }}/availability" hx-trigger="every 15s" hx-swap="innerHTML">{% include "agent_planes.html" %}</div>
-<table>
-  <tbody>
-  <tr><th>Present</th><td>{% if present %}both planes connected{% else %}not present{% endif %}</td></tr>
-  <tr><th>Gate plane</th><td>{{ gate }}</td></tr>
-  <tr><th>Admin plane</th><td>{{ admin_plane }}</td></tr>
-  <tr><th>Ceiling</th><td>{{ ceiling }}</td></tr>
-  <tr><th>Trace door</th><td>{{ door }}</td></tr>
-  <tr><th>Load state</th><td>{{ load_state }}</td></tr>
-  {%- if !transition.is_empty() %}
-  <tr><th>Transition</th><td>{{ transition }}</td></tr>
+<p class="lede"><span class="mono">{{ agent_id }}</span>; your roles: {{ roles }}</p>
+<div class="grid two">
+<div class="stack">
+  {%- if let Some(prompt) = prompt %}
+  <section class="pane decision">
+    <header><span class="stage"><b>4</b> Observe</span><h2>A decision is yours</h2><span class="backing built">built</span><span class="source">the alert's prompt</span></header>
+    <div class="body">
+    <dialog open>
+      <p>{{ prompt.summary }}</p>
+      {% if prompt.options.is_empty() %}
+      <p>Your roles and the connection's ceiling carry no option here; a person holding them chooses.</p>
+      {% else %}
+      <div class="row">
+      {% for (option, label) in prompt.options %}
+      <form method="post" action="/agents/{{ agent_id }}/alerts/{{ prompt.alert_id }}/choose"><input type="hidden" name="option" value="{{ option }}"><button type="submit" class="verb">{{ label }}</button></form>
+      {% endfor %}
+      </div>
+      {% endif %}
+    </dialog>
+    </div>
+    <footer>Choosing does not acknowledge the alert: it stays until acknowledged.</footer>
+  </section>
   {%- endif %}
-  <tr><th>Tuple</th><td>{{ tuple }}</td></tr>
-  <tr><th>Constituents</th><td>{{ constituents }}</td></tr>
-  </tbody>
-</table>
-<p><a href="/agents/{{ agent_id }}/trace">The live trace view</a> (an event stream): {{ window }}.</p>
-{% if let Some(prompt) = prompt %}
-<dialog open>
-  <h2>A decision is yours</h2>
-  <p>{{ prompt.summary }}</p>
-  {% if prompt.options.is_empty() %}
-  <p>Your roles and the connection's ceiling carry no option here; a person holding them chooses.</p>
-  {% else %}
-  {% for (option, label) in prompt.options %}
-  <form method="post" action="/agents/{{ agent_id }}/alerts/{{ prompt.alert_id }}/choose"><input type="hidden" name="option" value="{{ option }}"><button type="submit">{{ label }}</button></form>
-  {% endfor %}
-  {% endif %}
-  <p>Choosing does not acknowledge the alert: it stays until acknowledged.</p>
-</dialog>
-{% endif %}
-<h3>Alerts</h3>
-{% if alerts.is_empty() %}
-<p>No alert on this agent.</p>
-{% else %}
-<table>
-  <thead><tr><th>Alert</th><th>About</th><th>From</th><th>Why</th><th>When</th><th></th></tr></thead>
-  <tbody>
-  {% for alert in alerts %}
-  <tr>
-    <td>{{ alert.kind }}{% if alert.open %} (open){% endif %}</td>
-    <td>{{ alert.subject }}</td>
-    <td>{{ alert.from }}</td>
-    <td>{{ alert.summary }}{% if !alert.detail.is_empty() %}<pre>{{ alert.detail }}</pre>{% endif %}</td>
-    <td>raised {{ alert.raised }}; {{ alert.occurrences }} time{% if alert.occurrences != 1 %}s{% endif %}, last {{ alert.last }}{% if !alert.restored.is_empty() %}; {{ alert.restored }}{% endif %}{% if !alert.acknowledged.is_empty() %}; {{ alert.acknowledged }}{% endif %}</td>
-    <td>{% if alert.open && can_ack %}<form method="post" action="/agents/{{ agent_id }}/alerts/{{ alert.alert_id }}/ack"><input type="hidden" name="version" value="{{ alert.version }}"><button type="submit">Acknowledge</button></form>{% endif %}</td>
-  </tr>
-  {% endfor %}
-  </tbody>
-</table>
-{% endif %}
-<h3>Verbs</h3>
-{% if forms.is_empty() %}
-<p>No verb your roles carry that the connection's ceiling grants.</p>
-{% else %}
-{% for verb in forms %}
-<form method="post" action="/agents/{{ agent_id }}/verb"><input type="hidden" name="verb" value="{{ verb }}"><button type="submit">{{ verb }}</button></form>
-{% endfor %}
-{% endif %}
-<h3>Turn</h3>
-{% if turn_form %}
-{% if shared %}
-<p>More than one person holds turn on this agent: your turns interleave with theirs in the agent's one conversation, and each of you reads the other's.</p>
-{% endif %}
-<form method="post" action="/agents/{{ agent_id }}/turn"><textarea name="text" rows="4" cols="60" required></textarea><button type="submit" class="primary">Place the turn</button></form>
-{% else %}
-<p>No turn: your roles do not carry turn on this agent, or gate-con is not connected.</p>
-{% endif %}
-  </div>
-</section>
+  <section class="pane">
+    <header><span class="stage"><b>3</b> Run</span><h2>Load state</h2><span class="backing built">built</span><span class="source">admin-con, <code>show</code> or the trace's event{% if !state_at.is_empty() %}, {{ state_at }}{% endif %}</span></header>
+    <div class="body flush">
+    <table>
+      <tbody>
+      <tr><th>Load state</th><td>{{ load_state }}</td></tr>
+      {%- if !transition.is_empty() %}
+      <tr><th>Transition</th><td>{{ transition }}</td></tr>
+      {%- endif %}
+      <tr><th>Tuple</th><td class="mono">{{ tuple }}</td></tr>
+      <tr><th>Constituents</th><td class="mono">{{ constituents }}</td></tr>
+      <tr><th>Ceiling</th><td class="mono">{{ ceiling }}</td></tr>
+      <tr><th>Trace door</th><td>{{ door }}</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <footer>The row's facts, each with its own date. Nothing here is inferred from the link being up.</footer>
+  </section>
+  <section class="pane">
+    <header><span class="stage"><b>3</b> Run</span><h2>Verbs</h2><span class="backing built">built</span><span class="source">admin-con, the ceiling it declared</span></header>
+    <div class="body row">
+    {%- for v in verbs %}
+    {%- match v.why %}
+    {%- when None %}
+    <form method="post" action="/agents/{{ agent_id }}/verb"><input type="hidden" name="verb" value="{{ v.verb }}"><button type="submit" class="verb">{{ v.verb }}</button></form>
+    {%- when Some with (why) %}
+    <span class="row"><button type="button" class="verb" disabled>{{ v.verb }}</button><span class="note">{{ why }}</span></span>
+    {%- endmatch %}
+    {%- endfor %}
+    </div>
+    {%- if offered %}
+    <footer>A verb is asked of admin-con and answered on a page of its own; the box's own rule decides last.</footer>
+    {%- else %}
+    <footer>No verb your roles carry that the connection's ceiling grants.</footer>
+    {%- endif %}
+  </section>
+  <section class="pane">
+    <header><span class="stage"><b>3</b> Run</span><h2>Turn</h2><span class="backing built">built</span><span class="source">gate-con</span></header>
+    <div class="body">
+    {% if turn_form %}
+    <form method="post" action="/agents/{{ agent_id }}/turn" class="field">
+      <label for="turn-text">Your turn{% if shared %}. More than one person holds turn on this agent: your turns interleave with theirs in the agent's one conversation, and each of you reads the other's.{% endif %}</label>
+      <textarea id="turn-text" name="text" rows="4" required></textarea>
+      <div class="row"><button type="submit" class="verb primary">Place the turn</button></div>
+    </form>
+    {% else %}
+    <p>No turn: your roles do not carry turn on this agent, or gate-con is not connected.</p>
+    {% endif %}
+    </div>
+    <footer>A turn goes to gate-con as your held ask and is answered on a page of its own; its text is carried in the frame and kept in no record or log line.</footer>
+  </section>
+</div>
+<div class="stack">
+  <section class="pane">
+    <header><span class="stage"><b>4</b> Observe</span><h2>Connectors</h2><span class="backing built">built</span><span class="source">the listener's memory, every 15 s</span></header>
+    <div class="body flush">
+    <div id="planes" hx-get="/agents/{{ agent_id }}/availability" hx-trigger="every 15s" hx-swap="innerHTML">{% include "agent_planes.html" %}</div>
+    <table>
+      <tbody>
+      <tr><th>Present</th><td>{% if present %}both planes connected{% else %}not present{% endif %}</td></tr>
+      <tr><th>Gate plane</th><td>{{ gate }}</td></tr>
+      <tr><th>Admin plane</th><td>{{ admin_plane }}</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <footer>The connectors re-fetched every 15 s; the planes as the register holds them.</footer>
+  </section>
+  <section class="pane">
+    <header><span class="stage"><b>4</b> Observe</span><h2>Alerts</h2><span class="backing built">built</span><span class="source"><code>store::alerts</code></span></header>
+    {% if alerts.is_empty() %}
+    <div class="body"><p>No alert on this agent.</p></div>
+    {% else %}
+    <div class="body flush">
+    <table>
+      <thead><tr><th>Alert</th><th>About</th><th>From</th><th>Why</th><th>When</th><th></th></tr></thead>
+      <tbody>
+      {% for alert in alerts %}
+      <tr>
+        <td><span class="mono">{{ alert.kind }}</span> {% if alert.open %}<span class="status fail">open</span>{% else %}<span class="status ok">acknowledged</span>{% endif %}</td>
+        <td>{{ alert.subject }}</td>
+        <td>{{ alert.from }}</td>
+        <td>{{ alert.summary }}{% if !alert.detail.is_empty() %}<pre class="raw">{{ alert.detail }}</pre>{% endif %}</td>
+        <td>raised {{ alert.raised }}; {{ alert.occurrences }} time{% if alert.occurrences != 1 %}s{% endif %}, last {{ alert.last }}{% if !alert.restored.is_empty() %}; {{ alert.restored }}{% endif %}{% if !alert.acknowledged.is_empty() %}; {{ alert.acknowledged }}{% endif %}</td>
+        <td>{% if alert.open && can_ack %}<form method="post" action="/agents/{{ agent_id }}/alerts/{{ alert.alert_id }}/ack"><input type="hidden" name="version" value="{{ alert.version }}"><button type="submit">Acknowledge</button></form>{% endif %}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% endif %}
+    <footer>The alerts as this page loaded them. Acknowledging, an operator's, takes the version read; an alert changed since is refused as stale.</footer>
+  </section>
+  <section class="pane">
+    <header><span class="stage"><b>4</b> Observe</span><h2>Live trace</h2><span class="backing built">built</span><span class="source">admin-con, through the listener's window</span></header>
+    <div class="body">
+    <p><a href="/agents/{{ agent_id }}/trace">The live trace view</a>, an event stream from admin-con through the listener.</p>
+    </div>
+    <footer>This is {{ window }}.</footer>
+  </section>
+</div>
+</div>
 {% endblock %}

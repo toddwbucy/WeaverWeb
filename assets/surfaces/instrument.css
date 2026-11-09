@@ -274,5 +274,5 @@ input[type=password] { height: var(--control-h); padding: 0 var(--space-2); bord
 .pane textarea { width: 100%; }
 /* A stream row's time is the trace record's `wall_ms` as it came, thirteen digits; a monospace digit is 0.6em, so its column is 8em (ObservePane). */
 .stream li { grid-template-columns: 56px 8em 1fr; }
-/* The Live trace pane bounds its stream, which holds what the window sends, up to the ring's 10 000 events, and scrolls it within the pane (ObservePane). */
+/* The Live trace pane bounds its stream, which holds what the window holds, at most the ring's 10,000 events, and scrolls it within the pane (ObservePane). */
 .pane .stream { max-height: 60vh; overflow-y: auto; }

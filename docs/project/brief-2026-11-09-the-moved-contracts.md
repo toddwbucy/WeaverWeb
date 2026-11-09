@@ -3,19 +3,22 @@
 The second stacked act. Two WeaverAgent rulings moved the door contracts under the
 connectors, and the cutover (begun 2026-11-08) puts gate-con and admin-con on Olympus
 within days. Before they stand there, the repository's mirrors and readers meet the
-contracts as they are today. Two sub-PRs, each small, each closing or advancing one open
-issue; nothing here waits on the pane grammar stack.
+contracts as they are today. Three sub-PRs, each small: two each close or advance one
+open issue, and the third bounds the Live trace pane's list, a finding on the pane grammar
+stack that lands here.
 
 ## The stack
 
 - Stack branch `act/the-moved-contracts` from `main` (`f2487dd`), draft stack PR against
   `main`; this brief lands at `docs/project/brief-2026-11-09-the-moved-contracts.md` as
-  the stack's first commit. The pane grammar stack (#61) is independent: it touches
-  templates, the stylesheet and `reading.rs`; this one touches `adapters/gate.rs`, the
-  connectors' tests and the Spec's section 9. When `main` moves under this stack, the stack
-  branch merges `main` in.
+  the stack's first commit. The pane grammar stack (#61) touches templates, the
+  stylesheet and `reading.rs`; sub-PRs 1 and 2 touch `adapters/gate.rs`, the connectors'
+  tests and the Spec's section 9. When `main` moves under this stack, the stack branch
+  merges `main` in; it did once #61 reached `main`, and sub-PR 3 builds on the trace module
+  that brought.
 - Sub-PR branches from the stack's head, each a draft against the stack branch:
-  `act/the-moved-contracts-1-the-gate-line-bound`, `act/the-moved-contracts-2-the-unrecovered-call`.
+  `act/the-moved-contracts-1-the-gate-line-bound`, `act/the-moved-contracts-2-the-unrecovered-call`,
+  `act/the-moved-contracts-3-the-trace-list-bound`.
 - Working rules as before: ASCII; no box fact, path, posture or sudoers text; nothing in
   the store, the link's frames, the register or the surfaces changes; one target directory
   per worktree; the gates chained with `&&` into the push; the full suite with
@@ -84,6 +87,27 @@ refuse either, and that a conversation render the block as the model's attempted
   with one new row: "a trace kind or content block this repository does not know passes
   through the relay, the window and the live view, and raises nothing", the test and its
   perturbation. `Refs #40` (the planner closes it after the operator's ruling on the alert).
+
+## Sub-PR 3: the Live trace pane holds what the window holds
+
+Codex's review of stack #61 on 2026-11-09 found that a connected live view keeps receiving
+live events after the window's snapshot, and the trace module (`assets/surfaces/trace.js`)
+kept every row, so a tab left open on a busy agent grew the page without bound. The ring
+bounds the window at `RING_CAP` (10,000, `src/traceview.rs`). The operator ruled that #61
+merges as reviewed and the bound lands here.
+
+- **The rule:** the list holds what the window holds, not everything the window has sent.
+  The module names the ring's cap once, `RING_CAP` at its top, and after each row removes
+  the oldest past it, as the ring evicts. `pre.raw` stays the last event. This sub-PR
+  changes one surface asset, the module, which the working rules above otherwise leave
+  alone.
+- **The pin:** the reading test that reads the module asserts that its `RING_CAP` is
+  `traceview::RING_CAP` and that this is the 10,000 the docs state; perturbation: change
+  either one.
+- **Docs:** Spec 2.13's live-view clause, the ObservePane README and the stylesheet's
+  comment on `.pane .stream` say the list holds at most the ring's 10,000 events, the oldest
+  leaving as they leave the window; the section 9 script-policy row names the pin.
+- **Measured** on the stand-in: 10,005 events sent, 10,000 held, the first seq 6.
 
 ## What this act does not do
 

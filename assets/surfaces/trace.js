@@ -5,6 +5,10 @@
 // says (`mark`, `replayed`), and a member an event does not carry is an
 // `absent` pill, never a blank. The stream's URL is the list's `data-stream`.
 
+// The ring's cap, `RING_CAP` in `traceview.rs`: the pane shows what the
+// window holds, the oldest row leaving as the ring evicts it.
+const RING_CAP = 10000;
+
 const list = document.querySelector("ul.stream[data-stream]");
 
 const node = (tag, className, text) => {
@@ -48,8 +52,7 @@ if (list) {
   // An event and a mark are JSON; the server's own lag mark is a sentence.
   // The pane bounds the list; a reader at its end is kept at the newest row,
   // a reader scrolled back is left where they are. Only the list scrolls,
-  // never the page, and no row is dropped: the list holds what the window
-  // sends.
+  // never the page, and the list holds what the window holds.
   const take = (message) => {
     let event;
     try {
@@ -59,6 +62,7 @@ if (list) {
     }
     const atEnd = list.scrollTop + list.clientHeight >= list.scrollHeight - 1;
     list.append(row(event));
+    while (list.children.length > RING_CAP) list.firstElementChild.remove();
     if (atEnd) list.scrollTop = list.scrollHeight;
     raw.textContent = message.data;
   };

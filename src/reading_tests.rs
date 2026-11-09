@@ -227,6 +227,58 @@ async fn a_verb_not_offered_is_disabled_with_why_and_never_absent() {
     );
 }
 
+/// **The Live trace pane reads its stream through the trace module**
+/// (Spec 2.13): the module is served as JavaScript, under 4 KiB, under the
+/// script policy; the agent page carries the pane's list naming the agent's
+/// own stream in `data-stream`, and every script on the page is a file of
+/// this binary's, the trace module among them, none inline. Perturbation:
+/// drop the attribute, and the list is not found.
+#[tokio::test]
+async fn the_live_trace_pane_reads_its_stream_through_the_module() {
+    let Some((rig, _, karl, _, _, session)) = granted().await else {
+        return;
+    };
+    let (status, headers, module) =
+        send_as(&rig.app, "GET", "/assets/surfaces/trace.js", None, &session).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        headers.get(header::CONTENT_TYPE).unwrap(),
+        "text/javascript; charset=utf-8"
+    );
+    assert_eq!(
+        headers.get(header::CONTENT_SECURITY_POLICY).unwrap(),
+        "script-src 'self'"
+    );
+    assert!(module.len() < 4096, "{} bytes", module.len());
+    assert!(module.contains("new EventSource(list.dataset.stream)"));
+
+    let (status, headers, page) =
+        send_as(&rig.app, "GET", &format!("/agents/{karl}"), None, &session).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        headers.get(header::CONTENT_SECURITY_POLICY).unwrap(),
+        "script-src 'self'"
+    );
+    assert!(
+        page.contains(&format!(
+            r#"<ul class="stream" data-stream="/agents/{karl}/trace"></ul>"#
+        )),
+        "the pane's list names the agent's stream: {page}"
+    );
+    let scripts: Vec<&str> = page.split("<script").skip(1).collect();
+    assert!(
+        scripts
+            .iter()
+            .any(|tag| tag.starts_with(r#" type="module" src="/assets/surfaces/trace.js">"#)),
+        "the trace module is loaded: {page}"
+    );
+    for script in scripts {
+        let (tag, rest) = script.split_once('>').unwrap();
+        assert!(tag.contains(" src=\"/assets/surfaces/"), "{tag}");
+        assert!(rest.starts_with("</script>"), "an inline script: {rest}");
+    }
+}
+
 /// The live view's stream, opened under `session`.
 async fn open(rig: &Rig, agent: &str, session: &str) -> axum::body::BodyDataStream {
     let response = rig

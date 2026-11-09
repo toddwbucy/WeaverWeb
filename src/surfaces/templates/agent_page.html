@@ -131,12 +131,14 @@
     <footer>The alerts as this page loaded them. Acknowledging, an operator's, takes the version read; an alert changed since is refused as stale.</footer>
   </section>
   <section class="pane">
-    <header><span class="stage"><b>4</b> Observe</span><h2>Live trace</h2><span class="backing built">built</span><span class="source">admin-con, through the listener's window</span></header>
-    <div class="body">
-    <p><a href="/agents/{{ agent_id }}/trace">The live trace view</a>, an event stream from admin-con through the listener.</p>
+    <header><span class="stage"><b>4</b> Observe</span><h2>Live trace</h2><span class="backing built">built</span><span class="source">through admin-con's relay &middot; door {{ door }} &middot; boundary not in the register</span></header>
+    <div class="body flush">
+    <ul class="stream" data-stream="/agents/{{ agent_id }}/trace"></ul>
+    <pre class="raw">no event received</pre>
     </div>
-    <footer>This is {{ window }}.</footer>
+    <footer>An event stream of <span class="window">{{ window }}</span>. The session and the grant are re-checked every 15 s: <span class="state">the stream closes at the first failure and says why here</span>. <a href="/agents/{{ agent_id }}/trace">The stream itself</a>.</footer>
   </section>
 </div>
 </div>
+<script type="module" src="/assets/surfaces/trace.js"></script>
 {% endblock %}

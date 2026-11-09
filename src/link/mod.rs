@@ -36,7 +36,7 @@ mod admin_con_tests;
 #[cfg(test)]
 mod client_tests;
 #[cfg(test)]
-mod fake_relay;
+pub(crate) mod fake_relay;
 #[cfg(test)]
 mod server_asks_tests;
 #[cfg(test)]

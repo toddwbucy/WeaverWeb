@@ -24,7 +24,9 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
 
-const RING_CAP: usize = 10_000;
+/// The window's bound, events per agent; the trace module's own copy
+/// (`assets/surfaces/trace.js`) is pinned to it.
+pub(crate) const RING_CAP: usize = 10_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TraceEvent {

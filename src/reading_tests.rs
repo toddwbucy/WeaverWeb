@@ -251,6 +251,13 @@ async fn the_live_trace_pane_reads_its_stream_through_the_module() {
     );
     assert!(module.len() < 4096, "{} bytes", module.len());
     assert!(module.contains("new EventSource(list.dataset.stream)"));
+    // The pane holds what the window holds: the module's cap is the ring's,
+    // which the docs state as 10,000.
+    assert_eq!(crate::traceview::RING_CAP, 10_000);
+    assert!(
+        module.contains(&format!("const RING_CAP = {};", crate::traceview::RING_CAP)),
+        "the module's cap is the ring's"
+    );
 
     let (status, headers, page) =
         send_as(&rig.app, "GET", &format!("/agents/{karl}"), None, &session).await;

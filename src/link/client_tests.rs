@@ -9,7 +9,7 @@ use super::frames::{FromClient, LineReader, Plane, Refusal, ToClient};
 use super::gate_con::{self, GateConConfig};
 use super::listener::{Listener, TurnError};
 use super::tests::{Lab, SILENCE, SOON, lab_config, operator};
-use crate::adapters::gate::{CLOSE_BOUND, GateClose};
+use crate::adapters::gate::{self, CLOSE_BOUND, GateClose, GateError, LINE_BOUND};
 use crate::store::AgentId;
 use serde_json::json;
 use std::path::{Path, PathBuf};
@@ -336,7 +336,8 @@ async fn gate_con_relays_a_turn_and_each_gate_failure_as_its_typed_fault() {
             "{text}"
         );
     }
-    let long = "x".repeat(40 * 1024);
+    // The text alone is the bound, so its request line is past it.
+    let long = "x".repeat(LINE_BOUND);
     assert_eq!(
         fault_kind(turn(&lab.listener, &id, &long).await),
         "line_too_long"
@@ -355,6 +356,20 @@ async fn gate_con_relays_a_turn_and_each_gate_failure_as_its_typed_fault() {
     assert!(row.tuple.is_none(), "gate-con reports no tuple");
     assert!(row.load_state.is_none(), "gate-con reports no load state");
     con.stop().await;
+}
+
+/// **The gate's request line bound is 49,041 octets**, the organ
+/// envelope's capacity (`weaver-gate-world-contract` sections 2 and 5): a
+/// request line of exactly that many octets is built, and one octet more is
+/// refused before any dial. `{"text":""}` is 11 octets of the line.
+#[test]
+fn the_gate_request_line_bound_is_49041_octets() {
+    let at = gate::request_line(&"x".repeat(49_041 - 11)).expect("a line at the bound is built");
+    assert_eq!(at.len(), 49_041);
+    match gate::request_line(&"x".repeat(49_042 - 11)) {
+        Err(GateError::LineTooLong(n)) => assert_eq!(n, 49_042),
+        other => panic!("a line one octet past the bound is refused, got {other:?}"),
+    }
 }
 
 /// **A revoked credential retries at the cap and never faster, and gate-con

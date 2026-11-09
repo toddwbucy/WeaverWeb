@@ -251,6 +251,13 @@ async fn the_live_trace_pane_reads_its_stream_through_the_module() {
     );
     assert!(module.len() < 4096, "{} bytes", module.len());
     assert!(module.contains("new EventSource(list.dataset.stream)"));
+    // The pane holds what the window holds: the module's cap is the ring's,
+    // which the docs state as 10,000.
+    assert_eq!(crate::traceview::RING_CAP, 10_000);
+    assert!(
+        module.contains(&format!("const RING_CAP = {};", crate::traceview::RING_CAP)),
+        "the module's cap is the ring's"
+    );
 
     let (status, headers, page) =
         send_as(&rig.app, "GET", &format!("/agents/{karl}"), None, &session).await;
@@ -707,4 +714,196 @@ async fn a_mark_behind_the_boundary_is_replayed_and_the_servers_marks_are_not() 
         false,
         "{read}"
     );
+}
+
+/// Poll `cond` until it holds, or fail naming `what`, within ten seconds.
+async fn eventually(what: &str, cond: impl Fn() -> bool) {
+    let until = tokio::time::Instant::now() + Duration::from_secs(10);
+    while !cond() {
+        assert!(tokio::time::Instant::now() < until, "never {what}");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/// One trace record as a line of the file, built from its JSON.
+fn line_of(record: &serde_json::Value) -> String {
+    format!("{record}\n")
+}
+
+/// The trace's own state on the row: what a lifecycle event writes.
+fn row_state(row: &crate::link::register::Agent) -> serde_json::Value {
+    serde_json::json!({
+        "load_state": row.load_state, "load_state_at": row.load_state_at,
+        "state_source": row.state_source, "tuple": row.tuple,
+        "tuple_at": row.tuple_at, "tuple_source": row.tuple_source,
+        "in_transition_at": row.in_transition_at,
+    })
+}
+
+/// **A trace kind or content block this repository does not know passes
+/// through the relay, the window and the live view, and raises nothing**
+/// (Spec 2.13; `toddwbucy/WeaverAgent#136`, issue #40): karl's admin-con,
+/// run in-process on its real config against a fake relay serving a
+/// temporary trace file, relays a `model.unrecovered_call` record and a
+/// `message.assistant` record whose content holds an `unrecovered_call`
+/// block, both written after the opening. The window carries both whole
+/// and live, the live view sends them whole, the connection is never
+/// refused (the server acknowledges through the file's end, admin-con is
+/// admitted once), no alert is raised and no operations-log line written,
+/// and the row's load state and tuple are unchanged, since neither is a
+/// lifecycle event.
+///
+/// Perturbation: refuse at the listener a kind outside the ones this
+/// repository reads, or turn a record holding a content block of a type it
+/// does not know into a mark where admin-con parses it, and the window and
+/// the view lose the record.
+#[tokio::test]
+async fn an_unrecovered_call_passes_the_relay_the_window_and_the_live_view() {
+    use crate::link::admin_con::{self, AdminConConfig, NoVerbs};
+    use crate::link::client::{Backoff, LinkStatus};
+    use crate::link::fake_relay::FakeRelay;
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::sync::Arc;
+
+    let Some(rig) = rig().await else { return };
+    let s = rig.store().clone();
+    let (_, ada_session) = admin(&rig.app, &s, &mut authenticator(), "ada").await;
+    let (karl, handles) = rig.register(&ada_session, "box-a", "karl").await;
+    let (_, _, config) = rig.take(&handles[1], &ada_session).await;
+    let (bea, session) = signed_in(&rig.app, &s, &mut authenticator(), "bea").await;
+    let granted = host::grant_add(&s, &bea, "observer", Some(&karl), None).await;
+    assert!(granted.ok, "{}", granted.value);
+    let id: crate::store::AgentId = karl.parse().unwrap();
+
+    // The run's file, its relay, and admin-con's config as the install
+    // completes it: the three box facts, here a temporary directory's.
+    let dir = tempfile::tempdir().unwrap();
+    let trace = dir.path().join("trace.ndjson");
+    let output = serde_json::json!({
+        "kind": "model.output", "run": "run-1", "turn": "turn-1",
+        "wall_ms": 1_790_000_000_000i64, "payload": {"tokens": 41}
+    });
+    std::fs::write(&trace, line_of(&output)).unwrap();
+    let mut relay = FakeRelay::new(&trace);
+    relay.start();
+    let admin_log = relay.socket.with_file_name("admin.log");
+    std::fs::write(&admin_log, "").unwrap();
+    let path = dir.path().join("admin-con.toml");
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&path)
+        .unwrap();
+    write!(
+        file,
+        "{config}\ntrace_socket = {}\nweaver_admin = {}\nadmin_log = {}\n",
+        toml::Value::String(relay.socket.display().to_string()),
+        toml::Value::String("/nonexistent/weaver-admin".to_owned()),
+        toml::Value::String(admin_log.display().to_string()),
+    )
+    .unwrap();
+    drop(file);
+    let cfg = AdminConConfig::load(&path).unwrap();
+    let (stop, shutdown) = tokio::sync::watch::channel(false);
+    let (status_tx, mut status) = tokio::sync::watch::channel(LinkStatus::default());
+    let backoff = Backoff {
+        base: Duration::from_millis(20),
+        cap: Duration::from_millis(400),
+    };
+    let con = tokio::spawn(async move {
+        admin_con::run(cfg, Arc::new(NoVerbs), None, backoff, shutdown, &status_tx).await
+    });
+    tokio::time::timeout(Duration::from_secs(10), status.wait_for(|s| s.admitted))
+        .await
+        .expect("admin-con is admitted")
+        .unwrap();
+
+    let window = || rig.listener.windows().snapshot(&karl).unwrap_or_default();
+    let has = |kind: &str| window().iter().any(|e| e.kind.as_deref() == Some(kind));
+    // The record written before the opening is the replay's; the two after
+    // it are live.
+    eventually("the opening's record", || has("model.output")).await;
+    let mut stream = open(&rig, &karl, &session).await;
+    until(&mut stream, "model.output", Duration::from_secs(2)).await;
+    let before = row_state(&s.agent(&id).await.unwrap().unwrap());
+
+    let fragment = "<tool_call>{\"name\": \"search\", \"arguments\": {\"q\": \"wea";
+    let unrecovered = serde_json::json!({
+        "kind": "model.unrecovered_call", "run": "run-1", "turn": "turn-1",
+        "wall_ms": 1_790_000_000_100i64,
+        "payload": {
+            "fragment": fragment,
+            "reason": {"case": "unclosed"},
+            "grammar": {"family": "hermes", "open": "<tool_call>", "close": "</tool_call>"}
+        }
+    });
+    let assistant = serde_json::json!({
+        "kind": "message.assistant", "run": "run-1", "turn": "turn-1",
+        "wall_ms": 1_790_000_000_200i64,
+        "payload": {"content": [
+            {"type": "text", "text": "Let me look that up."},
+            {"type": "unrecovered_call", "fragment": fragment}
+        ]}
+    });
+    let mut f = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&trace)
+        .unwrap();
+    f.write_all(format!("{}{}", line_of(&unrecovered), line_of(&assistant)).as_bytes())
+        .unwrap();
+    f.sync_all().unwrap();
+    drop(f);
+    let end = std::fs::metadata(&trace).unwrap().len();
+
+    eventually("the assistant's message", || has("message.assistant")).await;
+    eventually("acknowledged through the end", || {
+        rig.listener.acknowledged(&id).map(|p| p.offset) == Some(end)
+    })
+    .await;
+    for record in [&unrecovered, &assistant] {
+        let kind = record["kind"].as_str().unwrap();
+        let held: Vec<_> = window()
+            .into_iter()
+            .filter(|e| e.kind.as_deref() == Some(kind))
+            .collect();
+        assert_eq!(held.len(), 1, "{kind} once in the window");
+        assert_eq!(&held[0].raw, record, "{kind} whole in the window");
+        assert!(held[0].mark.is_none(), "{kind} is a record, not a mark");
+        assert!(!held[0].replayed, "{kind} live");
+    }
+    let (read, _) = until(&mut stream, "message.assistant", Duration::from_secs(2)).await;
+    let events = sent(&read);
+    for record in [&unrecovered, &assistant] {
+        let kind = record["kind"].as_str().unwrap();
+        let found: Vec<_> = events.iter().filter(|e| e["kind"] == kind).collect();
+        assert_eq!(found.len(), 1, "{kind} once in the view: {read}");
+        assert_eq!(&found[0]["raw"], record, "{kind} whole in the view");
+        assert_eq!(found[0]["replayed"], false, "{kind} live in the view");
+    }
+
+    // Refused by nothing and raising nothing: one admission, no mark of a
+    // reconnection, no alert, no line of the operations log, and the row's
+    // trace state as it stood.
+    assert_eq!(status.borrow().admissions, 1, "{:?}", status.borrow());
+    assert!(
+        window().iter().all(|e| e.mark.is_none()),
+        "no mark: {:?}",
+        window()
+    );
+    assert!(s.alerts_on(&id, 16).await.unwrap().is_empty());
+    assert!(
+        rig.operations_log().is_empty(),
+        "{:?}",
+        rig.operations_log()
+    );
+    assert_eq!(row_state(&s.agent(&id).await.unwrap().unwrap()), before);
+
+    let _ = stop.send(true);
+    tokio::time::timeout(Duration::from_secs(10), con)
+        .await
+        .expect("admin-con stops")
+        .unwrap()
+        .unwrap();
 }

@@ -82,9 +82,9 @@ pub(super) struct Counts {
 }
 
 /// The fake relay for one trace file.
-pub(super) struct FakeRelay {
+pub(crate) struct FakeRelay {
     _dir: tempfile::TempDir,
-    pub(super) socket: PathBuf,
+    pub(crate) socket: PathBuf,
     trace: PathBuf,
     timing: Timing,
     /// Whether the header names a birth time, as most filesystems report.
@@ -96,7 +96,7 @@ pub(super) struct FakeRelay {
 impl FakeRelay {
     /// A fake relay for the trace at `trace`, not yet running: the door is
     /// closed until `start`.
-    pub(super) fn new(trace: &Path) -> Self {
+    pub(crate) fn new(trace: &Path) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let socket = dir.path().join("trace.sock");
         Self {
@@ -118,7 +118,7 @@ impl FakeRelay {
 
     /// **A run starts**: the file at the trace's path is opened and held,
     /// and the door opens.
-    pub(super) fn start(&mut self) {
+    pub(crate) fn start(&mut self) {
         assert!(self.run.is_none(), "the relay already runs");
         let file = Arc::new(std::fs::File::open(&self.trace).unwrap());
         let _ = std::fs::remove_file(&self.socket);

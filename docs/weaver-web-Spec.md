@@ -1834,8 +1834,10 @@ it decides are stated here and in section 2.8, and the reasons are there.
   listener judged the replay's marked `replayed`, a mark with its reason,
   an absent member as an absent pill, and the view's closing reason in the
   pane's footer, the pane bounding the list and keeping the newest row in
-  view while the reader is at its end; it computes nothing the stream did
-  not send, and the stream itself is unchanged. The
+  view while the reader is at its end; a stream the browser reopened sends
+  the window again, and the pane shows it once, cleared at the window's
+  word that opens every connection; it computes nothing the stream did not
+  send, and the stream itself is unchanged. The
   identity is parsed to its shape first (400); an agent the person holds no
   grant on answers exactly as one that does not exist (404), page and view
   alike, so neither is an oracle for agent identities. The grant check

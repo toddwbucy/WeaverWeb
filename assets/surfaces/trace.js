@@ -64,7 +64,14 @@ if (list) {
   };
   stream.addEventListener("trace", take);
   stream.addEventListener("mark", take);
+  // The window's word opens every connection, and the stream sends the
+  // whole window after it. The browser reopens a dropped stream on its own,
+  // so a connection's start clears what the last one placed: the pane shows
+  // the window once, as this connection sends it.
+  const unread = raw.textContent;
   stream.addEventListener("window", (message) => {
+    list.replaceChildren();
+    raw.textContent = unread;
     said.textContent = message.data;
   });
   // The view's end, with its reason: the session or the grant ended. The

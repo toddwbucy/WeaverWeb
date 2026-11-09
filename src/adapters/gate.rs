@@ -7,9 +7,13 @@ use std::path::{Path, PathBuf};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
-/// The line bound, inclusive, excluding the delimiter (gate contract
-/// section 5; the number is the framework Spec's, mirrored here).
-pub const LINE_BOUND: usize = 32 * 1024;
+/// The request line's bound, inclusive, excluding the delimiter: 49,041
+/// octets, the organ envelope's exact capacity, since the line rides the
+/// 64 KiB envelope base64-encoded beside at most 147 octets of other
+/// members, which is why it is not a round number. The number is stated in
+/// `weaver-gate-Spec` section 4 and `weaver-gate-world-contract` section 2,
+/// mirrored here; the refusal is the contract's section 5.
+pub const LINE_BOUND: usize = 49_041;
 
 /// Defensive cap on the close line we will buffer. The contract bounds
 /// the request line, not the close; this is weaver-web's own guard

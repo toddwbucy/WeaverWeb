@@ -1452,7 +1452,9 @@ it decides are stated here and in section 2.8, and the reasons are there.
   drops the library the connectors never call. The browser's half is one
   vendored module doing the two ceremonies and nothing else, under 4 KiB and
   served from the surfaces' own asset route, and **the surfaces answer with
-  `Content-Security-Policy: script-src 'self'`**, carrying no inline script;
+  `Content-Security-Policy: script-src 'self'`**, carrying no inline script
+  or inline handler, every script a file of the binary's (htmx, the passkey
+  module and the trace module of the live view below);
   measured on 2026-10-08, htmx's own `hx-get` and `hx-post` hold under it in
   Chromium 153 and Firefox 156, its evaluating attributes (`hx-on`) being
   what no surface may use while it stands. **A person's name is
@@ -1825,7 +1827,17 @@ it decides are stated here and in section 2.8, and the reasons are there.
   `replayed` member, the listener's verdict against the opening's boundary
   (section 7.2), set from the replay's end and never from admin-con's flag:
   a mark behind the boundary is the replay's as a record is, and the
-  server's own two marks, a reconnection and a lost link, are live. The
+  server's own two marks, a reconnection and a lost link, are live. **The
+  agent page renders the stream in its Live trace pane** through the trace
+  module, a file of the binary that opens the stream the pane's list names
+  in `data-stream` and places each event's members as they came, a row the
+  listener judged the replay's marked `replayed`, a mark with its reason,
+  an absent member as an absent pill, and the view's closing reason in the
+  pane's footer, the pane bounding the list and keeping the newest row in
+  view while the reader is at its end; a stream the browser reopened sends
+  the window again, and the pane shows it once, cleared at the window's
+  word that opens every connection; it computes nothing the stream did not
+  send, and the stream itself is unchanged. The
   identity is parsed to its shape first (400); an agent the person holds no
   grant on answers exactly as one that does not exist (404), page and view
   alike, so neither is an oracle for agent identities. The grant check
@@ -3195,7 +3207,13 @@ with its own destination rather than a mode of a list beside it. Their
 destinations are the charter's section 3 and are not restated.
 
 **The surfaces serve their own assets from `/assets/surfaces/`**: the
-stylesheet `instrument.css`, the vendored htmx and the passkey module. Each
+stylesheet `instrument.css`, the vendored htmx, the passkey module and the
+trace module of section 2.13's live view, four assets. The
+stylesheet is the design system's: `docs/design/system/tokens.css` followed
+by `docs/design/system/components/bundle.css` without its import line, and
+nothing else, pinned byte for byte by a test in `src/surfaces/mod.rs`, so
+the served pages wear the pane grammar of PRD section 3.0 and the copy
+served cannot drift from the copy that is the record. Each
 is a file of the binary, each is served under section 2.13's
 `Content-Security-Policy: script-src 'self'`, and no other asset route
 stands.
@@ -4539,6 +4557,9 @@ missing while it was relaying.
 | an absent surprisal renders as absent | perturbation: zero-fill, the view is wrong |
 | the position is stored at ingest | perturbation: after ingest, alter the summary's counts and reread, the stored position is unchanged |
 | an uncertified diagnostic record is not drawn | perturbation: drop the outcome check, an unknown run renders |
+| the served stylesheet is the design system's and every served page wears the frame | the byte-for-byte pin `the_stylesheet_is_the_design_systems` in `src/surfaces/mod.rs`, perturbation: append a rule to `bundle.css` without regenerating `instrument.css`, and the pin fails "has drifted"; and `assert_framed` (`src/surfaces/mod.rs`) in each page's test, perturbation: drop `workspace` from the base template's `main`, and 94 tests fail, every page's among them, each on the frame's assertion |
+| the agent page carries the eight stages in order with Run current, offers or disables every lifecycle verb and never hides one, and says each connector's status in a word | tests in `src/reading_tests.rs`, `src/alerts_tests.rs` and `src/surfaces/reading.rs`: drop a stage from the rail's table, or swap two, and `the_agent_page_carries_the_eight_stages_with_run_current` fails on the order; change a stage's backing in `stages.md` without the table, and `the_rails_stages_are_stages_md` fails; hide the verbs not offered, and `a_verb_not_offered_is_disabled_with_why_and_never_absent` finds them absent; render a connector's hue without its word, and `the_agents_connectors_show_last_heard_and_the_cut` fails |
+| every script a served page runs is a file of this binary's, none inline, and the Live trace pane reads its stream through the trace module | `the_live_trace_pane_reads_its_stream_through_the_module` in `src/reading_tests.rs` and `the_module_is_small_and_the_page_has_no_inline_script` in `src/passkeys_tests.rs`: drop the pane list's `data-stream`, and the list naming the agent's stream is not found; put an inline script in the agent page or the enrollment page, and the page's script check finds it. **Measured in the browser on 2026-11-07**, headless Chromium 154, against a stand-in and not the server: a local server answering with the agent page the server rendered (dumped from that test), the repository's assets and the policy's header, and a stream in the server's format: an inline script and an inline `onerror` handler put in the Live trace pane were both refused by `script-src 'self'` and reported, neither ran, and the trace module ran beside them and rendered every event |
 | no surface writes a position or a run | compile-fail: a doctest constructing a recorded-table writer from an authoring path does not compile |
 | an authored edit against a stale version refuses | perturbation: drop the version check, the second edit silently wins |
 | an authored row names its author or names none | perturbation: default the null to the operator, a row nobody can attribute reads as attributed and is uncorrectable |

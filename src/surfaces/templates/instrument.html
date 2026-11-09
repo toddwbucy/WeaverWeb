@@ -19,7 +19,7 @@
     {%- else %}
     <a href="/agents"{% if here == "agents" %} class="here"{% endif %}>Agents</a>
     {%- if chrome.open_alerts > 0 %}
-    <a href="/agents" class="alerts">{{ chrome.open_alerts }} open alert{% if chrome.open_alerts != 1 %}s{% endif %}</a>
+    <a href="/agents" class="status fail">{{ chrome.open_alerts }} open alert{% if chrome.open_alerts != 1 %}s{% endif %}</a>
     {%- endif %}
     <a href="/passkeys"{% if here == "passkeys" %} class="here"{% endif %}>Passkeys</a>
     {%- if admin %}
@@ -27,14 +27,19 @@
     <a href="/admin/grants"{% if here == "grants" %} class="here"{% endif %}>Grants</a>
     <a href="/admin/agents"{% if here == "register" %} class="here"{% endif %}>Register</a>
     {%- endif %}
-    <span class="who">{{ who }}</span>
+    {#- The highest role the masthead names is the server-wide one, admin;
+        a person's roles on an agent are per agent, on that agent's page. -#}
+    <span class="who">{{ who }}{% if admin %} &middot; admin{% endif %}</span>
     <form method="post" action="/sign-out" class="sign-out"><button type="submit">Sign out</button></form>
     {%- endif %}
   </nav>
   {%- if !who.is_empty() %}
   <div id="availability" hx-get="/availability" hx-trigger="every 15s" hx-swap="innerHTML">{% include "availability_banners.html" %}</div>
   {%- endif %}
-  <main class="{% block mainclass %}{% endblock %}">
+  {#- The stage rail, between the masthead and the workspace, on a page
+      about one agent; empty elsewhere. -#}
+  {% block rail %}{% endblock %}
+  <main class="workspace{% block mainclass %}{% endblock %}">
   {% block body %}{% endblock %}
   </main>
   {%- if !who.is_empty() %}

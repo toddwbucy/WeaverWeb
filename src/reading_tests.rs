@@ -47,6 +47,7 @@ async fn a_person_reads_only_the_agents_they_hold_a_grant_on() {
     };
     let (status, _, list) = send_as(&rig.app, "GET", "/agents", None, &session).await;
     assert_eq!(status, StatusCode::OK, "{list}");
+    crate::surfaces::assert_framed(&list);
     assert!(list.contains("box-a/karl"), "{list}");
     assert!(!list.contains("jane") && !list.contains(&jane), "{list}");
 
@@ -110,6 +111,7 @@ async fn the_page_shows_the_rows_facts_and_the_persons_roles() {
     let (status, _, page) =
         send_as(&rig.app, "GET", &format!("/agents/{karl}"), None, &session).await;
     assert_eq!(status, StatusCode::OK, "{page}");
+    crate::surfaces::assert_framed(&page);
     for fact in [
         "box-a/karl",
         "your roles: observer",
@@ -121,6 +123,159 @@ async fn the_page_shows_the_rows_facts_and_the_persons_roles() {
         "not a record",
     ] {
         assert!(page.contains(fact), "{fact}: {page}");
+    }
+}
+
+/// The stage rail's marks in the page's order, each with whether it is the
+/// current one: the numeral and the name of every `.step`.
+fn rail(page: &str) -> Vec<(String, bool)> {
+    let start = page.find(r#"<nav class="rail""#).expect("a rail");
+    let rail = &page[start..start + page[start..].find("</nav>").unwrap()];
+    rail.split(r#"<span class="step"#)
+        .skip(1)
+        .map(|step| {
+            let here = step.starts_with(" here\"");
+            let mark = step.split("<b>").nth(1).unwrap();
+            let (number, rest) = mark.split_once("</b> ").unwrap();
+            let name = rest.split('<').next().unwrap();
+            (format!("{number} {name}"), here)
+        })
+        .collect()
+}
+
+/// **The agent page carries the stage rail**: all eight stages in order,
+/// each a stage mark with its backing, Run the current one, and what is
+/// left at its end. Perturbation: drop a stage from the table, or swap two,
+/// and the order fails.
+#[tokio::test]
+async fn the_agent_page_carries_the_eight_stages_with_run_current() {
+    let Some((rig, _, karl, _, _, session)) = granted().await else {
+        return;
+    };
+    let (status, _, page) =
+        send_as(&rig.app, "GET", &format!("/agents/{karl}"), None, &session).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let stages = rail(&page);
+    let names: Vec<&str> = stages.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "1 Declare",
+            "2 Provision",
+            "3 Run",
+            "4 Observe",
+            "5 Preserve",
+            "6 Diagnose",
+            "7 Train",
+            "8 Retire"
+        ],
+        "{page}"
+    );
+    let here: Vec<&str> = stages
+        .iter()
+        .filter(|(_, here)| *here)
+        .map(|(name, _)| name.as_str())
+        .collect();
+    assert_eq!(here, ["3 Run"], "Run alone is current");
+    assert!(
+        page.contains("aria-label=\"Stages of box-a/karl\""),
+        "the rail names the agent"
+    );
+    assert!(page.contains("3 of 8 \u{b7} Observe next"), "{page}");
+    assert_eq!(
+        page.matches(r#"<span class="backing "#).count(),
+        8 + 6,
+        "a backing badge on each stage and on each of the six panes, no decision standing"
+    );
+}
+
+/// **A verb the person cannot ask is shown disabled with why, never
+/// hidden** (the Controls README): every lifecycle verb is on the page,
+/// offered as its form or disabled with its note. Perturbation: hide the
+/// verbs not offered, and the disabled ones are absent.
+#[tokio::test]
+async fn a_verb_not_offered_is_disabled_with_why_and_never_absent() {
+    let Some((rig, _, karl, _, _, session)) = granted().await else {
+        return;
+    };
+    let (_, _, page) = send_as(&rig.app, "GET", &format!("/agents/{karl}"), None, &session).await;
+    for verb in crate::store::identity::VOCABULARY
+        .into_iter()
+        .filter(|v| *v != "turn")
+    {
+        assert!(
+            page.contains(&format!(">{verb}</button>")),
+            "{verb} is on the page: {page}"
+        );
+    }
+    // An observer carries `show` alone, and no admin-con is connected here.
+    assert!(
+        page.contains(
+            r#"<button type="button" class="verb" disabled>load</button><span class="note">not in your roles</span>"#
+        ),
+        "{page}"
+    );
+    assert!(
+        page.contains(
+            r#"<button type="button" class="verb" disabled>show</button><span class="note">admin-con not connected</span>"#
+        ),
+        "{page}"
+    );
+    assert!(
+        !page.contains("name=\"verb\""),
+        "no verb is offered as a form: {page}"
+    );
+}
+
+/// **The Live trace pane reads its stream through the trace module**
+/// (Spec 2.13): the module is served as JavaScript, under 4 KiB, under the
+/// script policy; the agent page carries the pane's list naming the agent's
+/// own stream in `data-stream`, and every script on the page is a file of
+/// this binary's, the trace module among them, none inline. Perturbation:
+/// drop the attribute, and the list is not found.
+#[tokio::test]
+async fn the_live_trace_pane_reads_its_stream_through_the_module() {
+    let Some((rig, _, karl, _, _, session)) = granted().await else {
+        return;
+    };
+    let (status, headers, module) =
+        send_as(&rig.app, "GET", "/assets/surfaces/trace.js", None, &session).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        headers.get(header::CONTENT_TYPE).unwrap(),
+        "text/javascript; charset=utf-8"
+    );
+    assert_eq!(
+        headers.get(header::CONTENT_SECURITY_POLICY).unwrap(),
+        "script-src 'self'"
+    );
+    assert!(module.len() < 4096, "{} bytes", module.len());
+    assert!(module.contains("new EventSource(list.dataset.stream)"));
+
+    let (status, headers, page) =
+        send_as(&rig.app, "GET", &format!("/agents/{karl}"), None, &session).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        headers.get(header::CONTENT_SECURITY_POLICY).unwrap(),
+        "script-src 'self'"
+    );
+    assert!(
+        page.contains(&format!(
+            r#"<ul class="stream" data-stream="/agents/{karl}/trace"></ul>"#
+        )),
+        "the pane's list names the agent's stream: {page}"
+    );
+    let scripts: Vec<&str> = page.split("<script").skip(1).collect();
+    assert!(
+        scripts
+            .iter()
+            .any(|tag| tag.starts_with(r#" type="module" src="/assets/surfaces/trace.js">"#)),
+        "the trace module is loaded: {page}"
+    );
+    for script in scripts {
+        let (tag, rest) = script.split_once('>').unwrap();
+        assert!(tag.contains(" src=\"/assets/surfaces/"), "{tag}");
+        assert!(rest.starts_with("</script>"), "an inline script: {rest}");
     }
 }
 

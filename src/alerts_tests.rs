@@ -478,6 +478,7 @@ async fn save_point_then_unload_asks_unload_only_on_a_confirmed_save_point() {
         .await;
     let (status, _, page) = chosen.await.unwrap();
     assert_eq!(status, StatusCode::OK, "{page}");
+    crate::surfaces::assert_framed(&page);
     assert!(
         page.contains("d0c0ffee") && page.contains("admin&#39;s answer"),
         "{page}"
@@ -983,12 +984,19 @@ async fn the_agents_connectors_show_last_heard_and_the_cut() {
     let uri = format!("/agents/{}/availability", o.karl);
     let (app, bea) = (o.rig.app.clone(), o.bea_session.clone());
     let (_, _, first) = send_as(&app, "GET", &uri, None, &bea).await;
+    // **Each connector's status is a mark whose word says it**, the hue
+    // never alone. Perturbation: render the hue's class without the word,
+    // and these fail.
     assert!(
-        first.contains("admin-con: connected, last heard"),
+        first.contains(
+            r#"<th>admin-con</th><td><span class="status ok">connected</span> <span class="note read">last heard"#
+        ),
         "{first}"
     );
     assert!(
-        first.contains("gate-con: turns unavailable, gate-con down, never connected"),
+        first.contains(
+            r#"<th>gate-con</th><td><span class="status hold">not connected</span> <span class="note read">turns unavailable, gate-con down, never connected"#
+        ),
         "{first}"
     );
     let (_, _, page) = send_as(&app, "GET", &format!("/agents/{}", o.karl), None, &bea).await;
@@ -1010,7 +1018,9 @@ async fn the_agents_connectors_show_last_heard_and_the_cut() {
     let Operated { rig, admin_con, .. } = o;
     drop(admin_con);
     wait_body(&app, &bea, &uri, "admin-con down", |b| {
-        b.contains("admin-con: agent unavailable, admin-con down since ")
+        b.contains(
+            r#"<th>admin-con</th><td><span class="status hold">not connected</span> <span class="note read">agent unavailable, admin-con down since "#,
+        )
     })
     .await;
     drop(rig);

@@ -62,6 +62,57 @@ pub const RECHECK: Duration = Duration::from_secs(15);
 /// for an agent that does not exist.
 const NO_SUCH_AGENT: &str = "no such agent";
 
+/// **The eight stages and their backing today**, as
+/// `docs/design/system/stages.md` states them, its source (a test below
+/// reads that file's headings against this table). No stage's backing is
+/// derived from the agent: it is about the pane, never about the agent.
+const STAGES: [(u8, &str, &str); 8] = [
+    (1, "Declare", "unbuilt"),
+    (2, "Provision", "partly"),
+    (3, "Run", "built"),
+    (4, "Observe", "built"),
+    (5, "Preserve", "partly"),
+    (6, "Diagnose", "unbuilt"),
+    (7, "Train", "unbuilt"),
+    (8, "Retire", "partly"),
+];
+
+/// **The agent page is Run's**: its own forms are Run's, and the Observe
+/// panes beside them carry their own stage mark.
+const CURRENT_STAGE: u8 = 3;
+
+/// One stage on the rail.
+struct StageView {
+    number: u8,
+    name: &'static str,
+    backing: &'static str,
+    here: bool,
+}
+
+/// The rail's eight stages, the current one marked.
+fn stages() -> Vec<StageView> {
+    STAGES
+        .into_iter()
+        .map(|(number, name, backing)| StageView {
+            number,
+            name,
+            backing,
+            here: number == CURRENT_STAGE,
+        })
+        .collect()
+}
+
+/// What is left, said at the rail's end: the current stage of the eight
+/// and the one after it.
+fn left() -> String {
+    let next = STAGES
+        .iter()
+        .find(|(number, _, _)| *number == CURRENT_STAGE + 1)
+        .map(|(_, name, _)| *name)
+        .unwrap_or("none");
+    format!("{CURRENT_STAGE} of {} \u{b7} {next} next", STAGES.len())
+}
+
 /// What the live view says it is.
 const LIVE_WINDOW: &str = "the live window: what this server holds in memory of the agent's trace now, not a record; a restart or a full ring loses it";
 
@@ -348,7 +399,10 @@ struct AgentPage {
     /// none stands.
     transition: String,
     window: &'static str,
-    forms: Vec<&'static str>,
+    /// Every lifecycle verb, each offered or disabled with why.
+    verbs: Vec<VerbView>,
+    /// Whether any verb is offered.
+    offered: bool,
     turn_form: bool,
     shared: bool,
     chrome: super::Chrome,
@@ -359,6 +413,19 @@ struct AgentPage {
     can_ack: bool,
     /// The open decision prompt, with the options the person may choose.
     prompt: Option<PromptView>,
+    /// The stage rail and what is left.
+    stages: Vec<StageView>,
+    left: String,
+    /// When the load state was last written, for the pane's source line;
+    /// empty where it never was.
+    state_at: String,
+}
+
+/// **A lifecycle verb on the agent page**: offered as its form, or
+/// disabled with why, never hidden (the Controls README).
+struct VerbView {
+    verb: &'static str,
+    why: Option<&'static str>,
 }
 
 /// An alert as the agent page lists it.
@@ -379,10 +446,13 @@ struct AlertRow {
     open: bool,
 }
 
-/// One of an agent's two connectors, as the listener knows it.
+/// One of an agent's two connectors, as the listener knows it: its word,
+/// the hue the word stands in, and what the word does not say.
 struct PlaneView {
     connector: &'static str,
-    status: String,
+    word: &'static str,
+    hue: &'static str,
+    detail: String,
 }
 
 /// **An agent's two connectors** (Spec 2.14): a live connection's last
@@ -406,19 +476,32 @@ fn planes_of(listener: &Listener, row: &Agent) -> Vec<PlaneView> {
         ),
     ]
     .into_iter()
-    .map(|(plane, credential, connector, down)| PlaneView {
-        connector,
-        status: if credential.state != CredentialState::Live {
+    .map(|(plane, credential, connector, down)| {
+        let heard = (credential.state == CredentialState::Live)
+            .then(|| listener.last_heard(&row.agent_id, plane))
+            .flatten();
+        let detail = if credential.state != CredentialState::Live {
             "its credential is not live".to_owned()
-        } else if let Some(heard) = listener.last_heard(&row.agent_id, plane) {
-            format!("connected, last heard {} s ago", heard.as_secs())
+        } else if let Some(heard) = heard {
+            format!("last heard {} s ago", heard.as_secs())
         } else {
             match credential.link_at {
                 Some(at) if !credential.connected => format!("{down} since {}", when(at)),
                 None if !credential.connected => format!("{down}, never connected"),
                 _ => format!("{down}: its connection is not admitted here"),
             }
-        },
+        };
+        let (word, hue) = if heard.is_some() {
+            ("connected", "ok")
+        } else {
+            ("not connected", "hold")
+        };
+        PlaneView {
+            connector,
+            word,
+            hue,
+            detail,
+        }
     })
     .collect()
 }
@@ -583,11 +666,26 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, agent: String) ->
         Ok(shared) => shared.iter().any(|agent| agent == id.as_str()),
         Err(e) => return fault(e),
     };
-    let forms: Vec<&'static str> = VOCABULARY
+    // **Every lifecycle verb is on the page**: offered where the grants
+    // carry it and the live connection's ceiling grants it, disabled with
+    // why otherwise, never hidden.
+    let verbs: Vec<VerbView> = VOCABULARY
         .into_iter()
         .filter(|verb| lifecycle(verb))
-        .filter(|verb| granted.contains(*verb) && ceiling.iter().any(|c| c == verb))
+        .map(|verb| VerbView {
+            verb,
+            why: if !granted.contains(verb) {
+                Some("not in your roles")
+            } else if !row.admin.connected {
+                Some("admin-con not connected")
+            } else if !ceiling.iter().any(|c| c == verb) {
+                Some("above the ceiling")
+            } else {
+                None
+            },
+        })
         .collect();
+    let offered = verbs.iter().any(|v| v.why.is_none());
     // **The agent's alerts** (Spec 2.14): seen by every grant holder,
     // acknowledged by an `operator` holder; the open prompt offers only the
     // options the person's grants and the connection's ceiling carry, and
@@ -715,7 +813,8 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, agent: String) ->
             .unwrap_or_else(none),
         transition: transition_said(&row),
         window: LIVE_WINDOW,
-        forms,
+        verbs,
+        offered,
         turn_form,
         shared,
         chrome,
@@ -723,6 +822,9 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, agent: String) ->
         alerts,
         can_ack,
         prompt,
+        stages: stages(),
+        left: left(),
+        state_at: row.load_state_at.map(when).unwrap_or_default(),
     };
     match page.render() {
         Ok(html) => Html(html).into_response(),
@@ -767,6 +869,9 @@ struct VerbPage {
     first: String,
     kind: String,
     detail: String,
+    /// admin's exit status where it answered; `None` where it was not run
+    /// or not answered, and for a turn.
+    exit: Option<i32>,
     chrome: super::Chrome,
     /// **The leg an `unload` stopped at its save point missed** (Spec
     /// 2.14), whose prompt the page states, its options chosen on the
@@ -866,9 +971,9 @@ async fn act(
     // **The page's wait is its own**, bounding nothing of the ask: the
     // outcome is written at the answer whatever this does.
     let bound = seams.asker.silence();
-    let (status, kind, detail, missed) = if shown == "turn" {
+    let (status, kind, detail, exit, missed) = if shown == "turn" {
         let (status, kind, detail) = turn_shown(bound, enqueued).await;
-        (status, kind, detail, None)
+        (status, kind, detail, None, None)
     } else {
         verb_shown(bound, &shown, enqueued).await
     };
@@ -889,6 +994,7 @@ async fn act(
         first,
         kind,
         detail,
+        exit,
         chrome,
         missed,
     };
@@ -898,13 +1004,13 @@ async fn act(
     }
 }
 
-/// admin's answer to a verb, as the page shows it, with the leg an
-/// `unload` stopped at its save point missed.
+/// admin's answer to a verb, as the page shows it, with its exit status
+/// and the leg an `unload` stopped at its save point missed.
 async fn verb_shown(
     bound: Duration,
     verb: &str,
     enqueued: Enqueued,
-) -> (StatusCode, String, String, Option<String>) {
+) -> (StatusCode, String, String, Option<i32>, Option<String>) {
     match tokio::time::timeout(bound, enqueued.answer()).await {
         Ok(Ok(outcome)) => (
             StatusCode::OK,
@@ -919,6 +1025,7 @@ async fn verb_shown(
                 .as_ref()
                 .map(|a| serde_json::to_string_pretty(a).unwrap_or_default())
                 .unwrap_or_default(),
+            outcome.exit_code,
             crate::link::listener::stopped_at_save_point(verb, &outcome).map(str::to_owned),
         ),
         Ok(Err(VerbError::Fault(fault))) => (
@@ -926,18 +1033,27 @@ async fn verb_shown(
             "admin-con's fault".to_owned(),
             format!("{}: {}", fault.kind, fault.message),
             None,
+            None,
         ),
         Ok(Err(VerbError::Unanswered)) => (
             StatusCode::OK,
             "the connection ended with the verb in flight: its outcome is unknown here, and the trace and the next show hold it".to_owned(),
             String::new(),
             None,
+            None,
         ),
-        Ok(Err(e)) => (StatusCode::OK, "no answer".to_owned(), e.to_string(), None),
+        Ok(Err(e)) => (
+            StatusCode::OK,
+            "no answer".to_owned(),
+            e.to_string(),
+            None,
+            None,
+        ),
         Err(_) => (
             StatusCode::ACCEPTED,
             "asked, and not answered within the bound: its outcome is written when admin answers".to_owned(),
             String::new(),
+            None,
             None,
         ),
     }
@@ -1205,4 +1321,30 @@ fn trace_event(event: &crate::traceview::TraceEvent) -> SseEvent {
         .event(event_name)
         .id(event.seq.to_string())
         .data(serde_json::to_string(event).unwrap_or_default())
+}
+
+#[cfg(test)]
+mod tests {
+    /// **The rail's table is `stages.md`'s**: each `## <n> <name>, <backing>`
+    /// heading of that file, in order, is one row of `STAGES`, so the rail
+    /// cannot drift from the design system's record of what backs each
+    /// stage.
+    #[test]
+    fn the_rails_stages_are_stages_md() {
+        let headings: Vec<(u8, String, String)> =
+            include_str!("../../docs/design/system/stages.md")
+                .lines()
+                .filter_map(|line| line.strip_prefix("## "))
+                .map(|heading| {
+                    let (stage, backing) = heading.split_once(", ").unwrap();
+                    let (number, name) = stage.split_once(' ').unwrap();
+                    (number.parse().unwrap(), name.to_owned(), backing.to_owned())
+                })
+                .collect();
+        let table: Vec<(u8, String, String)> = super::STAGES
+            .into_iter()
+            .map(|(n, name, backing)| (n, name.to_owned(), backing.to_owned()))
+            .collect();
+        assert_eq!(table, headings);
+    }
 }

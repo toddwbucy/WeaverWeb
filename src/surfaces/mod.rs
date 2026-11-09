@@ -97,7 +97,8 @@ pub fn routes(policy: gate::Policy) -> Router<Store> {
         .merge(record::routes(policy))
         .route("/sign-out", post(gate::sign_out))
         .route("/assets/surfaces/instrument.css", get(stylesheet))
-        .route("/assets/surfaces/htmx.min.js", get(htmx));
+        .route("/assets/surfaces/htmx.min.js", get(htmx))
+        .route("/assets/surfaces/trace.js", get(trace_module));
     #[cfg(feature = "passkeys")]
     let router = router.route("/assets/surfaces/passkeys.js", get(passkeys_module));
     script_policy(router)
@@ -106,12 +107,12 @@ pub fn routes(policy: gate::Policy) -> Router<Store> {
 /// **A script runs from this server's own files alone**: the surfaces answer
 /// with `Content-Security-Policy: script-src 'self'`, which they can carry
 /// since none has an inline script, an inline handler or an `eval`, and the
-/// passkey module is a file of this binary's. **htmx holds under it too**,
-/// measured on 2026-10-08 in Chromium 153 and Firefox 156: the vendored
-/// htmx's `hx-get` and `hx-post` swaps ran with no violation reported, while
-/// a control page's inline script was blocked and reported. What would not
-/// hold is htmx's evaluating attributes (`hx-on`, `js:` values), which no
-/// surface may use while this header stands.
+/// passkey module and the trace module are files of this binary's. **htmx
+/// holds under it too**, measured on 2026-10-08 in Chromium 153 and Firefox
+/// 156: the vendored htmx's `hx-get` and `hx-post` swaps ran with no
+/// violation reported, while a control page's inline script was blocked and
+/// reported. What would not hold is htmx's evaluating attributes (`hx-on`,
+/// `js:` values), which no surface may use while this header stands.
 pub fn script_policy<S: Clone + Send + Sync + 'static>(router: Router<S>) -> Router<S> {
     router.layer(axum::middleware::map_response(
         |mut response: Response| async move {
@@ -135,6 +136,17 @@ async fn passkeys_module() -> impl IntoResponse {
     )
 }
 
+/// **The Live trace pane's browser module** (Spec 2.13), one hand-written
+/// file vendored into the binary: it reads the stream the agent page's
+/// `data-stream` names and places each event's words in the pane.
+async fn trace_module() -> impl IntoResponse {
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
+        include_str!("../../assets/surfaces/trace.js"),
+    )
+}
+
 /// **The vendored htmx, served from the surfaces' own route** (Spec 2.14):
 /// the availability fragments are re-fetched by its `hx-trigger`, no
 /// inline script, under the script policy above.
@@ -153,4 +165,45 @@ async fn stylesheet() -> impl IntoResponse {
         [(header::CONTENT_TYPE, "text/css; charset=utf-8")],
         include_str!("../../assets/surfaces/instrument.css"),
     )
+}
+
+/// **What every served page carries** (the pane grammar,
+/// `docs/design/system/components/Workspace`): the masthead, the workspace
+/// and the stylesheet. Each test that renders a page asserts it of that page.
+#[cfg(test)]
+pub(crate) fn assert_framed(page: &str) {
+    for mark in [
+        r#"<nav class="masthead">"#,
+        r#"<main class="workspace"#,
+        r#"<link rel="stylesheet" href="/assets/surfaces/instrument.css">"#,
+    ] {
+        assert!(page.contains(mark), "a served page carries {mark}: {page}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// **The served stylesheet is the design system's, byte for byte**:
+    /// `tokens.css`, then `bundle.css` without its import line, and nothing
+    /// else, so the copy served cannot drift from the copy that is the
+    /// record.
+    #[test]
+    fn the_stylesheet_is_the_design_systems() {
+        let tokens = include_str!("../../docs/design/system/tokens.css");
+        let bundle = include_str!("../../docs/design/system/components/bundle.css");
+        let derived: String = std::iter::once(tokens)
+            .chain(
+                bundle
+                    .split_inclusive('\n')
+                    .filter(|l| !l.starts_with("@import ")),
+            )
+            .collect();
+        assert!(
+            derived == include_str!("../../assets/surfaces/instrument.css"),
+            "assets/surfaces/instrument.css has drifted from the design system; regenerate it \
+             from the repository's root with: {{ cat docs/design/system/tokens.css; sed \
+             '/^@import /d' docs/design/system/components/bundle.css; }} > \
+             assets/surfaces/instrument.css"
+        );
+    }
 }

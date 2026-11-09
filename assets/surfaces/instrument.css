@@ -256,7 +256,7 @@ label { font-size: 12.6px; font-weight: 500; color: var(--dim); }
 .pane > .body { overflow-x: auto; }
 /* A header whose title, badge and source do not fit wraps, the source line to a row of its own at narrow width, rather than clipping (Pane). */
 .pane > header { flex-wrap: wrap; }
-@media (max-width: 760px) { .pane > header .source { margin-left: 0; white-space: normal; } }
+@media (max-width: 760px) { .pane > header .source { margin-left: 0; } }
 /* A source line longer than its pane's width, the Live trace's relay, door and boundary in the side column, wraps at any width rather than running past the frame (Pane). */
 .pane > header .source { white-space: normal; }
 /* A button's words wrap within it, a long decision option or a config's file name, its height growing from the control's rather than fixed (Controls). */

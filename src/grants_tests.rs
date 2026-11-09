@@ -181,6 +181,7 @@ async fn the_page_lists_grants_roles_and_agents() {
 
     let (status, _, page) = send_as(&app, "GET", "/admin/grants", None, &session).await;
     assert_eq!(status, StatusCode::OK, "{page}");
+    crate::surfaces::assert_framed(&page);
     assert!(page.contains("box/karl") && page.contains(&k), "{page}");
     assert!(
         page.contains(&format!("value=\"{theirs}\"")),

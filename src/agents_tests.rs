@@ -204,6 +204,7 @@ impl Rig {
             .await;
         assert_eq!(status, StatusCode::OK, "{page}");
         assert_eq!(headers[header::CACHE_CONTROL], "no-store");
+        crate::surfaces::assert_framed(&page);
         assert!(
             !page.contains("PRIVATE KEY")
                 && !headers
@@ -1023,6 +1024,7 @@ async fn retiring_closes_both_planes_and_the_row_is_never_live_again() {
     );
     assert_eq!(states(s, &id).await, ("revoked".into(), "revoked".into()));
     let (_, _, page) = send_as(&rig.app, "GET", "/admin/agents", None, &session).await;
+    crate::surfaces::assert_framed(&page);
     assert!(page.contains("retired; register it again"), "{page}");
     assert!(
         !page.contains(&format!("name=\"agent\" value=\"{id}\"")),

@@ -522,8 +522,12 @@ async fn the_module_is_small_and_the_page_has_no_inline_script() {
         "script-src 'self'"
     );
 
+    let (status, _, sign_in) = send(&app, "GET", "/sign-in", None).await;
+    assert_eq!(status, StatusCode::OK, "{sign_in}");
+    crate::surfaces::assert_framed(&sign_in);
     let (status, headers, page) = send(&app, "GET", "/enroll", None).await;
     assert_eq!(status, StatusCode::OK);
+    crate::surfaces::assert_framed(&page);
     assert_eq!(
         headers.get(header::CONTENT_SECURITY_POLICY).unwrap(),
         "script-src 'self'"

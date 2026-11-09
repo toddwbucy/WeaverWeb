@@ -1,25 +1,35 @@
 {% extends "instrument.html" %}
 {% block title %}{{ verb }} on {{ label }} - weaver-web{% endblock %}
-{% block mainclass %}listing{% endblock %}
 {% block body %}
-{#- A person's verb, asked through the server, and admin's answer. No inline
-    script. -#}
-<header class="listing-head">
-  <h1>{{ verb }} on {{ label }}</h1>
-  <p class="destination">{{ agent_id }}; recorded as {{ first }}</p>
-</header>
-<p>{{ kind }}</p>
-{% if !detail.is_empty() %}<pre>{{ detail }}</pre>{% endif %}
-{% if let Some(missed) = missed %}
-<dialog open>
-  <h2>A decision is yours</h2>
-  <p>The unload stopped at its save point (missed: {{ missed }}). The run stands at rest, its gate lowered, and nothing is lost yet.</p>
-  <ul>
-    <li>Save point, then unload: the unload is asked only once the save point is taken and read back to its manifest line.</li>
-    <li>Force-unload: loses the state since the last published save point.</li>
-  </ul>
-  <p><a href="/agents/{{ agent_id }}">Choose on {{ label }}'s page</a>, where its alert stands and the options your roles and the connection's ceiling carry are offered. Choosing does not acknowledge the alert.</p>
-</dialog>
-{% endif %}
-<p><a href="/agents/{{ agent_id }}">Back to {{ label }}</a></p>
+{#- A person's verb, asked through the server, and admin's answer: verbatim,
+    with its exit status as a mark, or the typed reason it was not run. No
+    inline script. -#}
+<h1>{{ verb }} on {{ label }}</h1>
+<p class="lede"><span class="mono">{{ agent_id }}</span>; recorded as {{ first }}</p>
+<div class="stack">
+{%- if let Some(missed) = missed %}
+<section class="pane decision">
+  <header><span class="stage"><b>4</b> Observe</span><h2>A decision is yours</h2><span class="backing built">built</span><span class="source">the alert's prompt</span></header>
+  <div class="body">
+  <dialog open>
+    <p>The unload stopped at its save point (missed: {{ missed }}). The run stands at rest, its gate lowered, and nothing is lost yet.</p>
+    <ul>
+      <li>Save point, then unload: the unload is asked only once the save point is taken and read back to its manifest line.</li>
+      <li>Force-unload: loses the state since the last published save point.</li>
+    </ul>
+    <p><a href="/agents/{{ agent_id }}">Choose on {{ label }}'s page</a>, where its alert stands and the options your roles and the connection's ceiling carry are offered.</p>
+  </dialog>
+  </div>
+  <footer>Choosing does not acknowledge the alert.</footer>
+</section>
+{%- endif %}
+<section class="pane">
+  <header><span class="stage"><b>3</b> Run</span><h2>Answer</h2><span class="backing built">built</span><span class="source">{% if verb == "turn" %}gate-con{% else %}admin-con, <code>{{ verb }}</code>{% endif %}</span></header>
+  <div class="body">
+  <p>{{ kind }}{% match exit %}{% when Some with (code) %} <span class="status {% if *code == 0 %}ok{% else %}fail{% endif %}">exit {{ code }}</span>{% when None %}{% endmatch %}</p>
+  {% if !detail.is_empty() %}<pre class="raw">{{ detail }}</pre>{% endif %}
+  </div>
+  <footer><a href="/agents/{{ agent_id }}">Back to {{ label }}</a></footer>
+</section>
+</div>
 {% endblock %}

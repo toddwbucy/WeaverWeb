@@ -110,7 +110,7 @@ text is the Spec's sections 7 and 8.
 
 The design session of 2026-11-06, the design seat with the operator and the architecture
 seat, produced the design system: tokens, the brand book, the pane grammar, the stage rail
-across the seven lifecycle stages, the marks and controls, and two proofs that the grammar
+across the eight lifecycle stages, the marks and controls, and two proofs that the grammar
 holds, the Declare diagram for an unbuilt stage and the Observe pane set for a built one.
 The rulings it took are recorded in `weaver-web-PRD` section 3.0. The files are the record
 and sit under `system/`, laid out as the artifact keeps them:
@@ -123,7 +123,7 @@ and sit under `system/`, laid out as the artifact keeps them:
 | `system/palettes.md` | the palette rulings, every hex and measured contrast pair, and the six themes in `instrument.css`'s shape |
 | `system/stages.md` | the eight stages pane by pane, each with its backing on 2026-11-07 |
 | `system/declare.md` | the Declare diagram's rules |
-| `system/components/` | the pane grammar's stylesheet (`bundle.css`) and one preview with guidelines per piece: Cover, Masthead, StageRail, Marks, Controls, Pane, Workspace, DeclareDiagram, ObservePane |
+| `system/components/` | the pane grammar's stylesheet (`bundle.css`, served with `tokens.css` as `assets/surfaces/instrument.css`) and one preview with guidelines per piece: Cover, Masthead, StageRail, Marks, Controls, Pane, Workspace, DeclareDiagram, ObservePane |
 
 The working copies are two private artifacts, shared from their own pages:
 

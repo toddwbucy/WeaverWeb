@@ -14,9 +14,10 @@ split #689, destination commit `f2f01d8`) and pushed here as a single fresh root
 without `deploy/`. **It is a seed, not an authority.** The split's 55 commits carry the
 reasoning behind each election. They are kept locally on the `seed-history` branch, which is
 **never pushed**, and in WeaverTools' own history. This repository owns its own charter,
-stack, editorial rules, and review process. Nothing in WeaverTools' process documents binds
-it. The suite `CLAUDE.md` one directory up, at `WeaverTools_Project/`, loads in every session
-opened here; it describes the suite and binds nothing in this repository. The founding
+stack and editorial rules. Nothing in WeaverAgent's process documents binds it. Its seats
+and its pull request path are the suite's, by the citation under "How we work". The suite
+`CLAUDE.md` one directory up, at `WeaverTools_Project/`, loads in every session opened here
+and describes the suite. The founding
 documents are `docs/project/HANDOFF-2026-09-30-weaver-web-session.md` and, beside it, the
 second handoff `docs/project/HANDOFF-2026-09-30-the-workspace-turns-to-weaver-web.md`. The
 connectors' brief is `docs/project/brief-2026-10-01-the-link-the-registry-and-the-two-connectors.md`.
@@ -96,7 +97,7 @@ deposits first (a trace plus its state store, as a replay), then build live view
 - **Do not edit WeaverAgent.** When a door contract lacks something, file an issue on
   `toddwbucy/WeaverAgent`, one issue per interface question, until the operator rules
   otherwise. Say what was measured, what is asked, and which document would have to move. The
-  olympus Planning seat answers there.
+  suite's Planner answers there.
 - Do not link the agent's interior crates (`weaver-harness`, `weaver-spu`, `weaver-admin`,
   `weaver-gate`, `weaver-state`).
 - **The remote is `git@github.com:toddwbucy/WeaverWeb.git`.** A different repository,
@@ -105,45 +106,34 @@ deposits first (a trace plus its state store, as a replay), then build live view
 
 ## How we work
 
-Two Claude Code sessions share this workspace, and the operator (Todd) closes every loop.
+The seats and the pull request path are the suite's, stated once in
+`process/WeaverTools-Suite-Workflow.md` of the suite repository (`toddwbucy/WeaverTools`).
+This file cites that document, and it binds this repository from 2026-11-10. Read it
+before any act. In the workshop layout the suite repository is a sibling checkout:
 
-- **Thinkpad-WeaverWeb-Planner** plans the work, directs the executor, reviews its PRs, and
-  handles the third-party review.
-- **Thinkpad-WeaverWeb-Executor** implements what the planner directs. It works on a branch
-  and opens a **draft** PR when the work is done.
+@../WeaverTools/process/WeaverTools-Suite-Workflow.md
 
-An act is a **stack**: one branch off `main` that reaches `main` through one PR, built up
-from sub-PRs the operator merges into it one at a time (the operator's ruling of
-2026-11-07). Two reviewers read the repository's PRs: **Codex** reviews every PR when it
-leaves draft, and **CodeRabbit** reviews only a PR whose base is `main`, so a stack costs
-one CodeRabbit pass however many sub-PRs it holds. Each act goes through this loop:
+In short: the Planner sits above the repositories and sends the briefs, an Executor
+works here on a branch and pushes only on the Planner's word, and the operator (Todd)
+takes every pull request to `main` out of draft and merges everything. An act is a stack,
+`act/<name>`, built from sub-acts opened as drafts against it. **A session opened in this
+repository is an Executor** unless the operator says otherwise.
 
-1. The planner sends the executor a task brief covering scope, acceptance, the sub-PRs and
-   their order, and the documents and boundaries that apply. The brief lands in
-   `docs/project/` as the stack's first commit.
-2. The executor branches the stack from `main` (`act/<name>`) and opens the **stack PR as a
-   draft against `main`**. Each sub-PR is a branch from the stack's head, opened as a
-   **draft against the stack branch** when its work is done. Then it tells the planner.
-3. The planner reviews the sub-PR. Findings go to the executor, which fixes them on the same
-   branch, one push per round. Repeat until the planner clears it.
-4. Once it is cleared, the planner marks the sub-PR ready (`gh pr ready`). That triggers
-   Codex's review, which the planner watches: a real finding goes to the executor to fix, and
-   a comment that does not hold up gets a reply on the PR saying why.
-5. The operator reviews each cleared sub-PR and **merges it into the stack**. Those merges
-   are the operator's review of the act as it grows; nothing else merges into the stack.
-   The executor rebases the next sub-PR on the stack's new head.
-6. When every sub-PR is in, the operator undrafts the stack PR. CodeRabbit reviews it once;
-   the planner verifies every finding against the code and routes the fixes to the executor
-   as one push on the stack branch. **Only the operator merges the stack into `main`.**
+What is this repository's own:
 
-The planner undrafts sub-PRs and never the stack PR, nor any other PR whose base is `main`:
-a planner's own docs PR is opened as a draft, and the operator undrafts it. The executor
-never undrafts or merges. Nobody pushes directly to `main` after the initial seed. A stack
-stays well under 200 files touched, since a bigger diff gets a shallower review; an act that
-would approach it is split into two stacks. When `main` moves under a stack, the stack
-branch merges `main` in. CodeRabbit's allowance is minded: at most one PR leaves draft an
-hour, and a push to a PR already out of draft counts as a pass, so a round's fixes go in one
-push.
+- **The brief** lands under `docs/project/` as `brief-YYYY-MM-DD-<name>.md`, the stack's
+  first commit. Sub-act branches are `act/<name>-<n>-<topic>`.
+- **The gates before a draft**, each run with `--locked` and reported with its exit
+  status: `cargo fmt --all -- --check`, `cargo build`, `cargo clippy --all-targets -- -D
+  warnings` with and without `--no-default-features`, and `cargo test` **with
+  `DATABASE_URL` set**. A report of the tests says how many passed and that nothing was
+  skipped, since a run without the variable passes without testing anything. Each
+  worktree builds into a target directory of its own, and the report names it.
+- **`Implements:`** names sections of `docs/weaver-web-Spec.md`.
+- **The hard boundaries above bind every brief, report and pull request body** as they
+  bind the tree: no credential, box path or security posture in any of them.
+- **After an act**, the Executor drops the merged sub-acts' worktrees and target
+  directories and keeps `main`'s.
 
 ## Commands
 

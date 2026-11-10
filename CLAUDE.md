@@ -176,8 +176,10 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
   without its `std` feature, so the default user is the literal `anonymous` and not the
   login name, and a server that authenticates local connections by peer refuses every
   connect (measured 2026-11-10: 357 lib tests failed on that one cause). A URL that names
-  the user (`postgres://<role>@/<db>?host=...`) does the same. The server's own `database`
-  setting needs one or the other for the same reason.
+  the user as a query member does the same (`postgres:///<db>?host=...&user=<role>`); the
+  userinfo form `postgres://<role>@/<db>` is refused with "empty host" (both measured
+  2026-11-10). The server's own `database` setting needs `&user=` or `PGUSER` in its
+  environment for the same reason.
 - **Single test:** `cargo test --lib store::read::tests::<name>`. Add `-- --nocapture` to see
   skip notices.
 - **Compile-fail pins** are doctests in `src/store/key.rs` and `src/store/experiment.rs`. Run

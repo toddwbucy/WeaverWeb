@@ -126,7 +126,7 @@ What is this repository's own:
 - **The gates before a draft**, each run with `--locked` and reported with its exit
   status: `cargo fmt --all -- --check`, `cargo build`, `cargo clippy --all-targets -- -D
   warnings` with and without `--no-default-features`, and `cargo test` **with
-  `DATABASE_URL` set**. A report of the tests says how many passed and that nothing was
+  `DATABASE_URL` and `PGUSER` set** (see Commands). A report of the tests says how many passed and that nothing was
   skipped, since a run without the variable passes without testing anything. Each
   worktree builds into a target directory of its own, and the report names it.
 - **`Implements:`** names sections of `docs/weaver-web-Spec.md`.
@@ -171,7 +171,13 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
   connect to the database in `DATABASE_URL` and run the migrations. The link's tests run one at
   a time, since a listener's start resets every row's link state, which is the claim. Without that variable they print
   `skipped:` and **pass without testing anything**. To really exercise them, set
-  `DATABASE_URL=postgres:///<db>?host=/run/postgresql`.
+  `PGUSER=<role> DATABASE_URL=postgres:///<db>?host=/run/postgresql`. **`PGUSER` is
+  required where the URL names no user**: the locked `sqlx-postgres` builds `whoami`
+  without its `std` feature, so the default user is the literal `anonymous` and not the
+  login name, and a server that authenticates local connections by peer refuses every
+  connect (measured 2026-11-10: 357 lib tests failed on that one cause). A URL that names
+  the user (`postgres://<role>@/<db>?host=...`) does the same. The server's own `database`
+  setting needs one or the other for the same reason.
 - **Single test:** `cargo test --lib store::read::tests::<name>`. Add `-- --nocapture` to see
   skip notices.
 - **Compile-fail pins** are doctests in `src/store/key.rs` and `src/store/experiment.rs`. Run

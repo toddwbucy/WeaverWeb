@@ -51,6 +51,10 @@ pub enum PersonMethod {
     /// A live session: what a signed-in person does with it, removing one
     /// of their passkeys among them.
     Session,
+    /// **A sign-in token the host issued** (Spec 2.13, the operator's ruling
+    /// of 2026-11-10), which authenticates its person for the session's
+    /// opening it is redeemed for and nothing else.
+    SignInToken,
 }
 
 impl Principal<'_> {
@@ -78,6 +82,10 @@ impl Principal<'_> {
                 method: PersonMethod::Session,
                 ..
             } => "session",
+            Principal::Person {
+                method: PersonMethod::SignInToken,
+                ..
+            } => "sign-in token",
         }
     }
 

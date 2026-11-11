@@ -5,11 +5,19 @@ IAM act, written to the brief `brief-2026-10-07-act-11-iam-pr1-the-design.md` be
 note. The Spec states each rule this note decides and cites this note for the reasons, the
 measurements and the threat model, which it does not repeat. Nothing here is code; every
 mechanism named is for the pull request the plan in section 12 assigns it to.
+Amended 2026-11-10 for the sign-in token, to `brief-2026-11-10-optional-passkey.md`:
+section 1's first ruling is relaxed, and sections 3, 5, 6, 7 and 10 carry what that moves.
 
 ## 1. What the operator ruled, 2026-10-07
 
 1. **Sign-in is by passkeys (WebAuthn), and only by passkeys.** No password, no second
-   factor, no external identity provider.
+   factor, no external identity provider. **Relaxed for the pre-release stage on
+   2026-11-10** by the operator, in his words: "the passkey should be optional not
+   manditory at this stage. we can always tighten this stuff up before release". A
+   sign-in token the host issues is a second method where the server's config admits it,
+   and the passkey stays the method a config naming none admits. Spec 2.13's item on the
+   sign-in token states the ruling with his reasons and what release decides; still no
+   password, no second factor and no external identity provider.
 2. **The roles.** In the operator's words: "one observer per agent, one operator per agent,
    admin on the weaverweb server side is about controlling the multiple admin-con
    connections, the who and how of accessing as well as the what of individual agent
@@ -146,6 +154,13 @@ handshake or the ceremony's `SecurityError`, which the server logs and the sign-
 reports where it can. A list that grew by one browser rule per review would never be
 complete, so the browser's rules beyond it stay the browser's to apply.
 
+**The sign-in token needs none of WebAuthn's secure context, and changes nothing here**
+(section 1's amendment of 2026-11-10). It is a form's post, with no relying party in it.
+But the session it opens is held by the `__Host-` cookie, which is `Secure`, and a browser
+keeps that on `https` or on `http://localhost` alone (section 6). So a browser on another
+machine still needs the listener's TLS under a name, whichever method signs its person in,
+and the start refusals above stay the list, the token adding none.
+
 ## 4. The browser half
 
 The two ceremonies call `navigator.credentials.create` and `navigator.credentials.get` in
@@ -186,10 +201,11 @@ It holds no secret of a person: a passkey's stored half is a public key.
 | Adversary | Promised | Not promised |
 |---|---|---|
 | **Someone on the network** between a browser and the server | No credential, cookie or trace crosses in the clear once TLS stands (PR 3); a passkey assertion is bound to the origin and the challenge, so a captured one replays nowhere | Availability: flooding the listener is out of scope |
-| **A phishing page** | A passkey answers only its relying party's origin, so a look-alike site cannot collect a usable assertion | A person who installs a malicious extension in their own browser |
+| **A phishing page** | A passkey answers only its relying party's origin, so a look-alike site cannot collect a usable assertion | A person who installs a malicious extension in their own browser. **Where the config admits the sign-in token** (section 1's amendment), a person who signs in by one: the token is bound to no origin, so a look-alike page that collects one signs in as its person within its minutes |
+| **A sign-in token in the wrong hands** (where the config admits it) | It is issued by the host alone and never by a surface, so no admin can sign in as another person; it lives ten minutes by default and an hour at most, is used once, and is held only as its digest; a disable or the host reset revokes it, and a disable ends every session it opened at that session's next use | Whoever reads it before its person uses it signs in as them, within the person's grants: the path that carries it from the host's shell to the person's browser is part of what it trusts. **The host reset does not end a session a token already opened**, as it opened by no passkey the reset clears: the person's disable does, and the idle and absolute limits bound it meanwhile |
 | **A stolen session cookie** | The cookie is `HttpOnly`, so page script cannot read it; `Secure`, so it never crosses plain http; and `SameSite=Strict` with an `Origin` check, so another site cannot ride it. It expires idle and absolutely. **It cannot add a passkey**: adding one takes a fresh assertion with an existing passkey (section 7), so a thief cannot make the access outlast the session. Disable and sign-out end it at its next use, and an open live view within 15 seconds (section 6) | A thief holding the cookie can act as the person until the session ends, within the person's grants |
 | **A lost or stolen device** | A passkey needs user verification (the device's unlock) at every ceremony; the person removes that passkey from another one, or an admin disables the person, or the host resets them (section 7); each ends every session opened with the passkey at its next use, and an open live view within 15 seconds | A device whose unlock the thief also holds is the person, until one of the above |
-| **A malicious or compromised admin** | An admin cannot take a person over: no admin reset, and an enrollment token only for a person with no passkey. An admin cannot widen their own grants, edit a role they hold, or remove the last admin. Every admin write is audited before it lands | An admin can grant another person anything, disable people, rewrite the roles they do not hold, and register or revoke connectors. **Two colluding admins can grant each other anything.** That is the admin role as ruled, and the audit is the remedy |
+| **A malicious or compromised admin** | An admin cannot take a person over: no admin reset, an enrollment token only for a person with no passkey, no sign-in token from any surface, and no admin's enrollment token for a person ever issued a sign-in token, who may hold no passkey and still hold access (Spec 2.13); issuing a sign-in token revokes the person's live enrollment token for the same reason. An admin cannot widen their own grants, edit a role they hold, or remove the last admin. Every admin write is audited before it lands | An admin can grant another person anything, disable people, rewrite the roles they do not hold, and register or revoke connectors. **Two colluding admins can grant each other anything.** That is the admin role as ruled, and the audit is the remedy |
 | **A compromised server host** | Nothing. The host holds the store, the authority and the host commands, which write any grant by design | Out of scope: the host is trusted, as the connectors' link already assumes |
 | **A compromised agent box** | Nothing new here: the connectors are mutually authenticated and the box's sudo rule is the third gate (Spec 8) | Out of IAM's scope |
 
@@ -208,13 +224,14 @@ drawn under the rule below and stored only as its digest (Spec 2.8's rule, uncha
 
 **Every bearer the server issues is 32 bytes from the operating system's cryptographic
 random source**: the session bearer, the enrollment token and the ceremony identity
-alike, and any bearer a later pull request adds. It is never derived from a counter, a
+alike, the sign-in token of 2026-11-10 among those added since, and any bearer a later pull request adds. It is never derived from a counter, a
 time or a row identity, so holding one bearer tells nothing of another. The source is read
 through `getrandom`, already in this crate's tree at two versions through `rand`; taking it
 as a direct dependency, or reading it through `rand`'s `OsRng`, is PR 2's to measure.
 
-**Its row** carries the person and the passkey it was opened with, beside the digest, when
-it opened, when it was last used and when it closed. **The last-used time is written at
+**Its row** carries the person, the method that opened it (`passkey assertion` or, since
+2026-11-10, `sign-in token`) and, where a passkey opened it, that passkey, beside the
+digest, when it opened, when it was last used and when it closed. **The last-used time is written at
 most once a minute per session**: an ordinary request refreshes it when the stored time is
 a minute old or more, and an open live view refreshes it at its 15-second re-check under
 the same rule. **The refresh is one conditional update on the database's clock**,
@@ -232,8 +249,12 @@ still holds.
 - sign-out, which closes the row;
 - the idle or absolute expiry;
 - disabling its person, seen at the next use as Spec 2.13 already says;
-- removing the passkey it was opened with;
-- the host reset of its person, by clearing the passkey the session was opened with.
+- removing the passkey it was opened with, where a passkey opened it;
+- the host reset of its person, by clearing the passkey the session was opened with,
+  where a passkey opened it.
+
+A session a sign-in token opened has no passkey to lose: a passkey's removal and the host
+reset leave it standing, and the other ends hold for it as for any session.
 
 Each is checked at every use, so no end needs a write to every session, and **nothing but
 the surface writes a session**: a disable, a passkey's removal and the host reset each
@@ -250,6 +271,15 @@ answers; the server verifies, updates the passkey's counter and opens the sessio
   it, so nothing is required now.
 - Name-first answers whether a name exists. For a handful of named people on one server,
   that is accepted and stated rather than hidden.
+
+**Sign-in by token** (section 1's amendment of 2026-11-10), where the config admits it:
+the sign-in page carries a second form, the person's name and the sign-in token the host
+printed for them, a plain post needing no script. A token that does not redeem, for any
+reason, gets one answer and no audit record, as a failed signature does. One that does is
+ended `redeemed` by a conditional update matching only a live, unexpired token, in the same
+transaction as the session's insert, so it opens one session however many posts carry it;
+the person is checked again as enabled, and the session names the method and no passkey.
+Spec 2.8 states the opening in full.
 
 **A person's name is unique, compared in one canonical form**, since name-first sign-in
 finds the person by it. The form is Unicode's compatibility caseless form (the Unicode
@@ -386,6 +416,12 @@ This settles Spec 10's "What an author names".
 - **No admin reset.** It would let an admin take a person over, issuing a token to a
   person and enrolling it themselves, and the threat model (section 5) promises against
   that.
+- **Where the config admits the sign-in token** (section 1's amendment of 2026-11-10), a
+  person who lost every passkey can be signed in by one the host issues. It recovers their
+  access and not a passkey: a session it opened adds none by itself, so a new passkey
+  still comes by an enrollment token from the host, the reset's or `person token`'s, and
+  never from an admin for a person ever issued a sign-in token (section 5). It is the
+  host's alone, never an admin's, so the rule above stands.
 
 ## 8. The lone admin's grant
 
@@ -448,8 +484,8 @@ every session its passkeys opened.
 - its identity;
 - when;
 - **the principal**: the person, the server or the host;
-- **how the principal was authenticated**: `session`, `enrollment token` or `passkey
-  assertion` for a person,
+- **how the principal was authenticated**: `session`, `enrollment token`, `passkey
+  assertion` or, since 2026-11-10, `sign-in token` for a person,
   `server` for the server acting on its own behalf (the admission's `show`), and `host`
   for access to the server's host. Each value belongs to exactly one principal, so a
   record's principal and its method can never disagree. **`passkey assertion` marks the
@@ -459,7 +495,9 @@ every session its passkeys opened.
   with; the fresh assertion before a passkey's addition; and any assertion the counter
   refused, whose principal is the passkey's person because the signature proved them.
   **An assertion whose signature failed is not audited**: it proves no principal, and
-  auditing it would let anyone fill the audit with requests;
+  auditing it would let anyone fill the audit with requests. **`sign-in token` marks the
+  opening of a session a sign-in token opened**, its target the person, since no passkey
+  began it; a token that does not redeem is not audited, for the same reason;
 - the host's `--author` claim where the host acts;
 - the target's kind and identity;
 - the action;

@@ -84,6 +84,29 @@ pub struct ServerConfig {
     /// it.
     #[serde(default)]
     pub operations_log: Option<PathBuf>,
+    /// **The ways a person may sign in** (Spec 2.13, the operator's ruling
+    /// of 2026-11-10): `passkey`, `token`, or both. `["passkey"]` where the
+    /// config names none, so a server configured as before behaves as
+    /// before; refused at load where it is empty or names a method twice.
+    /// The sign-in token is the pre-release stage's posture, which release
+    /// tightens.
+    #[serde(default = "default_sign_in")]
+    pub sign_in: Vec<SignInMethod>,
+}
+
+/// **A sign-in method the server's config may admit** (Spec 2.13).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SignInMethod {
+    /// A passkey's assertion, the method a config naming none admits.
+    Passkey,
+    /// A sign-in token the host issued (the operator's ruling of
+    /// 2026-11-10): a pre-release posture.
+    Token,
+}
+
+fn default_sign_in() -> Vec<SignInMethod> {
+    vec![SignInMethod::Passkey]
 }
 
 fn default_link_listen() -> String {
@@ -102,6 +125,11 @@ impl ServerConfig {
     /// The address a client config carries for the server.
     pub fn link_address(&self) -> &str {
         self.link_address.as_deref().unwrap_or(&self.link_listen)
+    }
+
+    /// Whether the config admits `method` for sign-in.
+    pub fn signs_in_by(&self, method: SignInMethod) -> bool {
+        self.sign_in.contains(&method)
     }
 }
 
@@ -178,6 +206,17 @@ impl ServerConfig {
                 "session_absolute_secs is {}, over {SESSION_ABSOLUTE_MAX_SECS} (seven days): an absolute limit longer than a week stops being one",
                 cfg.session_absolute_secs
             );
+        }
+        // A list naming no method would serve no sign-in at all, and one
+        // naming a method twice is a mistake the reader of the file should
+        // see rather than one the server quietly folds.
+        if cfg.sign_in.is_empty() {
+            anyhow::bail!("sign_in names no method; name passkey, token or both");
+        }
+        for (at, method) in cfg.sign_in.iter().enumerate() {
+            if cfg.sign_in[..at].contains(method) {
+                anyhow::bail!("sign_in names {method:?} twice");
+            }
         }
         if cfg.session_idle_secs > cfg.session_absolute_secs {
             anyhow::bail!(
@@ -275,5 +314,41 @@ mod tests {
             let loaded = ServerConfig::load(&path);
             assert_eq!(loaded.is_ok(), ok, "{idle}/{absolute}: {:?}", loaded.err());
         }
+    }
+
+    /// **Sign-in is by passkey where the config names no method**, and the
+    /// sign-in token only where it names `token` (Spec 2.13); a list naming
+    /// no method or one twice is refused at load, as is a method the server
+    /// does not know.
+    #[test]
+    fn sign_in_is_by_passkey_unless_the_config_names_the_token() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("server.toml");
+        let base =
+            "listen = \"127.0.0.1:0\"\ndatabase = \"postgres:///x\"\nauthority_dir = \"/a\"\n";
+        std::fs::write(&path, base).unwrap();
+        let loaded = ServerConfig::load(&path).unwrap();
+        assert_eq!(loaded.sign_in, vec![SignInMethod::Passkey]);
+        assert!(loaded.signs_in_by(SignInMethod::Passkey));
+        assert!(!loaded.signs_in_by(SignInMethod::Token));
+        for (list, ok) in [
+            (r#"["passkey"]"#, true),
+            (r#"["passkey", "token"]"#, true),
+            (r#"["token"]"#, true),
+            (r#"[]"#, false),
+            (r#"["passkey", "passkey"]"#, false),
+            (r#"["token", "passkey", "token"]"#, false),
+            (r#"["password"]"#, false),
+        ] {
+            std::fs::write(&path, format!("{base}sign_in = {list}\n")).unwrap();
+            let loaded = ServerConfig::load(&path);
+            assert_eq!(loaded.is_ok(), ok, "{list}: {:?}", loaded.err());
+        }
+        std::fs::write(&path, format!("{base}sign_in = [\"passkey\", \"token\"]\n")).unwrap();
+        assert!(
+            ServerConfig::load(&path)
+                .unwrap()
+                .signs_in_by(SignInMethod::Token)
+        );
     }
 }

@@ -111,6 +111,7 @@ pub(crate) fn refused(refusal: &Refusal) -> Response {
         Refusal::Stale
         | Refusal::Taken(_)
         | Refusal::HoldsPasskey
+        | Refusal::SignsInByToken
         | Refusal::LastAdmin
         | Refusal::Already
         | Refusal::Held

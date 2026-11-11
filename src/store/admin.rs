@@ -35,6 +35,9 @@ pub enum Refusal {
     Taken(String),
     /// A token is issued only for a person holding no passkey.
     HoldsPasskey,
+    /// A person ever issued a sign-in token takes an enrollment token from
+    /// the host alone (Spec 2.13).
+    SignsInByToken,
     /// The write would leave no enabled person holding a live admin grant.
     LastAdmin,
     /// The person is already in the state asked for.
@@ -92,6 +95,10 @@ impl std::fmt::Display for Refusal {
             Refusal::HoldsPasskey => write!(
                 f,
                 "a token is issued only for a person holding no passkey; a person with one recovers by another passkey or the host's reset"
+            ),
+            Refusal::SignsInByToken => write!(
+                f,
+                "this person has been issued a sign-in token, and takes an enrollment token from the host alone"
             ),
             Refusal::LastAdmin => write!(
                 f,
@@ -272,6 +279,12 @@ impl Store {
         if identity::holds_passkey(&mut tx, person).await? {
             return Ok(Err(Refusal::HoldsPasskey));
         }
+        // **A person who signs in by token may hold no passkey and still hold
+        // access** (Spec 2.13): an admin's token would let the admin enroll
+        // their own authenticator onto them, so the host alone issues one.
+        if identity::ever_issued_sign_in_token(&mut tx, person).await? {
+            return Ok(Err(Refusal::SignsInByToken));
+        }
         let token = identity::issue_token(&mut tx, person, hours, Supersedes::Issue).await?;
         commit_with_outcome(tx, "person token", self, first).await?;
         Ok(Ok((token, name)))
@@ -314,6 +327,9 @@ impl Store {
         .bind(person)
         .execute(&mut *tx)
         .await?;
+        // **And their sign-in token** (Spec 2.13), so one printed before the
+        // disable never opens a session after an enable.
+        identity::end_sign_in_token(&mut tx, person, "revoked").await?;
         commit_with_outcome(tx, "person disable", self, first).await?;
         Ok(Ok(()))
     }

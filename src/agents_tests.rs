@@ -66,6 +66,7 @@ fn server_config(dir: &std::path::Path, link: std::net::SocketAddr) -> crate::co
         session_idle_secs: 3600,
         session_absolute_secs: 43200,
         operations_log: None,
+        sign_in: vec![crate::config::SignInMethod::Passkey],
     }
 }
 

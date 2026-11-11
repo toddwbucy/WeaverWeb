@@ -116,6 +116,17 @@ enum PersonVerb {
         #[arg(long)]
         author: Option<String>,
     },
+    /// A sign-in token for an enabled person, printed once, where the
+    /// config's sign_in names token.
+    SignInToken {
+        /// The person as pe-<sixteen hex> or by name.
+        person: String,
+        /// The token's lifetime in minutes; ten where unset, never past 60.
+        #[arg(long)]
+        minutes: Option<u32>,
+        #[arg(long)]
+        author: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -266,6 +277,7 @@ async fn run_verb(cfg: &ServerConfig, command: Command) -> verbs::Answer {
                 PersonVerb::Bootstrap { .. } => "person bootstrap",
                 PersonVerb::Token { .. } => "person token",
                 PersonVerb::Reset { .. } => "person reset",
+                PersonVerb::SignInToken { .. } => "person sign-in-token",
             };
             let store = match store::Store::connect(&cfg.database).await {
                 Ok(store) => store,
@@ -287,6 +299,11 @@ async fn run_verb(cfg: &ServerConfig, command: Command) -> verbs::Answer {
                     hours,
                     author,
                 } => host::reset(&store, cfg, &person, hours, author.as_deref()).await,
+                PersonVerb::SignInToken {
+                    person,
+                    minutes,
+                    author,
+                } => host::sign_in_token(&store, cfg, &person, minutes, author.as_deref()).await,
             }
         }
         Command::Grant { verb } => {
@@ -445,7 +462,7 @@ async fn serve(cfg: Arc<ServerConfig>) -> anyhow::Result<()> {
             weaver_web::surfaces::enroll::routes(passkeys.clone()),
         ))
         .merge(weaver_web::surfaces::script_policy(
-            weaver_web::surfaces::sign_in::routes(passkeys.clone()),
+            weaver_web::surfaces::sign_in::routes(passkeys.clone(), &cfg.sign_in),
         ))
         // **An admin's writes to persons** (Spec 2.13), each re-checking
         // its admin's grant in its own transaction.

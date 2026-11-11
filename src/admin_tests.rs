@@ -136,7 +136,7 @@ async fn audited(s: &Store, admin: &str, target: &str, action: &str) -> (i64, i6
 }
 
 /// The token a shown-once answer carries.
-fn token_in(page: &str) -> String {
+pub(crate) fn token_in(page: &str) -> String {
     let at = page.find("<code>").unwrap() + "<code>".len();
     page[at..at + 64].to_owned()
 }

@@ -170,7 +170,7 @@ async fn page(store: Store, policy: &Policy, headers: HeaderMap) -> Response {
     let rows: Vec<Row> = held
         .into_iter()
         .map(|own| Row {
-            this_session: own.passkey_id == session.passkey_id,
+            this_session: session.passkey_id.as_deref() == Some(own.passkey_id.as_str()),
             label: own.label.unwrap_or_else(|| "unlabelled".to_owned()),
             added: stamp(own.added_at),
             used: own

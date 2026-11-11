@@ -2964,29 +2964,39 @@ async fn bounded<T>(
 /// `bounded` to an instant rather than a span: **a deadline kept as an
 /// instant is read at the await it bounds**, where a remainder computed
 /// earlier would be stale and a remainder of zero would still wait for the
-/// timer's next tick. **A landing whose deadline has already come is
-/// never polled** (Spec 7.2): tokio's `timeout_at` polls the wrapped
-/// future before it reads its deadline, and a single-statement write that
-/// goes out at that one poll commits whether or not its answer is waited
-/// for, so an admission refused as incomplete would still land its
-/// `show`. The instant is read here, at this function's first poll. What
-/// this leaves is a write that goes out before the deadline and is
-/// answered after it: it commits while the bound reads as timed out.
+/// timer's next tick. **The landing is never polled once its deadline has
+/// come** (Spec 7.2): the instant is read at every poll, before the
+/// landing is. tokio's `timeout_at` polls the wrapped future before it
+/// reads its deadline, at every poll and the timer's own wake among them,
+/// so a landing handed a deadline already past would send its statement at
+/// its first poll, and one waiting on the pool when the deadline came could
+/// take its connection and send it at the wake. A single-statement write
+/// that goes out commits whether or not its answer is waited for, so an
+/// admission refused as incomplete would still land its `show`. What this
+/// leaves is a statement that goes out before the deadline and is answered
+/// after it: it commits while the bound reads as timed out. The close
+/// signal is read before the landing too, so a close standing at a poll
+/// ends the bound there.
 async fn bounded_at<T>(
     landing: impl Future<Output = T>,
     deadline: tokio::time::Instant,
     close: &mut watch::Receiver<bool>,
 ) -> Bounded<T> {
-    if tokio::time::Instant::now() >= deadline {
-        return Bounded::TimedOut;
-    }
-    tokio::select! {
-        done = tokio::time::timeout_at(deadline, landing) => match done {
-            Ok(value) => Bounded::Done(value),
-            Err(_) => Bounded::TimedOut,
-        },
-        _ = close.changed() => Bounded::Closed,
-    }
+    let mut landing = std::pin::pin!(landing);
+    let mut timer = std::pin::pin!(tokio::time::sleep_until(deadline));
+    let mut closed = std::pin::pin!(close.changed());
+    std::future::poll_fn(|cx| {
+        // The timer is polled even where the clock answers, so a poll that
+        // finds the deadline still ahead leaves its wake registered.
+        if tokio::time::Instant::now() >= deadline || timer.as_mut().poll(cx).is_ready() {
+            return std::task::Poll::Ready(Bounded::TimedOut);
+        }
+        if closed.as_mut().poll(cx).is_ready() {
+            return std::task::Poll::Ready(Bounded::Closed);
+        }
+        landing.as_mut().poll(cx).map(Bounded::Done)
+    })
+    .await
 }
 
 /// Wait for the writer to drain what it holds, bounded: a peer that stopped
@@ -4595,9 +4605,11 @@ mod bounded_tests {
     /// and at one long gone. No sleep races the deadline: it has passed
     /// before the bound is asked.
     ///
-    /// Perturbation: drop the check before the first poll. tokio's
-    /// `timeout_at` polls the wrapped future before it reads its deadline,
-    /// the landing answers at that poll, and the bound reads it as done.
+    /// Perturbation: read the clock after the landing is polled, as tokio's
+    /// `timeout_at` reads its deadline, and the landing answers at that poll
+    /// and the bound reads it as done. Perturbation: drop the clock and keep
+    /// the timer alone, and a deadline at this very instant, which the timer
+    /// rounds up to its next tick, lets the landing be polled.
     #[tokio::test]
     async fn a_landing_handed_a_deadline_already_past_is_never_polled() {
         let now = tokio::time::Instant::now();
@@ -4617,8 +4629,57 @@ mod bounded_tests {
         }
     }
 
-    /// The check takes nothing from a landing with time left: it is polled
-    /// and its answer is the bound's.
+    /// **A landing still waiting when its deadline comes is not polled
+    /// again** (Spec 7.2): one waiting on the pool for a connection could
+    /// otherwise take it at the timer's own wake and send its statement past
+    /// the deadline. The landing never answers, so the bound ends only at
+    /// its deadline, and the timer's wake is a poll at or past it by
+    /// construction: no sleep races the deadline, and the verdict does not
+    /// ride on how long the wait takes.
+    ///
+    /// Perturbation: read the deadline only at the first poll, or bound the
+    /// landing with tokio's `timeout_at`, which polls the wrapped future
+    /// before its deadline at every poll. The timer's wake polls the landing
+    /// past its deadline.
+    #[tokio::test]
+    async fn a_landing_still_waiting_when_its_deadline_comes_is_not_polled_again() {
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(20);
+        let late = Arc::new(AtomicBool::new(false));
+        let seen = late.clone();
+        let landing = std::future::poll_fn(move |_| {
+            if tokio::time::Instant::now() >= deadline {
+                seen.store(true, Ordering::Relaxed);
+            }
+            Poll::<()>::Pending
+        });
+        let (_close, mut close_rx) = watch::channel(false);
+        let ended = bounded_at(landing, deadline, &mut close_rx).await;
+        assert!(matches!(ended, Bounded::TimedOut));
+        assert!(
+            !late.load(Ordering::Relaxed),
+            "a landing was polled at or past its deadline, where its statement could go out"
+        );
+    }
+
+    /// **A close standing at a poll ends the bound before the landing is
+    /// polled**: a revocation, rotation or halt cuts the connection's store
+    /// work where it finds it rather than letting one more statement go out.
+    ///
+    /// Perturbation: poll the landing before the close signal, and the
+    /// landing answers and the bound reads it as done.
+    #[tokio::test]
+    async fn a_close_standing_at_a_poll_ends_the_bound_before_the_landing_is_polled() {
+        let (polled, landing) = watched();
+        let (close, mut close_rx) = watch::channel(false);
+        close.send(true).unwrap();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+        let ended = bounded_at(landing, deadline, &mut close_rx).await;
+        assert!(matches!(ended, Bounded::Closed));
+        assert!(!polled.load(Ordering::Relaxed));
+    }
+
+    /// The bound takes nothing from a landing with time left and no close:
+    /// it is polled and its answer is the bound's.
     #[tokio::test]
     async fn a_landing_with_time_left_is_polled_and_its_answer_taken() {
         let (polled, landing) = watched();

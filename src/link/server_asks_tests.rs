@@ -834,10 +834,9 @@ async fn a_fault_of_a_kind_that_proves_nothing_writes_no_outcome() {
 /// write. The landing gets the stale remainder and the admission completes
 /// after its deadline.
 ///
-/// Perturbation: poll the landing once its deadline has come (drop
-/// `bounded_at`'s check). tokio's `timeout_at` polls the landing before it
-/// reads the deadline, the landing's one statement can go out at that
-/// poll, and the late `show` lands on the row while the connection closes
+/// Perturbation: poll the landing before reading its deadline, as tokio's
+/// `timeout_at` does. The landing's one statement can go out at that poll,
+/// and the late `show` lands on the row while the connection closes
 /// `admission_incomplete`. It failed 6 of 20 runs alone (2026-11-11), since
 /// that one poll must take a connection from the pool and finish the
 /// socket's write; `bounded_tests` in the listener shows it every run.

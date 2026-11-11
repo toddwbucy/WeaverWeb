@@ -2962,14 +2962,24 @@ async fn bounded<T>(
 }
 
 /// `bounded` to an instant rather than a span: **a deadline kept as an
-/// instant is read at the await it bounds**, and one already past fires
-/// at the first poll, where a remainder of zero computed earlier would
-/// still wait for the timer's next tick.
+/// instant is read at the await it bounds**, where a remainder computed
+/// earlier would be stale and a remainder of zero would still wait for the
+/// timer's next tick. **A landing whose deadline has already come is
+/// never polled** (Spec 7.2): tokio's `timeout_at` polls the wrapped
+/// future before it reads its deadline, and a single-statement write that
+/// goes out at that one poll commits whether or not its answer is waited
+/// for, so an admission refused as incomplete would still land its
+/// `show`. The instant is read here, at this function's first poll. What
+/// this leaves is a write that goes out before the deadline and is
+/// answered after it: it commits while the bound reads as timed out.
 async fn bounded_at<T>(
     landing: impl Future<Output = T>,
     deadline: tokio::time::Instant,
     close: &mut watch::Receiver<bool>,
 ) -> Bounded<T> {
+    if tokio::time::Instant::now() >= deadline {
+        return Bounded::TimedOut;
+    }
     tokio::select! {
         done = tokio::time::timeout_at(deadline, landing) => match done {
             Ok(value) => Bounded::Done(value),
@@ -4557,5 +4567,65 @@ impl Inner {
                 false
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod bounded_tests {
+    use super::*;
+    use std::sync::atomic::AtomicBool;
+    use std::task::Poll;
+
+    /// A landing that records whether it was ever polled and answers at
+    /// its first poll, as a single statement whose reply is already in.
+    fn watched() -> (Arc<AtomicBool>, impl Future<Output = ()>) {
+        let polled = Arc::new(AtomicBool::new(false));
+        let seen = polled.clone();
+        let landing = std::future::poll_fn(move |_| {
+            seen.store(true, Ordering::Relaxed);
+            Poll::Ready(())
+        });
+        (polled, landing)
+    }
+
+    /// **A landing handed a deadline already past is never polled** (Spec
+    /// 7.2): a poll is where a single-statement write goes out, and one
+    /// that went out commits whether or not its answer is waited for, so
+    /// the bound refuses it before the first poll, at the deadline itself
+    /// and at one long gone. No sleep races the deadline: it has passed
+    /// before the bound is asked.
+    ///
+    /// Perturbation: drop the check before the first poll. tokio's
+    /// `timeout_at` polls the wrapped future before it reads its deadline,
+    /// the landing answers at that poll, and the bound reads it as done.
+    #[tokio::test]
+    async fn a_landing_handed_a_deadline_already_past_is_never_polled() {
+        let now = tokio::time::Instant::now();
+        let gone = now.checked_sub(Duration::from_secs(1)).unwrap_or(now);
+        for deadline in [now, gone] {
+            let (polled, landing) = watched();
+            let (_close, mut close_rx) = watch::channel(false);
+            let ended = bounded_at(landing, deadline, &mut close_rx).await;
+            assert!(
+                matches!(ended, Bounded::TimedOut),
+                "a deadline already past ends the bound as timed out"
+            );
+            assert!(
+                !polled.load(Ordering::Relaxed),
+                "a landing past its deadline was polled, where its write could go out"
+            );
+        }
+    }
+
+    /// The check takes nothing from a landing with time left: it is polled
+    /// and its answer is the bound's.
+    #[tokio::test]
+    async fn a_landing_with_time_left_is_polled_and_its_answer_taken() {
+        let (polled, landing) = watched();
+        let (_close, mut close_rx) = watch::channel(false);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+        let ended = bounded_at(landing, deadline, &mut close_rx).await;
+        assert!(matches!(ended, Bounded::Done(())));
+        assert!(polled.load(Ordering::Relaxed));
     }
 }

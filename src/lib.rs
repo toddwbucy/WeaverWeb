@@ -40,6 +40,9 @@ mod reading_tests;
 mod sign_in_tests;
 #[cfg(all(test, feature = "passkeys"))]
 mod sign_in_token_tests;
+pub mod stage;
+#[cfg(test)]
+mod stage_tests;
 pub mod store;
 pub mod surfaces;
 pub mod traceview;

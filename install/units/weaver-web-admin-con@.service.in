@@ -1,0 +1,28 @@
+# admin-con for one agent, the instance being the agent's name (Spec 8.1).
+# weaver-web-stage renders this file: each @NAME@ is a parameter with no
+# default, kept outside this repository.
+#
+# A stop signals admin-con alone (KillMode=mixed), which waits within its
+# grace for a verb in flight; the stop timeout is the grace plus 60 seconds,
+# 1080 + 60 here, and weaver-web-stage writes a drop-in per agent from the
+# grace it stages. PATH is fixed, since the invoker finds the program it runs
+# by it. This unit restricts nothing weaver-admin-operator-contract section 2
+# requires left open: Spec 8.1 lists the directives it never sets.
+[Unit]
+Description=WeaverWeb admin-con for agent %i
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=@ACCOUNT@
+UMask=0077
+Environment=PATH=@ADMIN_PATH@
+KillMode=mixed
+TimeoutStopSec=1140
+ExecStart=@BINARIES@/admin-con --config @CONFIG_ROOT@/connectors/%i/admin-con.toml
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -922,6 +922,24 @@ async fn an_alert_and_its_record_on_the_row_are_one() {
     )
     .await;
     wait_entries(&o.rig, 1).await;
+    // The line is written before the claim's transaction commits, so the
+    // alert is read once the row has left the inbox, which that commit does.
+    let until = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM entry_inbox WHERE run_id = $1")
+            .bind(RUN)
+            .fetch_one(&o.rig.store().pool)
+            .await
+            .unwrap();
+        if rows == 0 {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < until,
+            "the row never left the inbox"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
     let found = alerts(&o.rig, &o.karl).await;
     assert_eq!(found.len(), 1, "{found:#?}");
     assert_eq!(found[0].occurrences, 1, "{found:#?}");

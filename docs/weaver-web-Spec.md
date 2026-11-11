@@ -1296,7 +1296,7 @@ never a bare socket's. Each row carries:
   per section 8
 - **the run's constituents as the last `show` named them**, by process id,
   with that answer's date, per section 8: a fact for the operator and for
-  the install's one-time containment check, which drives no behaviour of
+  the install's one-time check after the first load (section 8.1), which drives no behaviour of
   admin-con's. A `show` that names none writes none, so the member reads
   null where no run holds the agent's run lock, dated still (migration
   `0013`)
@@ -4459,61 +4459,60 @@ two cadences ends a connection whose peer stopped acknowledging. A
 connection that is merely quiet is not dead: the server sends nothing
 unasked on the gate plane, and its kernel still answers.
 
-**The agent's lifetime is bound to its admin-con, and the agent fails
-closed with it**, on the operator's ruling of 2026-10-03 on
-`toddwbucy/WeaverWeb#15`, per `weaver-admin-operator-contract` section 3.
-Each agent has its own admin-con, and stopping that admin-con stops its
-agent and only its agent: the management plane going down may mean it was
-taken over. **admin-con's service contains the agent it starts**, under
-control-group kill and never `KillMode=process`, so the agent's processes
-live and die inside the invoker's containment. The invoker's resource limits
-contain the agent too, so they are sized for it, model loading included, or
-left unset, and an upgrade of admin-con is planned as an unload, the
-upgrade, then a load. **admin-con is a conduit, and its stop asks nothing
-of the agent**, on the operator's ruling of 2026-10-14 (section 2.14, ruling
-3), which retired the orderly stop's `unload` and its retry until rest of
+**The agent's lifetime is its own scope's, and admin-con's end ends neither
+the agent nor a load's start step**, on the operator's ruling of 2026-11-07
+on `toddwbucy/WeaverAgent#166`, per `weaver-admin-operator-contract`
+sections 2 and 3. That ruling replaced the binding of 2026-10-03 on
+`toddwbucy/WeaverWeb#15`, under which stopping an agent's admin-con stopped
+that agent: admin's start step now makes a scope of root's for the load,
+delegated, and the agent lives there until `unload`, `force-unload`, root
+stopping that scope, or its own processes ending, whoever invoked the load.
+Each agent still has its own admin-con. **admin-con's service no longer
+contains the agent**: the limits of its control group do not reach the
+agent, and what does reach it is admin-con's execution context, which no
+move between control groups changes (the contract's section 2), so section
+8.1 names what admin-con's unit leaves unrestricted. An upgrade of
+admin-con is a stop, the upgrade and a start, with the agent running
+throughout. **admin-con is a conduit, and its stop asks nothing of the
+agent**, on the operator's ruling of 2026-10-14 (section 2.14, ruling 3),
+which retired the orderly stop's `unload` and its retry until rest of
 2026-10-08: admin-con answers its waiting asks `not_started`, waits for the
 verb in flight, until its process exits and is reaped, within the stop's
 grace, never killing it, and exits, invoking nothing. It parses no
 refusal class of admin's. A verb whose process outlasts the grace runs on
-unkilled as far as admin-con is concerned. **The stop's grace is a member
-of admin-con's config**, `stop_grace_secs`, 1080 unless set: the box's load
-bound, the unload bound and a margin, timed from the stop's signal, so a
-stop that meets a `load` in flight waits for it. **What the containment does
-at the service's stop is provisioning's**, per the binding below: a kill
-there is an unclean stop, whose next load resets the agent to its latest
-save point, and the server sees the connection end as lost contact, raised
-to the operator, the agent possibly still running. An operator who wants
-the agent at rest before a stop unloads it first, through section 2.14's
-path.
-**The binding is a property of how the box is provisioned, and admin-con
-enforces none of it**, on the operator's ruling of 2026-10-05. admin-con is
-a connector that abstracts the agent's primitives and polices nothing on
-the box: it does exactly three things, runs a granted line when asked,
-reads the relay, and passes the lines of `admin.log` and its own failures
-upstream as entries, and acts on its agent on its own initiative never. There
-is no adversary between admin-con and weaver-admin, both being the
-operator's; the one adversary is a hijacked management plane, which the
-binding answers by provisioning, so a check at runtime would guard only
-against a misprovisioned box, which is the install's question. WeaverAgent's
-setup writes the sudo rule with no login session, so the agent's processes
-land inside admin-con's service, per the contract's section 2, and **the
-install owes four things**, named here and built by the install act: the
-unit's control-group kill mode; a stop timeout covering the box's load bound
-plus the unload bound plus a margin, so an orderly stop that meets a `load`
-in flight waits for it; a fixed `PATH` in the unit's environment, since the
-invoker finds sudo by it, a path to it being a box path this repository
-does not carry, so the unit's environment is part of what the invocation
-trusts; and **one check, after the first load**, that the
-run's constituents, the processes `show` names by id where a run stands,
-per the contract's section 3, sit inside admin-con's service, failing the
-install by name otherwise. `show`'s pids reach the row as a fact for the
-operator and for that check, per section 2.12, and drive no behaviour of
-admin-con's; `show` carries them on WeaverAgent's side, per
-`weaver-types` `LifecycleAnswer::State`. **Without a cgroup-capable supervisor the binding does
-not hold**: a process group does not contain an agent whose worker leaves its
-session, so an admin-con that stops or dies there leaves its agent running.
-The gap is stated rather than imitated.
+unkilled as far as admin-con is concerned; what the unit's own end does to
+it is section 8.1's. **The stop's grace is a member of admin-con's config**,
+`stop_grace_secs`, 1080 unless set: the box's load bound, the unload bound
+and a margin, timed from the stop's signal, so a stop that meets a `load`
+in flight waits for it, and the unit's stop timeout stands above the grace
+(section 8.1). The server sees admin-con's end as lost contact, raised to
+the operator, the agent still running. An operator who wants the agent at
+rest before a stop unloads it first, through section 2.14's path.
+**The containment is a property of how the box is provisioned, and
+admin-con enforces none of it**, on the operator's ruling of 2026-10-05.
+admin-con is a connector that abstracts the agent's primitives and polices
+nothing on the box: it does exactly three things, runs a granted line when
+asked, reads the relay, and passes the lines of `admin.log` and its own
+failures upstream as entries, and acts on its agent on its own initiative
+never. There is no adversary between admin-con and weaver-admin, both being
+the operator's; the one adversary is a hijacked management plane, which the
+containment answers by provisioning: the agent's scope and every containment
+above it are root's, so no account but root, admin-con's included, can move
+a process of the agent out of it (`toddwbucy/WeaverAgent#166`'s guard, the
+operator's ruling of 2026-10-15), and admin's start step refuses
+`BoundaryUnverified` where the host does not let it make that scope (the
+contract's section 2, `weaver-admin-Spec` section 6.1). A check at runtime
+in admin-con would guard only against a misprovisioned box, which is the
+install's question, so **the install checks once, after the first load**,
+that every constituent `show` names sits in the agent's own scope and none
+in admin-con's service, as the contract's section 2 asks of the invoker
+(section 8.1). `show`'s pids reach the row as a fact for the operator and
+for that check, per section 2.12, and drive no behaviour of admin-con's;
+`show` carries them on WeaverAgent's side, per `weaver-types`
+`LifecycleAnswer::State`. **Without a service manager that makes such a
+scope, there is no containment and no load**: admin's start step refuses
+rather than start an agent nothing contains. The gap is the box's, and is
+stated rather than imitated.
 
 **A lost link never unloads an agent**, on the operator's confirmation of
 2026-10-03 on `toddwbucy/WeaverWeb#15`: a network disruption must never
@@ -4664,6 +4663,254 @@ have the replacement record connected and the old teardown then land
 disconnected with a higher arrival number, so the row would read the plane
 missing while it was relaying.
 
+### 8.1 The install
+
+**This repository carries the install's units and a tool that stages them,
+and nothing that applies them.** Until 2026-11-11 the server and both
+connectors had only run as units typed by hand at a shell, so their
+properties were written down nowhere here and nothing survived a restart of
+the machine; the act of that date (`docs/project/brief-2026-11-11-the-install.md`)
+writes them down. Three rules from the hard boundaries shape it. **No
+location, account, group or socket is written into the repository**: each is
+a named parameter with no default, read from a file the operator keeps
+outside it. **No privileged program stands in it**: the staging tool runs as
+the operator's own user, refuses to run as root, and writes a directory the
+operator applies; the one privileged invocation stays admin-con's sudo
+invoker, per section 7.2 and section 9's row. **No account, group or sudo
+rule is created**: those are WeaverAgent's (`create-agent.sh`), so the
+install requires them and refuses by name where one is missing at apply.
+Whether the repository's own locations may become overridable defaults, and
+whether a script the operator runs as root to apply the staged files stands
+outside the one-privileged-invocation rule, are the operator's, named in
+section 10.
+
+**Three units, two of them templates.** `weaver-web.service` runs the
+server. `weaver-web-gate-con@.service` and `weaver-web-admin-con@.service`
+run the connectors, the instance being the agent's name, so one file per
+plane serves every agent on a box and each agent's connectors start, stop
+and fail apart. A template is one text to review and to verify, where
+units generated per agent would need a generator and its tests for no gain
+while the connectors' accounts are the box's and not the agent's (the
+Planner's default of 2026-11-11, recorded as such and not as the operator's
+ruling). The templates stand under `install/units/` with each location and
+account as a placeholder the staging tool fills, and it refuses a
+template carrying a placeholder it does not fill, so none stages
+half-rendered.
+
+**What every unit carries, and why:**
+
+- **`User=`, the unit's account parameter, never the operator's uid**, per
+  the operator's rulings of 2026-10-02 and 2026-10-03 for the connectors;
+  the server takes the same rule as a system unit under its own account
+  (the Planner's default of 2026-11-11), so the console survives a restart
+  of the machine with nobody signed in. No `Group=` is set: each runs with
+  its account's own groups, which the box gives it, and section 8's service
+  users hold exactly what their planes need through them.
+- **`UMask=0077`**: every file a program creates is its own alone, the
+  server's authority and operations log among them.
+- **`Wants=` and `After=network-online.target`**: the server listens on
+  configured addresses and reaches its store, and each connector dials the
+  server. Where the store is local, ordering after it is the box's, by a
+  drop-in.
+- **`Restart=on-failure` with `RestartSec=5`**, a new behaviour for the
+  operator's ruling (section 10): a connector that exits on a fault comes
+  back on its own, and its own reconnect policy (above) carries it from
+  there; a stop asked of the service manager is not a failure, so a stopped
+  unit stays stopped.
+- **`WantedBy=multi-user.target`**: an enabled unit starts at boot, the gap
+  the brief measured.
+- **`ExecStart=`** the program under the binaries location with `--config`
+  naming its config: the server's at `<config root>/config.toml` with
+  `serve`, a connector's at `<config root>/connectors/<agent>/gate-con.toml`
+  or `admin-con.toml`.
+
+**What admin-con's unit adds, and why:**
+
+- **`KillMode=mixed`**: a stop signals admin-con alone, so the one process
+  that knows a verb is in flight decides how long to wait, within its
+  grace (section 8). What remains in the unit after admin-con exits is a
+  verb that outlasted the grace, which the box's own bounds limit; the
+  service manager's final kill reaches it there, and never the agent, which
+  runs in its own scope (section 8). A `load`'s admin has left the unit for
+  the agent's scope at its start step (`weaver-admin-Spec` section 6.1);
+  any other verb's admin runs in the unit until it ends. **Measured
+  nowhere yet**: the moment the final kill lands, when admin-con exits
+  before its stop timeout with a process left in the unit, is the service
+  manager's and is to be measured on a box before the operator rules on the
+  restart policy.
+- **`TimeoutStopSec=`, the agent's `stop_grace_secs` plus 60 seconds**, so
+  the service manager's timeout never cuts admin-con's own grace short.
+  The grace is a member of each agent's config, so the staging tool writes
+  the timeout as a drop-in per instance,
+  `weaver-web-admin-con@<agent>.service.d/stop-timeout.conf`, from the
+  value it stages into that agent's config (1080 unless the parameter
+  file sets it, so 1140), and the template carries 1140 for an instance
+  started without one.
+- **`Environment=PATH=`, admin-con's path parameter**, since the invoker
+  finds sudo by `PATH` and a path to it is a box path this repository does
+  not carry (section 7.2), so the unit's environment is part of what the
+  invocation trusts.
+- **No `Delegate=`.** `toddwbucy/WeaverWeb#46` asked for it on
+  2026-10-14, when admin made the agent's control group beneath the
+  invoker's, which then had to be delegated. Since `toddwbucy/WeaverAgent#166`
+  admin's start step leaves the invoker's control group for a scope of
+  root's that the service manager makes, and the invoker's containment is no
+  longer judged (`weaver-admin-Spec` section 6.1), so admin-con's unit needs
+  no delegation and asks for none.
+- **Nothing the contract forbids.** `weaver-admin-operator-contract`
+  section 2 requires the invoker's execution context to leave admin and the
+  agent what they need (the operator's ruling of 2026-11-09 on
+  `toddwbucy/WeaverAgent#166`), and calls providing it the invoker's
+  install's. So admin-con's unit sets none of these, and a test reads the
+  rendered unit for each:
+  - **no new privileges, under which sudo cannot gain root**:
+    `NoNewPrivileges`, and every directive the service manager documents as
+    implying it for a unit that runs as an account other than root:
+    `SystemCallFilter`, `SystemCallArchitectures`, `RestrictAddressFamilies`,
+    `RestrictNamespaces`, `PrivateDevices`, `ProtectKernelTunables`,
+    `ProtectKernelModules`, `ProtectKernelLogs`, `ProtectClock`,
+    `MemoryDenyWriteExecute`, `RestrictRealtime`, `RestrictSUIDSGID`,
+    `DynamicUser` and `LockPersonality`;
+  - **no capability bounding set narrower than root's**:
+    `CapabilityBoundingSet`, `SecureBits` and `PrivateUsers`;
+  - **no system call filter** (`SystemCallFilter` and its siblings above,
+    and `SystemCallLog`), and **no address family filter** at all, which
+    admits `AF_UNIX` by setting none;
+  - **no private or read-only view** of `/sys/fs/cgroup`, `/run`, the
+    agent's territory, the admin config root or the stack's prefix:
+    `ProtectSystem`, `ProtectHome`, `ProtectControlGroups`, `ProtectProc`,
+    `ProcSubset`, `ReadOnlyPaths`, `InaccessiblePaths`, `TemporaryFileSystem`,
+    `BindReadOnlyPaths`, `RootDirectory` and `RootImage`;
+  - **no resource limit**: no `Limit` directive of any kind, since a limit
+    set on admin-con passes through sudo and admin to the agent, whose
+    model loading it must not cut, so the box's defaults apply.
+
+  gate-con's unit and the server's take none of these either. They need
+  none, and hardening them is security posture, which the hard boundaries
+  keep out of this repository.
+
+**The parameters**, one TOML file the operator writes and keeps outside the
+repository, read by the staging tool alone:
+
+- **`[locations]`, always required**: `binaries`, the directory the
+  programs are placed in; `units`, the directory the unit files and their
+  drop-ins are placed in; `config_root`, the directory holding the server's
+  `config.toml` and `connectors/<agent>/` beneath it.
+- **`[server]`, where the server's unit is staged**: `account`, and
+  `binary`, the built `weaver-web` to place.
+- **`[connectors]`, where any agent is staged**: `gate_account`,
+  `admin_account`, `admin_path` (admin-con's `PATH`), `gate_con_binary`,
+  `admin_con_binary`, and `handover`, the directory `register` wrote into
+  (its `--out`).
+- **`[[agent]]`, one per agent on the box**: `box` and `name` as registered,
+  the four box facts the connectors' configs require (`gate_socket`,
+  `trace_socket`, `weaver_admin`, `admin_log`), and optionally
+  `stop_grace_secs` and `verb_bound_secs`, which default as admin-con's
+  config does.
+
+**What each must be**, refused otherwise: every path absolute, not the root
+directory, with no empty, `.` or `..` component and no trailing separator,
+and of printable ASCII outside the characters a unit or a `PATH` list would
+read (whitespace, quotes, the backslash, `%`, `$`, `;` and `:`), so each is
+written into a unit as it stands; `admin_path` one or
+more such directories joined by `:`; every account a portable user name (a
+lowercase letter or `_`, then lowercase letters, digits, `_` or `-`, at most
+32); `name` letters, digits, `_` and `-`, and `box` those and `.`, not `.`
+or `..`, the grammar `register` holds them to, so a name is also a systemd
+instance name that needs no escaping; no `name` twice; no member
+the tool does not know, so a misspelled member is a refusal and not a
+default; and no file's destination may be a directory's or lie above
+another destination, since a program is not copied into the staged tree and
+the manifest would list one path as both, which no order applies.
+
+**The staging tool**, `weaver-web-stage --params <file> --out <dir>`,
+built without default features so it runs on an agent's box as the
+connectors do. It runs as the operator's own user and refuses to run as
+root. It reads and checks every parameter, and renders every unit and
+composes every connector config in memory, before it writes anything; it
+then writes, loads each staged connector config through that connector's
+own loader, and where any step refuses removes everything it wrote, so a
+refusal leaves `<out>` as it found it. It makes `<out>` where absent, makes
+the tree under it, `files/`, by an exclusive make, and on a refusal removes
+only what that run made, so a second run on the same `<out>`, whose check
+passed before the first wrote, is refused at the tree's make and removes
+nothing of the first's. It writes, under `<out>`:
+
+- **`files/`**, a tree mirroring each destination: the three units, each
+  admin-con instance's stop-timeout drop-in, and each agent's two
+  connector configs. **A connector config is its handover file, unchanged,
+  then the box facts from the parameter file**, and the tool loads the
+  staged file through that connector's own config loader (`client::read_private`'s
+  trust rule on the staged copy, the plane, the members, the bounds and the
+  absolute paths), refusing where
+  it does not load, where its `agent` is not the parameter's `name`, or
+  where the handover file is missing or is not a regular file. A refusal
+  names the member, never the file's text, which carries a key. Each
+  handover file and each program is opened without following a symlink and
+  judged and read through the descriptor that open gave, as the
+  connectors' trust rule reads a config, so the check and the read are one
+  look at the name. **A handover file is held to that trust rule whole**:
+  the invoking user's, at `0600` or tighter, since it names the server the
+  connector will trust and carries its key, and the staged copy's `0600`
+  must not stand for a source anyone else could have written or read. The
+  cost is the operator's: a handover downloaded through a browser from the
+  admin's agents page arrives under the browser's umask, often `0644`, so
+  the operator tightens it (`chmod 600`) before staging, and the refusal
+  names the mode found.
+- **`manifest.tsv`**, one line per directory and file in the order they are
+  applied, parents first: the kind (`dir` or `file`), the source (the staged
+  file, or for a program the built binary the parameter names), the
+  destination, the owner, the group, the mode, and the SHA-256 of the source
+  (`-` for a directory). The binaries, units and directories are `root`'s,
+  the directories and binaries at `0755` and the units at `0644`; each
+  connector config is its plane's account's at `0600`, as the connector's
+  trust rule requires, under an agent directory of `root`'s at `0755`. A
+  group of `-` is the owner's primary group.
+- **Its answer**, one JSON object on stdout with the exit status agreeing,
+  the register verbs' shape (section 8): `verb` `stage`, `ok`, and on
+  success the manifest's path and its line count, or on refusal the reason.
+
+**`<out>` holds keys**, the connectors' configs, so it must not exist or be
+an empty directory of the operator's own at `0700` or tighter, and the tool
+makes it `0700` (a relative `<out>` is taken against the working
+directory, and its `.` components and repeated or trailing separators are
+dropped, lexically, with no symlink resolved; a `..` is refused as in any
+path); the operator removes it after applying, as the handover
+copy is removed once both planes connect.
+
+**Applying is the operator's, as root, in the manifest's order**: each
+directory made where it is absent, with its owner, group and mode, and left
+as it stands where it is present, since a location may be a directory the
+box already keeps; each file placed with its
+owner, group and mode, a program only where the binary still has the
+manifest's sum; then the service manager reloaded and each unit enabled and
+started, the connectors as `weaver-web-gate-con@<agent>` and
+`weaver-web-admin-con@<agent>`. Placing a file where one stands is a
+replacement, so a running connector is stopped before its program or config
+is replaced. This repository carries no script that does it.
+
+**The check after the first load.** After the first `load` through
+admin-con, the operator reads the constituents the register holds for the
+agent (section 2.12, the `agents` verb), and for each process id reads its
+control group as the kernel reports it in `/proc/<pid>/cgroup`, which needs
+no privilege where `/proc` is mounted without hiding other users'
+processes. Each must lie in the agent's own scope, as `weaver-admin-Spec`
+section 6.1 names it, and none in `weaver-web-admin-con@<agent>.service`. A
+constituent anywhere else fails the install, named: the operator unloads the
+agent and examines the box's provisioning before another load. The check is
+the install's, once, and drives no behaviour of admin-con's (section 8).
+
+**Not in this act**, each waiting on what is named: the locations as
+overridable defaults, and a script that applies the staged directory
+(the operator's rulings, section 10); the restart policy (the same);
+squashing the migrations into one schema file, which epic #18's install
+item carried under the operator's ruling of 2026-10-08 that no deployment
+held data before it, and which waits on his ruling now that one does; and
+section 8's sentence on a service user per agent and plane, which
+WeaverAgent's layout of two connector accounts per box would change, waiting
+on `toddwbucy/WeaverAgent#533`'s merge, since no repository builds against
+an unmerged contract.
+
 ## 9. What is enforced, and by which instrument
 
 | claim | instrument |
@@ -4784,6 +5031,11 @@ missing while it was relaying.
 | a recovery holds exactly one of the person's places for its whole life | perturbation in `src/alerts_tests.rs`: admit again inside the sequence, and with the person's other three asks outstanding the choice's save-point is shed |
 | the prompt's `unload` follows only a hash-confirmed save point | perturbation in `src/alerts_tests.rs`: ask `unload` on any `save-point` answer, and a `save_point_not_taken`, or a `save_point_taken` with no report, is followed by an unload |
 | no privileged invocation exists outside admin-con's sudo invoker | perturbation, two instruments. A test, `tests/no_privilege.rs`: it reads every tracked file outside `docs/`, never following a symlink, comment lines aside by each file's syntax and Markdown read in its fences only, for a privilege-escalating program named as a word, a setuid family call, a child's user or group set on a command, and a setuid or setgid mode bit, with the program's word allowed in `src/link/sudo_invoker.rs` and its test module alone; shown to fail when one of each family is planted, in Rust and in a README fence, when the program is planted in another file of the invoker's name, and when another family is planted in the invoker's own files. And the argv instrument in `src/link/sudo_invoker_tests.rs`: plant the principal's name from the ask into the command, and the line the fake records is no longer exactly `sudo -n <weaver_admin> <verb> <agent>` |
+| the staged units carry section 8.1's properties, and admin-con's sets nothing the contract forbids | perturbation in `src/stage_tests.rs`, rendering with invented parameters into a temporary directory: drop `UMask`, `KillMode=mixed`, the stop timeout or `PATH` from a template, and the read of the rendered unit fails; plant one directive of each of section 8.1's five forbidden groups in admin-con's template, and the read fails; drop the renderer's refusal of a placeholder it does not fill, and its test renders such a template instead of refusing it. And the service manager's own verifier: each rendered unit, instanced, passes `systemd-analyze verify` with nothing on its error stream, since the verifier warns and still exits 0 on an unknown key or a value it cannot parse (measured 2026-11-11, systemd 262); the test prints a `skipped:` line where the verifier is absent |
+| a staged connector config is its handover file and the box facts, and loads under the connector's own rule | perturbation in `src/stage_tests.rs`: drop a box fact from the composition, and the connector's loader refuses the staged file; stage an admin plane's handover file as gate-con's, or one naming another agent, and the tool refuses at the staged file's load and leaves `<out>` as it found it; drop that load, or the agent's check, or the removal after a refusal, and the case stages or leaves `<out>` behind |
+| the staging tool refuses every parameter out of shape, and a refusal writes nothing | perturbation in `src/stage_tests.rs`, one case per refusal: a missing member, an unknown member, a relative path, a `..` component, a trailing separator, a character a unit would read, a relative element of admin-con's `PATH`, an account or a name out of its grammar, a name twice, an agent without `[connectors]` or `[connectors]` without an agent, a file that stages nothing, a program that is a directory or a symlink, a handover file that is missing, a symlink, a directory, open to others or not the operator's own, a location that is a program's destination or lies under one, an `<out>` that is not empty, open to others or not the operator's own; drop each check and its case stages instead, or is refused for another reason, which the case's expected reason catches; after every refusal `<out>` is absent, or as it stood, and a refusal after the writes began empties an `<out>` that stood empty. And a second run on the same `<out>`, its check passed before the first wrote, with `<out>` absent and with it standing empty: refused, the first run's files and manifest unchanged; make `files/` without exclusion, or let a run that made nothing remove `<out>`, and the test fails. And a relative `<out>` with a `.` component and repeated and trailing separators is taken against the working directory and stages, a `..` kept and refused: drop the normalization, and the case is refused for its `.` |
+| the manifest names every directory and file with its owner, group, mode and sum, parents first | perturbation in `src/stage_tests.rs`, the manifest read line by line against the parameters: give a connector config another mode or owner, list a file before its directory, or leave a binary's sum out, and the read fails |
+| the staging tool never runs as root | perturbation in `src/stage_tests.rs`: the refusal is a function of the effective uid it is handed, and dropping it lets a uid of 0 stage |
 
 **A watch that cannot fail is not a test.** For each perturbation above, the
 act that lands it states what removal makes it fail and confirms it does.
@@ -5071,3 +5323,28 @@ a `web-` assertion beside `weaver-admin`'s.
   the emitter's charter leaves it the same way**, a reach the initiating side
   declares being no less a seam for being declared elsewhere, and what it
   does change is that this crate's charter now records none of the three.
+- **The install's locations and its applier, opened 2026-11-11** by the act
+  of that date (section 8.1). Two questions are the operator's, each
+  changing a hard boundary he wrote: whether this repository's own
+  locations (the binaries, the units, its config root, the operations log)
+  may be written as overridable defaults, the box facts that are
+  WeaverAgent's staying out either way; and whether a script the operator
+  runs as root to apply the staged directory, which the product never runs
+  and nothing from the network reaches, stands outside the
+  one-privileged-invocation rule. The act is built to lose nothing either
+  way: a default fills a parameter that already exists, and an applier
+  applies the manifest the tool already writes.
+- **The connectors' restart policy, opened 2026-11-11.** Section 8.1 writes
+  `Restart=on-failure` for each unit as a new behaviour for the operator's
+  ruling. The interaction he rules on is admin-con's: at admin-con's fault,
+  a `load`'s admin runs on in the agent's scope, any other verb's admin
+  sits in admin-con's unit and ends with it as the service manager ends
+  what the unit holds (the moment measured nowhere yet), and the restarted
+  admin-con knows of neither, admin's own locks refusing a second verb
+  while one runs. What a restarted admin-con owes a verb that was in flight
+  is the open question.
+- **Squashing the migrations, held 2026-11-11.** Epic #18's install item
+  carried it under the operator's ruling of 2026-10-08 that no deployment
+  held data before it. A deployment now holds data, and a squash makes the
+  server refuse a store that applied the migrations one by one, since every
+  applied migration is checksummed, so it waits on his ruling.

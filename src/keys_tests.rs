@@ -670,6 +670,7 @@ fn cfg() -> crate::config::ServerConfig {
         session_idle_secs: 3600,
         session_absolute_secs: 43200,
         operations_log: None,
+        sign_in: vec![crate::config::SignInMethod::Passkey],
     }
 }
 

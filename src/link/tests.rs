@@ -68,7 +68,7 @@ pub(super) async fn operator(store: &Store, agent: &AgentId) -> Asker {
     .await
     .unwrap();
     let session_id: i64 = sqlx::query_scalar(
-        "INSERT INTO session (bearer_digest, person_id, passkey_id) VALUES ($1, $2, $3) \
+        "INSERT INTO session (bearer_digest, person_id, passkey_id, method) VALUES ($1, $2, $3, 'passkey assertion') \
          RETURNING session_id",
     )
     .bind(format!("{tag}{}", uuid::Uuid::new_v4().simple()))
@@ -2050,6 +2050,7 @@ pub(super) fn lab_config(lab: &Lab) -> crate::config::ServerConfig {
         session_idle_secs: 3600,
         session_absolute_secs: 43200,
         operations_log: None,
+        sign_in: vec![crate::config::SignInMethod::Passkey],
     }
 }
 
@@ -3090,6 +3091,7 @@ fn a_staging_entry_swapped_before_the_publish_is_refused() {
         session_idle_secs: 3600,
         session_absolute_secs: 43200,
         operations_log: None,
+        sign_in: vec![crate::config::SignInMethod::Passkey],
     };
     let out = tmp.path().join("out");
     std::fs::create_dir(&out).unwrap();

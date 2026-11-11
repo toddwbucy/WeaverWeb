@@ -25,8 +25,9 @@ pub mod record;
 pub mod sign_in;
 
 use axum::Router;
-use axum::http::{HeaderValue, StatusCode, header};
-use axum::response::{IntoResponse, Response};
+use axum::extract::State;
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 
 use crate::store::Store;
@@ -93,7 +94,15 @@ impl Chrome {
 /// holds a seam takes it as its own argument rather than widening this:
 /// the session's policy is that argument here.
 pub fn routes(policy: gate::Policy) -> Router<Store> {
+    let landing_policy = policy.clone();
     let router = Router::new()
+        .route(
+            "/",
+            get(move |State(store): State<Store>, headers: HeaderMap| {
+                let policy = landing_policy.clone();
+                async move { landing(store, policy, headers).await }
+            }),
+        )
         .merge(record::routes(policy))
         .route("/sign-out", post(gate::sign_out))
         .route("/assets/surfaces/instrument.css", get(stylesheet))
@@ -102,6 +111,18 @@ pub fn routes(policy: gate::Policy) -> Router<Store> {
     #[cfg(feature = "passkeys")]
     let router = router.route("/assets/surfaces/passkeys.js", get(passkeys_module));
     script_policy(router)
+}
+
+/// **`GET /` sends the browser on** (Spec 2.8): to sign-in where the request
+/// names no session that serves, and to Record, where every sign-in lands,
+/// where it names one. It reads the session as any use does, and is a
+/// redirect (`303 See Other`), never a page of its own.
+async fn landing(store: Store, policy: gate::Policy, headers: HeaderMap) -> Response {
+    match gate::session(&store, &policy, &headers).await {
+        Ok(Some(_)) => Redirect::to("/record").into_response(),
+        Ok(None) => Redirect::to("/sign-in").into_response(),
+        Err(e) => crate::fault::Fault::from(e).into_response(),
+    }
 }
 
 /// **A script runs from this server's own files alone**: the surfaces answer

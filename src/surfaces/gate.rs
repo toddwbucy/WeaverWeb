@@ -14,7 +14,10 @@
 //! session ended closes it, a use refreshes its last use, and sign-out
 //! closes it. Disabling a person, removing a passkey and the host reset
 //! change the person or the passkey, and the session sees that here, at
-//! its next use, so no end needs a write to every session.
+//! its next use, so no end needs a write to every session. **A session is
+//! opened by a passkey or, where the config admits it, by a sign-in token**
+//! (Spec 2.8, the operator's ruling of 2026-11-10); one a token opened names
+//! no passkey and has none to lose.
 
 use std::time::Duration;
 
@@ -63,7 +66,8 @@ impl Policy {
     }
 }
 
-/// **A live session**: the person it is and the passkey it was opened with.
+/// **A live session**: the person it is and, where a passkey opened it,
+/// that passkey.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Session {
     pub session_id: i64,
@@ -71,8 +75,9 @@ pub struct Session {
     /// The person's current name, for a page to show.
     pub name: String,
     /// The identity of the passkey it was opened with, never reused, so a
-    /// credential re-enrolled after a reset is not this passkey.
-    pub passkey_id: String,
+    /// credential re-enrolled after a reset is not this passkey; `None` for
+    /// a session a sign-in token opened (Spec 2.8).
+    pub passkey_id: Option<String>,
 }
 
 impl Session {
@@ -91,7 +96,7 @@ pub enum Ended {
     Closed,
     /// Its person is disabled.
     PersonDisabled,
-    /// The passkey it was opened with is gone.
+    /// The passkey it was opened with is gone, where a passkey opened it.
     PasskeyRemoved,
     /// Open past the absolute limit.
     Expired,
@@ -169,7 +174,8 @@ pub async fn session_in_background(
 /// **A session checked at this use** (design section 6): the session where
 /// it serves, why it ended where it has, or `Err(None)` where the bearer
 /// names no session. **Each end is checked at every use**: closed, its
-/// person disabled, its passkey removed, open past the absolute limit,
+/// person disabled, its passkey removed where a passkey opened it (a session
+/// a sign-in token opened has none to lose), open past the absolute limit,
 /// unused past the idle limit, in one read on the database's clock. A use
 /// that finds it serving refreshes its last use; one that finds it ended
 /// closes it, **the close restating its reason** so it is atomic with what
@@ -225,7 +231,7 @@ async fn read(
         "SELECT s.session_id, s.person_id, p.name, s.passkey_id, \
          s.closed_at IS NOT NULL AS closed, \
          NOT p.enabled AS disabled, \
-         NOT EXISTS (SELECT 1 FROM passkey k \
+         s.passkey_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM passkey k \
            WHERE k.passkey_id = s.passkey_id AND k.person_id = s.person_id) AS removed, \
          s.opened_at <= now() - make_interval(secs => $2) AS expired, \
          s.last_used_at <= now() - make_interval(secs => $3) AS idle \
@@ -282,7 +288,7 @@ async fn close(
             None,
         ),
         Ended::PasskeyRemoved => (
-            "NOT EXISTS (SELECT 1 FROM passkey k \
+            "session.passkey_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM passkey k \
              WHERE k.passkey_id = session.passkey_id AND k.person_id = session.person_id)",
             None,
         ),
@@ -380,12 +386,70 @@ pub async fn open(
         return Ok(None);
     }
     let bearer = crate::store::identity::hex(&crate::store::identity::bearer());
-    sqlx::query("INSERT INTO session (bearer_digest, person_id, passkey_id) VALUES ($1, $2, $3)")
-        .bind(digest(&bearer))
-        .bind(person_id)
-        .bind(passkey_id)
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query(
+        "INSERT INTO session (bearer_digest, person_id, passkey_id, method) \
+         VALUES ($1, $2, $3, 'passkey assertion')",
+    )
+    .bind(digest(&bearer))
+    .bind(person_id)
+    .bind(passkey_id)
+    .execute(&mut *tx)
+    .await?;
+    crate::store::commit::commit_with_outcome(tx, "session open", store, first).await?;
+    Ok(Some(bearer))
+}
+
+/// **A session opened by a sign-in token** (Spec 2.8, the operator's ruling
+/// of 2026-11-10), after its first record: in a transaction of its own, the
+/// token ended `redeemed` by one conditional update that matches it only
+/// while it is still redeemable (live, unexpired, its person enabled and the
+/// name given theirs), its person's row read under a share lock so no
+/// disable lands between the check and the insert, so of two redemptions at
+/// once one opens a session and the other finds nothing to end; then a
+/// bearer under the rule every bearer is drawn by, stored as its digest, and
+/// the session naming the person, the method `sign-in token` and no
+/// passkey. The bearer, for the cookie, or `None` where the token no longer
+/// redeems for this person.
+pub async fn open_by_sign_in_token(
+    store: &Store,
+    token_digest: &str,
+    name_key: &str,
+    person_id: &str,
+    first: &str,
+) -> anyhow::Result<Option<String>> {
+    let mut tx = store.pool.begin().await?;
+    let enabled: Option<i32> =
+        sqlx::query_scalar("SELECT 1 FROM person WHERE person_id = $1 AND enabled FOR SHARE")
+            .bind(person_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    if enabled.is_none() {
+        return Ok(None);
+    }
+    let redeemed: Option<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "UPDATE sign_in_token t SET ended_at = now(), ended = 'redeemed' \
+         FROM person p WHERE p.person_id = t.person_id \
+         AND t.token_digest = $1 AND t.person_id = $3 AND {} \
+         RETURNING t.person_id",
+        crate::store::identity::SIGN_IN_REDEEMABLE
+    )))
+    .bind(token_digest)
+    .bind(name_key)
+    .bind(person_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if redeemed.is_none() {
+        return Ok(None);
+    }
+    let bearer = crate::store::identity::hex(&crate::store::identity::bearer());
+    sqlx::query(
+        "INSERT INTO session (bearer_digest, person_id, passkey_id, method) \
+         VALUES ($1, $2, NULL, 'sign-in token')",
+    )
+    .bind(digest(&bearer))
+    .bind(person_id)
+    .execute(&mut *tx)
+    .await?;
     crate::store::commit::commit_with_outcome(tx, "session open", store, first).await?;
     Ok(Some(bearer))
 }

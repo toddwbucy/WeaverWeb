@@ -1,7 +1,11 @@
-//! conforms: web-a-person-authenticates-by-passkey-alone
+//! conforms: web-a-person-authenticates-by-a-configured-method
 //!
 //! **Sign-in** (`docs/project/design-2026-10-07-iam.md` sections 6 and 10;
-//! Spec 2.8 and 2.13): name-first. The person gives their name; the options
+//! Spec 2.8 and 2.13), by the methods the config's `sign_in` admits: a
+//! passkey, the default, and the sign-in token the host issues, the
+//! pre-release posture of the operator's ruling of 2026-11-10.
+//!
+//! **By passkey**, name-first. The person gives their name; the options
 //! endpoint finds the person by the name's canonical form and starts an
 //! authentication ceremony for their passkeys; the finish has the library
 //! verify the assertion, applies the counter rule in a transaction of its own
@@ -16,12 +20,19 @@
 //! began with, its first record before the write. Every audit of an attempt
 //! names the passkey the ceremony challenged, by its own identity. No
 //! bearer, digest or name reaches a log line.
+//!
+//! **By sign-in token**, where the config names `token` and nowhere else:
+//! a plain form posts the person's name and the token; one answer refuses
+//! every token that does not redeem, unaudited, since a wrong token proves no
+//! principal; one that does is audited as the session's opening by
+//! `sign-in token` on the person, its first record before the write, and is
+//! ended `redeemed` in the opening's own transaction (`gate::open_by_sign_in_token`).
 
 use std::collections::HashMap;
 
 use askama::Template;
 use axum::Router;
-use axum::extract::{Json, State};
+use axum::extract::{Form, Json, State};
 use axum::http::{StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
@@ -29,6 +40,7 @@ use serde::Deserialize;
 use serde_json::json;
 use webauthn_rs::prelude::{Passkey, PublicKeyCredential, WebauthnError};
 
+use crate::config::SignInMethod;
 use crate::fault::Fault;
 use crate::passkeys::{self, Ceremony, Counted, Full, Passkeys};
 use crate::store::Store;
@@ -48,12 +60,46 @@ const PASSKEY_REMOVED: &str = "the passkey you signed in with has been removed; 
 /// The answer to an assertion whose counter did not rise.
 const POSSIBLE_CLONE: &str = "this passkey's signature counter did not rise, so it may be a copy; sign in with another passkey, or ask your admin";
 
-/// The sign-in surface, taking the passkeys' seam as its own argument;
-/// without one, the page says passkeys are not configured.
-pub fn routes(passkeys: Option<Passkeys>) -> Router<Store> {
-    let configured = passkeys.is_some();
-    let router = Router::new().route("/sign-in", get(move || page(configured)));
-    let Some(passkeys) = passkeys else {
+/// **The one answer to a sign-in token that cannot sign in**, whether it is
+/// unknown, expired, ended or another person's, the name not its person's,
+/// or the person disabled.
+const NO_TOKEN_SIGN_IN: &str =
+    "no sign-in by token is open for that name and token; ask the host for a fresh one";
+
+/// **What the sign-in page shows**: the passkey's pane where the config
+/// admits the passkey, saying passkeys are not configured where the seam is
+/// absent, and the token's pane where it admits the token.
+#[derive(Debug, Clone, Copy)]
+struct Shown {
+    passkey: bool,
+    configured: bool,
+    token: bool,
+}
+
+/// The sign-in surface, taking the passkeys' seam and the config's
+/// `sign_in` as its own arguments; without the seam, the page says passkeys
+/// are not configured. **The token's route stands only where `sign_in`
+/// names `token`**, and the passkey's ceremonies only where it names
+/// `passkey`.
+pub fn routes(passkeys: Option<Passkeys>, sign_in: &[SignInMethod]) -> Router<Store> {
+    let shown = Shown {
+        passkey: sign_in.contains(&SignInMethod::Passkey),
+        configured: passkeys.is_some(),
+        token: sign_in.contains(&SignInMethod::Token),
+    };
+    let mut router =
+        Router::new().route("/sign-in", get(move || page(shown, None, StatusCode::OK)));
+    if shown.token {
+        router = router.route(
+            "/sign-in/token",
+            post(
+                move |State(store): State<Store>, Form(ask): Form<TokenAsk>| async move {
+                    token_sign_in(store, shown, ask).await
+                },
+            ),
+        );
+    }
+    let Some(passkeys) = passkeys.filter(|_| shown.passkey) else {
         return router;
     };
     let finishing = passkeys.clone();
@@ -85,20 +131,89 @@ struct SignInPage {
     who: String,
     admin: bool,
     chrome: super::Chrome,
+    passkey: bool,
     configured: bool,
+    token: bool,
+    refusal: Option<&'static str>,
 }
 
-async fn page(configured: bool) -> Response {
+async fn page(shown: Shown, refusal: Option<&'static str>, status: StatusCode) -> Response {
     match (SignInPage {
         here: "sign-in",
         who: String::new(),
         admin: false,
         chrome: super::Chrome::default(),
-        configured,
+        passkey: shown.passkey,
+        configured: shown.configured,
+        token: shown.token,
+        refusal,
     })
     .render()
     {
-        Ok(html) => Html(html).into_response(),
+        Ok(html) => (status, Html(html)).into_response(),
+        Err(e) => Fault::from(e).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct TokenAsk {
+    name: String,
+    token: String,
+}
+
+/// **Sign-in by token** (Spec 2.8): the token found by its digest with the
+/// name's canonical form, redeemable, before anything is written; then the
+/// opening's first record, the person by `sign-in token` on the person; then
+/// the opening, which ends the token and inserts the session in one
+/// transaction. The browser is sent to Record with the cookie.
+async fn token_sign_in(store: Store, shown: Shown, ask: TokenAsk) -> Response {
+    let token = ask.token.trim();
+    // **A token is 64 hex digits as the host prints it**; any other value
+    // names none and gets the one answer, unlooked-up.
+    if token.len() != 64 || !token.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return page(shown, Some(NO_TOKEN_SIGN_IN), StatusCode::FORBIDDEN).await;
+    }
+    let token_digest = identity::digest(&token.to_ascii_lowercase());
+    let name_key = identity::name_key(ask.name.trim());
+    let person_id = match store.sign_in_token_person(&token_digest, &name_key).await {
+        Ok(Some(person_id)) => person_id,
+        Ok(None) => return page(shown, Some(NO_TOKEN_SIGN_IN), StatusCode::FORBIDDEN).await,
+        Err(e) => return Fault::from(e).into_response(),
+    };
+    let principal = Principal::Person {
+        person_id: &person_id,
+        method: PersonMethod::SignInToken,
+    };
+    let first = match store
+        .audit_first(principal, Target::Person(&person_id), "session open")
+        .await
+    {
+        Ok(first) => first,
+        Err(e) => return Fault::from(e).into_response(),
+    };
+    let opened =
+        gate::open_by_sign_in_token(&store, &token_digest, &name_key, &person_id, &first).await;
+    // An opening that landed wrote its `ok` outcome in its own transaction
+    // (`store::commit`); one that did not is recorded here.
+    if !matches!(opened, Ok(Some(_)))
+        && !crate::store::commit::outcome_unknown(&opened)
+        && let Err(e) = store.audit_outcome(&first, false).await
+    {
+        tracing::error!("the session's opening outcome record {first} was not written: {e:#}");
+    }
+    match opened {
+        Ok(Some(bearer)) => (
+            StatusCode::SEE_OTHER,
+            [
+                (header::SET_COOKIE, gate::set_cookie(&bearer)),
+                (
+                    header::LOCATION,
+                    axum::http::HeaderValue::from_static("/record"),
+                ),
+            ],
+        )
+            .into_response(),
+        Ok(None) => page(shown, Some(NO_TOKEN_SIGN_IN), StatusCode::FORBIDDEN).await,
         Err(e) => Fault::from(e).into_response(),
     }
 }

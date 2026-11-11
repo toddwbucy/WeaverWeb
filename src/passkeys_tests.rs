@@ -51,7 +51,10 @@ pub(crate) fn app(s: &Store, passkeys: Option<Passkeys>) -> axum::Router {
                 passkeys.clone(),
             )))
             .merge(crate::surfaces::script_policy(
-                crate::surfaces::sign_in::routes(passkeys.clone()),
+                crate::surfaces::sign_in::routes(
+                    passkeys.clone(),
+                    &[crate::config::SignInMethod::Passkey],
+                ),
             ))
             .merge(crate::surfaces::script_policy(
                 crate::surfaces::admin::routes(policy.clone(), 24),

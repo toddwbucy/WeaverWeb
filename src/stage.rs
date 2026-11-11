@@ -165,6 +165,22 @@ pub fn admin_path_ok(p: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// **`--out` as the tool takes it** (Spec 8.1): a relative path against the
+/// working directory, then its `.` components and repeated or trailing
+/// separators dropped, the lexical normalization `Path::components` gives.
+/// A `..` is kept, so `path_ok` refuses it as in any path, and no symlink is
+/// resolved.
+pub fn out_path(cwd: &Path, out: &Path) -> PathBuf {
+    let joined = if out.is_absolute() {
+        out.to_path_buf()
+    } else {
+        cwd.join(out)
+    };
+    // The working directory is absolute, and `Path::components` drops every
+    // `.` past an absolute path's root.
+    joined.components().collect()
+}
+
 /// **A portable user name** (Spec 8.1): a lowercase letter or `_`, then
 /// lowercase letters, digits, `_` or `-`, at most 32 in all.
 pub fn account_ok(member: &str, a: &str) -> anyhow::Result<()> {
@@ -198,6 +214,8 @@ pub enum Kind {
 }
 
 impl Entry {
+    /// The entry as one tab-separated manifest line, in `MANIFEST_HEADER`'s
+    /// order; a directory's source and sum are `-`.
     fn line(&self) -> String {
         format!(
             "{}\t{}\t{}\t{}\t-\t{}\t{}",
@@ -420,8 +438,15 @@ fn sha256_hex(bytes: &[u8]) -> String {
 /// judge that descriptor and read it, so the check and the read are one look
 /// at the name and a FIFO never blocks the open.
 fn read_regular(what: &str, path: &Path) -> anyhow::Result<Vec<u8>> {
-    use std::io::Read;
-    let mut file = std::fs::OpenOptions::new()
+    let (file, _) = open_regular(what, path)?;
+    read_all(what, path, file)
+}
+
+/// The no-follow open and the regular-file judgement of `read_regular`,
+/// answering the descriptor and its metadata, so a caller judges more of the
+/// same descriptor before it reads.
+fn open_regular(what: &str, path: &Path) -> anyhow::Result<(std::fs::File, std::fs::Metadata)> {
+    let file = std::fs::OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
         .open(path)
@@ -439,6 +464,12 @@ fn read_regular(what: &str, path: &Path) -> anyhow::Result<Vec<u8>> {
     if !meta.file_type().is_file() {
         bail!("{what} {} is not a regular file", path.display());
     }
+    Ok((file, meta))
+}
+
+/// Read the whole of a descriptor `open_regular` gave.
+fn read_all(what: &str, path: &Path, mut file: std::fs::File) -> anyhow::Result<Vec<u8>> {
+    use std::io::Read;
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)
         .with_context(|| format!("{what} {} cannot be read", path.display()))?;
@@ -453,11 +484,33 @@ fn program(member: &str, p: &str) -> anyhow::Result<(PathBuf, String)> {
     Ok((path, sha256_hex(&bytes)))
 }
 
-/// A handover file `register` wrote: a regular file, never a symlink.
-fn handover_file(path: &Path) -> anyhow::Result<String> {
-    let bytes = read_regular("the handover file", path)?;
-    String::from_utf8(bytes)
-        .map_err(|_| anyhow::anyhow!("the handover file {} is not UTF-8", path.display()))
+/// **A handover file `register` wrote, held to the connectors' own trust
+/// rule** (Spec 8.1, `client::read_private`): a regular file, never a
+/// symlink, the invoking user's, at `0600` or tighter, judged on the
+/// descriptor it is read from. It names the server the connector will trust
+/// and carries the connector's key, so the staged copy's `0600` must not
+/// stand for a source anyone else could have written or read. A handover
+/// downloaded through a browser arrives under the browser's umask, so the
+/// refusal names the mode found and the operator tightens it.
+fn handover_file(path: &Path, euid: u32) -> anyhow::Result<String> {
+    let what = "the handover file";
+    let (file, meta) = open_regular(what, path)?;
+    if meta.uid() != euid {
+        bail!(
+            "{what} {} is owned by uid {}, not the invoking uid {euid}; a file carrying a key is read only from its owner",
+            path.display(),
+            meta.uid()
+        );
+    }
+    let mode = meta.mode() & 0o7777;
+    if mode & !0o600 != 0 {
+        bail!(
+            "{what} {} has mode {mode:04o}; a file carrying a key is 0600 or tighter, so tighten it (chmod 600) before staging",
+            path.display()
+        );
+    }
+    let bytes = read_all(what, path, file)?;
+    String::from_utf8(bytes).map_err(|_| anyhow::anyhow!("{what} {} is not UTF-8", path.display()))
 }
 
 /// **`<out>` holds keys** (Spec 8.1): absent, or an empty directory of the
@@ -497,19 +550,47 @@ pub fn stage(params_text: &str, out: &Path, euid: u32) -> anyhow::Result<Staged>
         .map_err(|e| anyhow::anyhow!("the parameter file does not parse: {e}"))?;
     let out = path_ok("--out", &out.display().to_string())?;
     let existed = out_ok(&out, euid)?;
-    let (dirs, files) = plan(&params)?;
-    let written = write(&out, existed, &dirs, &files);
-    match written {
+    stage_checked(&params, &out, existed, euid)
+}
+
+/// **What this run holds of `<out>`** (Spec 8.1): only what it made by an
+/// exclusive make, so a refusal removes only that.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Held {
+    /// Nothing: `<out>`, or its `files/`, was another run's when this run
+    /// came to make it.
+    Nothing,
+    /// `<out>`, made by this run, and not yet its `files/`.
+    Out,
+    /// `<out>`'s `files/`, made by this run in an `<out>` that stood.
+    Tree,
+    /// `<out>` and its `files/`, both made by this run.
+    OutAndTree,
+}
+
+/// **Everything after `<out>` is checked**: plan, write holding only what
+/// this run makes, and on a refusal remove only that. A step of its own so
+/// a test can stand in for a second run whose check of `<out>` passed before
+/// the first run wrote.
+pub(crate) fn stage_checked(
+    params: &Params,
+    out: &Path,
+    existed: bool,
+    euid: u32,
+) -> anyhow::Result<Staged> {
+    let (dirs, files) = plan(params, euid)?;
+    let mut held = Held::Nothing;
+    match write(out, existed, &dirs, &files, &mut held) {
         Ok(staged) => Ok(staged),
         Err(e) => {
-            clean(&out, existed);
+            clean(out, held);
             Err(e)
         }
     }
 }
 
 /// Every check, and every file rendered or composed, before a write.
-fn plan(params: &Params) -> anyhow::Result<(Vec<Entry>, Vec<PlannedFile>)> {
+fn plan(params: &Params, euid: u32) -> anyhow::Result<(Vec<Entry>, Vec<PlannedFile>)> {
     let loc = &params.locations;
     let binaries = path_ok("locations.binaries", &loc.binaries)?;
     let units = path_ok("locations.units", &loc.units)?;
@@ -607,8 +688,8 @@ fn plan(params: &Params) -> anyhow::Result<(Vec<Entry>, Vec<PlannedFile>)> {
                 path_ok(&member(m), v)?;
             }
             let from = handover.join(&agent.r#box).join(n);
-            let gate_text = handover_file(&from.join("gate-con.toml"))?;
-            let admin_text = handover_file(&from.join("admin-con.toml"))?;
+            let gate_text = handover_file(&from.join("gate-con.toml"), euid)?;
+            let admin_text = handover_file(&from.join("admin-con.toml"), euid)?;
 
             let mut gate_facts = toml::Table::new();
             gate_facts.insert("gate_socket".into(), agent.gate_socket.clone().into());
@@ -654,6 +735,31 @@ fn plan(params: &Params) -> anyhow::Result<(Vec<Entry>, Vec<PlannedFile>)> {
         }
     }
 
+    // No file's destination is a directory's, or lies above another
+    // destination (Spec 8.1): a program is not copied into the staged tree,
+    // so nothing there would collide, and the manifest would list a path as
+    // both, which no order applies.
+    for f in &files {
+        let d = &f.destination;
+        if dirs.contains(d) {
+            bail!(
+                "{} is a file's destination and a directory's; the locations overlap",
+                d.display()
+            );
+        }
+        if let Some(under) = dirs
+            .iter()
+            .chain(files.iter().map(|g| &g.destination))
+            .find(|other| *other != d && other.starts_with(d))
+        {
+            bail!(
+                "{} is a file's destination and {} lies under it; the locations overlap",
+                d.display(),
+                under.display()
+            );
+        }
+    }
+
     // Parents first: shallower directories before deeper ones, every file
     // after every directory.
     let mut dirs: Vec<PathBuf> = dirs.into_iter().collect();
@@ -679,14 +785,27 @@ fn write(
     existed: bool,
     dirs: &[Entry],
     files: &[PlannedFile],
+    held: &mut Held,
 ) -> anyhow::Result<Staged> {
+    // Each make is exclusive, never recursive: where another run made it
+    // first, this run holds nothing there and is refused.
     if !existed {
         std::fs::DirBuilder::new()
             .mode(0o700)
             .create(out)
             .with_context(|| format!("{} cannot be made", out.display()))?;
+        *held = Held::Out;
     }
     let tree = out.join("files");
+    std::fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&tree)
+        .with_context(|| format!("{} cannot be made", tree.display()))?;
+    *held = if existed {
+        Held::Tree
+    } else {
+        Held::OutAndTree
+    };
     let mut entries: Vec<Entry> = dirs.to_vec();
     for file in files {
         let (source, sha256) = match &file.content {
@@ -762,13 +881,23 @@ fn write(
     })
 }
 
-/// **Leave `out` as it was found**: removed where the tool made it,
-/// emptied of what the tool wrote where it stood empty.
-fn clean(out: &Path, existed: bool) {
-    if existed {
-        let _ = std::fs::remove_dir_all(out.join("files"));
-        let _ = std::fs::remove_file(out.join(MANIFEST));
-    } else {
-        let _ = std::fs::remove_dir_all(out);
+/// **Remove only what this run made** (Spec 8.1), so `<out>` is left as
+/// this run found it and nothing of another run's goes with it: `<out>`
+/// whole where this run made it and its `files/`; the `files/` and the
+/// manifest where `<out>` stood; `<out>` alone, and only while empty, where
+/// another run made its `files/` first; nothing where this run made nothing.
+fn clean(out: &Path, held: Held) {
+    match held {
+        Held::Nothing => {}
+        Held::Out => {
+            let _ = std::fs::remove_dir(out);
+        }
+        Held::Tree => {
+            let _ = std::fs::remove_dir_all(out.join("files"));
+            let _ = std::fs::remove_file(out.join(MANIFEST));
+        }
+        Held::OutAndTree => {
+            let _ = std::fs::remove_dir_all(out);
+        }
     }
 }

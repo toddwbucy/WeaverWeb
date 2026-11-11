@@ -22,6 +22,9 @@ struct Args {
     out: PathBuf,
 }
 
+/// Stage, print the one JSON answer on stdout, and exit 0 where it is `ok`
+/// and 1 otherwise. A usage error is clap's, before any answer, as the
+/// register verbs' is.
 fn main() -> std::process::ExitCode {
     let args = Args::parse();
     let answer = run(&args);
@@ -34,6 +37,8 @@ fn main() -> std::process::ExitCode {
     }
 }
 
+/// The answer for one invocation: read the parameter file, take `--out` as
+/// `stage::out_path` gives it, and stage as the effective uid.
 fn run(args: &Args) -> serde_json::Value {
     let refused = |e: anyhow::Error| serde_json::json!({ "verb": "stage", "ok": false, "error": format!("{e:#}") });
     let text = match std::fs::read_to_string(&args.params) {
@@ -45,14 +50,15 @@ fn run(args: &Args) -> serde_json::Value {
             ));
         }
     };
-    let out = if args.out.is_absolute() {
-        args.out.clone()
+    let cwd = if args.out.is_absolute() {
+        PathBuf::from("/")
     } else {
         match std::env::current_dir() {
-            Ok(cwd) => cwd.join(&args.out),
+            Ok(cwd) => cwd,
             Err(e) => return refused(anyhow::anyhow!("the working directory cannot be read: {e}")),
         }
     };
+    let out = weaver_web::stage::out_path(&cwd, &args.out);
     // SAFETY: geteuid takes nothing and cannot fail.
     let euid = unsafe { libc::geteuid() };
     match weaver_web::stage::stage(&text, &out, euid) {

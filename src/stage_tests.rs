@@ -463,6 +463,22 @@ fn every_parameter_out_of_shape_is_refused_and_writes_nothing() {
             "is not a regular file",
         ),
         (
+            "a location that is a program's destination",
+            full.replace(
+                &format!("units = \"{}\"", rig.s("units")),
+                &format!("units = \"{}\"", rig.s("bin/weaver-web")),
+            ),
+            "is a file's destination and a directory's",
+        ),
+        (
+            "a location under a program's destination",
+            full.replace(
+                &format!("config_root = \"{}\"", rig.s("config")),
+                &format!("config_root = \"{}\"", rig.s("bin/admin-con/config")),
+            ),
+            "lies under it",
+        ),
+        (
             "a missing handover",
             full.replacen("box = \"box1\"", "box = \"box9\"", 1),
             "is missing",
@@ -511,6 +527,27 @@ fn every_parameter_out_of_shape_is_refused_and_writes_nothing() {
     assert!(!rig.out().exists());
     std::fs::remove_dir(&f).unwrap();
     std::fs::rename(rig.p("a2-gate"), &f).unwrap();
+
+    // A handover file open to others: refused, naming the mode found.
+    std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let e = rig.stage(&full).expect_err("a handover open to others");
+    assert!(
+        format!("{e:#}").contains("the handover file")
+            && format!("{e:#}").contains("has mode 0644"),
+        "{e:#}"
+    );
+    assert!(!rig.out().exists());
+    std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+    // A handover file that is not the operator's own: the tool is handed a
+    // uid other than the file's owner, with <out> absent.
+    let e = stage::stage(&full, &rig.out(), euid() + 1).expect_err("another's handover");
+    assert!(
+        format!("{e:#}").contains("the handover file")
+            && format!("{e:#}").contains("is owned by uid"),
+        "{e:#}"
+    );
+    assert!(!rig.out().exists());
 
     // An <out> that is not empty, and one open to others: each left as found.
     std::fs::DirBuilder::new()
@@ -630,6 +667,81 @@ fn the_manifest_names_every_directory_and_file_parents_first() {
     ] {
         assert!(dirs.contains(&d), "{d}");
     }
+}
+
+/// Every staged file under `<out>`, with its bytes, and the manifest's text.
+fn snapshot(out: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+    let mut found = Vec::new();
+    let mut stack = vec![out.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                stack.push(path);
+            } else {
+                found.push((path.clone(), std::fs::read(&path).unwrap()));
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
+#[test]
+fn a_second_run_on_the_same_out_is_refused_and_removes_nothing_of_the_first() {
+    // Two runs whose checks of <out> both passed before either wrote: the
+    // first stages, then the second comes to write. Once with <out> absent at
+    // both checks, once with <out> standing empty.
+    for stood in [false, true] {
+        let rig = Rig::new();
+        if stood {
+            std::fs::DirBuilder::new()
+                .mode(0o700)
+                .create(rig.out())
+                .unwrap();
+        }
+        let params: stage::Params = toml::from_str(&rig.params()).unwrap();
+        rig.stage(&rig.params()).expect("the first run stages");
+        let before = snapshot(&rig.out());
+        assert!(before.len() > 1, "stood {stood}: the first run's files");
+        let e = stage::stage_checked(&params, &rig.out(), stood, euid())
+            .expect_err("the second run is refused");
+        assert!(
+            format!("{e:#}").contains("cannot be made"),
+            "stood {stood}: {e:#}"
+        );
+        assert_eq!(
+            snapshot(&rig.out()),
+            before,
+            "stood {stood}: the first run's staged files and manifest stand, unchanged"
+        );
+    }
+}
+
+#[test]
+fn a_relative_out_is_taken_against_the_working_directory_lexically() {
+    let cwd = Path::new("/w");
+    for (out, expect) in [
+        ("./staged", "/w/staged"),
+        ("staged/", "/w/staged"),
+        ("a/./b//c/", "/w/a/b/c"),
+        ("/x/./y/", "/x/y"),
+    ] {
+        assert_eq!(
+            stage::out_path(cwd, Path::new(out)).display().to_string(),
+            expect,
+            "{out}"
+        );
+    }
+    // A `..` is kept, so the path rule refuses it as in any path.
+    let up = stage::out_path(cwd, Path::new("../x"));
+    assert_eq!(up.display().to_string(), "/w/../x");
+    assert!(stage::path_ok("--out", &up.display().to_string()).is_err());
+    // A relative <out> taken so stages.
+    let rig = Rig::new();
+    let out = stage::out_path(rig.dir.path(), Path::new("./staged/"));
+    assert_eq!(out.display().to_string(), rig.out().display().to_string());
+    stage::stage(&rig.params(), &out, euid()).expect("stages");
 }
 
 #[test]

@@ -33,7 +33,7 @@ Declare is two screens (operator's rulings of 2026-11-11, Spec 6.1): the declara
 | pane | shows | source | backing |
 | --- | --- | --- | --- |
 | Load state | the agent's last word on its state, with its source (`show` or `event`) and date, and a transition standing beside it | the register row | built |
-| Verbs | one form per verb the person's roles carry and the ceiling grants; the rest disabled with why | `POST /agents/{ag}/verb` | built; `load` refused upstream for now (`toddwbucy/WeaverAgent#166`: admin refuses a load whose invoking cgroup is not root-owned, which parks connector-managed loads) |
+| Verbs | one form per verb the person's roles carry and the ceiling grants; the rest disabled with why | `POST /agents/{ag}/verb` | built |
 | Turn | the turn form; a note when more than one person holds `turn` | `POST /agents/{ag}/turn` through gate-con | built |
 | Answer | admin's JSON verbatim with its exit status, or the typed reason it was not run | the verb's outcome | built |
 

@@ -3532,9 +3532,18 @@ outside it are not on this screen.
 - `POST /declarations`: save the first row of a new lineage
 - `GET /declarations/{de}`: reopen that row, its document filled into the
   screen, with its version, its last save, its author, whether it is its
-  lineage's head, and the two panes below
+  lineage's head, its lineage's versions with what moved at each, and the
+  two panes below
 - `POST /declarations/{de}`: save from that row, a new row whose parent it
   is
+
+**The screen's slots are the form's, not the document's.** Each `GET` takes
+`?boxes=`, the box slots offered in all, one by default and at most sixteen,
+a reopened row's own boxes first; each box offers one model slot past its
+last filled one, at least two and at most eight. A slot left empty is no
+member of the document, and no slot moves when the screen is shown again,
+so a refusal names the slot the operator sees. Asking for more slots is a
+link and carries nothing typed.
 
 **Who may declare: the server-wide admin grant**, for reading and writing
 alike, on the Planner's default of 2026-11-11; the operator's ruling is open
@@ -3544,7 +3553,9 @@ no live admin grant is refused at every route, and at a save with one
 record carrying the refusal. Reads are not audited. **A save is an admin
 write and takes section 2.13's one order**: (1) the form is parsed into the
 document below and the path's identity into its `de-` shape, a refusal of
-either being the ask's fault and recorded nowhere; (2) the admin gate, with
+either being the ask's fault and recorded nowhere, the screen shown again
+with what was typed and the refusal where the session's person is an
+admin, and the refusal's words alone otherwise; (2) the admin gate, with
 its one refusal record, before any row is looked up; (3) the row saved from
 is resolved, unknown answering not found, a row that is not its lineage's
 head answering conflict, and the name checked against every other lineage
@@ -3555,7 +3566,9 @@ checks an agent's or an alert's, action `declaration save`; then, in one
 transaction under the declarations' own advisory key, the admin grant, the
 head and the name re-checked, the row inserted, and the `ok` outcome
 written, so the row and its outcome commit together; a lost commit answer
-read back by that record.
+read back by that record. That transaction holds section 2.13's identity
+exclusion shared, for the grant's re-check, and then the declarations' own
+key exclusively, which no other act takes.
 
 **The document**, the body section 2.4 stores, in this grammar and no
 other: a JSON object whose every member is listed here, an unknown member
@@ -3632,7 +3645,12 @@ prompt      text, or null for no prompt
   of 2026-11-11 were one of each: one named card every time, any card of one
   family, and two named cards as a pair. **Start satisfies the requirement
   or refuses; it never substitutes** a card the requirement does not admit,
-  and it stamps the card drawn on every load event.
+  and it stamps the card drawn on every load event. **A host may reserve a
+  card for itself**, its display card for one, and a reserved card
+  satisfies no requirement and belongs to no class, whatever the table
+  lists it under (the operator's clarification of 2026-11-11); the
+  reservation is the host's fact, and this screen declares nothing of it
+  (section 10).
 - **The sampler's defaults**, ruling 8: temperature, top-k, top-p, the
   seed, the repetition penalty, the repetition window and the maximum
   tokens per turn, each optional. Each is a per-turn knob by the ruling's
@@ -3659,14 +3677,18 @@ agent's template, a box, a box with no model, a model's function, artifact
 or format, a box's GPU requirement, the store); a requirement that names
 nothing (a card with no identifier, a class giving neither a family nor a
 list, a family with no name, a list with no model or a model with no name,
-a pair that is not two, a pair inside a pair, a list naming a model twice);
-a class giving both a family and a list; a roster the framework would not load (no decoder, a second
-decoder, a second classifier, a function the roster does not hold, an
-adapter on a classifier); a format other than GGUF; an adapter missing a
-member, with a digest of another shape or a scale that is not finite; a
-name outside its grammar; a control character in any text; a sampler value
-outside its kind; a tool other than `sh`; and an unknown member. At save
-it also refuses, as section 2.4 rules, a name another lineage holds, a
+a pair that is not two, a pair inside a pair, a list naming a model twice,
+judged with case and spacing folded); a class giving both a family and a
+list; a requirement naming more than one of a card, a class and a pair; a
+roster the framework would not load (no decoder, a second decoder, a
+second classifier, a function the roster does not hold, an adapter on a
+classifier); a format other than GGUF; an adapter missing a member, with a
+digest of another shape or a scale that is not finite; a name outside its
+grammar; a control character in any text, the prompt alone admitting a
+line feed and a tab, since a prompt is lines; a sampler value outside its
+kind; a tool other than `sh`; and an unknown member. **A refusal names its
+field by the document's path**, its box and model numbered as the screen
+numbers its slots. At save it also refuses, as section 2.4 rules, a name another lineage holds, a
 changed name within a lineage, and a save from a row that is not its
 lineage's head. **A class spanning more than one compute capability is not
 among these refusals**, under any of them: on the operator's word of
@@ -3677,7 +3699,17 @@ than one compute capability, a family's models being those the table lists
 under it. The capability comes from a small table in this repository, each
 card model with its family and its compute capability, taken from the
 vendor's published documentation with the source cited beside each row; a
-model whose capability no citable source confirms is left out of it.
+model whose capability no citable source confirms is left out of it. The
+table is the vendor's page as read on 2026-11-11, kept beside it and
+checked against it row for row. **A family is the vendor's architecture
+name**, and one name may span capabilities, as Ampere spans two in the
+vendor's guides, which is the warning's commonest cause. Each row records
+which rule gave its family: a statement in the vendor's compatibility
+guide tying its capability to the architecture, cited to that passage, or
+the architecture's word in the vendor's own model name; a model neither
+rule ties to a family has none, and a list may still name it. **The
+table's lookups fold case and runs of spacing**, of a model and of a
+family alike.
 **A model or a family the table does not know is admitted**, named on the
 screen with the word that its capability is unknown, so the screen cannot
 warn for it; an unknown is a word and never a blank (section 6).
@@ -3698,7 +3730,9 @@ field:
 
 **What is saved and shown.** A save writes one row of section 2.4, and the
 screen shows the row's version, its last save and its author, and whether
-the row is its lineage's head; a reopen fills the screen with the same
+the row is its lineage's head, a row that is not naming the head and
+offering no save, and a row saved under another corpus commit named
+stale; a reopen fills the screen with the same
 document, and a save and a reopen of it are the same document. **Two panes
 read the document back**:
 
@@ -5312,14 +5346,14 @@ an unmerged contract.
 | the staging tool refuses every parameter out of shape, and a refusal writes nothing | perturbation in `src/stage_tests.rs`, one case per refusal: a missing member, an unknown member, a relative path, a `..` component, a trailing separator, a character a unit would read, a relative element of admin-con's `PATH`, an account or a name out of its grammar, a name twice, an agent without `[connectors]` or `[connectors]` without an agent, a file that stages nothing, a program that is a directory or a symlink, a handover file that is missing, a symlink, a directory, open to others or not the operator's own, a location that is a program's destination or lies under one, an `<out>` that is not empty, open to others or not the operator's own; drop each check and its case stages instead, or is refused for another reason, which the case's expected reason catches; after every refusal `<out>` is absent, or as it stood, and a refusal after the writes began empties an `<out>` that stood empty. And a second run on the same `<out>`, its check passed before the first wrote, with `<out>` absent and with it standing empty: refused, the first run's files and manifest unchanged; make `files/` without exclusion, or let a run that made nothing remove `<out>`, and the test fails. And a relative `<out>` with a `.` component and repeated and trailing separators is taken against the working directory and stages, a `..` kept and refused: drop the normalization, and the case is refused for its `.` |
 | the manifest names every directory and file with its owner, group, mode and sum, parents first | perturbation in `src/stage_tests.rs`, the manifest read line by line against the parameters: give a connector config another mode or owner, list a file before its directory, or leave a binary's sum out, and the read fails |
 | the staging tool never runs as root | perturbation in `src/stage_tests.rs`: the refusal is a function of the effective uid it is handed, and dropping it lets a uid of 0 stage |
-| the declaration screen refuses every field out of shape and saves nothing | perturbation in `src/declarations_tests.rs`, one case per refusal of section 6.1: a missing required field, a requirement that names nothing, a class giving both a family and a list, a roster the framework would not load, a format other than GGUF, an adapter out of shape, a name outside its grammar, a control character, a sampler value outside its kind, a tool other than `sh`, an unknown member; drop each check and its case saves, or is refused for another reason, which the case's expected reason catches; after every refusal the table holds what it held; a class spanning two compute capabilities is no refusal's case, and saves (the next row) |
-| a class spanning more than one compute capability is warned of, and a model the capability table does not know is named unknown and admitted | perturbation in `src/declarations_tests.rs`: drop the warning, and a class of two capabilities saves with none; make it a refusal, and the case fails, since the class must save; a family spanning two capabilities by the table's rows is warned of, and the saved class keeps the form typed, family or list; render an unknown capability, of a model or of a family, as a blank, or refuse it, and the case fails; and a test that every row of the table cites its source |
-| a save and a reopen are the same document, and the agent's file is derived from it | perturbation in `src/declarations_tests.rs`: save, reopen and compare the document and both panes; drop a member on the save or on the reopen, and the comparison fails; the agent's file parses as TOML, names the pinned corpus commit, and writes each placeless member in its trailing block |
-| a save from a row that is not its lineage's head is refused and writes nothing, and the schema admits a second child of one parent | perturbation in `src/declarations_tests.rs`: drop the head check, and the stale save lands; and a store test inserting two children of one parent through the store's own insert, which succeeds |
-| a declaration row's authored half never changes | perturbation in `src/declarations_tests.rs`: an update of each authored member and a delete are refused by the trigger; drop the trigger, and the update lands |
-| no two lineages share a name, and a lineage keeps its name | perturbation in `src/declarations_tests.rs`: drop the check, and a second lineage saves under a held name, or a save renames its lineage |
-| only the server-wide admin grant reads or writes a declaration, and a refused save is one record | perturbation in `src/declarations_tests.rs`: drop the gate, and a person holding only a per-agent role reads the list and saves; a refused save writes exactly one audit record, carrying the refusal, and no row |
-| the declaration screen reaches no agent and no host | a test in `src/declarations_tests.rs` with a real listener and a fake connector of each plane connected: every route is exercised, and the connectors read no frame beyond the heartbeat |
+| the declaration screen refuses every field out of shape and saves nothing | perturbation in `src/declarations_tests.rs`: `every_refusal_names_its_field_and_its_reason`, one case per refusal of section 6.1 judged on the document by its field and its kind (a missing required field, a requirement that names nothing, a class giving both a family and a list, a requirement naming more than one kind, a roster the framework would not load, a format other than GGUF, an adapter out of shape, a name outside its grammar, a control character, a sampler value outside its kind, a tool other than `sh`, an unknown member): drop each check and its case is admitted, or refused for another reason, which the case's kind and field catch; and `the_screen_refuses_a_field_out_of_shape_and_saves_nothing`, every refusal the form can carry posted end to end, each answered 400 naming its field by the screen's slot, after which the table and the audit hold what they held; a class spanning two compute capabilities is no refusal's case, and saves (the next row) |
+| a class spanning more than one compute capability is warned of, and a model the capability table does not know is named unknown and admitted | perturbation in `src/declarations_tests.rs`, `a_class_spanning_capabilities_is_warned_of_and_an_unknown_is_named`: drop the warning, and a class of two capabilities saves with none; make it a refusal, and the case fails, since the class must save; a family spanning two capabilities by the table's rows, typed in another case, is warned of, and each saved class keeps the form typed, family or list; render an unknown capability, of a model or of a family, as a blank, or refuse it, and the case fails; and `the_capability_table_is_the_page_as_read_and_every_row_cites_its_source`: the table against the vendor's page as read, row for row, every capability and family citing its source, a family by statement citing a guide's passage and one by name holding the name |
+| a save and a reopen are the same document, and the agent's file is derived from it | perturbation in `src/declarations_tests.rs`, `a_save_and_a_reopen_are_the_same_document`: a document holding every member saved, the row holding its canonical form, and the reopened page's form posted as a browser posts it read back as the same document, its re-save moving nothing; drop a member on the save or on the reopen, and the comparison fails; both panes are what the document derives; the agent's file parses as TOML, names the pinned corpus commit, and writes each placeless member in its trailing block |
+| a save from a row that is not its lineage's head is refused and writes nothing, and the schema admits a second child of one parent | perturbation in `src/declarations_tests.rs`, `a_save_from_a_row_not_the_head_is_refused_and_two_children_are_admitted`: drop the screen's head check, or the store's under the key, and the stale save lands, each check exercised alone; and two children of one parent inserted through the store's own insert, which succeeds |
+| a declaration row's authored half never changes | perturbation in `src/declarations_tests.rs`, `a_declaration_rows_authored_half_never_changes`: an update of each authored member, a delete and a truncate are refused by the trigger, and the last `validate` reading moves; drop the trigger, and the update lands. The key is an identity column no update may set |
+| no two lineages share a name, and a lineage keeps its name | perturbation in `src/declarations_tests.rs`, `no_two_lineages_share_a_name_and_a_lineage_keeps_its_name`: drop the screen's check, or the store's under the key, and a second lineage saves under a held name, or a save renames its lineage, each check exercised alone; the index on a root's name stands beneath both |
+| only the server-wide admin grant reads or writes a declaration, and a refused save is one record | perturbation in `src/declarations_tests.rs`, `only_the_admin_grant_reads_or_writes_a_declaration`: drop the gate, and a person holding only a per-agent role reads the list and saves; a refused save writes exactly one audit record, carrying the refusal, and no row |
+| the declaration screen reaches no agent and no host | `the_declaration_screen_reaches_no_agent_and_no_host` in `src/declarations_tests.rs`, with a real listener and a fake connector of each plane connected and admitted: every route is exercised, a save, a save from it and two refusals among them, and neither connector is sent a line, the server sending a connector no heartbeat of its own |
 
 **A watch that cannot fail is not a test.** For each perturbation above, the
 act that lands it states what removal makes it fail and confirms it does.
@@ -5653,3 +5687,8 @@ a `web-` assertion beside `weaver-admin`'s.
   a host holds, and only then is it checked. A class's family is the
   capability table's word, so a host that names a card's family otherwise
   would need the table to map it.
+- **A host's reserved card, opened 2026-11-11** (section 6.1). The
+  operator's clarification is that a host may reserve a card for itself,
+  which then satisfies no requirement and belongs to no class. Where the
+  reservation is declared and how start reads it wait on the host plane's
+  Spec; the declaration screen declares nothing of it.

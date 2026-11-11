@@ -4819,7 +4819,9 @@ lowercase letter or `_`, then lowercase letters, digits, `_` or `-`, at most
 or `..`, the grammar `register` holds them to, so a name is also a systemd
 instance name that needs no escaping; no `name` twice; no member
 the tool does not know, so a misspelled member is a refusal and not a
-default.
+default; and no file's destination may be a directory's or lie above
+another destination, since a program is not copied into the staged tree and
+the manifest would list one path as both, which no order applies.
 
 **The staging tool**, `weaver-web-stage --params <file> --out <dir>`,
 built without default features so it runs on an agent's box as the
@@ -4828,7 +4830,11 @@ root. It reads and checks every parameter, and renders every unit and
 composes every connector config in memory, before it writes anything; it
 then writes, loads each staged connector config through that connector's
 own loader, and where any step refuses removes everything it wrote, so a
-refusal leaves `<out>` as it found it. It writes, under `<out>`:
+refusal leaves `<out>` as it found it. It makes `<out>` where absent, makes
+the tree under it, `files/`, by an exclusive make, and on a refusal removes
+only what that run made, so a second run on the same `<out>`, whose check
+passed before the first wrote, is refused at the tree's make and removes
+nothing of the first's. It writes, under `<out>`:
 
 - **`files/`**, a tree mirroring each destination: the three units, each
   admin-con instance's stop-timeout drop-in, and each agent's two
@@ -4843,7 +4849,14 @@ refusal leaves `<out>` as it found it. It writes, under `<out>`:
   handover file and each program is opened without following a symlink and
   judged and read through the descriptor that open gave, as the
   connectors' trust rule reads a config, so the check and the read are one
-  look at the name.
+  look at the name. **A handover file is held to that trust rule whole**:
+  the invoking user's, at `0600` or tighter, since it names the server the
+  connector will trust and carries its key, and the staged copy's `0600`
+  must not stand for a source anyone else could have written or read. The
+  cost is the operator's: a handover downloaded through a browser from the
+  admin's agents page arrives under the browser's umask, often `0644`, so
+  the operator tightens it (`chmod 600`) before staging, and the refusal
+  names the mode found.
 - **`manifest.tsv`**, one line per directory and file in the order they are
   applied, parents first: the kind (`dir` or `file`), the source (the staged
   file, or for a program the built binary the parameter names), the
@@ -4860,7 +4873,9 @@ refusal leaves `<out>` as it found it. It writes, under `<out>`:
 **`<out>` holds keys**, the connectors' configs, so it must not exist or be
 an empty directory of the operator's own at `0700` or tighter, and the tool
 makes it `0700` (a relative `<out>` is taken against the working
-directory); the operator removes it after applying, as the handover
+directory, and its `.` components and repeated or trailing separators are
+dropped, lexically, with no symlink resolved; a `..` is refused as in any
+path); the operator removes it after applying, as the handover
 copy is removed once both planes connect.
 
 **Applying is the operator's, as root, in the manifest's order**: each
@@ -5018,7 +5033,7 @@ an unmerged contract.
 | no privileged invocation exists outside admin-con's sudo invoker | perturbation, two instruments. A test, `tests/no_privilege.rs`: it reads every tracked file outside `docs/`, never following a symlink, comment lines aside by each file's syntax and Markdown read in its fences only, for a privilege-escalating program named as a word, a setuid family call, a child's user or group set on a command, and a setuid or setgid mode bit, with the program's word allowed in `src/link/sudo_invoker.rs` and its test module alone; shown to fail when one of each family is planted, in Rust and in a README fence, when the program is planted in another file of the invoker's name, and when another family is planted in the invoker's own files. And the argv instrument in `src/link/sudo_invoker_tests.rs`: plant the principal's name from the ask into the command, and the line the fake records is no longer exactly `sudo -n <weaver_admin> <verb> <agent>` |
 | the staged units carry section 8.1's properties, and admin-con's sets nothing the contract forbids | perturbation in `src/stage_tests.rs`, rendering with invented parameters into a temporary directory: drop `UMask`, `KillMode=mixed`, the stop timeout or `PATH` from a template, and the read of the rendered unit fails; plant one directive of each of section 8.1's five forbidden groups in admin-con's template, and the read fails; drop the renderer's refusal of a placeholder it does not fill, and its test renders such a template instead of refusing it. And the service manager's own verifier: each rendered unit, instanced, passes `systemd-analyze verify` with nothing on its error stream, since the verifier warns and still exits 0 on an unknown key or a value it cannot parse (measured 2026-11-11, systemd 262); the test prints a `skipped:` line where the verifier is absent |
 | a staged connector config is its handover file and the box facts, and loads under the connector's own rule | perturbation in `src/stage_tests.rs`: drop a box fact from the composition, and the connector's loader refuses the staged file; stage an admin plane's handover file as gate-con's, or one naming another agent, and the tool refuses at the staged file's load and leaves `<out>` as it found it; drop that load, or the agent's check, or the removal after a refusal, and the case stages or leaves `<out>` behind |
-| the staging tool refuses every parameter out of shape, and a refusal writes nothing | perturbation in `src/stage_tests.rs`, one case per refusal: a missing member, an unknown member, a relative path, a `..` component, a trailing separator, a character a unit would read, a relative element of admin-con's `PATH`, an account or a name out of its grammar, a name twice, an agent without `[connectors]` or `[connectors]` without an agent, a file that stages nothing, a program that is a directory or a symlink, a handover file that is missing, a symlink or a directory, an `<out>` that is not empty, open to others or not the operator's own; drop each check and its case stages instead, or is refused for another reason, which the case's expected reason catches; after every refusal `<out>` is absent, or as it stood, and a refusal after the writes began empties an `<out>` that stood empty |
+| the staging tool refuses every parameter out of shape, and a refusal writes nothing | perturbation in `src/stage_tests.rs`, one case per refusal: a missing member, an unknown member, a relative path, a `..` component, a trailing separator, a character a unit would read, a relative element of admin-con's `PATH`, an account or a name out of its grammar, a name twice, an agent without `[connectors]` or `[connectors]` without an agent, a file that stages nothing, a program that is a directory or a symlink, a handover file that is missing, a symlink, a directory, open to others or not the operator's own, a location that is a program's destination or lies under one, an `<out>` that is not empty, open to others or not the operator's own; drop each check and its case stages instead, or is refused for another reason, which the case's expected reason catches; after every refusal `<out>` is absent, or as it stood, and a refusal after the writes began empties an `<out>` that stood empty. And a second run on the same `<out>`, its check passed before the first wrote, with `<out>` absent and with it standing empty: refused, the first run's files and manifest unchanged; make `files/` without exclusion, or let a run that made nothing remove `<out>`, and the test fails. And a relative `<out>` with a `.` component and repeated and trailing separators is taken against the working directory and stages, a `..` kept and refused: drop the normalization, and the case is refused for its `.` |
 | the manifest names every directory and file with its owner, group, mode and sum, parents first | perturbation in `src/stage_tests.rs`, the manifest read line by line against the parameters: give a connector config another mode or owner, list a file before its directory, or leave a binary's sum out, and the read fails |
 | the staging tool never runs as root | perturbation in `src/stage_tests.rs`: the refusal is a function of the effective uid it is handed, and dropping it lets a uid of 0 stage |
 

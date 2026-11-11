@@ -10,10 +10,10 @@ use axum::body::Body;
 use axum::http::{HeaderMap, Request, StatusCode, header};
 use tower::ServiceExt;
 
-use crate::admin_tests::{admin, form, send_as, version};
+use crate::admin_tests::{admin, form, send_as, token_in, version};
 use crate::config::{ServerConfig, SignInMethod};
 use crate::host;
-use crate::passkeys_tests::{ORIGIN, authenticator, passkeys};
+use crate::passkeys_tests::{ORIGIN, authenticator, passkeys, send as send_json};
 use crate::sign_in_tests::{bearer, rows};
 use crate::store::Store;
 use crate::store::identity;
@@ -660,4 +660,107 @@ async fn the_root_sends_a_browser_on() {
     let (status, headers, _) = send(&app, "GET", "/", None, Some(&bearer(&headers))).await;
     assert_eq!(status, StatusCode::SEE_OTHER);
     assert_eq!(location(&headers), "/record");
+}
+
+/// **A person issued a sign-in token takes an enrollment token from the host
+/// alone** (Spec 2.13): issuing the sign-in token revokes the enrollment
+/// token an admin issued before, and an admin's is refused after, so no
+/// admin enrolls their own authenticator onto a person who signs in by
+/// token; the host's `person token` still issues one.
+#[tokio::test]
+async fn a_person_issued_a_sign_in_token_takes_an_enrollment_token_from_the_host_alone() {
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let app = app(s, BOTH);
+    let (_, session) = admin(&app, s, &mut authenticator(), "ada").await;
+    let bea = person(s, "bea").await;
+
+    let (status, _, shown) = send_as(
+        &app,
+        "POST",
+        "/admin/persons/token",
+        Some(form(&[("person", &bea)])),
+        &session,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{shown}");
+    let enrollment = token_in(&shown);
+    token_for(s, &bea).await;
+    let ended: Option<String> =
+        sqlx::query_scalar("SELECT ended FROM enrollment_token WHERE token_digest = $1")
+            .bind(identity::digest(&enrollment))
+            .fetch_one(&s.pool)
+            .await
+            .unwrap();
+    assert_eq!(ended.as_deref(), Some("revoked"));
+    let (status, _, answer) = send_json(
+        &app,
+        "POST",
+        "/enroll/options",
+        Some(serde_json::json!({ "token": enrollment })),
+    )
+    .await;
+    assert_ne!(
+        status,
+        StatusCode::OK,
+        "the admin's earlier token enrolls nothing: {answer}"
+    );
+
+    let (status, _, answer) = send_as(
+        &app,
+        "POST",
+        "/admin/persons/token",
+        Some(form(&[("person", &bea)])),
+        &session,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{answer}");
+    assert!(answer.contains("from the host alone"), "{answer}");
+    assert_eq!(
+        rows(
+            s,
+            &format!("SELECT count(*) FROM enrollment_token WHERE person_id = '{bea}' AND ended_at IS NULL")
+        )
+        .await,
+        0
+    );
+
+    let host = host::token(s, &cfg(BOTH), &bea, None, Some("lab")).await;
+    assert!(host.ok, "the host still issues one: {}", host.value);
+}
+
+/// **The host reset revokes a live sign-in token** (Spec 2.13), so none
+/// printed before it signs in after, and leaves standing a session a token
+/// already opened, which opened by no passkey the reset clears.
+#[tokio::test]
+async fn the_host_reset_revokes_a_sign_in_token_and_leaves_its_session() {
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let app = app(s, BOTH);
+    let ada = person(s, "ada").await;
+    let first = token_for(s, &ada).await;
+    let (status, headers, body) = post_token(&app, "ada", &first).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let session = bearer(&headers);
+    let second = token_for(s, &ada).await;
+
+    let reset = host::reset(s, &cfg(BOTH), &ada, None, Some("lab")).await;
+    assert!(reset.ok, "{}", reset.value);
+    let ended: Option<String> =
+        sqlx::query_scalar("SELECT ended FROM sign_in_token WHERE token_digest = $1")
+            .bind(identity::digest(&second))
+            .fetch_one(&s.pool)
+            .await
+            .unwrap();
+    assert_eq!(ended.as_deref(), Some("reset"));
+    let (status, _, body) = post_token(&app, "ada", &second).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert!(
+        gate::at_use(s, &policy(), &session).await.unwrap().is_ok(),
+        "the reset leaves a token's session standing"
+    );
 }

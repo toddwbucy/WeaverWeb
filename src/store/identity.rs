@@ -744,6 +744,40 @@ pub async fn issue_sign_in_token(
     Ok(IssuedToken { value, expires_at })
 }
 
+/// **End the person's live sign-in token**, if they hold one, for `ended`:
+/// `revoked` by a disable, `reset` by the host reset.
+pub async fn end_sign_in_token(
+    tx: &mut Transaction<'_, Postgres>,
+    person: &str,
+    ended: &'static str,
+) -> anyhow::Result<()> {
+    sqlx::query(
+        "UPDATE sign_in_token SET ended_at = now(), ended = $2 \
+         WHERE person_id = $1 AND ended_at IS NULL",
+    )
+    .bind(person)
+    .bind(ended)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+/// **Whether the person was ever issued a sign-in token** (Spec 2.13): such
+/// a person may hold no passkey and still hold access, so an admin issues
+/// them no enrollment token, which would let the admin enroll their own
+/// authenticator onto that person. Read under the exclusion.
+pub async fn ever_issued_sign_in_token(
+    tx: &mut Transaction<'_, Postgres>,
+    person: &str,
+) -> anyhow::Result<bool> {
+    Ok(
+        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM sign_in_token WHERE person_id = $1)")
+            .bind(person)
+            .fetch_one(&mut **tx)
+            .await?,
+    )
+}
+
 /// **What makes a sign-in token redeemable**, over `sign_in_token t` joined
 /// to `person p`: unexpired and not ended, its person enabled, and the name
 /// given at sign-in the person's in its canonical form (`$2`). One

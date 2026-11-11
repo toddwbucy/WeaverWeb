@@ -176,7 +176,8 @@ pub async fn token(
 /// passkeys or not, printed once. **Refused before any record where the
 /// config's `sign_in` does not name `token`**, so a server configured as
 /// before issues none. The host alone issues one: an admin able to would
-/// sign in as anyone. The person's earlier live sign-in token ends.
+/// sign in as anyone. The person's earlier live sign-in token ends, and so
+/// does their live enrollment token, which an admin may have issued.
 pub async fn sign_in_token(
     store: &Store,
     cfg: &ServerConfig,
@@ -220,6 +221,16 @@ pub async fn sign_in_token(
                 person.person_id
             );
         }
+        // **The person's live enrollment token is revoked** (Spec 2.13), so
+        // one an admin issued before cannot enroll their authenticator onto
+        // a person who now signs in by token.
+        sqlx::query(
+            "UPDATE enrollment_token SET ended_at = now(), ended = 'revoked' \
+             WHERE person_id = $1 AND ended_at IS NULL",
+        )
+        .bind(&person.person_id)
+        .execute(&mut *tx)
+        .await?;
         let token = identity::issue_sign_in_token(&mut tx, &person.person_id, minutes).await?;
         commit_with_outcome(tx, VERB, store, &first).await?;
         anyhow::Ok(token)
@@ -268,6 +279,10 @@ pub async fn reset(
     let answer = async {
         let mut tx = store.identity_transaction().await?;
         let cleared = identity::clear_passkeys(&mut tx, &person.person_id).await?;
+        // **A sign-in token printed before the reset signs in after it no
+        // more** (Spec 2.13); a session one already opened stands, as it
+        // opened by no passkey the reset clears.
+        identity::end_sign_in_token(&mut tx, &person.person_id, "reset").await?;
         let token =
             identity::issue_token(&mut tx, &person.person_id, hours, Supersedes::Reset).await?;
         commit_with_outcome(tx, VERB, store, &first).await?;

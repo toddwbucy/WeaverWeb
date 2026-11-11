@@ -45,7 +45,8 @@ ALTER TABLE audit ADD CONSTRAINT audit_principal_and_method_agree CHECK (
 -- printed it and a short life leaves a lost one little time. **A person holds
 -- at most one live token**: issuing one ends the earlier, so the newest
 -- printed is the one that works. A token ends redeemed at its one use,
--- superseded by a newer one, or revoked by a disable.
+-- superseded by a newer one, revoked by a disable, or reset by the host
+-- reset, so no token printed before a reset signs in after it.
 CREATE TABLE sign_in_token (
   token_digest  TEXT PRIMARY KEY,
   person_id     person_id NOT NULL REFERENCES person (person_id),
@@ -62,7 +63,7 @@ CREATE TABLE sign_in_token (
   CONSTRAINT sign_in_token_ends_with_a_reason CHECK (
     (ended_at IS NULL AND ended IS NULL)
     OR (ended_at IS NOT NULL AND ended IS NOT NULL
-      AND ended IN ('redeemed', 'superseded', 'revoked'))
+      AND ended IN ('redeemed', 'superseded', 'revoked', 'reset'))
   )
 );
 CREATE UNIQUE INDEX sign_in_token_one_live_per_person

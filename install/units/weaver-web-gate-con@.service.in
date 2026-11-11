@@ -1,0 +1,18 @@
+# gate-con for one agent, the instance being the agent's name (Spec 8.1).
+# weaver-web-stage renders this file: each @NAME@ is a parameter with no
+# default, kept outside this repository.
+[Unit]
+Description=WeaverWeb gate-con for agent %i
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=@ACCOUNT@
+UMask=0077
+ExecStart=@BINARIES@/gate-con --config @CONFIG_ROOT@/connectors/%i/gate-con.toml
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

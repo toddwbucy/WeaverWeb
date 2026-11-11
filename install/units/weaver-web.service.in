@@ -1,0 +1,17 @@
+# The WeaverWeb server (Spec 8.1). weaver-web-stage renders this file: each
+# @NAME@ is a parameter with no default, kept outside this repository.
+[Unit]
+Description=WeaverWeb server
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=@ACCOUNT@
+UMask=0077
+ExecStart=@BINARIES@/weaver-web --config @CONFIG_ROOT@/config.toml serve
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

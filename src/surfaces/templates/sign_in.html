@@ -4,9 +4,13 @@
 {% block body %}
 {#- Name-first: the person gives their name and answers their own
     authenticator. The input has no name and the form's method is POST, so a
-    submit without the module carries nothing. No inline script. -#}
+    submit without the module carries nothing. No inline script. The token's
+    pane, where the config admits it, is a plain form needing no script.
+    Each pane's tags trim the line before them, so a page with the passkey
+    alone renders as it did before the token existed. -#}
 <h1>Sign in</h1>
-<p class="lede">Give your name, then answer your passkey.</p>
+<p class="lede">{% if !passkey %}Give your name and the sign-in token the host printed for you.{% else if token %}Give your name, then answer your passkey or give the sign-in token the host printed for you.{% else %}Give your name, then answer your passkey.{% endif %}</p>
+{%- if passkey %}
 <section class="pane">
   <header><h2>Your passkey</h2><span class="backing built">built</span></header>
   <div class="body">
@@ -25,7 +29,26 @@
   <footer>No passkey yet? <a href="/enroll">Enroll with your token.</a></footer>
   {% endif %}
 </section>
-{% if configured %}
+{%- endif %}
+{%- if token %}
+<section class="pane">
+  <header><h2>A sign-in token</h2><span class="backing built">built</span></header>
+  <div class="body">
+  <form id="sign-in-token" method="post" action="/sign-in/token" autocomplete="off" class="row">
+    <label for="token-person">Name</label>
+    <input id="token-person" name="name" type="text" required autocomplete="username" spellcheck="false">
+    <label for="token">Sign-in token</label>
+    <input id="token" name="token" type="text" required autocomplete="off" spellcheck="false">
+    <button type="submit" class="primary">Sign in</button>
+  </form>
+  {%- if let Some(refusal) = refusal %}
+  <p role="status">{{ refusal }}</p>
+  {%- endif %}
+  </div>
+  <footer>The host prints one with <code>person sign-in-token</code>; it signs in once, within minutes.</footer>
+</section>
+{%- endif %}
+{% if passkey && configured %}
 <script type="module" src="/assets/surfaces/passkeys.js"></script>
 {% endif %}
 {% endblock %}

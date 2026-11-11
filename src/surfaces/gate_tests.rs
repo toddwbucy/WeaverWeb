@@ -39,7 +39,7 @@ pub(crate) async fn open(store: &Store, name: &str) -> (String, String, String) 
     let credential = format!("cred-{}", uuid::Uuid::new_v4().simple());
     let passkey = enroll(store, &person, &credential).await;
     let bearer = uuid::Uuid::new_v4().simple().to_string();
-    sqlx::query("INSERT INTO session (bearer_digest, person_id, passkey_id) VALUES ($1, $2, $3)")
+    sqlx::query("INSERT INTO session (bearer_digest, person_id, passkey_id, method) VALUES ($1, $2, $3, 'passkey assertion')")
         .bind(gate::digest(&bearer))
         .bind(&person)
         .bind(&passkey)
@@ -587,7 +587,7 @@ async fn a_credential_re_enrolled_after_a_reset_revives_no_session() {
         "a session opened before the reset revived on the re-enrolled credential"
     );
     let bearer = uuid::Uuid::new_v4().simple().to_string();
-    sqlx::query("INSERT INTO session (bearer_digest, person_id, passkey_id) VALUES ($1, $2, $3)")
+    sqlx::query("INSERT INTO session (bearer_digest, person_id, passkey_id, method) VALUES ($1, $2, $3, 'passkey assertion')")
         .bind(gate::digest(&bearer))
         .bind(&person)
         .bind(&again)

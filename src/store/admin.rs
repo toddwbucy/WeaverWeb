@@ -314,6 +314,15 @@ impl Store {
         .bind(person)
         .execute(&mut *tx)
         .await?;
+        // **And their sign-in token** (Spec 2.13), so one printed before the
+        // disable never opens a session after an enable.
+        sqlx::query(
+            "UPDATE sign_in_token SET ended_at = now(), ended = 'revoked' \
+             WHERE person_id = $1 AND ended_at IS NULL",
+        )
+        .bind(person)
+        .execute(&mut *tx)
+        .await?;
         commit_with_outcome(tx, "person disable", self, first).await?;
         Ok(Ok(()))
     }

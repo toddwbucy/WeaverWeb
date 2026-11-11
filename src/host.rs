@@ -1,7 +1,7 @@
 //! **The host's identity commands** (Spec 2.13, `docs/project/design-2026-10-07-iam.md`
 //! sections 7 and 8), subcommands of the `weaver-web` binary beside the
 //! register verbs: `person bootstrap`, `person token`, `person reset`,
-//! `grant add`, `grant remove` and `role set`. The host is the principal
+//! `person sign-in-token`, `grant add`, `grant remove` and `role set`. The host is the principal
 //! that is not a person, authorized by access to the server's host and the
 //! store rather than by grants, which is how the first admin comes to exist
 //! and how a lone admin comes to hold a role on an agent.
@@ -17,13 +17,14 @@
 //! **A token is printed once**, in the answer of the command that issued it,
 //! and kept by the store only as its digest.
 
-use crate::config::ServerConfig;
+use crate::config::{ServerConfig, SignInMethod};
 use crate::link::verbs::{Answer, first_record, refused, with_landed_outcome};
 use crate::store::Store;
 use crate::store::audit::Target;
 use crate::store::commit::commit_with_outcome;
 use crate::store::identity::{
-    self, IssuedToken, Person, Supersedes, TOKEN_LIFETIME_MAX_HOURS, VOCABULARY,
+    self, IssuedToken, Person, SIGN_IN_TOKEN_MAX_MINUTES, SIGN_IN_TOKEN_MINUTES, Supersedes,
+    TOKEN_LIFETIME_MAX_HOURS, VOCABULARY,
 };
 use serde_json::json;
 
@@ -159,6 +160,77 @@ pub async fn token(
     let answer = match answer {
         Ok(token) => {
             let mut value = json!({ "verb": VERB, "ok": true, "person": person.person_id });
+            value
+                .as_object_mut()
+                .unwrap()
+                .extend(token_answer(&token).as_object().unwrap().clone());
+            Answer { value, ok: true }
+        }
+        Err(e) => refused(VERB, format!("{e:#}")),
+    };
+    with_landed_outcome(store, first, answer, unknown).await
+}
+
+/// `person sign-in-token <person>`: **a sign-in token for a named enabled
+/// person** (Spec 2.13, the operator's ruling of 2026-11-10), holding
+/// passkeys or not, printed once. **Refused before any record where the
+/// config's `sign_in` does not name `token`**, so a server configured as
+/// before issues none. The host alone issues one: an admin able to would
+/// sign in as anyone. The person's earlier live sign-in token ends.
+pub async fn sign_in_token(
+    store: &Store,
+    cfg: &ServerConfig,
+    spec: &str,
+    minutes: Option<u32>,
+    author: Option<&str>,
+) -> Answer {
+    const VERB: &str = "person sign-in-token";
+    if !cfg.signs_in_by(SignInMethod::Token) {
+        return refused(
+            VERB,
+            "this server's config does not admit the sign-in token: its sign_in does not name token",
+        );
+    }
+    let minutes = minutes.unwrap_or(SIGN_IN_TOKEN_MINUTES);
+    if minutes == 0 || minutes > SIGN_IN_TOKEN_MAX_MINUTES {
+        return refused(
+            VERB,
+            format!(
+                "a sign-in token lives between 1 and {SIGN_IN_TOKEN_MAX_MINUTES} minutes, not {minutes}"
+            ),
+        );
+    }
+    let person = match person(store, VERB, spec).await {
+        Ok(person) => person,
+        Err(refusal) => return refusal,
+    };
+    let first = match first_record(store, VERB, author, Target::Person(&person.person_id)).await {
+        Ok(first) => first,
+        Err(refusal) => return refusal,
+    };
+    let answer = async {
+        let mut tx = store.identity_transaction().await?;
+        let enabled: bool = sqlx::query_scalar("SELECT enabled FROM person WHERE person_id = $1")
+            .bind(&person.person_id)
+            .fetch_one(&mut *tx)
+            .await?;
+        if !enabled {
+            anyhow::bail!(
+                "{} is disabled, and a disabled person is issued nothing",
+                person.person_id
+            );
+        }
+        let token = identity::issue_sign_in_token(&mut tx, &person.person_id, minutes).await?;
+        commit_with_outcome(tx, VERB, store, &first).await?;
+        anyhow::Ok(token)
+    }
+    .await;
+    let unknown = crate::store::commit::outcome_unknown(&answer);
+    let answer = match answer {
+        Ok(token) => {
+            let mut value = json!({
+                "verb": VERB, "ok": true, "person": person.person_id, "name": person.name,
+            });
             value
                 .as_object_mut()
                 .unwrap()

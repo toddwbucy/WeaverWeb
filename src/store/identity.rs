@@ -43,6 +43,15 @@ pub const VOCABULARY: [&str; 9] = [
 /// section 7), refused at the config's load and at every issue.
 pub const TOKEN_LIFETIME_MAX_HOURS: u32 = 7 * 24;
 
+/// **A sign-in token lives ten minutes unless the host's command says
+/// otherwise** (Spec 2.13): it is redeemed by a person beside the host that
+/// printed it, and a short life leaves a lost one little time.
+pub const SIGN_IN_TOKEN_MINUTES: u32 = 10;
+
+/// **The longest a sign-in token may live**: an hour, held by the store too
+/// (migration `0022`).
+pub const SIGN_IN_TOKEN_MAX_MINUTES: u32 = 60;
+
 /// The most bytes a name may run to, the store's key bound.
 pub const NAME_BOUND: usize = 1024;
 
@@ -230,10 +239,12 @@ pub enum Removed {
 
 /// **The rule for every write a session authorizes** (Spec 2.13): inside
 /// the write's own transaction, under the identity exclusion, the session is
-/// re-checked as standing (open, its person enabled, the passkey it was
-/// opened with still the person's), so a disable, a removal or a host reset
-/// committed after the request read its session refuses the write rather
-/// than landing beneath it.
+/// re-checked as standing (open, its person enabled, and where a passkey
+/// opened it, that passkey still the person's), so a disable, a removal or a
+/// host reset committed after the request read its session refuses the write
+/// rather than landing beneath it. **A session a sign-in token opened names
+/// no passkey** (migration `0022` holds the method and the passkey as one
+/// fact), so it stands on its person and its close alone.
 pub async fn session_stands(
     tx: &mut Transaction<'_, Postgres>,
     session_id: i64,
@@ -242,8 +253,9 @@ pub async fn session_stands(
     let standing: Option<i32> = sqlx::query_scalar(
         "SELECT 1 FROM session s \
          JOIN person p ON p.person_id = s.person_id \
-         JOIN passkey k ON k.passkey_id = s.passkey_id AND k.person_id = s.person_id \
-         WHERE s.session_id = $1 AND s.person_id = $2 AND s.closed_at IS NULL AND p.enabled",
+         WHERE s.session_id = $1 AND s.person_id = $2 AND s.closed_at IS NULL AND p.enabled \
+         AND (s.passkey_id IS NULL OR EXISTS (SELECT 1 FROM passkey k \
+           WHERE k.passkey_id = s.passkey_id AND k.person_id = s.person_id))",
     )
     .bind(session_id)
     .bind(person_id)
@@ -696,6 +708,69 @@ pub async fn issue_token(
     .fetch_one(&mut **tx)
     .await?;
     Ok(IssuedToken { value, expires_at })
+}
+
+/// **Issue a sign-in token** for the person (Spec 2.13): a fresh bearer,
+/// its digest written beside its expiry, the person's earlier live sign-in
+/// token ended `superseded` first, and the value answered once, to be
+/// printed and never stored.
+pub async fn issue_sign_in_token(
+    tx: &mut Transaction<'_, Postgres>,
+    person: &str,
+    minutes: u32,
+) -> anyhow::Result<IssuedToken> {
+    if minutes == 0 || minutes > SIGN_IN_TOKEN_MAX_MINUTES {
+        anyhow::bail!(
+            "a sign-in token lives between 1 and {SIGN_IN_TOKEN_MAX_MINUTES} minutes, not {minutes}"
+        );
+    }
+    sqlx::query(
+        "UPDATE sign_in_token SET ended_at = now(), ended = 'superseded' \
+         WHERE person_id = $1 AND ended_at IS NULL",
+    )
+    .bind(person)
+    .execute(&mut **tx)
+    .await?;
+    let value = hex(&bearer());
+    let expires_at: chrono::DateTime<chrono::Utc> = sqlx::query_scalar(
+        "INSERT INTO sign_in_token (token_digest, person_id, expires_at) \
+         VALUES ($1, $2, now() + make_interval(mins => $3)) RETURNING expires_at",
+    )
+    .bind(digest(&value))
+    .bind(person)
+    .bind(minutes as i32)
+    .fetch_one(&mut **tx)
+    .await?;
+    Ok(IssuedToken { value, expires_at })
+}
+
+/// **What makes a sign-in token redeemable**, over `sign_in_token t` joined
+/// to `person p`: unexpired and not ended, its person enabled, and the name
+/// given at sign-in the person's in its canonical form (`$2`). One
+/// definition, read before the session's first record and again in its
+/// opening's transaction.
+pub(crate) const SIGN_IN_REDEEMABLE: &str = "t.ended_at IS NULL AND t.expires_at > now() \
+     AND p.enabled AND p.name_key = $2";
+
+impl Store {
+    /// **The person a sign-in token can open a session for**, by the
+    /// token's digest and the name given beside it: their identity, where
+    /// the token is redeemable as [`SIGN_IN_REDEEMABLE`] says.
+    pub async fn sign_in_token_person(
+        &self,
+        token_digest: &str,
+        name_key: &str,
+    ) -> anyhow::Result<Option<String>> {
+        Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT p.person_id FROM sign_in_token t \
+             JOIN person p ON p.person_id = t.person_id \
+             WHERE t.token_digest = $1 AND {SIGN_IN_REDEEMABLE}"
+        )))
+        .bind(token_digest)
+        .bind(name_key)
+        .fetch_optional(&self.pool)
+        .await?)
+    }
 }
 
 /// **The enabled persons who would still hold a live admin grant** were the

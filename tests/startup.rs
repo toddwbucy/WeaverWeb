@@ -243,7 +243,7 @@ async fn real_server_starts_on_current_schema() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    sqlx::query("INSERT INTO session (bearer_digest, person_id, passkey_id) VALUES ($1, $2, $3)")
+    sqlx::query("INSERT INTO session (bearer_digest, person_id, passkey_id, method) VALUES ($1, $2, $3, 'passkey assertion')")
         .bind(format!("{:x}", Sha256::digest(token.as_bytes())))
         .bind(&person)
         .bind(&passkey)

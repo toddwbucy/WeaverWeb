@@ -829,8 +829,10 @@ who asks if something holds it, and that something is this row.
 
 **A session is a person's**, as act 11 built it on 2026-10-08 to its design
 (`docs/project/design-2026-10-07-iam.md` section 6): it is opened at sign-in
-by a passkey of the person's, per section 2.13, and carries the person and
-the passkey it was opened with. It is what a surface reads to know who asks,
+by one of the two methods section 2.13 names and the server's config admits,
+a passkey of the person's or, since 2026-11-10, a sign-in token the host
+issued them, and carries the person, the method that opened it and, where a
+passkey opened it, that passkey. It is what a surface reads to know who asks,
 and what an authored row's author member takes its value from.
 
 ```graph
@@ -850,12 +852,18 @@ Each row carries:
   is hashed before it is stored and the lookup is on the digest, so a read of
   this table is not a set of live sessions
 - **the person**, whose identity section 3.2's author member takes
-- **the passkey it was opened with**, by the passkey's own identity (`pk-`,
-  drawn at random and never reused) and not its credential ID, and with no
-  foreign key: removing a passkey deletes its row, which a key would refuse
-  or cascade into the session, and the session sees the absence at its next
-  use; the same credential re-enrolled after a host reset is a new row with
-  a new identity, so it revives no session opened before the reset
+- **the method that opened it**, `passkey assertion` or `sign-in token`, the
+  audit's own names for the two (section 2.13), so the session and the
+  record of its opening say the same thing
+- **the passkey it was opened with, where a passkey opened it**, by the
+  passkey's own identity (`pk-`, drawn at random and never reused) and not
+  its credential ID, and with no foreign key: removing a passkey deletes its
+  row, which a key would refuse or cascade into the session, and the session
+  sees the absence at its next use; the same credential re-enrolled after a
+  host reset is a new row with a new identity, so it revives no session
+  opened before the reset. **A session a sign-in token opened names no
+  passkey**, and the store refuses a row whose method and passkey disagree:
+  a passkey's method with no passkey, or a token's with one
 - when it opened, when it was last used, and when it closed where it has
 
 **The digest rule was stated before there was a token to migrate.** The
@@ -889,8 +897,12 @@ name, `weaver_session`, names nothing.
 
 **Each end is checked at every use**, in one read on the database's clock:
 the session closed, its person disabled, the passkey it was opened with
-removed (the host reset among the ways, clearing the person's passkeys),
-open past the absolute limit, or unused past the idle limit. **The limits are
+removed where a passkey opened it (the host reset among the ways, clearing
+the person's passkeys), open past the absolute limit, or unused past the
+idle limit. **A session a sign-in token opened has no passkey to lose**: it
+ends at sign-out, at either limit or at its person's disable, and a
+passkey's removal or the host reset leaves it standing, as neither changes
+what opened it. **The limits are
 twelve hours open and one hour idle**, the server's config
 (`session_absolute_secs`, `session_idle_secs`) with those defaults, **the
 absolute limit never past seven days** (`SESSION_ABSOLUTE_MAX_SECS`, refused
@@ -930,8 +942,12 @@ one. **Sign-out** is a `POST` that closes the session's row, clears the
 cookie and sends the browser to the sign-in page. **A signed-in page's
 navigation** links to Record and to the person's own passkeys and carries
 the sign-out as a plain form; a page without a session links to sign-in.
+**`GET /` sends the browser on**, as built on 2026-11-10: to `/sign-in` where
+the request names no session that serves, and to Record where it names one,
+Record being where every sign-in lands. It reads the session as any use
+does, and is a redirect (`303 See Other`) and never a page of its own.
 
-**Sign-in is name-first**, as built on 2026-10-09 (`/sign-in`): the person
+**Sign-in by passkey is name-first**, as built on 2026-10-09 (`/sign-in`): the person
 gives their name, found by its canonical form, and answers a challenge for
 their own passkeys alone; an unknown name, a disabled person and one holding
 no passkey get one answer, the name's existence being all a name-first
@@ -962,6 +978,28 @@ identity drawn as every bearer the server issues is, for at most five
 minutes, used once, **with at most 64 ceremonies in flight**, a new one
 beyond that refused, since a ceremony starts before anyone is authenticated
 and an unbounded map would be a crash. A restart drops what is in flight.
+
+**Sign-in by token**, as built on 2026-11-10 (`POST /sign-in/token`), is
+served only where the config's `sign_in` names `token`, and is otherwise no
+route at all: the sign-in page then carries a second pane, a plain form
+taking the person's name and the sign-in token the host printed for them,
+which needs no script. **One answer refuses every token that cannot sign
+in**, unaudited, whether the token is unknown, expired, ended or another
+person's, the name's canonical form not the token's person's, or the person
+disabled: a wrong token proves no principal, as a failed signature does not,
+and auditing it would let anyone fill the audit. **Then the session's
+opening, in a transaction of its own**, its first record written before it
+(the person, by `sign-in token`, on the person, the action `session open`):
+the token ended `redeemed` by one conditional update that matches only a
+token still live and unexpired, so of two redemptions at once one opens a
+session and the other is refused; the person checked again as enabled under
+a share lock and the name again as theirs; a bearer drawn under section
+2.13's rule and stored as its digest; and the session naming the person,
+the method `sign-in token` and no passkey, its outcome committed with it.
+The browser is sent to Record (`303 See Other`) with the `__Host-` cookie
+set. **The session it opens is an ordinary session** in every other way:
+the `Origin` check, the cookie, both limits, the grants and the audit of
+everything done in it hold as for one a passkey opened.
 
 **A session is not an authored row and takes no version.** Section 3.2's
 ordering rule answers two engineers editing one declaration, and nobody edits
@@ -1391,7 +1429,12 @@ admission, per section 8. The register verbs act on the server and not on an age
 last item below states. How people authenticate and what
 the roles are called were section 10's open elections, and the operator
 closed both on 2026-10-07: **people authenticate by passkey (WebAuthn) and
-by nothing else**, and the roles are the ones the item below names. **This
+by nothing else**, and the roles are the ones the item below names. **The
+operator relaxed the first for the pre-release stage on 2026-11-10**: a
+sign-in token the host issues is a second method where the server's config
+admits it, and the passkey stays the method a config naming none admits;
+the sign-in token's item below states the ruling, its reasons and what
+release decides. **This
 section charters identity and access at the level the store needs, and no
 further**: the act that builds it, act 11, owed its full design before any
 code, including a threat model of the person, the session, enrollment and
@@ -1400,13 +1443,15 @@ holds the threat model and the measurements the choices rest on; the rules
 it decides are stated here and in section 2.8, and the reasons are there.
 
 - **The person**: an identity authenticated to the server, whose session,
-  section 2.8, carries the person and the passkey it was opened with. A person row
+  section 2.8, carries the person, the method that opened it and, where a
+  passkey opened it, that passkey. A person row
   carries its own identity under the convention section 2 opens with, the
   name it is known by, and whatever the authentication mechanism keeps,
   never a secret in the clear, which is section 2.8's digest rule carried to
   the person. Section 3.2's author member takes its value from the
   session's person's identity, the surfaces rendering the person's current
-  name. **The person authenticates by passkey alone**:
+  name. **The person authenticates by a passkey, or by a sign-in token where
+  the server's config admits one, and by nothing else**:
   no password, no second factor and no external identity provider, the
   relying party's identity and origin coming from the server's config and
   never from the repository. **The browser's listener serves TLS before any
@@ -1584,8 +1629,8 @@ it decides are stated here and in section 2.8, and the reasons are there.
   person row with no authentication material**: redemption refuses if
   material has appeared on the row since, so a token can never replace a
   credential, which would let an admin take a person over. **Every bearer the
-  server issues, the session bearer, the enrollment token and the ceremony
-  identity alike, is 32 bytes from the operating system's cryptographic
+  server issues, the session bearer, the enrollment token, the sign-in token
+  and the ceremony identity alike, is 32 bytes from the operating system's cryptographic
   random source**, never derived from a counter, a time or a row identity. **A lost passkey
   is recovered by another passkey the person holds, or by the host reset**:
   a host command that, in one write under the exclusion below, clears the
@@ -1609,9 +1654,9 @@ it decides are stated here and in section 2.8, and the reasons are there.
   enabled, so a disabled person's open sessions authorize nothing, and the
   disable writes no session: the surface closes such a session at its next
   use, as the session's own writer under section 3. Disabling a person does
-  revoke their outstanding enrollment tokens in the same write, under the
-  same exclusion, the tokens being part of the person row, each ending
-  `revoked`. Redeeming a token
+  revoke their outstanding enrollment tokens and sign-in tokens in the same
+  write, under the same exclusion, the tokens being part of the person row,
+  each ending `revoked`. Redeeming a token
   checks that its person is enabled too, so a token issued before a disable
   can never land a credential on a disabled row. **Redemption, as built on
   2026-10-08**: the page `/enroll` takes the token pasted, never in a URL;
@@ -1623,6 +1668,64 @@ it decides are stated here and in section 2.8, and the reasons are there.
   credential ID already held, inserts the passkey and ends the token
   `redeemed`. **It opens no session**: the person signs in with the passkey
   afterwards.
+- **The sign-in token, a second method for the pre-release stage, by the
+  operator's ruling of 2026-11-10.** In his words: "the passkey should be
+  optional not manditory at this stage. we can always tighten this stuff up
+  before release". Earlier the same evening: "I already have way too many
+  ways to log into way to many ... services ai WILL NOT STAND TO ADD
+  ANOTHER." **The reasons.** The ruling reads with his standing statement
+  that WeaverWeb is "the operator's console at the same abstraction level as
+  a Proxmox console, and never faces the public". A console of that kind is
+  reached by the people who run the machines it manages, from the network
+  they run, and its trust root is already the host: whoever holds a shell on
+  the server's host writes any grant, as the host's item below says. And the
+  passkey did not carry a person through sign-in when it was tried on
+  2026-11-10: a password manager extension answered enrollment's `create`
+  and a passkey was stored, three times, and at sign-in the extension never
+  offered the credential and the browser fell through to its cross-device
+  prompt, so no session opened. A method whose trust root is the host's adds
+  no new root and nothing for a person to remember, and lets the work on an
+  agent's lifecycle go on while the passkey's path is settled. **What it
+  is**:
+  - **Selected by the server's config**: `sign_in` lists the methods the
+    server admits, `passkey` and `token`, and is `["passkey"]` where the
+    config names none, so a server configured as before behaves as before:
+    the sign-in page byte for byte, no route for the token, and the token's
+    host command refusing. A list that is empty or names a method twice is
+    refused at load. A config naming `token` alone serves no sign-in by
+    passkey, while enrollment and a person's passkeys stay served.
+  - **Issued by the host alone**, by `person sign-in-token <person>`, for a
+    named person who is enabled, holding passkeys or not, and refused before
+    any record where the config does not name `token`. **No surface issues
+    one**: an admin able to issue a sign-in token could sign in as any
+    person, the takeover the enrollment token's rule above exists to
+    prevent, and the host is already trusted with every grant.
+  - **A bearer like the others**: 32 bytes under the rule above, printed
+    once in the command's answer and held only as its digest beside its
+    expiry, **living ten minutes by default** (`--minutes`) **and never more
+    than an hour**, the store refusing a row past it, since a token is
+    redeemed by the person standing at the host's side and a short life
+    leaves a lost one little time; **one live per person**, a new one ending
+    the earlier `superseded`; ended `redeemed` at its one use, and `revoked`
+    by a disable.
+  - **Redeemed at sign-in** with the person's name, by section 2.8's sign-in
+    by token, opening an ordinary session that names its method and no
+    passkey. **It authenticates its person for that opening and nothing
+    else**: what the person then does is done by `session`, as after a
+    passkey's sign-in, and a session it opened adds no passkey by itself,
+    adding one taking a fresh assertion with a passkey the person holds.
+  - **Audited**: its issue as the host's command, on the person; its
+    redemption as the session's opening, the person by `sign-in token`, the
+    audit's fourth method for a person.
+
+  **What it gives up**, stated so nobody reads more into it: a passkey's
+  assertion is bound to the server's origin and to a challenge, and a
+  sign-in token to neither, so a look-alike page that collects one, or
+  anyone who reads it, signs in as its person within its minutes; and the
+  path that carries it from the host's shell to the person's browser is part
+  of what it trusts. **Release tightens it**: before release the operator
+  decides whether the method stays, and under what config, with the
+  passkey's own path settled beside it.
 - **The server, one of the two principals that are not a person**, for the
   asks the server makes itself, of which the admission's `show` of section 7.2 is the
   one today. It may ask `show` only, the one observation verb, and never a
@@ -1662,13 +1765,13 @@ it decides are stated here and in section 2.8, and the reasons are there.
 - **The host, the other principal that is not a person**, for the writes an
   operator makes by command on the server's host: the bootstrap's three
   writes, the bootstrap person row, its admin grant below and its enrollment
-  token; the host reset above; **any grant, and any per-agent role's
-  verbs**, which is how a server's only admin comes to hold a role on an
+  token; the host reset above; the sign-in token below, where the config
+  admits it; **any grant, and any per-agent role's verbs**, which is how a server's only admin comes to hold a role on an
   agent and can still change what a role they hold carries, a person never
   writing a grant on themselves or a role they hold; and the register verbs
   while they stay host commands. **The identity commands are `person
-  bootstrap`, `person token`, `person reset`, `grant add`, `grant remove` and
-  `role set`**, each under the exclusion below, and **the last-admin rule
+  bootstrap`, `person token`, `person reset`, `person sign-in-token`, `grant
+  add`, `grant remove` and `role set`**, each under the exclusion below, and **the last-admin rule
   binds them too**: the host's removal of the last enabled admin's grant is
   refused like anyone's. It asks no
   verb of an agent and never places a turn. It is
@@ -1792,7 +1895,8 @@ it decides are stated here and in section 2.8, and the reasons are there.
   between the two and the act would land on authority that no longer stood.
   **Every write a session authorizes re-checks its authority inside its own
   transaction**, under the identity exclusion: the session as standing
-  (open, its person enabled, the passkey it was opened with still theirs),
+  (open, its person enabled, and where a passkey opened it, that passkey
+  still theirs),
   and any passkey that earned the write, as an addition's grant was earned,
   as still standing. Otherwise the write is refused as its authority gone,
   audited as failed, and nothing lands, so a disable, a removal or a host
@@ -1923,7 +2027,8 @@ it decides are stated here and in section 2.8, and the reasons are there.
   kind and identity and the action the mutation: enroll, issue an enrollment
   token, disable, enable, rename, set authentication material, write a role, grant,
   or revoke; **a host command's action is the command**, `person bootstrap`,
-  `person token`, `person reset`, `grant add`, `grant remove` or `role set`,
+  `person token`, `person reset`, `person sign-in-token`, `grant add`,
+  `grant remove` or `role set`,
   its target the person, the grant or the role, as a register verb's action
   is the verb; a register verb's target and action are the last item's. **A record
   holds no secret**: a write of authentication material records that it
@@ -4609,7 +4714,7 @@ missing while it was relaying.
 | a turn's text is in no audit record and no log line | perturbation, in `src/verbs_tests.rs`: put the text in the first record, and the row carries it; log it at debug in the held section, and the process's capture of every line finds it |
 | every person, role or grant written has an audit record naming its principal, and its outcome is a second record naming the first | perturbation, **owed**: update the first record with the outcome instead of appending a second, and an ask whose answer is lost reads as never answered with no trace of the rewrite; write a grant with the audit write dropped, and the grant lands with no record; add a passkey with the audit write dropped, and the write lands with no record; record the material in an authentication write's record, and a read of the audit table is a set of credentials. The server's own asks and a person's verbs and turns stand in their own rows. Lands with the IAM act |
 | the server's own asks are audited: every verb frame it sends has a first record committed before the frame enters the channel and an outcome naming it when the answer lands, and it asks `show` only | perturbation, in `src/link/server_asks_tests.rs` against the real listener and fake admin-cons: enqueue the frame before the record step, or where the record failed, at an admission and through `Listener::verb`, and a `show` reaches admin-con with no record; drop the record step's bound, and a store that stalls holds the ask past the silence bound; take the oldest entry of the connection's map of first records rather than the one the answer's id names, and an opening's answer lands as the admission's outcome; race an answered ask's outcome against the close signal, and a revocation landing mid-write leaves its first alone; disarm the guard between the record and the channel as soon as it is installed, and an ask cancelled while its send waits on a full channel keeps its entries and leaves its first alone; arm the guard only once the insert has answered, and a first whose answer is lost after its commit stands alone; drop the outcome lock from the `failed` write, and a first whose commit lands after its answer was lost stands alone; go back to a deny-list of the fault kinds that write no outcome, and a kind a connector invents writes `failed`; drop the door's verb check, and a `load` answer to a `show` ask writes `ok`; land a `show` answer's state whatever its exit status, and a refusal's object lands as the row's state; compute what remains of the admission's deadline before the outcome's write, and an admission whose write passes its deadline completes after it; classify a verb frame carrying both an outcome and a fault as admin's outcome, and the asker reads a success and the audit `ok` for a contradictory answer; drop the `show`-only refusal, and the server's `load` leaves with no refusal record |
-| a person authenticates by passkey and by nothing else | perturbation, through a soft passkey in `src/sign_in_tests.rs`: let the options load every person's passkeys, the counter rule find the credential among anyone's and the opening take any person's passkey, and another person's authenticator answering this person's challenge opens this person's session, each of the three guards holding it alone; take a ceremony without removing it, and the ceremony table's own test in `src/passkeys_tests.rs` finishes one twice, a captured sign-in assertion replayed being refused besides by the counter rule; audit the failed signature, and a stream of bad assertions fills the audit; drop the opening's check of its person, disable the person between the counter rule and the opening, and a disabled person's session opens; look the passkey up by its credential ID at the finish rather than by the identity the ceremony challenged, reset the person and re-enroll the same credential between the options and the finish, and a session opens on the re-enrolled row, and a possible clone whose passkey was removed goes unaudited. No path opens a session but the finish of a verified assertion |
+| a person authenticates by passkey, or by a sign-in token where the config admits one, and by nothing else | perturbation, through a soft passkey in `src/sign_in_tests.rs`: let the options load every person's passkeys, the counter rule find the credential among anyone's and the opening take any person's passkey, and another person's authenticator answering this person's challenge opens this person's session, each of the three guards holding it alone; take a ceremony without removing it, and the ceremony table's own test in `src/passkeys_tests.rs` finishes one twice, a captured sign-in assertion replayed being refused besides by the counter rule; audit the failed signature, and a stream of bad assertions fills the audit; drop the opening's check of its person, disable the person between the counter rule and the opening, and a disabled person's session opens; look the passkey up by its credential ID at the finish rather than by the identity the ceremony challenged, reset the person and re-enroll the same credential between the options and the finish, and a session opens on the re-enrolled row, and a possible clone whose passkey was removed goes unaudited. No path opens a session but the finish of a verified assertion and, where the config's `sign_in` names `token`, the redemption of a live sign-in token, whose own row is the sign-in token's below |
 | the server refuses to start on the listener's faults the design lists, and promises nothing beyond them | perturbation, each start refusal of `docs/project/design-2026-10-07-iam.md` section 3 that concerns the origin and the certificate, against certificates minted at test time in `src/listen_tests.rs`: the origin parsed by `url`, the WHATWG URL Standard a browser parses by, and required to equal its origin's ASCII serialization: drop the equality, and an origin with userinfo, a path or a trailing slash, a query, a fragment, a scheme or host in upper case, a default port written, a port with a leading zero, an IPv6 address not in its canonical form, a host a browser reads as an IPv4 address written otherwise than in dotted decimal, or an internationalized name not in its ASCII form starts, each a value no browser sends, so every state-changing request would fail the `Origin` comparison; compare the Unicode serialization instead, and an internationalized name starts in its Unicode form; keep the brackets of an IPv6 host in the name check, and a certificate for that address is refused; let `http` through off `localhost`, and the server listens on an origin where no ceremony can run; drop the refusal of an `https` origin with no certificate and key, and the listener serves it in the clear; drop the pair check, and a key that does not pair with its certificate starts; drop the name check, and a certificate for another host starts against the origin; drop either half of the validity check, and an expired or a not-yet-valid certificate starts; drop the warning, and one expiring within fourteen days starts silently. And the listener itself: let the binary serve plain where a certificate and key are configured, and `tests/startup.rs` (ignored, the real binary, started with a certificate minted at test time) gets no answer over TLS and a surface's answer in the clear; take each handshake on the accepting task, and a client that connects and never speaks stalls the next client's handshake in `src/listen_tests.rs`; drop the permit taken before each accept, and with the cap held by silent clients the next connection is accepted at once rather than waiting for a silent one's bound, at a small cap and bound the test sets; the same file shows a TLS client a surface's answer and a plain request none. And the listener's log, against a log captured in `src/listen_tests.rs`: log a client's certificate alert at debug, and a browser refusing the certificate leaves the operator nothing at the default level; warn of every one, and a second alert within the interval warns again; take every failed handshake for a certificate alert, and a plain client warns. With a certificate and no origin, the pair and the period are checked and the name check waits for an origin. A fault the list does not name, a certificate unfit for server authentication among them, is not this row's: the browser's refused handshake shows it |
 | the server refuses to start on the relying party's faults the design lists | perturbation, each refusal its own case in `src/listen_tests.rs`: drop the refusal of an `rp_id` with no `origin`, or of an `origin` with no `rp_id`, and the server listens with passkeys no browser will use; drop the refusal of an empty `rp_id`, or of one that is an IP address, bracketed or not, and every ceremony fails with the browser's `SecurityError`; drop the refusal of an origin whose host is neither the `rp_id` nor under it, or take a bare suffix for a domain under it, and an origin of another registrable domain, or one the `rp_id` sits under, starts; drop the requirement that the `rp_id`, parsed by `url` as a browser parses a host, equal its domain's ASCII serialization, and an `rp_id` in upper case or with a Unicode label starts, the config and what the ceremonies send the browser no longer one fact. A public suffix as the `rp_id` is not this row's: the browser's failure at the first ceremony shows it |
 | a person's name is unique in its canonical form at enrollment | perturbation in `src/host_tests.rs` and `src/store/identity_tests.rs`: compare names as given, and a second person bootstraps as `ADA` beside `Ada`, as full-width letters, or with an accent composed where the first decomposed it, so name-first sign-in would find two |
@@ -4620,9 +4725,11 @@ missing while it was relaying.
 | a credential ID belongs to one passkey of one person | perturbation in `src/passkeys_tests.rs` and `src/keys_tests.rs`, through a soft passkey: drop the addition's check of a credential ID already held, under the identity exclusion, and a registration whose ID another person holds fails at the store's key rather than refusing, its grant spent either way; drop that key too (the passkey table's primary key on the credential ID) with the checks, and the ID lands a second passkey row, so one credential signs in as either person |
 | a signature counter that did not rise refuses the sign-in, and the stored passkey is updated by a locked read, merge and write | perturbation in `src/sign_in_tests.rs`, the counter rule driven through its `Assertion` seam where a soft passkey cannot reach: drop the library's `CredentialPossibleCompromise` arm, and a clone's sign-in is refused unaudited; swallow the error where the possible clone's refusal cannot be recorded, and it answers the ordinary refusal over a record the audit lost; drop the rule's own comparison, and a counter raised between the options and the finish signs in; drop the write of the merged passkey, and the stored counter never rises; drop the row's lock, and of two concurrent assertions with one nonzero counter both succeed, and a concurrent assertion erases another's backup-eligibility upgrade; apply the refusal to a zero counter, and two zero-counter assertions are refused; drop the rule's commit, and the counter does not persist where the opening then fails |
 | a signature counter that did not rise refuses the fresh assertion before adding a passkey, its update committed before the addition's | perturbation in `src/keys_tests.rs`: drop the library's `CredentialPossibleCompromise` arm at the fresh assertion, and a clone's assertion is refused unaudited; the rule's own comparison is the one sign-in's row shows, by the same function. The counter's transaction commits before the grant is minted and the grant is held in memory alone, so no addition's failure can roll it back |
-| a session carries a person, ends where its person or its passkey does, and its cookie is neither readable by script nor carried by another site | perturbation, against sessions opened in the store in `src/surfaces/gate_tests.rs`: drop `HttpOnly`, `Secure`, `SameSite=Strict` or `Path=/`, or set the cookie under another name, and the cookie's test finds it changed; read the old `weaver_session` name too, and a claimed-name cookie names a session; drop the check of a session's close, of its person's disable, of its passkey's presence, of the absolute limit or of the idle limit, and a session so ended is served; name the passkey by its credential ID rather than its own identity, reset the person and enroll the same credential again, and the session opened before the reset is served; leave the row open where a use finds it ended, and the next read finds it open; drop the `Origin` check, admit a request with no origin configured, or take the first of two `Origin` headers, and a POST from another origin changes state; refresh the last use unconditionally, and two uses within a minute write twice and a time ahead of the clock moves back; close unconditionally where a read found a session ended, hold a use between its read and its close, refresh the session from another request meanwhile, and the refreshed session is closed on the stale read (`src/surfaces/gate_tests.rs`); drop the absolute limit's seven-day bound, and an absolute limit of the largest integer a config holds loads (`src/config.rs`), an interval the database cannot make at every use; drop the idle limit's five-minute floor, and an idle limit of 30 seconds is accepted at load (`src/config.rs`), where a session in active use would end; and a session used every 50 seconds is held open at the floor itself (`src/surfaces/gate_tests.rs`); let sign-out leave the row open, and the cookie it cleared still names a session; write the person's name as the author, or resolve every member as a claim, and an authored row stops naming its person or their current name; let a host's `--author` claim of the whole `pe-` shape through, and each register verb and identity command acts on it (`src/link/verbs_audit_tests.rs`, `src/host_tests.rs`), its claim then resolving as that person. `tests/startup.rs` (ignored, the real binary) reads Record under a person's session, refuses `POST /sign-out` at the `Origin` check with the session's cookie and without, and refuses a `POST` to a path no route serves at the same check |
+| a session carries a person and the method that opened it, ends where its person does or, where a passkey opened it, its passkey does, and its cookie is neither readable by script nor carried by another site | perturbation, against sessions opened in the store in `src/surfaces/gate_tests.rs`: drop `HttpOnly`, `Secure`, `SameSite=Strict` or `Path=/`, or set the cookie under another name, and the cookie's test finds it changed; read the old `weaver_session` name too, and a claimed-name cookie names a session; drop the check of a session's close, of its person's disable, of its passkey's presence, of the absolute limit or of the idle limit, and a session so ended is served; read a session no passkey opened as one whose passkey is removed, and a session a sign-in token opened ends at its first use, and re-check a write's session by its passkey alone, and every write under such a session is refused as its authority gone (`src/sign_in_token_tests.rs`); name the passkey by its credential ID rather than its own identity, reset the person and enroll the same credential again, and the session opened before the reset is served; leave the row open where a use finds it ended, and the next read finds it open; drop the `Origin` check, admit a request with no origin configured, or take the first of two `Origin` headers, and a POST from another origin changes state; refresh the last use unconditionally, and two uses within a minute write twice and a time ahead of the clock moves back; close unconditionally where a read found a session ended, hold a use between its read and its close, refresh the session from another request meanwhile, and the refreshed session is closed on the stale read (`src/surfaces/gate_tests.rs`); drop the absolute limit's seven-day bound, and an absolute limit of the largest integer a config holds loads (`src/config.rs`), an interval the database cannot make at every use; drop the idle limit's five-minute floor, and an idle limit of 30 seconds is accepted at load (`src/config.rs`), where a session in active use would end; and a session used every 50 seconds is held open at the floor itself (`src/surfaces/gate_tests.rs`); let sign-out leave the row open, and the cookie it cleared still names a session; write the person's name as the author, or resolve every member as a claim, and an authored row stops naming its person or their current name; let a host's `--author` claim of the whole `pe-` shape through, and each register verb and identity command acts on it (`src/link/verbs_audit_tests.rs`, `src/host_tests.rs`), its claim then resolving as that person. `tests/startup.rs` (ignored, the real binary) reads Record under a person's session, refuses `POST /sign-out` at the `Origin` check with the session's cookie and without, and refuses a `POST` to a path no route serves at the same check |
 | a passkey is added only after a fresh assertion, and a person's last is never removed | perturbation in `src/keys_tests.rs`: start a registration with no grant, and a session alone adds a passkey, a stolen cookie gaining access that outlasts it; drop the grant's binding to its session, and another session of the same person spends a grant it did not earn; drop the refusal of the last, and a person removes their last passkey; drop the addition's re-check of its session and of the passkey that earned its grant, hold the addition after its session read, run the host reset, and the device the reset cut off lands while the reset's token is stranded; drop the re-check of the passkey that earned the grant alone, remove that passkey while the session stands, and the addition lands on a removed passkey's grant; drop the removal's re-check of its session, and a removal asked under a session that no longer stands lands; take the removal's count outside the identity exclusion, hold one removal after its count, and two concurrent removals of the last two both land; list passkeys without the session's person, and the page shows another person's. A grant is taken once by the ceremony table, whose own test shows it |
 | an enrollment token is issued only for a person holding no passkey, lives at most seven days, is kept as its digest, and is its person's one live token | perturbation in `src/host_tests.rs`: drop the passkey check, and a token is issued for a person holding a credential, which an admin could redeem over theirs; drop the command's lifetime bound, and a token past seven days is refused only by the store, as a fault; drop the store's lifetime check, and a row past seven days lands; store the token in the clear, and a read of the token table is a set of usable tokens; leave an earlier token live when issuing, and the newest is refused against the one live token per person. And in `src/config.rs`: configure a lifetime past seven days, and it is taken |
+| a sign-in token is issued by the host alone and only where the config names `token`, lives at most an hour, is kept as its digest, is its person's one live token, is revoked by a disable, and opens one session, by its person's name, naming its method and no passkey | perturbation in `src/sign_in_token_tests.rs`: drop the command's refusal where the config names no `token`, and a server configured as before issues one; mount the token's route whatever the config, and such a server serves it; drop the store's lifetime check, and a row past an hour lands; store the token in the clear, and a read of the token table is a set of usable tokens; leave an earlier token live when issuing, and the newest is refused against the one live token per person; drop the redemption's match on a token still live, and one token opens two sessions, one after the other or two at once; drop the check of the name, and a token signs in under another person's name; drop the expiry, and an expired token signs in; drop the opening's check of its person, and a disabled person's token opens a session; drop the disable's revocation, and a token issued before a disable signs in after an enable; drop the session's check of its method against its passkey, and a session of a passkey's method naming no passkey lands. And in `src/config.rs`: take an empty `sign_in` or one naming a method twice, and it loads |
+| `GET /` sends a browser to sign-in without a session and to Record with one | test in `src/sign_in_token_tests.rs`: a request with no cookie, one whose cookie names no session and one naming a live session each get their redirect, and the first two never Record |
 | an enrollment token is single-use and redeemed only within its lifetime | perturbation, against a soft passkey (`webauthn-authenticator-rs`, a dev-dependency) in `src/passkeys_tests.rs`: drop the token's expiry, its end, its person's enable or the person's holding no passkey from what makes a token redeemable, and that token starts a ceremony; drop the transaction's re-check, and a passkey appearing between the options and the finish leaves the person holding two; leave the token unended at the redemption, and it redeems again; drop the check of a credential ID already held, and the finish fails at the store rather than refusing. A redemption sets no cookie and writes no session row, which the end-to-end test asserts |
 | an enrollment token is 32 bytes of the operating system's cryptographic randomness | perturbation in `src/store/identity_tests.rs`: draw bearers from a counter, and consecutive bearers share a prefix, the next guessed from the last |
 | a ceremony identity is drawn as every bearer the server issues is | perturbation in `src/passkeys_tests.rs`: draw ceremony identities from a counter, and consecutive identities share a prefix, the next guessed from the last |
@@ -4911,7 +5018,11 @@ a `web-` assertion beside `weaver-admin`'s.
   operator: by passkey (WebAuthn), and by nothing else, no password, no
   second factor and no external identity provider. Section 2.13 states the
   rules and `docs/project/design-2026-10-07-iam.md` the mechanism, the
-  library and the threat model.
+  library and the threat model. **Relaxed for the pre-release stage on 2026-11-10** by
+  the operator: a sign-in token the host issues is a second method where the
+  server's config admits it, the passkey staying the default; section 2.13's
+  item on the sign-in token states the ruling in his words, its reasons and
+  what release decides.
 - **The role vocabulary, closed 2026-10-07** by the operator: per agent,
   `observer` (seeded with `show`) and `operator` (seeded with `show`,
   `validate`, `load`, `unload`, `stop` and `turn`, and with `save-point`,

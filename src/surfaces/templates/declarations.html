@@ -1,0 +1,39 @@
+{% extends "instrument.html" %}
+{% block title %}declarations - weaver-web{% endblock %}
+{% block body %}
+{#- Every lineage of saved declarations, for an admin (Spec 2.4, 6.1), by
+    name, each with its head's version, last save and author. No inline
+    script. -#}
+<h1>Declarations</h1>
+<p class="lede">Declare an agent's components: its models and their GPUs, its store, its gate and its prompt. A save is a new version; nothing reaches an agent or a host.</p>
+<div class="stack">
+<section class="pane">
+  <header><h2>Lineages</h2><span class="backing built">built</span><span class="source">the store's declarations</span></header>
+  <div class="body flush">
+  <table>
+    <thead><tr><th>Name</th><th>Head</th><th>Version</th><th>Last save</th><th>Author</th></tr></thead>
+    <tbody>
+    {% for row in rows %}
+    <tr>
+      <td><a href="/declarations/{{ row.head }}">{{ row.name }}</a></td>
+      <td class="mono">{{ row.head }}</td>
+      <td>{{ row.version }}</td>
+      <td class="mono">{{ row.saved_at }}</td>
+      <td>{{ row.author }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="5"><span class="absent">no declaration is saved yet</span></td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <footer>A lineage is every version saved under one name; its head is its latest. A save is made from the head alone.</footer>
+</section>
+<section class="pane">
+  <header><h2>Declare an agent</h2><span class="backing built">built</span></header>
+  <div class="body">
+  <p><a class="btn primary" href="/declarations/new">A new declaration</a></p>
+  </div>
+</section>
+</div>
+{% endblock %}

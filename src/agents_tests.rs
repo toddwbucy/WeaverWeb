@@ -304,6 +304,17 @@ impl Connector {
         }
     }
 
+    /// **The first line the server sends within `within`**, raw and
+    /// whatever it parses as, or none where it sends nothing: a frame of no
+    /// variant [`recv`](Self::recv) knows counts here too.
+    pub(crate) async fn first_line_within(&mut self, within: Duration) -> Option<String> {
+        let mut line = String::new();
+        match tokio::time::timeout(within, self.reader.read_line(&mut line)).await {
+            Ok(Ok(n)) if n > 0 => Some(line),
+            _ => None,
+        }
+    }
+
     /// Whether the server closed the connection within the bound.
     async fn closed(&mut self) -> bool {
         let mut line = String::new();

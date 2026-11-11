@@ -118,6 +118,8 @@ pub enum Target<'a> {
     Passkey(&'a str),
     /// An alert, by its own identity (`al-`), for its acknowledgement.
     Alert(&'a str),
+    /// A declaration's row, by its own identity (`de-`), for its save.
+    Declaration(&'a str),
 }
 
 impl Target<'_> {
@@ -130,6 +132,7 @@ impl Target<'_> {
             Target::Role(_) => "role",
             Target::Passkey(_) => "passkey",
             Target::Alert(_) => "alert",
+            Target::Declaration(_) => "declaration",
         }
     }
 
@@ -141,7 +144,8 @@ impl Target<'_> {
             | Target::Grant(id)
             | Target::Role(id)
             | Target::Passkey(id)
-            | Target::Alert(id) => Some(id),
+            | Target::Alert(id)
+            | Target::Declaration(id) => Some(id),
         }
     }
 }

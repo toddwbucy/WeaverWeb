@@ -4,23 +4,28 @@ Each row is one pane the grammar expects, with its stage mark, its backing today
 
 ## 1 Declare, unbuilt
 
+Declare is two screens (operator's rulings of 2026-11-11, Spec 6.1): the declaration screen, below, and the board, which wires what was declared and is unbuilt with no panes drawn yet.
+
 | pane | shows | source | backing |
 | --- | --- | --- | --- |
-| Diagram | the agent's edge, its two sockets, the two connectors outside as fixed nodes, the organs inside with their tunables on them, the wires | a view of the saved `agent.yaml`; every reachable state is a valid declaration | unbuilt |
-| Pieces | the menu of pieces that exist today: decoder (mandatory; the agent config's `decoder`, `weaver-types-Spec` section 2), state (SQLite, in memory; `weaver-state-PRD` section 1), classifier (optional, pulled in by state; `weaver-state-PRD` section 1), LoRA adapter (the design session's assumption, waiting on a WeaverAgent document that charters an adapter) | the organ kinds the framework charters; a kind is a charter act before it is a row here. The connectors are not pieces: they are minted at Provision | unbuilt |
-| Configure | one piece's settings in a pop-up: system prompt, code, tunables; per field, caught now or caught at load | the piece's contract | unbuilt |
-| agent.yaml | the declaration as a saved document: the same state the diagram shows, with its version and last save | the saved file | unbuilt |
-| Refusals | what the form refuses on its own, and nothing more: a missing required field, a piece with no configuration; each names the field | the form | unbuilt |
+| Agent | the name, and host agent or virtual-machine agent with the template a virtual-machine agent is cloned from by the console itself; the template's digest and the machine's, once recorded; no Hosts page, and no virtual machine managed as an object of its own | the saved declaration | unbuilt |
+| SPU box | one per box: its models, each with its function from the roster the framework charters (decoder, exactly one; classifier, optional), artifact, format (GGUF offered, the rest named as later) and a decoder's adapter; the box's GPU requirement, a card, a class (a family or a list of models) or a pair, which start satisfies or refuses, never substituting | the saved declaration; the compute-capability table for the warning | unbuilt |
+| Sampler | the defaults for the per-turn knobs; what is fixed at load read-only once an agent reports it, and until then what that waits on | the saved declaration | unbuilt |
+| Store and gate | the store (`none` or `sqlite`) and the gate's tool election | the saved declaration | unbuilt |
+| Prompt | the system prompt, its own field, written into declared state by the declaration act | the saved declaration | unbuilt |
+| agent.toml | the file the declaration becomes, derived at the pinned corpus commit and never edited; what the screen does not declare as comments naming what fills it, what the grammar has no place for as a trailing block | derived from the saved declaration | unbuilt |
+| Version | the row's version, last save and author, and whether it is its lineage's head | the store (Spec 2.4) | unbuilt |
+| Refusals and warning | what the form refuses on its own (a missing required field, a requirement that names nothing, a field out of its shape), each naming the field; the warning where a class spans more than one compute capability; per field, what it waits on | the form | unbuilt |
 
 ## 2 Provision, partly
 
 | pane | shows | source | backing |
 | --- | --- | --- | --- |
-| Host | localhost or a remote host; staging the binaries is the operator's work on the box, which this server never reaches, and the pane shows what is done and what remains | nothing yet | unbuilt |
+| Staging | staging the binaries is the operator's work on the box, which this server never reaches, and the pane shows what is done and what remains; host agent or virtual-machine agent is the declaration's field, not a pane here, and there is no Hosts page | nothing yet | unbuilt |
 | Kernel account | the agent's user and the connectors' service users; creating them is the operator's work on the box, and the pane shows what is done and what remains | nothing yet | unbuilt |
 | Register | box and name, the row minted with two credentials | `POST /admin/agents/register` | built |
 | Handover | the two client configs, offered once, five minutes, this session only | `agents::Handover` | built |
-| Declaration | the operator installs the file Declare saved; validate reads the installed declaration, never a draft (Spec 7.2, WeaverAgent #59) | nothing yet | unbuilt |
+| Declaration | the operator installs the file derived from the declaration Declare saved, since no console verb installs one yet; validate reads the installed declaration, never a draft (Spec 7.2, WeaverAgent #59) | nothing yet | unbuilt |
 | Validate | closes Provision and gates Run: asks admin whether every element the installed declaration names that admin holds custody of is on the box; a refusal names the field; a clean answer is acceptance for filing: nothing admin holds custody of stands in the way of a load, and what only the organ can judge is answered at admission; it is not a promise the load succeeds | admin through admin-con | unbuilt as a step; the verb itself is built on the agent page |
 
 ## 3 Run, built

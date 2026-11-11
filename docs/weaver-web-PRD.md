@@ -164,7 +164,7 @@ agent in a way that blocks many.
 
 | stage | what it holds | backing |
 | --- | --- | --- |
-| 1 Declare | compose the binding: boundary, organs, models, adapters, tuple | unbuilt |
+| 1 Declare | two screens (the operator's rulings of 2026-11-11): declare the components (the models on their SPU boxes with each box's GPU requirement, the store, the gate, host or virtual machine, the system prompt, the sampler's defaults), then wire them on a board that shows only what was declared | partly: the declaration screen saves versioned declarations and shows the file each will become (Spec 6.1); the board is unbuilt and waits on contracts WeaverAgent has yet to write |
 | 2 Provision | first the operator's work on the box, which this server never reaches: stage the binaries, create the kernel account, install the declaration Declare saved; then this server's: register the agent, mint its two connector credentials; then `validate`, which reads the installed declaration | partly: the register page and the one-time config handover are built; the box steps and the validate step are not |
 | 3 Run | load, serve turns through the gate, unload | built; `load` from the front end is refused upstream for now (`toddwbucy/WeaverAgent#166`: admin refuses a load whose invoking cgroup is not root-owned, which parks connector-managed loads) |
 | 4 Observe | availability, alerts, the live trace | built |
@@ -198,43 +198,55 @@ with its stage and whether it has backing today, so a drawing is never mistaken 
 surface. The served pages are composed in this grammar, and the stylesheet they load is
 the design system's own (Spec section 6).
 
-**The Declare diagram is the core interaction of stage 1**, and the design's proof that
-the grammar holds for an unbuilt stage, Observe being its proof for a built one.
+**Declare is two screens**, on the operator's rulings of 2026-11-11, which replace the
+single diagram the design session of 2026-11-06 drew, with its system prompt on the
+decoder and its free placement of pieces. Spec section 6.1 states the first screen.
 
-- It is a view of `agent.yaml`, Visio-style: drag a piece from the menu, click a piece
-  to configure it in a pop-up. Every state it can reach is a valid declaration. It is
-  never a free canvas, and it is a saved document: the diagram is the file and the file
-  is the diagram, with a version and a last save, and reopening the document reopens the
-  same graph.
-- The agent's edge is drawn. On it sit the two Unix sockets, gate and admin, neither on
-  the network; configuring the gate sets which peer it admits, by kernel identity and
-  never by port. Outside the edge sit GateCon and AdminCon as their own fixed nodes:
-  they are not pieces of the menu, since they are not declared but minted at register in
-  Provision, and the network settings live on them only. They are drawn separately
-  because access attaches per connector. No access-control screen in this pass.
-- Inside: the decoder on the input path with its system prompt attached and the model as
-  one field inside it (the agent config's `decoder`, `weaver-types-Spec` section 2);
-  state management, today SQLite in memory only; adding state pulls in a classifier on
-  the SPU (both `weaver-state-PRD` section 1). The classifier pointing at a LoRA adapter
-  on the model is the design session's assumption, and waits on a WeaverAgent document
-  that charters an adapter. Each node carries its
-  tunables on itself, read on the node and edited in the pop-up.
-- Adding a piece pulls in its requirements. A wire the contracts do not permit does not
-  attach and says why, naming the contract. Only pieces that exist today appear in the
-  menu, which is section 3.1's roster rule applied: a kind is a charter act before it is
-  a row.
-- Take ComfyUI's experience and drop its free wiring. Kept: a node graph composed by
-  hand, a menu of pieces, click a node to configure it, the node's tunables visible on
-  the node. Dropped: wire anything to anything, and a canvas with no visible destination.
-  The path under the diagram always says where you are and what is left.
+- **The declaration screen** comes first: the operator declares the components, which
+  models on which GPUs, which store, which gate, and saves the declaration as a
+  versioned document, read back as the file it will become. One SPU box stands for the
+  models it holds, four models declared apart being four boxes and one decoder with its
+  adapter one box, spread out or collapsed as the operator chooses. The engine follows
+  from the model's format, GGUF offered first and the other formats named as later.
+  Whether the agent is a host agent or a virtual-machine agent is one field, and there
+  is no Hosts page: the console never manages a virtual machine as an object of its own.
+  A virtual-machine agent is cloned by the console itself from a template at
+  declaration, with no operator script between, load being the machine's start, unload
+  its stop and retire its destroy. The template holds no keys, and its image digest goes
+  on the run card as the agent's provenance; the configured machine hashes differently
+  and its own digest is recorded too, the template being the parent it descends from. A
+  GPU is declared as a requirement, not as a device: a specific card, a class, given as
+  a family (any card of one architecture) or as a list of models, or a pair of two
+  requirements in shard order. The screen warns, and does not refuse, where a class
+  spans more than one compute capability; start satisfies the requirement or refuses,
+  and never substitutes; and the card drawn is stamped on every load event. The system
+  prompt is a field: the declaration act writes it into whatever state was declared,
+  from then on it is read from state and never from a file, and it is locked for the
+  session. The sampler's mechanism is fixed at load, and its knobs are per-turn, the
+  declaration supplying the defaults, the turn call the values and the record each
+  event's: the test for any engine setting is whether changing it invalidates the cache,
+  fixed at load if it does and a per-turn knob if not.
+- **The board** comes second and is unbuilt: the operator wires what was declared, and
+  the board shows only that. A component is a compiled primitive the harness is
+  pre-wired to, a wire is one ask and one return written in Python by the operator, and
+  a function that makes several asks is a node the wires converge on. It waits on
+  contracts WeaverAgent has yet to write.
+- **An agent is binaries by hash plus wires by hash**, and the two screens are a
+  rendering of that card: a wire edit is a new link in the lineage, not a reload of the
+  same agent. **The trace is the record, not a component**, declared on neither screen.
+- The agent's edge, its two sockets and the two connectors outside it are not on the
+  declaration screen. The connectors are minted at register in Provision, and the
+  network belongs to them alone, as every other surface keeps saying.
+- Only pieces that exist today are offered, section 3.1's roster rule applied: a kind is
+  a charter act before it is a row.
 
 **`validate` closes Provision and gates Run** (the operator's ruling of 2026-11-06). It
 asks admin, through admin-con, whether every element the installed declaration names
 that admin holds custody of is on the box, so it has nothing to ask before the agent is
 provisioned. Declare keeps only what its form can refuse on its own: a missing required
-field, a piece with no configuration. A clean `validate` is acceptance for filing:
-nothing admin holds custody of stands in the way of a load, and what only the organ can
-judge is answered at admission. It is not a promise the load succeeds. Section 3.1's
+field, a requirement that names nothing, and the shape of each field (Spec 6.1). A clean
+`validate` is acceptance for filing: nothing admin holds custody of stands in the way of
+a load, and what only the organ can judge is answered at admission. It is not a promise the load succeeds. Section 3.1's
 sentence that Compose "asks `validate`" is amended below to say where the verb is asked.
 
 **The palette** (the operator's rulings of 2026-11-06). The purple of
@@ -261,12 +273,17 @@ governs.
 
 You cannot load an agent you have not created, so the first surface authors
 one. The artifact is the declaration, presented as a composition surface
-rather than as a text file, with the text always reachable and always the
-authority: edits in either place round-trip to the other.
+rather than as a text file, and saved as a versioned document of its own
+whose every version is kept. **The file it will become is always shown
+beside it**, derived from the saved document at a pinned commit of the
+agent's grammar, so the text is always reachable without being a second
+place to edit.
 
-The declaration is a roster plus a wiring. Each declared component resolves
-its artifact, sets its elections, and takes its own socket. The wiring is
-the loop, and it is real topology the operator draws.
+The declaration is a roster plus a wiring, **declared on two screens**, per
+section 3.0 and the operator's rulings of 2026-11-11: the roster on the
+declaration screen, each component resolving its artifact and setting its
+elections, and the wiring on the board, where the loop is real topology the
+operator draws. The board is unbuilt.
 
 **The roster offers the organ kinds the framework charters, and carries no
 enumeration of its own.** As of 2026-09-05 that is the decoder, mandatory,
@@ -281,8 +298,9 @@ Offering a kind the framework will not load is therefore the failure to
 avoid, not offering too few.
 
 **Whether a given declaration will load is not this crate's judgment
-either.** It writes the draft, refusing on its own only a missing required field
-and a piece with no configuration, and `validate` is asked at the end of
+either.** It writes the draft, refusing on its own only a missing required field,
+a requirement that names nothing and a field out of its shape (Spec 6.1), and
+`validate` is asked at the end of
 Provision once the agent stands on a box (section 3.0, the ruling of
 2026-11-06). The verb transitions nothing, refuses an incoherent declaration
 naming the field, and reaches the box facts admin holds custody of. The refusal is

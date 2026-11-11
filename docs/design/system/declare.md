@@ -1,23 +1,31 @@
-# The Declare diagram
+# Declare: two screens
 
-The diagram is the core interaction of stage 1 and the proof that the grammar holds for an unbuilt stage. It is a view of `agent.yaml`, Visio-style: drag a piece from the menu, click a piece to configure it in a pop-up. It is never a free canvas.
+Declare is a loop builder in two steps, on the operator's rulings of 2026-11-11. On the first screen the operator declares the components: which models, on which GPUs, which store, which gate. On the second, the board, the operator wires them, and the board shows only what was declared. The first screen is specified in Spec section 6.1; the board is unbuilt and waits on contracts WeaverAgent has yet to write. An agent is binaries by hash plus wires by hash, and the two screens are a rendering of that card. The trace is the record and not a component, so neither screen declares it.
 
-Take the experience from ComfyUI and drop the free wiring. The experience: a node graph a person composes by hand, a menu of pieces, click a node to configure it, the node's tunables visible on the node. Dropped: wire anything to anything, and a canvas with no visible destination. Here a wire attaches only where a contract permits, and the path under the diagram always says where you are and what is left.
+## The declaration screen
 
-The graph is a saved document. The diagram is `agent.yaml` and `agent.yaml` is the diagram: every save is a valid declaration, the document carries a version and a last-save time, and reopening the document reopens the same graph. The form refuses on its own only a missing required field and a piece with no configuration, naming the field. Everything else waits for `validate`, which closes Provision and gates Run: it asks admin whether every element the installed declaration names that admin holds custody of is on the box, never of a draft. A clean `validate` is acceptance for filing: nothing admin holds custody of stands in the way of a load, and what only the organ can judge is answered at admission. It is not a promise the load succeeds.
+The screen is a form of panes, under the pane grammar every surface uses, and never a canvas. Nothing on it is dragged or placed.
 
-## What is drawn
+- **The agent pane** holds the name and the one field that says host agent or virtual-machine agent, with the template a virtual-machine agent is cloned from. The console does the clone itself at declaration, once a host plane exists. The template holds no keys; its image digest and the configured machine's own digest are both recorded, the first as the agent's provenance on the run card. There is no Hosts page, and the console never manages a virtual machine as an object of its own.
+- **One pane per SPU box.** A box stands for the models it holds: four models declared apart are four boxes, one decoder with its adapter is one box, and the operator chooses which. Each model row carries its function from the roster the framework charters (the decoder, exactly one; the classifier, optional), its artifact, its format and, on a decoder, its adapter. GGUF is the one format offered; the others are named as later and not offered. The box's GPU requirement sits in the box's pane: a card, a class (a family the capability table knows, or a list of models; the form typed is kept), or a pair in shard order. Start satisfies the requirement or refuses; it never substitutes.
+- **The sampler pane** holds the defaults the declaration supplies for the per-turn knobs: temperature, top-k, top-p, the seed, the repetition penalty, the repetition window and the maximum tokens per turn. The turn call carries the values; the record holds them per event. What is fixed at load, the sampler's mechanism among it, is shown read-only beside the model once an agent reports it, and until then the pane says what that waits on.
+- **The store and gate pane** holds the store (`none` or `sqlite`) and the gate's tool election (no tool, or `sh`). Who the gate admits is its gate-con, filled at Provision, and is not asked here.
+- **The prompt pane** holds the system prompt as its own field, never attached to a model. The declaration act writes it into declared state; from then on it is read from state and never from a file, and a change is a reload.
 
-- The agent's edge is a rounded rectangle in `fg`, 2px, `radius-md`, labelled with the agent's name and its kernel user in `id`. Everything inside the edge runs under that identity.
-- On the edge sit two sockets in `inset` with an `fg` stroke: the gate (ordinary traffic) and admin (control). Both are Unix sockets. Neither is on the network. Configuring the gate sets which peer it admits, by kernel identity, never by port.
-- Outside the edge sit two connectors as their own nodes: GateCon and AdminCon. They are fixed, never dragged from the menu: they are not declared in `agent.yaml` but minted at register, in Provision, and the diagram draws them so the edge is seen to be crossed by them alone. Network settings live on them only, drawn as the one `accent-soft` field in the diagram. They are separate nodes because access attaches per connector: today, per-agent `observer` and `operator` roles plus a server-wide `admin`. No access-control screen in this pass.
-- Inside: the decoder on the input path with its system prompt attached, and the model as one field inside it. The model is the agent config's `decoder` (`weaver-types-Spec` section 2). State management, today SQLite in memory only. Adding state pulls in a classifier on the SPU (both `weaver-state-PRD` section 1). The classifier pointing at a LoRA adapter on the model is the design session's assumption and waits on a WeaverAgent document that charters an adapter.
-- Each node carries its tunables as `.tunable` chips on the node: the decoder's seed and temperature, the classifier's threshold, the adapter's scale, state's memory flag. They are read on the node and edited in the pop-up.
+Two panes read the saved document back, beside the form:
+
+- **The agent's file**: `agent.toml` in the agent's grammar at the pinned corpus commit, derived and never edited. What the screen does not declare is a comment naming what fills it, and what the grammar has no place for is a trailing block naming its interface question.
+- **The prompt as it will be written**, with its waits-on line, or the word that there is none.
 
 ## The rules
 
-- Every state the diagram can reach is a valid declaration. A piece lands only where it may; a wire the contracts do not permit does not attach and says why, in `fail`, naming the contract.
-- Adding a piece pulls in its requirements. The pulled-in piece appears with a dashed wire (`.wire.pulled`) until it is configured.
-- Only pieces that exist today appear in the menu. The roster offers the organ kinds the framework charters, and carries no enumeration of its own: decoder (mandatory) and classifier (optional). A kind the framework will not load is never offered.
-- The pop-up annotates each field with when a mistake there is caught: now, where admin holds custody or can ask synchronously, or at load, where only the organ can answer. A clean `validate` is acceptance for filing, not approval to load.
-- The path at the bottom of the pane says where you are and what is left: Declare, saved as a document, then Provision, which `validate` closes before Run opens.
+- **A saved declaration is a versioned document.** Every save is a new row in its lineage, with a version and a last-save time; reopening a row reopens the same document. A save from a row that is not its lineage's head is refused.
+- **The form refuses on its own, naming the field**, only what it can judge alone: a missing required field, a requirement that names nothing, and a field out of its shape (Spec 6.1 lists each). A refusal is in `fail`, at the field.
+- **It warns, and saves all the same,** where a class spans more than one compute capability; it never refuses for it. The warning is in `hold`, at the requirement. A card model or a family the repository's table does not know is named "capability unknown" and never left blank.
+- **Each field carries what it waits on before it takes effect**, as a line under the field in `dim`: Provision's register, the declaration reaching the agent, `validate`, the host plane. Spec 6.1 holds the table. Beside its label it carries when a mistake there is caught, `.when.now` or `.when.load` (the brand book's controls). A clean `validate` is acceptance for filing, not approval to load.
+- **The screen reaches no agent and no host.** It writes the store and nothing else.
+- **The path at the bottom of the pane** says where you are and what is left: the components, saved as a document; then the board, unbuilt; then Provision, which `validate` closes before Run opens.
+
+## The board, when it comes
+
+Components are compiled primitives the harness is pre-wired to. A wire is one ask and one return, written in Python by the operator. A function that makes several asks is a node the wires converge on. A wire edit is a new link in the lineage, not a reload of the same agent. None of this is drawn or built yet, and no page carries a wire or Python until the board's own act. The agent's edge, its two sockets and the two connectors outside it are drawn on the board when it is designed, not on the declaration screen.

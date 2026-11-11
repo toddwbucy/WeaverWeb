@@ -6,7 +6,7 @@ Teach the difference, never hide it. A local developer arrives from LM Studio, O
 
 - Name the agent first, everywhere: the masthead's switcher, a page's `title`, a pane's header. The model appears as a field inside the decoder, in `id`, and never as the thing being managed.
 - Say what kind of thing a word is: a verb is a verb (`load`, `unload`, `stop`), a state is a state (`unloaded`, `in transition`), a plane is a plane (gate, admin), a connector is a connector (gate-con, admin-con). Set each in `id`.
-- There is no endpoint. The gate and admin are Unix sockets on the agent's edge, off the network. The network belongs to the two connectors outside the edge and to nothing else. The Declare diagram draws this; every other surface keeps the words.
+- There is no endpoint. The gate and admin are Unix sockets on the agent's edge, off the network. The network belongs to the two connectors outside the edge and to nothing else. Declare's board will draw this when it is designed; every other surface keeps the words.
 
 ## Standing positions, kept on every surface
 
@@ -57,8 +57,8 @@ The stages, in order, with what backs each today:
 
 | stage | the pane kinds | backing today |
 | --- | --- | --- |
-| 1 Declare | the diagram with its tunables on the nodes, the configure pop-up, the saved `agent.yaml`, the form's own refusals | unbuilt |
-| 2 Provision | the operator's work on the box, which this server never reaches (staging the binaries, the kernel account, installing the declaration Declare saved), then the register row, the one-time config handover, then `validate`, which reads the installed declaration, closes the stage and gates Run | partly: the register page and the handover are built; the box steps and the validate step are not |
+| 1 Declare | two screens (rulings of 2026-11-11): the declaration screen, its panes for the agent, each SPU box with its models and GPU requirement, the sampler's defaults, the store and gate, the prompt, the derived `agent.toml`, the version and the form's own refusals and warning; then the board, which wires what was declared | unbuilt; the declaration screen is specified (Spec 6.1), the board waits on WeaverAgent's contracts |
+| 2 Provision | the operator's work on the box, which this server never reaches (staging the binaries, the kernel account, installing the file derived from the declaration Declare saved), then the register row, the one-time config handover, then `validate`, which reads the installed declaration, closes the stage and gates Run | partly: the register page and the handover are built; the box steps and the validate step are not |
 | 3 Run | the verb forms, the turn form, the load state | built; `load` from the front end is refused upstream for now (`toddwbucy/WeaverAgent#166`: admin refuses a load whose invoking cgroup is not root-owned, which parks connector-managed loads) |
 | 4 Observe | availability, the two connectors, alerts, the live trace | built |
 | 5 Preserve | `save-point`, `restore`, the decision on a missed save point | partly: both verbs are offered on the agent page where the role carries them and the ceiling grants them; no list of save points is served, and `restore` names none, carrying no argument (the invoker's fixed line `sudo -n <weaver_admin> <verb> <agent>`, Spec 7.2) |
@@ -70,7 +70,7 @@ Every pane is marked with its stage and its backing, in its header, so a person 
 
 The trace is the record of the whole lifecycle and no stage's own (ruling of 2026-11-07): Observe reads it live, Diagnose and Train read it landed. Train selects from it, builds a dataset from the selection, trains an adapter and hands it back to Declare; gathering is part of Train; no frontier-model or reviewer text enters a dataset; the adapter enters through Declare and Provision at the load boundary.
 
-`validate` closes Provision and gates Run (ruling of 2026-11-06). It asks admin, through admin-con, whether every element the installed declaration names that admin holds custody of is on the box, so it has nothing to ask before the agent is provisioned. Declare keeps only what its form can refuse on its own: a missing required field, a piece with no configuration. A clean `validate` is acceptance for filing: nothing admin holds custody of stands in the way of a load, and what only the organ can judge is answered at admission. It is not a promise the load succeeds.
+`validate` closes Provision and gates Run (ruling of 2026-11-06). It asks admin, through admin-con, whether every element the installed declaration names that admin holds custody of is on the box, so it has nothing to ask before the agent is provisioned. Declare keeps only what its form can refuse on its own: a missing required field, a requirement that names nothing and a field out of its shape (Spec 6.1). A clean `validate` is acceptance for filing: nothing admin holds custody of stands in the way of a load, and what only the organ can judge is answered at admission. It is not a promise the load succeeds.
 
 ## Marks
 
@@ -88,7 +88,7 @@ A zero, a blank cell and an empty string are values. None of them stands in for 
 
 Every control is a real button, link, input, label or form. A verb is a form with one button in `.verb` (`control-h-verb`, `id`); the button's text is the verb's word. A verb that does not apply is disabled, not hidden, with a note saying why ("refused upstream", "not in the ceiling", "your roles do not carry it"). A turn is a `textarea` in `mono` and a `.verb` button reading "Place the turn". The focus ring is `focus`, 2px, offset 2px, on every control. Targets are 32px or taller, 36px where the action changes the agent.
 
-A field in the Declare pop-up carries, beside its label, when a mistake there is caught: `.when.now` ("caught now", admin holds custody or can ask) or `.when.load` ("caught at load", only the organ can answer). The artifact is the clearest field of the second kind. A node's tunables (seed, temperature, a threshold, an adapter's scale) sit on the node itself as `.tunable` chips, so the diagram shows them without opening the pop-up; the pop-up is where they are edited.
+A field on the declaration screen carries, beside its label, when a mistake there is caught: `.when.now` ("caught now", admin holds custody or can ask) or `.when.load` ("caught at load", only the organ can answer). The artifact is the clearest field of the second kind. Under the label, in `dim`, the field says what it waits on before it takes effect (Spec 6.1). Every field is edited in place on the screen; there is no pop-up.
 
 ## Iconography
 

@@ -618,24 +618,82 @@ question, answered by the repository and revision the row already carries.
 
 ### 2.4 The declaration
 
-The saved configurations the charter's section 3.6 lists under Agents,
+The saved declarations the charter's section 3.6 lists under Agents,
 **loadable at any time**, which is what makes them a table rather than a
-draft buffer. Each row carries:
+draft buffer. **A row is one saved version of a declaration**, written by
+the declaration screen of section 6.1 and by nothing else, and it carries:
 
-- the declaration as authored, whole, in the shape `weaver-types-Spec`
-  section 2 defines
-- **the corpus commit its field shape was written against**, which is this
-  row's staleness rule per section 7.2: when the floor moves, the pin says
-  so, and the draft is named stale before it is offered for install
-- the parent declaration where this one is derived, and **the one thing
-  that moved**, which is what the charter's section 3.6 draws
+- **the declaration as authored, whole, in this console's own document**,
+  the grammar section 6.1 states. It is a superset of the agent's grammar,
+  `weaver-types-Spec` section 2, and **the agent's file is derived from it**
+  at the corpus commit below, never stored beside it. **Better way, ruled
+  by the Planner on 2026-11-11**: the row held the agent's grammar whole
+  until then, and that grammar has no place for what the operator's
+  rulings of 2026-11-11 put on the declaration screen, a GPU requirement, a
+  further model function, or whether the agent is a host agent or a
+  virtual-machine agent. So the console's document holds them, and what
+  the agent's grammar has no place for is shown as such (section 6.1)
+  rather than dropped
+- **its identity, `de-` and sixteen lowercase hexadecimal digits**, minted
+  by the server before the save's first audit record, as an agent's `ag-`
+  is at register, so the record can name the row it is about to write
+- **the agent's name**, in the grammar `register` holds a name to (section
+  8), the declaration naming no box: a host agent's box is Provision's, and
+  a virtual-machine agent's box is the machine the console will clone
+- **the corpus commit its derived file was written against**, which is
+  this row's staleness rule per section 7.2: when the agent's grammar
+  moves, the pin says so, and the draft is named stale before it is offered
+  for install. It is the WeaverAgent commit whose `weaver-types-Spec` the
+  rendering of section 6.1 follows, a constant of the build, and not the
+  row's version below
+- **its parent, the row it was opened from**, none for the first save of a
+  declaration, and **its lineage's root**, none for the root itself, so a
+  lineage is identified by its root row
+- **its version, the row's ordinal in its lineage**: 1 at the root and one
+  more than its parent's at every later save, assigned by the store
+- **when it was saved**, the store's clock at the save
+- **what moved**: the field paths of section 6.1's document whose values
+  differ from the parent's, computed by the server and never authored,
+  empty at a root
+- **the one thing that moved**, the member the charter's section 3.6 draws
+  and the ablation matrix of section 2.9 reads, one parent's arms side by
+  side: set to the one path where exactly one moved, and none otherwise
 - the last answer `validate` gave, with when it was given, **meaningful only
   where the operator installed this row's declaration**: `validate` judges
-  the declaration placed on the box and never a draft, per section 7.2
+  the declaration placed on the box and never a draft, per section 7.2. No
+  act writes it yet
 - **the author**, per section 3.2
-- **the row's version**, per section 3.2, which is not the corpus commit
-  above: that one answers whether the field shape is current, this one
-  whether the row has moved since it was read
+
+**Every save appends a row, and a row's authored half never changes**, on
+the Planner's default of 2026-11-11 following the operator's ruling 9 of
+that date, that a wire edit is a new link in the lineage and not a reload
+of the same agent; the operator's ruling on this is open (section 10). A
+trigger refuses every update to a row's authored members and every delete,
+the last `validate` reading being the one member a later act may write
+onto a row. **A save is made from the row it was opened from**, and the
+declaration screen refuses a save from a row that is no longer its
+lineage's head, so the lineage stays linear in this act. **The refusal is
+the handler's and not the schema's**: the schema admits a second child of
+one parent, since the ablation matrix draws one parent's arms side by side
+and the parent and the one thing that moved were chartered for that, and a
+later act opens that door without a migration.
+
+**Section 3.2's version is, for this table, the row's ordinal.** A row never
+moves, so whether it has moved since it was read becomes whether its
+lineage has moved, which the head check answers. It still has nothing to do
+with the corpus commit: one says whether the derived file's shape is
+current, the other where the row stands in its lineage.
+
+**No two lineages share a name while both exist, and a lineage keeps its
+name**: a save that would give a second lineage a name another lineage
+holds is refused, and so is a save that changes its lineage's name, a new
+name being a new declaration. Since no act retires a declaration yet,
+"exist" is every row the table holds.
+
+**Nothing is migrated.** The table was built by migration `0001` and, as of
+2026-11-11, no code reads or writes it; its one reference is the staged
+experiment's parent declaration of section 2.5. The act of that date adds
+its members by an additive migration and moves no row.
 
 **The last answer is a reading and not a verdict.** It is what the verb said
 at a moment against a corpus commit, so a surface presents it with its date
@@ -3357,8 +3415,9 @@ reached rather than for what it does.
 
 **A surface that authors or exchanges also holds an exchange outside this
 crate**, a call out and an answer back rather than a write left for someone
-else to drain. Compose keeps drafts and produces a declaration file the
-operator installs, and reads `validate`'s judgment of what is installed.
+else to drain. Compose keeps versioned declarations and shows the file
+each will become (section 6.1); the operator installs that file, and
+reading `validate`'s judgment of what is installed is section 7.2's.
 Live carries a
 turn to the gate and reads the measurement that comes back. Agents drives
 the lifecycle verbs and reads the observation exchange. Section 7 names
@@ -3448,6 +3507,223 @@ edge: asserts
 from: weaver-web
 to: web-uncertified-diagnostic-record-is-not-drawn
 ```
+
+### 6.1 The declaration screen
+
+**Declare is two screens**, on the operator's rulings of 2026-11-11. On the
+first, the operator declares the components: which models, on which GPUs,
+which store, which gate. On the second, the board, the operator wires them,
+and the board shows only what was declared. **This section is the first
+screen; the board is unbuilt** and waits on contracts WeaverAgent has yet to
+write. When it comes, a component is a compiled primitive the harness is
+pre-wired to, a wire is one ask and one return written in Python by the
+operator, and a function that makes several asks is a node the wires
+converge on. No page draws a wire or carries Python until then. **An agent
+is binaries by hash plus wires by hash**, and the screens render that card;
+**the trace is the record and not a component**, so it is declared on
+neither screen. The agent's edge, its two sockets and the two connectors
+outside it are not on this screen.
+
+**The routes**, each under section 2.13's session gate and `Origin` check:
+
+- `GET /declarations`: every lineage of section 2.4, by name, with its
+  head's version, last save and author
+- `GET /declarations/new`: the screen, empty
+- `POST /declarations`: save the first row of a new lineage
+- `GET /declarations/{de}`: reopen that row, its document filled into the
+  screen, with its version, its last save, its author, whether it is its
+  lineage's head, and the two panes below
+- `POST /declarations/{de}`: save from that row, a new row whose parent it
+  is
+
+**Who may declare: the server-wide admin grant**, for reading and writing
+alike, on the Planner's default of 2026-11-11; the operator's ruling is open
+(section 10). A declaration comes before Provision's register, so no agent
+row exists for a per-agent role to attach to. A session whose person holds
+no live admin grant is refused at every route, and at a save with one
+record carrying the refusal. Reads are not audited. **A save is an admin
+write and takes section 2.13's one order**: (1) the form is parsed into the
+document below and the path's identity into its `de-` shape, a refusal of
+either being the ask's fault and recorded nowhere; (2) the admin gate, with
+its one refusal record, before any row is looked up; (3) the row saved from
+is resolved, unknown answering not found, a row that is not its lineage's
+head answering conflict, and the name checked against every other lineage
+and against its own lineage's, each refusal recorded nowhere; (4) the
+audited write: the first record, target kind `declaration` naming the row
+the save mints by its `de-` identity, a kind the audit checks as it
+checks an agent's or an alert's, action `declaration save`; then, in one
+transaction under the declarations' own advisory key, the admin grant, the
+head and the name re-checked, the row inserted, and the `ok` outcome
+written, so the row and its outcome commit together; a lost commit answer
+read back by that record.
+
+**The document**, the body section 2.4 stores, in this grammar and no
+other: a JSON object whose every member is listed here, an unknown member
+refusing.
+
+```text
+name        text: letters, digits, _ and -, the grammar register holds a name to
+placement   {"kind": "host"}
+          | {"kind": "virtual-machine", "template": text}
+boxes       one or more SPU boxes, each
+              {"models": [model, ...], "gpu": requirement}
+model       {"function": "decoder" | "classifier",
+             "artifact": text,
+             "format": "gguf",
+             "adapter": {"artifact": text, "sha256": hex64,
+                         "base_blake3": hex64, "scale": number}}   adapter optional
+requirement {"card": text}
+          | {"class": {"family": text}}
+          | {"class": {"models": [card model, ...]}}
+          | {"pair": [card-or-class, card-or-class]}
+sampler     {"temperature", "top_k", "top_p", "seed",
+             "repetition_penalty", "repetition_window",
+             "max_tokens_per_turn"}, each a number, each optional
+store       "none" | "sqlite"
+gate        {"tools": [] | ["sh"]}
+prompt      text, or null for no prompt
+```
+
+**The fields**, and what each may hold:
+
+- **The agent's name**, required. It names the lineage and never changes
+  within it (section 2.4).
+- **Host agent or virtual-machine agent**, required, ruling 5. A
+  virtual-machine agent names the template it will be cloned from, as the
+  operator types it. **The console does the clone itself, at declaration**,
+  once a host plane exists, with no operator script between; after it, load
+  is the machine's start, unload its stop and retire its destroy. **The
+  template holds no keys.** Its image digest and the configured machine's
+  own digest are two facts, and both are recorded: the configured machine
+  hashes differently from the template, and the template is the parent it
+  descends from, so the template's digest goes on the run card as the
+  agent's provenance and the machine's is recorded as descending from it
+  (the operator's clarification of 2026-11-11). There is no Hosts page, and
+  **the console never manages a virtual machine as an object of its own**: a
+  machine is an agent's, made and ended by that agent's own steps.
+- **SPU boxes**, one or more, ruling 3: one box stands for the models it
+  holds, so four models declared apart are four boxes and one decoder with
+  its adapter is one box, spread out or collapsed as the operator chooses.
+  **Each model** has a function from the roster the framework charters,
+  carrying no enumeration of its own (PRD section 3.1): the decoder, exactly
+  one across every box, and the classifier, at most one. Its artifact is
+  text in the agent's artifact grammar, resolved by admin and read by the
+  SPU. **Its format is GGUF**, ruling 4: the engine follows from the format,
+  GGUF is offered first and the screen names the other formats as later
+  without offering them. A decoder may carry one LoRA adapter in the four
+  members of the agent's grammar (`weaver-types-Spec` section 2, ADP-1): the
+  adapter's artifact, its SHA-256 and its base's BLAKE3, each 64 lowercase
+  hexadecimal digits, and a finite scale.
+- **Each box's GPU requirement**, required, ruling 6: a requirement and not
+  a device. **A card** is one physical card, named by an identifier the
+  operator types and held as opaque text: a card's identity is a fact a host
+  reports, nothing reports one yet, and it is checked against what the host
+  reports once a host plane exists. **A class** is the card models any one
+  of which may be drawn, given in one of two forms, and the stored form says
+  which was typed: **a family**, a name the capability table below lists
+  models under, standing for every model the table lists under it, or **a
+  list of models**, each named once. A class is one form or the other and
+  never both, so no class names a model twice over, once through its family
+  and once by name: the operator's examples need no mixed class, and a mixed
+  one would need a rule for that double naming which nothing asks for. A
+  family the table does not know is admitted with the same word for unknown
+  as a model. **A pair** is two requirements, each a card or a class, in
+  shard order, the order the agent's `devices` hold. The operator's examples
+  of 2026-11-11 were one of each: one named card every time, any card of one
+  family, and two named cards as a pair. **Start satisfies the requirement
+  or refuses; it never substitutes** a card the requirement does not admit,
+  and it stamps the card drawn on every load event.
+- **The sampler's defaults**, ruling 8: temperature, top-k, top-p, the
+  seed, the repetition penalty, the repetition window and the maximum
+  tokens per turn, each optional. Each is a per-turn knob by the ruling's
+  test, a value whose change does not invalidate the cache: the declaration
+  supplies the default, the turn call carries the value, and the record
+  holds it per event. The counts (top-k, the window, the maximum and the
+  seed) are integers at or above zero, and the reals finite, as the agent's
+  grammar judges its tunable values. **The sampler's mechanism and every
+  other setting fixed at load** are shown read-only beside the model once
+  an agent reports them; until then the screen says what that waits on.
+- **The store**, required: `none` or `sqlite`, the engines the agent's
+  grammar names.
+- **The gate**: its tool election, no tool or `sh`. Who it admits is its
+  gate-con, filled at Provision; the access rule names the box's accounts
+  and is not asked here.
+- **The system prompt**, ruling 7: text, or none. The declaration act writes
+  it into whatever state was declared; from then on it is read from state
+  and never from a file, and it is locked for the session, a change being a
+  reload.
+
+**What the form refuses on its own, saving nothing and naming the field**:
+a missing required field (the name, the placement, a virtual-machine
+agent's template, a box, a box with no model, a model's function, artifact
+or format, a box's GPU requirement, the store); a requirement that names
+nothing (a card with no identifier, a class giving neither a family nor a
+list, a family with no name, a list with no model or a model with no name,
+a pair that is not two, a pair inside a pair, a list naming a model twice);
+a class giving both a family and a list; a roster the framework would not load (no decoder, a second
+decoder, a second classifier, a function the roster does not hold, an
+adapter on a classifier); a format other than GGUF; an adapter missing a
+member, with a digest of another shape or a scale that is not finite; a
+name outside its grammar; a control character in any text; a sampler value
+outside its kind; a tool other than `sh`; and an unknown member. At save
+it also refuses, as section 2.4 rules, a name another lineage holds, a
+changed name within a lineage, and a save from a row that is not its
+lineage's head. **A class spanning more than one compute capability is not
+among these refusals**, under any of them: on the operator's word of
+2026-11-11, "warn, do not refuse".
+
+**What it warns of, saving all the same**: a class whose models span more
+than one compute capability, a family's models being those the table lists
+under it. The capability comes from a small table in this repository, each
+card model with its family and its compute capability, taken from the
+vendor's published documentation with the source cited beside each row; a
+model whose capability no citable source confirms is left out of it.
+**A model or a family the table does not know is admitted**, named on the
+screen with the word that its capability is unknown, so the screen cannot
+warn for it; an unknown is a word and never a blank (section 6).
+
+**What each field waits on before it takes effect**, shown beside the
+field:
+
+| field | takes effect when |
+| --- | --- |
+| the name | Provision's register names the agent's row; the box's accounts are the box's |
+| host or virtual machine, the template | a host agent: nothing more. A virtual-machine agent: the host plane's Spec, which waits on a measurement in progress; then the console's clone at declaration, and the template's digest and the machine's recorded |
+| the boxes, models, artifacts, formats and adapters | the declaration reaches the agent (interface question 2), then `validate` and the SPU's admission; a second box has no place in the agent's grammar (question 1) |
+| a GPU requirement | the agent's grammar holds device ordinals, not requirements (question 1); start satisfies the requirement or refuses, never substituting, and stamps the card drawn on every load event; a card's identifier is checked once a host reports cards |
+| the sampler's defaults | they derive into the agent's `tunable-values` today, the names being the agent's binary's (question 5); the per-turn values wait on the turn call, the loop's ask to the harness (question 6) |
+| the settings fixed at load | an agent reports them (question 5) |
+| the store and the gate's tools | the declaration reaches the agent (question 2); the gate admits its gate-con, filled at Provision |
+| the system prompt | the declaration act writes it into declared state (question 3), and a declaration with no store has no answer yet (question 4); on the agent's side today the prompt is seeded by a turn through the gate |
+
+**What is saved and shown.** A save writes one row of section 2.4, and the
+screen shows the row's version, its last save and its author, and whether
+the row is its lineage's head; a reopen fills the screen with the same
+document, and a save and a reopen of it are the same document. **Two panes
+read the document back**:
+
+- **The agent's file**: `agent.toml` in the agent's grammar,
+  `weaver-types-Spec` section 2 at the corpus commit section 2.4 pins,
+  derived from the document and never stored. What the document places is
+  written as the grammar's members: the decoder's and the classifier's
+  model bindings with their artifacts, the adapter, the sampler's defaults
+  as `tunable-values`, the store's engine and the tool set. A member the
+  grammar requires and the screen does not declare is written as a comment
+  naming what fills it (the session, the trace sink and the gate's access
+  rule at Provision, each binding's devices at start from the requirement,
+  and any member the screen does not declare). A trailing block of comments
+  lists what the grammar has no place for, each naming its interface
+  question: the placement and its template, each box's GPU requirement, and
+  every box beyond the first. The file is TOML 1.0, the grammar every reader
+  of a declaration shares, and it is checked by a TOML parser; the agent's
+  `weaver-types` is not linked, since this crate links no crate of the
+  agent (section 1).
+- **The prompt**: the text the declaration act will write into declared
+  state, with its waits-on line, or the word that there is none.
+
+**The screen reaches no agent and no host.** A save writes the store and
+nothing else: no frame leaves on the link, no verb is asked, no file is
+written, and nothing is installed, validated or seeded.
 
 ## 7. The seams
 
@@ -4983,7 +5259,7 @@ an unmerged contract.
 | a role's verbs stay within the vocabulary, and the admin role is never written | perturbation in `src/host_tests.rs` and `src/store/identity_tests.rs`: drop the command's vocabulary check, and a verb outside it reaches the store, refused there only as a fault; drop the command's admin check, and the same; drop the store's vocabulary check, and a role carrying `fly` lands; drop the trigger fixing the admin role, and its verbs are rewritten |
 | a grant names an agent exactly where its role is per agent | perturbation in `src/host_tests.rs` and `src/store/identity_tests.rs`: let a server-wide role name an agent in the command, and an admin grant on an agent is taken as server-wide; drop the store's check, and a per-agent grant naming no agent lands |
 | every identity check is false, never unknown, on a missing value, and the audit's person is a person | perturbation in `src/store/identity_tests.rs`, one row per check with its guarded member missing, each rolled back: drop the guard on a token's ending, and a token ended with no reason lands; drop it on a person target's identity, and a person target naming no row lands; drop the audit's foreign key to the person, and a record naming no person lands. A role's missing verb needs no guard: `<@` is false, not unknown, on a NULL element, so the vocabulary check refuses it as it stands |
-| every target the audit writes is checked by its kind | perturbation in `src/store/identity_tests.rs`, each insert rolled back: drop the passkey target's check, and a passkey target out of its `pk-` shape, or naming none, lands; drop the alert target's, and an alert target out of its `al-` shape, or naming none, lands; drop the authority target's, and an authority target naming a row lands; drop the known kinds, and a target of a kind no check covers lands. The agent's, person's, grant's and role's checks stand in the rows of the audit's checks and the identity checks |
+| every target the audit writes is checked by its kind | perturbation in `src/store/identity_tests.rs`, each insert rolled back: drop the passkey target's check, and a passkey target out of its `pk-` shape, or naming none, lands; drop the alert target's, and an alert target out of its `al-` shape, or naming none, lands; drop the declaration target's, and a declaration target out of its `de-` shape, or naming none, lands; drop the authority target's, and an authority target naming a row lands; drop the known kinds, and a target of a kind no check covers lands. The agent's, person's, grant's and role's checks stand in the rows of the audit's checks and the identity checks |
 | every verb a person asks has its first record before its frame, and every refusal of one its record | perturbation, in `src/verbs_tests.rs`: send the frame before the record step, and it reaches admin-con though the audit holds no record of it; drop a refusal's record, and a refused verb leaves no trace. The outcome naming the first is written at the door of the server's asks' row, which a person's answer passes through alike |
 | every turn a person places has its first record before its frame, naming `turn`, and its outcome only by the gate contract's evidence | perturbation, in `src/verbs_tests.rs`: write `ok` for any close, and a stopped turn reads `ok`; write `failed` for `delivery_lost`, and an unknown outcome reads `failed`; drop the door's shape check, and an answer carrying both a close and a fault is taken. The first before the frame is the record step's, shown on the verb's row and the server's asks' |
 | a turn's text is in no audit record and no log line | perturbation, in `src/verbs_tests.rs`: put the text in the first record, and the row carries it; log it at debug in the held section, and the process's capture of every line finds it |
@@ -5047,6 +5323,14 @@ an unmerged contract.
 | the staging tool refuses every parameter out of shape, and a refusal writes nothing | perturbation in `src/stage_tests.rs`, one case per refusal: a missing member, an unknown member, a relative path, a `..` component, a trailing separator, a character a unit would read, a relative element of admin-con's `PATH`, an account or a name out of its grammar, a name twice, an agent without `[connectors]` or `[connectors]` without an agent, a file that stages nothing, a program that is a directory or a symlink, a handover file that is missing, a symlink, a directory, open to others or not the operator's own, a location that is a program's destination or lies under one, an `<out>` that is not empty, open to others or not the operator's own; drop each check and its case stages instead, or is refused for another reason, which the case's expected reason catches; after every refusal `<out>` is absent, or as it stood, and a refusal after the writes began empties an `<out>` that stood empty. And a second run on the same `<out>`, its check passed before the first wrote, with `<out>` absent and with it standing empty: refused, the first run's files and manifest unchanged; make `files/` without exclusion, or let a run that made nothing remove `<out>`, and the test fails. And a relative `<out>` with a `.` component and repeated and trailing separators is taken against the working directory and stages, a `..` kept and refused: drop the normalization, and the case is refused for its `.` |
 | the manifest names every directory and file with its owner, group, mode and sum, parents first | perturbation in `src/stage_tests.rs`, the manifest read line by line against the parameters: give a connector config another mode or owner, list a file before its directory, or leave a binary's sum out, and the read fails |
 | the staging tool never runs as root | perturbation in `src/stage_tests.rs`: the refusal is a function of the effective uid it is handed, and dropping it lets a uid of 0 stage |
+| the declaration screen refuses every field out of shape and saves nothing | perturbation in `src/declarations_tests.rs`, one case per refusal of section 6.1: a missing required field, a requirement that names nothing, a class giving both a family and a list, a roster the framework would not load, a format other than GGUF, an adapter out of shape, a name outside its grammar, a control character, a sampler value outside its kind, a tool other than `sh`, an unknown member; drop each check and its case saves, or is refused for another reason, which the case's expected reason catches; after every refusal the table holds what it held; a class spanning two compute capabilities is no refusal's case, and saves (the next row) |
+| a class spanning more than one compute capability is warned of, and a model the capability table does not know is named unknown and admitted | perturbation in `src/declarations_tests.rs`: drop the warning, and a class of two capabilities saves with none; make it a refusal, and the case fails, since the class must save; a family spanning two capabilities by the table's rows is warned of, and the saved class keeps the form typed, family or list; render an unknown capability, of a model or of a family, as a blank, or refuse it, and the case fails; and a test that every row of the table cites its source |
+| a save and a reopen are the same document, and the agent's file is derived from it | perturbation in `src/declarations_tests.rs`: save, reopen and compare the document and both panes; drop a member on the save or on the reopen, and the comparison fails; the agent's file parses as TOML, names the pinned corpus commit, and writes each placeless member in its trailing block |
+| a save from a row that is not its lineage's head is refused and writes nothing, and the schema admits a second child of one parent | perturbation in `src/declarations_tests.rs`: drop the head check, and the stale save lands; and a store test inserting two children of one parent through the store's own insert, which succeeds |
+| a declaration row's authored half never changes | perturbation in `src/declarations_tests.rs`: an update of each authored member and a delete are refused by the trigger; drop the trigger, and the update lands |
+| no two lineages share a name, and a lineage keeps its name | perturbation in `src/declarations_tests.rs`: drop the check, and a second lineage saves under a held name, or a save renames its lineage |
+| only the server-wide admin grant reads or writes a declaration, and a refused save is one record | perturbation in `src/declarations_tests.rs`: drop the gate, and a person holding only a per-agent role reads the list and saves; a refused save writes exactly one audit record, carrying the refusal, and no row |
+| the declaration screen reaches no agent and no host | a test in `src/declarations_tests.rs` with a real listener and a fake connector of each plane connected: every route is exercised, and the connectors read no frame beyond the heartbeat |
 
 **A watch that cannot fail is not a test.** For each perturbation above, the
 act that lands it states what removal makes it fail and confirms it does.
@@ -5359,6 +5643,27 @@ a `web-` assertion beside `weaver-admin`'s.
   held data before it. A deployment now holds data, and a squash makes the
   server refuse a store that applied the migrations one by one, since every
   applied migration is checksummed, so it waits on his ruling.
+- **The declaration's lineage, opened 2026-11-11** (sections 2.4 and 6.1).
+  The Planner's default, following the operator's ruling 9 of that date:
+  every save appends an immutable row whose parent is the row it was opened
+  from, the lineage kept linear by the handler and the schema admitting a
+  second child for the ablation's arms. Whether a saved declaration may
+  instead be edited in place is the operator's ruling.
+- **Who may declare, opened 2026-11-11** (section 6.1). The Planner's
+  default is the server-wide admin grant, since no agent row exists before
+  register for a per-agent role to attach to. A role of its own for
+  declaring would be an act in section 2.13's role shape; the choice is the
+  operator's.
+- **The gate's field, opened 2026-11-11** (section 6.1). The screen
+  declares the gate's tool election alone, its admission being its
+  gate-con's, filled at Provision. The operator's words for the first step
+  were "which gate", and he has spoken of an agent with several callers
+  through one gate, so the field may grow.
+- **A card's identity, opened 2026-11-11** (section 6.1). A specific card is
+  held as the text the operator typed until a host plane reports the cards
+  a host holds, and only then is it checked. A class's family is the
+  capability table's word, so a host that names a card's family otherwise
+  would need the table to map it.
 - **A statement sent before its deadline and answered after it, opened
   2026-11-11.** The admission's landing is one statement, and section 7.2
   polls no landing once its deadline has come, so none waiting on the pool

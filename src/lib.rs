@@ -14,6 +14,8 @@ mod admin_tests;
 mod agents_tests;
 pub mod alerting;
 #[cfg(all(test, feature = "passkeys"))]
+mod alerting_deadline_tests;
+#[cfg(all(test, feature = "passkeys"))]
 mod alerts_tests;
 pub mod config;
 pub(crate) mod deadline;

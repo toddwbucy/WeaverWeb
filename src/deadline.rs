@@ -54,8 +54,9 @@ pub(crate) async fn before<T>(
 /// - The site records the deadline it bounds its write by ([`hold::bound`]).
 /// - The store function, where the hold is armed for its point and a
 ///   deadline is recorded, waits until that very instant
-///   ([`hold::statement`] for a write of one statement, [`hold::commit`]
-///   for a transaction's commit), and marks the hold as let go.
+///   ([`hold::statement`] or [`hold::prepared`] for a write of one
+///   statement, [`hold::commit`] for a transaction's commit), and marks the
+///   hold as let go.
 ///
 /// The wait and the caller's timer share one instant, so they fire in one
 /// tick of the timer and wake one poll. A bound that polls the write first,
@@ -65,13 +66,14 @@ pub(crate) async fn before<T>(
 ///
 /// A statement of one write that has never run on its connection is
 /// prepared first, a round trip of its own, so [`hold::statement`] takes a
-/// connection and prepares the statement on it before the wait: what goes
+/// connection, and [`hold::prepared`] uses the one the write already holds,
+/// and each prepares the statement on it before the wait: what goes
 /// out at the wake is then the statement itself, in one poll, as a write
 /// whose connection and statement were already in hand would send it.
 ///
 /// The hold is thread-local, as the audit's other test levers are: the
 /// tests that arm it run on a current-thread runtime, where the listener's
-/// tasks run on the test's own thread.
+/// tasks and the alerts' worker and drainer run on the test's own thread.
 #[cfg(test)]
 pub(crate) mod hold {
     use std::cell::RefCell;
@@ -92,11 +94,20 @@ pub(crate) mod hold {
         Outcome,
         /// `Store::audit_refusal`, a refusal's record: its one statement.
         Refusal,
+        /// `Store::alert_contact_restored`: its one statement.
+        Restored,
+        /// `Store::raise_alert`, the worker's raise: its one statement.
+        Raise,
+        /// `Claimed::done`, an inbox row applied: the claim's commit.
+        Apply,
+        /// `Store::inbox_failed`, a row's back-off: its one statement.
+        InboxFailed,
     }
 
     #[derive(Debug, Default)]
     struct Held {
         deadline: Option<Instant>,
+        reached: bool,
         let_go: bool,
     }
 
@@ -118,6 +129,12 @@ pub(crate) mod hold {
         /// ended and the statement that commits it went out in that poll.
         pub(crate) fn let_go(&self) -> bool {
             HELD.with(|h| h.borrow().get(&self.0).is_some_and(|held| held.let_go))
+        }
+
+        /// Whether the held write has reached its hold: it waits there now,
+        /// or has waited.
+        pub(crate) fn reached(&self) -> bool {
+            HELD.with(|h| h.borrow().get(&self.0).is_some_and(|held| held.reached))
         }
     }
 
@@ -150,9 +167,11 @@ pub(crate) mod hold {
     /// The recorded deadline, taken once, so the hold holds one write.
     fn take(point: Point) -> Option<Instant> {
         HELD.with(|h| {
-            h.borrow_mut()
-                .get_mut(&point)
-                .and_then(|held| held.deadline.take())
+            let mut held = h.borrow_mut();
+            let held = held.get_mut(&point)?;
+            let deadline = held.deadline.take()?;
+            held.reached = true;
+            Some(deadline)
         })
     }
 
@@ -183,14 +202,34 @@ pub(crate) mod hold {
         pool: &sqlx::PgPool,
         sql: &'static str,
     ) -> anyhow::Result<Option<sqlx::pool::PoolConnection<sqlx::Postgres>>> {
-        use sqlx::{Executor, SqlSafeStr};
         let Some(deadline) = take(point) else {
             return Ok(None);
         };
         let mut conn = pool.acquire().await?;
-        (&mut *conn).prepare(sql.into_sql_str()).await?;
+        prepare(&mut conn, sql).await?;
         until(point, deadline).await;
         Ok(Some(conn))
+    }
+
+    /// **The store's half, for a write of one statement on a connection it
+    /// already holds**: where the hold is armed and bound, `sql` prepared on
+    /// it, then the wait.
+    pub(crate) async fn prepared(
+        point: Point,
+        conn: &mut sqlx::PgConnection,
+        sql: &'static str,
+    ) -> anyhow::Result<()> {
+        if let Some(deadline) = take(point) {
+            prepare(conn, sql).await?;
+            until(point, deadline).await;
+        }
+        Ok(())
+    }
+
+    async fn prepare(conn: &mut sqlx::PgConnection, sql: &'static str) -> anyhow::Result<()> {
+        use sqlx::{Executor, SqlSafeStr};
+        conn.prepare(sql.into_sql_str()).await?;
+        Ok(())
     }
 }
 

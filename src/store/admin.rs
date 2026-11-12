@@ -73,6 +73,14 @@ pub enum Refusal {
     HandoverFull,
     /// The plane's credential is revoked already.
     PlaneRevoked,
+    /// No such declaration row.
+    NoSuchDeclaration,
+    /// The row saved from is not its lineage's head (Spec 2.4).
+    NotHead,
+    /// Another lineage holds the name (Spec 2.4).
+    NameHeld(String),
+    /// A save would change its lineage's name (Spec 2.4).
+    NameChanged(String),
 }
 
 impl std::fmt::Display for Refusal {
@@ -125,6 +133,19 @@ impl std::fmt::Display for Refusal {
             ),
             Refusal::Authority(why) => write!(f, "{why}"),
             Refusal::PlaneRevoked => write!(f, "that plane's credential is revoked already"),
+            Refusal::NoSuchDeclaration => write!(f, "no such declaration"),
+            Refusal::NotHead => write!(
+                f,
+                "that version is not its lineage's latest; open the latest and save from it"
+            ),
+            Refusal::NameHeld(name) => write!(
+                f,
+                "another declaration is named {name}; no two lineages share a name"
+            ),
+            Refusal::NameChanged(name) => write!(
+                f,
+                "this lineage is named {name}, and a lineage keeps its name; a new name is a new declaration"
+            ),
             Refusal::Retired => write!(
                 f,
                 "that agent's row holds no live credential; register the agent again rather than rotating it"

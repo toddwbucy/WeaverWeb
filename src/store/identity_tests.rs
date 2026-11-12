@@ -109,17 +109,18 @@ async fn every_identity_check_refuses_its_member_missing() {
 }
 
 /// **Every target the audit writes is checked by its kind** (0018's
-/// sweep, and 0019's alert): a passkey target out of its `pk-` shape, an
-/// alert target out of its `al-` shape or naming none, an authority target
-/// naming a row, and a target of no kind the writer knows are each refused
-/// by their check's name.
+/// sweep, 0019's alert and 0023's declaration): a passkey target out of its
+/// `pk-` shape, an alert target out of its `al-` shape or naming none, a
+/// declaration target out of its `de-` shape or naming none, an authority
+/// target naming a row, and a target of no kind the writer knows are each
+/// refused by their check's name.
 #[tokio::test]
 async fn every_audit_target_is_checked_by_its_kind() {
     let Some(fresh) = fresh_store().await else {
         return;
     };
     let s = &fresh.store;
-    let cases: [(&str, &str, &str); 6] = [
+    let cases: [(&str, &str, &str); 8] = [
         (
             "a passkey target out of shape",
             "INSERT INTO audit (principal, method, target_kind, target_id, action) \
@@ -143,6 +144,18 @@ async fn every_audit_target_is_checked_by_its_kind() {
             "INSERT INTO audit (principal, method, target_kind, action) \
              VALUES ('host', 'host', 'alert', 'test')",
             "audit_an_alert_target_names_its_row",
+        ),
+        (
+            "a declaration target out of shape",
+            "INSERT INTO audit (principal, method, target_kind, target_id, action) \
+             VALUES ('host', 'host', 'declaration', 'de-0123', 'test')",
+            "audit_a_declaration_target_names_its_row",
+        ),
+        (
+            "a declaration target with no identity",
+            "INSERT INTO audit (principal, method, target_kind, action) \
+             VALUES ('host', 'host', 'declaration', 'test')",
+            "audit_a_declaration_target_names_its_row",
         ),
         (
             "an authority target naming a row",

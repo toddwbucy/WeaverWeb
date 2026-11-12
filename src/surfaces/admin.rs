@@ -84,7 +84,8 @@ pub fn routes(policy: Policy, token_hours: u32) -> Router<Store> {
         .route("/admin/persons/disable", post(seamed!(disable, VersionAsk)))
         .route("/admin/persons/enable", post(seamed!(enable, VersionAsk)))
         .route("/admin/persons/rename", post(seamed!(rename, RenameAsk)))
-        .merge(crate::surfaces::grants::routes(seams.policy))
+        .merge(crate::surfaces::grants::routes(seams.policy.clone()))
+        .merge(crate::surfaces::declarations::routes(seams.policy))
 }
 
 #[derive(Clone)]
@@ -106,7 +107,8 @@ pub(crate) fn refused(refusal: &Refusal) -> Response {
         Refusal::NoSuchPerson
         | Refusal::NoSuchGrant
         | Refusal::NoSuchRole
-        | Refusal::NoSuchAgent => StatusCode::NOT_FOUND,
+        | Refusal::NoSuchAgent
+        | Refusal::NoSuchDeclaration => StatusCode::NOT_FOUND,
         Refusal::Name(_) | Refusal::Scope(_) | Refusal::Vocabulary(_) => StatusCode::BAD_REQUEST,
         Refusal::Stale
         | Refusal::Taken(_)
@@ -118,7 +120,10 @@ pub(crate) fn refused(refusal: &Refusal) -> Response {
         | Refusal::Revoked
         | Refusal::Authority(_)
         | Refusal::Retired
-        | Refusal::PlaneRevoked => StatusCode::CONFLICT,
+        | Refusal::PlaneRevoked
+        | Refusal::NotHead
+        | Refusal::NameHeld(_)
+        | Refusal::NameChanged(_) => StatusCode::CONFLICT,
         Refusal::HandoverFull => StatusCode::SERVICE_UNAVAILABLE,
     };
     (status, refusal.to_string()).into_response()

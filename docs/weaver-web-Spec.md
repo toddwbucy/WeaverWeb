@@ -2108,7 +2108,17 @@ it decides are stated here and in section 2.8, and the reasons are there.
   the table is reread. Where the contract and the page differ, the
   contract wins. A reading is the row's and can be older than the agent's
   state, which is why the warning carries its date and the box's own rule
-  decides last. **As built on
+  decides last. **Run's two panes re-read by themselves** (on the
+  Planner's ruling of 2026-11-12): the load state and the verbs are one
+  fragment, `GET /agents/{ag}/run`, which the vendored htmx re-fetches
+  every 15 s with no inline script, so a state that a load answered past
+  the silence bound writes reaches the page without a reload, and a
+  warning never outlives the reading it was drawn from. It is read as
+  section 2.14's fragments are: through the session gate without
+  refreshing the session's last use, an ended session answering 401, and
+  through the grant scoping as at the page's load, an agent without a
+  grant answered as an unknown one (404) and a malformed identity 400.
+  **As built on
   2026-10-14, a person's turn** goes the same way, one mechanism serving
   both planes: `POST /agents/{ag}/turn` parses the identity and the text,
   not empty and its request line within the gate's own bound (400, no
@@ -2527,8 +2537,9 @@ The banner is derived from the register at the read and clears by itself
 once the plane is admitted again; the lost-contact alert stands beside it
 until acknowledged. **The page re-reads it by itself**: the banners are a
 fragment (`GET /availability`) that the vendored htmx re-fetches every 15
-s with no inline script, and the agent page's connectors are another
-(`GET /agents/{ag}/availability`), each through the session gate and the
+s with no inline script, the agent page's connectors are another
+(`GET /agents/{ag}/availability`), and its load state and verbs a third
+(`GET /agents/{ag}/run`, section 2.13), each through the session gate and the
 grant scoping as at the page's load, an agent without a grant answered as
 an unknown one. **A re-fetch is not the person's use**: it checks every end
 of the session but leaves its last use as it was, so an open tab never
@@ -5396,7 +5407,8 @@ an unmerged contract.
 | the server's own `show` in flight at a teardown raises no `unknown` | perturbation in `src/alerts_tests.rs`: keep it among the in-flight unknowns, and a cut with the server's `show` in flight raises an `unknown` beside the lost contact |
 | choosing a prompt's option without a grant answers as an unknown agent | perturbation in `src/alerts_tests.rs`: resolve the alert before the grant check, and a person holding no grant tells a real prompt from an unknown one |
 | a plane the server cannot reach is a banner for the agent's grant holders alone, re-read by the page | perturbation in `src/alerts_tests.rs`: drop the grant scoping of the unavailable planes, and a person holding no grant sees another agent's banners; drop the grant check from the connectors' fragment, and such a person reads its connectors and their last-heard time |
-| a fragment's re-fetch leaves the session's last use as it was | perturbation in `src/alerts_tests.rs`: refresh the last use at a background read, and a poll moves it, so an open tab holds an idle session open |
+| a fragment's re-fetch leaves the session's last use as it was | perturbation in `src/alerts_tests.rs`, `a_poll_leaves_the_sessions_last_use_as_it_was`, over the banners, the connectors and Run's panes: refresh the last use at a background read, or read Run's panes through the page's session read, and a poll moves it, so an open tab holds an idle session open |
+| the agent page's load state and verbs are one fragment, re-fetched every 15 s through the grant scoping | perturbation, in `src/transition_tests.rs`, `the_run_panes_re_read_by_themselves`, against the real listener and a fake admin-con: the page wraps both panes in the fragment's trigger; the fragment is the page's own panes, kept from every cache; a state written between two fetches shows at the second, its warnings with it; a person holding no grant reads 404, a malformed identity 400, an ended session 401; drop the trigger from the page, drop the grant check, or render the fragment from another view, and the case fails |
 | an answer refused at the door leaves its act's outcome unknown, and raises its alert | perturbation in `src/alerts_tests.rs`: leave the refused answer's ask out of the teardown's drain, on the admin plane or on the gate plane, and a `load` answered naming another verb, or a turn answered with both a close and a fault, raises only the lost contact |
 | a plane's loss is ordered before the restoration that follows it | perturbation in `src/alerts_tests.rs`, the teardown held after its row is released: raise the loss after the teardown rather than where the entry comes out, readmit in the gap, and the lost-contact alert ends unrestored while a connection stands |
 | a line of the box's `admin.log` raises an alert only where it did not come through WeaverWeb | perturbation in `src/entries_tests.rs` and `src/link/admin_con_tests.rs`: drop the own check at the server, and a refusal admin-con's own invocation met raises its alert again from its line; take every line as another party's at admin-con, and an own line sent end to end through the real admin-con raises one; put the whole line back in the alert's detail, and another party's refusal shows the line's uid and command line to every grant holder |

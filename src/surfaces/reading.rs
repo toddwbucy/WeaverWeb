@@ -379,6 +379,13 @@ async fn list(store: Store, seams: &Seams, headers: HeaderMap) -> Response {
     }
 }
 
+/// **The WeaverAgent commit admin's `[restore]` rule was read at**, for the
+/// agent page's statement of it (`weaver-admin-Spec` section 4, "The
+/// inventory"; Spec 2.13). A test holds it to the build's pin,
+/// [`crate::declaration::render::CORPUS_COMMIT`], so the pin does not move
+/// until the rule is reread at the new commit and the statement restated.
+pub const RESTORE_RULE_READ_AT: &str = "a3543b31f264b269f66ab55d8767f25290ec9d61";
+
 #[derive(Template)]
 #[template(path = "agent_page.html")]
 struct AgentPage {
@@ -404,6 +411,9 @@ struct AgentPage {
     verbs: Vec<VerbView>,
     /// Whether any verb is offered.
     offered: bool,
+    /// The commit admin's `[restore]` rule was read at, which the page's
+    /// statement of it names.
+    restore_rule_at: &'static str,
     turn_form: bool,
     shared: bool,
     chrome: super::Chrome,
@@ -816,6 +826,7 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, agent: String) ->
         window: LIVE_WINDOW,
         verbs,
         offered,
+        restore_rule_at: RESTORE_RULE_READ_AT,
         turn_form,
         shared,
         chrome,

@@ -827,12 +827,19 @@ async fn a_fault_of_a_kind_that_proves_nothing_writes_no_outcome() {
 
 /// **The admission's deadline is read at the await it bounds**: the
 /// outcome's write takes the admission past its deadline, and the landing
-/// then has nothing left, so the admission fails at its deadline rather
-/// than completing late.
+/// is then never begun, so the admission fails at its deadline rather than
+/// completing late, and the row keeps the state it had.
 ///
 /// Perturbation: compute what remains of the deadline before the outcome's
 /// write. The landing gets the stale remainder and the admission completes
 /// after its deadline.
+///
+/// Perturbation: poll the landing before reading its deadline, as tokio's
+/// `timeout_at` does. The landing's one statement can go out at that poll,
+/// and the late `show` lands on the row while the connection closes
+/// `admission_incomplete`. It failed 6 of 20 runs alone (2026-11-11), since
+/// that one poll must take a connection from the pool and finish the
+/// socket's write; `bounded_tests` in the listener shows it every run.
 #[tokio::test]
 async fn an_admission_answered_near_its_deadline_does_not_complete_past_it() {
     let Some(lab) = Lab::open_with(Duration::from_secs(4)).await else {

@@ -21,7 +21,9 @@
 //! a `.rs` file under `src/` that no declaration reaches fails the test. In
 //! each, every comment, string and character literal is blanked, and every
 //! item or statement under `#[cfg(test)]`, or under a `cfg(all(..))` that
-//! names `test`, is dropped. What is left is searched for calls of
+//! names `test`, is dropped; such an attribute written inside a block
+//! (`#![cfg(test)]`) drops that block, and the file where it stands at the
+//! top. What is left is searched for calls of
 //! `timeout` and `timeout_at`: the name, not part of a longer one, then any
 //! generic arguments (`::<..>`) and any whitespace or comment before its
 //! `(`. A method of that name counts too (the passkey library's builder
@@ -218,8 +220,24 @@ fn the_scan_counts_production_calls_and_nothing_else() {
         ),
         ["m", "m", "m", "n", "n"]
     );
-    // A file compiled only under test is none of the scan's.
+    // A file compiled only under test is none of the scan's; an inner
+    // attribute inside a module drops that module alone.
     assert!(production(&code("#![cfg(test)]\nfn l() { timeout(d, f); }")).is_none());
+    assert_eq!(
+        functions(
+            "#![allow(dead_code)]\nmod t {\n#![cfg(test)]\nfn o() { timeout(d, f); }\n}\n\
+             fn p() { timeout(d, f); }"
+        ),
+        ["p"]
+    );
+    // A raw string after `b` or `c` ends at its own quote, an escape in it
+    // escaping nothing.
+    assert_eq!(
+        functions(
+            "fn q() { let s = cr\"\\\"; timeout(d, f); let t = br\"\\\"; timeout(d, f); let u = \"x\"; }"
+        ),
+        ["q", "q"]
+    );
 }
 
 /// One call compiled outside test: its file under the crate, the function
@@ -273,10 +291,11 @@ fn code(src: &str) -> Vec<char> {
             }
             j
         } else if s[i] == 'r'
-            && (!ident(prev) || (prev == 'b' && (i < 2 || !ident(s[i - 2]))))
+            && (!ident(prev) || (matches!(prev, 'b' | 'c') && (i < 2 || !ident(s[i - 2]))))
             && matches!(at(i + 1), '"' | '#')
         {
-            // A raw string, `r"..."` or `r#"..."#`; `r#name` is a raw name.
+            // A raw string, `r"..."` or `r#"..."#`, a byte or C string's
+            // among them (`br`, `cr`); `r#name` is a raw name.
             let mut j = i + 1;
             while at(j) == '#' {
                 j += 1;
@@ -383,7 +402,9 @@ fn test_only(attr: &str) -> bool {
 /// blanked**, from its attribute to its end: a `let` statement's at its
 /// `;`; any other's at a `;` or `,` at its own depth, at the `}` closing a
 /// block it opened, or before the bracket closing the one it sits in.
-/// `None` where the file is compiled only under test (`#![cfg(test)]`).
+/// An inner attribute (`#![cfg(test)]`) drops the block it stands in;
+/// `None` where it stands at the file's top, so the file compiles only
+/// under test.
 fn production(code: &[char]) -> Option<Vec<char>> {
     let mut out = code.to_vec();
     let mut i = 0;
@@ -401,7 +422,13 @@ fn production(code: &[char]) -> Option<Vec<char>> {
             continue;
         }
         if inner {
-            return None;
+            // An inner attribute applies to what encloses it: the file at
+            // the top level, otherwise the innermost block it stands in.
+            let block = enclosing_block(code, i)?;
+            let close = closing(code, block);
+            blank(&mut out[block..close]);
+            i = close;
+            continue;
         }
         // The item's further attributes.
         let mut j = end;
@@ -453,6 +480,22 @@ fn production(code: &[char]) -> Option<Vec<char>> {
         i = k;
     }
     Some(out)
+}
+
+/// The `{` of the innermost block standing open at `i`, `None` at the top
+/// level.
+fn enclosing_block(code: &[char], i: usize) -> Option<usize> {
+    let mut open = Vec::new();
+    for (j, &c) in code.iter().enumerate().take(i) {
+        match c {
+            '{' => open.push(j),
+            '}' => {
+                open.pop();
+            }
+            _ => {}
+        }
+    }
+    open.pop()
 }
 
 /// The name after a keyword at `i`, and the index past it; `None` where

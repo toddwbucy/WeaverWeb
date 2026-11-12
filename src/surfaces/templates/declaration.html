@@ -1,0 +1,234 @@
+{% extends "instrument.html" %}
+{% block title %}{% if form.name.is_empty() %}a new declaration{% else %}{{ form.name }}{% endif %} - weaver-web{% endblock %}
+{% block body %}
+{#- The declaration screen (Spec 6.1): the first of Declare's two screens.
+    One form posts the whole document; a saved row reopened shows its
+    version, last save, author and standing, the class readings, and the
+    two panes the document is read back as. What each field waits on is
+    shown beside it. Plain forms and one link; no inline script. A
+    textarea's and a pre's text starts on the line after its tag, since
+    HTML drops one newline there and a prompt may begin with one. -#}
+<h1>{% if form.name.is_empty() %}A new declaration{% else %}{{ form.name }}{% endif %}</h1>
+<p class="lede">The components of one agent: which models, on which GPUs, which store, which gate, and its prompt. Wiring them is the board, the second screen, which is not built yet. A save writes a new version here and reaches no agent and no host.</p>
+<datalist id="gpu-names">
+{%- for s in suggestions %}
+  <option value="{{ s }}">
+{%- endfor %}
+</datalist>
+<div class="stack">
+{%- if let Some(refusal) = refusal %}
+<section class="pane">
+  <header><h2>Not saved</h2><span class="status fail">refused</span></header>
+  <div class="body"><p class="mono">{{ refusal }}</p><p class="note">Nothing was saved. The form below holds what was typed.</p></div>
+</section>
+{%- endif %}
+{%- if let Some(o) = opened %}
+<section class="pane">
+  <header><h2>This version</h2><span class="backing built">built</span><span class="source">the store's declarations</span></header>
+  <div class="body">
+  <table>
+    <tbody>
+    <tr><th>Identity</th><td class="mono">{{ o.de }}</td></tr>
+    <tr><th>Version</th><td>{{ o.version }}</td></tr>
+    <tr><th>Last save</th><td class="mono">{{ o.saved_at }}</td></tr>
+    <tr><th>Author</th><td>{{ o.author }}</td></tr>
+    <tr><th>Standing</th><td>{% if o.head %}<span class="status ok">the head</span> of its lineage: a save from here is the next version{% else %}<span class="status hold">not the head</span>: version {{ o.head_version }} is, <a class="mono" href="/declarations/{{ o.head_de }}">{{ o.head_de }}</a>, and a save is made from the head alone{% endif %}</td></tr>
+    {%- if let Some(pin) = o.stale %}
+    <tr><th>Grammar</th><td><span class="status hold">stale</span> saved under the agent's grammar at WeaverAgent <span class="mono">{{ pin }}</span>; this build follows <span class="mono">{{ corpus }}</span></td></tr>
+    {%- endif %}
+    </tbody>
+  </table>
+  </div>
+</section>
+{%- endif %}
+<form method="post" action="{{ action }}" autocomplete="off" class="stack">
+<section class="pane">
+  <header><h2>The agent</h2></header>
+  <div class="body stack">
+  <div class="field">
+    <label for="name">Name</label>
+    <input id="name" type="text" name="name" value="{{ form.name }}" spellcheck="false" required{% if opened.is_some() %} readonly{% endif %}>
+    <span class="note">Letters, digits, _ and -. It names the lineage and never changes within it. Takes effect when Provision's register names the agent's row; the box's accounts are the box's.</span>
+  </div>
+  <div class="row">
+    <div class="field">
+      <label for="placement">Host or virtual machine</label>
+      <select id="placement" name="placement" required>
+        <option value=""{% if form.placement.is_empty() %} selected{% endif %}>choose</option>
+        <option value="host"{% if form.placement == "host" %} selected{% endif %}>a host agent</option>
+        <option value="virtual-machine"{% if form.placement == "virtual-machine" %} selected{% endif %}>a virtual-machine agent</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="template">Template, for a virtual-machine agent</label>
+      <input id="template" type="text" name="template" value="{{ form.template }}" spellcheck="false">
+    </div>
+  </div>
+  <span class="note">A host agent takes effect as it stands. A virtual-machine agent waits on the host plane's Spec, which waits on a measurement in progress; then the console clones the template itself, at declaration, and records the template's digest and the machine's. The template holds no keys.</span>
+  </div>
+</section>
+{%- for b in form.boxes %}
+{%- let i = loop.index0 %}
+<section class="pane">
+  <header><h2>SPU box {{ i }}</h2><span class="note read mono">boxes[{{ i }}]</span><span class="source">{% if *i == 0 %}the box the agent's grammar places{% else %}a box of its own{% endif %}</span></header>
+  <div class="body flush">
+  <table>
+    <thead><tr><th>Model</th><th>Function</th><th>Artifact</th><th>Format</th><th>Adapter artifact</th><th>Adapter SHA-256</th><th>Base BLAKE3</th><th>Scale</th></tr></thead>
+    <tbody>
+    {%- for m in b.models %}
+    {%- let j = loop.index0 %}
+    <tr>
+      <td>{{ j }}</td>
+      <td><select name="b{{ i }}.m{{ j }}.function" aria-label="box {{ i }} model {{ j }} function">
+        <option value=""{% if m.function.is_empty() %} selected{% endif %}>none</option>
+        <option value="decoder"{% if m.function == "decoder" %} selected{% endif %}>decoder</option>
+        <option value="classifier"{% if m.function == "classifier" %} selected{% endif %}>classifier</option>
+      </select></td>
+      <td><input type="text" name="b{{ i }}.m{{ j }}.artifact" value="{{ m.artifact }}" spellcheck="false" aria-label="box {{ i }} model {{ j }} artifact"></td>
+      <td><select name="b{{ i }}.m{{ j }}.format" aria-label="box {{ i }} model {{ j }} format">
+        <option value="gguf" selected>GGUF</option>
+        <option disabled>safetensors, later</option>
+      </select></td>
+      <td><input type="text" name="b{{ i }}.m{{ j }}.adapter.artifact" value="{{ m.adapter_artifact }}" spellcheck="false" aria-label="box {{ i }} model {{ j }} adapter artifact"></td>
+      <td><input type="text" name="b{{ i }}.m{{ j }}.adapter.sha256" value="{{ m.adapter_sha256 }}" spellcheck="false" class="mono" aria-label="box {{ i }} model {{ j }} adapter SHA-256"></td>
+      <td><input type="text" name="b{{ i }}.m{{ j }}.adapter.base_blake3" value="{{ m.adapter_base_blake3 }}" spellcheck="false" class="mono" aria-label="box {{ i }} model {{ j }} base BLAKE3"></td>
+      <td><input type="text" name="b{{ i }}.m{{ j }}.adapter.scale" value="{{ m.adapter_scale }}" spellcheck="false" aria-label="box {{ i }} model {{ j }} adapter scale"></td>
+    </tr>
+    {%- endfor %}
+    </tbody>
+  </table>
+  </div>
+  <div class="body stack">
+  <span class="note">One decoder across every box, at most one classifier; a LoRA adapter on a decoder only, its digests 64 lowercase hex. A row left empty is not declared. Takes effect when the declaration reaches the agent (interface question 2), then validate and the SPU's admission; a second box has no place in the agent's grammar (question 1).</span>
+  <div class="row">
+    {%- for part in b.gpu %}
+    {%- let k = loop.index %}
+    <div class="field">
+      <label for="b{{ i }}-gpu{{ k }}-kind">{% if *k == 1 %}GPU requirement{% else %}its pair's second, in shard order{% endif %}</label>
+      <div class="row">
+        <select id="b{{ i }}-gpu{{ k }}-kind" name="b{{ i }}.gpu{{ k }}.kind">
+          <option value=""{% if part.0.is_empty() %} selected{% endif %}>{% if *k == 1 %}choose{% else %}no pair{% endif %}</option>
+          <option value="card"{% if part.0 == "card" %} selected{% endif %}>a card</option>
+          <option value="family"{% if part.0 == "family" %} selected{% endif %}>a family</option>
+          <option value="models"{% if part.0 == "models" %} selected{% endif %}>a list of models</option>
+        </select>
+        <input type="text" name="b{{ i }}.gpu{{ k }}.value" value="{{ part.1 }}" list="gpu-names" spellcheck="false" aria-label="box {{ i }} GPU requirement {{ k }}">
+      </div>
+    </div>
+    {%- endfor %}
+  </div>
+  <span class="note">A card is one physical card, by the identifier you type. A family stands for every model the capability table lists under it; a list of models is comma-separated, each named once. A class spanning compute capabilities is saved with a warning. Takes effect when the agent's grammar holds requirements and not device ordinals (question 1); start satisfies the requirement or refuses, never substituting, and stamps the card drawn on every load event; a card's identifier is checked once a host reports cards.</span>
+  </div>
+</section>
+{%- endfor %}
+<p class="row"><a href="{{ slots_href }}?boxes={{ more_boxes }}">Another SPU box</a><span class="note">a link, so it carries nothing typed and unsaved: ask for the boxes before typing</span></p>
+<section class="pane">
+  <header><h2>The sampler's defaults</h2></header>
+  <div class="body stack">
+  <div class="row">
+    {%- for (member, text) in form.sampler %}
+    <div class="field">
+      <label for="sampler-{{ member }}">{{ member }}</label>
+      <input id="sampler-{{ member }}" type="text" name="sampler.{{ member }}" value="{{ text }}" spellcheck="false" inputmode="decimal">
+    </div>
+    {%- endfor %}
+  </div>
+  <span class="note">Each optional. {% for (member, kind) in sampler_hints %}{{ member }}: {{ kind }}{% if !loop.last %}; {% endif %}{% endfor %}. They derive into the agent's tunable-values today, the names being the agent's binary's (question 5); the per-turn values wait on the turn call, the loop's ask to the harness (question 6). The sampler's mechanism and every other setting fixed at load are shown here once an agent reports them (question 5).</span>
+  </div>
+</section>
+<section class="pane">
+  <header><h2>The store and the gate</h2></header>
+  <div class="body stack">
+  <div class="row">
+    <div class="field">
+      <label for="store">Store</label>
+      <select id="store" name="store" required>
+        <option value=""{% if form.store.is_empty() %} selected{% endif %}>choose</option>
+        <option value="none"{% if form.store == "none" %} selected{% endif %}>none</option>
+        <option value="sqlite"{% if form.store == "sqlite" %} selected{% endif %}>sqlite</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="tools">The gate's tools</label>
+      <label class="row"><input id="tools" type="checkbox" name="tools" value="sh"{% if form.sh %} checked{% endif %}> sh</label>
+    </div>
+  </div>
+  <span class="note">Takes effect when the declaration reaches the agent (question 2). Who the gate admits is its gate-con, filled at Provision.</span>
+  </div>
+</section>
+<section class="pane">
+  <header><h2>The system prompt</h2></header>
+  <div class="body stack">
+  <textarea name="prompt" rows="8" spellcheck="false" aria-label="the system prompt">
+{{ form.prompt }}</textarea>
+  <span class="note">Optional. Takes effect when the declaration act writes it into declared state (question 3), and a declaration with no store has no answer yet (question 4); on the agent's side today the prompt is seeded by a turn through the gate. Locked for the session; a change is a reload.</span>
+  </div>
+</section>
+<div class="row">
+  {%- if let Some(o) = opened %}
+  {%- if o.head %}
+  <button type="submit" class="primary">Save version {{ o.version + 1 }}</button>
+  {%- else %}
+  <button type="submit" class="primary" disabled>Save</button><span class="note">not the head: a save is made from version {{ o.head_version }}</span>
+  {%- endif %}
+  {%- else %}
+  <button type="submit" class="primary">{% if action == "/declarations" %}Save version 1{% else %}Save{% endif %}</button>
+  {%- endif %}
+  <a href="/declarations">Every declaration</a>
+</div>
+</form>
+{%- if let Some(o) = opened %}
+<section class="pane">
+  <header><h2>The GPU classes</h2><span class="backing built">built</span><span class="source">the capability table, from the vendor's documentation</span></header>
+  <div class="body stack">
+  {%- for r in o.readings %}
+  <div class="field">
+    <span><span class="mono">{{ r.field }}</span>: {% if let Some(family) = r.family %}the family {{ family }}{% else %}a list of models{% endif %}
+    {%- if r.spans() %} <span class="status hold">spans {{ r.capabilities.len() }} compute capabilities: {{ r.capabilities.join(", ") }}</span>{% endif %}
+    {%- if !r.family_known %} <span class="status hold">not a family the table knows: capability unknown</span>{% endif %}</span>
+    {%- if !r.models.is_empty() %}
+    <span class="note read">{% for (model, cap) in r.models %}{{ model }}, {% match cap %}{% when Some with (c) %}compute capability {{ c }}{% when None %}capability unknown{% endmatch %}{% if !loop.last %}; {% endif %}{% endfor %}</span>
+    {%- endif %}
+  </div>
+  {%- else %}
+  <span class="note">No box asks for a class; each names a card.</span>
+  {%- endfor %}
+  <span class="note">A class whose models span more than one compute capability is a warning and not a refusal. A model or family the table does not know is admitted, its capability unknown.</span>
+  </div>
+</section>
+<div class="grid two">
+<section class="pane">
+  <header><h2>agent.toml</h2><span class="backing partly">partly</span><span class="source">derived, never stored</span></header>
+  <div class="body"><pre>
+{{ o.file }}</pre></div>
+  <footer>The agent's grammar at the corpus commit the row was saved under. What it has no place for is a comment.</footer>
+</section>
+<section class="pane">
+  <header><h2>The prompt</h2></header>
+  <div class="body">{% if let Some(p) = o.prompt %}<pre>
+{{ p }}</pre>{% else %}<span class="absent">no prompt</span>{% endif %}</div>
+  <footer>Written into declared state by the declaration act (question 3); a declaration with no store has no answer yet (question 4).</footer>
+</section>
+</div>
+<section class="pane">
+  <header><h2>The lineage</h2><span class="source">oldest first</span></header>
+  <div class="body flush">
+  <table>
+    <thead><tr><th>Version</th><th>Identity</th><th>Saved</th><th>Author</th><th>What moved</th></tr></thead>
+    <tbody>
+    {%- for v in o.versions %}
+    <tr>
+      <td>{{ v.version }}{% if v.this %} <span class="pill">this</span>{% endif %}</td>
+      <td class="mono"><a href="/declarations/{{ v.de }}">{{ v.de }}</a></td>
+      <td class="mono">{{ v.saved_at }}</td>
+      <td>{{ v.author }}</td>
+      <td class="mono">{{ v.moved }}</td>
+    </tr>
+    {%- endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+{%- endif %}
+</div>
+{% endblock %}

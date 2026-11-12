@@ -351,6 +351,34 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Captured {
     }
 }
 
+impl Captured {
+    /// Where the capture stands now: the lines a test reads come after it.
+    pub(crate) fn mark(&self) -> usize {
+        self.0.lock().unwrap().len()
+    }
+
+    /// **A line of the capture** written since `from` and holding every
+    /// needle, looked for until `within` has passed.
+    pub(crate) async fn logged(&self, from: usize, needles: &[&str], within: Duration) -> bool {
+        let until = tokio::time::Instant::now() + within;
+        loop {
+            let found = {
+                let bytes = self.0.lock().unwrap();
+                String::from_utf8_lossy(&bytes[from.min(bytes.len())..])
+                    .lines()
+                    .any(|line| needles.iter().all(|needle| line.contains(needle)))
+            };
+            if found {
+                return true;
+            }
+            if tokio::time::Instant::now() >= until {
+                return false;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+}
+
 /// The body of a PEM, the lines between its armour, which is the part a
 /// leak would carry.
 fn pem_body(pem: &str) -> String {

@@ -12,16 +12,12 @@
 //! out at the deadline's wake, which polls the write before the bound reads
 //! its deadline, and its row lands while the caller reports it unwritten.
 
-use std::future::Future;
 use std::time::Duration;
-
-use tokio::time::Instant;
 
 use super::frames::FromClient;
 use super::listener::{Act, VerbError};
 use super::server_asks_tests::{admitted, hello, take_show};
 use super::tests::{Lab, SOON, operator, show_answer};
-use crate::agents_tests::Captured;
 use crate::deadline::hold::{self, Point};
 use crate::store::AgentId;
 use crate::store::audit::{FIRST_FAULT, FirstFault};
@@ -62,54 +58,6 @@ async fn refusals(lab: &Lab, agent: &AgentId) -> i64 {
         .unwrap()
 }
 
-/// **The audit's verdict on a held write**: where the hold was let go at
-/// its deadline, its statement went out and commits a moment later, so the
-/// read waits for the row, which the assertion then shows; where it was
-/// not, nothing is in flight and the read is final. A verdict stands only
-/// where the write reached its hold: one that stalled before it until the
-/// deadline lands no row in either order, so that run fails here.
-async fn settled<T, F, Fut>(held: &hold::Armed, read: F, landed: impl Fn(&T) -> bool) -> T
-where
-    F: Fn() -> Fut,
-    Fut: Future<Output = T>,
-{
-    let until = Instant::now() + SOON;
-    loop {
-        let now = read().await;
-        if !held.let_go() || landed(&now) || Instant::now() >= until {
-            assert!(held.reached(), "the write never reached its hold");
-            return now;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-}
-
-/// **The caller's error line**: one line of the process's capture, written
-/// since `from`, holding every needle, within a bound and the slack past it.
-async fn logged(capture: &Captured, from: usize, needles: &[&str]) -> bool {
-    let until = Instant::now() + BOUND + SOON;
-    loop {
-        let found = {
-            let bytes = capture.0.lock().unwrap();
-            String::from_utf8_lossy(&bytes[from.min(bytes.len())..])
-                .lines()
-                .any(|line| needles.iter().all(|needle| line.contains(needle)))
-        };
-        if found {
-            return true;
-        }
-        if Instant::now() >= until {
-            return false;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-}
-
-/// Where the capture stands now: the lines a test reads come after it.
-fn mark(capture: &Captured) -> usize {
-    capture.0.lock().unwrap().len()
-}
-
 /// **A person's refusal not recorded by the ask's deadline was never sent**
 /// (Spec 2.13, `listener.rs`, `Inner::ask_held`): bea holds `operator` on
 /// karl, whose admin-con is not connected, so her `load` is refused past
@@ -144,7 +92,7 @@ async fn a_persons_refusal_unrecorded_at_the_asks_deadline_was_never_sent() {
         "expected the bound's failure, got {:?}",
         asked.err()
     );
-    let refusals = settled(&held, || refusals(&lab, &karl.id), |n| *n > 0).await;
+    let refusals = held.settled(|| refusals(&lab, &karl.id), |n| *n > 0).await;
     assert_eq!(
         refusals, 0,
         "the audit holds a refusal the person was told was not made"
@@ -177,7 +125,7 @@ async fn the_servers_refusal_unrecorded_at_its_deadline_was_never_sent() {
         matches!(refused, Err(VerbError::Audit)),
         "expected the audit's failure, got {refused:?}"
     );
-    let refusals = settled(&held, || refusals(&lab, &karl.id), |n| *n > 0).await;
+    let refusals = held.settled(|| refusals(&lab, &karl.id), |n| *n > 0).await;
     assert_eq!(
         refusals, 0,
         "the audit holds a refusal the verb answered as unrecorded"
@@ -213,7 +161,7 @@ async fn an_outcome_unwritten_at_its_deadline_was_never_sent() {
     let first = firsts(&lab, &karl.id).await;
     assert_eq!(first.len(), 1, "the admission's first: {first:?}");
     let first = first[0].clone();
-    let from = mark(capture);
+    let from = capture.mark();
     let held = hold::arm(Point::Outcome);
     admin
         .send(FromClient::Verb {
@@ -223,15 +171,18 @@ async fn an_outcome_unwritten_at_its_deadline_was_never_sent() {
         })
         .await;
     assert!(
-        logged(
-            capture,
-            from,
-            &[karl.id.as_str(), &first, "was not written within"]
-        )
-        .await,
+        capture
+            .logged(
+                from,
+                &[karl.id.as_str(), &first, "was not written within"],
+                BOUND + SOON
+            )
+            .await,
         "the listener never logged the outcome as not written"
     );
-    let outcome = settled(&held, || outcome_of(&lab, &first), Option::is_some).await;
+    let outcome = held
+        .settled(|| outcome_of(&lab, &first), Option::is_some)
+        .await;
     assert_eq!(
         outcome, None,
         "the audit holds an outcome the listener logged as not written"
@@ -260,7 +211,7 @@ async fn a_first_unwritten_at_its_deadline_was_never_committed() {
     let karl = lab.register("karl").await;
     let _admin = admitted(&lab, &karl, &["show"]).await;
     let before = firsts(&lab, &karl.id).await.len();
-    let from = mark(capture);
+    let from = capture.mark();
     let held = hold::arm(Point::FirstRecord);
     let asked = tokio::time::timeout(BOUND + SOON, lab.listener.verb(&karl.id, "show"))
         .await
@@ -270,19 +221,22 @@ async fn a_first_unwritten_at_its_deadline_was_never_committed() {
         "expected the audit's failure, got {asked:?}"
     );
     assert!(
-        logged(
-            capture,
-            from,
-            &[
-                karl.id.as_str(),
-                "the first record",
-                "was not written within"
-            ]
-        )
-        .await,
+        capture
+            .logged(
+                from,
+                &[
+                    karl.id.as_str(),
+                    "the first record",
+                    "was not written within"
+                ],
+                BOUND + SOON
+            )
+            .await,
         "the record step never logged the first as not written"
     );
-    let firsts = settled(&held, || firsts(&lab, &karl.id), |f| f.len() > before).await;
+    let firsts = held
+        .settled(|| firsts(&lab, &karl.id), |f| f.len() > before)
+        .await;
     assert_eq!(
         firsts.len(),
         before,
@@ -311,7 +265,7 @@ async fn a_failed_outcome_unwritten_at_its_deadline_was_never_committed() {
     let karl = lab.register("karl").await;
     let _admin = admitted(&lab, &karl, &["show"]).await;
     let before = firsts(&lab, &karl.id).await.len();
-    let from = mark(capture);
+    let from = capture.mark();
     let held = hold::arm(Point::Unsent);
     FIRST_FAULT.with(|f| f.set(Some(FirstFault::LoseAnswer)));
     assert!(matches!(
@@ -326,19 +280,22 @@ async fn a_failed_outcome_unwritten_at_its_deadline_was_never_committed() {
     );
     let first = firsts.last().unwrap().clone();
     assert!(
-        logged(
-            capture,
-            from,
-            &[
-                karl.id.as_str(),
-                &first,
-                "its frame never sent, was not written within"
-            ]
-        )
-        .await,
+        capture
+            .logged(
+                from,
+                &[
+                    karl.id.as_str(),
+                    &first,
+                    "its frame never sent, was not written within"
+                ],
+                BOUND + SOON
+            )
+            .await,
         "the guard never logged the failed outcome as not written"
     );
-    let outcome = settled(&held, || outcome_of(&lab, &first), Option::is_some).await;
+    let outcome = held
+        .settled(|| outcome_of(&lab, &first), Option::is_some)
+        .await;
     assert_eq!(
         outcome, None,
         "the audit holds a failed outcome the guard logged as not written"

@@ -12,14 +12,12 @@
 //! out at the deadline's wake, which polls the write before the bound reads
 //! its deadline, and its effect lands while the caller reports it unmade.
 
-use std::future::Future;
 use std::path::Path;
 use std::time::Duration;
 
 use serde_json::json;
 use tokio::time::Instant;
 
-use crate::agents_tests::Captured;
 use crate::alerting::{Alerts, Failure, STORE_BOUND};
 use crate::deadline::hold::{self, Point};
 use crate::store::alerts::{AlertKind, Raise, TakenEntry};
@@ -61,53 +59,6 @@ fn raise(agent: &AgentId, kind: AlertKind, subject: &str) -> Raise {
         source: "server",
         once: false,
     }
-}
-
-/// **The audit's verdict on a held write**, as `link::deadline_tests` reads
-/// it: where the hold was let go at its deadline, its statement went out
-/// and commits a moment later, so the read waits for its effect; where it
-/// was not, nothing is in flight and the read is final. A verdict stands
-/// only where the write reached its hold: one that stalled before it until
-/// the deadline lands nothing in either order, so that run fails here.
-async fn settled<T, F, Fut>(held: &hold::Armed, read: F, landed: impl Fn(&T) -> bool) -> T
-where
-    F: Fn() -> Fut,
-    Fut: Future<Output = T>,
-{
-    let until = Instant::now() + SOON;
-    loop {
-        let now = read().await;
-        if !held.let_go() || landed(&now) || Instant::now() >= until {
-            assert!(held.reached(), "the write never reached its hold");
-            return now;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-}
-
-/// **The caller's error line**: one line of the process's capture, written
-/// since `from`, holding every needle, within the bound and the slack.
-async fn logged(capture: &Captured, from: usize, needles: &[&str]) -> bool {
-    let until = Instant::now() + STORE_BOUND + SOON;
-    loop {
-        let found = {
-            let bytes = capture.0.lock().unwrap();
-            String::from_utf8_lossy(&bytes[from.min(bytes.len())..])
-                .lines()
-                .any(|line| needles.iter().all(|needle| line.contains(needle)))
-        };
-        if found {
-            return true;
-        }
-        if Instant::now() >= until {
-            return false;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-}
-
-fn mark(capture: &Captured) -> usize {
-    capture.0.lock().unwrap().len()
 }
 
 /// The held write has reached its hold: the drainer is inside the row's
@@ -185,7 +136,7 @@ async fn an_alert_unraised_at_its_bound_was_never_sent_and_its_line_names_none()
     let dir = tempfile::tempdir().unwrap();
     let log = dir.path().join("operations.log");
     let capture = global_capture();
-    let from = mark(capture);
+    let from = capture.mark();
     let held = hold::arm(Point::Raise);
     let (alerts, tasks) = Alerts::start(store.clone(), Some(log.clone()));
     alerts.raise(Failure {
@@ -199,20 +150,21 @@ async fn an_alert_unraised_at_its_bound_was_never_sent_and_its_line_names_none()
     assert_eq!(line["agent"], karl.as_str());
     assert!(line["alert"].is_null(), "the line names an alert: {line}");
     assert!(
-        logged(
-            capture,
-            from,
-            &[karl.as_str(), "an alert was not raised within"]
-        )
-        .await,
+        capture
+            .logged(
+                from,
+                &[karl.as_str(), "an alert was not raised within"],
+                STORE_BOUND + SOON
+            )
+            .await,
         "the worker never logged the raise as not made"
     );
-    let raised = settled(
-        &held,
-        || async { store.alerts_on(&karl, 10).await.unwrap() },
-        |a| !a.is_empty(),
-    )
-    .await;
+    let raised = held
+        .settled(
+            || async { store.alerts_on(&karl, 10).await.unwrap() },
+            |a| !a.is_empty(),
+        )
+        .await;
     assert!(
         raised.is_empty(),
         "the store holds an alert the operations log says was not raised: {raised:#?}"
@@ -244,25 +196,26 @@ async fn a_restoration_unnoted_at_its_bound_was_never_sent() {
         .unwrap()
         .expect("the loss raised");
     let capture = global_capture();
-    let from = mark(capture);
+    let from = capture.mark();
     let held = hold::arm(Point::Restored);
     let (alerts, tasks) = Alerts::start(store.clone(), None);
     alerts.restored(&karl, "admin");
     assert!(
-        logged(
-            capture,
-            from,
-            &[karl.as_str(), "contact's restoration was not noted within"]
-        )
-        .await,
+        capture
+            .logged(
+                from,
+                &[karl.as_str(), "contact's restoration was not noted within"],
+                STORE_BOUND + SOON
+            )
+            .await,
         "the worker never logged the restoration as not noted"
     );
-    let restored = settled(
-        &held,
-        || async { store.alert(&lost).await.unwrap().unwrap().restored_at },
-        Option::is_some,
-    )
-    .await;
+    let restored = held
+        .settled(
+            || async { store.alert(&lost).await.unwrap().unwrap().restored_at },
+            Option::is_some,
+        )
+        .await;
     assert_eq!(
         restored, None,
         "the alert carries a restoration the worker logged as not noted"
@@ -290,27 +243,29 @@ async fn an_inbox_row_unapplied_at_its_bound_was_never_committed() {
     let inbox_id = inbox_row(&store, &karl).await;
     let dir = tempfile::tempdir().unwrap();
     let capture = global_capture();
-    let from = mark(capture);
+    let from = capture.mark();
     let held = hold::arm(Point::Apply);
     let (alerts, tasks) = Alerts::start(store.clone(), Some(dir.path().join("operations.log")));
     reached(&held).await;
     let _stalled = alerts.stall_worker().await;
     let not_applied = format!("an inbox row ({inbox_id}) was not applied within");
     assert!(
-        logged(capture, from, &[&not_applied]).await,
+        capture
+            .logged(from, &[&not_applied], STORE_BOUND + SOON)
+            .await,
         "the drainer never logged the row as not applied"
     );
-    let (standing, raised) = settled(
-        &held,
-        || async {
-            (
-                attempts(&store, inbox_id).await,
-                store.alerts_on(&karl, 10).await.unwrap().len(),
-            )
-        },
-        |(standing, raised)| standing.is_none() || *raised > 0,
-    )
-    .await;
+    let (standing, raised) = held
+        .settled(
+            || async {
+                (
+                    attempts(&store, inbox_id).await,
+                    store.alerts_on(&karl, 10).await.unwrap().len(),
+                )
+            },
+            |(standing, raised)| standing.is_none() || *raised > 0,
+        )
+        .await;
     assert!(
         standing.is_some() && raised == 0,
         "the store applied a row the drainer logged as not applied: row {standing:?}, {raised} alerts"
@@ -336,7 +291,7 @@ async fn a_back_off_unwritten_at_its_bound_was_never_sent() {
     let karl = agent(&store).await;
     let inbox_id = inbox_row(&store, &karl).await;
     let capture = global_capture();
-    let from = mark(capture);
+    let from = capture.mark();
     let held = hold::arm(Point::InboxFailed);
     let (alerts, tasks) = Alerts::start(store.clone(), None);
     // Before the drainer first runs: on this runtime it runs at the test's
@@ -346,15 +301,14 @@ async fn a_back_off_unwritten_at_its_bound_was_never_sent() {
     let _stalled = alerts.stall_worker().await;
     let not_backed_off = format!("an inbox row ({inbox_id}) was not backed off within");
     assert!(
-        logged(capture, from, &[&not_backed_off]).await,
+        capture
+            .logged(from, &[&not_backed_off], STORE_BOUND + SOON)
+            .await,
         "the drainer never logged the row as not backed off"
     );
-    let backed_off = settled(
-        &held,
-        || attempts(&store, inbox_id),
-        |a| a.is_some_and(|a| a > 0),
-    )
-    .await;
+    let backed_off = held
+        .settled(|| attempts(&store, inbox_id), |a| a.is_some_and(|a| a > 0))
+        .await;
     assert_eq!(
         backed_off,
         Some(0),

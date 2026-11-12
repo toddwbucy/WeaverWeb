@@ -28,6 +28,10 @@
   <div class="body">
   <p>{{ kind }}{% match exit %}{% when Some with (code) %} <span class="status {% if *code == 0 %}ok{% else %}fail{% endif %}">exit {{ code }}</span>{% when None %}{% endmatch %}</p>
   {% if !detail.is_empty() %}<pre class="raw">{{ detail }}</pre>{% endif %}
+  {%- if let Some(said) = stderr %}
+  <p class="note">admin's stderr{% if let Some(n) = said.cut_at %}, its first {{ n }} bytes{% endif %}: admin's own words, shown as written and never read by this console.</p>
+  <pre class="raw words">{{ said.text }}</pre>
+  {%- endif %}
   </div>
   <footer><a href="/agents/{{ agent_id }}">Back to {{ label }}</a></footer>
 </section>

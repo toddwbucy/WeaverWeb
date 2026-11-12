@@ -43,7 +43,7 @@ use crate::link::register::{
     TupleWrite,
 };
 use crate::store::access::{shared_hold, verbs_granted_in};
-use crate::store::alerts::{AlertKind, InboxRow, Raise, TakenEntry, bounded as cut};
+use crate::store::alerts::{AlertKind, InboxRow, Raise, STDERR_BOUND, TakenEntry, bounded as cut};
 use crate::store::audit::{self, PersonMethod, Target};
 use crate::store::identity::session_stands;
 use crate::store::{AgentId, Store};
@@ -2759,7 +2759,7 @@ fn refusal_raised(verb: &str, object: &serde_json::Value, stderr: &str) -> Raise
         .unwrap_or("unnamed")
         .to_owned();
     let missed = object.get("missed").and_then(|m| m.as_str());
-    let stderr = cut(stderr, 2048);
+    let stderr = cut(stderr, STDERR_BOUND);
     let detail = if stderr.is_empty() {
         object.to_string()
     } else {

@@ -49,6 +49,7 @@ use crate::adapters::gate::request_line;
 use crate::fault::Fault;
 use crate::link::listener::{Act, Asker, Enqueued, Listener, TurnError, TurnText, VerbError};
 use crate::link::register::{Agent, CredentialState};
+use crate::store::alerts::{STDERR_BOUND, bounded};
 use crate::store::identity::{VOCABULARY, is_agent_id};
 use crate::store::{AgentId, Store};
 use crate::surfaces::gate::{self, Policy, Session};
@@ -877,6 +878,52 @@ struct VerbPage {
     /// 2.14), whose prompt the page states, its options chosen on the
     /// agent's page, where the alert stands.
     missed: Option<String>,
+    /// admin's stderr beside its answer, where it wrote any.
+    stderr: Option<Said>,
+}
+
+/// **admin's own words beside its answer** (Spec 2.13): text admin wrote,
+/// cut at [`STDERR_BOUND`] bytes at a character boundary as an alert's
+/// reason cuts it, shown on the page escaped as every value is, and never
+/// parsed or read for meaning by this console.
+struct Said {
+    text: String,
+    /// The bound, where the text was cut at it.
+    cut_at: Option<usize>,
+}
+
+impl Said {
+    /// What admin wrote, `None` where it wrote nothing but blanks.
+    fn of(text: Option<&str>) -> Option<Said> {
+        let text = text.filter(|t| !t.trim().is_empty())?;
+        let kept = bounded(text, STDERR_BOUND);
+        let cut_at = (kept.len() < text.len()).then_some(STDERR_BOUND);
+        Some(Said { text: kept, cut_at })
+    }
+}
+
+/// admin's answer to a verb as its page shows it.
+struct Shown {
+    status: StatusCode,
+    kind: String,
+    detail: String,
+    exit: Option<i32>,
+    missed: Option<String>,
+    stderr: Option<Said>,
+}
+
+impl Shown {
+    /// An answer that carried none of admin's words.
+    fn bare(status: StatusCode, kind: String, detail: String) -> Shown {
+        Shown {
+            status,
+            kind,
+            detail,
+            exit: None,
+            missed: None,
+            stderr: None,
+        }
+    }
 }
 
 /// **A person's verb, asked through the server** (Spec 2.13): parsed,
@@ -971,9 +1018,9 @@ async fn act(
     // **The page's wait is its own**, bounding nothing of the ask: the
     // outcome is written at the answer whatever this does.
     let bound = seams.asker.silence();
-    let (status, kind, detail, exit, missed) = if shown == "turn" {
+    let answered = if shown == "turn" {
         let (status, kind, detail) = turn_shown(bound, enqueued).await;
-        (status, kind, detail, None, None)
+        Shown::bare(status, kind, detail)
     } else {
         verb_shown(bound, &shown, enqueued).await
     };
@@ -992,69 +1039,56 @@ async fn act(
         label: format!("{}/{}", row.r#box, row.name),
         verb: shown,
         first,
-        kind,
-        detail,
-        exit,
+        kind: answered.kind,
+        detail: answered.detail,
+        exit: answered.exit,
         chrome,
-        missed,
+        missed: answered.missed,
+        stderr: answered.stderr,
     };
     match page.render() {
-        Ok(html) => (status, Html(html)).into_response(),
+        Ok(html) => (answered.status, Html(html)).into_response(),
         Err(e) => fault(e),
     }
 }
 
 /// admin's answer to a verb, as the page shows it, with its exit status
 /// and the leg an `unload` stopped at its save point missed.
-async fn verb_shown(
-    bound: Duration,
-    verb: &str,
-    enqueued: Enqueued,
-) -> (StatusCode, String, String, Option<i32>, Option<String>) {
+async fn verb_shown(bound: Duration, verb: &str, enqueued: Enqueued) -> Shown {
     match tokio::time::timeout(bound, enqueued.answer()).await {
-        Ok(Ok(outcome)) => (
-            StatusCode::OK,
-            if outcome.exit_code == Some(0) {
+        Ok(Ok(outcome)) => Shown {
+            status: StatusCode::OK,
+            kind: if outcome.exit_code == Some(0) {
                 "admin's answer"
             } else {
                 "admin's refusal"
             }
             .to_owned(),
-            outcome
+            detail: outcome
                 .answer
                 .as_ref()
                 .map(|a| serde_json::to_string_pretty(a).unwrap_or_default())
                 .unwrap_or_default(),
-            outcome.exit_code,
-            crate::link::listener::stopped_at_save_point(verb, &outcome).map(str::to_owned),
-        ),
-        Ok(Err(VerbError::Fault(fault))) => (
+            exit: outcome.exit_code,
+            missed: crate::link::listener::stopped_at_save_point(verb, &outcome)
+                .map(str::to_owned),
+            stderr: Said::of(outcome.stderr.as_deref()),
+        },
+        Ok(Err(VerbError::Fault(fault))) => Shown::bare(
             StatusCode::OK,
             "admin-con's fault".to_owned(),
             format!("{}: {}", fault.kind, fault.message),
-            None,
-            None,
         ),
-        Ok(Err(VerbError::Unanswered)) => (
+        Ok(Err(VerbError::Unanswered)) => Shown::bare(
             StatusCode::OK,
             "the connection ended with the verb in flight: its outcome is unknown here, and the trace and the next show hold it".to_owned(),
             String::new(),
-            None,
-            None,
         ),
-        Ok(Err(e)) => (
-            StatusCode::OK,
-            "no answer".to_owned(),
-            e.to_string(),
-            None,
-            None,
-        ),
-        Err(_) => (
+        Ok(Err(e)) => Shown::bare(StatusCode::OK, "no answer".to_owned(), e.to_string()),
+        Err(_) => Shown::bare(
             StatusCode::ACCEPTED,
             "asked, and not answered within the bound: its outcome is written when admin answers".to_owned(),
             String::new(),
-            None,
-            None,
         ),
     }
 }

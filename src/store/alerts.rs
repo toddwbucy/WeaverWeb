@@ -24,6 +24,11 @@ use crate::store::{AgentId, Store};
 const SUMMARY_BOUND: usize = 1024;
 const DETAIL_BOUND: usize = 8192;
 
+/// **admin's stderr is cut at this bound wherever it is carried**: in an
+/// alert's reason (Spec 2.14) and on the verb's answer page (Spec 2.13), so
+/// the page and the alert show the same words.
+pub const STDERR_BOUND: usize = 2048;
+
 /// A string cut to at most `bound` bytes, at a character boundary, **a NUL
 /// replaced** by U+FFFD: PostgreSQL's text holds none, and a reason that
 /// carries one, an entry's message among them, would otherwise fail its

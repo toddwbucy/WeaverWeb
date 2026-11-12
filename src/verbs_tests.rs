@@ -307,6 +307,87 @@ async fn an_operator_asks_load_and_the_page_shows_admins_answer() {
     assert_eq!(outcome_of(&answered, &first), Some("ok"));
 }
 
+/// **The answer page shows admin's own words** (Spec 2.13): a refused
+/// `load` whose stderr carries markup and runs past the bound shows that
+/// stderr escaped, cut at a character boundary within 2048 bytes and saying
+/// so, beside the refusal object, never read for meaning; and a blank stderr
+/// is not shown.
+#[tokio::test]
+async fn the_answer_page_shows_admins_own_words() {
+    let Some(mut o) = operated(&["show", "load"]).await else {
+        return;
+    };
+    // The words fill 2047 bytes; a two-byte character starts at byte 2047,
+    // so the cut falls before it, and what follows it is never shown.
+    let head = "weaver-admin: restore names <sp-447> & \"sp-448\"; {\"kind\":\"loaded\"} ";
+    let mut stderr = head.to_owned();
+    stderr.push_str(&"a".repeat(2047 - head.len()));
+    assert_eq!(stderr.len(), 2047);
+    stderr.push('\u{e9}');
+    stderr.push_str(" TAIL-PAST-THE-BOUND");
+    let asked = ask(&o.rig, &o.bea_session, &o.karl, "load");
+    let (id, _, _) = take_verb(&mut o.admin_con).await;
+    let mut outcome = answer(
+        "load",
+        json!({"kind": "config_invalid", "field": "restore"}),
+        1,
+    );
+    outcome.stderr = Some(stderr.clone());
+    o.admin_con
+        .send(FromClient::Verb {
+            id,
+            outcome: Some(outcome),
+            error: None,
+        })
+        .await;
+    let (status, _, page) = asked.await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{page}");
+    crate::surfaces::assert_framed(&page);
+    assert!(page.contains("admin&#39;s refusal"), "{page}");
+    assert!(
+        page.contains("config_invalid"),
+        "the refusal object: {page}"
+    );
+    // askama escapes by numeric reference.
+    let shown = "weaver-admin: restore names &#60;sp-447&#62; &#38; &#34;sp-448&#34;; \
+                 {&#34;kind&#34;:&#34;loaded&#34;} ";
+    assert!(page.contains(shown), "the words, escaped: {page}");
+    assert!(!page.contains("<sp-447>"), "never unescaped: {page}");
+    assert!(
+        page.contains(&format!("{}</pre>", "a".repeat(64))),
+        "the words run to the cut: {page}"
+    );
+    assert!(
+        !page.contains('\u{e9}') && !page.contains("TAIL-PAST-THE-BOUND"),
+        "nothing past the bound: {page}"
+    );
+    // The template's own words are its text, not a value, so unescaped.
+    assert!(
+        page.contains("admin's stderr, its first 2048 bytes"),
+        "the cut is said: {page}"
+    );
+
+    // A refusal whose stderr is blank shows no stderr.
+    let asked = ask(&o.rig, &o.bea_session, &o.karl, "load");
+    let (id, _, _) = take_verb(&mut o.admin_con).await;
+    let mut outcome = answer("load", json!({"kind": "agent_running"}), 1);
+    outcome.stderr = Some("  \n".into());
+    o.admin_con
+        .send(FromClient::Verb {
+            id,
+            outcome: Some(outcome),
+            error: None,
+        })
+        .await;
+    let (status, _, page) = asked.await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains("agent_running"), "{page}");
+    assert!(
+        !page.contains("admin's stderr"),
+        "blank stderr is not shown: {page}"
+    );
+}
+
 /// **A grant without the verb is refused before an ask**: an observer's
 /// `stop` answers 403 with one refusal record, and no frame leaves.
 ///

@@ -21,11 +21,14 @@ use super::{Class, Document, Function, Part, Placement, Requirement, Value64};
 /// named stale on its page.
 pub const CORPUS_COMMIT: &str = "a3543b31f264b269f66ab55d8767f25290ec9d61";
 
-/// The row a file is derived from, as its header names it.
+/// The row a file is derived from, as its header names it. The grammar the
+/// header names is this build's, [`CORPUS_COMMIT`], the one the file is
+/// written in, whatever pin the row was saved under: a stale row's file is
+/// this build's rendering of it, and its page names the row's own pin beside
+/// it (Spec 6.1).
 pub struct Meta<'a> {
     pub de: &'a str,
     pub version: i64,
-    pub corpus_commit: &'a str,
 }
 
 /// The SPU's name for each sampler member, in `tunable-values`.
@@ -48,12 +51,17 @@ fn string(text: &str) -> String {
     format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
-/// A real as TOML writes a float, always with its point.
+/// **A real as TOML writes a float**, always with its point or its
+/// exponent, so that TOML reads it as a float (Spec 6.1). Rust's `{}` writes
+/// a whole value at or above 1e15 as its digits alone, which TOML reads as
+/// an integer, or refuses past its range, so that value takes its exponent.
 fn real(x: f64) -> String {
-    if x.fract() == 0.0 && x.abs() < 1e15 {
+    if x.fract() != 0.0 {
+        format!("{x}")
+    } else if x.abs() < 1e15 {
         format!("{x:.1}")
     } else {
-        format!("{x}")
+        format!("{x:e}")
     }
 }
 
@@ -106,10 +114,7 @@ pub fn agent_toml(document: &Document, meta: &Meta<'_>) -> String {
     );
     line(
         &mut out,
-        &format!(
-            "# The grammar is weaver-types-Spec section 2 at WeaverAgent {}.",
-            meta.corpus_commit
-        ),
+        &format!("# The grammar is weaver-types-Spec section 2 at WeaverAgent {CORPUS_COMMIT}."),
     );
     line(
         &mut out,
@@ -167,6 +172,8 @@ pub fn agent_toml(document: &Document, meta: &Meta<'_>) -> String {
                     tunable(name),
                     match value {
                         Value64::Real(x) => real(x),
+                        // At most `i64::MAX`, TOML's largest integer: the
+                        // parse refuses a count above it.
                         Value64::Count(x) => x.to_string(),
                     }
                 )

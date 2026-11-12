@@ -63,8 +63,11 @@ ALTER TABLE declaration
 CREATE UNIQUE INDEX declaration_one_lineage_per_name
   ON declaration (name) WHERE parent_declaration_id IS NULL;
 
+-- **A lineage's rows by its root**, on the expression every lineage read
+-- filters on (`store::declarations`'s `LINEAGE`), since a root is its own
+-- lineage and carries no root of its own.
 CREATE INDEX declaration_by_lineage
-  ON declaration (lineage_root_id, declaration_id);
+  ON declaration ((coalesce(lineage_root_id, declaration_id)), declaration_id);
 
 -- **A row's authored half never changes** (Spec 2.4): an update may move
 -- the last `validate` reading and nothing else, and no row is deleted or

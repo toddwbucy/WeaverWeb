@@ -9,7 +9,7 @@
 //! DB-backed test runs on a database of its own. No name, card, artifact or
 //! digest here is a real deployment's.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::http::{HeaderMap, StatusCode, header};
 use serde_json::{Value, json};
@@ -528,6 +528,12 @@ fn every_refusal_names_its_field_and_its_reason() {
             Kind::Sampler,
             "sampler.max_tokens_per_turn",
         ),
+        (
+            "a count above the largest whole number the agent's file holds",
+            edit(|v| v["sampler"] = json!({"seed": 9_223_372_036_854_775_808_u64})),
+            Kind::Sampler,
+            "sampler.seed",
+        ),
         // A tool other than sh.
         (
             "a tool other than sh",
@@ -620,6 +626,95 @@ fn every_refusal_names_its_field_and_its_reason() {
             "{what}: the canonical form reads back as itself"
         );
     }
+}
+
+/// **A class is judged in one pass over what was sent**, since a save's
+/// parse runs before the session is read (Spec 6.1): a list of 20,000
+/// distinct models is judged well inside its bound, and its first model
+/// typed again at its end is refused naming that slot. The scan of every
+/// earlier name this replaced took 101 s for 16,000 in the test build
+/// (measured 2026-11-12).
+#[test]
+fn a_long_class_is_judged_in_one_pass() {
+    const N: usize = 20_000;
+    let mut models: Vec<String> = (0..N).map(|i| format!("model-{i}")).collect();
+    let started = Instant::now();
+    let document = Document::parse(&edit(|v| {
+        v["boxes"][0]["gpu"] = json!({"class": {"models": models.clone()}})
+    }));
+    let took = started.elapsed();
+    assert!(document.is_ok(), "{document:?}");
+    assert!(
+        took < Duration::from_secs(5),
+        "a class of {N} models took {took:?}"
+    );
+    models.push("MODEL-0".to_owned());
+    let refused = Document::parse(&edit(|v| {
+        v["boxes"][0]["gpu"] = json!({"class": {"models": models}})
+    }))
+    .unwrap_err();
+    assert_eq!(
+        (refused.kind, refused.field.as_str()),
+        (
+            Kind::NamesNothing,
+            format!("boxes[0].gpu.class.models[{N}]").as_str()
+        )
+    );
+}
+
+/// **The agent's file writes every admitted value in its TOML type**
+/// (Spec 6.1): a whole real at or above 1e15, which Rust's `{}` writes as
+/// digits alone, is a float, the adapter's scale too, and a count at the
+/// largest whole number TOML holds is that integer.
+#[test]
+fn the_agents_file_writes_every_admitted_value_in_its_toml_type() {
+    let document = Document::parse(&edit(|v| {
+        v["boxes"][0]["models"][0]["adapter"] = json!({
+            "artifact": "adapter-a",
+            "sha256": "0123456789abcdef".repeat(4),
+            "base_blake3": "f".repeat(64),
+            "scale": 1e16,
+        });
+        v["sampler"] = json!({
+            "temperature": 1e20,
+            "top_p": 1e15,
+            "repetition_penalty": -1e300,
+            "seed": i64::MAX,
+            "top_k": 0,
+        });
+    }))
+    .unwrap();
+    let file = render::agent_toml(
+        &document,
+        &Meta {
+            de: "de-0000000000000000",
+            version: 1,
+        },
+    );
+    let table: toml::Table = toml::from_str(&file)
+        .unwrap_or_else(|e| panic!("the agent's file is TOML 1.0: {e}\n{file}"));
+    let decoder = &table["spu-instruction"]["decoder"];
+    let values = &decoder["tunable-values"];
+    assert_eq!(values["temperature"].as_float(), Some(1e20), "{file}");
+    assert_eq!(values["top-p"].as_float(), Some(1e15), "{file}");
+    assert_eq!(
+        values["repetition-penalty"].as_float(),
+        Some(-1e300),
+        "{file}"
+    );
+    assert_eq!(values["seed"].as_integer(), Some(i64::MAX), "{file}");
+    assert_eq!(values["top-k"].as_integer(), Some(0), "{file}");
+    assert_eq!(
+        decoder["model-binding"]["adapter"]["scale"].as_float(),
+        Some(1e16),
+        "{file}"
+    );
+    assert!(
+        file.contains(&format!(
+            "weaver-types-Spec section 2 at WeaverAgent {CORPUS_COMMIT}."
+        )),
+        "the header names this build's pin: {file}"
+    );
 }
 
 /// **The screen refuses a field out of shape and saves nothing**, end to
@@ -1009,7 +1104,6 @@ async fn a_save_and_a_reopen_are_the_same_document() {
         &Meta {
             de: &de,
             version: 1,
-            corpus_commit: CORPUS_COMMIT,
         },
     );
     assert_eq!(pre(&page, 0), file);

@@ -391,7 +391,6 @@ async fn open(
             &Meta {
                 de: &row.de,
                 version: row.version,
-                corpus_commit: &row.corpus_commit,
             },
         ),
         prompt: render::prompt(&document).map(str::to_owned),

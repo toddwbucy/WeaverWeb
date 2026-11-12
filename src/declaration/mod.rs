@@ -21,6 +21,7 @@ pub mod capability;
 pub mod render;
 
 use serde_json::{Map, Value, json};
+use std::collections::HashSet;
 
 /// **Why a document was refused**, by kind, so a test reads the reason and
 /// not its wording.
@@ -812,10 +813,14 @@ fn class(value: &Value, path: &str) -> Result<Class, Refused> {
                 Value::Array(list) => list,
                 _ => return Err(refused(field, Kind::Shape, "is not a list")),
             };
+            // Each name folded once and looked up, so that the judgement is
+            // one pass over what was sent: it runs before the session is
+            // read (Spec 6.1).
             let mut out: Vec<String> = Vec::new();
+            let mut seen: HashSet<String> = HashSet::new();
             for (k, m) in list.iter().enumerate() {
                 let name = naming_text(m, format!("{field}[{k}]"), "is a model with no name")?;
-                if out.iter().any(|o| fold(o) == fold(&name)) {
+                if !seen.insert(fold(&name)) {
                     return Err(refused(
                         format!("{field}[{k}]"),
                         Kind::NamesNothing,
@@ -855,7 +860,14 @@ fn sampler(value: Option<&Value>) -> Result<Sampler, Refused> {
             }
         } else {
             match v.as_u64() {
-                Some(x) => Value64::Count(x),
+                Some(x) if i64::try_from(x).is_ok() => Value64::Count(x),
+                Some(_) => {
+                    return Err(refused(
+                        field,
+                        Kind::Sampler,
+                        "is a count above 9223372036854775807, the largest whole number the agent's file holds",
+                    ));
+                }
                 None => {
                     return Err(refused(
                         field,

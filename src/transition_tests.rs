@@ -312,3 +312,196 @@ async fn a_turns_close_keeps_the_transition_and_the_unload_ends_it() {
     .await;
     assert_eq!(row.in_transition_at, None, "the unload ends it");
 }
+
+/// The warning the agent page puts beside `verb`'s form, `None` where the
+/// form stands bare; panics where the verb is not offered.
+fn warning_beside(page: &str, karl: &str, verb: &str) -> Option<String> {
+    let form = format!(
+        "<form method=\"post\" action=\"/agents/{karl}/verb\"><input type=\"hidden\" name=\"verb\" value=\"{verb}\"><button type=\"submit\" class=\"verb\">{verb}</button></form>"
+    );
+    let at = page
+        .find(&form)
+        .unwrap_or_else(|| panic!("{verb} is not offered: {page}"));
+    let rest = &page[at + form.len()..];
+    let open = "<span class=\"status hold warning\">";
+    rest.strip_prefix(open)
+        .map(|w| w[..w.find("</span>").unwrap()].to_owned())
+}
+
+/// **A verb admin's state table refuses in the row's last reading is warned
+/// of, and offered still** (Spec 2.13; the admin-operator contract's
+/// section 4.1): read idle, `load` is warned `AgentRunning` and `save-point`
+/// and `unload` are not; read active, `load` is warned `AgentRunning` and
+/// `save-point` `ActivityNotAtRest`; read in transition, both are warned
+/// with the lock held and free told apart, dated by the transition; read
+/// unloaded, `save-point` alone is warned `OutOfOrder`. Each warning names
+/// the reading and its date, every form stays, the pane names the table's
+/// source at its pin while a warning shows, and `unload` is never warned.
+///
+/// Perturbation: drop the warning from the template, change a cell, or
+/// ignore a standing transition, and the case fails.
+#[tokio::test]
+async fn the_agent_page_warns_of_a_verb_the_state_table_refuses() {
+    let Some(mut o) = operated(&["show", "load", "save-point", "unload"]).await else {
+        return;
+    };
+    let id: AgentId = o.karl.parse().unwrap();
+    let date = |at: chrono::DateTime<chrono::Utc>| at.format("%Y-%m-%d %H:%M:%S UTC").to_string();
+    let source = format!(
+        "admin's state table (<code>weaver-admin-operator-contract</code> section 4.1 at WeaverAgent <span class=\"mono\">{}</span>)",
+        crate::surfaces::admin_table::STATE_TABLE_READ_AT
+    );
+    let karl = o.karl.clone();
+    let reads = |page: &str, verb: &str| warning_beside(page, &karl, verb);
+
+    // Idle, as the admission's `show` answered.
+    let row = o.rig.store().agent(&id).await.unwrap().unwrap();
+    assert_eq!(row.load_state.as_deref(), Some("idle"));
+    let at = date(row.load_state_at.unwrap());
+    let p = page(&o).await;
+    assert_eq!(
+        reads(&p, "load").as_deref(),
+        Some(
+            format!("admin refuses this while the agent reads idle: AgentRunning. Read idle {at}.")
+                .as_str()
+        ),
+        "{p}"
+    );
+    assert_eq!(reads(&p, "save-point"), None, "S2 and S9 take a save point");
+    assert_eq!(reads(&p, "unload"), None);
+    assert!(p.contains(&source), "{p}");
+
+    // Active.
+    let row = shown(&mut o, json!({"kind": "state", "state": "active"}), 0).await;
+    let at = date(row.load_state_at.unwrap());
+    let p = page(&o).await;
+    assert_eq!(
+        reads(&p, "load").as_deref(),
+        Some(
+            format!(
+                "admin refuses this while the agent reads active: AgentRunning. Read active {at}."
+            )
+            .as_str()
+        ),
+    );
+    assert_eq!(
+        reads(&p, "save-point").as_deref(),
+        Some(format!("admin refuses this while the agent reads active: ActivityNotAtRest. Read active {at}.").as_str()),
+    );
+    assert_eq!(reads(&p, "unload"), None);
+
+    // In transition: the transition is the reading while it stands, dated
+    // by itself.
+    let row = shown(&mut o, json!({"kind": "in_transition"}), 0).await;
+    assert_eq!(
+        row.load_state.as_deref(),
+        Some("active"),
+        "no state claimed"
+    );
+    let at = date(row.in_transition_at.unwrap());
+    let p = page(&o).await;
+    assert_eq!(
+        reads(&p, "load").as_deref(),
+        Some(format!("admin refuses this while the agent reads in transition: InvocationInFlight where a command holds the agent, AgentRunning where none does. Read in transition {at}.").as_str()),
+    );
+    assert_eq!(
+        reads(&p, "save-point").as_deref(),
+        Some(format!("admin refuses this while the agent reads in transition: InvocationInFlight where a command holds the agent, OutOfOrder where none does. Read in transition {at}.").as_str()),
+    );
+    assert_eq!(reads(&p, "unload"), None);
+
+    // Unloaded.
+    let row = shown(&mut o, json!({"kind": "state", "state": "unloaded"}), 0).await;
+    assert_eq!(row.in_transition_at, None);
+    let at = date(row.load_state_at.unwrap());
+    let p = page(&o).await;
+    assert_eq!(reads(&p, "load"), None, "S0 answers with the load");
+    assert_eq!(
+        reads(&p, "save-point").as_deref(),
+        Some(
+            format!(
+                "admin refuses this while the agent reads unloaded: OutOfOrder. Read unloaded {at}."
+            )
+            .as_str()
+        ),
+    );
+    assert_eq!(reads(&p, "unload"), None);
+    assert!(p.contains(&source), "{p}");
+}
+
+/// **Run's two panes re-read by themselves** (Spec 2.13): the agent page
+/// holds the load state and the verbs as one fragment, `GET
+/// /agents/{ag}/run`, which the vendored htmx re-fetches every 15 s. The
+/// fragment is the page's own panes, kept from every cache; a state written
+/// between two fetches shows at the second, its warnings with it; a person
+/// holding no grant is answered as for an unknown agent, a malformed
+/// identity 400, and an ended session 401. That the fetch leaves the
+/// session's last use as it was is `a_poll_leaves_the_sessions_last_use_as_it_was`.
+///
+/// Perturbation: drop the trigger from the page, drop the grant check, or
+/// render the fragment from another view, and the case fails.
+#[tokio::test]
+async fn the_run_panes_re_read_by_themselves() {
+    let Some(mut o) = operated(&["show", "load", "save-point", "unload"]).await else {
+        return;
+    };
+    let s = o.rig.store().clone();
+    let (_, dan) = crate::admin_tests::signed_in(
+        &o.rig.app,
+        &s,
+        &mut crate::passkeys_tests::authenticator(),
+        "dan",
+    )
+    .await;
+    let uri = format!("/agents/{}/run", o.karl);
+    let karl = o.karl.clone();
+    let (app, bea) = (o.rig.app.clone(), o.bea_session.clone());
+
+    let p = page(&o).await;
+    assert!(
+        p.contains(&format!(
+            "<div class=\"stack\" id=\"run\" hx-get=\"{uri}\" hx-trigger=\"every 15s\" hx-swap=\"innerHTML\">"
+        )),
+        "{p}"
+    );
+    assert!(p.contains("/assets/surfaces/htmx.min.js"), "{p}");
+
+    let (status, headers, first) = send_as(&app, "GET", &uri, None, &bea).await;
+    assert_eq!(status, axum::http::StatusCode::OK, "{first}");
+    assert_eq!(
+        headers
+            .get(axum::http::header::CACHE_CONTROL)
+            .map(|v| v.to_str().unwrap()),
+        Some("no-store")
+    );
+    assert!(
+        p.contains(first.trim()),
+        "the fragment is the page's own panes: {first}"
+    );
+    assert!(first.contains("<h2>Load state</h2>"), "{first}");
+    assert!(first.contains("<td>idle, by show (since "), "{first}");
+    assert!(warning_beside(&first, &karl, "load").is_some(), "{first}");
+    assert_eq!(warning_beside(&first, &karl, "save-point"), None);
+
+    // A state written between two fetches shows at the second.
+    shown(&mut o, json!({"kind": "state", "state": "unloaded"}), 0).await;
+    let (status, _, second) = send_as(&app, "GET", &uri, None, &bea).await;
+    assert_eq!(status, axum::http::StatusCode::OK, "{second}");
+    assert!(second.contains("<td>unloaded, by show (since "), "{second}");
+    assert_eq!(warning_beside(&second, &karl, "load"), None, "{second}");
+    assert!(
+        warning_beside(&second, &karl, "save-point")
+            .is_some_and(|w| w.contains("reads unloaded: OutOfOrder")),
+        "{second}"
+    );
+
+    let (status, _, theirs) = send_as(&app, "GET", &uri, None, &dan).await;
+    assert_eq!(status, axum::http::StatusCode::NOT_FOUND, "{theirs}");
+    let (status, _, _) = send_as(&app, "GET", "/agents/not-an-agent/run", None, &bea).await;
+    assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+
+    let (status, _, _) = send_as(&app, "POST", "/sign-out", None, &bea).await;
+    assert!(status.is_redirection() || status.is_success(), "{status}");
+    let (status, _, ended) = send_as(&app, "GET", &uri, None, &bea).await;
+    assert_eq!(status, axum::http::StatusCode::UNAUTHORIZED, "{ended}");
+}

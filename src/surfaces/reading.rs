@@ -49,6 +49,7 @@ use crate::adapters::gate::request_line;
 use crate::fault::Fault;
 use crate::link::listener::{Act, Asker, Enqueued, Listener, TurnError, TurnText, VerbError};
 use crate::link::register::{Agent, CredentialState};
+use crate::store::alerts::{STDERR_BOUND, bounded};
 use crate::store::identity::{VOCABULARY, is_agent_id};
 use crate::store::{AgentId, Store};
 use crate::surfaces::gate::{self, Policy, Session};
@@ -138,7 +139,7 @@ pub fn routes(seams: Seams) -> Router<Store> {
         seams.clone(),
     );
     let choose_seams = seams.clone();
-    let (banner_seams, planes_seams) = (seams.clone(), seams);
+    let (banner_seams, planes_seams, run_seams) = (seams.clone(), seams.clone(), seams);
     Router::new()
         .route(
             "/agents",
@@ -160,6 +161,15 @@ pub fn routes(seams: Seams) -> Router<Store> {
                 move |State(store): State<Store>, headers: HeaderMap, Path(agent): Path<String>| {
                     let seams = planes_seams.clone();
                     async move { agent_availability(store, &seams, headers, agent).await }
+                },
+            ),
+        )
+        .route(
+            "/agents/{agent}/run",
+            get(
+                move |State(store): State<Store>, headers: HeaderMap, Path(agent): Path<String>| {
+                    let seams = run_seams.clone();
+                    async move { agent_run(store, &seams, headers, agent).await }
                 },
             ),
         )
@@ -378,6 +388,13 @@ async fn list(store: Store, seams: &Seams, headers: HeaderMap) -> Response {
     }
 }
 
+/// **The WeaverAgent commit admin's `[restore]` rule was read at**, for the
+/// agent page's statement of it (`weaver-admin-Spec` section 4, "The
+/// inventory"; Spec 2.13). A test holds it to the build's pin,
+/// [`crate::declaration::render::CORPUS_COMMIT`], so the pin does not move
+/// until the rule is reread at the new commit and the statement restated.
+pub const RESTORE_RULE_READ_AT: &str = "a3543b31f264b269f66ab55d8767f25290ec9d61";
+
 #[derive(Template)]
 #[template(path = "agent_page.html")]
 struct AgentPage {
@@ -390,19 +407,12 @@ struct AgentPage {
     present: bool,
     gate: String,
     admin_plane: String,
-    ceiling: String,
+    /// The trace door, said, for the live trace's pane.
     door: String,
-    load_state: String,
-    tuple: String,
-    constituents: String,
-    /// The transition standing beside the last state, said; empty where
-    /// none stands.
-    transition: String,
     window: &'static str,
-    /// Every lifecycle verb, each offered or disabled with why.
-    verbs: Vec<VerbView>,
-    /// Whether any verb is offered.
-    offered: bool,
+    /// Run's two panes, the load state and the verbs, re-fetched every
+    /// 15 s.
+    run: RunView,
     turn_form: bool,
     shared: bool,
     chrome: super::Chrome,
@@ -416,9 +426,143 @@ struct AgentPage {
     /// The stage rail and what is left.
     stages: Vec<StageView>,
     left: String,
+}
+
+/// **Run's two panes, the load state and the verbs** (Spec 2.13): the agent
+/// page's own and the fragment it re-fetches every 15 s, one view, so a
+/// warning never outlives the reading it was drawn from.
+struct RunView {
+    agent_id: String,
+    load_state: String,
+    tuple: String,
+    constituents: String,
+    ceiling: String,
+    door: String,
+    /// The transition standing beside the last state, said; empty where
+    /// none stands.
+    transition: String,
     /// When the load state was last written, for the pane's source line;
     /// empty where it never was.
     state_at: String,
+    /// Every lifecycle verb, each offered or disabled with why.
+    verbs: Vec<VerbView>,
+    /// Whether any verb is offered.
+    offered: bool,
+    /// Whether any offered verb carries a warning, and so whether the pane
+    /// names the table's source.
+    warned: bool,
+    /// The commit admin's state table was read at, which that line names.
+    state_table_at: &'static str,
+    /// The commit admin's `[restore]` rule was read at, which the page's
+    /// statement of it names.
+    restore_rule_at: &'static str,
+}
+
+/// **The verbs admin-con's live connection declares it may run**: the
+/// ceiling's copy on the row while the admin plane is connected, none
+/// otherwise.
+fn live_ceiling(row: &Agent) -> Vec<String> {
+    row.ceiling
+        .as_ref()
+        .filter(|_| row.admin.connected)
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// The trace door as the pages say it.
+fn door_said(row: &Agent) -> String {
+    row.trace_door
+        .map(|open| {
+            format!(
+                "{}{}",
+                if open { "open" } else { "closed" },
+                stamp(row.trace_door_at)
+            )
+        })
+        .unwrap_or_else(|| "not reported".to_owned())
+}
+
+impl RunView {
+    /// **Run's panes from the row and the person's verbs on the agent.**
+    /// **Every lifecycle verb is on the page**: offered where the grants
+    /// carry it and the live connection's ceiling grants it, disabled with
+    /// why otherwise, never hidden. Presentation alone: the ask checks
+    /// everything again. **An offered verb that admin's state table refuses
+    /// in the row's last reading carries a warning** and stays offered
+    /// ("warn, do not refuse").
+    fn of(row: &Agent, granted: &std::collections::BTreeSet<String>) -> RunView {
+        let ceiling = live_ceiling(row);
+        let verbs: Vec<VerbView> = VOCABULARY
+            .into_iter()
+            .filter(|verb| lifecycle(verb))
+            .map(|verb| {
+                let why = if !granted.contains(verb) {
+                    Some("not in your roles")
+                } else if !row.admin.connected {
+                    Some("admin-con not connected")
+                } else if !ceiling.iter().any(|c| c == verb) {
+                    Some("above the ceiling")
+                } else {
+                    None
+                };
+                VerbView {
+                    verb,
+                    why,
+                    warning: why
+                        .is_none()
+                        .then(|| super::admin_table::warning(verb, row))
+                        .flatten(),
+                }
+            })
+            .collect();
+        let none = || "none held".to_owned();
+        RunView {
+            agent_id: row.agent_id.as_str().to_owned(),
+            load_state: row
+                .load_state
+                .as_ref()
+                .map(|state| {
+                    format!(
+                        "{state}, by {}{}",
+                        row.state_source.as_deref().unwrap_or("an unnamed source"),
+                        stamp(row.load_state_at)
+                    )
+                })
+                .unwrap_or_else(none),
+            tuple: row
+                .tuple
+                .as_ref()
+                .map(|tuple| {
+                    format!(
+                        "{tuple}, by {}{}",
+                        row.tuple_source.as_deref().unwrap_or("an unnamed source"),
+                        stamp(row.tuple_at)
+                    )
+                })
+                .unwrap_or_else(none),
+            constituents: row
+                .constituents
+                .as_ref()
+                .map(|pids| {
+                    let pids: Vec<String> = pids.iter().map(i32::to_string).collect();
+                    format!("{}{}", pids.join(" "), stamp(row.constituents_at))
+                })
+                .unwrap_or_else(none),
+            ceiling: row
+                .ceiling
+                .as_ref()
+                .map(|c| format!("{}{}", c.join(" "), stamp(row.ceiling_at)))
+                .unwrap_or_else(|| "none declared".to_owned()),
+            door: door_said(row),
+            transition: transition_said(row),
+            state_at: row.load_state_at.map(when).unwrap_or_default(),
+            offered: verbs.iter().any(|v| v.why.is_none()),
+            warned: verbs.iter().any(|v| v.warning.is_some()),
+            verbs,
+            state_table_at: super::admin_table::STATE_TABLE_READ_AT,
+            restore_rule_at: RESTORE_RULE_READ_AT,
+        }
+    }
 }
 
 /// **A lifecycle verb on the agent page**: offered as its form, or
@@ -426,6 +570,10 @@ struct AgentPage {
 struct VerbView {
     verb: &'static str,
     why: Option<&'static str>,
+    /// **The warning beside an offered verb** that admin's state table
+    /// refuses in the row's last reading (`admin_table`, Spec 2.13): the
+    /// verb is offered still. None for a disabled verb.
+    warning: Option<String>,
 }
 
 /// An alert as the agent page lists it.
@@ -518,6 +666,12 @@ struct PlanesFragment {
     planes: Vec<PlaneView>,
 }
 
+#[derive(Template)]
+#[template(path = "agent_run.html")]
+struct RunFragment {
+    run: RunView,
+}
+
 /// A fragment, kept from every cache.
 fn fragment(rendered: askama::Result<String>) -> Response {
     match rendered {
@@ -557,6 +711,31 @@ async fn availability(store: Store, seams: &Seams, headers: HeaderMap) -> Respon
     }
 }
 
+/// **An agent a fragment re-fetch may read**, as [`readable`] but through
+/// [`background_session`]: the identity parsed (400), the session standing
+/// (401), a grant held on it (otherwise 404, as an unknown agent).
+async fn readable_in_background(
+    store: &Store,
+    policy: &Policy,
+    headers: &HeaderMap,
+    agent: &str,
+) -> Result<(Session, AgentId), Response> {
+    if !is_agent_id(agent) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "the agent asked for is not of its identity's shape",
+        )
+            .into_response());
+    }
+    let id: AgentId = agent.parse().map_err(|e| fault(anyhow::Error::msg(e)))?;
+    let session = background_session(store, policy, headers).await?;
+    match store.roles_on(&session.person_id, &id).await {
+        Ok(roles) if roles.is_empty() => Err(not_found()),
+        Ok(_) => Ok((session, id)),
+        Err(e) => Err(fault(e)),
+    }
+}
+
 /// **One agent's connectors, re-fetched every 15 s by its page**: an agent
 /// without a grant answers as an unknown one.
 async fn agent_availability(
@@ -565,26 +744,10 @@ async fn agent_availability(
     headers: HeaderMap,
     agent: String,
 ) -> Response {
-    if !is_agent_id(&agent) {
-        return (
-            StatusCode::BAD_REQUEST,
-            "the agent asked for is not of its identity's shape",
-        )
-            .into_response();
-    }
-    let id: AgentId = match agent.parse() {
-        Ok(id) => id,
-        Err(e) => return fault(anyhow::Error::msg(e)),
-    };
-    let session = match background_session(&store, &seams.policy, &headers).await {
-        Ok(session) => session,
+    let (_, id) = match readable_in_background(&store, &seams.policy, &headers, &agent).await {
+        Ok(read) => read,
         Err(answer) => return answer,
     };
-    match store.roles_on(&session.person_id, &id).await {
-        Ok(roles) if roles.is_empty() => return not_found(),
-        Ok(_) => {}
-        Err(e) => return fault(e),
-    }
     match store.agent(&id).await {
         Ok(Some(row)) => fragment(
             PlanesFragment {
@@ -595,6 +758,35 @@ async fn agent_availability(
         Ok(None) => not_found(),
         Err(e) => fault(e),
     }
+}
+
+/// **Run's two panes, re-fetched every 15 s by the agent page** (Spec
+/// 2.13): the load state and the verbs from the row as it stands, through
+/// the session gate without refreshing the session's last use and through
+/// the grant scoping as at the page's load, so the state a load answered
+/// past the silence bound reaches the page without a reload, and a warning
+/// with it.
+async fn agent_run(store: Store, seams: &Seams, headers: HeaderMap, agent: String) -> Response {
+    let (session, id) = match readable_in_background(&store, &seams.policy, &headers, &agent).await
+    {
+        Ok(read) => read,
+        Err(answer) => return answer,
+    };
+    let row = match store.agent(&id).await {
+        Ok(Some(row)) => row,
+        Ok(None) => return not_found(),
+        Err(e) => return fault(e),
+    };
+    let granted = match store.verbs_on(&session.person_id, &id).await {
+        Ok(granted) => granted,
+        Err(e) => return fault(e),
+    };
+    fragment(
+        RunFragment {
+            run: RunView::of(&row, &granted),
+        }
+        .render(),
+    )
 }
 
 /// An open decision prompt, as its `<dialog open>` shows it.
@@ -651,12 +843,7 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, agent: String) ->
         Ok(granted) => granted,
         Err(e) => return fault(e),
     };
-    let ceiling = row
-        .ceiling
-        .as_ref()
-        .filter(|_| row.admin.connected)
-        .cloned()
-        .unwrap_or_default();
+    let ceiling = live_ceiling(&row);
     // **The turn form** where the person's grants carry `turn` and gate-con
     // is connected, and **the shared-conversation note** where more than
     // one enabled person holds `turn` on the agent, by the grants page's
@@ -666,26 +853,6 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, agent: String) ->
         Ok(shared) => shared.iter().any(|agent| agent == id.as_str()),
         Err(e) => return fault(e),
     };
-    // **Every lifecycle verb is on the page**: offered where the grants
-    // carry it and the live connection's ceiling grants it, disabled with
-    // why otherwise, never hidden.
-    let verbs: Vec<VerbView> = VOCABULARY
-        .into_iter()
-        .filter(|verb| lifecycle(verb))
-        .map(|verb| VerbView {
-            verb,
-            why: if !granted.contains(verb) {
-                Some("not in your roles")
-            } else if !row.admin.connected {
-                Some("admin-con not connected")
-            } else if !ceiling.iter().any(|c| c == verb) {
-                Some("above the ceiling")
-            } else {
-                None
-            },
-        })
-        .collect();
-    let offered = verbs.iter().any(|v| v.why.is_none());
     // **The agent's alerts** (Spec 2.14): seen by every grant holder,
     // acknowledged by an `operator` holder; the open prompt offers only the
     // options the person's grants and the connection's ceiling carry, and
@@ -755,7 +922,6 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, agent: String) ->
             version: a.version,
         })
         .collect();
-    let none = || "none held".to_owned();
     let page = AgentPage {
         here: "agents",
         who: session.name,
@@ -766,55 +932,9 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, agent: String) ->
         present: row.present(),
         gate: plane(&row.gate),
         admin_plane: plane(&row.admin),
-        ceiling: row
-            .ceiling
-            .as_ref()
-            .map(|c| format!("{}{}", c.join(" "), stamp(row.ceiling_at)))
-            .unwrap_or_else(|| "none declared".to_owned()),
-        door: row
-            .trace_door
-            .map(|open| {
-                format!(
-                    "{}{}",
-                    if open { "open" } else { "closed" },
-                    stamp(row.trace_door_at)
-                )
-            })
-            .unwrap_or_else(|| "not reported".to_owned()),
-        load_state: row
-            .load_state
-            .as_ref()
-            .map(|state| {
-                format!(
-                    "{state}, by {}{}",
-                    row.state_source.as_deref().unwrap_or("an unnamed source"),
-                    stamp(row.load_state_at)
-                )
-            })
-            .unwrap_or_else(none),
-        tuple: row
-            .tuple
-            .as_ref()
-            .map(|tuple| {
-                format!(
-                    "{tuple}, by {}{}",
-                    row.tuple_source.as_deref().unwrap_or("an unnamed source"),
-                    stamp(row.tuple_at)
-                )
-            })
-            .unwrap_or_else(none),
-        constituents: row
-            .constituents
-            .as_ref()
-            .map(|pids| {
-                let pids: Vec<String> = pids.iter().map(i32::to_string).collect();
-                format!("{}{}", pids.join(" "), stamp(row.constituents_at))
-            })
-            .unwrap_or_else(none),
-        transition: transition_said(&row),
+        door: door_said(&row),
         window: LIVE_WINDOW,
-        verbs,
-        offered,
+        run: RunView::of(&row, &granted),
         turn_form,
         shared,
         chrome,
@@ -824,7 +944,6 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, agent: String) ->
         prompt,
         stages: stages(),
         left: left(),
-        state_at: row.load_state_at.map(when).unwrap_or_default(),
     };
     match page.render() {
         Ok(html) => Html(html).into_response(),
@@ -877,6 +996,52 @@ struct VerbPage {
     /// 2.14), whose prompt the page states, its options chosen on the
     /// agent's page, where the alert stands.
     missed: Option<String>,
+    /// admin's stderr beside its answer, where it wrote any.
+    stderr: Option<Said>,
+}
+
+/// **admin's own words beside its answer** (Spec 2.13): text admin wrote,
+/// cut at [`STDERR_BOUND`] bytes at a character boundary as an alert's
+/// reason cuts it, shown on the page escaped as every value is, and never
+/// parsed or read for meaning by this console.
+struct Said {
+    text: String,
+    /// The bound, where the text was cut at it.
+    cut_at: Option<usize>,
+}
+
+impl Said {
+    /// What admin wrote, `None` where it wrote nothing but blanks.
+    fn of(text: Option<&str>) -> Option<Said> {
+        let text = text.filter(|t| !t.trim().is_empty())?;
+        let kept = bounded(text, STDERR_BOUND);
+        let cut_at = (kept.len() < text.len()).then_some(STDERR_BOUND);
+        Some(Said { text: kept, cut_at })
+    }
+}
+
+/// admin's answer to a verb as its page shows it.
+struct Shown {
+    status: StatusCode,
+    kind: String,
+    detail: String,
+    exit: Option<i32>,
+    missed: Option<String>,
+    stderr: Option<Said>,
+}
+
+impl Shown {
+    /// An answer that carried none of admin's words.
+    fn bare(status: StatusCode, kind: String, detail: String) -> Shown {
+        Shown {
+            status,
+            kind,
+            detail,
+            exit: None,
+            missed: None,
+            stderr: None,
+        }
+    }
 }
 
 /// **A person's verb, asked through the server** (Spec 2.13): parsed,
@@ -971,9 +1136,9 @@ async fn act(
     // **The page's wait is its own**, bounding nothing of the ask: the
     // outcome is written at the answer whatever this does.
     let bound = seams.asker.silence();
-    let (status, kind, detail, exit, missed) = if shown == "turn" {
+    let answered = if shown == "turn" {
         let (status, kind, detail) = turn_shown(bound, enqueued).await;
-        (status, kind, detail, None, None)
+        Shown::bare(status, kind, detail)
     } else {
         verb_shown(bound, &shown, enqueued).await
     };
@@ -992,69 +1157,56 @@ async fn act(
         label: format!("{}/{}", row.r#box, row.name),
         verb: shown,
         first,
-        kind,
-        detail,
-        exit,
+        kind: answered.kind,
+        detail: answered.detail,
+        exit: answered.exit,
         chrome,
-        missed,
+        missed: answered.missed,
+        stderr: answered.stderr,
     };
     match page.render() {
-        Ok(html) => (status, Html(html)).into_response(),
+        Ok(html) => (answered.status, Html(html)).into_response(),
         Err(e) => fault(e),
     }
 }
 
 /// admin's answer to a verb, as the page shows it, with its exit status
 /// and the leg an `unload` stopped at its save point missed.
-async fn verb_shown(
-    bound: Duration,
-    verb: &str,
-    enqueued: Enqueued,
-) -> (StatusCode, String, String, Option<i32>, Option<String>) {
+async fn verb_shown(bound: Duration, verb: &str, enqueued: Enqueued) -> Shown {
     match tokio::time::timeout(bound, enqueued.answer()).await {
-        Ok(Ok(outcome)) => (
-            StatusCode::OK,
-            if outcome.exit_code == Some(0) {
+        Ok(Ok(outcome)) => Shown {
+            status: StatusCode::OK,
+            kind: if outcome.exit_code == Some(0) {
                 "admin's answer"
             } else {
                 "admin's refusal"
             }
             .to_owned(),
-            outcome
+            detail: outcome
                 .answer
                 .as_ref()
                 .map(|a| serde_json::to_string_pretty(a).unwrap_or_default())
                 .unwrap_or_default(),
-            outcome.exit_code,
-            crate::link::listener::stopped_at_save_point(verb, &outcome).map(str::to_owned),
-        ),
-        Ok(Err(VerbError::Fault(fault))) => (
+            exit: outcome.exit_code,
+            missed: crate::link::listener::stopped_at_save_point(verb, &outcome)
+                .map(str::to_owned),
+            stderr: Said::of(outcome.stderr.as_deref()),
+        },
+        Ok(Err(VerbError::Fault(fault))) => Shown::bare(
             StatusCode::OK,
             "admin-con's fault".to_owned(),
             format!("{}: {}", fault.kind, fault.message),
-            None,
-            None,
         ),
-        Ok(Err(VerbError::Unanswered)) => (
+        Ok(Err(VerbError::Unanswered)) => Shown::bare(
             StatusCode::OK,
             "the connection ended with the verb in flight: its outcome is unknown here, and the trace and the next show hold it".to_owned(),
             String::new(),
-            None,
-            None,
         ),
-        Ok(Err(e)) => (
-            StatusCode::OK,
-            "no answer".to_owned(),
-            e.to_string(),
-            None,
-            None,
-        ),
-        Err(_) => (
+        Ok(Err(e)) => Shown::bare(StatusCode::OK, "no answer".to_owned(), e.to_string()),
+        Err(_) => Shown::bare(
             StatusCode::ACCEPTED,
             "asked, and not answered within the bound: its outcome is written when admin answers".to_owned(),
             String::new(),
-            None,
-            None,
         ),
     }
 }

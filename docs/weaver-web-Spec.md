@@ -2064,7 +2064,61 @@ it decides are stated here and in section 2.8, and the reasons are there.
   their `pe-` identity. The page offers the verbs the person's grants carry
   and the connection's ceiling grants, and after an ask waits for admin's
   answer to the silence bound and shows it, or answers 202 naming the first
-  record, whose outcome is written when admin answers. **As built on
+  record, whose outcome is written when admin answers. **Beside the answer,
+  admin's own words** (on the Planner's ruling of 2026-11-12): the outcome's
+  stderr, cut at 2048 bytes at a character boundary as an alert's reason
+  cuts it (section 2.14), the page saying where it cut. They are
+  escaped as every value on the page is, shown and never parsed or read for
+  meaning, so a refusal's remedy that admin writes on stderr, a stale
+  `[restore]`'s among them, is read where the verb was asked. **Beside
+  `load` and `restore`, admin's `[restore]` rule** (on the Planner's ruling
+  of 2026-11-12): a declared `[restore]` loads only while the save point it
+  names is the manifest's latest; any save point or unload publishes past
+  it, and admin then refuses the load (`config_invalid`, naming `restore`)
+  until `restore` runs again or the key is removed on the box. The page
+  restates it from `weaver-admin-Spec` section 4 at the corpus commit
+  section 2.4 pins, which the admin-operator contract does not yet carry,
+  and names the commit it was read at; a test holds that commit to the
+  build's pin, so the pin does not move until the rule is reread. The page
+  guards nothing on it: whether a declaration carries a stale `[restore]`
+  is the box's, and nothing the console reads says so. **Beside a verb
+  admin's state table refuses, a warning** (on the Planner's ruling of
+  2026-11-12 and the operator's "warn, do not refuse" of 2026-11-11):
+  where every state of the admin-operator contract's section 4.1 table
+  that the row's last reading covers refuses an offered verb, the page
+  names the refusal, the reading and its date beside the verb's form, and
+  the verb stays offered. The row reads one of four things, each covering
+  the states whose `show` prints it: unloaded (S0, S0d and S8b once
+  nothing of the agent stands), idle (S2 and S9), active (S3), or in
+  transition while one stands (section 2.12), the transition being the
+  reading then, a turn's events keeping it (S0d and S8b while processes
+  stand, S1, S4 to S8a, S10, S11, any state while another command holds
+  the agent, and a command killed mid-command). Six cells warn: `load`
+  read idle or active (`AgentRunning`) or in transition
+  (`InvocationInFlight` where a command holds the agent, `AgentRunning`
+  where none does), and `save-point` read unloaded (`OutOfOrder`), active
+  (`ActivityNotAtRest`) or in transition (`InvocationInFlight` where a
+  command holds the agent, `OutOfOrder` where none does). `unload`,
+  `force-unload` and `restore` are answered in some state of every
+  reading, and the table gives `show`, `validate` and `stop` no column, so
+  none of them is warned of. The table is read at the corpus commit
+  section 2.4 pins, and the repository holds the table and the two
+  paragraphs beneath it as read; a test derives every cell from that copy
+  and holds the commit to the build's pin, so the pin does not move until
+  the table is reread. Where the contract and the page differ, the
+  contract wins. A reading is the row's and can be older than the agent's
+  state, which is why the warning carries its date and the box's own rule
+  decides last. **Run's two panes re-read by themselves** (on the
+  Planner's ruling of 2026-11-12): the load state and the verbs are one
+  fragment, `GET /agents/{ag}/run`, which the vendored htmx re-fetches
+  every 15 s with no inline script, so a state that a load answered past
+  the silence bound writes reaches the page without a reload, and a
+  warning never outlives the reading it was drawn from. It is read as
+  section 2.14's fragments are: through the session gate without
+  refreshing the session's last use, an ended session answering 401, and
+  through the grant scoping as at the page's load, an agent without a
+  grant answered as an unknown one (404) and a malformed identity 400.
+  **As built on
   2026-10-14, a person's turn** goes the same way, one mechanism serving
   both planes: `POST /agents/{ag}/turn` parses the identity and the text,
   not empty and its request line within the gate's own bound (400, no
@@ -2483,8 +2537,9 @@ The banner is derived from the register at the read and clears by itself
 once the plane is admitted again; the lost-contact alert stands beside it
 until acknowledged. **The page re-reads it by itself**: the banners are a
 fragment (`GET /availability`) that the vendored htmx re-fetches every 15
-s with no inline script, and the agent page's connectors are another
-(`GET /agents/{ag}/availability`), each through the session gate and the
+s with no inline script, the agent page's connectors are another
+(`GET /agents/{ag}/availability`), and its load state and verbs a third
+(`GET /agents/{ag}/run`, section 2.13), each through the session gate and the
 grant scoping as at the page's load, an agent without a grant answered as
 an unknown one. **A re-fetch is not the person's use**: it checks every end
 of the session but leaves its last use as it was, so an open tab never
@@ -5306,6 +5361,9 @@ an unmerged contract.
 | every target the audit writes is checked by its kind | perturbation in `src/store/identity_tests.rs`, each insert rolled back: drop the passkey target's check, and a passkey target out of its `pk-` shape, or naming none, lands; drop the alert target's, and an alert target out of its `al-` shape, or naming none, lands; drop the declaration target's, and a declaration target out of its `de-` shape, or naming none, lands; drop the authority target's, and an authority target naming a row lands; drop the known kinds, and a target of a kind no check covers lands. The agent's, person's, grant's and role's checks stand in the rows of the audit's checks and the identity checks |
 | every verb a person asks has its first record before its frame, and every refusal of one its record | perturbation, in `src/verbs_tests.rs`: send the frame before the record step, and it reaches admin-con though the audit holds no record of it; drop a refusal's record, and a refused verb leaves no trace. The outcome naming the first is written at the door of the server's asks' row, which a person's answer passes through alike |
 | every turn a person places has its first record before its frame, naming `turn`, and its outcome only by the gate contract's evidence | perturbation, in `src/verbs_tests.rs`: write `ok` for any close, and a stopped turn reads `ok`; write `failed` for `delivery_lost`, and an unknown outcome reads `failed`; drop the door's shape check, and an answer carrying both a close and a fault is taken. The first before the frame is the record step's, shown on the verb's row and the server's asks' |
+| the verb's answer page shows admin's own words, escaped and cut at the alert's bound, never parsed | perturbation, in `src/verbs_tests.rs`, `the_answer_page_shows_admins_own_words`, against the real listener and a fake admin-con: a refused `load` whose stderr carries markup and runs past 2048 bytes, a two-byte character straddling the bound, shows the words escaped, ending before that character and saying it cut, beside the refusal object, and a blank stderr is not shown; drop the stderr from the page, the cut or the escaping, and the case fails |
+| the agent page states admin's `[restore]` rule with its source, read at the build's pin | `the_agent_page_states_admins_restore_rule_with_its_source` in `src/reading_tests.rs`: the page carries the rule, its refusal and its two remedies beside the verbs, naming the commit it was read at; drop the statement, and the case fails; and `the_restore_rule_was_read_at_the_builds_pin`: move `CORPUS_COMMIT` alone, and the case fails |
+| a verb admin's state table refuses in the row's last reading is warned of beside its form and offered still, read at the build's pin | perturbation, in `src/transition_tests.rs`, `the_agent_page_warns_of_a_verb_the_state_table_refuses`, against the real listener and a fake admin-con: read idle, `load` is warned `AgentRunning` and `save-point` and `unload` are not; read active, `load` and `save-point` are warned; read in transition, both are warned with the lock held and free told apart, dated by the transition; read unloaded, `save-point` alone; each warning names the reading and its date and every form stays; drop the warning from the template, change a cell, or ignore a standing transition, and the case fails; `the_state_table_cells_follow_the_contract_as_read` in `src/surfaces/admin_table.rs`: every cell stands on the words of the contract's section 4.1 as held in `admin-table-a3543b31.md`, and every warning is the derivation's; change a cell or a copy's word, and the case fails; and `the_state_table_was_read_at_the_builds_pin`: move `CORPUS_COMMIT` alone, and the case fails |
 | a turn's text is in no audit record and no log line | perturbation, in `src/verbs_tests.rs`: put the text in the first record, and the row carries it; log it at debug in the held section, and the process's capture of every line finds it |
 | every person, role or grant written has an audit record naming its principal, and its outcome is a second record naming the first | perturbation, **owed**: update the first record with the outcome instead of appending a second, and an ask whose answer is lost reads as never answered with no trace of the rewrite; write a grant with the audit write dropped, and the grant lands with no record; add a passkey with the audit write dropped, and the write lands with no record; record the material in an authentication write's record, and a read of the audit table is a set of credentials. The server's own asks and a person's verbs and turns stand in their own rows. Lands with the IAM act |
 | the server's own asks are audited: every verb frame it sends has a first record committed before the frame enters the channel and an outcome naming it when the answer lands, and it asks `show` only | perturbation, in `src/link/server_asks_tests.rs` against the real listener and fake admin-cons: enqueue the frame before the record step, or where the record failed, at an admission and through `Listener::verb`, and a `show` reaches admin-con with no record; drop the record step's bound, and a store that stalls holds the ask past the silence bound; take the oldest entry of the connection's map of first records rather than the one the answer's id names, and an opening's answer lands as the admission's outcome; race an answered ask's outcome against the close signal, and a revocation landing mid-write leaves its first alone; disarm the guard between the record and the channel as soon as it is installed, and an ask cancelled while its send waits on a full channel keeps its entries and leaves its first alone; arm the guard only once the insert has answered, and a first whose answer is lost after its commit stands alone; drop the outcome lock from the `failed` write, and a first whose commit lands after its answer was lost stands alone; go back to a deny-list of the fault kinds that write no outcome, and a kind a connector invents writes `failed`; drop the door's verb check, and a `load` answer to a `show` ask writes `ok`; land a `show` answer's state whatever its exit status, and a refusal's object lands as the row's state; compute what remains of the admission's deadline before the outcome's write, and an admission whose write passes its deadline completes after it; read the deadline after the landing's poll rather than before it, as tokio's `timeout_at` does at every poll, and a `show` answered past the admission's deadline lands on the row while the connection closes `admission_incomplete` (6 of 20 runs alone, measured 2026-11-11), a landing handed a deadline already past is polled and read as done, and one still waiting when its deadline comes is polled at the timer's wake, where it could take a pool connection and send its statement (`link::listener::bounded_tests`, every run); read the clock at the first poll alone, and the timer's wake polls a waiting landing past its deadline; keep the timer and drop the clock, and a deadline at the instant the bound is asked, which the timer rounds up to its next tick, lets the landing be polled; drop the timer and keep the clock, and a landing that never answers holds the bound past its deadline; poll the landing before the close signal, and a close standing at a poll lets it be polled; classify a verb frame carrying both an outcome and a fault as admin's outcome, and the asker reads a success and the audit `ok` for a contradictory answer; drop the `show`-only refusal, and the server's `load` leaves with no refusal record |
@@ -5349,7 +5407,8 @@ an unmerged contract.
 | the server's own `show` in flight at a teardown raises no `unknown` | perturbation in `src/alerts_tests.rs`: keep it among the in-flight unknowns, and a cut with the server's `show` in flight raises an `unknown` beside the lost contact |
 | choosing a prompt's option without a grant answers as an unknown agent | perturbation in `src/alerts_tests.rs`: resolve the alert before the grant check, and a person holding no grant tells a real prompt from an unknown one |
 | a plane the server cannot reach is a banner for the agent's grant holders alone, re-read by the page | perturbation in `src/alerts_tests.rs`: drop the grant scoping of the unavailable planes, and a person holding no grant sees another agent's banners; drop the grant check from the connectors' fragment, and such a person reads its connectors and their last-heard time |
-| a fragment's re-fetch leaves the session's last use as it was | perturbation in `src/alerts_tests.rs`: refresh the last use at a background read, and a poll moves it, so an open tab holds an idle session open |
+| a fragment's re-fetch leaves the session's last use as it was | perturbation in `src/alerts_tests.rs`, `a_poll_leaves_the_sessions_last_use_as_it_was`, over the banners, the connectors and Run's panes: refresh the last use at a background read, or read Run's panes through the page's session read, and a poll moves it, so an open tab holds an idle session open |
+| the agent page's load state and verbs are one fragment, re-fetched every 15 s through the grant scoping | perturbation, in `src/transition_tests.rs`, `the_run_panes_re_read_by_themselves`, against the real listener and a fake admin-con: the page wraps both panes in the fragment's trigger; the fragment is the page's own panes, kept from every cache; a state written between two fetches shows at the second, its warnings with it; a person holding no grant reads 404, a malformed identity 400, an ended session 401; drop the trigger from the page, drop the grant check, or render the fragment from another view, and the case fails |
 | an answer refused at the door leaves its act's outcome unknown, and raises its alert | perturbation in `src/alerts_tests.rs`: leave the refused answer's ask out of the teardown's drain, on the admin plane or on the gate plane, and a `load` answered naming another verb, or a turn answered with both a close and a fault, raises only the lost contact |
 | a plane's loss is ordered before the restoration that follows it | perturbation in `src/alerts_tests.rs`, the teardown held after its row is released: raise the loss after the teardown rather than where the entry comes out, readmit in the gap, and the lost-contact alert ends unrestored while a connection stands |
 | a line of the box's `admin.log` raises an alert only where it did not come through WeaverWeb | perturbation in `src/entries_tests.rs` and `src/link/admin_con_tests.rs`: drop the own check at the server, and a refusal admin-con's own invocation met raises its alert again from its line; take every line as another party's at admin-con, and an own line sent end to end through the real admin-con raises one; put the whole line back in the alert's detail, and another party's refusal shows the line's uid and command line to every grant holder |

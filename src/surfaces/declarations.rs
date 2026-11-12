@@ -255,19 +255,12 @@ fn suggestions() -> Vec<&'static str> {
     out
 }
 
+/// Each tunable value with what the screen admits for it (Spec 6.1's
+/// table), for the pane's note.
 fn sampler_hints() -> Vec<(&'static str, &'static str)> {
     crate::declaration::SAMPLER
         .iter()
-        .map(|(name, real)| {
-            (
-                *name,
-                if *real {
-                    "a finite number"
-                } else {
-                    "a whole number, 0 or more"
-                },
-            )
-        })
+        .map(|(name, _)| (*name, crate::declaration::admits(name)))
         .collect()
 }
 

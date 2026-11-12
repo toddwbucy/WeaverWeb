@@ -14,6 +14,8 @@ mod admin_tests;
 mod agents_tests;
 pub mod alerting;
 #[cfg(all(test, feature = "passkeys"))]
+mod alerting_deadline_tests;
+#[cfg(all(test, feature = "passkeys"))]
 mod alerts_tests;
 pub mod config;
 pub(crate) mod deadline;
@@ -49,6 +51,8 @@ pub mod stage;
 mod stage_tests;
 pub mod store;
 pub mod surfaces;
+#[cfg(test)]
+mod timeouts_tests;
 pub mod traceview;
 #[cfg(all(test, feature = "passkeys"))]
 mod transition_tests;

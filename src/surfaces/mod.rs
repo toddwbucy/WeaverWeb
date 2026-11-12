@@ -9,6 +9,7 @@
 //! and a run land by the ingest of section 3.1 alone.
 
 pub mod admin;
+pub mod admin_table;
 pub mod agents;
 pub mod alerts;
 pub mod declarations;

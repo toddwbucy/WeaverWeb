@@ -227,6 +227,50 @@ async fn a_verb_not_offered_is_disabled_with_why_and_never_absent() {
     );
 }
 
+/// **The agent page states admin's `[restore]` rule with its source**
+/// (Spec 2.13): beside `load` and `restore`, the rule as `weaver-admin-Spec`
+/// section 4 states it, the refusal it gives and its two remedies, naming
+/// the commit it was read at, offered verbs or none.
+#[tokio::test]
+async fn the_agent_page_states_admins_restore_rule_with_its_source() {
+    let Some((rig, _, karl, _, _, session)) = granted().await else {
+        return;
+    };
+    let (status, _, page) =
+        send_as(&rig.app, "GET", &format!("/agents/{karl}"), None, &session).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    for words in [
+        "a declared <code>[restore]</code> loads only while the save point it names is the manifest's latest",
+        "Any save point or unload publishes past it",
+        "(<code>config_invalid</code>, naming <code>restore</code>)",
+        "until <code>restore</code> runs again or the key is removed on the box",
+        "Restated from <code>weaver-admin-Spec</code> section 4 at WeaverAgent",
+    ] {
+        assert!(page.contains(words), "{words}: {page}");
+    }
+    assert!(
+        page.contains(&format!(
+            "<span class=\"mono\">{}</span>",
+            crate::surfaces::reading::RESTORE_RULE_READ_AT
+        )),
+        "the commit it was read at: {page}"
+    );
+}
+
+/// **The `[restore]` rule was read at the build's pin** (Spec 2.13, the
+/// Planner's ruling of 2026-11-12): moving `CORPUS_COMMIT` fails here until
+/// `weaver-admin-Spec` section 4's rule is reread at the new commit, the
+/// agent page's statement restated, and the constant moved with it.
+#[test]
+fn the_restore_rule_was_read_at_the_builds_pin() {
+    assert_eq!(
+        crate::surfaces::reading::RESTORE_RULE_READ_AT,
+        crate::declaration::render::CORPUS_COMMIT,
+        "the pin moved: reread weaver-admin-Spec section 4's [restore] rule at the new \
+         commit, restate it on the agent page, then move RESTORE_RULE_READ_AT"
+    );
+}
+
 /// **The Live trace pane reads its stream through the trace module**
 /// (Spec 2.13): the module is served as JavaScript, under 4 KiB, under the
 /// script policy; the agent page carries the pane's list naming the agent's

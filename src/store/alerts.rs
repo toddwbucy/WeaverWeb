@@ -17,6 +17,8 @@
 
 use sqlx::{Postgres, Transaction};
 
+#[cfg(test)]
+use crate::deadline::hold::{self, Point};
 use crate::store::{AgentId, Store};
 
 /// The bounds the table checks, applied before the write so a long reason
@@ -95,32 +97,42 @@ pub struct Raise {
     pub once: bool,
 }
 
+/// A raise's one statement: an insert resolving its conflict on the open
+/// alert's index.
+const RAISE: &str = "INSERT INTO alert (agent_id, kind, subject, source, summary, detail, \
+     first_record, options) VALUES ($1, $2, $3, $8, $4, $5, $6, $7) \
+     ON CONFLICT (agent_id, kind, subject) WHERE acknowledged_at IS NULL \
+     DO UPDATE SET last_at = now(), occurrences = alert.occurrences + 1, \
+     version = alert.version + 1, summary = EXCLUDED.summary, \
+     detail = EXCLUDED.detail, first_record = EXCLUDED.first_record, \
+     options = EXCLUDED.options, source = EXCLUDED.source, restored_at = NULL \
+     RETURNING alert_id";
+
+/// A raise once ever's one statement: an insert where none stands.
+const RAISE_ONCE: &str = "INSERT INTO alert (agent_id, kind, subject, source, summary, detail, \
+     first_record, options) \
+     SELECT $1, $2, $3, $8, $4, $5, $6, $7 WHERE NOT EXISTS ( \
+       SELECT 1 FROM alert WHERE agent_id = $1 AND kind = $2 AND subject = $3) \
+     ON CONFLICT (agent_id, kind, subject) WHERE acknowledged_at IS NULL DO NOTHING \
+     RETURNING alert_id";
+
 /// **Raise an alert, or repeat the open one**, on the connection given: a
 /// pool's for a raise of its own, a transaction's for an inbox row's.
 async fn raise_in(conn: &mut sqlx::PgConnection, raise: &Raise) -> anyhow::Result<Option<String>> {
     if raise.once {
         return raise_once_in(conn, raise).await;
     }
-    let id: String = sqlx::query_scalar(
-        "INSERT INTO alert (agent_id, kind, subject, source, summary, detail, \
-         first_record, options) VALUES ($1, $2, $3, $8, $4, $5, $6, $7) \
-         ON CONFLICT (agent_id, kind, subject) WHERE acknowledged_at IS NULL \
-         DO UPDATE SET last_at = now(), occurrences = alert.occurrences + 1, \
-         version = alert.version + 1, summary = EXCLUDED.summary, \
-         detail = EXCLUDED.detail, first_record = EXCLUDED.first_record, \
-         options = EXCLUDED.options, source = EXCLUDED.source, restored_at = NULL \
-         RETURNING alert_id",
-    )
-    .bind(raise.agent.as_str())
-    .bind(raise.kind.as_str())
-    .bind(bounded(&raise.subject, 64))
-    .bind(bounded(&raise.summary, SUMMARY_BOUND))
-    .bind(bounded(&raise.detail, DETAIL_BOUND))
-    .bind(&raise.first)
-    .bind(&raise.options)
-    .bind(raise.source)
-    .fetch_one(&mut *conn)
-    .await?;
+    let id: String = sqlx::query_scalar(RAISE)
+        .bind(raise.agent.as_str())
+        .bind(raise.kind.as_str())
+        .bind(bounded(&raise.subject, 64))
+        .bind(bounded(&raise.summary, SUMMARY_BOUND))
+        .bind(bounded(&raise.detail, DETAIL_BOUND))
+        .bind(&raise.first)
+        .bind(&raise.options)
+        .bind(raise.source)
+        .fetch_one(&mut *conn)
+        .await?;
     Ok(Some(id))
 }
 
@@ -131,24 +143,17 @@ async fn raise_once_in(
     conn: &mut sqlx::PgConnection,
     raise: &Raise,
 ) -> anyhow::Result<Option<String>> {
-    Ok(sqlx::query_scalar(
-        "INSERT INTO alert (agent_id, kind, subject, source, summary, detail, \
-         first_record, options) \
-         SELECT $1, $2, $3, $8, $4, $5, $6, $7 WHERE NOT EXISTS ( \
-           SELECT 1 FROM alert WHERE agent_id = $1 AND kind = $2 AND subject = $3) \
-         ON CONFLICT (agent_id, kind, subject) WHERE acknowledged_at IS NULL DO NOTHING \
-         RETURNING alert_id",
-    )
-    .bind(raise.agent.as_str())
-    .bind(raise.kind.as_str())
-    .bind(bounded(&raise.subject, 64))
-    .bind(bounded(&raise.summary, SUMMARY_BOUND))
-    .bind(bounded(&raise.detail, DETAIL_BOUND))
-    .bind(&raise.first)
-    .bind(&raise.options)
-    .bind(raise.source)
-    .fetch_optional(&mut *conn)
-    .await?)
+    Ok(sqlx::query_scalar(RAISE_ONCE)
+        .bind(raise.agent.as_str())
+        .bind(raise.kind.as_str())
+        .bind(bounded(&raise.subject, 64))
+        .bind(bounded(&raise.summary, SUMMARY_BOUND))
+        .bind(bounded(&raise.detail, DETAIL_BOUND))
+        .bind(&raise.first)
+        .bind(&raise.options)
+        .bind(raise.source)
+        .fetch_optional(&mut *conn)
+        .await?)
 }
 
 /// **An entry as the door took it**, for the inbox.
@@ -197,6 +202,8 @@ impl Claimed {
             .bind(self.row.inbox_id)
             .execute(&mut *self.tx)
             .await?;
+        #[cfg(test)]
+        hold::commit(Point::Apply).await;
         self.tx.commit().await?;
         Ok(())
     }
@@ -212,6 +219,11 @@ impl Claimed {
         Ok(())
     }
 }
+
+/// A restoration's one statement, on the open lost-contact alert alone.
+const RESTORED: &str = "UPDATE alert SET restored_at = now(), version = version + 1 \
+     WHERE agent_id = $1 AND kind = 'lost_contact' AND subject = $2 \
+     AND acknowledged_at IS NULL AND restored_at IS NULL";
 
 /// A row's next try, its wait doubling from a second to five minutes.
 const BACK_OFF: &str = "UPDATE entry_inbox SET attempts = attempts + 1, \
@@ -261,6 +273,13 @@ impl Store {
     /// being lost again. Answers the alert's identity.
     pub async fn raise_alert(&self, raise: &Raise) -> anyhow::Result<Option<String>> {
         let mut conn = self.pool.acquire().await?;
+        #[cfg(test)]
+        hold::prepared(
+            Point::Raise,
+            &mut conn,
+            if raise.once { RAISE_ONCE } else { RAISE },
+        )
+        .await?;
         raise_in(&mut conn, raise).await
     }
 
@@ -330,25 +349,26 @@ impl Store {
     /// **A row whose effect failed** is tried again later, its wait
     /// doubling from a second to five minutes, never deleted.
     pub async fn inbox_failed(&self, inbox_id: i64) -> anyhow::Result<()> {
-        sqlx::query(BACK_OFF)
-            .bind(inbox_id)
-            .execute(&self.pool)
-            .await?;
+        let back_off = sqlx::query(BACK_OFF).bind(inbox_id);
+        #[cfg(test)]
+        if let Some(mut conn) = hold::statement(Point::InboxFailed, &self.pool, BACK_OFF).await? {
+            back_off.execute(&mut *conn).await?;
+            return Ok(());
+        }
+        back_off.execute(&self.pool).await?;
         Ok(())
     }
 
     /// **Contact restored**: the open lost-contact alert on the plane, if
     /// any, notes when, and stays until acknowledged.
     pub async fn alert_contact_restored(&self, agent: &AgentId, plane: &str) -> anyhow::Result<()> {
-        sqlx::query(
-            "UPDATE alert SET restored_at = now(), version = version + 1 \
-             WHERE agent_id = $1 AND kind = 'lost_contact' AND subject = $2 \
-             AND acknowledged_at IS NULL AND restored_at IS NULL",
-        )
-        .bind(agent.as_str())
-        .bind(plane)
-        .execute(&self.pool)
-        .await?;
+        let restored = sqlx::query(RESTORED).bind(agent.as_str()).bind(plane);
+        #[cfg(test)]
+        if let Some(mut conn) = hold::statement(Point::Restored, &self.pool, RESTORED).await? {
+            restored.execute(&mut *conn).await?;
+            return Ok(());
+        }
+        restored.execute(&self.pool).await?;
         Ok(())
     }
 

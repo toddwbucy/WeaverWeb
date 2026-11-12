@@ -126,7 +126,7 @@ fn assert_servers_show(first: &Record) {
 }
 
 /// Connect admin-con with the ceiling given and take the hello's answer.
-async fn hello(lab: &Lab, agent: &Registered, ceiling: &[&str]) -> Fake {
+pub(super) async fn hello(lab: &Lab, agent: &Registered, ceiling: &[&str]) -> Fake {
     let mut fake = lab.connect(&agent.admin).await;
     fake.send(FromClient::Hello {
         agent: agent.name.clone(),
@@ -144,7 +144,7 @@ async fn hello(lab: &Lab, agent: &Registered, ceiling: &[&str]) -> Fake {
 }
 
 /// The next frame is the server's `show`: its ask's id.
-async fn take_show(fake: &mut Fake) -> u64 {
+pub(super) async fn take_show(fake: &mut Fake) -> u64 {
     match fake.recv().await {
         Some(ToClient::Verb {
             id,
@@ -160,7 +160,7 @@ async fn take_show(fake: &mut Fake) -> u64 {
 
 /// Answer the admission's `show` with a state, take the server's landing
 /// and say the replay is caught up: an admission complete.
-async fn admitted(lab: &Lab, agent: &Registered, ceiling: &[&str]) -> Fake {
+pub(super) async fn admitted(lab: &Lab, agent: &Registered, ceiling: &[&str]) -> Fake {
     let mut fake = hello(lab, agent, ceiling).await;
     let id = take_show(&mut fake).await;
     fake.send(FromClient::Verb {

@@ -1,4 +1,5 @@
 //! conforms: web-raising-an-alert-never-waits
+//! conforms: web-a-bounded-write-is-never-sent-once-its-deadline-has-come
 //!
 //! **The server's alerts and its operations log** (Spec 2.14; act 12, PR
 //! 1; the operator's rulings of 2026-10-14): a failure the listener meets,
@@ -25,6 +26,9 @@ use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 
+#[cfg(test)]
+use crate::deadline::hold::{self, Point};
+use crate::deadline::{self, Passed};
 use crate::store::alerts::{Claimed, Raise};
 use crate::store::{AgentId, Store};
 
@@ -33,7 +37,7 @@ const QUEUE: usize = 256;
 
 /// How long the worker gives the store for one alert before logging the
 /// failure without its identity.
-const STORE_BOUND: Duration = Duration::from_secs(10);
+pub(crate) const STORE_BOUND: Duration = Duration::from_secs(10);
 
 /// A failure, as raised.
 #[derive(Debug, Clone)]
@@ -257,14 +261,17 @@ async fn work(
         match note {
             Note::Stop => return,
             Note::Restored { agent, plane } => {
-                match tokio::time::timeout(STORE_BOUND, store.alert_contact_restored(&agent, plane))
-                    .await
-                {
+                // **Read before the write is polled** (Spec 2.14, 7.2): a
+                // restoration logged as not noted was not sent.
+                let until = tokio::time::Instant::now() + STORE_BOUND;
+                #[cfg(test)]
+                hold::bound(Point::Restored, until);
+                match deadline::before(store.alert_contact_restored(&agent, plane), until).await {
                     Ok(Ok(())) => {}
                     Ok(Err(e)) => tracing::error!(
                         "{agent} ({plane}): contact's restoration could not be noted on its alert: {e:#}"
                     ),
-                    Err(_) => tracing::error!(
+                    Err(Passed) => tracing::error!(
                         "{agent} ({plane}): contact's restoration was not noted within {STORE_BOUND:?}"
                     ),
                 }
@@ -279,15 +286,22 @@ async fn work(
     }
 }
 
-/// The alert raised, bounded; its identity, none where nothing was raised.
+/// **The alert raised, bounded; its identity, none where nothing was
+/// raised** (Spec 2.14). The deadline is read before the raise is polled
+/// (Spec 7.2), so a raise still waiting when the bound passes is never
+/// sent, and the operations log's line naming no alert agrees with the
+/// store, a statement in flight at the bound excepted (Spec 10).
 async fn raised(store: &Store, raise: &Raise) -> Option<String> {
-    match tokio::time::timeout(STORE_BOUND, store.raise_alert(raise)).await {
+    let until = tokio::time::Instant::now() + STORE_BOUND;
+    #[cfg(test)]
+    hold::bound(Point::Raise, until);
+    match deadline::before(store.raise_alert(raise), until).await {
         Ok(Ok(id)) => id,
         Ok(Err(e)) => {
             tracing::error!("{}: an alert could not be raised: {e:#}", raise.agent);
             None
         }
-        Err(_) => {
+        Err(Passed) => {
             tracing::error!(
                 "{}: an alert was not raised within {STORE_BOUND:?}",
                 raise.agent
@@ -374,21 +388,42 @@ async fn drain(store: Store, log: Option<PathBuf>, alerts: Alerts) {
             continue;
         };
         let inbox_id = claimed.row.inbox_id;
-        let applied =
-            tokio::time::timeout(STORE_BOUND, apply(claimed, log.as_ref(), &alerts)).await;
+        // **Read before the row's work is polled** (Spec 2.14, 7.2): a row
+        // logged as not applied was not committed, so its claim and its
+        // raise rolled back and its back-off below finds it standing.
+        let until = tokio::time::Instant::now() + STORE_BOUND;
+        #[cfg(test)]
+        hold::bound(Point::Apply, until);
+        let applied = deadline::before(apply(claimed, log.as_ref(), &alerts), until).await;
         let failed = match applied {
             Ok(Ok(())) => false,
             Ok(Err(e)) => {
                 tracing::error!("an inbox row ({inbox_id}) was not applied: {e:#}");
                 true
             }
-            Err(_) => {
+            Err(Passed) => {
                 tracing::error!("an inbox row ({inbox_id}) was not applied within {STORE_BOUND:?}");
                 true
             }
         };
         if failed {
-            let _ = bounded(store.inbox_failed(inbox_id)).await;
+            backed_off(&store, inbox_id).await;
+        }
+    }
+}
+
+/// **A row whose effect failed, backed off**, bounded, the deadline read
+/// before the write is polled (Spec 7.2): a back-off logged as not written
+/// was not sent, and the row is due again as it stood.
+async fn backed_off(store: &Store, inbox_id: i64) {
+    let until = tokio::time::Instant::now() + STORE_BOUND;
+    #[cfg(test)]
+    hold::bound(Point::InboxFailed, until);
+    match deadline::before(store.inbox_failed(inbox_id), until).await {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => tracing::error!("an inbox row ({inbox_id}) could not be backed off: {e:#}"),
+        Err(Passed) => {
+            tracing::error!("an inbox row ({inbox_id}) was not backed off within {STORE_BOUND:?}")
         }
     }
 }
@@ -451,21 +486,6 @@ async fn apply(mut claimed: Claimed, log: Option<&PathBuf>, alerts: &Alerts) -> 
     }
     let _ = alerts;
     claimed.done().await
-}
-
-/// A store step bounded, true where it completed.
-async fn bounded(step: impl std::future::Future<Output = anyhow::Result<()>>) -> bool {
-    match tokio::time::timeout(STORE_BOUND, step).await {
-        Ok(Ok(())) => true,
-        Ok(Err(e)) => {
-            tracing::error!("the entries' inbox could not be written: {e:#}");
-            false
-        }
-        Err(_) => {
-            tracing::error!("the entries' inbox was not written within {STORE_BOUND:?}");
-            false
-        }
-    }
 }
 
 /// **The operations log can be appended to**, checked at the server's

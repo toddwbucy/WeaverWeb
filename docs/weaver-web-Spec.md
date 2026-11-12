@@ -2060,7 +2060,16 @@ it decides are stated here and in section 2.8, and the reasons are there.
   session no longer standing, answered exactly as an unknown agent, 404; a
   grant without the verb 403; outside the ceiling 403, naming it; not
   connected 503); then the first record, durable; then the enqueue through
-  the reserved slot, and the hold's commit. The frame names the person by
+  the reserved slot, and the hold's commit. **A refusal's record is held to
+  the ask's one deadline, read before the record is sent** (section 7.2;
+  the Planner's default of 2026-11-12). Recorded, the person is answered
+  the refusal itself, as above. Refused by the store, they are answered the
+  server's failure (500). Not recorded when the deadline comes, they are
+  answered the bound's failure (503, the ask not made within its bound),
+  and its statement was never sent, so the audit holds no refusal the
+  person was not told of, one statement's flight excepted (section 10).
+  Past the grant check either failure is an alert besides (section 2.14),
+  and before it neither is. The frame names the person by
   their `pe-` identity. The page offers the verbs the person's grants carry
   and the connection's ceiling grants, and after an ask waits for admin's
   answer to the silence bound and shows it, or answers 202 naming the first
@@ -2295,6 +2304,16 @@ from: weaver-web
 to: web-the-servers-asks-are-audited
 ```
 
+```graph
+node: web-a-bounded-write-is-never-sent-once-its-deadline-has-come
+kind: assertion
+tag: perturbation
+
+edge: asserts
+from: weaver-web
+to: web-a-bounded-write-is-never-sent-once-its-deadline-has-come
+```
+
 ### 2.14 Alerts and the operator's decisions
 
 **What the server does with a failure, ruled by the operator on
@@ -2442,8 +2461,11 @@ copy, **each row claimed in a transaction of its own** (`FOR UPDATE SKIP
 LOCKED`, so no two drainers, of one process or two, ever apply one row) and
 held to the store's bound: its alert raised and kept on the row, then its
 line written, then the row deleted, all committed with the claim; a drainer
-that fails or dies mid-row ends the transaction, the claim and any raise
-rolling back and the row due again. **The worker and the drainer live and
+that fails, dies or passes the bound mid-row ends the transaction, its
+commit never sent once the bound has come (section 7.2), the claim and any
+raise rolling back and the row due again. A row's back-off is bounded and
+read the same way: logged as not backed off, it was not sent, and the row is
+due again as it stood. **The worker and the drainer live and
 die with their listener**, ended at its stop before its lock is released, **in
 the order the work flows**: the connections closed and drained, their
 teardowns raising, then the worker writing what was queued, held to a
@@ -2492,7 +2514,19 @@ failure to a bounded queue of 256 and go on; a worker of its own writes the
 alert, its store write bounded at ten seconds, then the operations log's
 line naming it. A full queue drops the failure and counts the drops, the
 count logged at error, so a stalled store or a full disk never holds a
-connection, a teardown or an ask.
+connection, a teardown or an ask. **The line and the store agree in each
+outcome of the raise** (the Planner's default of 2026-11-12):
+
+- **Raised**: the line names the alert, and the alert stands.
+- **Refused by the store**: the line names none (`"alert": null`), no
+  alert stands, and the worker logs the refusal at error.
+- **The bound passes first**: the raise is never sent, its deadline read
+  before it is polled (section 7.2). The line names none, no alert stands,
+  and the worker logs the bound at error, one statement's flight excepted
+  (section 10).
+
+The worker's note of a restoration on the open lost-contact alert is
+bounded and read the same way: logged as not noted, it was not sent.
 
 **The operations log** is a file the server appends one JSON line to per
 failure: the time, the agent, the plane, the act, the first record, the
@@ -4337,7 +4371,17 @@ anywhere short of its statement. A connection closed as incomplete has
 written none of that answer, and the reconnection's `show` lands in its
 place. A statement that goes out before the deadline and is answered after
 it still commits under a connection closed as incomplete, a window of one
-statement's flight that section 10 holds open. Where the ceiling does not grant `show`, the
+statement's flight that section 10 holds open. **The rule is every bounded
+write's** (the Planner's default of 2026-11-12, after a sweep of the
+server's store writes under tokio's timeouts): each first record, outcome
+and refusal the listener writes under a bound (section 2.13), the `failed`
+outcome of a first whose frame never left among them, and each write of the
+alerts' worker and drainer (section 2.14) reads its deadline before its
+write is polled, through one helper (`crate::deadline::before`).
+A write still waiting when its deadline comes, on the pool, on a lock or on
+an earlier statement's answer, is then dropped unsent, so a caller that
+reports a write as not made at its bound is telling the truth, the same one
+statement's flight excepted. Where the ceiling does not grant `show`, the
 server asks nothing, admission completes at `caught_up`, and the row's
 tuple and load state stand on live trace events alone, the row naming that
 source and its date per section 2.12, so a surface says the state is
@@ -5367,6 +5411,7 @@ an unmerged contract.
 | a turn's text is in no audit record and no log line | perturbation, in `src/verbs_tests.rs`: put the text in the first record, and the row carries it; log it at debug in the held section, and the process's capture of every line finds it |
 | every person, role or grant written has an audit record naming its principal, and its outcome is a second record naming the first | perturbation, **owed**: update the first record with the outcome instead of appending a second, and an ask whose answer is lost reads as never answered with no trace of the rewrite; write a grant with the audit write dropped, and the grant lands with no record; add a passkey with the audit write dropped, and the write lands with no record; record the material in an authentication write's record, and a read of the audit table is a set of credentials. The server's own asks and a person's verbs and turns stand in their own rows. Lands with the IAM act |
 | the server's own asks are audited: every verb frame it sends has a first record committed before the frame enters the channel and an outcome naming it when the answer lands, and it asks `show` only | perturbation, in `src/link/server_asks_tests.rs` against the real listener and fake admin-cons: enqueue the frame before the record step, or where the record failed, at an admission and through `Listener::verb`, and a `show` reaches admin-con with no record; drop the record step's bound, and a store that stalls holds the ask past the silence bound; take the oldest entry of the connection's map of first records rather than the one the answer's id names, and an opening's answer lands as the admission's outcome; race an answered ask's outcome against the close signal, and a revocation landing mid-write leaves its first alone; disarm the guard between the record and the channel as soon as it is installed, and an ask cancelled while its send waits on a full channel keeps its entries and leaves its first alone; arm the guard only once the insert has answered, and a first whose answer is lost after its commit stands alone; drop the outcome lock from the `failed` write, and a first whose commit lands after its answer was lost stands alone; go back to a deny-list of the fault kinds that write no outcome, and a kind a connector invents writes `failed`; drop the door's verb check, and a `load` answer to a `show` ask writes `ok`; land a `show` answer's state whatever its exit status, and a refusal's object lands as the row's state; compute what remains of the admission's deadline before the outcome's write, and an admission whose write passes its deadline completes after it; read the deadline after the landing's poll rather than before it, as tokio's `timeout_at` does at every poll, and a `show` answered past the admission's deadline lands on the row while the connection closes `admission_incomplete` (6 of 20 runs alone, measured 2026-11-11), a landing handed a deadline already past is polled and read as done, and one still waiting when its deadline comes is polled at the timer's wake, where it could take a pool connection and send its statement (`link::listener::bounded_tests`, every run); read the clock at the first poll alone, and the timer's wake polls a waiting landing past its deadline; keep the timer and drop the clock, and a deadline at the instant the bound is asked, which the timer rounds up to its next tick, lets the landing be polled; drop the timer and keep the clock, and a landing that never answers holds the bound past its deadline; poll the landing before the close signal, and a close standing at a poll lets it be polled; classify a verb frame carrying both an outcome and a fault as admin's outcome, and the asker reads a success and the audit `ok` for a contradictory answer; drop the `show`-only refusal, and the server's `load` leaves with no refusal record |
+| a store write the server bounds by a deadline is never sent once its deadline has come, so a caller that reports it as not made at its bound is telling the truth | perturbation, in `src/deadline.rs` with no database: poll the write before reading its deadline, as tokio's `timeout_at` does, and a write whose wait ends at its deadline sends at the timer's wake (`a_write_waiting_at_its_deadline_is_never_sent`); keep the timer and drop the clock, and a write handed a deadline at this very instant is polled; tokio's own order is held as a test (`tokios_timeout_sends_a_write_waiting_at_its_deadline`), so an upgrade that reorders it is seen. And at each site, in `src/link/deadline_tests.rs` against the real listener and fake admin-cons, the write held just before the statement that commits it until the very deadline its site bounds it by (`deadline::hold`, a test's lever alone): bound the site's write with tokio's `timeout_at` again, and its row lands while the caller reports it not made, every run: a person's refusal while the ask answers the bound's failure, the server's refusal of a verb but `show` while the verb answers the audit's failure, and a verb's outcome, a first record and the `failed` outcome of a first whose frame never left while each is logged as not written. And in `src/alerting_deadline_tests.rs`, against the alerts' own worker and drainer on a store of their own, the same perturbation lands an alert while the operations log's line names none, a restoration on the lost-contact alert while the worker logs it as not noted, an inbox row's commit, the row gone and its alert raised, while the drainer logs it as not applied, and a row's back-off while the drainer logs it as not backed off. And the class, in `src/timeouts_tests.rs` with no database, the Planner's ruling of 2026-11-12: every call of tokio's `timeout` or `timeout_at` in code compiled outside test is held to a list, each entry naming its function and one reason it bounds no write that could commit unreported; add such a call, or put any of the act's nine sites back in tokio's order, and the scan finds it unlisted |
 | a person authenticates by passkey, or by a sign-in token where the config admits one, and by nothing else | perturbation, through a soft passkey in `src/sign_in_tests.rs`: let the options load every person's passkeys, the counter rule find the credential among anyone's and the opening take any person's passkey, and another person's authenticator answering this person's challenge opens this person's session, each of the three guards holding it alone; take a ceremony without removing it, and the ceremony table's own test in `src/passkeys_tests.rs` finishes one twice, a captured sign-in assertion replayed being refused besides by the counter rule; audit the failed signature, and a stream of bad assertions fills the audit; drop the opening's check of its person, disable the person between the counter rule and the opening, and a disabled person's session opens; look the passkey up by its credential ID at the finish rather than by the identity the ceremony challenged, reset the person and re-enroll the same credential between the options and the finish, and a session opens on the re-enrolled row, and a possible clone whose passkey was removed goes unaudited. No path opens a session but the finish of a verified assertion and, where the config's `sign_in` names `token`, the redemption of a live sign-in token, whose own row is the sign-in token's below |
 | the server refuses to start on the listener's faults the design lists, and promises nothing beyond them | perturbation, each start refusal of `docs/project/design-2026-10-07-iam.md` section 3 that concerns the origin and the certificate, against certificates minted at test time in `src/listen_tests.rs`: the origin parsed by `url`, the WHATWG URL Standard a browser parses by, and required to equal its origin's ASCII serialization: drop the equality, and an origin with userinfo, a path or a trailing slash, a query, a fragment, a scheme or host in upper case, a default port written, a port with a leading zero, an IPv6 address not in its canonical form, a host a browser reads as an IPv4 address written otherwise than in dotted decimal, or an internationalized name not in its ASCII form starts, each a value no browser sends, so every state-changing request would fail the `Origin` comparison; compare the Unicode serialization instead, and an internationalized name starts in its Unicode form; keep the brackets of an IPv6 host in the name check, and a certificate for that address is refused; let `http` through off `localhost`, and the server listens on an origin where no ceremony can run; drop the refusal of an `https` origin with no certificate and key, and the listener serves it in the clear; drop the pair check, and a key that does not pair with its certificate starts; drop the name check, and a certificate for another host starts against the origin; drop either half of the validity check, and an expired or a not-yet-valid certificate starts; drop the warning, and one expiring within fourteen days starts silently. And the listener itself: let the binary serve plain where a certificate and key are configured, and `tests/startup.rs` (ignored, the real binary, started with a certificate minted at test time) gets no answer over TLS and a surface's answer in the clear; take each handshake on the accepting task, and a client that connects and never speaks stalls the next client's handshake in `src/listen_tests.rs`; drop the permit taken before each accept, and with the cap held by silent clients the next connection is accepted at once rather than waiting for a silent one's bound, at a small cap and bound the test sets; the same file shows a TLS client a surface's answer and a plain request none. And the listener's log, against a log captured in `src/listen_tests.rs`: log a client's certificate alert at debug, and a browser refusing the certificate leaves the operator nothing at the default level; warn of every one, and a second alert within the interval warns again; take every failed handshake for a certificate alert, and a plain client warns. With a certificate and no origin, the pair and the period are checked and the name check waits for an origin. A fault the list does not name, a certificate unfit for server authentication among them, is not this row's: the browser's refused handshake shows it |
 | the server refuses to start on the relying party's faults the design lists | perturbation, each refusal its own case in `src/listen_tests.rs`: drop the refusal of an `rp_id` with no `origin`, or of an `origin` with no `rp_id`, and the server listens with passkeys no browser will use; drop the refusal of an empty `rp_id`, or of one that is an IP address, bracketed or not, and every ceremony fails with the browser's `SecurityError`; drop the refusal of an origin whose host is neither the `rp_id` nor under it, or take a bare suffix for a domain under it, and an origin of another registrable domain, or one the `rp_id` sits under, starts; drop the requirement that the `rp_id`, parsed by `url` as a browser parses a host, equal its domain's ASCII serialization, and an `rp_id` in upper case or with a Unicode label starts, the config and what the ceremonies send the browser no longer one fact. A public suffix as the `rp_id` is not this row's: the browser's failure at the first ceremony shows it |
@@ -5784,4 +5829,8 @@ a `web-` assertion beside `weaver-admin`'s.
   included, so an upper bound on the flight: a median of 0.95 ms and a
   longest of 5.2 ms over 6000 landings. Closing it means the store refusing
   a landing past the deadline on the store's own clock, which changes what
-  the store promises, so it waits on the operator's ruling.
+  the store promises, so it waits on the operator's ruling. The same window
+  stands, unclosed, at every write section 7.2 bounds by a deadline since
+  2026-11-12, section 2.13's first records, outcomes and refusals and section
+  2.14's raises, restorations, claims and back-offs, each one statement's
+  flight, and the ruling that closes it here closes it there.

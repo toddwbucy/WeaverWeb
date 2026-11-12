@@ -51,6 +51,8 @@ pub mod stage;
 mod stage_tests;
 pub mod store;
 pub mod surfaces;
+#[cfg(test)]
+mod timeouts_tests;
 pub mod traceview;
 #[cfg(all(test, feature = "passkeys"))]
 mod transition_tests;

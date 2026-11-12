@@ -57,7 +57,7 @@ The stages, in order, with what backs each today:
 
 | stage | the pane kinds | backing today |
 | --- | --- | --- |
-| 1 Declare | two screens (rulings of 2026-11-11): the declaration screen, its panes for the agent, each SPU box with its models and GPU requirement, the sampler's defaults, the store and gate, the prompt, the derived `agent.toml`, the version and the form's own refusals and warning; then the board, which wires what was declared | unbuilt; the declaration screen is specified (Spec 6.1), the board waits on WeaverAgent's contracts |
+| 1 Declare | two screens (rulings of 2026-11-11): the declaration screen, its panes for the agent, each SPU box with its models and GPU requirement, the tunable values a serving load requires, the store and gate, the prompt, the derived `agent.toml`, the version and the form's own refusals and warning; then the board, which wires what was declared | unbuilt; the declaration screen is specified (Spec 6.1), the board waits on WeaverAgent's contracts |
 | 2 Provision | the operator's work on the box, which this server never reaches (staging the binaries, the kernel account, installing the file derived from the declaration Declare saved), then the register row, the one-time config handover, then `validate`, which reads the installed declaration, closes the stage and gates Run | partly: the register page and the handover are built; the box steps and the validate step are not |
 | 3 Run | the verb forms, the turn form, the load state | built; `load` is offered as every verb is, where the person's grants and the connection's ceiling carry it |
 | 4 Observe | availability, the two connectors, alerts, the live trace | built |

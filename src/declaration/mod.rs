@@ -1,5 +1,8 @@
 //! conforms: web-the-declaration-screen-refuses-every-field-out-of-shape
 //! conforms: web-a-class-spanning-capabilities-is-warned-of
+//! conforms: web-a-saved-declaration-carries-every-tunable-value
+//! conforms: web-every-tunable-value-is-judged-on-the-agents-range
+//! conforms: web-a-new-form-starts-with-five-tunable-values
 //!
 //! **The declaration's document** (Spec 6.1): the console's own grammar, a
 //! superset of the agent's, which the declaration screen saves and the
@@ -7,10 +10,12 @@
 //! reaches a store, an agent or a host: [`Document::parse`] judges a JSON
 //! value and refuses, naming the field, everything out of shape; [`Form`]
 //! reads the screen's form and turns it into that value, a refusal naming
-//! the screen's own slot; [`Document::to_value`] writes the
-//! canonical form a save stores; [`Document::readings`] reads each class
-//! against the capability table for the one warning; and [`moved`] names the
-//! paths whose values differ between two documents.
+//! the screen's own slot; [`Document::serving`] judges, at save, that every
+//! tunable value a serving load requires is present and in the agent's
+//! range; [`Document::to_value`] writes the canonical form a save stores;
+//! [`Document::readings`] reads each class against the capability table for
+//! the one warning; and [`moved`] names the paths whose values differ
+//! between two documents.
 //!
 //! **The form refuses on its own only what it can judge alone**: a missing
 //! required field, a requirement that names nothing, and a field out of its
@@ -19,6 +24,7 @@
 
 pub mod capability;
 pub mod render;
+pub mod tunable_set;
 
 use serde_json::{Map, Value, json};
 use std::collections::HashSet;
@@ -43,8 +49,12 @@ pub enum Kind {
     Name,
     /// A control character in a text.
     Control,
-    /// A sampler value outside its kind.
+    /// A tunable value outside its kind: a count that is not a whole number,
+    /// a real that is not a finite number.
     Sampler,
+    /// A tunable value of its kind but outside the agent's range at the pin
+    /// (Spec 6.1's table), judged at save.
+    Range,
     /// A tool other than `sh`, or `sh` twice.
     Tool,
     /// A member the grammar does not hold.
@@ -172,8 +182,12 @@ impl Engine {
     }
 }
 
-/// **The sampler's defaults** (ruling 8), each optional: the declaration
-/// supplies the default, the turn call the value.
+/// **The tunable values** (Spec 6.1): every name a serving load requires in
+/// the agent's `tunable-values` at the build's pin, the sampler's six
+/// defaults and the session's two parameters. **Each is held as an option**
+/// so that a row saved before the eight were required still reads and
+/// reopens; a save requires all eight, each in its range
+/// ([`Document::serving`]).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Sampler {
     pub temperature: Option<f64>,
@@ -183,10 +197,13 @@ pub struct Sampler {
     pub repetition_penalty: Option<f64>,
     pub repetition_window: Option<u64>,
     pub max_tokens_per_turn: Option<u64>,
+    pub context_capacity: Option<u64>,
 }
 
-/// The sampler's members, in the grammar's order, each a real or a count.
-pub const SAMPLER: [(&str, bool); 7] = [
+/// The tunable values' members, in the grammar's order, each a real or a
+/// count. `src/declaration/tunable_set.rs` holds this set to the agent's at
+/// the pin.
+pub const SAMPLER: [(&str, bool); 8] = [
     ("temperature", true),
     ("top_k", false),
     ("top_p", true),
@@ -194,7 +211,70 @@ pub const SAMPLER: [(&str, bool); 7] = [
     ("repetition_penalty", true),
     ("repetition_window", false),
     ("max_tokens_per_turn", false),
+    ("context_capacity", false),
 ];
+
+/// **The five values a new declaration's form starts with** (the Planner's
+/// default of 2026-11-12, Spec 6.1): the constants the SPU froze until the
+/// carrier, at WeaverAgent `a3543b31f264b269f66ab55d8767f25290ec9d61`,
+/// `crates/weaver-spu/src/main.rs` lines 177 to 181. The seed and the two
+/// session parameters start empty, and the operator enters each.
+pub const STARTING: [(&str, &str); 5] = [
+    ("temperature", "0.7"),
+    ("top_k", "40"),
+    ("top_p", "0.95"),
+    ("repetition_penalty", "1.1"),
+    ("repetition_window", "64"),
+];
+
+/// The counts below 2^31: the GGUF engine takes `top-k` and the window as
+/// signed 32-bit integers (`weaver-spu-Spec` section 8).
+const BELOW_2_31: u64 = 1 << 31;
+/// The context capacity is below 2^32, the SPU's resolve's ceiling.
+const BELOW_2_32: u64 = 1 << 32;
+
+/// **Whether a tunable value is in the agent's range at the pin**, Spec
+/// 6.1's table: `Sampling::out_of_range` and its three real predicates in
+/// `crates/weaver-types/src/wire.rs`, `sampling_defaults` in `config.rs`,
+/// and the SPU's resolve for the session's two parameters. A context
+/// capacity of zero is refused as both engines refuse it at open. The seed
+/// and the maximum tokens per turn stop at `i64::MAX`, tighter than the
+/// agent's 2^64, since the agent's file holds no larger integer.
+fn in_range(member: &str, value: Value64) -> bool {
+    match (member, value) {
+        ("temperature", Value64::Real(x)) => narrowed(x, |v| v.is_finite() && v >= 0.0),
+        ("top_p", Value64::Real(x)) => narrowed(x, |v| v.is_finite() && v > 0.0 && v <= 1.0),
+        ("repetition_penalty", Value64::Real(x)) => narrowed(x, |v| v.is_finite() && v > 0.0),
+        ("top_k" | "repetition_window", Value64::Count(n)) => n < BELOW_2_31,
+        ("seed" | "max_tokens_per_turn", Value64::Count(n)) => i64::try_from(n).is_ok(),
+        ("context_capacity", Value64::Count(n)) => (1..BELOW_2_32).contains(&n),
+        _ => false,
+    }
+}
+
+/// **A real judged as written, then as the agent narrows it to a 32-bit
+/// float** (`DecoderInstruction::sampling_defaults`): in range as written, a
+/// nonzero value staying nonzero once narrowed, and the narrowed value,
+/// widened back exactly, in range again, which refuses a value that
+/// narrowed past the float's range to infinity.
+fn narrowed(x: f64, in_range: fn(f64) -> bool) -> bool {
+    let n = x as f32;
+    in_range(x) && !(x != 0.0 && n == 0.0) && in_range(f64::from(n))
+}
+
+/// **What the screen admits for each tunable value**, Spec 6.1's table in
+/// words, for the form's hints and the range refusal.
+pub fn admits(member: &str) -> &'static str {
+    match member {
+        "temperature" => "a finite number, 0 or more",
+        "top_k" | "repetition_window" => "a whole number from 0 to 2147483647",
+        "top_p" => "a number more than 0 and at most 1",
+        "repetition_penalty" => "a finite number more than 0",
+        "seed" | "max_tokens_per_turn" => "a whole number from 0 to 9223372036854775807",
+        "context_capacity" => "a whole number from 1 to 4294967295",
+        _ => "not a tunable value",
+    }
+}
 
 /// One sampler value, as the screen and the agent's file read it.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -216,6 +296,7 @@ impl Sampler {
             ("seed", self.seed),
             ("repetition_window", self.repetition_window),
             ("max_tokens_per_turn", self.max_tokens_per_turn),
+            ("context_capacity", self.context_capacity),
         ];
         SAMPLER
             .iter()
@@ -246,8 +327,19 @@ impl Sampler {
             ("seed", Value64::Count(v)) => self.seed = Some(v),
             ("repetition_window", Value64::Count(v)) => self.repetition_window = Some(v),
             ("max_tokens_per_turn", Value64::Count(v)) => self.max_tokens_per_turn = Some(v),
+            ("context_capacity", Value64::Count(v)) => self.context_capacity = Some(v),
             _ => {}
         }
+    }
+
+    /// The members the document lacks, in the grammar's order.
+    pub fn missing(&self) -> Vec<&'static str> {
+        let present = self.present();
+        SAMPLER
+            .iter()
+            .map(|(n, _)| *n)
+            .filter(|n| !present.iter().any(|(m, _)| m == n))
+            .collect()
     }
 }
 
@@ -441,6 +533,37 @@ impl Document {
                 Kind::Roster,
                 "declare no decoder; an agent declares exactly one",
             ));
+        }
+        Ok(())
+    }
+
+    /// **Whether a save may store this document** (Spec 6.1): every tunable
+    /// value a serving load requires at the pin present, each in the agent's
+    /// range, or the refusal naming the first that is not, in the grammar's
+    /// order. [`Document::parse`] admits a document lacking one, so that a
+    /// row saved before the eight were required still reopens; a save judges
+    /// it here as well, through [`Form::document`].
+    pub fn serving(&self) -> Result<(), Refused> {
+        let present = self.sampler.present();
+        for (name, _) in SAMPLER {
+            let field = format!("sampler.{name}");
+            match present.iter().find(|(m, _)| *m == name) {
+                None => {
+                    return Err(refused(
+                        field,
+                        Kind::Missing,
+                        "is required: a serving load refuses a declaration lacking it",
+                    ));
+                }
+                Some((_, value)) if !in_range(name, *value) => {
+                    return Err(refused(
+                        field,
+                        Kind::Range,
+                        format!("is outside the agent's range: {}", admits(name)),
+                    ));
+                }
+                Some(_) => {}
+            }
         }
         Ok(())
     }
@@ -1291,17 +1414,20 @@ impl Form {
         Ok(Value::Object(top))
     }
 
-    /// **The document the form describes, judged**: [`Form::to_value`],
-    /// then [`Document::parse`], a refusal's box and model renumbered to the
+    /// **The document the form describes, judged for a save**:
+    /// [`Form::to_value`], then [`Document::parse`] and
+    /// [`Document::serving`], a refusal's box and model renumbered to the
     /// screen's slots, since the value leaves an empty slot out. Every
     /// refusal the screen shows names a field by the document's path and
     /// the screen's own numbering.
     pub fn document(&self) -> Result<Document, Refused> {
         let value = self.to_value()?;
-        Document::parse(&value).map_err(|mut refusal| {
-            refusal.field = self.slot_path(&refusal.field);
-            refusal
-        })
+        Document::parse(&value)
+            .and_then(|document| document.serving().map(|()| document))
+            .map_err(|mut refusal| {
+                refusal.field = self.slot_path(&refusal.field);
+                refusal
+            })
     }
 
     /// A document path's box and model as the screen numbers its slots.
@@ -1412,10 +1538,18 @@ impl Form {
         form
     }
 
-    /// **The empty form**, with `boxes` empty boxes, at least one.
+    /// **The empty form**, with `boxes` empty boxes, at least one, and the
+    /// five [`STARTING`] values filled in, the other three tunable values
+    /// empty.
     pub fn empty(boxes: usize) -> Form {
         let mut form = Form {
-            sampler: SAMPLER.iter().map(|(n, _)| (*n, String::new())).collect(),
+            sampler: SAMPLER
+                .iter()
+                .map(|(n, _)| {
+                    let start = STARTING.iter().find(|(m, _)| m == n).map(|(_, v)| *v);
+                    (*n, start.unwrap_or_default().to_owned())
+                })
+                .collect(),
             boxes: vec![FormBox::default(); boxes.max(1)],
             ..Form::default()
         };

@@ -393,7 +393,7 @@ async fn list(store: Store, seams: &Seams, headers: HeaderMap) -> Response {
 /// inventory"; Spec 2.13). A test holds it to the build's pin,
 /// [`crate::declaration::render::CORPUS_COMMIT`], so the pin does not move
 /// until the rule is reread at the new commit and the statement restated.
-pub const RESTORE_RULE_READ_AT: &str = "a3543b31f264b269f66ab55d8767f25290ec9d61";
+pub const RESTORE_RULE_READ_AT: &str = "5ec7ecf8fe9cb37a45e2d65298a02fc395aa4291";
 
 #[derive(Template)]
 #[template(path = "agent_page.html")]

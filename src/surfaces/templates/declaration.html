@@ -34,7 +34,7 @@
     <tr><th>Author</th><td>{{ o.author }}</td></tr>
     <tr><th>Standing</th><td>{% if o.head %}<span class="status ok">the head</span> of its lineage: a save from here is the next version{% else %}<span class="status hold">not the head</span>: version {{ o.head_version }} is, <a class="mono" href="/declarations/{{ o.head_de }}">{{ o.head_de }}</a>, and a save is made from the head alone{% endif %}</td></tr>
     {%- if let Some(pin) = o.stale %}
-    <tr><th>Grammar</th><td><span class="status hold">stale</span> saved under the agent's grammar at WeaverAgent <span class="mono">{{ pin }}</span>; this build follows <span class="mono">{{ corpus }}</span></td></tr>
+    <tr><th>Grammar</th><td><span class="status hold">stale</span> saved under the agent's grammar at WeaverAgent <span class="mono">{{ pin }}</span>; this build follows <span class="mono">{{ corpus }}</span>, and a save from here judges every tunable value this build requires</td></tr>
     {%- endif %}
     </tbody>
   </table>
@@ -123,7 +123,7 @@
 {%- endfor %}
 <p class="row"><a href="{{ slots_href }}?boxes={{ more_boxes }}">Another SPU box</a><span class="note">a link, so it carries nothing typed and unsaved: ask for the boxes before typing</span></p>
 <section class="pane">
-  <header><h2>The sampler's defaults</h2></header>
+  <header><h2>The tunable values</h2></header>
   <div class="body stack">
   <div class="row">
     {%- for (member, text) in form.sampler %}
@@ -133,7 +133,7 @@
     </div>
     {%- endfor %}
   </div>
-  <span class="note">Each optional. {% for (member, kind) in sampler_hints %}{{ member }}: {{ kind }}{% if !loop.last %}; {% endif %}{% endfor %}. They derive into the agent's tunable-values today, the names being the agent's binary's (question 5); the per-turn values wait on the turn call, the loop's ask to the harness (question 6). The sampler's mechanism and every other setting fixed at load are shown here once an agent reports them (question 5).</span>
+  <span class="note">Each required: {% for (member, kind) in sampler_hints %}{{ member }}, {{ kind }}{% if !loop.last %}; {% endif %}{% endfor %}. A new declaration starts with five filled, the values the agent ran with before the declaration carried them; the seed, max_tokens_per_turn and context_capacity are yours to enter. They derive into the agent's tunable-values, every name a serving load requires at WeaverAgent {{ corpus }}: the first six are the sampling values every generation carries, max_tokens_per_turn the session's ceiling under each generation's own bound, and context_capacity the positions the session opens with, whose KV cache the SPU's admit judges against the devices drawn at start. Values a turn carries of its own wait on the console sending a turn with them (question 6). The sampler's mechanism and every other setting fixed at load are shown here once an agent reports them (question 5).</span>
   </div>
 </section>
 <section class="pane">

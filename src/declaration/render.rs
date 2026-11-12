@@ -1,4 +1,5 @@
 //! conforms: web-a-save-and-a-reopen-are-the-same-document
+//! conforms: web-a-stale-row-reopens-and-saves-once-filled
 //!
 //! **The agent's file a declaration becomes** (Spec 6.1): `agent.toml` in
 //! the agent's grammar, `weaver-types-Spec` section 2 at [`CORPUS_COMMIT`],
@@ -10,16 +11,17 @@
 //!
 //! **The member names are the agent's**, read at the pin from
 //! `crates/weaver-types/src/config.rs` (`AgentConfig`, kebab-case, closed
-//! objects) and, for `tunable-values`, from the SPU's own parameter names in
-//! `crates/weaver-spu/src/sampling.rs`. This crate links no crate of the
-//! agent (Spec 1), so the file is checked as TOML 1.0 and nothing more.
+//! objects) and, for `tunable-values`, from the eight names a serving load
+//! requires, held to the agent's as read by `super::tunable_set`. This
+//! crate links no crate of the agent (Spec 1), so the file is checked as
+//! TOML 1.0 and nothing more.
 
 use super::{Class, Document, Function, Part, Placement, Requirement, Value64};
 
 /// **The WeaverAgent commit whose grammar the file follows**, a constant of
 /// the build and Spec 2.4's staleness rule: a row saved under another pin is
 /// named stale on its page.
-pub const CORPUS_COMMIT: &str = "a3543b31f264b269f66ab55d8767f25290ec9d61";
+pub const CORPUS_COMMIT: &str = "5ec7ecf8fe9cb37a45e2d65298a02fc395aa4291";
 
 /// The row a file is derived from, as its header names it. The grammar the
 /// header names is this build's, [`CORPUS_COMMIT`], the one the file is
@@ -31,8 +33,8 @@ pub struct Meta<'a> {
     pub version: i64,
 }
 
-/// The SPU's name for each sampler member, in `tunable-values`.
-fn tunable(member: &str) -> &'static str {
+/// **The agent's name for each tunable value**, in `tunable-values`.
+pub(crate) fn tunable(member: &str) -> &'static str {
     match member {
         "temperature" => "temperature",
         "top_k" => "top-k",
@@ -41,6 +43,7 @@ fn tunable(member: &str) -> &'static str {
         "repetition_penalty" => "repetition-penalty",
         "repetition_window" => "repetition-window",
         "max_tokens_per_turn" => "max-tokens-per-turn",
+        "context_capacity" => "context-capacity",
         _ => "unknown",
     }
 }
@@ -185,6 +188,22 @@ pub fn agent_toml(document: &Document, meta: &Meta<'_>) -> String {
         } else {
             line(&mut out, &format!("tunable-values = {{ {values} }}"));
         }
+        // A row saved before the eight were required (Spec 2.4): the file
+        // the load would refuse, each name it lacks said.
+        let missing = document.sampler.missing();
+        if !missing.is_empty() {
+            line(
+                &mut out,
+                &format!(
+                    "# tunable-values lacks {}: a serving load refuses this file, and the row's save is refused until each is filled.",
+                    missing
+                        .iter()
+                        .map(|m| tunable(m))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            );
+        }
         line(&mut out, "");
         line(&mut out, "[spu-instruction.decoder.model-binding]");
         line(
@@ -260,7 +279,7 @@ pub fn agent_toml(document: &Document, meta: &Meta<'_>) -> String {
     }
     line(
         &mut out,
-        "# context-capacity and every other setting fixed at load: not declared on this screen (question 5).",
+        "# the sampler's mechanism and every other setting fixed at load: shown once an agent reports them (question 5).",
     );
     out
 }

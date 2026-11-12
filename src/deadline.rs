@@ -127,6 +127,11 @@ pub(crate) mod hold {
     #[derive(Debug)]
     pub(crate) struct Armed(Point);
 
+    /// How long [`Armed::settled`] waits for a write let go at its deadline
+    /// to commit.
+    #[cfg(feature = "passkeys")]
+    const SETTLE: std::time::Duration = std::time::Duration::from_secs(5);
+
     #[cfg(feature = "passkeys")]
     impl Armed {
         /// Whether the held write was let go at its deadline: its wait
@@ -140,6 +145,30 @@ pub(crate) mod hold {
         /// waited.
         pub(crate) fn reached(&self) -> bool {
             HELD.with(|h| h.borrow().get(&self.0).is_some_and(|held| held.reached))
+        }
+
+        /// **The store's verdict on the held write**: where the hold was let
+        /// go at its deadline, its statement went out and commits a moment
+        /// later, so `read` is repeated until `landed` holds or `SETTLE`
+        /// passes, and the assertion that follows shows the write; where it
+        /// was not, nothing is in flight and the first read is final. A
+        /// verdict stands only where the write reached its hold: one that
+        /// stalled before it until the deadline lands nothing in either
+        /// order, so that run fails here.
+        pub(crate) async fn settled<T, F, Fut>(&self, read: F, landed: impl Fn(&T) -> bool) -> T
+        where
+            F: Fn() -> Fut,
+            Fut: std::future::Future<Output = T>,
+        {
+            let until = Instant::now() + SETTLE;
+            loop {
+                let now = read().await;
+                if !self.let_go() || landed(&now) || Instant::now() >= until {
+                    assert!(self.reached(), "the write never reached its hold");
+                    return now;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
         }
     }
 

@@ -35,6 +35,8 @@ pub mod verbs;
 mod admin_con_tests;
 #[cfg(test)]
 mod client_tests;
+#[cfg(all(test, feature = "passkeys"))]
+mod deadline_tests;
 #[cfg(test)]
 pub(crate) mod fake_relay;
 #[cfg(test)]

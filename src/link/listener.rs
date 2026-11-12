@@ -7,6 +7,7 @@
 //! conforms: web-nothing-crosses-the-link-in-the-clear
 //! conforms: web-the-servers-asks-are-audited
 //! conforms: web-verb-refused-before-an-ask-unless-granted
+//! conforms: web-a-bounded-write-is-never-sent-once-its-deadline-has-come
 //!
 //! The listener (Spec section 8): the mutual-TLS accept loop, admission
 //! under the row's lock, the heartbeat, the incarnations that bind every

@@ -1,4 +1,5 @@
 //! conforms: web-raising-an-alert-never-waits
+//! conforms: web-a-bounded-write-is-never-sent-once-its-deadline-has-come
 //!
 //! **The server's alerts and its operations log** (Spec 2.14; act 12, PR
 //! 1; the operator's rulings of 2026-10-14): a failure the listener meets,

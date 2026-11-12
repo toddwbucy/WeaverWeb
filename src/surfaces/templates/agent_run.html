@@ -1,0 +1,50 @@
+{#- Run's two panes, the load state and the verbs: the agent page's own and
+    the fragment it re-fetches every 15 s (`GET /agents/{ag}/run`), one view
+    so a warning never outlives its reading. No inline script. -#}
+  <section class="pane">
+    <header><span class="stage"><b>3</b> Run</span><h2>Load state</h2><span class="backing built">built</span><span class="source">admin-con, <code>show</code> or the trace's event{% if !run.state_at.is_empty() %}, {{ run.state_at }}{% endif %}</span></header>
+    <div class="body flush">
+    <table>
+      <tbody>
+      <tr><th>Load state</th><td>{{ run.load_state }}</td></tr>
+      {%- if !run.transition.is_empty() %}
+      <tr><th>Transition</th><td>{{ run.transition }}</td></tr>
+      {%- endif %}
+      <tr><th>Tuple</th><td class="mono">{{ run.tuple }}</td></tr>
+      <tr><th>Constituents</th><td class="mono">{{ run.constituents }}</td></tr>
+      <tr><th>Ceiling</th><td class="mono">{{ run.ceiling }}</td></tr>
+      <tr><th>Trace door</th><td>{{ run.door }}</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <footer>The row's facts, each with its own date. Nothing here is inferred from the link being up.</footer>
+  </section>
+  <section class="pane">
+    <header><span class="stage"><b>3</b> Run</span><h2>Verbs</h2><span class="backing built">built</span><span class="source">admin-con, the ceiling it declared</span></header>
+    <div class="body row">
+    {%- for v in run.verbs %}
+    {%- match v.why %}
+    {%- when None %}
+    {%- match v.warning %}
+    {%- when None %}
+    <form method="post" action="/agents/{{ run.agent_id }}/verb"><input type="hidden" name="verb" value="{{ v.verb }}"><button type="submit" class="verb">{{ v.verb }}</button></form>
+    {%- when Some with (warning) %}
+    <span class="row"><form method="post" action="/agents/{{ run.agent_id }}/verb"><input type="hidden" name="verb" value="{{ v.verb }}"><button type="submit" class="verb">{{ v.verb }}</button></form><span class="status hold warning">{{ warning }}</span></span>
+    {%- endmatch %}
+    {%- when Some with (why) %}
+    <span class="row"><button type="button" class="verb" disabled>{{ v.verb }}</button><span class="note">{{ why }}</span></span>
+    {%- endmatch %}
+    {%- endfor %}
+    </div>
+    <div class="body">
+    {%- if run.warned %}
+    <p class="note table">A warning reads admin's state table (<code>weaver-admin-operator-contract</code> section 4.1 at WeaverAgent <span class="mono">{{ run.state_table_at }}</span>) against the row's last reading, dated: the verb stays offered, and the box decides.</p>
+    {%- endif %}
+    <p class="note rule">admin's <code>[restore]</code> rule: a declared <code>[restore]</code> loads only while the save point it names is the manifest's latest. Any save point or unload publishes past it, and admin then refuses the load (<code>config_invalid</code>, naming <code>restore</code>) until <code>restore</code> runs again or the key is removed on the box. Restated from <code>weaver-admin-Spec</code> section 4 at WeaverAgent <span class="mono">{{ run.restore_rule_at }}</span>.</p>
+    </div>
+    {%- if run.offered %}
+    <footer>A verb is asked of admin-con and answered on a page of its own; the box's own rule decides last.</footer>
+    {%- else %}
+    <footer>No verb your roles carry that the connection's ceiling grants.</footer>
+    {%- endif %}
+  </section>

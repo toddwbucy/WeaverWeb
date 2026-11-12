@@ -428,3 +428,80 @@ async fn the_agent_page_warns_of_a_verb_the_state_table_refuses() {
     assert_eq!(reads(&p, "unload"), None);
     assert!(p.contains(&source), "{p}");
 }
+
+/// **Run's two panes re-read by themselves** (Spec 2.13): the agent page
+/// holds the load state and the verbs as one fragment, `GET
+/// /agents/{ag}/run`, which the vendored htmx re-fetches every 15 s. The
+/// fragment is the page's own panes, kept from every cache; a state written
+/// between two fetches shows at the second, its warnings with it; a person
+/// holding no grant is answered as for an unknown agent, a malformed
+/// identity 400, and an ended session 401. That the fetch leaves the
+/// session's last use as it was is `a_poll_leaves_the_sessions_last_use_as_it_was`.
+///
+/// Perturbation: drop the trigger from the page, drop the grant check, or
+/// render the fragment from another view, and the case fails.
+#[tokio::test]
+async fn the_run_panes_re_read_by_themselves() {
+    let Some(mut o) = operated(&["show", "load", "save-point", "unload"]).await else {
+        return;
+    };
+    let s = o.rig.store().clone();
+    let (_, dan) = crate::admin_tests::signed_in(
+        &o.rig.app,
+        &s,
+        &mut crate::passkeys_tests::authenticator(),
+        "dan",
+    )
+    .await;
+    let uri = format!("/agents/{}/run", o.karl);
+    let karl = o.karl.clone();
+    let (app, bea) = (o.rig.app.clone(), o.bea_session.clone());
+
+    let p = page(&o).await;
+    assert!(
+        p.contains(&format!(
+            "<div class=\"stack\" id=\"run\" hx-get=\"{uri}\" hx-trigger=\"every 15s\" hx-swap=\"innerHTML\">"
+        )),
+        "{p}"
+    );
+    assert!(p.contains("/assets/surfaces/htmx.min.js"), "{p}");
+
+    let (status, headers, first) = send_as(&app, "GET", &uri, None, &bea).await;
+    assert_eq!(status, axum::http::StatusCode::OK, "{first}");
+    assert_eq!(
+        headers
+            .get(axum::http::header::CACHE_CONTROL)
+            .map(|v| v.to_str().unwrap()),
+        Some("no-store")
+    );
+    assert!(
+        p.contains(first.trim()),
+        "the fragment is the page's own panes: {first}"
+    );
+    assert!(first.contains("<h2>Load state</h2>"), "{first}");
+    assert!(first.contains("<td>idle, by show (since "), "{first}");
+    assert!(warning_beside(&first, &karl, "load").is_some(), "{first}");
+    assert_eq!(warning_beside(&first, &karl, "save-point"), None);
+
+    // A state written between two fetches shows at the second.
+    shown(&mut o, json!({"kind": "state", "state": "unloaded"}), 0).await;
+    let (status, _, second) = send_as(&app, "GET", &uri, None, &bea).await;
+    assert_eq!(status, axum::http::StatusCode::OK, "{second}");
+    assert!(second.contains("<td>unloaded, by show (since "), "{second}");
+    assert_eq!(warning_beside(&second, &karl, "load"), None, "{second}");
+    assert!(
+        warning_beside(&second, &karl, "save-point")
+            .is_some_and(|w| w.contains("reads unloaded: OutOfOrder")),
+        "{second}"
+    );
+
+    let (status, _, theirs) = send_as(&app, "GET", &uri, None, &dan).await;
+    assert_eq!(status, axum::http::StatusCode::NOT_FOUND, "{theirs}");
+    let (status, _, _) = send_as(&app, "GET", "/agents/not-an-agent/run", None, &bea).await;
+    assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+
+    let (status, _, _) = send_as(&app, "POST", "/sign-out", None, &bea).await;
+    assert!(status.is_redirection() || status.is_success(), "{status}");
+    let (status, _, ended) = send_as(&app, "GET", &uri, None, &bea).await;
+    assert_eq!(status, axum::http::StatusCode::UNAUTHORIZED, "{ended}");
+}

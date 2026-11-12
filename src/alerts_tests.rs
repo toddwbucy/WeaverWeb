@@ -1058,6 +1058,7 @@ async fn a_poll_leaves_the_sessions_last_use_as_it_was() {
     for uri in [
         "/availability".to_owned(),
         format!("/agents/{}/availability", o.karl),
+        format!("/agents/{}/run", o.karl),
     ] {
         let (status, _, _) = send_as(&o.rig.app, "GET", &uri, None, &o.bea_session).await;
         assert_eq!(status, StatusCode::OK, "{uri}");

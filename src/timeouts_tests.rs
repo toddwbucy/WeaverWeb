@@ -21,11 +21,12 @@
 //! a `.rs` file under `src/` that no declaration reaches fails the test. In
 //! each, every comment, string and character literal is blanked, and every
 //! item or statement under `#[cfg(test)]`, or under a `cfg(all(..))` that
-//! names `test`, is dropped. What is left is searched for `timeout(` and
-//! `timeout_at(` after a character that cannot end a name, so a method of
-//! that name counts too (the passkey library's builder has one). It reads
-//! text, not resolved paths: tokio's functions imported under another name,
-//! or a call a macro writes, are not seen.
+//! names `test`, is dropped. What is left is searched for calls of
+//! `timeout` and `timeout_at`: the name, not part of a longer one, then any
+//! generic arguments (`::<..>`) and any whitespace or comment before its
+//! `(`. A method of that name counts too (the passkey library's builder
+//! has one). It reads text, not resolved paths: tokio's functions imported
+//! under another name, or a call a macro writes, are not seen.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -206,6 +207,16 @@ fn the_scan_counts_production_calls_and_nothing_else() {
              fn k() { verb_timeout(d); s.timeout_secs(d); }"
         ),
         ["i", "j"]
+    );
+    // A call with generic arguments, or with whitespace or a comment
+    // before its `(`, counts; a name used without a call does not.
+    assert_eq!(
+        functions(
+            "use tokio::time::timeout;\n\
+             fn m() { timeout_at::<_>(d, f); timeout (d, f); timeout/* c */(d, f); }\n\
+             fn n() { s.timeout :: < u8 > (d); timeout_at::<fn() -> u8>(d, f); let g = timeout; }"
+        ),
+        ["m", "m", "m", "n", "n"]
     );
     // A file compiled only under test is none of the scan's.
     assert!(production(&code("#![cfg(test)]\nfn l() { timeout(d, f); }")).is_none());
@@ -525,15 +536,65 @@ fn bodies(code: &[char]) -> Vec<(String, usize, usize)> {
     found
 }
 
+/// **Whether a call of `timeout` or `timeout_at` starts at `i`**: the
+/// name, after a character that is not part of a name and before one that
+/// is not, then any generic arguments (`::<..>`), then its `(`, with
+/// whitespace allowed between them (a comment is blanked to whitespace).
+fn call_at(code: &[char], i: usize) -> bool {
+    if i > 0 && ident(code[i - 1]) {
+        return false;
+    }
+    let mut j = if starts(code, i, "timeout_at") {
+        i + "timeout_at".len()
+    } else if starts(code, i, "timeout") {
+        i + "timeout".len()
+    } else {
+        return false;
+    };
+    if code.get(j).is_some_and(|c| ident(*c)) {
+        return false;
+    }
+    let skip = |mut k: usize| {
+        while code.get(k).is_some_and(|c| c.is_whitespace()) {
+            k += 1;
+        }
+        k
+    };
+    j = skip(j);
+    if starts(code, j, "::") {
+        j = skip(j + 2);
+        if code.get(j) != Some(&'<') {
+            return false;
+        }
+        // The generic arguments, to the `>` closing the first `<`; the `>`
+        // of a `->` inside them closes nothing.
+        let mut depth = 0;
+        while j < code.len() {
+            match code[j] {
+                '<' => depth += 1,
+                '>' if code[j - 1] != '-' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        j += 1;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            j += 1;
+        }
+        j = skip(j);
+    }
+    code.get(j) == Some(&'(')
+}
+
 /// The calls in one file's production code, in order, each in the
 /// innermost named function holding it.
 fn calls_in(file: &str, code: &[char]) -> Vec<Call> {
     let functions = bodies(code);
     let mut found = Vec::new();
     for i in 0..code.len() {
-        if (i > 0 && ident(code[i - 1]))
-            || !(starts(code, i, "timeout(") || starts(code, i, "timeout_at("))
-        {
+        if !call_at(code, i) {
             continue;
         }
         let function = functions

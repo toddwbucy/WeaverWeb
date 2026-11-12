@@ -164,7 +164,7 @@ agent in a way that blocks many.
 
 | stage | what it holds | backing |
 | --- | --- | --- |
-| 1 Declare | two screens (the operator's rulings of 2026-11-11): declare the components (the models on their SPU boxes with each box's GPU requirement, the store, the gate, host or virtual machine, the system prompt, the sampler's defaults), then wire them on a board that shows only what was declared | partly: the declaration screen saves versioned declarations and shows the file each will become (Spec 6.1); the board is unbuilt and waits on contracts WeaverAgent has yet to write |
+| 1 Declare | two screens (the operator's rulings of 2026-11-11): declare the components (the models on their SPU boxes with each box's GPU requirement, the store, the gate, host or virtual machine, the system prompt, the tunable values a serving load requires), then wire them on a board that shows only what was declared | partly: the declaration screen saves versioned declarations and shows the file each will become (Spec 6.1); the board is unbuilt and waits on contracts WeaverAgent has yet to write |
 | 2 Provision | first the operator's work on the box, which this server never reaches: stage the binaries, create the kernel account, install the declaration Declare saved; then this server's: register the agent, mint its two connector credentials; then `validate`, which reads the installed declaration | partly: the register page and the one-time config handover are built; the box steps and the validate step are not |
 | 3 Run | load, serve turns through the gate, unload | built; `load` is offered as every verb is, where the person's grants and the connection's ceiling carry it |
 | 4 Observe | availability, alerts, the live trace | built |
@@ -225,7 +225,10 @@ decoder and its free placement of pieces. Spec section 6.1 states the first scre
   session. The sampler's mechanism is fixed at load, and its knobs are per-turn, the
   declaration supplying the defaults, the turn call the values and the record each
   event's: the test for any engine setting is whether changing it invalidates the cache,
-  fixed at load if it does and a per-turn knob if not.
+  fixed at load if it does and a per-turn knob if not. Since 2026-11-12 the screen
+  requires every tunable value a serving load requires at its pin, eight: the six
+  sampler defaults and the session's two parameters, the maximum tokens per turn and
+  the context capacity (Spec 6.1).
 - **The board** comes second and is unbuilt: the operator wires what was declared, and
   the board shows only that. A component is a compiled primitive the harness is
   pre-wired to, a wire is one ask and one return written in Python by the operator, and

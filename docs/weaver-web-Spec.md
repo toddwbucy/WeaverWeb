@@ -645,7 +645,14 @@ the declaration screen of section 6.1 and by nothing else, and it carries:
   moves, the pin says so, and the draft is named stale before it is offered
   for install. It is the WeaverAgent commit whose `weaver-types-Spec` the
   rendering of section 6.1 follows, a constant of the build, and not the
-  row's version below
+  row's version below. **The pin is WeaverAgent
+  `5ec7ecf8fe9cb37a45e2d65298a02fc395aa4291` since the act of 2026-11-12**,
+  moved from `a3543b31f264b269f66ab55d8767f25290ec9d61` when the agent
+  began to require the sampler's six defaults at every serving load. A row
+  saved under the earlier pin is named stale, and its reopen refuses its
+  save until the eight tunable values of section 6.1 are filled, the
+  Planner's default of 2026-11-12. No row is migrated, since the body is
+  stored whole and no member of the schema moves
 - **its parent, the row it was opened from**, none for the first save of a
   declaration, and **its lineage's root**, none for the root itself, so a
   lineage is identified by its root row
@@ -2088,9 +2095,11 @@ it decides are stated here and in section 2.8, and the reasons are there.
   restates it from `weaver-admin-Spec` section 4 at the corpus commit
   section 2.4 pins, which the admin-operator contract does not yet carry,
   and names the commit it was read at; a test holds that commit to the
-  build's pin, so the pin does not move until the rule is reread. The page
-  guards nothing on it: whether a declaration carries a stale `[restore]`
-  is the box's, and nothing the console reads says so. **Beside a verb
+  build's pin, so the pin does not move until the rule is reread. It was
+  reread at `5ec7ecf8` on 2026-11-12, every line of that section naming
+  `[restore]` unchanged. The page guards nothing on it: whether a
+  declaration carries a stale `[restore]` is the box's, and nothing the
+  console reads says so. **Beside a verb
   admin's state table refuses, a warning** (on the Planner's ruling of
   2026-11-12 and the operator's "warn, do not refuse" of 2026-11-11):
   where every state of the admin-operator contract's section 4.1 table
@@ -2114,8 +2123,9 @@ it decides are stated here and in section 2.8, and the reasons are there.
   section 2.4 pins, and the repository holds the table and the two
   paragraphs beneath it as read; a test derives every cell from that copy
   and holds the commit to the build's pin, so the pin does not move until
-  the table is reread. Where the contract and the page differ, the
-  contract wins. A reading is the row's and can be older than the agent's
+  the table is reread. It was reread at `5ec7ecf8` on 2026-11-12, the table
+  and its two paragraphs byte-identical to the copy. Where the contract and
+  the page differ, the contract wins. A reading is the row's and can be older than the agent's
   state, which is why the warning carries its date and the box's own rule
   decides last. **Run's two panes re-read by themselves** (on the
   Planner's ruling of 2026-11-12): the load state and the verbs are one
@@ -3683,7 +3693,8 @@ requirement {"card": text}
           | {"pair": [card-or-class, card-or-class]}
 sampler     {"temperature", "top_k", "top_p", "seed",
              "repetition_penalty", "repetition_window",
-             "max_tokens_per_turn"}, each a number, each optional
+             "max_tokens_per_turn", "context_capacity"}, each a number,
+             every one required
 store       "none" | "sqlite"
 gate        {"tools": [] | ["sh"]}
 prompt      text, or null for no prompt
@@ -3743,19 +3754,100 @@ prompt      text, or null for no prompt
   lists it under (the operator's clarification of 2026-11-11); the
   reservation is the host's fact, and this screen declares nothing of it
   (section 10).
-- **The sampler's defaults**, ruling 8: temperature, top-k, top-p, the
-  seed, the repetition penalty, the repetition window and the maximum
-  tokens per turn, each optional. Each is a per-turn knob by the ruling's
-  test, a value whose change does not invalidate the cache: the declaration
-  supplies the default, the turn call carries the value, and the record
-  holds it per event. The counts (top-k, the window, the maximum and the
-  seed) are integers from zero to 9223372036854775807, the largest TOML 1.0
-  holds, and the reals finite, as the agent's grammar judges its tunable
-  values; a count above that bound is refused, naming its field, since the
-  agent's file could not hold it. The file writes every real with its
-  point or its exponent, so that TOML reads it as a float. **The sampler's mechanism and every
-  other setting fixed at load** are shown read-only beside the model once
-  an agent reports them; until then the screen says what that waits on.
+- **The tunable values**, ruling 8 and the act of 2026-11-12: every name a
+  serving load requires in the agent's `tunable-values` at this build's
+  corpus commit (section 2.4), eight at WeaverAgent `5ec7ecf8`, **each
+  required**. That is the Planner's default of 2026-11-12, following the
+  operator's ruling of that date that a missing name refuses the load on
+  the agent's side as built and WeaverAgent adds no default, so the console
+  saves no serving declaration lacking one. The document's member keeps
+  its name, `sampler`, from the act of 2026-11-11, so a row saved before
+  this act still reads. The eight are two groups:
+  - **the sampler's six defaults**: the temperature, top-k, top-p, the
+    repetition penalty, the repetition window and the seed. Since
+    WeaverAgent's carrier (#539), the harness reads the six from the
+    declaration at every serving load and refuses the load naming the
+    first missing or out of range, and every generation carries its own
+    six values, the record stating them per generation
+    (`weaver-harness-Spec` section 6.1, `weaver-spu-Spec` section 8). What
+    still waits is a turn carrying values of its own: the console sends
+    none (question 6).
+  - **the session's two parameters**: the maximum tokens per turn, the
+    session's ceiling, fixed at load, under which each generation carries
+    its own bound (`weaver-spu-Spec` sections 4.2 and 8); and the context
+    capacity, the positions the session opens with, which sizes each
+    device's share of the KV cache at the SPU's admit.
+
+  **Five start filled in a new declaration's form**, the Planner's default:
+  temperature 0.7, top-k 40, top-p 0.95, repetition penalty 1.1 and
+  repetition window 64. These are the constants the SPU froze until the
+  carrier, at WeaverAgent `a3543b31f264b269f66ab55d8767f25290ec9d61`,
+  `crates/weaver-spu/src/main.rs` lines 177 to 181, unchanged at
+  `61d99dce`, the last commit before #539. They are visible and editable,
+  and they are written because the operator saves them, so the file states
+  every value. **The seed, the maximum tokens per turn and the context
+  capacity start empty**, and the operator enters each (section 10). A
+  reopened row shows what it holds, a member it lacks empty.
+
+  **The ranges are the agent's at the pin, and no further**, judged at
+  save, so a value the load would refuse is refused there, naming its
+  field. A count is a whole number. A real is judged as written, and again
+  as the agent narrows it to a 32-bit float: a nonzero value that narrows
+  to zero is refused, and so is one that narrows past the float's range.
+
+  | name in the file | the document's member | kind | the screen admits |
+  | --- | --- | --- | --- |
+  | `temperature` | `temperature` | real | finite, 0 or more |
+  | `top-k` | `top_k` | count | 0 to 2147483647, below 2^31 |
+  | `top-p` | `top_p` | real | more than 0 and at most 1 |
+  | `repetition-penalty` | `repetition_penalty` | real | finite, more than 0 |
+  | `repetition-window` | `repetition_window` | count | 0 to 2147483647, below 2^31 |
+  | `seed` | `seed` | count | 0 to 9223372036854775807 |
+  | `max-tokens-per-turn` | `max_tokens_per_turn` | count | 0 to 9223372036854775807 |
+  | `context-capacity` | `context_capacity` | count | 1 to 4294967295, below 2^32 |
+
+  - **Two counts are bounded tighter than the agent bounds them.** The
+    seed and the maximum tokens per turn stop at 9223372036854775807, the
+    largest integer TOML 1.0 holds, since the agent's file could not hold
+    a larger one. The agent admits either below 2^64. The bound is kept,
+    and a value past it is refused naming its field.
+  - **A context capacity of zero is refused**, as both of the agent's
+    engines refuse it when the session opens.
+  - **Two edges are stated and not solved**, on the Planner's word:
+    - a seed above 2^53 is rounded, since the agent holds every tunable
+      value as a 64-bit float;
+    - a temperature below the 32-bit float's least normal value, about
+      1.18e-38, narrows to a subnormal and is in range by the table.
+  - **The screen judges no relation between the values**, since the agent
+    judges none: not between the two session parameters, nor between a
+    session parameter and a model. One judgement is the agent's alone:
+    whether the devices drawn at start hold the context capacity's KV
+    cache, which the SPU's admit judges against the model and those
+    devices.
+  - **The `top-k` rule of a field election**, a `top-k` of zero or above
+    the field's depth refusing, is not mirrored, since the screen declares
+    no field election.
+
+  **The test of membership.** The required set is read from the agent at
+  the pin, in three places:
+  - `SAMPLING_DEFAULT_NAMES` in `crates/weaver-types/src/config.rs`;
+  - `SESSION_PARAMETERS` in `crates/weaver-spu/src/main.rs`, whose
+    `Disposition::OperatorTunable` members are required, under the names
+    `SessionParameters::tunable_names` in `crates/weaver-spu/src/sampling.rs`
+    gives them;
+  - the conditional field-election rule in `judge_sampling_defaults`,
+    `crates/weaver-harness/src/lifecycle.rs`, which the screen cannot reach.
+
+  The repository links no crate of the agent (section 1). It carries those
+  three passages as read at the pin, a dated copy named for its commit, and
+  a test fails where the screen's set and the copy's differ, so a reread at
+  a new pin is a diff of the copy. **The screen composes no diagnostic
+  declaration**: the file writes no `binding-kind`, whose absence the
+  agent reads as serving, so every row is a serving declaration and needs
+  the eight. **The sampler's mechanism and every setting fixed at load
+  beyond the session's two parameters** are shown read-only beside the
+  model once an agent reports them. Until then the screen says what that
+  waits on (question 5).
 - **The store**, required: `none` or `sqlite`, the engines the agent's
   grammar names.
 - **The gate**: its tool election, no tool or `sh`. Who it admits is its
@@ -3780,8 +3872,9 @@ second classifier, a function the roster does not hold, an adapter on a
 classifier); a format other than GGUF; an adapter missing a member, with a
 digest of another shape or a scale that is not finite; a name outside its
 grammar; a control character in any text, the prompt alone admitting a
-line feed and a tab, since a prompt is lines; a sampler value outside its
-kind; a tool other than `sh`; and an unknown member. **A refusal names its
+line feed and a tab, since a prompt is lines; a tunable value missing,
+outside its kind or outside its range in the table above; a tool other
+than `sh`; and an unknown member. **A refusal names its
 field by the document's path**, its box and model numbered as the screen
 numbers its slots. At save it also refuses, as section 2.4 rules, a name another lineage holds, a
 changed name within a lineage, and a save from a row that is not its
@@ -3818,8 +3911,8 @@ field:
 | host or virtual machine, the template | a host agent: nothing more. A virtual-machine agent: the host plane's Spec, which waits on a measurement in progress; then the console's clone at declaration, and the template's digest and the machine's recorded |
 | the boxes, models, artifacts, formats and adapters | the declaration reaches the agent (interface question 2), then `validate` and the SPU's admission; a second box has no place in the agent's grammar (question 1) |
 | a GPU requirement | the agent's grammar holds device ordinals, not requirements (question 1); start satisfies the requirement or refuses, never substituting, and stamps the card drawn on every load event; a card's identifier is checked once a host reports cards |
-| the sampler's defaults | they derive into the agent's `tunable-values` today, the names being the agent's binary's (question 5); the per-turn values wait on the turn call, the loop's ask to the harness (question 6) |
-| the settings fixed at load | an agent reports them (question 5) |
+| the tunable values | they derive into the agent's `tunable-values`, every name a serving load requires at the pin, so no file is refused for a missing one; the harness reads the sampler's six at load and every generation carries them, the record stating them; values a turn carries of its own wait on the console sending a turn with them (question 6) |
+| the sampler's mechanism and the other settings fixed at load | an agent reports them (question 5) |
 | the store and the gate's tools | the declaration reaches the agent (question 2); the gate admits its gate-con, filled at Provision |
 | the system prompt | the declaration act writes it into declared state (question 3), and a declaration with no store has no answer yet (question 4); on the agent's side today the prompt is seeded by a turn through the gate |
 
@@ -3839,18 +3932,24 @@ read the document back**:
   and its file is this build's rendering of it, its header naming this
   build's pin and never the row's. What the document places is
   written as the grammar's members: the decoder's and the classifier's
-  model bindings with their artifacts, the adapter, the sampler's defaults
-  as `tunable-values`, the store's engine and the tool set. A member the
-  grammar requires and the screen does not declare is written as a comment
-  naming what fills it (the session, the trace sink and the gate's access
-  rule at Provision, each binding's devices at start from the requirement,
-  and any member the screen does not declare). A trailing block of comments
-  lists what the grammar has no place for, each naming its interface
-  question: the placement and its template, each box's GPU requirement, and
-  every box beyond the first. The file is TOML 1.0, the grammar every reader
-  of a declaration shares, and it is checked by a TOML parser; the agent's
-  `weaver-types` is not linked, since this crate links no crate of the
-  agent (section 1).
+  model bindings with their artifacts, the adapter, the eight tunable
+  values as `tunable-values`, every one, the store's engine and the tool
+  set. A stale row lacking a tunable value is rendered with a comment
+  naming each name it lacks, since that file is one the load would refuse
+  and its save is refused until they are filled. A member the grammar
+  requires and the screen does not declare is written as a comment naming
+  what fills it (the session, the trace sink and the gate's access rule at
+  Provision, each binding's devices at start from the requirement, and any
+  member the screen does not declare). **The file is not loadable
+  by itself, by design**: the session, the trace sink, the gate's access
+  rule and each binding's devices stay such comments, Provision's and
+  start's to fill, and requiring the tunable values changes none of them.
+  A trailing block of comments lists what the grammar has no place for,
+  each naming its interface question: the placement and its template, each
+  box's GPU requirement, and every box beyond the first. The file is TOML
+  1.0, the grammar every reader of a declaration shares, and it is checked
+  by a TOML parser; the agent's `weaver-types` is not linked, since this
+  crate links no crate of the agent (section 1).
 - **The prompt**: the text the declaration act will write into declared
   state, with its waits-on line, or the word that there is none.
 
@@ -4541,7 +4640,11 @@ copy of the rules**, only a copy of the declaration's field shape written
 against `weaver-types-Spec` section 2 **at a named corpus commit**, which is
 the draft's staleness rule: when the floor moves, the pin says so, and a
 draft written against the old floor is named stale before it is offered for
-install.
+install. **The one presence it judges is the tunable set** (section 6.1):
+every name a serving load requires at the pin, read as a dated copy of the
+agent's three places and held to the screen's set by a test, with each
+value's range, so the derived file is never refused for a missing or
+out-of-range tunable value. Every other rule stays the organ's.
 
 ### 7.3 The analysis stream
 
@@ -5407,7 +5510,7 @@ an unmerged contract.
 | every turn a person places has its first record before its frame, naming `turn`, and its outcome only by the gate contract's evidence | perturbation, in `src/verbs_tests.rs`: write `ok` for any close, and a stopped turn reads `ok`; write `failed` for `delivery_lost`, and an unknown outcome reads `failed`; drop the door's shape check, and an answer carrying both a close and a fault is taken. The first before the frame is the record step's, shown on the verb's row and the server's asks' |
 | the verb's answer page shows admin's own words, escaped and cut at the alert's bound, never parsed | perturbation, in `src/verbs_tests.rs`, `the_answer_page_shows_admins_own_words`, against the real listener and a fake admin-con: a refused `load` whose stderr carries markup and runs past 2048 bytes, a two-byte character straddling the bound, shows the words escaped, ending before that character and saying it cut, beside the refusal object, and a blank stderr is not shown; drop the stderr from the page, the cut or the escaping, and the case fails |
 | the agent page states admin's `[restore]` rule with its source, read at the build's pin | `the_agent_page_states_admins_restore_rule_with_its_source` in `src/reading_tests.rs`: the page carries the rule, its refusal and its two remedies beside the verbs, naming the commit it was read at; drop the statement, and the case fails; and `the_restore_rule_was_read_at_the_builds_pin`: move `CORPUS_COMMIT` alone, and the case fails |
-| a verb admin's state table refuses in the row's last reading is warned of beside its form and offered still, read at the build's pin | perturbation, in `src/transition_tests.rs`, `the_agent_page_warns_of_a_verb_the_state_table_refuses`, against the real listener and a fake admin-con: read idle, `load` is warned `AgentRunning` and `save-point` and `unload` are not; read active, `load` and `save-point` are warned; read in transition, both are warned with the lock held and free told apart, dated by the transition; read unloaded, `save-point` alone; each warning names the reading and its date and every form stays; drop the warning from the template, change a cell, or ignore a standing transition, and the case fails; `the_state_table_cells_follow_the_contract_as_read` in `src/surfaces/admin_table.rs`: every cell stands on the words of the contract's section 4.1 as held in `admin-table-a3543b31.md`, and every warning is the derivation's; change a cell or a copy's word, and the case fails; and `the_state_table_was_read_at_the_builds_pin`: move `CORPUS_COMMIT` alone, and the case fails |
+| a verb admin's state table refuses in the row's last reading is warned of beside its form and offered still, read at the build's pin | perturbation, in `src/transition_tests.rs`, `the_agent_page_warns_of_a_verb_the_state_table_refuses`, against the real listener and a fake admin-con: read idle, `load` is warned `AgentRunning` and `save-point` and `unload` are not; read active, `load` and `save-point` are warned; read in transition, both are warned with the lock held and free told apart, dated by the transition; read unloaded, `save-point` alone; each warning names the reading and its date and every form stays; drop the warning from the template, change a cell, or ignore a standing transition, and the case fails; `the_state_table_cells_follow_the_contract_as_read` in `src/surfaces/admin_table.rs`: every cell stands on the words of the contract's section 4.1 as held in `admin-table-5ec7ecf8.md`, and every warning is the derivation's; change a cell or a copy's word, and the case fails; and `the_state_table_was_read_at_the_builds_pin`: move `CORPUS_COMMIT` alone, and the case fails |
 | a turn's text is in no audit record and no log line | perturbation, in `src/verbs_tests.rs`: put the text in the first record, and the row carries it; log it at debug in the held section, and the process's capture of every line finds it |
 | every person, role or grant written has an audit record naming its principal, and its outcome is a second record naming the first | perturbation, **owed**: update the first record with the outcome instead of appending a second, and an ask whose answer is lost reads as never answered with no trace of the rewrite; write a grant with the audit write dropped, and the grant lands with no record; add a passkey with the audit write dropped, and the write lands with no record; record the material in an authentication write's record, and a read of the audit table is a set of credentials. The server's own asks and a person's verbs and turns stand in their own rows. Lands with the IAM act |
 | the server's own asks are audited: every verb frame it sends has a first record committed before the frame enters the channel and an outcome naming it when the answer lands, and it asks `show` only | perturbation, in `src/link/server_asks_tests.rs` against the real listener and fake admin-cons: enqueue the frame before the record step, or where the record failed, at an admission and through `Listener::verb`, and a `show` reaches admin-con with no record; drop the record step's bound, and a store that stalls holds the ask past the silence bound; take the oldest entry of the connection's map of first records rather than the one the answer's id names, and an opening's answer lands as the admission's outcome; race an answered ask's outcome against the close signal, and a revocation landing mid-write leaves its first alone; disarm the guard between the record and the channel as soon as it is installed, and an ask cancelled while its send waits on a full channel keeps its entries and leaves its first alone; arm the guard only once the insert has answered, and a first whose answer is lost after its commit stands alone; drop the outcome lock from the `failed` write, and a first whose commit lands after its answer was lost stands alone; go back to a deny-list of the fault kinds that write no outcome, and a kind a connector invents writes `failed`; drop the door's verb check, and a `load` answer to a `show` ask writes `ok`; land a `show` answer's state whatever its exit status, and a refusal's object lands as the row's state; compute what remains of the admission's deadline before the outcome's write, and an admission whose write passes its deadline completes after it; read the deadline after the landing's poll rather than before it, as tokio's `timeout_at` does at every poll, and a `show` answered past the admission's deadline lands on the row while the connection closes `admission_incomplete` (6 of 20 runs alone, measured 2026-11-11), a landing handed a deadline already past is polled and read as done, and one still waiting when its deadline comes is polled at the timer's wake, where it could take a pool connection and send its statement (`link::listener::bounded_tests`, every run); read the clock at the first poll alone, and the timer's wake polls a waiting landing past its deadline; keep the timer and drop the clock, and a deadline at the instant the bound is asked, which the timer rounds up to its next tick, lets the landing be polled; drop the timer and keep the clock, and a landing that never answers holds the bound past its deadline; poll the landing before the close signal, and a close standing at a poll lets it be polled; classify a verb frame carrying both an outcome and a fault as admin's outcome, and the asker reads a success and the audit `ok` for a contradictory answer; drop the `show`-only refusal, and the server's `load` leaves with no refusal record |
@@ -5471,9 +5574,14 @@ an unmerged contract.
 | the staging tool refuses every parameter out of shape, and a refusal writes nothing | perturbation in `src/stage_tests.rs`, one case per refusal: a missing member, an unknown member, a relative path, a `..` component, a trailing separator, a character a unit would read, a relative element of admin-con's `PATH`, an account or a name out of its grammar, a name twice, an agent without `[connectors]` or `[connectors]` without an agent, a file that stages nothing, a program that is a directory or a symlink, a handover file that is missing, a symlink, a directory, open to others or not the operator's own, a location that is a program's destination or lies under one, an `<out>` that is not empty, open to others or not the operator's own; drop each check and its case stages instead, or is refused for another reason, which the case's expected reason catches; after every refusal `<out>` is absent, or as it stood, and a refusal after the writes began empties an `<out>` that stood empty. And a second run on the same `<out>`, its check passed before the first wrote, with `<out>` absent and with it standing empty: refused, the first run's files and manifest unchanged; make `files/` without exclusion, or let a run that made nothing remove `<out>`, and the test fails. And a relative `<out>` with a `.` component and repeated and trailing separators is taken against the working directory and stages, a `..` kept and refused: drop the normalization, and the case is refused for its `.` |
 | the manifest names every directory and file with its owner, group, mode and sum, parents first | perturbation in `src/stage_tests.rs`, the manifest read line by line against the parameters: give a connector config another mode or owner, list a file before its directory, or leave a binary's sum out, and the read fails |
 | the staging tool never runs as root | perturbation in `src/stage_tests.rs`: the refusal is a function of the effective uid it is handed, and dropping it lets a uid of 0 stage |
-| the declaration screen refuses every field out of shape and saves nothing | perturbation in `src/declarations_tests.rs`: `every_refusal_names_its_field_and_its_reason`, one case per refusal of section 6.1 judged on the document by its field and its kind (a missing required field, a requirement that names nothing, a class giving both a family and a list, a requirement naming more than one kind, a roster the framework would not load, a format other than GGUF, an adapter out of shape, a name outside its grammar, a control character, a sampler value outside its kind (a count above the largest whole number TOML holds among them), a tool other than `sh`, an unknown member): drop each check and its case is admitted, or refused for another reason, which the case's kind and field catch; and `the_screen_refuses_a_field_out_of_shape_and_saves_nothing`, every refusal the form can carry posted end to end, each answered 400 naming its field by the screen's slot, after which the table and the audit hold what they held; a class spanning two compute capabilities is no refusal's case, and saves (the next row); and `a_long_class_is_judged_in_one_pass`: a class of 20,000 distinct models, parsed before the session is read, is judged inside 5 s, and its first model typed again at its end is refused naming that slot; restore the scan of every earlier name, and the judgement takes minutes (101 s for 16,000 in the test build, measured 2026-11-12) |
+| the declaration screen refuses every field out of shape and saves nothing | perturbation in `src/declarations_tests.rs`: `every_refusal_names_its_field_and_its_reason`, one case per refusal of section 6.1 judged on the document by its field and its kind (a missing required field, a requirement that names nothing, a class giving both a family and a list, a requirement naming more than one kind, a roster the framework would not load, a format other than GGUF, an adapter out of shape, a name outside its grammar, a control character, a tunable value outside its kind (a count above the largest whole number TOML holds among them), a tool other than `sh`, an unknown member): drop each check and its case is admitted, or refused for another reason, which the case's kind and field catch; and `the_screen_refuses_a_field_out_of_shape_and_saves_nothing`, every refusal the form can carry posted end to end, each answered 400 naming its field by the screen's slot, after which the table and the audit hold what they held; a class spanning two compute capabilities is no refusal's case, and saves (the next row); and `a_long_class_is_judged_in_one_pass`: a class of 20,000 distinct models, parsed before the session is read, is judged inside 5 s, and its first model typed again at its end is refused naming that slot; restore the scan of every earlier name, and the judgement takes minutes (101 s for 16,000 in the test build, measured 2026-11-12) |
+| a declaration the screen saves carries every tunable value a serving load requires at the pin, and a save lacking one is refused naming it and writes nothing | perturbation in `src/declarations_tests.rs`, `every_tunable_value_is_required_and_a_missing_one_is_refused_naming_it`: one case per name of the eight, the document otherwise whole, each refused naming that name's field, and posted end to end each answered 400 by the screen's slot with the table and the audit holding what they held; drop the requirement of any one name, and its case saves |
+| every tunable value is judged on the agent's range at the pin, and a real again as narrowed to a 32-bit float | perturbation in `src/declarations_tests.rs`, `every_tunable_value_is_judged_on_the_agents_range`: on each side of every edge of section 6.1's table one case, the edge itself admitted and its neighbour refused naming the field (a negative or infinite temperature, a temperature narrowing to infinity and a nonzero one narrowing to zero, a top-p of 0 and above 1, a repetition penalty of 0, a top-k and a repetition window at 2^31, a context capacity of 0 and at 2^32, a seed and a maximum tokens per turn above 9223372036854775807), the two stated edges admitted; drop or loosen any bound, and its case saves; tighten one, and its edge is refused |
+| a new declaration's form starts with the five values the SPU froze until the carrier, and the other three empty | perturbation in `src/declarations_tests.rs`, `a_new_declarations_form_starts_with_five_tunable_values`: the new form's temperature, top-k, top-p, repetition penalty and repetition window carry 0.7, 40, 0.95, 1.1 and 64, editable, and the seed, the maximum tokens per turn and the context capacity carry nothing; change a value or fill one of the three, and the case fails |
+| the screen's required tunable set is the agent's at the build's pin, as read | perturbation in `src/declaration/tunable_set.rs`: `the_tunable_set_is_the_agents_as_read`, the eight names read from the passages held in `tunable-set-5ec7ecf8.md` (the six of `SAMPLING_DEFAULT_NAMES`, and the `OperatorTunable` members of `SESSION_PARAMETERS` under the names `tunable_names` gives them; the conditional field-election rule held and not required); add a name to the copy or drop one from the screen, and the case fails; and `the_tunable_set_was_read_at_the_builds_pin`: move `CORPUS_COMMIT` alone, and the case fails |
+| a row saved before the eight were required reopens, is named stale by its pin, and its save is refused until the eight are filled | perturbation in `src/declarations_tests.rs`, `a_row_lacking_a_tunable_value_reopens_stale_and_saves_once_filled`: a row placed under the earlier pin with the old document's optional sampler reopens, names its pin stale and shows what it holds and empty fields for the rest, its file naming each missing name in a comment; its save as reopened is refused naming the first missing field and writes nothing, and filled it saves under this build's pin; make the reopen refuse, or the save admit the row as it stood, and the case fails |
 | a class spanning more than one compute capability is warned of, and a model the capability table does not know is named unknown and admitted | perturbation in `src/declarations_tests.rs`, `a_class_spanning_capabilities_is_warned_of_and_an_unknown_is_named`: drop the warning, and a class of two capabilities saves with none; make it a refusal, and the case fails, since the class must save; a family spanning two capabilities by the table's rows, typed in another case, is warned of, and each saved class keeps the form typed, family or list; render an unknown capability, of a model or of a family, as a blank, or refuse it, and the case fails; and `the_capability_table_is_the_page_as_read_and_every_row_cites_its_source`: the table against the vendor's page as read, row for row, every capability and family citing its source, a family by statement citing a guide's passage and one by name holding the name |
-| a save and a reopen are the same document, and the agent's file is derived from it | perturbation in `src/declarations_tests.rs`, `a_save_and_a_reopen_are_the_same_document`: a document holding every member saved, the row holding its canonical form, and the reopened page's form posted as a browser posts it read back as the same document, its re-save moving nothing; drop a member on the save or on the reopen, and the comparison fails; both panes are what the document derives; the agent's file parses as TOML, names the pinned corpus commit, and writes each placeless member in its trailing block; and `the_agents_file_writes_every_admitted_value_in_its_toml_type`: a whole real at or above 1e15 and the adapter's scale read back as floats, a count at the largest whole number TOML holds as that integer, and the header names this build's pin; write a whole real as its digits alone, and the case fails |
+| a save and a reopen are the same document, and the agent's file is derived from it | perturbation in `src/declarations_tests.rs`, `a_save_and_a_reopen_are_the_same_document`: a document holding every member saved, the row holding its canonical form, and the reopened page's form posted as a browser posts it read back as the same document, its re-save moving nothing; drop a member on the save or on the reopen, and the comparison fails; both panes are what the document derives; the agent's file parses as TOML, names the pinned corpus commit, writes the eight tunable values in `tunable-values` under the agent's names, and writes each placeless member in its trailing block; and `the_agents_file_writes_every_admitted_value_in_its_toml_type`: a whole real at or above 1e15 and the adapter's scale read back as floats, a count at the largest whole number TOML holds as that integer, and the header names this build's pin; write a whole real as its digits alone, and the case fails |
 | a save from a row that is not its lineage's head is refused and writes nothing, and the schema admits a second child of one parent | perturbation in `src/declarations_tests.rs`, `a_save_from_a_row_not_the_head_is_refused_and_two_children_are_admitted`: drop the screen's head check, or the store's under the key, and the stale save lands, each check exercised alone; and two children of one parent inserted through the store's own insert, which succeeds |
 | a declaration row's authored half never changes | perturbation in `src/declarations_tests.rs`, `a_declaration_rows_authored_half_never_changes`: an update of each authored member, a delete and a truncate are refused by the trigger, and the last `validate` reading moves; drop the trigger, and the update lands. The key is an identity column no update may set |
 | no two lineages share a name, and a lineage keeps its name | perturbation in `src/declarations_tests.rs`, `no_two_lineages_share_a_name_and_a_lineage_keeps_its_name`: drop the screen's check, or the store's under the key, and a second lineage saves under a held name, or a save renames its lineage, each check exercised alone; the index on a root's name stands beneath both |
@@ -5817,6 +5925,17 @@ a `web-` assertion beside `weaver-admin`'s.
   which then satisfies no requirement and belongs to no class. Where the
   reservation is declared and how start reads it wait on the host plane's
   Spec; the declaration screen declares nothing of it.
+- **The session parameters' starting values, opened 2026-11-12** (section
+  6.1). The Planner's default: the maximum tokens per turn and the context
+  capacity start empty in a new declaration's form, and the operator enters
+  each. The SPU's own comment on the context capacity, at WeaverAgent
+  `5ec7ecf8`, reads "The declaration now governs, sized by the operator
+  against the KV cache's device footprint, 32768 being the ruled starting
+  point on this deployment." The screen does not adopt that value, since
+  the capacity's fit is judged at admit against devices the screen does
+  not know. Whether either parameter shows a starting value is the
+  operator's ruling. The seed starts empty too, and a screen that offered
+  to draw one would be a question for the operator, not built.
 - **A statement sent before its deadline and answered after it, opened
   2026-11-11.** The admission's landing is one statement, and section 7.2
   polls no landing once its deadline has come, so none waiting on the pool

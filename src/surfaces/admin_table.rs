@@ -14,8 +14,8 @@
 //! (Spec 2.12: a turn's start or close keeps it). **A verb is warned of only
 //! where every state its reading covers refuses it**, so a warning is never
 //! a guess between an answer and a refusal. The table and its two paragraphs
-//! are held beside this module as read (`admin-table-a3543b31.md`, the
-//! contract's lines 273 to 318 at the pin, byte for byte), and a test derives
+//! are held beside this module as read (`admin-table-5ec7ecf8.md`, the
+//! contract's lines 282 to 327 at the pin, byte for byte), and a test derives
 //! every cell from that copy. Where the contract and this module differ, the
 //! contract wins.
 
@@ -27,7 +27,7 @@ use crate::link::register::Agent;
 /// test holds it to the build's pin,
 /// [`crate::declaration::render::CORPUS_COMMIT`], so the pin does not move
 /// until the table is reread at the new commit and this module with it.
-pub const STATE_TABLE_READ_AT: &str = "a3543b31f264b269f66ab55d8767f25290ec9d61";
+pub const STATE_TABLE_READ_AT: &str = "5ec7ecf8fe9cb37a45e2d65298a02fc395aa4291";
 
 /// What the agent row last read of the agent's state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,9 +125,9 @@ mod tests {
     use super::{Reading, STATE_TABLE_READ_AT, refused};
 
     /// The contract's section 4.1 table and the two paragraphs beneath it,
-    /// lines 273 to 318 of `weaver-admin-operator-contract.md` at
+    /// lines 282 to 327 of `weaver-admin-operator-contract.md` at
     /// [`STATE_TABLE_READ_AT`], byte for byte.
-    const READ: &str = include_str!("admin-table-a3543b31.md");
+    const READ: &str = include_str!("admin-table-5ec7ecf8.md");
 
     /// The verbs the table gives a column, in the header's order after
     /// `State`, `show` last.

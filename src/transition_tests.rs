@@ -312,3 +312,119 @@ async fn a_turns_close_keeps_the_transition_and_the_unload_ends_it() {
     .await;
     assert_eq!(row.in_transition_at, None, "the unload ends it");
 }
+
+/// The warning the agent page puts beside `verb`'s form, `None` where the
+/// form stands bare; panics where the verb is not offered.
+fn warning_beside(page: &str, karl: &str, verb: &str) -> Option<String> {
+    let form = format!(
+        "<form method=\"post\" action=\"/agents/{karl}/verb\"><input type=\"hidden\" name=\"verb\" value=\"{verb}\"><button type=\"submit\" class=\"verb\">{verb}</button></form>"
+    );
+    let at = page
+        .find(&form)
+        .unwrap_or_else(|| panic!("{verb} is not offered: {page}"));
+    let rest = &page[at + form.len()..];
+    let open = "<span class=\"status hold warning\">";
+    rest.strip_prefix(open)
+        .map(|w| w[..w.find("</span>").unwrap()].to_owned())
+}
+
+/// **A verb admin's state table refuses in the row's last reading is warned
+/// of, and offered still** (Spec 2.13; the admin-operator contract's
+/// section 4.1): read idle, `load` is warned `AgentRunning` and `save-point`
+/// and `unload` are not; read active, `load` is warned `AgentRunning` and
+/// `save-point` `ActivityNotAtRest`; read in transition, both are warned
+/// with the lock held and free told apart, dated by the transition; read
+/// unloaded, `save-point` alone is warned `OutOfOrder`. Each warning names
+/// the reading and its date, every form stays, the pane names the table's
+/// source at its pin while a warning shows, and `unload` is never warned.
+///
+/// Perturbation: drop the warning from the template, change a cell, or
+/// ignore a standing transition, and the case fails.
+#[tokio::test]
+async fn the_agent_page_warns_of_a_verb_the_state_table_refuses() {
+    let Some(mut o) = operated(&["show", "load", "save-point", "unload"]).await else {
+        return;
+    };
+    let id: AgentId = o.karl.parse().unwrap();
+    let date = |at: chrono::DateTime<chrono::Utc>| at.format("%Y-%m-%d %H:%M:%S UTC").to_string();
+    let source = format!(
+        "admin's state table (<code>weaver-admin-operator-contract</code> section 4.1 at WeaverAgent <span class=\"mono\">{}</span>)",
+        crate::surfaces::admin_table::STATE_TABLE_READ_AT
+    );
+    let karl = o.karl.clone();
+    let reads = |page: &str, verb: &str| warning_beside(page, &karl, verb);
+
+    // Idle, as the admission's `show` answered.
+    let row = o.rig.store().agent(&id).await.unwrap().unwrap();
+    assert_eq!(row.load_state.as_deref(), Some("idle"));
+    let at = date(row.load_state_at.unwrap());
+    let p = page(&o).await;
+    assert_eq!(
+        reads(&p, "load").as_deref(),
+        Some(
+            format!("admin refuses this while the agent reads idle: AgentRunning. Read idle {at}.")
+                .as_str()
+        ),
+        "{p}"
+    );
+    assert_eq!(reads(&p, "save-point"), None, "S2 and S9 take a save point");
+    assert_eq!(reads(&p, "unload"), None);
+    assert!(p.contains(&source), "{p}");
+
+    // Active.
+    let row = shown(&mut o, json!({"kind": "state", "state": "active"}), 0).await;
+    let at = date(row.load_state_at.unwrap());
+    let p = page(&o).await;
+    assert_eq!(
+        reads(&p, "load").as_deref(),
+        Some(
+            format!(
+                "admin refuses this while the agent reads active: AgentRunning. Read active {at}."
+            )
+            .as_str()
+        ),
+    );
+    assert_eq!(
+        reads(&p, "save-point").as_deref(),
+        Some(format!("admin refuses this while the agent reads active: ActivityNotAtRest. Read active {at}.").as_str()),
+    );
+    assert_eq!(reads(&p, "unload"), None);
+
+    // In transition: the transition is the reading while it stands, dated
+    // by itself.
+    let row = shown(&mut o, json!({"kind": "in_transition"}), 0).await;
+    assert_eq!(
+        row.load_state.as_deref(),
+        Some("active"),
+        "no state claimed"
+    );
+    let at = date(row.in_transition_at.unwrap());
+    let p = page(&o).await;
+    assert_eq!(
+        reads(&p, "load").as_deref(),
+        Some(format!("admin refuses this while the agent reads in transition: InvocationInFlight where a command holds the agent, AgentRunning where none does. Read in transition {at}.").as_str()),
+    );
+    assert_eq!(
+        reads(&p, "save-point").as_deref(),
+        Some(format!("admin refuses this while the agent reads in transition: InvocationInFlight where a command holds the agent, OutOfOrder where none does. Read in transition {at}.").as_str()),
+    );
+    assert_eq!(reads(&p, "unload"), None);
+
+    // Unloaded.
+    let row = shown(&mut o, json!({"kind": "state", "state": "unloaded"}), 0).await;
+    assert_eq!(row.in_transition_at, None);
+    let at = date(row.load_state_at.unwrap());
+    let p = page(&o).await;
+    assert_eq!(reads(&p, "load"), None, "S0 answers with the load");
+    assert_eq!(
+        reads(&p, "save-point").as_deref(),
+        Some(
+            format!(
+                "admin refuses this while the agent reads unloaded: OutOfOrder. Read unloaded {at}."
+            )
+            .as_str()
+        ),
+    );
+    assert_eq!(reads(&p, "unload"), None);
+    assert!(p.contains(&source), "{p}");
+}

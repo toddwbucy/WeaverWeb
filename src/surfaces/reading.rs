@@ -411,6 +411,11 @@ struct AgentPage {
     verbs: Vec<VerbView>,
     /// Whether any verb is offered.
     offered: bool,
+    /// Whether any offered verb carries a warning, and so whether the pane
+    /// names the table's source.
+    warned: bool,
+    /// The commit admin's state table was read at, which that line names.
+    state_table_at: &'static str,
     /// The commit admin's `[restore]` rule was read at, which the page's
     /// statement of it names.
     restore_rule_at: &'static str,
@@ -437,6 +442,10 @@ struct AgentPage {
 struct VerbView {
     verb: &'static str,
     why: Option<&'static str>,
+    /// **The warning beside an offered verb** that admin's state table
+    /// refuses in the row's last reading (`admin_table`, Spec 2.13): the
+    /// verb is offered still. None for a disabled verb.
+    warning: Option<String>,
 }
 
 /// An alert as the agent page lists it.
@@ -680,12 +689,14 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, agent: String) ->
     // **Every lifecycle verb is on the page**: offered where the grants
     // carry it and the live connection's ceiling grants it, disabled with
     // why otherwise, never hidden.
+    // **An offered verb that admin's state table refuses in the row's last
+    // reading carries a warning** and stays offered (Spec 2.13; "warn, do
+    // not refuse").
     let verbs: Vec<VerbView> = VOCABULARY
         .into_iter()
         .filter(|verb| lifecycle(verb))
-        .map(|verb| VerbView {
-            verb,
-            why: if !granted.contains(verb) {
+        .map(|verb| {
+            let why = if !granted.contains(verb) {
                 Some("not in your roles")
             } else if !row.admin.connected {
                 Some("admin-con not connected")
@@ -693,10 +704,19 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, agent: String) ->
                 Some("above the ceiling")
             } else {
                 None
-            },
+            };
+            VerbView {
+                verb,
+                why,
+                warning: why
+                    .is_none()
+                    .then(|| super::admin_table::warning(verb, &row))
+                    .flatten(),
+            }
         })
         .collect();
     let offered = verbs.iter().any(|v| v.why.is_none());
+    let warned = verbs.iter().any(|v| v.warning.is_some());
     // **The agent's alerts** (Spec 2.14): seen by every grant holder,
     // acknowledged by an `operator` holder; the open prompt offers only the
     // options the person's grants and the connection's ceiling carry, and
@@ -826,6 +846,8 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, agent: String) ->
         window: LIVE_WINDOW,
         verbs,
         offered,
+        warned,
+        state_table_at: super::admin_table::STATE_TABLE_READ_AT,
         restore_rule_at: RESTORE_RULE_READ_AT,
         turn_form,
         shared,

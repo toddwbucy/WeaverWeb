@@ -62,13 +62,21 @@
     {%- for v in verbs %}
     {%- match v.why %}
     {%- when None %}
+    {%- match v.warning %}
+    {%- when None %}
     <form method="post" action="/agents/{{ agent_id }}/verb"><input type="hidden" name="verb" value="{{ v.verb }}"><button type="submit" class="verb">{{ v.verb }}</button></form>
+    {%- when Some with (warning) %}
+    <span class="row"><form method="post" action="/agents/{{ agent_id }}/verb"><input type="hidden" name="verb" value="{{ v.verb }}"><button type="submit" class="verb">{{ v.verb }}</button></form><span class="status hold warning">{{ warning }}</span></span>
+    {%- endmatch %}
     {%- when Some with (why) %}
     <span class="row"><button type="button" class="verb" disabled>{{ v.verb }}</button><span class="note">{{ why }}</span></span>
     {%- endmatch %}
     {%- endfor %}
     </div>
     <div class="body">
+    {%- if warned %}
+    <p class="note table">A warning reads admin's state table (<code>weaver-admin-operator-contract</code> section 4.1 at WeaverAgent <span class="mono">{{ state_table_at }}</span>) against the row's last reading, dated: the verb stays offered, and the box decides.</p>
+    {%- endif %}
     <p class="note rule">admin's <code>[restore]</code> rule: a declared <code>[restore]</code> loads only while the save point it names is the manifest's latest. Any save point or unload publishes past it, and admin then refuses the load (<code>config_invalid</code>, naming <code>restore</code>) until <code>restore</code> runs again or the key is removed on the box. Restated from <code>weaver-admin-Spec</code> section 4 at WeaverAgent <span class="mono">{{ restore_rule_at }}</span>.</p>
     </div>
     {%- if offered %}

@@ -65,7 +65,9 @@ async fn refusals(lab: &Lab, agent: &AgentId) -> i64 {
 /// **The audit's verdict on a held write**: where the hold was let go at
 /// its deadline, its statement went out and commits a moment later, so the
 /// read waits for the row, which the assertion then shows; where it was
-/// not, nothing is in flight and the read is final.
+/// not, nothing is in flight and the read is final. A verdict stands only
+/// where the write reached its hold: one that stalled before it until the
+/// deadline lands no row in either order, so that run fails here.
 async fn settled<T, F, Fut>(held: &hold::Armed, read: F, landed: impl Fn(&T) -> bool) -> T
 where
     F: Fn() -> Fut,
@@ -75,6 +77,7 @@ where
     loop {
         let now = read().await;
         if !held.let_go() || landed(&now) || Instant::now() >= until {
+            assert!(held.reached(), "the write never reached its hold");
             return now;
         }
         tokio::time::sleep(Duration::from_millis(20)).await;

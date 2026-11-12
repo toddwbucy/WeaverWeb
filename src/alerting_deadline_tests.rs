@@ -66,7 +66,9 @@ fn raise(agent: &AgentId, kind: AlertKind, subject: &str) -> Raise {
 /// **The audit's verdict on a held write**, as `link::deadline_tests` reads
 /// it: where the hold was let go at its deadline, its statement went out
 /// and commits a moment later, so the read waits for its effect; where it
-/// was not, nothing is in flight and the read is final.
+/// was not, nothing is in flight and the read is final. A verdict stands
+/// only where the write reached its hold: one that stalled before it until
+/// the deadline lands nothing in either order, so that run fails here.
 async fn settled<T, F, Fut>(held: &hold::Armed, read: F, landed: impl Fn(&T) -> bool) -> T
 where
     F: Fn() -> Fut,
@@ -76,6 +78,7 @@ where
     loop {
         let now = read().await;
         if !held.let_go() || landed(&now) || Instant::now() >= until {
+            assert!(held.reached(), "the write never reached its hold");
             return now;
         }
         tokio::time::sleep(Duration::from_millis(20)).await;

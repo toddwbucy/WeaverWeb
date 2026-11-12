@@ -57,6 +57,10 @@ pub(crate) async fn before<T>(
 ///   ([`hold::statement`] or [`hold::prepared`] for a write of one
 ///   statement, [`hold::commit`] for a transaction's commit), and marks the
 ///   hold as let go.
+/// - The hold is marked reached as that wait begins, after any connection
+///   is taken and the statement prepared. Each site test asserts it, since
+///   a write that stalled before its hold until the deadline would leave no
+///   row in either order, and the run would prove nothing.
 ///
 /// The wait and the caller's timer share one instant, so they fire in one
 /// tick of the timer and wake one poll. A bound that polls the write first,
@@ -131,8 +135,9 @@ pub(crate) mod hold {
             HELD.with(|h| h.borrow().get(&self.0).is_some_and(|held| held.let_go))
         }
 
-        /// Whether the held write has reached its hold: it waits there now,
-        /// or has waited.
+        /// Whether the held write has reached its hold: its connection
+        /// taken and its statement prepared, it waits there now, or has
+        /// waited.
         pub(crate) fn reached(&self) -> bool {
             HELD.with(|h| h.borrow().get(&self.0).is_some_and(|held| held.reached))
         }
@@ -169,13 +174,18 @@ pub(crate) mod hold {
         HELD.with(|h| {
             let mut held = h.borrow_mut();
             let held = held.get_mut(&point)?;
-            let deadline = held.deadline.take()?;
-            held.reached = true;
-            Some(deadline)
+            held.deadline.take()
         })
     }
 
+    /// The wait itself: the hold is reached as it begins, and let go
+    /// where it ends.
     async fn until(point: Point, deadline: Instant) {
+        HELD.with(|h| {
+            if let Some(held) = h.borrow_mut().get_mut(&point) {
+                held.reached = true;
+            }
+        });
         tokio::time::sleep_until(deadline).await;
         HELD.with(|h| {
             if let Some(held) = h.borrow_mut().get_mut(&point) {

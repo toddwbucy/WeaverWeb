@@ -16,6 +16,7 @@ pub mod alerting;
 #[cfg(all(test, feature = "passkeys"))]
 mod alerts_tests;
 pub mod config;
+pub(crate) mod deadline;
 pub mod declaration;
 #[cfg(all(test, feature = "passkeys"))]
 mod declarations_tests;

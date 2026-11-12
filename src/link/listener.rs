@@ -33,6 +33,9 @@
 
 use crate::adapters::gate::GateClose;
 use crate::alerting::{Alerts, Failure};
+#[cfg(test)]
+use crate::deadline::hold::{self, Point};
+use crate::deadline::{self, Passed};
 use crate::link::authority::{Authority, fingerprint};
 use crate::link::frames::{
     FromClient, Line, LineReader, Plane, Position, Principal, Refusal, ToClient, TurnFault,
@@ -194,7 +197,12 @@ impl Drop for Unsent {
             return;
         };
         runtime.spawn(async move {
-            match tokio::time::timeout(silence, store.audit_unsent(&first)).await {
+            // **Read before the write is polled** (Spec 7.2), so a `failed`
+            // outcome still waiting when the bound passes is never sent.
+            let until = tokio::time::Instant::now() + silence;
+            #[cfg(test)]
+            hold::bound(Point::Unsent, until);
+            match deadline::before(store.audit_unsent(&first), until).await {
                 Ok(Ok(true)) => {}
                 Ok(Ok(false)) => {
                     tracing::info!("{agent}: {first} never landed, so it has no outcome to answer")
@@ -202,7 +210,7 @@ impl Drop for Unsent {
                 Ok(Err(e)) => tracing::error!(
                     "{agent}: the failed outcome of {first}, its frame never sent, could not be written: {e:#}"
                 ),
-                Err(_) => tracing::error!(
+                Err(Passed) => tracing::error!(
                     "{agent}: the failed outcome of {first}, its frame never sent, was not written within {silence:?}"
                 ),
             }
@@ -1155,14 +1163,19 @@ impl Listener {
     /// connection declared is refused here** too, before any record.
     pub async fn verb(&self, agent: &AgentId, verb: &str) -> Result<VerbOutcome, VerbError> {
         if verb != "show" {
-            let refused = tokio::time::timeout(
-                self.inner.silence,
+            // **Read before the write is polled** (Spec 7.2): a refusal
+            // answered as unrecorded was not sent.
+            let until = tokio::time::Instant::now() + self.inner.silence;
+            #[cfg(test)]
+            hold::bound(Point::Refusal, until);
+            let refused = deadline::before(
                 self.inner.store.audit_refusal(
                     audit::Principal::Server,
                     Target::Agent(agent.as_str()),
                     verb,
                     "the server asks show only",
                 ),
+                until,
             )
             .await;
             return match refused {
@@ -1175,7 +1188,7 @@ impl Listener {
                     );
                     Err(VerbError::Audit)
                 }
-                Err(_) => {
+                Err(Passed) => {
                     tracing::error!(
                         "{agent}: the server's refusal of {verb} was not recorded within {:?}",
                         self.inner.silence
@@ -1424,7 +1437,13 @@ impl Inner {
                 }
                 store.audit_first_as(&first, &record).await
             };
-            match tokio::time::timeout(silence, insert).await {
+            // **Read before the insert is polled** (Spec 7.2): a first still
+            // waiting when the bound passes is never committed, so the guard
+            // this task drops finds no first to answer.
+            let until = tokio::time::Instant::now() + silence;
+            #[cfg(test)]
+            hold::bound(Point::FirstRecord, until);
+            match deadline::before(insert, until).await {
                 // A receiver gone hands the guard back here, and it drops.
                 Ok(Ok(())) => {
                     let _ = hand_over.send(unsent);
@@ -1432,7 +1451,7 @@ impl Inner {
                 Ok(Err(e)) => {
                     tracing::error!("{owner}: the first record {first} was not written: {e:#}");
                 }
-                Err(_) => tracing::error!(
+                Err(Passed) => tracing::error!(
                     "{owner}: the first record {first} was not written within {silence:?}"
                 ),
             }
@@ -1458,12 +1477,17 @@ impl Inner {
             }
             self.store.audit_outcome(first, ok).await
         };
-        match tokio::time::timeout(self.silence, outcome).await {
+        // **Read before the write is polled** (Spec 7.2): an outcome logged
+        // as unwritten was not sent.
+        let until = tokio::time::Instant::now() + self.silence;
+        #[cfg(test)]
+        hold::bound(Point::Outcome, until);
+        match deadline::before(outcome, until).await {
             Ok(Ok(_)) => {}
             Ok(Err(e)) => {
                 tracing::error!("{agent}: the outcome of {first} could not be written: {e:#}")
             }
-            Err(_) => tracing::error!(
+            Err(Passed) => tracing::error!(
                 "{agent}: the outcome of {first} was not written within {:?}",
                 self.silence
             ),
@@ -1698,10 +1722,15 @@ impl Inner {
         if let Some((answer, why)) = refusal {
             #[cfg(test)]
             self.pause_at(AskPoint::AtRefusal).await;
-            let recorded = tokio::time::timeout_at(
-                deadline,
+            // **Read before the record is polled** (Spec 2.13, 7.2): a
+            // refusal answered as the bound's failure was not sent, so the
+            // audit holds no refusal the person was not told of.
+            #[cfg(test)]
+            hold::bound(Point::Refusal, deadline);
+            let recorded = deadline::before(
                 self.store
                     .audit_refusal(principal, Target::Agent(agent.as_str()), verb, why),
+                deadline,
             )
             .await;
             return match recorded {
@@ -1714,7 +1743,7 @@ impl Inner {
                 }
                 // **A refusal that cannot be recorded is the server's
                 // failure**, answered as the bound passed.
-                Err(_) => Err(stalled("the refusal's record")),
+                Err(Passed) => Err(stalled("the refusal's record")),
             };
         }
         let mut unsent = match tokio::time::timeout_at(

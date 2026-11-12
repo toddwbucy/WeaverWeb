@@ -15,6 +15,8 @@
 //! the act's error text, which can carry a path; a refusal's text is the
 //! caller's, and names no credential.
 
+#[cfg(test)]
+use crate::deadline::hold::{self, Point};
 use crate::store::Store;
 use crate::store::commit::OUTCOME_LOCK_CLASS;
 
@@ -223,6 +225,10 @@ const OUTCOME: &str = "INSERT INTO audit (principal, person_id, method, claimed_
      action, audit_id, $2 FROM audit WHERE audit_id = $1 AND answers IS NULL \
      AND refusal IS NULL RETURNING audit_id";
 
+/// A refusal's one statement, its record and the refusal together.
+const REFUSAL: &str = "INSERT INTO audit (principal, person_id, method, claimed_author, target_kind, \
+     target_id, action, refusal) VALUES ($1, $8, $2, $3, $4, $5, $6, $7) RETURNING audit_id";
+
 impl Store {
     /// **The first record, written before the act**, answering its
     /// identity. An act whose first record cannot be written does not act:
@@ -298,6 +304,8 @@ impl Store {
             }
             _ => {}
         }
+        #[cfg(test)]
+        hold::commit(Point::FirstRecord).await;
         tx.commit().await?;
         #[cfg(test)]
         match fault {
@@ -327,6 +335,8 @@ impl Store {
             .bind("failed")
             .fetch_optional(&mut *tx)
             .await?;
+        #[cfg(test)]
+        hold::commit(Point::Unsent).await;
         tx.commit().await?;
         Ok(landed.is_some())
     }
@@ -335,9 +345,17 @@ impl Store {
     /// action copied from the first in the one statement, so the two never
     /// disagree, and the outcome `ok` or `failed`.
     pub async fn audit_outcome(&self, first: &str, ok: bool) -> anyhow::Result<String> {
-        let id: String = sqlx::query_scalar(OUTCOME)
+        let outcome = sqlx::query_scalar::<_, String>(OUTCOME)
             .bind(first)
-            .bind(if ok { "ok" } else { "failed" })
+            .bind(if ok { "ok" } else { "failed" });
+        #[cfg(test)]
+        if let Some(mut conn) = hold::statement(Point::Outcome, &self.pool, OUTCOME).await? {
+            return outcome
+                .fetch_optional(&mut *conn)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("{first} is not a first record"));
+        }
+        let id: String = outcome
             .fetch_optional(&self.pool)
             .await?
             .ok_or_else(|| anyhow::anyhow!("{first} is not a first record"))?;
@@ -392,20 +410,20 @@ impl Store {
         if FAIL_REFUSAL.with(|f| f.replace(false)) {
             anyhow::bail!("a test fault refused the refusal's record");
         }
-        let id: String = sqlx::query_scalar(
-            "INSERT INTO audit (principal, person_id, method, claimed_author, target_kind, \
-             target_id, action, refusal) VALUES ($1, $8, $2, $3, $4, $5, $6, $7) RETURNING audit_id",
-        )
-        .bind(principal.kind())
-        .bind(principal.method())
-        .bind(principal.claimed_author())
-        .bind(target.kind())
-        .bind(target.id())
-        .bind(action)
-        .bind(refusal)
-        .bind(principal.person_id())
-        .fetch_one(&self.pool)
-        .await?;
+        let refused = sqlx::query_scalar::<_, String>(REFUSAL)
+            .bind(principal.kind())
+            .bind(principal.method())
+            .bind(principal.claimed_author())
+            .bind(target.kind())
+            .bind(target.id())
+            .bind(action)
+            .bind(refusal)
+            .bind(principal.person_id());
+        #[cfg(test)]
+        if let Some(mut conn) = hold::statement(Point::Refusal, &self.pool, REFUSAL).await? {
+            return Ok(refused.fetch_one(&mut *conn).await?);
+        }
+        let id: String = refused.fetch_one(&self.pool).await?;
         Ok(id)
     }
 }

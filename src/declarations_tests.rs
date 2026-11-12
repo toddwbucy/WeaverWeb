@@ -2,7 +2,9 @@
 //! `src/store/declarations.rs`, `src/declaration/`; Spec 2.4 and 6.1,
 //! section 9's rows for them): every refusal by its field and reason, and
 //! nothing saved after one; the one warning, and the word for an unknown;
-//! the capability table against the vendor's page as read; a save and a
+//! the capability table against the vendor's page as read; every tunable
+//! value required and judged on the agent's range, the five starting values,
+//! and a stale row lacking one reopening and saving once filled; a save and a
 //! reopen the same document, the agent's file TOML; the head, the name and
 //! the authored half held by the screen and the store both; the admin grant
 //! alone reading or writing; and no frame to either connector. Each
@@ -26,7 +28,23 @@ use crate::store::declarations::{Under, insert_row};
 use crate::store::read::tests::fresh_store;
 use crate::verbs_tests::{dial_gate, operated};
 
-/// A document every check admits: one box, one decoder on a named card.
+/// **The eight tunable values of a whole document**, each in range (Spec
+/// 6.1). The seed is 1, so a save setting it to 7 moves it.
+fn tunables() -> Value {
+    json!({
+        "temperature": 0.7,
+        "top_k": 40,
+        "top_p": 0.95,
+        "seed": 1,
+        "repetition_penalty": 1.1,
+        "repetition_window": 64,
+        "max_tokens_per_turn": 512,
+        "context_capacity": 4096,
+    })
+}
+
+/// A document every check admits, a save's among them: one box, one
+/// decoder on a named card, and the eight tunable values.
 fn base() -> Value {
     json!({
         "name": "karl",
@@ -35,7 +53,7 @@ fn base() -> Value {
             "models": [{"function": "decoder", "artifact": "decoder-a", "format": "gguf"}],
             "gpu": {"card": "card-0"},
         }],
-        "sampler": {},
+        "sampler": tunables(),
         "store": "none",
         "gate": {"tools": []},
         "prompt": null,
@@ -50,7 +68,7 @@ fn edit(f: impl FnOnce(&mut Value)) -> Value {
 }
 
 /// The base document's form, as the screen posts it.
-const BASE_FORM: [(&str, &str); 8] = [
+const BASE_FORM: [(&str, &str); 16] = [
     ("name", "karl"),
     ("placement", "host"),
     ("b0.m0.function", "decoder"),
@@ -58,6 +76,14 @@ const BASE_FORM: [(&str, &str); 8] = [
     ("b0.m0.format", "gguf"),
     ("b0.gpu1.kind", "card"),
     ("b0.gpu1.value", "card-0"),
+    ("sampler.temperature", "0.7"),
+    ("sampler.top_k", "40"),
+    ("sampler.top_p", "0.95"),
+    ("sampler.seed", "1"),
+    ("sampler.repetition_penalty", "1.1"),
+    ("sampler.repetition_window", "64"),
+    ("sampler.max_tokens_per_turn", "512"),
+    ("sampler.context_capacity", "4096"),
     ("store", "none"),
 ];
 
@@ -1058,6 +1084,7 @@ async fn a_save_and_a_reopen_are_the_same_document() {
         ("sampler.repetition_penalty", "1.1"),
         ("sampler.repetition_window", "64"),
         ("sampler.max_tokens_per_turn", "512"),
+        ("sampler.context_capacity", "32768"),
         ("store", "sqlite"),
         ("tools", "sh"),
         ("prompt", prompt),
@@ -1128,12 +1155,27 @@ async fn a_save_and_a_reopen_are_the_same_document() {
     assert_eq!(table["tool-set"], toml::Value::Array(vec!["sh".into()]));
     assert_eq!(table["state-store"]["engine"].as_str(), Some("sqlite"));
     let decoder = &table["spu-instruction"]["decoder"];
-    assert_eq!(decoder["tunable-values"].as_table().unwrap().len(), 7);
-    assert_eq!(decoder["tunable-values"]["top-k"].as_integer(), Some(40));
+    // The eight tunable values, every one, under the agent's names.
+    let values = decoder["tunable-values"].as_table().unwrap();
+    let mut names: Vec<&str> = values.keys().map(String::as_str).collect();
+    names.sort_unstable();
     assert_eq!(
-        decoder["tunable-values"]["temperature"].as_float(),
-        Some(0.7)
+        names,
+        [
+            "context-capacity",
+            "max-tokens-per-turn",
+            "repetition-penalty",
+            "repetition-window",
+            "seed",
+            "temperature",
+            "top-k",
+            "top-p",
+        ]
     );
+    assert_eq!(values["top-k"].as_integer(), Some(40));
+    assert_eq!(values["temperature"].as_float(), Some(0.7));
+    assert_eq!(values["context-capacity"].as_integer(), Some(32768));
+    assert!(!file.contains("tunable-values lacks"), "{file}");
     let binding = &decoder["model-binding"];
     assert_eq!(binding["artifact"].as_str(), Some("decoder-a"));
     assert_eq!(binding["adapter"]["sha256"].as_str(), Some(sha.as_str()));
@@ -1160,7 +1202,7 @@ async fn a_save_and_a_reopen_are_the_same_document() {
     // A member dropped on the save shows: the reopen is no longer the
     // document.
     let mut fewer = reposted.clone();
-    fewer.retain(|(k, _)| *k != "sampler.seed");
+    fewer.retain(|(k, _)| *k != "tools");
     assert_ne!(
         Form::read(form(&fewer).as_bytes())
             .unwrap()
@@ -1549,4 +1591,434 @@ async fn the_declaration_screen_reaches_no_agent_and_no_host() {
     );
     assert_eq!(admin_line, None, "admin-con was sent a line");
     assert_eq!(gate_line, None, "gate-con was sent a line");
+}
+
+/// The members of [`crate::declaration::SAMPLER`], each as the form names
+/// its field.
+fn tunable_fields() -> Vec<String> {
+    crate::declaration::SAMPLER
+        .iter()
+        .map(|(name, _)| format!("sampler.{name}"))
+        .collect()
+}
+
+/// **Every tunable value is required, and a save lacking one is refused
+/// naming it** (Spec 6.1): on the document, each of the eight dropped in
+/// turn still parses, since a row saved before they were required must
+/// reopen, and is refused at save naming its field; end to end, a form
+/// lacking each in turn, left out or posted empty, is answered 400 naming
+/// that field, and neither a row nor an audit record is written. Whole, the
+/// form saves.
+#[tokio::test]
+async fn every_tunable_value_is_required_and_a_missing_one_is_refused_naming_it() {
+    let whole = Document::parse(&base()).unwrap();
+    assert_eq!(whole.serving(), Ok(()));
+    for (name, _) in crate::declaration::SAMPLER {
+        let value = edit(|v| {
+            v["sampler"].as_object_mut().unwrap().remove(name);
+        });
+        let document = Document::parse(&value).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let refused = document
+            .serving()
+            .err()
+            .unwrap_or_else(|| panic!("a document lacking {name} would save"));
+        assert_eq!(
+            (refused.kind, refused.field.as_str()),
+            (Kind::Missing, format!("sampler.{name}").as_str()),
+            "{refused}"
+        );
+    }
+
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let app = app(s, Some(passkeys()));
+    let (_, session) = admin(&app, s, &mut authenticator(), "ada").await;
+    let (rows, audit) = (count(s, "declaration").await, count(s, "audit").await);
+    for field in tunable_fields() {
+        for (how, body) in [
+            ("left out", posted(&[], &[field.as_str()])),
+            ("posted empty", posted(&[(field.as_str(), "")], &[])),
+        ] {
+            let (status, _, page) =
+                send_as(&app, "POST", "/declarations", Some(body), &session).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{field} {how}: {page}");
+            assert!(
+                page.contains(&format!("{field}: is required")),
+                "{field} {how}: the refusal names its field: {page}"
+            );
+            assert_eq!(count(s, "declaration").await, rows, "{field} {how} saved");
+            assert_eq!(
+                count(s, "audit").await,
+                audit,
+                "{field} {how} wrote a record"
+            );
+        }
+    }
+    save(&app, &session, "/declarations", posted(&[], &[])).await;
+    assert_eq!(count(s, "declaration").await, rows + 1);
+}
+
+/// **Every tunable value is judged on the agent's range at the pin**, a
+/// real again as narrowed to a 32-bit float (Spec 6.1's table): on each
+/// side of every edge one case, the edge admitted and its neighbour refused
+/// naming the field, and the two stated edges admitted. The seed and the
+/// maximum tokens per turn past the largest whole number TOML holds are
+/// refused by their kind at the parse, and by the range on a document built
+/// otherwise. End to end, a range refusal is the screen's 400.
+#[tokio::test]
+async fn every_tunable_value_is_judged_on_the_agents_range() {
+    let cases: Vec<(&str, Value, bool)> = vec![
+        // The temperature: finite and 0 or more, as written and narrowed.
+        ("temperature", json!(0.0), true),
+        ("temperature", json!(-0.1), false),
+        ("temperature", json!(3.4e38), true),
+        ("temperature", json!(1e39), false),
+        ("temperature", json!(1e-50), false),
+        // A stated edge: narrows to a subnormal, in range by the table.
+        ("temperature", json!(1e-40), true),
+        // Top-p: more than 0 and at most 1, as written and narrowed.
+        ("top_p", json!(0.0), false),
+        ("top_p", json!(-0.5), false),
+        ("top_p", json!(1e-30), true),
+        ("top_p", json!(1e-50), false),
+        ("top_p", json!(1.0), true),
+        ("top_p", json!(1.000_000_01), false),
+        // The repetition penalty: finite and more than 0.
+        ("repetition_penalty", json!(0.0), false),
+        ("repetition_penalty", json!(-1.0), false),
+        ("repetition_penalty", json!(1e-30), true),
+        ("repetition_penalty", json!(1e-50), false),
+        ("repetition_penalty", json!(1e38), true),
+        ("repetition_penalty", json!(1e39), false),
+        // Top-k and the window: below 2^31.
+        ("top_k", json!(0), true),
+        ("top_k", json!(2_147_483_647_u64), true),
+        ("top_k", json!(2_147_483_648_u64), false),
+        ("repetition_window", json!(0), true),
+        ("repetition_window", json!(2_147_483_647_u64), true),
+        ("repetition_window", json!(2_147_483_648_u64), false),
+        // The seed and the maximum tokens per turn: to i64::MAX.
+        ("seed", json!(0), true),
+        ("seed", json!(i64::MAX), true),
+        // A stated edge: above 2^53, rounded by the agent's number type.
+        ("seed", json!(9_007_199_254_740_993_u64), true),
+        ("max_tokens_per_turn", json!(0), true),
+        ("max_tokens_per_turn", json!(i64::MAX), true),
+        // The context capacity: 1 to below 2^32.
+        ("context_capacity", json!(0), false),
+        ("context_capacity", json!(1), true),
+        ("context_capacity", json!(4_294_967_295_u64), true),
+        ("context_capacity", json!(4_294_967_296_u64), false),
+    ];
+    for (name, value, admitted) in cases {
+        let document = Document::parse(&edit(|v| v["sampler"][name] = value.clone()))
+            .unwrap_or_else(|e| panic!("{name} = {value} does not parse: {e}"));
+        match (document.serving(), admitted) {
+            (Ok(()), true) => {}
+            (Err(refused), false) => assert_eq!(
+                (refused.kind, refused.field.as_str()),
+                (Kind::Range, format!("sampler.{name}").as_str()),
+                "{name} = {value}: {refused}"
+            ),
+            (judged, _) => panic!("{name} = {value}: {judged:?}"),
+        }
+    }
+    let past = i64::MAX.unsigned_abs() + 1;
+    for name in ["seed", "max_tokens_per_turn"] {
+        let refused = Document::parse(&edit(|v| v["sampler"][name] = json!(past))).unwrap_err();
+        assert_eq!(
+            (refused.kind, refused.field.as_str()),
+            (Kind::Sampler, format!("sampler.{name}").as_str())
+        );
+        let mut document = Document::parse(&base()).unwrap();
+        match name {
+            "seed" => document.sampler.seed = Some(past),
+            _ => document.sampler.max_tokens_per_turn = Some(past),
+        }
+        let refused = document
+            .serving()
+            .err()
+            .unwrap_or_else(|| panic!("{name} past i64::MAX was admitted by the range"));
+        assert_eq!(
+            (refused.kind, refused.field.as_str()),
+            (Kind::Range, format!("sampler.{name}").as_str())
+        );
+    }
+
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let app = app(s, Some(passkeys()));
+    let (_, session) = admin(&app, s, &mut authenticator(), "ada").await;
+    let (rows, audit) = (count(s, "declaration").await, count(s, "audit").await);
+    for (field, text, words) in [
+        (
+            "sampler.context_capacity",
+            "0",
+            "sampler.context_capacity: is outside the agent",
+        ),
+        (
+            "sampler.top_p",
+            "1.00000001",
+            "sampler.top_p: is outside the agent",
+        ),
+        (
+            "sampler.temperature",
+            "inf",
+            "sampler.temperature: is a finite number",
+        ),
+    ] {
+        let (status, _, page) = send_as(
+            &app,
+            "POST",
+            "/declarations",
+            Some(posted(&[(field, text)], &[])),
+            &session,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{field} = {text}: {page}");
+        assert!(
+            page.contains(&words.replace('\'', "&#39;")) || page.contains(words),
+            "{field} = {text}: {page}"
+        );
+        assert_eq!(
+            (count(s, "declaration").await, count(s, "audit").await),
+            (rows, audit)
+        );
+    }
+}
+
+/// **A new declaration's form starts with the five values the SPU froze
+/// until the carrier, and the other three empty** (Spec 6.1): the
+/// temperature, top-k, top-p, repetition penalty and repetition window
+/// carry 0.7, 40, 0.95, 1.1 and 64 as editable inputs, and the seed, the
+/// maximum tokens per turn and the context capacity carry nothing. Posted
+/// as it starts, the save is refused naming the seed; with the three
+/// entered, it saves the five as they started.
+#[tokio::test]
+async fn a_new_declarations_form_starts_with_five_tunable_values() {
+    let starting = [
+        ("sampler.temperature", "0.7"),
+        ("sampler.top_k", "40"),
+        ("sampler.top_p", "0.95"),
+        ("sampler.seed", ""),
+        ("sampler.repetition_penalty", "1.1"),
+        ("sampler.repetition_window", "64"),
+        ("sampler.max_tokens_per_turn", ""),
+        ("sampler.context_capacity", ""),
+    ];
+    let form = Form::empty(1);
+    let held: Vec<(String, String)> = form
+        .sampler
+        .iter()
+        .map(|(n, v)| (format!("sampler.{n}"), v.clone()))
+        .collect();
+    let expected: Vec<(String, String)> = starting
+        .iter()
+        .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+        .collect();
+    assert_eq!(held, expected, "the empty form");
+
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let app = app(s, Some(passkeys()));
+    let (_, session) = admin(&app, s, &mut authenticator(), "ada").await;
+    let (status, _, page) = send_as(&app, "GET", "/declarations/new", None, &session).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let shown: Vec<(String, String)> = posted_by(&page)
+        .into_iter()
+        .filter(|(k, _)| k.starts_with("sampler."))
+        .collect();
+    assert_eq!(shown, expected, "the new page's inputs");
+    for (field, _) in &starting {
+        let at = page
+            .find(&format!("name=\"{field}\""))
+            .unwrap_or_else(|| panic!("{field} is an input"));
+        let tag = &page[page[..at].rfind('<').unwrap()..at];
+        assert!(
+            !tag.contains("readonly") && !tag.contains("disabled"),
+            "{field} is editable: {tag}"
+        );
+    }
+
+    // Posted as it starts, beside the base's other fields: the seed is the
+    // first value the operator must enter.
+    let rest: Vec<(&str, &str)> = BASE_FORM
+        .iter()
+        .filter(|(k, _)| !k.starts_with("sampler."))
+        .copied()
+        .collect();
+    let mut fields = rest.clone();
+    fields.extend_from_slice(&starting);
+    let (status, _, answer) = send_as(
+        &app,
+        "POST",
+        "/declarations",
+        Some(crate::admin_tests::form(&fields)),
+        &session,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{answer}");
+    assert!(answer.contains("sampler.seed: is required"), "{answer}");
+
+    let mut fields = rest;
+    fields.extend(starting.iter().map(|(k, v)| match *k {
+        "sampler.seed" => (*k, "7"),
+        "sampler.max_tokens_per_turn" => (*k, "512"),
+        "sampler.context_capacity" => (*k, "32768"),
+        _ => (*k, *v),
+    }));
+    let de = save(
+        &app,
+        &session,
+        "/declarations",
+        crate::admin_tests::form(&fields),
+    )
+    .await;
+    let row = s.declaration(&de).await.unwrap().unwrap();
+    assert_eq!(
+        row.body["sampler"],
+        json!({
+            "temperature": 0.7,
+            "top_k": 40,
+            "top_p": 0.95,
+            "seed": 7,
+            "repetition_penalty": 1.1,
+            "repetition_window": 64,
+            "max_tokens_per_turn": 512,
+            "context_capacity": 32768,
+        })
+    );
+}
+
+/// **A row saved before the eight were required reopens, is named stale by
+/// its pin, and its save is refused until the eight are filled** (Spec 2.4
+/// and 6.1): a row under the earlier pin, holding the old document's
+/// optional sampler, reopens with what it holds and empty fields for the
+/// rest, its file naming each missing name; its save as reopened is refused
+/// naming the first missing field and writes nothing; filled, it saves
+/// under this build's pin.
+#[tokio::test]
+async fn a_row_lacking_a_tunable_value_reopens_stale_and_saves_once_filled() {
+    const EARLIER: &str = "a3543b31f264b269f66ab55d8767f25290ec9d61";
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let app = app(s, Some(passkeys()));
+    let (ada, session) = admin(&app, s, &mut authenticator(), "ada").await;
+    let body = edit(|v| {
+        v["sampler"] = json!({"temperature": 0.7, "top_k": 40, "max_tokens_per_turn": 512})
+    });
+    let de = "de-00000000000000b1";
+    sqlx::query(
+        "INSERT INTO declaration (declaration_ref, name, body, corpus_commit, version, \
+         what_moved, author) VALUES ($1, 'karl', $2, $3, 1, '{}', $4)",
+    )
+    .bind(de)
+    .bind(&body)
+    .bind(EARLIER)
+    .bind(&ada)
+    .execute(&s.pool)
+    .await
+    .unwrap();
+
+    let (status, _, page) =
+        send_as(&app, "GET", &format!("/declarations/{de}"), None, &session).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains("stale"), "{page}");
+    assert!(
+        page.contains(EARLIER) && page.contains(CORPUS_COMMIT),
+        "{page}"
+    );
+    let reposted = posted_by(&page);
+    let shown: Vec<(&str, &str)> = reposted
+        .iter()
+        .filter(|(k, _)| k.starts_with("sampler."))
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    assert_eq!(
+        shown,
+        [
+            ("sampler.temperature", "0.7"),
+            ("sampler.top_k", "40"),
+            ("sampler.top_p", ""),
+            ("sampler.seed", ""),
+            ("sampler.repetition_penalty", ""),
+            ("sampler.repetition_window", ""),
+            ("sampler.max_tokens_per_turn", "512"),
+            ("sampler.context_capacity", ""),
+        ],
+        "the reopen shows what the row holds and no starting value"
+    );
+    let file = pre(&page, 0);
+    assert!(
+        file.contains(
+            "# tunable-values lacks top-p, seed, repetition-penalty, repetition-window, \
+             context-capacity: a serving load refuses this file"
+        ),
+        "{file}"
+    );
+    toml::from_str::<toml::Table>(&file).expect("the stale row's file is TOML 1.0");
+
+    let as_reopened: Vec<(&str, &str)> = reposted
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    let (rows, audit) = (count(s, "declaration").await, count(s, "audit").await);
+    let (status, _, answer) = send_as(
+        &app,
+        "POST",
+        &format!("/declarations/{de}"),
+        Some(crate::admin_tests::form(&as_reopened)),
+        &session,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{answer}");
+    assert!(answer.contains("sampler.top_p: is required"), "{answer}");
+    assert_eq!(
+        (count(s, "declaration").await, count(s, "audit").await),
+        (rows, audit)
+    );
+
+    let filled: Vec<(&str, &str)> = as_reopened
+        .iter()
+        .map(|(k, v)| match *k {
+            "sampler.top_p" => (*k, "0.95"),
+            "sampler.seed" => (*k, "7"),
+            "sampler.repetition_penalty" => (*k, "1.1"),
+            "sampler.repetition_window" => (*k, "64"),
+            "sampler.context_capacity" => (*k, "4096"),
+            _ => (*k, *v),
+        })
+        .collect();
+    let child = save(
+        &app,
+        &session,
+        &format!("/declarations/{de}"),
+        crate::admin_tests::form(&filled),
+    )
+    .await;
+    let row = s.declaration(&child).await.unwrap().unwrap();
+    assert_eq!(
+        (row.version, row.corpus_commit.as_str()),
+        (2, CORPUS_COMMIT)
+    );
+    let mut moved = row.what_moved.clone();
+    moved.sort_unstable();
+    assert_eq!(
+        moved,
+        [
+            "sampler.context_capacity",
+            "sampler.repetition_penalty",
+            "sampler.repetition_window",
+            "sampler.seed",
+            "sampler.top_p",
+        ]
+    );
 }

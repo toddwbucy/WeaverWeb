@@ -7,11 +7,13 @@
 //! the file it will become. The five routes:
 //!
 //! - `GET /declarations`: every lineage, by name, with its head
-//! - `GET /declarations/new`: the screen, empty (`?boxes=` for more slots)
+//! - `GET /declarations/new`: the screen, empty (`?boxes=` for more box
+//!   slots, `?kinds=` for more of the state election's rows)
 //! - `POST /declarations`: save the first row of a new lineage
 //! - `GET /declarations/{de}`: reopen that row, with its version, its last
 //!   save, its author, whether it is its lineage's head, the class
-//!   readings and the two panes (`?boxes=` for more empty boxes)
+//!   readings and the two panes (`?boxes=` for more empty boxes, `?kinds=`
+//!   for more of the state election's rows)
 //! - `POST /declarations/{de}`: save from that row, a new row whose parent
 //!   it is
 //!
@@ -37,7 +39,8 @@ use serde::Deserialize;
 
 use crate::declaration::capability;
 use crate::declaration::render::{self, CORPUS_COMMIT, Meta};
-use crate::declaration::{Document, Form, MAX_BOXES, Reading};
+use crate::declaration::state_election::KINDS;
+use crate::declaration::{Document, Form, MAX_BOXES, MAX_KINDS, Reading};
 use crate::store::Store;
 use crate::store::admin::Refusal;
 use crate::store::audit::Target;
@@ -113,11 +116,15 @@ pub fn routes(policy: Policy) -> Router<Store> {
         )
 }
 
-/// The slots a screen offers: how many SPU boxes, at most [`MAX_BOXES`].
+/// The slots a screen offers: how many SPU boxes, at most [`MAX_BOXES`],
+/// and how many of the state election's rows, at most [`MAX_KINDS`], each
+/// in all.
 #[derive(Debug, Default, Deserialize)]
 pub struct Slots {
     #[serde(default)]
     boxes: Option<usize>,
+    #[serde(default)]
+    kinds: Option<usize>,
 }
 
 /// The session's person, an admin, or the page's answer: 401 without a
@@ -235,9 +242,12 @@ struct ScreenPage {
     chrome: super::Chrome,
     /// Where the form posts.
     action: String,
-    /// Where "more boxes" asks.
+    /// Where "more boxes" and "more kinds" ask.
     slots_href: String,
     more_boxes: usize,
+    more_kinds: usize,
+    /// The kinds a state election's row may name.
+    kinds: &'static [&'static str],
     refusal: Option<String>,
     form: Form,
     opened: Option<Opened>,
@@ -280,6 +290,7 @@ async fn screen(
         Err(e) => return fault(e),
     };
     let more_boxes = (form.boxes.len() + 1).min(MAX_BOXES);
+    let more_kinds = (form.state_keys.len() + 1).min(MAX_KINDS);
     let page = ScreenPage {
         here: "declarations",
         who: session.name.clone(),
@@ -288,6 +299,8 @@ async fn screen(
         action,
         slots_href,
         more_boxes,
+        more_kinds,
+        kinds: &KINDS,
         refusal,
         form,
         opened,
@@ -314,7 +327,7 @@ async fn new(store: Store, policy: &Policy, headers: HeaderMap, slots: Slots) ->
         StatusCode::OK,
         "/declarations".to_owned(),
         "/declarations/new".to_owned(),
-        Form::empty(boxes),
+        Form::empty(boxes).with_kinds(slots.kinds.unwrap_or(0)),
         None,
         None,
     )
@@ -375,7 +388,8 @@ async fn open(
     let head = lineage.last().map(|h| (h.de.clone(), h.version));
     let (head_de, head_version) = head.unwrap_or_else(|| (row.de.clone(), row.version));
     // `?boxes=` asks for that many box slots in all, as on the empty
-    // screen: the row's own boxes and empty ones after them.
+    // screen: the row's own boxes and empty ones after them; `?kinds=` the
+    // same of the state election's rows.
     let own = document.boxes.len();
     let extra = slots.boxes.unwrap_or(0).min(MAX_BOXES).saturating_sub(own);
     let opened = Opened {
@@ -404,7 +418,7 @@ async fn open(
         StatusCode::OK,
         format!("/declarations/{}", row.de),
         format!("/declarations/{}", row.de),
-        Form::of(&document, extra),
+        Form::of(&document, extra).with_kinds(slots.kinds.unwrap_or(0)),
         None,
         Some(opened),
     )

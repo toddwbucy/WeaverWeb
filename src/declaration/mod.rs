@@ -5,6 +5,8 @@
 //! conforms: web-a-new-form-starts-with-five-tunable-values
 //! conforms: web-a-saved-declaration-carries-the-readout-election
 //! conforms: web-a-new-form-starts-with-two-elections-at-the-agents-absence
+//! conforms: web-an-election-beside-no-store-is-refused-and-none-is-written
+//! conforms: web-a-new-form-starts-at-the-default-state-election
 //!
 //! **The declaration's document** (Spec 6.1): the console's own grammar, a
 //! superset of the agent's, which the declaration screen saves and the
@@ -14,7 +16,9 @@
 //! reads the screen's form and turns it into that value, a refusal naming
 //! the screen's own slot; [`Document::serving`] judges, at save, that every
 //! tunable value a serving load requires is present and in the agent's
-//! range, and that the residual readout's election is made;
+//! range, and that the residual readout's election is made; the state
+//! election's own grammar is [`state_election`]'s, and the document holds
+//! it beside a store, never beside `none`;
 //! [`Document::to_value`] writes the canonical form a save stores;
 //! [`Document::readings`] reads each class against the capability table for
 //! the one warning; and [`moved`] names the paths whose values differ
@@ -28,10 +32,13 @@
 pub mod capability;
 pub mod elections;
 pub mod render;
+pub mod state_election;
 pub mod tunable_set;
 
 use serde_json::{Map, Value, json};
 use std::collections::HashSet;
+
+use state_election::StateElection;
 
 /// **Why a document was refused**, by kind, so a test reads the reason and
 /// not its wording.
@@ -67,8 +74,17 @@ pub enum Kind {
     Shape,
     /// An election outside its values: a turn context other than
     /// `continuous` or `independent`, a boolean election that is not true
-    /// or false.
+    /// or false, a state election's kind outside the kinds that cross.
     Election,
+    /// A kind the state election names twice.
+    Twice,
+    /// A state election's path with an empty segment.
+    Path,
+    /// A state election past its bounds: more paths for a kind, or a longer
+    /// path, than the screen admits.
+    Bound,
+    /// A state election beside the store `none`.
+    Declined,
 }
 
 /// **A refusal, naming the field** by its path in the document.
@@ -97,6 +113,10 @@ fn refused(field: impl Into<String>, kind: Kind, why: impl Into<String>) -> Refu
 pub const MAX_BOXES: usize = 16;
 pub const MAX_MODELS: usize = 8;
 
+/// The most rows the state election offers: one for each kind that can
+/// cross, since a kind is refused twice.
+pub const MAX_KINDS: usize = state_election::KINDS.len();
+
 /// The document, judged.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Document {
@@ -118,6 +138,13 @@ pub struct Document {
     pub turn_context: Option<TurnContext>,
     pub residual_readout_election: Option<bool>,
     pub surprisal_election: Option<bool>,
+    /// **The state election** (Spec 6.1, `super::state_election`), the
+    /// tee's election. **Held as an option**: the agent reads its absence as
+    /// the default election, so a row saved before the screen held it reads
+    /// and saves; beside the store `none` it is always absent, since admin
+    /// refuses a present one there. The form writes it at every save beside
+    /// `sqlite`.
+    pub state_election: Option<StateElection>,
 }
 
 /// **The turn-context election**, closed at the agent's two values:
@@ -476,6 +503,7 @@ impl Document {
                 "turn_context",
                 "residual_readout_election",
                 "surprisal_election",
+                "state_election",
             ],
         )?;
         let name = required_text(top, "", "name")?;
@@ -532,6 +560,19 @@ impl Document {
         };
         let residual_readout_election = election(top, "residual_readout_election")?;
         let surprisal_election = election(top, "surprisal_election")?;
+        let state_election = match top.get("state_election") {
+            None => None,
+            Some(value) => Some(state_election::parse(value)?),
+        };
+        // Admin refuses a present election beside the store `none`, the
+        // default's spelling among them: the screen says so at save.
+        if store == Engine::None && state_election.is_some() {
+            return Err(refused(
+                "state_election",
+                Kind::Declined,
+                "is declared beside the store none, which admin refuses at load: an election says what the tee sends to a store the declaration declined",
+            ));
+        }
         let document = Document {
             name,
             placement,
@@ -543,6 +584,7 @@ impl Document {
             turn_context,
             residual_readout_election,
             surprisal_election,
+            state_election,
         };
         document.roster()?;
         Ok(document)
@@ -698,6 +740,9 @@ impl Document {
         }
         if let Some(surprisal) = self.surprisal_election {
             value["surprisal_election"] = json!(surprisal);
+        }
+        if let Some(election) = &self.state_election {
+            value["state_election"] = election.to_value();
         }
         value
     }
@@ -1254,6 +1299,37 @@ pub struct Form {
     pub residual_readout_election: String,
     /// The surprisal's checkbox.
     pub surprisal_election: bool,
+    /// The state election's select of which kinds cross: `true`, every
+    /// kind; `false`, only the kinds named; empty where the body carries
+    /// none.
+    pub state_all_kinds: String,
+    /// The state election's rows, each a kind and its paths.
+    pub state_keys: Vec<FormKind>,
+}
+
+/// **One row of the state election**: a kind, chosen or empty, and its
+/// paths as typed, one per line.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FormKind {
+    pub kind: String,
+    pub paths: String,
+}
+
+impl FormKind {
+    fn is_empty(&self) -> bool {
+        self.kind.is_empty() && self.paths.trim().is_empty()
+    }
+
+    /// Each line a path, its surrounding white space trimmed, a blank line
+    /// none.
+    fn paths(&self) -> Vec<String> {
+        self.paths
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(str::to_owned)
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -1341,6 +1417,21 @@ impl Form {
                         Kind::Election,
                         "is true, its box checked, or absent",
                     ));
+                }
+                ["state_election", "all_kinds"] => form.state_all_kinds = value,
+                ["state_election", k, which] if k.starts_with('k') => {
+                    let Some(i) = index(k, 'k', MAX_KINDS) else {
+                        return Err(unknown_field(&key));
+                    };
+                    if form.state_keys.len() <= i {
+                        form.state_keys.resize(i + 1, FormKind::default());
+                    }
+                    let row = &mut form.state_keys[i];
+                    match *which {
+                        "kind" => row.kind = value,
+                        "paths" => row.paths = value,
+                        _ => return Err(unknown_field(&key)),
+                    }
                 }
                 ["sampler", member] if SAMPLER.iter().any(|(n, _)| n == member) => {
                     if let Some(slot) = form.sampler.iter_mut().find(|(n, _)| n == member) {
@@ -1536,6 +1627,45 @@ impl Form {
             }
         }
         top.insert("surprisal_election".into(), json!(self.surprisal_election));
+        // The state election: written where the body carries it, but the
+        // default beside the store `none`, which admin would refuse and
+        // which the agent reads as its absence.
+        let rows: Vec<&FormKind> = self.state_keys.iter().filter(|k| !k.is_empty()).collect();
+        let declared = !self.state_all_kinds.is_empty() || !rows.is_empty();
+        let default_beside_none =
+            self.store == "none" && self.state_all_kinds == "true" && rows.is_empty();
+        if declared && !default_beside_none {
+            let mut election = Map::new();
+            match self.state_all_kinds.as_str() {
+                "" => {}
+                "true" => {
+                    election.insert("all_kinds".into(), json!(true));
+                }
+                "false" => {
+                    election.insert("all_kinds".into(), json!(false));
+                }
+                _ => {
+                    return Err(refused(
+                        "state_election.all_kinds",
+                        Kind::Election,
+                        "is true or false",
+                    ));
+                }
+            }
+            let keys: Vec<Value> = rows
+                .iter()
+                .map(|k| {
+                    let mut entry = Map::new();
+                    if !k.kind.is_empty() {
+                        entry.insert("kind".into(), json!(k.kind));
+                    }
+                    entry.insert("paths".into(), json!(k.paths()));
+                    Value::Object(entry)
+                })
+                .collect();
+            election.insert("keys".into(), Value::Array(keys));
+            top.insert("state_election".into(), Value::Object(election));
+        }
         Ok(Value::Object(top))
     }
 
@@ -1557,6 +1687,20 @@ impl Form {
 
     /// A document path's box and model as the screen numbers its slots.
     fn slot_path(&self, field: &str) -> String {
+        if let Some(rest) = field.strip_prefix("state_election.keys[") {
+            let row = || -> Option<String> {
+                let (i, tail) = rest.split_once(']')?;
+                let i: usize = i.parse().ok()?;
+                let (ki, _) = self
+                    .state_keys
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, k)| !k.is_empty())
+                    .nth(i)?;
+                Some(format!("state_election.keys[{ki}]{tail}"))
+            };
+            return row().unwrap_or_else(|| field.to_owned());
+        }
         let renumber = || -> Option<String> {
             let (i, rest) = field.strip_prefix("boxes[")?.split_once(']')?;
             let i: usize = i.parse().ok()?;
@@ -1666,6 +1810,20 @@ impl Form {
                 .map(|b| b.to_string())
                 .unwrap_or_default(),
             surprisal_election: document.surprisal_election.unwrap_or(false),
+            state_all_kinds: document
+                .state_election
+                .as_ref()
+                .is_none_or(|e| e.all_kinds)
+                .to_string(),
+            state_keys: document
+                .state_election
+                .iter()
+                .flat_map(|e| &e.keys)
+                .map(|k| FormKind {
+                    kind: k.kind.clone(),
+                    paths: k.paths.join("\n"),
+                })
+                .collect(),
         };
         form.boxes
             .extend(std::iter::repeat_n(FormBox::default(), extra_boxes));
@@ -1689,6 +1847,7 @@ impl Form {
                 .collect(),
             boxes: vec![FormBox::default(); boxes.max(1)],
             turn_context: TurnContext::Continuous.word().to_owned(),
+            state_all_kinds: "true".to_owned(),
             ..Form::default()
         };
         form.slotted();
@@ -1712,6 +1871,26 @@ impl Form {
                 FormModel::default(),
             );
         }
+        let used = self
+            .state_keys
+            .iter()
+            .rposition(|k| !k.is_empty())
+            .map_or(0, |last| last + 1);
+        self.state_keys.truncate(used);
+        self.state_keys.resize(
+            (used + 1).clamp(2, MAX_KINDS).max(used),
+            FormKind::default(),
+        );
+    }
+
+    /// **The state election's rows, `kinds` in all where more are asked
+    /// for**, at most [`MAX_KINDS`]; no row moves.
+    pub fn with_kinds(mut self, kinds: usize) -> Form {
+        let kinds = kinds.min(MAX_KINDS);
+        if self.state_keys.len() < kinds {
+            self.state_keys.resize(kinds, FormKind::default());
+        }
+        self
     }
 }
 

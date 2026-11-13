@@ -19,6 +19,7 @@ use serde_json::{Value, json};
 use crate::admin_tests::{admin, form, send_as};
 use crate::declaration::capability::{self, READ, Rule, TABLE};
 use crate::declaration::render::{self, CORPUS_COMMIT, Meta};
+use crate::declaration::state_election::{ElectedKind, KINDS, StateElection};
 use crate::declaration::{Document, Form, Kind};
 use crate::passkeys_tests::{app, authenticator, passkeys};
 use crate::store::Store;
@@ -641,6 +642,168 @@ fn every_refusal_names_its_field_and_its_reason() {
             Kind::Unknown,
             "trace",
         ),
+        // The state election, beside the store `sqlite`.
+        (
+            "a state election that is not an object",
+            stored(json!("all")),
+            Kind::Shape,
+            "state_election",
+        ),
+        (
+            "a null state election",
+            stored(Value::Null),
+            Kind::Shape,
+            "state_election",
+        ),
+        (
+            "a state election lacking all_kinds",
+            stored(json!({"keys": []})),
+            Kind::Missing,
+            "state_election.all_kinds",
+        ),
+        (
+            "all_kinds neither true nor false",
+            stored(json!({"all_kinds": "yes", "keys": []})),
+            Kind::Election,
+            "state_election.all_kinds",
+        ),
+        (
+            "a state election lacking keys",
+            stored(json!({"all_kinds": true})),
+            Kind::Missing,
+            "state_election.keys",
+        ),
+        (
+            "keys that are not a list",
+            stored(json!({"all_kinds": true, "keys": {}})),
+            Kind::Shape,
+            "state_election.keys",
+        ),
+        (
+            "an entry that is not an object",
+            stored(json!({"all_kinds": true, "keys": ["message.user"]})),
+            Kind::Shape,
+            "state_election.keys[0]",
+        ),
+        (
+            "an entry lacking its kind",
+            stored(json!({"all_kinds": true, "keys": [{"paths": []}]})),
+            Kind::Missing,
+            "state_election.keys[0].kind",
+        ),
+        (
+            "a kind that is not a text",
+            stored(json!({"all_kinds": true, "keys": [{"kind": 3, "paths": []}]})),
+            Kind::Shape,
+            "state_election.keys[0].kind",
+        ),
+        (
+            "a kind outside the kinds that cross",
+            elected(&[("message.users", &[])]),
+            Kind::Election,
+            "state_election.keys[0].kind",
+        ),
+        (
+            "the save-point kind, which never crosses",
+            elected(&[("save_point", &[])]),
+            Kind::Election,
+            "state_election.keys[0].kind",
+        ),
+        (
+            "a kind named twice",
+            elected(&[
+                ("message.user", &["content"]),
+                ("message.assistant", &[]),
+                ("message.user", &[]),
+            ]),
+            Kind::Twice,
+            "state_election.keys[2].kind",
+        ),
+        (
+            "an entry lacking its paths",
+            stored(json!({"all_kinds": true, "keys": [{"kind": "message.user"}]})),
+            Kind::Missing,
+            "state_election.keys[0].paths",
+        ),
+        (
+            "paths that are not a list",
+            stored(
+                json!({"all_kinds": true, "keys": [{"kind": "message.user", "paths": "content"}]}),
+            ),
+            Kind::Shape,
+            "state_election.keys[0].paths",
+        ),
+        (
+            "a path that is not a text",
+            stored(json!({"all_kinds": true, "keys": [{"kind": "message.user", "paths": [3]}]})),
+            Kind::Shape,
+            "state_election.keys[0].paths[0]",
+        ),
+        (
+            "an empty path",
+            elected(&[("message.user", &["content", ""])]),
+            Kind::Path,
+            "state_election.keys[0].paths[1]",
+        ),
+        (
+            "a path with an empty segment",
+            elected(&[("message.user", &["content..text"])]),
+            Kind::Path,
+            "state_election.keys[0].paths[0]",
+        ),
+        (
+            "a path with a leading dot",
+            elected(&[("message.user", &[".content"])]),
+            Kind::Path,
+            "state_election.keys[0].paths[0]",
+        ),
+        (
+            "a path with a trailing dot",
+            elected(&[("message.user", &["content."])]),
+            Kind::Path,
+            "state_election.keys[0].paths[0]",
+        ),
+        (
+            "a control character in a path",
+            elected(&[("message.user", &["con\u{7}tent"])]),
+            Kind::Control,
+            "state_election.keys[0].paths[0]",
+        ),
+        (
+            "a path past 256 characters",
+            elected(&[("message.user", &[&"a".repeat(257)])]),
+            Kind::Bound,
+            "state_election.keys[0].paths[0]",
+        ),
+        (
+            "more than 32 paths for a kind",
+            stored(json!({"all_kinds": true, "keys": [{
+                "kind": "message.user",
+                "paths": (0..33).map(|i| format!("p{i}")).collect::<Vec<_>>(),
+            }]})),
+            Kind::Bound,
+            "state_election.keys[0].paths",
+        ),
+        (
+            "an unknown member of the election",
+            stored(json!({"all_kinds": true, "keys": [], "depth": 1})),
+            Kind::Unknown,
+            "state_election.depth",
+        ),
+        (
+            "an unknown member of an entry",
+            stored(
+                json!({"all_kinds": true, "keys": [{"kind": "message.user", "paths": [], "depth": 1}]}),
+            ),
+            Kind::Unknown,
+            "state_election.keys[0].depth",
+        ),
+        (
+            "the default election beside the store none",
+            edit(|v| v["state_election"] = json!({"all_kinds": true, "keys": []})),
+            Kind::Declined,
+            "state_election",
+        ),
     ];
     for (what, value, kind, field) in cases {
         let refused = Document::parse(&value)
@@ -708,6 +871,36 @@ fn every_refusal_names_its_field_and_its_reason() {
                 }
             }),
         ),
+        (
+            "the default election beside the store sqlite",
+            stored(json!({"all_kinds": true, "keys": []})),
+        ),
+        (
+            "a kind with no paths, only the kinds named crossing",
+            stored(json!({"all_kinds": false, "keys": [{"kind": "message.user", "paths": []}]})),
+        ),
+        (
+            "32 paths of 256 characters",
+            stored(json!({"all_kinds": true, "keys": [{
+                "kind": "message.user",
+                "paths": (0..32).map(|i| format!("{i:03}{}", "a".repeat(253))).collect::<Vec<_>>(),
+            }]})),
+        ),
+        (
+            "a path of 256 characters of two bytes each, measured in characters",
+            elected(&[("message.user", &[&"\u{e9}".repeat(256)])]),
+        ),
+        (
+            "every kind that crosses, once each",
+            stored(json!({
+                "all_kinds": false,
+                "keys": KINDS.iter().map(|k| json!({"kind": k, "paths": ["content"]})).collect::<Vec<_>>(),
+            })),
+        ),
+        (
+            "a nested path, a path with a space and one beyond ASCII",
+            elected(&[("message.assistant", &["content.0.text", "a b", "caf\u{e9}"])]),
+        ),
     ] {
         let document = Document::parse(&value).unwrap_or_else(|e| panic!("{what}: {e}"));
         assert_eq!(
@@ -716,6 +909,47 @@ fn every_refusal_names_its_field_and_its_reason() {
             "{what}: the canonical form reads back as itself"
         );
     }
+
+    // The two refusals the Planner worded: a kind twice says what the
+    // agent would do with it, and an election beside no store names
+    // admin's refusal.
+    let twice = Document::parse(&elected(&[("message.user", &[]), ("message.user", &[])]))
+        .expect_err("a kind twice was admitted");
+    assert!(
+        twice
+            .why
+            .contains("the agent would take the first entry for a kind and drop the rest"),
+        "{twice}"
+    );
+    let declined = Document::parse(&edit(|v| {
+        v["state_election"] = json!({"all_kinds": false, "keys": []})
+    }))
+    .expect_err("an election beside no store was admitted");
+    assert!(
+        declined.why.contains("which admin refuses at load"),
+        "{declined}"
+    );
+}
+
+/// The base document with the store `sqlite` and `election` its state
+/// election.
+fn stored(election: Value) -> Value {
+    edit(|v| {
+        v["store"] = json!("sqlite");
+        v["state_election"] = election;
+    })
+}
+
+/// The base document beside the store `sqlite`, every kind crossing and
+/// each `(kind, paths)` named.
+fn elected(keys: &[(&str, &[&str])]) -> Value {
+    stored(json!({
+        "all_kinds": true,
+        "keys": keys
+            .iter()
+            .map(|(kind, paths)| json!({"kind": kind, "paths": paths}))
+            .collect::<Vec<_>>(),
+    }))
 }
 
 /// **A class is judged in one pass over what was sent**, since a save's
@@ -821,6 +1055,11 @@ async fn the_screen_refuses_a_field_out_of_shape_and_saves_nothing() {
     let s = &fresh.store;
     let app = app(s, Some(passkeys()));
     let (_, session) = admin(&app, s, &mut authenticator(), "ada").await;
+    let thirty_three: String = (0..33)
+        .map(|i| format!("p{i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let long = "a".repeat(257);
     let cases: Vec<(&str, String, &str)> = vec![
         ("no name", posted(&[], &["name"]), "name: is required"),
         (
@@ -957,6 +1196,90 @@ async fn the_screen_refuses_a_field_out_of_shape_and_saves_nothing() {
             posted(&[("b16.m0.artifact", "x")], &[]),
             "b16.m0.artifact: is not a field",
         ),
+        (
+            "a kind outside the kinds that cross",
+            kind_rows(&[("message.users", "content")]),
+            "state_election.keys[0].kind: is none of the kinds that can cross",
+        ),
+        (
+            "a kind named twice",
+            kind_rows(&[("message.user", "content"), ("message.user", "")]),
+            "state_election.keys[1].kind: names a kind an earlier entry names",
+        ),
+        (
+            "a later row, numbered as the screen numbers it",
+            posted(
+                &[
+                    ("store", "sqlite"),
+                    ("state_election.all_kinds", "true"),
+                    ("state_election.k0.kind", ""),
+                    ("state_election.k0.paths", ""),
+                    ("state_election.k2.kind", "message.users"),
+                ],
+                &[],
+            ),
+            "state_election.keys[2].kind: is none of the kinds that can cross",
+        ),
+        (
+            "a row's paths with no kind",
+            kind_rows(&[("", "content")]),
+            "state_election.keys[0].kind: is required",
+        ),
+        (
+            "a path with an empty segment",
+            kind_rows(&[("message.user", "content..text")]),
+            "state_election.keys[0].paths[0]: has an empty segment",
+        ),
+        (
+            "a control character in a path",
+            kind_rows(&[("message.user", "con\u{7}tent")]),
+            "state_election.keys[0].paths[0]: holds a control character",
+        ),
+        (
+            "more than 32 paths for a kind",
+            kind_rows(&[("message.user", &thirty_three)]),
+            "state_election.keys[0].paths: holds more than 32 paths",
+        ),
+        (
+            "a path past 256 characters",
+            kind_rows(&[("message.user", &long)]),
+            "state_election.keys[0].paths[0]: is longer than 256 characters",
+        ),
+        (
+            "which kinds cross, neither every kind nor the kinds named",
+            posted(
+                &[("store", "sqlite"), ("state_election.all_kinds", "maybe")],
+                &[],
+            ),
+            "state_election.all_kinds: is true or false",
+        ),
+        (
+            "only the kinds named, beside no store",
+            posted(&[("state_election.all_kinds", "false")], &[]),
+            "state_election: is declared beside the store none, which admin refuses at load",
+        ),
+        (
+            "a kind's row beside no store",
+            posted(
+                &[
+                    ("state_election.all_kinds", "true"),
+                    ("state_election.k0.kind", "message.user"),
+                    ("state_election.k0.paths", "content"),
+                ],
+                &[],
+            ),
+            "state_election: is declared beside the store none, which admin refuses at load",
+        ),
+        (
+            "a kind's row past the bound",
+            posted(&[("state_election.k25.kind", "message.user")], &[]),
+            "state_election.k25.kind: is not a field",
+        ),
+        (
+            "a member of the state election the screen does not hold",
+            posted(&[("state_election.depth", "1")], &[]),
+            "state_election.depth: is not a field",
+        ),
     ];
     let (rows, audit) = (count(s, "declaration").await, count(s, "audit").await);
     for (what, body, words) in cases {
@@ -997,6 +1320,25 @@ async fn the_screen_refuses_a_field_out_of_shape_and_saves_nothing() {
     )
     .await;
     assert_eq!(count(s, "declaration").await, rows + 1);
+}
+
+/// The base form beside the store `sqlite`, every kind crossing, with one
+/// row of the state election for each `(kind, paths)`.
+fn kind_rows(rows: &[(&str, &str)]) -> String {
+    let named: Vec<(String, &str)> = rows
+        .iter()
+        .enumerate()
+        .flat_map(|(i, (kind, paths))| {
+            [
+                (format!("state_election.k{i}.kind"), *kind),
+                (format!("state_election.k{i}.paths"), *paths),
+            ]
+        })
+        .collect();
+    let mut set: Vec<(&str, &str)> =
+        vec![("store", "sqlite"), ("state_election.all_kinds", "true")];
+    set.extend(named.iter().map(|(k, v)| (k.as_str(), *v)));
+    posted(&set, &[])
 }
 
 /// **A class spanning capabilities is warned of, and an unknown is named
@@ -1170,12 +1512,44 @@ async fn a_save_and_a_reopen_are_the_same_document() {
         ("turn_context", "independent"),
         ("residual_readout_election", "true"),
         ("surprisal_election", "true"),
+        ("state_election.all_kinds", "false"),
+        ("state_election.k0.kind", "message.user"),
+        (
+            "state_election.k0.paths",
+            "content\r\n  content.0.text  \r\n\r\n",
+        ),
+        ("state_election.k1.kind", "turn.closed"),
+        ("state_election.k1.paths", ""),
+        ("state_election.k2.kind", "message.assistant"),
+        ("state_election.k2.paths", "content"),
     ];
     let expected = Form::read(form(&fields).as_bytes())
         .unwrap()
         .document()
         .unwrap();
     assert_eq!(expected.prompt.as_deref(), Some(prompt));
+    // Each line of a kind's paths a path, trimmed, a blank line none, and
+    // a kind with no paths kept.
+    assert_eq!(
+        expected.state_election,
+        Some(StateElection {
+            all_kinds: false,
+            keys: vec![
+                ElectedKind {
+                    kind: "message.user".to_owned(),
+                    paths: vec!["content".to_owned(), "content.0.text".to_owned()],
+                },
+                ElectedKind {
+                    kind: "turn.closed".to_owned(),
+                    paths: Vec::new(),
+                },
+                ElectedKind {
+                    kind: "message.assistant".to_owned(),
+                    paths: vec!["content".to_owned()],
+                },
+            ],
+        })
+    );
     let de = save(&app, &session, "/declarations", form(&fields)).await;
     let row = s.declaration(&de).await.unwrap().unwrap();
     assert_eq!(
@@ -1240,19 +1614,47 @@ async fn a_save_and_a_reopen_are_the_same_document() {
     let decoder = &table["spu-instruction"]["decoder"];
     assert_eq!(decoder["residual-readout-election"].as_bool(), Some(true));
     assert_eq!(decoder["surprisal-election"].as_bool(), Some(true));
+    let election = table["state-election"].as_table().unwrap();
+    assert_eq!(election["all-kinds"].as_bool(), Some(false));
+    let keys: Vec<(&str, Vec<&str>)> = election["keys"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|k| {
+            (
+                k["kind"].as_str().unwrap(),
+                k["paths"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|p| p.as_str().unwrap())
+                    .collect(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        keys,
+        [
+            ("message.user", vec!["content", "content.0.text"]),
+            ("turn.closed", vec![]),
+            ("message.assistant", vec!["content"]),
+        ],
+        "{file}"
+    );
     // What the screen does not declare is named and never written.
     assert!(
-        !table.contains_key("binding-kind")
-            && !table.contains_key("state-election")
-            && decoder.get("field-election").is_none(),
+        !table.contains_key("binding-kind") && decoder.get("field-election").is_none(),
         "{file}"
+    );
+    assert!(
+        !file.contains("# [state-election]"),
+        "the declared state election is also said undeclared: {file}"
     );
     let undeclared = &file[file
         .find("# What the agent's grammar holds and this screen does not declare")
         .unwrap_or_else(|| panic!("the file names what the screen does not declare: {file}"))..];
     for words in [
         "# binding-kind: not declared on this screen; the agent reads its absence as serving, and every declaration this screen saves is serving.",
-        "# [state-election]: not declared on this screen; admin resolves its absence to the default election, the envelope of every kind.",
         "# [spu-instruction.decoder] field-election: not declared on this screen; its absence is the ordinary posture, no probability field elected, and the agent reads no default into it.",
     ] {
         assert!(undeclared.contains(words), "{words}\n{file}");
@@ -1303,7 +1705,12 @@ async fn a_save_and_a_reopen_are_the_same_document() {
     }
     // A member dropped on the save shows: the reopen is no longer the
     // document.
-    for dropped in ["tools", "surprisal_election", "turn_context"] {
+    for dropped in [
+        "tools",
+        "surprisal_election",
+        "turn_context",
+        "state_election.k2.paths",
+    ] {
         let mut fewer = reposted.clone();
         fewer.retain(|(k, _)| *k != dropped);
         assert_ne!(
@@ -2422,5 +2829,352 @@ async fn a_row_without_the_elections_reopens_and_saves_once_the_readout_is_chose
             &row.body["surprisal_election"],
         ),
         (&json!("continuous"), &json!(true), &json!(false))
+    );
+}
+
+/// **The acceptance of 2026-11-13: an agent's state election, typed into
+/// the screen, derives as its own file holds it.** The agent's file elects
+/// every kind, with the content of each user and each assistant message
+/// beside its envelope. Typed as the two rows it is, beside the store
+/// `sqlite`, the derived file's `[state-election]` parses equal to that
+/// file's, and the file no longer names the table as undeclared.
+#[test]
+fn an_agents_state_election_derives_as_its_file_holds_it() {
+    const ITS_FILE: &str = "[state-election]\n\
+        all-kinds = true\n\
+        keys = [\n  \
+        { kind = \"message.user\", paths = [\"content\"] },\n  \
+        { kind = \"message.assistant\", paths = [\"content\"] },\n\
+        ]\n";
+    let body = kind_rows(&[
+        ("message.user", "content"),
+        ("message.assistant", "content"),
+    ]);
+    let document = Form::read(body.as_bytes())
+        .unwrap()
+        .document()
+        .unwrap_or_else(|e| panic!("{e}"));
+    let file = render::agent_toml(
+        &document,
+        &Meta {
+            de: "de-0000000000000001",
+            version: 1,
+        },
+    );
+    let derived: toml::Table = toml::from_str(&file)
+        .unwrap_or_else(|e| panic!("the agent's file is TOML 1.0: {e}\n{file}"));
+    let its: toml::Table = toml::from_str(ITS_FILE).unwrap();
+    assert!(derived.contains_key("state-election"), "{file}");
+    assert_eq!(
+        derived.get("state-election"),
+        its.get("state-election"),
+        "{file}"
+    );
+    assert!(!file.contains("# [state-election]"), "{file}");
+}
+
+/// **An election beside no store is refused, and none is written**: admin
+/// refuses a present `[state-election]` beside the store `none`, the
+/// default's spelling among them. Beside `none` the form's default, every
+/// kind and no rows, writes no member and the file says why; any other
+/// election is refused naming the member and admin's refusal. Beside
+/// `sqlite` the default is written as the agent spells it.
+#[test]
+fn an_election_beside_no_store_is_refused_and_none_is_written() {
+    let none = Form::read(
+        posted(
+            &[
+                ("state_election.all_kinds", "true"),
+                ("state_election.k0.kind", ""),
+                ("state_election.k0.paths", ""),
+            ],
+            &[],
+        )
+        .as_bytes(),
+    )
+    .unwrap()
+    .document()
+    .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(none.state_election, None, "the default beside no store");
+    assert_eq!(none.to_value().get("state_election"), None);
+    let meta = Meta {
+        de: "de-0000000000000001",
+        version: 1,
+    };
+    let file = render::agent_toml(&none, &meta);
+    let table: toml::Table = toml::from_str(&file).unwrap();
+    assert!(!table.contains_key("state-election"), "{file}");
+    assert!(
+        file.contains(
+            "# [state-election]: not written beside the store none, which admin refuses an election beside."
+        ),
+        "{file}"
+    );
+
+    for (what, set) in [
+        (
+            "only the kinds named",
+            vec![("state_election.all_kinds", "false")],
+        ),
+        (
+            "a kind's row",
+            vec![
+                ("state_election.all_kinds", "true"),
+                ("state_election.k0.kind", "message.user"),
+                ("state_election.k0.paths", ""),
+            ],
+        ),
+    ] {
+        let refused = Form::read(posted(&set, &[]).as_bytes())
+            .unwrap()
+            .document()
+            .expect_err(what);
+        assert_eq!(
+            (refused.kind, refused.field.as_str()),
+            (Kind::Declined, "state_election"),
+            "{what}: {refused}"
+        );
+        assert!(
+            refused.why.contains("which admin refuses at load"),
+            "{refused}"
+        );
+    }
+
+    let sqlite = Form::read(
+        posted(
+            &[("store", "sqlite"), ("state_election.all_kinds", "true")],
+            &[],
+        )
+        .as_bytes(),
+    )
+    .unwrap()
+    .document()
+    .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(
+        sqlite.state_election,
+        Some(StateElection::agents_default()),
+        "the default beside sqlite is written"
+    );
+    let file = render::agent_toml(&sqlite, &meta);
+    let table: toml::Table = toml::from_str(&file).unwrap();
+    let election = table["state-election"].as_table().unwrap();
+    assert_eq!(election["all-kinds"].as_bool(), Some(true), "{file}");
+    assert_eq!(election["keys"].as_array().map(Vec::len), Some(0), "{file}");
+}
+
+/// The state election's fields a page's form posts, in its order.
+fn state_fields(page: &str) -> Vec<(String, String)> {
+    posted_by(page)
+        .into_iter()
+        .filter(|(k, _)| k.starts_with("state_election."))
+        .collect()
+}
+
+/// The values a select named `name` offers, in order.
+fn offered(page: &str, name: &str) -> Vec<String> {
+    let at = page
+        .find(&format!("name=\"{name}\""))
+        .unwrap_or_else(|| panic!("{name} is a select"));
+    let end = page[at..].find("</select>").unwrap() + at;
+    page[at..end]
+        .split("<option")
+        .skip(1)
+        .map(|o| attr(&o[..o.find('>').unwrap()], "value").unwrap_or_default())
+        .collect()
+}
+
+/// **A new form starts at the default state election and offers the kinds
+/// that cross**: every kind, two empty rows, each row's kind a choice of
+/// the twenty-five kinds and none; the note says that a kind with no paths
+/// is written and what the rows cannot state; a reopened row shows its own
+/// rows and one empty row past the last; `?kinds=` asks for that many rows
+/// in all, at most twenty-five, on the new screen and a reopened one, and
+/// the page's link asks for one more.
+#[tokio::test]
+async fn a_new_form_starts_at_the_default_state_election_and_offers_the_kinds() {
+    let form = Form::empty(1);
+    assert_eq!(form.state_all_kinds, "true");
+    assert_eq!(form.state_keys.len(), 2);
+    assert!(
+        form.state_keys
+            .iter()
+            .all(|k| k.kind.is_empty() && k.paths.is_empty())
+    );
+
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let app = app(s, Some(passkeys()));
+    let (_, session) = admin(&app, s, &mut authenticator(), "ada").await;
+    let (status, _, page) = send_as(&app, "GET", "/declarations/new", None, &session).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let empty = |n: usize| {
+        let mut want = vec![("state_election.all_kinds".to_owned(), "true".to_owned())];
+        for i in 0..n {
+            want.push((format!("state_election.k{i}.kind"), String::new()));
+            want.push((format!("state_election.k{i}.paths"), String::new()));
+        }
+        want
+    };
+    assert_eq!(
+        state_fields(&page),
+        empty(2),
+        "the new page's state election"
+    );
+    assert_eq!(
+        offered(&page, "state_election.all_kinds"),
+        ["true", "false"],
+        "every kind, or only the kinds named"
+    );
+    let mut kinds = vec![String::new()];
+    kinds.extend(KINDS.iter().map(|k| (*k).to_owned()));
+    assert_eq!(offered(&page, "state_election.k0.kind"), kinds);
+    assert_eq!(offered(&page, "state_election.k1.kind"), kinds);
+    let page_text = unescape(&page);
+    for words in [
+        "A kind with no paths is written: with every kind crossing it adds nothing, and with only the kinds named crossing it makes that kind cross with its envelope alone, presence itself being state.",
+        "A path is not checked against its kind's payload, so a mistyped one saves and elects nothing, as at the agent; a payload key holding a dot cannot be spelled; and a kind outside the twenty-five cannot be named.",
+    ] {
+        assert!(page_text.contains(words), "{words}");
+    }
+    assert!(
+        page.contains("href=\"/declarations/new?boxes=1&amp;kinds=3\""),
+        "the link asks for one more row: {page}"
+    );
+
+    let (_, _, five) = send_as(&app, "GET", "/declarations/new?kinds=5", None, &session).await;
+    assert_eq!(state_fields(&five), empty(5), "five rows asked for");
+    let (_, _, many) = send_as(&app, "GET", "/declarations/new?kinds=99", None, &session).await;
+    assert_eq!(
+        state_fields(&many).len(),
+        1 + 2 * KINDS.len(),
+        "at most the kinds"
+    );
+
+    // A saved row reopened: its own rows and one empty row past the last,
+    // then empty ones up to the ask.
+    let de = save(
+        &app,
+        &session,
+        "/declarations",
+        kind_rows(&[
+            ("message.user", "content"),
+            ("turn.closed", ""),
+            ("message.assistant", "content"),
+        ]),
+    )
+    .await;
+    let own = [
+        ("state_election.all_kinds", "true"),
+        ("state_election.k0.kind", "message.user"),
+        ("state_election.k0.paths", "content"),
+        ("state_election.k1.kind", "turn.closed"),
+        ("state_election.k1.paths", ""),
+        ("state_election.k2.kind", "message.assistant"),
+        ("state_election.k2.paths", "content"),
+    ]
+    .map(|(k, v)| (k.to_owned(), v.to_owned()));
+    let (_, _, reopened) =
+        send_as(&app, "GET", &format!("/declarations/{de}"), None, &session).await;
+    let shown = state_fields(&reopened);
+    assert_eq!(shown.len(), 1 + 2 * 4, "one row past the last: {shown:?}");
+    assert_eq!(&shown[..own.len()], own);
+    assert!(shown[own.len()..].iter().all(|(_, v)| v.is_empty()));
+    let (_, _, reopened) = send_as(
+        &app,
+        "GET",
+        &format!("/declarations/{de}?kinds=6"),
+        None,
+        &session,
+    )
+    .await;
+    let shown = state_fields(&reopened);
+    assert_eq!(shown.len(), 1 + 2 * 6, "{shown:?}");
+    assert_eq!(&shown[..own.len()], own);
+}
+
+/// **A row saved before the state election reopens and saves the default**
+/// (Spec 2.4 and 6.1): a row beside the store `sqlite` lacking the member
+/// reopens, not named stale, the form at every kind and no rows; its file
+/// says the absence in a comment and writes no table; its save as reopened
+/// asks for nothing and writes the default as the agent spells it, the
+/// member named as moved.
+#[tokio::test]
+async fn a_row_without_the_state_election_reopens_and_saves_the_default() {
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let app = app(s, Some(passkeys()));
+    let (ada, session) = admin(&app, s, &mut authenticator(), "ada").await;
+    let body = edit(|v| v["store"] = json!("sqlite"));
+    let de = "de-00000000000000c2";
+    sqlx::query(
+        "INSERT INTO declaration (declaration_ref, name, body, corpus_commit, version, \
+         what_moved, author) VALUES ($1, 'karl', $2, $3, 1, '{}', $4)",
+    )
+    .bind(de)
+    .bind(&body)
+    .bind(CORPUS_COMMIT)
+    .bind(&ada)
+    .execute(&s.pool)
+    .await
+    .unwrap();
+
+    let (status, _, page) =
+        send_as(&app, "GET", &format!("/declarations/{de}"), None, &session).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(!page.contains("status hold\">stale"), "{page}");
+    let shown = state_fields(&page);
+    assert_eq!(
+        shown[0],
+        ("state_election.all_kinds".to_owned(), "true".to_owned()),
+        "the reopen shows the default"
+    );
+    assert!(shown[1..].iter().all(|(_, v)| v.is_empty()), "{shown:?}");
+    let file = pre(&page, 0);
+    assert!(
+        file.contains(
+            "# [state-election]: not declared on this row; admin resolves its absence to the default election, the envelope of every kind."
+        ),
+        "{file}"
+    );
+    let table = toml::from_str::<toml::Table>(&file).unwrap();
+    assert!(!table.contains_key("state-election"), "{file}");
+
+    let as_reopened: Vec<(String, String)> = posted_by(&page);
+    let as_reopened: Vec<(&str, &str)> = as_reopened
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    let child = save(
+        &app,
+        &session,
+        &format!("/declarations/{de}"),
+        crate::admin_tests::form(&as_reopened),
+    )
+    .await;
+    let row = s.declaration(&child).await.unwrap().unwrap();
+    assert_eq!(row.version, 2);
+    assert_eq!(row.what_moved, ["state_election"]);
+    assert_eq!(
+        row.body["state_election"],
+        json!({"all_kinds": true, "keys": []})
+    );
+    let (_, _, page) = send_as(
+        &app,
+        "GET",
+        &format!("/declarations/{child}"),
+        None,
+        &session,
+    )
+    .await;
+    let file = pre(&page, 0);
+    let table = toml::from_str::<toml::Table>(&file).unwrap();
+    assert_eq!(
+        table["state-election"]["all-kinds"].as_bool(),
+        Some(true),
+        "{file}"
     );
 }

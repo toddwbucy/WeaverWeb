@@ -637,7 +637,11 @@ the declaration screen of section 6.1 and by nothing else, and it carries:
   by the server before the save's first audit record, as an agent's `ag-`
   is at register, so the record can name the row it is about to write
 - **the agent's name**, in the grammar `register` holds a name to (section
-  8), the declaration naming no box, which is Provision's
+  8), the declaration naming no box, which is Provision's. One lineage's
+  root holds a name (migration `0023`), so a name finds no lineage or
+  exactly one, and every register row of the name finds the same one: its
+  head is "the declaration saved under the name", which the agent page
+  shows (section 2.13)
 - **the corpus commit its derived file was written against**, which is
   this row's staleness rule per section 7.2: when the agent's grammar
   moves, the pin says so, and the draft is named stale before it is offered
@@ -1323,9 +1327,14 @@ never a bare socket's. Each row carries:
   opaque**: the two sources give different shapes and stay so, per
   `toddwbucy/WeaverAgent#59`, so the row's shape differs by source, which
   the tuple's source member below records (migration `0012`), and nothing compares
-  it. **The run's tuple of section 2.2 is the compared one**, written only
+  it with a run. **The run's tuple of section 2.2 is the compared one**, written only
   by ingest, and the two are not the same thing. Nothing on the data plane
-  may fill it, per section 8
+  may fill it, per section 8. **The agent page reads it by its source**
+  (section 2.13, as built on 2026-11-13): `show`'s facts or a load event's
+  payload, of either shape the agent authors, each member read by its
+  presence and set beside the same member of the declaration saved under
+  the agent's name. That is a definition set beside a definition, never a
+  run's progress
 - **the two credentials**, each as the fingerprint of its client certificate
   and never the key, each with its plane, gate or admin, its state, live or
   revoked, and the date the state was set. The posture is section 2.8's
@@ -2036,7 +2045,50 @@ it decides are stated here and in section 2.8, and the reasons are there.
     new declaration where none is saved.
 
   On its stage rail, for an admin, Declare links to that same declaration
-  and Provision to the register. Every other mark is a span;
+  and Provision to the register. Every other mark is a span.
+
+  **The page's Declare pane** (the operator's word of 2026-11-13, "yes the
+  agent page should show its declaration"; as built that day) shows the
+  declaration saved under the agent's name, the head of the one lineage of
+  that name (section 2.4). It is matched by name and never by digest. The
+  console writes no file an agent loads, and records no digest of one, so
+  the pane never says which version the agent was loaded from; that waits
+  on Provision. Its truth line has three states:
+  1. no lineage of the name: the pane says so, and an admin is offered a
+     new declaration;
+  2. a lineage, and no load on the register's row: the head's parts, as
+     declared;
+  3. a lineage, and a load the row holds from `show` or a load event: the
+     report's declaration digest, and each member the agent reports set
+     beside the head, reading "equal", "differs (declared X, reported Y)"
+     or "not in this report", with the sentence that a difference may only
+     mean an older version was the source.
+
+  A row that holds a tuple and names no source (one written before
+  migration `0012`) is set beside nothing, and the pane says it holds a
+  load from a source the page does not read. The members set beside a
+  report are the decoder's artifact, the residual
+  readout, the surprisal, the turn context, the state election and the
+  store. `show` reports no turn context, and a load event no artifact; the
+  serving flow's load event carries neither the tee's election nor the turn
+  context. A declared absence is read as the agent reads it. Every other
+  part (the placement, each box's GPU requirement, a classifier, an
+  adapter, the tunable values, the gate's tools and the prompt) is shown as
+  declared and marked "not reported by the agent". **The shapes are held
+  to a dated copy** of the agent's passages at the pin
+  (`src/declaration/reported-5ec7ecf8.md`). **Access, which the operator
+  rules by the merge:** every holder of a grant on the agent sees the
+  declared parts; the link to the declaration screen stays an admin's, as
+  the screen does; the prompt's text is on no agent page, and the prompt is
+  shown by its length in characters, and to an admin alone by the sha256 of
+  its text. **The digest was every grant holder's until a security review
+  of 2026-11-13 found it**: an unkeyed digest of a text handed to a reader
+  who may not read the text lets them confirm a guess at it, and on this
+  page it compares with nothing, so the Planner corrected the line the same
+  day. The other live
+  register rows of the name are listed: every one to an admin, and to a
+  person only those they hold a grant on, since an agent without a grant
+  answers to them exactly as one that does not exist;
   `GET /agents/{ag}/trace` is the live view, an event stream of the
   listener's window, which says it is that window and not a record. Each
   event carries the window's members as the listener landed them and its
@@ -3670,7 +3722,10 @@ converge on. No page draws a wire or carries Python until then. **An agent
 is binaries by hash plus wires by hash**, and the screens render that card;
 **the trace is the record and not a component**, so it is declared on
 neither screen. The agent's edge, its two sockets and the two connectors
-outside it are not on this screen.
+outside it are not on this screen. **The screen is an admin's; the agent
+page shows its saved parts** to every holder of a grant on an agent of the
+lineage's name, the prompt by its length, its digest to an admin alone
+(section 2.13).
 
 **The routes**, each under section 2.13's session gate and `Origin` check:
 
@@ -5759,6 +5814,9 @@ an unmerged contract.
 | the masthead stands in the path's order, each work page carrying its stage marks and Record last and unmarked, and a person sees it less the links an admin alone opens | perturbation in `src/navigation_tests.rs`, `the_masthead_stands_in_the_paths_order`, on the base template: swap Declarations and Register, put Record before Agents, who before Record or Passkeys before Persons, and the admin's masthead fails on its order; drop any of the four marks or number Declare 2, and it fails on that page's text; mark Record, and it fails on Record's; move Declarations, Register, Persons or Grants out of the admin's condition, and a person's masthead names it; drop Record from a page without a session, or put sign-in before it, and that order fails (16 cases, each caught) |
 | a page's way forward stands where its condition holds and nowhere else | perturbation in `src/navigation_tests.rs`: drop a saved declaration's way forward, or the name its link carries, or plant one on the empty screen, and `a_saved_declaration_leads_on_to_registering_its_name` fails; let the register's form fill any name, or none, or drop the field's value, and it fails on the prefill; invert the hand-over's read of the admin's grant, or fix it either way, drop the box sentence under a grant, or point the Grants link at the agent's page, and `the_hand_over_leads_on_to_the_agents_page_or_says_why_not` fails (11 cases, each caught); in `src/surfaces/agents.rs`, read a failed grant read as none held, and `a_grant_read_is_held_not_held_or_unread` fails; render an unread grant as none held, or drop either of its two links, and `the_hand_over_says_an_unread_grant_is_unread` fails (4 cases, each caught) |
 | the agent page leads every reader on to Record and an admin alone back to the declaration saved under the agent's name, the rail linking Declare and Provision for an admin alone | perturbation in `src/navigation_tests.rs`, `the_agent_page_leads_on_to_record_and_back_to_its_declaration`: offer the way back to every reader, or to none, and it fails on the person's page or the admin's; drop the way on to Record, or its words that the record is not filtered by the agent, and it fails; name the lineage's root, or a lineage of another name, and it fails on version 2; link no mark, render a linked mark as a span or point Provision at another page, and it fails on the rail; send an agent with no declaration to the list, and it fails on the way back (10 cases, each caught) |
+| the reported members are the agent's as read: each member the Declare pane reads from `show`'s facts or a load event is a field of that shape's struct at the pin, of the type it reads, under the rename it reads, and each it takes as absent is not one | `the_reported_members_are_the_agents_as_read` and `the_reported_members_were_read_at_the_builds_pin` in `src/declaration/reported.rs`, against the dated copy `src/declaration/reported-5ec7ecf8.md`: misname `show`'s state election, read a turn context from `show` or an artifact from a load event, read the load event's election by `show`'s name, or spell either flag as the other shape does, and it fails on the reader's tables; rename `LoadFacts`'s members, name the tee otherwise, give the serving record a turn context, add an engine or a turn context the reader does not read, or make the artifact optional, and it fails on the copy; move the pin without a reread, and the second fails (13 cases, each caught) |
+| each reported member reads equal, differs or not in this report, by the shape its source names, and an absence is set beside the report as the agent reads it | `each_member_reads_equal_differs_or_not_in_this_report` and `an_absence_is_set_beside_the_report_as_the_agent_reads_it` in `src/declaration/reported.rs`: read a state election's kinds in their order or a path named twice twice, read a null member as reported, read the tee's election in `show`'s spelling, read any engine or turn context word, or swap a difference's two sides, and the first fails; read an absent turn context as independent, an absent surprisal as true, an absent residual readout as false or an absent state election as the other default, and the second fails (11 cases, each caught) |
+| the agent page sets what the agent reports beside the declaration saved under its name, to every grant holder, and never says which version the agent was loaded from | perturbation in `src/declare_pane_tests.rs`: change the empty state's sentence, or offer a new declaration to every reader or to none, and `with_no_declaration_saved_the_pane_says_so` fails; give the screen's link to every reader or to none, mark a reported part with no load as never reported or the reverse, read the pane for an admin alone, name the lineage's root for its head, or show the declared value as the verdict, and `a_saved_declaration_with_no_load_shows_its_parts` fails; never compare the decoder, drop the sentence that a difference may only mean an older version, plant "loaded from", or read a load event as `show`'s answer, and `a_load_the_agent_reports_is_set_beside_the_head` fails; read a tuple of no named source as `show`'s, or say it is no load, and `a_load_whose_source_the_row_does_not_name_is_set_beside_nothing` fails; show the prompt's text or its length in bytes, render its digest for a person who is not an admin, or for no one, and `the_prompt_is_shown_by_its_length_and_its_digest_to_an_admin_alone` fails; drop the name, the row's own identity or the live credential from the others' filter, show a person every row of the register, or never render the others, and `the_other_rows_of_the_name_are_listed_as_far_as_the_reader_may_see` fails (25 cases, each caught) |
 
 **A watch that cannot fail is not a test.** For each perturbation above, the
 act that lands it states what removal makes it fail and confirms it does.

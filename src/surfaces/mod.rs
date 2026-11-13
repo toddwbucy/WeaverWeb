@@ -13,6 +13,7 @@ pub mod admin_table;
 pub mod agents;
 pub mod alerts;
 pub mod declarations;
+pub mod declare_pane;
 #[cfg(feature = "passkeys")]
 pub mod enroll;
 pub mod gate;

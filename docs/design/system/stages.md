@@ -16,6 +16,7 @@ Declare is two screens (operator's rulings of 2026-11-11, Spec 6.1): the declara
 | agent.toml | the file the declaration becomes, derived at the pinned corpus commit and never edited; what the screen does not declare as comments naming what fills it, what the grammar has no place for as a trailing block | derived from the saved declaration | built |
 | Version | the row's version, last save and author, and whether it is its lineage's head | the store (Spec 2.4) | built |
 | Refusals and warning | what the form refuses on its own (a missing required field, a requirement that names nothing, a field out of its shape), each naming the field; the warning where a class spans more than one compute capability; per field, what it waits on | the form | built |
+| Declaration, on the agent page | the declaration saved under the agent's name, the head of that lineage: its version, last save and author; its parts, each the agent reports set beside the agent's report (equal, differs, or not in this report) and each it never reports marked so; the prompt by its length, its digest to an admin alone; the other live register rows of the name; the declaration screen's link for an admin | the saved declaration; the register row's tuple and its source | partly: which saved version the agent's file was derived from is not known until Provision writes the file and records its digest |
 
 ## 2 Provision, partly
 

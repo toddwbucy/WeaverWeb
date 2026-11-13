@@ -1,18 +1,23 @@
 //! conforms: web-a-save-and-a-reopen-are-the-same-document
 //! conforms: web-a-stale-row-reopens-and-saves-once-filled
+//! conforms: web-a-row-without-the-elections-reopens-and-saves-once-chosen
 //!
 //! **The agent's file a declaration becomes** (Spec 6.1): `agent.toml` in
 //! the agent's grammar, `weaver-types-Spec` section 2 at [`CORPUS_COMMIT`],
 //! derived from the saved document and never stored. What the document
 //! places is written as the grammar's members. A member the grammar requires
-//! and the screen does not declare is a comment naming what fills it. A
-//! trailing block of comments lists what the grammar has no place for, each
-//! naming its interface question.
+//! and the screen does not declare is a comment naming what fills it. An
+//! election a row saved before the screen held it does not carry is a
+//! comment saying what its absence means, and is never written. A trailing
+//! block of comments lists what the grammar has no place for, each naming
+//! its interface question, and a last block names what the grammar holds
+//! and the screen does not declare.
 //!
 //! **The member names are the agent's**, read at the pin from
 //! `crates/weaver-types/src/config.rs` (`AgentConfig`, kebab-case, closed
 //! objects) and, for `tunable-values`, from the eight names a serving load
-//! requires, held to the agent's as read by `super::tunable_set`. This
+//! requires, held to the agent's as read by `super::tunable_set`, and for
+//! the three elections held to the agent's as read by `super::elections`. This
 //! crate links no crate of the agent (Spec 1), so the file is checked as
 //! TOML 1.0 and nothing more.
 
@@ -139,6 +144,16 @@ pub fn agent_toml(document: &Document, meta: &Meta<'_>) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     line(&mut out, &format!("tool-set = [{tools}]"));
+    match document.turn_context {
+        Some(turn_context) => line(
+            &mut out,
+            &format!("turn-context = {}", string(turn_context.word())),
+        ),
+        None => line(
+            &mut out,
+            "# turn-context: not declared on this row; the agent reads its absence as continuous.",
+        ),
+    }
     line(&mut out, "");
     line(&mut out, "[state-store]");
     line(
@@ -161,10 +176,20 @@ pub fn agent_toml(document: &Document, meta: &Meta<'_>) -> String {
     if let Some((i, decoder)) = placed.iter().find(|(_, m)| m.function == Function::Decoder) {
         line(&mut out, "");
         line(&mut out, "[spu-instruction.decoder]");
-        line(
-            &mut out,
-            "# residual-readout-election: not declared on this screen.",
-        );
+        match document.residual_readout_election {
+            Some(readout) => line(&mut out, &format!("residual-readout-election = {readout}")),
+            None => line(
+                &mut out,
+                "# residual-readout-election: not declared on this row: a serving load refuses this file, and the row's save is refused until it is chosen.",
+            ),
+        }
+        match document.surprisal_election {
+            Some(surprisal) => line(&mut out, &format!("surprisal-election = {surprisal}")),
+            None => line(
+                &mut out,
+                "# surprisal-election: not declared on this row; the agent reads its absence as false.",
+            ),
+        }
         let values = document
             .sampler
             .present()
@@ -280,6 +305,23 @@ pub fn agent_toml(document: &Document, meta: &Meta<'_>) -> String {
     line(
         &mut out,
         "# the sampler's mechanism and every other setting fixed at load: shown once an agent reports them (question 5).",
+    );
+    line(&mut out, "");
+    line(
+        &mut out,
+        "# What the agent's grammar holds and this screen does not declare:",
+    );
+    line(
+        &mut out,
+        "# binding-kind: not declared on this screen; the agent reads its absence as serving, and every declaration this screen saves is serving.",
+    );
+    line(
+        &mut out,
+        "# [state-election]: not declared on this screen; admin resolves its absence to the default election, the envelope of every kind.",
+    );
+    line(
+        &mut out,
+        "# [spu-instruction.decoder] field-election: not declared on this screen; its absence is the ordinary posture, no probability field elected, and the agent reads no default into it.",
     );
     out
 }

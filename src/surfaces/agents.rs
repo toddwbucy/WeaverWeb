@@ -353,10 +353,23 @@ struct HandoverPage {
     /// The agent's identity, for the way forward to its page.
     agent_id: String,
     /// Whether the admin holds a grant on the agent, and so whether its
-    /// page answers them (Spec 2.13).
-    granted: bool,
+    /// page answers them (Spec 2.13): none where the grant was not read.
+    granted: Option<bool>,
     waiting: Vec<Waiting>,
     minutes: u64,
+}
+
+/// **Whether the admin holds a grant on the agent, as read** (Spec 2.13):
+/// held, not held, or none where the read failed, which is logged. A page
+/// never states a grant it did not read.
+fn grant_read(roles: anyhow::Result<Vec<String>>) -> Option<bool> {
+    match roles {
+        Ok(roles) => Some(!roles.is_empty()),
+        Err(e) => {
+            tracing::error!("the admin's grant on the agent could not be read: {e:#}");
+            None
+        }
+    }
 }
 
 /// **The two client configs held for the session, and the page that
@@ -379,18 +392,11 @@ async fn hand_over(
             super::Chrome::default()
         });
     // **The way forward** (Spec 2.13): the agent's page where the admin
-    // holds a grant on it, since it answers no one else; unread, it is
-    // logged and offered as not held, never at the cost of the page.
+    // holds a grant on it, since it answers no one else; a grant that could
+    // not be read is said to be unread, never at the cost of the page.
     let granted = match minted.agent_id.parse::<AgentId>() {
-        Ok(id) => store
-            .roles_on(&session.person_id, &id)
-            .await
-            .map(|roles| !roles.is_empty())
-            .unwrap_or_else(|e| {
-                tracing::error!("the admin's grant on the agent could not be read: {e:#}");
-                false
-            }),
-        Err(_) => false,
+        Ok(id) => grant_read(store.roles_on(&session.person_id, &id).await),
+        Err(_) => None,
     };
     let mut waiting = Vec::new();
     for (plane, credential) in [(Plane::Gate, &minted.gate), (Plane::Admin, &minted.admin)] {
@@ -799,5 +805,69 @@ async fn retire(store: Store, seams: &Seams, headers: HeaderMap, ask: RotateAsk)
     match resolve_revocation(&store, seams, &headers, &ask.agent, None, ACTION).await {
         Ok((session, id)) => revoked(&store, &session, &id, None, ACTION).await,
         Err(answer) => answer,
+    }
+}
+
+#[cfg(test)]
+mod handover_tests {
+    use askama::Template;
+
+    use super::{HandoverPage, grant_read};
+
+    /// **A grant is said only as it was read**: roles held, none held, or
+    /// unread where the read failed.
+    #[test]
+    fn a_grant_read_is_held_not_held_or_unread() {
+        assert_eq!(grant_read(Ok(vec!["observer".to_owned()])), Some(true));
+        assert_eq!(grant_read(Ok(Vec::new())), Some(false));
+        assert_eq!(grant_read(Err(anyhow::anyhow!("the store is away"))), None);
+    }
+
+    /// The hand-over page's way forward, rendered for a grant as read.
+    fn way_forward(granted: Option<bool>) -> String {
+        let page = HandoverPage {
+            here: "register",
+            who: "ada".to_owned(),
+            admin: true,
+            chrome: crate::surfaces::Chrome::default(),
+            verb: "registered",
+            agent: "box-a/karl (ag-0000000000000001)".to_owned(),
+            agent_id: "ag-0000000000000001".to_owned(),
+            granted,
+            waiting: Vec::new(),
+            minutes: 5,
+        }
+        .render()
+        .unwrap();
+        let next = &page[page.find(r#"<p class="next">"#).expect("a way forward")..];
+        next[..next.find("</p>").unwrap()].to_owned()
+    }
+
+    /// **The hand-over says an unread grant is unread**, and offers both
+    /// ways: the agent's page, which answers if the grant is held, and
+    /// Grants, where one is added. It never says the admin holds none.
+    #[test]
+    fn the_hand_over_says_an_unread_grant_is_unread() {
+        let unread = way_forward(None);
+        assert!(
+            unread.contains("could not be read")
+                && unread.contains(r#"href="/agents/ag-0000000000000001""#)
+                && unread.contains(r#"href="/admin/grants""#)
+                && !unread.contains("you hold none"),
+            "{unread}"
+        );
+        assert!(unread.contains("install both configs"), "{unread}");
+        let none = way_forward(Some(false));
+        assert!(
+            none.contains("you hold none") && !none.contains("could not be read"),
+            "{none}"
+        );
+        let held = way_forward(Some(true));
+        assert!(
+            held.contains(r#"href="/agents/ag-0000000000000001""#)
+                && !held.contains("you hold none")
+                && !held.contains("could not be read"),
+            "{held}"
+        );
     }
 }

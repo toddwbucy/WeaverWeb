@@ -3,6 +3,8 @@
 //! conforms: web-a-saved-declaration-carries-every-tunable-value
 //! conforms: web-every-tunable-value-is-judged-on-the-agents-range
 //! conforms: web-a-new-form-starts-with-five-tunable-values
+//! conforms: web-a-saved-declaration-carries-the-readout-election
+//! conforms: web-a-new-form-starts-with-two-elections-at-the-agents-absence
 //!
 //! **The declaration's document** (Spec 6.1): the console's own grammar, a
 //! superset of the agent's, which the declaration screen saves and the
@@ -12,7 +14,8 @@
 //! reads the screen's form and turns it into that value, a refusal naming
 //! the screen's own slot; [`Document::serving`] judges, at save, that every
 //! tunable value a serving load requires is present and in the agent's
-//! range; [`Document::to_value`] writes the canonical form a save stores;
+//! range, and that the residual readout's election is made;
+//! [`Document::to_value`] writes the canonical form a save stores;
 //! [`Document::readings`] reads each class against the capability table for
 //! the one warning; and [`moved`] names the paths whose values differ
 //! between two documents.
@@ -23,6 +26,7 @@
 //! capability is never refused**: it is warned of and saved.
 
 pub mod capability;
+pub mod elections;
 pub mod render;
 pub mod tunable_set;
 
@@ -61,6 +65,10 @@ pub enum Kind {
     Unknown,
     /// A value of another shape than its field's.
     Shape,
+    /// An election outside its values: a turn context other than
+    /// `continuous` or `independent`, a boolean election that is not true
+    /// or false.
+    Election,
 }
 
 /// **A refusal, naming the field** by its path in the document.
@@ -100,6 +108,35 @@ pub struct Document {
     /// The gate's tools: none, or `sh`.
     pub tools: Vec<String>,
     pub prompt: Option<String>,
+    /// **The three elections** (Spec 6.1), each as the agent's grammar holds
+    /// it at the pin (`super::elections`). **Each is held as an option** so
+    /// that a row saved before the screen held them still reads and reopens:
+    /// the turn context's absence the agent reads as continuous and the
+    /// surprisal's as false, so a save admits either absent; the residual
+    /// readout's has no default in the agent's grammar, so a save requires it
+    /// ([`Document::serving`]). The form writes all three at every save.
+    pub turn_context: Option<TurnContext>,
+    pub residual_readout_election: Option<bool>,
+    pub surprisal_election: Option<bool>,
+}
+
+/// **The turn-context election**, closed at the agent's two values:
+/// `continuous`, each turn seeing the turns before it, and `independent`,
+/// each turn answered from the prefix the open seated and its own request
+/// alone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TurnContext {
+    Continuous,
+    Independent,
+}
+
+impl TurnContext {
+    pub fn word(self) -> &'static str {
+        match self {
+            TurnContext::Continuous => "continuous",
+            TurnContext::Independent => "independent",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -436,6 +473,9 @@ impl Document {
                 "store",
                 "gate",
                 "prompt",
+                "turn_context",
+                "residual_readout_election",
+                "surprisal_election",
             ],
         )?;
         let name = required_text(top, "", "name")?;
@@ -478,6 +518,20 @@ impl Document {
             Some(Value::String(s)) => Some(s.clone()),
             Some(_) => return Err(refused("prompt", Kind::Shape, "is a text or null")),
         };
+        let turn_context = match top.get("turn_context") {
+            None => None,
+            Some(Value::String(s)) if s == "continuous" => Some(TurnContext::Continuous),
+            Some(Value::String(s)) if s == "independent" => Some(TurnContext::Independent),
+            Some(_) => {
+                return Err(refused(
+                    "turn_context",
+                    Kind::Election,
+                    "is continuous or independent, the turn contexts the agent's grammar names",
+                ));
+            }
+        };
+        let residual_readout_election = election(top, "residual_readout_election")?;
+        let surprisal_election = election(top, "surprisal_election")?;
         let document = Document {
             name,
             placement,
@@ -486,6 +540,9 @@ impl Document {
             store,
             tools,
             prompt,
+            turn_context,
+            residual_readout_election,
+            surprisal_election,
         };
         document.roster()?;
         Ok(document)
@@ -540,9 +597,11 @@ impl Document {
     /// **Whether a save may store this document** (Spec 6.1): every tunable
     /// value a serving load requires at the pin present, each in the agent's
     /// range, or the refusal naming the first that is not, in the grammar's
-    /// order. [`Document::parse`] admits a document lacking one, so that a
-    /// row saved before the eight were required still reopens; a save judges
-    /// it here as well, through [`Form::document`].
+    /// order; then the residual readout's election, which a serving load
+    /// requires with no default. [`Document::parse`] admits a document
+    /// lacking any of them, so that a row saved before they were required
+    /// still reopens; a save judges it here as well, through
+    /// [`Form::document`].
     pub fn serving(&self) -> Result<(), Refused> {
         let present = self.sampler.present();
         for (name, _) in SAMPLER {
@@ -565,11 +624,19 @@ impl Document {
                 Some(_) => {}
             }
         }
+        if self.residual_readout_election.is_none() {
+            return Err(refused(
+                "residual_readout_election",
+                Kind::Missing,
+                "is required: a serving load refuses a declaration lacking it, the agent's grammar giving it no default",
+            ));
+        }
         Ok(())
     }
 
     /// **The canonical form a save stores**: every member written, absent
-    /// sampler values left out, the prompt null where there is none.
+    /// sampler values and absent elections left out, the prompt null where
+    /// there is none.
     pub fn to_value(&self) -> Value {
         let placement = match &self.placement {
             Placement::Host => json!({"kind": "host"}),
@@ -614,7 +681,7 @@ impl Document {
                 },
             );
         }
-        json!({
+        let mut value = json!({
             "name": self.name,
             "placement": placement,
             "boxes": boxes,
@@ -622,7 +689,17 @@ impl Document {
             "store": self.store.word(),
             "gate": {"tools": self.tools},
             "prompt": self.prompt,
-        })
+        });
+        if let Some(turn_context) = self.turn_context {
+            value["turn_context"] = json!(turn_context.word());
+        }
+        if let Some(readout) = self.residual_readout_election {
+            value["residual_readout_election"] = json!(readout);
+        }
+        if let Some(surprisal) = self.surprisal_election {
+            value["surprisal_election"] = json!(surprisal);
+        }
+        value
     }
 
     /// **Every class the document names, read against the capability
@@ -644,6 +721,16 @@ impl Document {
             }
         }
         out
+    }
+}
+
+/// **A boolean election**: absent, or true or false; null or any other
+/// value refused naming it.
+fn election(top: &Map<String, Value>, member: &str) -> Result<Option<bool>, Refused> {
+    match top.get(member) {
+        None => Ok(None),
+        Some(Value::Bool(b)) => Ok(Some(*b)),
+        Some(_) => Err(refused(member, Kind::Election, "is true or false")),
     }
 }
 
@@ -1161,6 +1248,12 @@ pub struct Form {
     pub store: String,
     pub sh: bool,
     pub prompt: String,
+    /// The turn context's select: `continuous` or `independent`.
+    pub turn_context: String,
+    /// The residual readout's select: `true`, `false`, or empty, unchosen.
+    pub residual_readout_election: String,
+    /// The surprisal's checkbox.
+    pub surprisal_election: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -1237,6 +1330,18 @@ impl Form {
                     ));
                 }
                 ["prompt"] => form.prompt = value.replace("\r\n", "\n"),
+                ["turn_context"] => form.turn_context = value,
+                ["residual_readout_election"] => form.residual_readout_election = value,
+                ["surprisal_election"] if value == "true" && !form.surprisal_election => {
+                    form.surprisal_election = true;
+                }
+                ["surprisal_election"] => {
+                    return Err(refused(
+                        "surprisal_election",
+                        Kind::Election,
+                        "is true, its box checked, or absent",
+                    ));
+                }
                 ["sampler", member] if SAMPLER.iter().any(|(n, _)| n == member) => {
                     if let Some(slot) = form.sampler.iter_mut().find(|(n, _)| n == member) {
                         slot.1 = value;
@@ -1411,6 +1516,26 @@ impl Form {
                 json!(self.prompt)
             },
         );
+        if !self.turn_context.is_empty() {
+            top.insert("turn_context".into(), json!(self.turn_context));
+        }
+        match self.residual_readout_election.as_str() {
+            "" => {}
+            "true" => {
+                top.insert("residual_readout_election".into(), json!(true));
+            }
+            "false" => {
+                top.insert("residual_readout_election".into(), json!(false));
+            }
+            _ => {
+                return Err(refused(
+                    "residual_readout_election",
+                    Kind::Election,
+                    "is true or false",
+                ));
+            }
+        }
+        top.insert("surprisal_election".into(), json!(self.surprisal_election));
         Ok(Value::Object(top))
     }
 
@@ -1531,6 +1656,16 @@ impl Form {
             store: document.store.word().to_owned(),
             sh: !document.tools.is_empty(),
             prompt: document.prompt.clone().unwrap_or_default(),
+            turn_context: document
+                .turn_context
+                .unwrap_or(TurnContext::Continuous)
+                .word()
+                .to_owned(),
+            residual_readout_election: document
+                .residual_readout_election
+                .map(|b| b.to_string())
+                .unwrap_or_default(),
+            surprisal_election: document.surprisal_election.unwrap_or(false),
         };
         form.boxes
             .extend(std::iter::repeat_n(FormBox::default(), extra_boxes));
@@ -1540,7 +1675,9 @@ impl Form {
 
     /// **The empty form**, with `boxes` empty boxes, at least one, and the
     /// five [`STARTING`] values filled in, the other three tunable values
-    /// empty.
+    /// empty; the turn context at continuous and the surprisal unchecked,
+    /// the agent's readings of their absence, and the residual readout's
+    /// election unchosen, since the agent's grammar gives it no default.
     pub fn empty(boxes: usize) -> Form {
         let mut form = Form {
             sampler: SAMPLER
@@ -1551,6 +1688,7 @@ impl Form {
                 })
                 .collect(),
             boxes: vec![FormBox::default(); boxes.max(1)],
+            turn_context: TurnContext::Continuous.word().to_owned(),
             ..Form::default()
         };
         form.slotted();

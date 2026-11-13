@@ -53,7 +53,7 @@ use crate::link::register::{Agent, CredentialState};
 use crate::store::alerts::{STDERR_BOUND, bounded};
 use crate::store::identity::{VOCABULARY, is_agent_id};
 use crate::store::{AgentId, Store};
-use crate::surfaces::declare_pane::DeclarePane;
+use crate::surfaces::declare_pane::{DeclarePane, Head};
 use crate::surfaces::gate::{self, Policy, Session};
 use crate::surfaces::record::NoSession;
 use crate::traceview::TraceViews;
@@ -116,22 +116,31 @@ fn stages(links: &[(u8, String)]) -> Vec<StageView> {
 /// **The way back to the agent's declaration**, an admin's alone, since
 /// the declaration screen is (Spec 2.13, 6.1): the declaration saved under
 /// the agent's name, or a new one where none is.
-struct DeclaredLink {
-    href: String,
-    words: String,
+pub(crate) struct DeclaredLink {
+    pub(crate) href: String,
+    pub(crate) words: String,
 }
 
 impl DeclaredLink {
-    fn of(name: &str, saved: Option<&crate::store::declarations::Saved>) -> DeclaredLink {
-        match saved {
-            Some(saved) => DeclaredLink {
+    /// The way back for what the head lookup read: the head, a new
+    /// declaration where none is saved, or the declarations where the
+    /// lookup failed, since "declare one" would state what was not read.
+    pub(crate) fn of(name: &str, head: Head<'_>) -> DeclaredLink {
+        match head {
+            Head::Unread => DeclaredLink {
+                href: "/declarations".to_owned(),
+                words: format!(
+                    "whether a declaration is saved under the name {name} could not be read just now: the declarations"
+                ),
+            },
+            Head::Saved(saved) => DeclaredLink {
                 href: format!("/declarations/{}", saved.de),
                 words: format!(
                     "the declaration saved under the name {name}, version {}",
                     saved.version
                 ),
             },
-            None => DeclaredLink {
+            Head::NoneSaved => DeclaredLink {
                 href: "/declarations/new".to_owned(),
                 words: format!("no declaration is saved under the name {name}: declare one"),
             },
@@ -910,16 +919,16 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, agent: String) ->
     // agent's name, Provision to the register.
     // **The declaration saved under the agent's name** (Spec 2.13), for
     // every reader: the Declare pane, and an admin's way back.
-    let named = match store.declaration_named(&row.name).await {
-        Ok(named) => named,
-        Err(e) => return fault(e),
-    };
-    let declaration =
-        match DeclarePane::of(&store, &row, named.as_ref(), admin, &session.person_id).await {
-            Ok(pane) => pane,
-            Err(e) => return fault(e),
-        };
-    let declared = admin.then(|| DeclaredLink::of(&row.name, named.as_ref()));
+    // **A read that fails here fails the pane alone** (the Planner's read
+    // of 2026-11-13): logged, said in the pane and the way back, never an
+    // error for the page that carries Run.
+    let named = store.declaration_named(&row.name).await;
+    if let Err(e) = &named {
+        tracing::error!(agent = %id.as_str(), "the declaration saved under the name could not be read: {e:#}");
+    }
+    let head = Head::of(&named);
+    let declaration = DeclarePane::of(&store, &row, head, admin, &session.person_id).await;
+    let declared = admin.then(|| DeclaredLink::of(&row.name, head));
     let links: Vec<(u8, String)> = match &declared {
         Some(link) => vec![(1, link.href.clone()), (2, "/admin/agents".to_owned())],
         None => Vec::new(),

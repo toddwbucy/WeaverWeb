@@ -1,4 +1,5 @@
 //! conforms: web-reading-an-agent-takes-a-grant-on-it
+//! conforms: web-the-agent-page-leads-on-to-record-and-an-admin-back-to-its-declaration
 //!
 //! **Reading an agent** (design sections 6 and 9; Spec 2.12 and 2.13; act
 //! 11, PR 6a): the agents a person holds a grant on, one agent's register
@@ -68,7 +69,7 @@ const NO_SUCH_AGENT: &str = "no such agent";
 /// reads that file's headings against this table). No stage's backing is
 /// derived from the agent: it is about the pane, never about the agent.
 const STAGES: [(u8, &str, &str); 8] = [
-    (1, "Declare", "unbuilt"),
+    (1, "Declare", "partly"),
     (2, "Provision", "partly"),
     (3, "Run", "built"),
     (4, "Observe", "built"),
@@ -88,10 +89,14 @@ struct StageView {
     name: &'static str,
     backing: &'static str,
     here: bool,
+    /// The page this stage has for this agent, where the person may open
+    /// it; a span otherwise.
+    href: Option<String>,
 }
 
-/// The rail's eight stages, the current one marked.
-fn stages() -> Vec<StageView> {
+/// The rail's eight stages, the current one marked, each stage named in
+/// `links` a link to its page (Spec 2.13).
+fn stages(links: &[(u8, String)]) -> Vec<StageView> {
     STAGES
         .into_iter()
         .map(|(number, name, backing)| StageView {
@@ -99,8 +104,38 @@ fn stages() -> Vec<StageView> {
             name,
             backing,
             here: number == CURRENT_STAGE,
+            href: links
+                .iter()
+                .find(|(n, _)| *n == number && number != CURRENT_STAGE)
+                .map(|(_, href)| href.clone()),
         })
         .collect()
+}
+
+/// **The way back to the agent's declaration**, an admin's alone, since
+/// the declaration screen is (Spec 2.13, 6.1): the declaration saved under
+/// the agent's name, or a new one where none is.
+struct DeclaredLink {
+    href: String,
+    words: String,
+}
+
+impl DeclaredLink {
+    fn of(name: &str, saved: Option<&crate::store::declarations::Saved>) -> DeclaredLink {
+        match saved {
+            Some(saved) => DeclaredLink {
+                href: format!("/declarations/{}", saved.de),
+                words: format!(
+                    "the declaration saved under the name {name}, version {}",
+                    saved.version
+                ),
+            },
+            None => DeclaredLink {
+                href: "/declarations/new".to_owned(),
+                words: format!("no declaration is saved under the name {name}: declare one"),
+            },
+        }
+    }
 }
 
 /// What is left, said at the rail's end: the current stage of the eight
@@ -426,6 +461,8 @@ struct AgentPage {
     /// The stage rail and what is left.
     stages: Vec<StageView>,
     left: String,
+    /// The way back to the agent's declaration, an admin's alone.
+    declared: Option<DeclaredLink>,
 }
 
 /// **Run's two panes, the load state and the verbs** (Spec 2.13): the agent
@@ -865,6 +902,21 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, agent: String) ->
         Ok(chrome) => chrome,
         Err(e) => return fault(e),
     };
+    // **The way back to the declaration, and the rail's links**, an
+    // admin's alone (Spec 2.13): Declare to the declaration saved under the
+    // agent's name, Provision to the register.
+    let declared = if admin {
+        match store.declaration_named(&row.name).await {
+            Ok(saved) => Some(DeclaredLink::of(&row.name, saved.as_ref())),
+            Err(e) => return fault(e),
+        }
+    } else {
+        None
+    };
+    let links: Vec<(u8, String)> = match &declared {
+        Some(link) => vec![(1, link.href.clone()), (2, "/admin/agents".to_owned())],
+        None => Vec::new(),
+    };
     let can_ack = roles.iter().any(|r| r == "operator");
     let carries = |verb: &str| granted.contains(verb) && ceiling.iter().any(|c| c == verb);
     let prompt = stored
@@ -942,8 +994,9 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, agent: String) ->
         alerts,
         can_ack,
         prompt,
-        stages: stages(),
+        stages: stages(&links),
         left: left(),
+        declared,
     };
     match page.render() {
         Ok(html) => Html(html).into_response(),

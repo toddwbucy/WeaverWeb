@@ -1,5 +1,6 @@
 //! conforms: web-only-the-admin-grant-reads-or-writes-a-declaration
 //! conforms: web-the-declaration-screen-reaches-no-agent-and-no-host
+//! conforms: web-a-pages-way-forward-stands-where-its-condition-holds
 //!
 //! **The declaration screen** (Spec 6.1): the first of the two screens
 //! Declare becomes. A signed-in admin declares an agent's components, saves
@@ -220,6 +221,8 @@ struct Version {
 /// author and standing, the class readings and the two panes.
 struct Opened {
     de: String,
+    /// The lineage's name, which the way forward carries to the register.
+    name: String,
     version: i64,
     saved_at: String,
     author: String,
@@ -404,6 +407,7 @@ async fn open(
         readings: document.readings(),
         stale: (row.corpus_commit != CORPUS_COMMIT).then(|| row.corpus_commit.clone()),
         de: row.de.clone(),
+        name: row.name.clone(),
         version: row.version,
         saved_at: when(row.saved_at),
         author,

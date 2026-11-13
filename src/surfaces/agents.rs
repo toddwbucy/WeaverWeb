@@ -1,4 +1,5 @@
 //! conforms: web-a-client-config-is-handed-over-once-and-kept-nowhere
+//! conforms: web-a-pages-way-forward-stands-where-its-condition-holds
 //!
 //! **The register of agents through the server** (Spec 2.12, 2.13 and 8;
 //! act 11, PR 5c): the page that lists the register's rows, and
@@ -28,7 +29,7 @@ use std::time::Duration;
 
 use askama::Template;
 use axum::Router;
-use axum::extract::{Form, State};
+use axum::extract::{Form, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
@@ -214,10 +215,14 @@ pub fn routes(seams: Seams) -> Router<Store> {
     Router::new()
         .route(
             "/admin/agents",
-            get(move |State(store): State<Store>, headers: HeaderMap| {
-                let seams = page_seams.clone();
-                async move { page(store, &seams, headers).await }
-            }),
+            get(
+                move |State(store): State<Store>,
+                      headers: HeaderMap,
+                      Query(ask): Query<Prefill>| {
+                    let seams = page_seams.clone();
+                    async move { page(store, &seams, headers, ask).await }
+                },
+            ),
         )
         .route(
             "/admin/agents/register",
@@ -256,12 +261,24 @@ struct AgentsPage {
     admin: bool,
     chrome: super::Chrome,
     rows: Vec<AgentRow>,
+    /// The register form's name, as a link from a saved declaration asks.
+    name: String,
+}
+
+/// **What a link may fill into the register form** (Spec 2.13): the
+/// agent's name, as a saved declaration's way forward carries it. A name
+/// out of the register's grammar fills nothing, and the register judges
+/// what is posted either way.
+#[derive(Debug, Default, Deserialize)]
+struct Prefill {
+    #[serde(default)]
+    name: Option<String>,
 }
 
 /// **The register as the admin governs it** (Spec 2.13): each agent's box
 /// and name, its identity, each plane's credential state, and presence;
 /// not its door, load state or trace, which read access by grant shows.
-async fn page(store: Store, seams: &Seams, headers: HeaderMap) -> Response {
+async fn page(store: Store, seams: &Seams, headers: HeaderMap, ask: Prefill) -> Response {
     let session = match admin_session(&store, &seams.policy, &headers).await {
         Ok(Ok(session)) => session,
         Ok(Err(_)) => return (StatusCode::FORBIDDEN, NOT_AN_ADMIN).into_response(),
@@ -296,6 +313,10 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap) -> Response {
         admin: true,
         chrome,
         rows,
+        name: ask
+            .name
+            .filter(|name| crate::declaration::is_name(name))
+            .unwrap_or_default(),
     })
     .render()
     {
@@ -329,6 +350,11 @@ struct HandoverPage {
     chrome: super::Chrome,
     verb: &'static str,
     agent: String,
+    /// The agent's identity, for the way forward to its page.
+    agent_id: String,
+    /// Whether the admin holds a grant on the agent, and so whether its
+    /// page answers them (Spec 2.13).
+    granted: bool,
     waiting: Vec<Waiting>,
     minutes: u64,
 }
@@ -352,6 +378,20 @@ async fn hand_over(
             tracing::error!("the page's chrome could not be read: {e:#}");
             super::Chrome::default()
         });
+    // **The way forward** (Spec 2.13): the agent's page where the admin
+    // holds a grant on it, since it answers no one else; unread, it is
+    // logged and offered as not held, never at the cost of the page.
+    let granted = match minted.agent_id.parse::<AgentId>() {
+        Ok(id) => store
+            .roles_on(&session.person_id, &id)
+            .await
+            .map(|roles| !roles.is_empty())
+            .unwrap_or_else(|e| {
+                tracing::error!("the admin's grant on the agent could not be read: {e:#}");
+                false
+            }),
+        Err(_) => false,
+    };
     let mut waiting = Vec::new();
     for (plane, credential) in [(Plane::Gate, &minted.gate), (Plane::Admin, &minted.admin)] {
         let content = client_config(
@@ -377,6 +417,8 @@ async fn hand_over(
         chrome,
         verb,
         agent: format!("{}/{} ({})", minted.r#box, minted.name, minted.agent_id),
+        agent_id: minted.agent_id.clone(),
+        granted,
         waiting,
         minutes: HANDOVER_LIFETIME.as_secs() / 60,
     })

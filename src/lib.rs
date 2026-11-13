@@ -36,6 +36,8 @@ pub mod link;
 pub mod listen;
 #[cfg(test)]
 mod listen_tests;
+#[cfg(all(test, feature = "passkeys"))]
+mod navigation_tests;
 #[cfg(feature = "passkeys")]
 pub mod passkeys;
 #[cfg(all(test, feature = "passkeys"))]

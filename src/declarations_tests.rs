@@ -96,7 +96,7 @@ const BASE_FORM: [(&str, &str); 18] = [
 
 /// The base form with `set` replacing or adding fields and `drop` leaving
 /// fields out.
-fn posted(set: &[(&str, &str)], drop: &[&str]) -> String {
+pub(crate) fn posted(set: &[(&str, &str)], drop: &[&str]) -> String {
     let mut fields: Vec<(&str, &str)> = BASE_FORM
         .iter()
         .filter(|(k, _)| !drop.contains(k) && !set.iter().any(|(s, _)| s == k))
@@ -125,7 +125,7 @@ fn saved_at(status: StatusCode, headers: &HeaderMap, body: &str) -> String {
 }
 
 /// A save posted and its new row's identity.
-async fn save(app: &axum::Router, session: &str, uri: &str, body: String) -> String {
+pub(crate) async fn save(app: &axum::Router, session: &str, uri: &str, body: String) -> String {
     let (status, headers, answer) = send_as(app, "POST", uri, Some(body), session).await;
     saved_at(status, &headers, &answer)
 }

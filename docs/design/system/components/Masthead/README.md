@@ -1,8 +1,9 @@
-The masthead is the server's bar on every page: brand, the agent switcher, the server pages, the open-alert count, who is signed in and sign out. Beneath it, an availability banner for each plane the server cannot reach.
+The masthead is the server's bar on every page: brand, the agent switcher, the server pages in the path's order, the open-alert count, who is signed in and sign out. Beneath it, an availability banner for each plane the server cannot reach.
 
 - The consumer provides the current agent's name (in `id`, inside `.agent-switch`), the pages the person's grants reach, the open-alert count and the person's name and highest role.
 - The current page is `.here`: `fg` with an `accent` underline. Every other link is `dim`.
 - The alert count is a `.status.fail` pill only when it is above zero; at zero it is not shown.
 - The availability banner (`.unavailable`) is `accent-soft` on a `line` rule and names the agent, the plane's connector and since when, in the words the server uses: "agent unavailable, admin-con down", "turns unavailable, gate-con down".
-- Do not put the stages here; they belong to the agent's stage rail.
+- **The pages stand in the path's order** (the operator's word of 2026-11-13). On the left is the work, in the order a person does it, each page carrying the stage marks it serves: Declarations, 1 Declare; Register, 2 Provision; Agents, 3 Run and 4 Observe, with the alert count after it. Record comes last, unmarked: it is the record of the whole lifecycle, no stage's own. On the right, after who is signed in, are the person and the house: Persons and Grants for an admin, Passkeys, sign out. A person sees the same order less what they may not open.
+- The marks here state the order of the server's pages. Where one agent stands in its path is the agent's stage rail, not the masthead.
 - The served masthead carries no agent switcher and names no agent until multi-agent management; its alert count is `.masthead a.status`, a served-surfaces rule of `bundle.css` that keeps the link's padding and underline off the pill. Two more served rules keep the brand and the sign-out button on one line each, and at phone width (760px and under) let the masthead's row wrap, its links to a second line, rather than run past the page's edge.

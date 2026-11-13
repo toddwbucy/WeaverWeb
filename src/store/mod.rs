@@ -2,7 +2,7 @@
 //! `weaver-web-Spec` section 4 over the tables of its section 2.
 //!
 //! **All six of that section's reads are served here** as of 2026-09-11.
-//! The fifth landed with Record and the sixth with the plan's schema, which
+//! The fifth landed with The Record and the sixth with the plan's schema, which
 //! is where section 4 said that one was owed. The Experiments list's read
 //! is the one still owed, at the act that builds it.
 //!

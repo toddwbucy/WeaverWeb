@@ -165,7 +165,7 @@ pub struct TokenAsk {
 /// name's canonical form, redeemable, before anything is written; then the
 /// opening's first record, the person by `sign-in token` on the person; then
 /// the opening, which ends the token and inserts the session in one
-/// transaction. The browser is sent to Record with the cookie.
+/// transaction. The browser is sent to The Record with the cookie.
 async fn token_sign_in(store: Store, shown: Shown, ask: TokenAsk) -> Response {
     let token = ask.token.trim();
     // **A token is 64 hex digits as the host prints it**; any other value

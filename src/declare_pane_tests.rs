@@ -5,8 +5,9 @@
 //! in each of its three states, each reported member's verdict, the parts
 //! the agent never reports, the prompt by its length (its digest to an
 //! admin alone), the other live rows of the name as far as the reader may
-//! see, and the declaration screen's link an admin's alone. Each test runs on a store of
-//! its own. No name, artifact or digest here is a real deployment's.
+//! see, the declaration screen's link an admin's alone, and the pane failing by
+//! itself where its head does not read or a read inside it fails. Each test runs on a
+//! store of its own. No name, artifact or digest here is a real deployment's.
 
 use axum::http::StatusCode;
 use serde_json::{Value, json};
@@ -18,6 +19,7 @@ use crate::declarations_tests::{posted, save};
 use crate::host;
 use crate::passkeys_tests::authenticator;
 use crate::store::Store;
+use crate::surfaces::declare_pane::{DeclarePane, Head, PaneView};
 
 /// The text of `html` with its tags dropped and its spaces collapsed.
 fn text(html: &str) -> String {
@@ -416,4 +418,172 @@ async fn the_other_rows_of_the_name_are_listed_as_far_as_the_reader_may_see() {
         let p = pane(&page_of(&rig.app, &karl, session).await);
         assert!(said(&p, "others").is_none(), "a retired row: {p}");
     }
+}
+
+/// The Declare pane alone, rendered from what its reads returned.
+fn render(declaration: &DeclarePane) -> String {
+    use askama::Template;
+    PaneView { declaration }.render().unwrap()
+}
+
+/// **A head that does not read in this build fails in the pane alone**
+/// (the Planner's read of 2026-11-13): a row saved by a newer build and read
+/// by an older one leaves the agent page standing, Run's panes with it. The
+/// pane says the head does not read, names its version, shows no parts, and
+/// offers the screen's link to an admin alone.
+#[tokio::test]
+async fn a_head_that_does_not_read_fails_in_the_pane_alone() {
+    let Some((rig, ada, bea, karl)) = setting().await else {
+        return;
+    };
+    let s = rig.store();
+    sqlx::query(
+        "INSERT INTO declaration (declaration_ref, name, body, corpus_commit, \
+         parent_declaration_id, lineage_root_id, version, what_moved, \
+         the_one_thing_that_moved, author) \
+         VALUES ('de-00000000000000aa', 'karl', $1, $2, NULL, NULL, 1, '{}', NULL, NULL)",
+    )
+    .bind(json!({"a_member_this_build_does_not_read": true}))
+    .bind(crate::declaration::render::CORPUS_COMMIT)
+    .execute(&s.pool)
+    .await
+    .unwrap();
+    for (session, admin) in [(&bea, false), (&ada, true)] {
+        let page = page_of(&rig.app, &karl, session).await;
+        assert!(page.contains(r#"id="run""#), "Run's panes stand: {page}");
+        let p = pane(&page);
+        assert_eq!(
+            said(&p, "truth").as_deref(),
+            Some(
+                "The declaration saved under the name karl, version 1, does not read in this \
+                 build, so its parts are not shown."
+            ),
+            "{p}"
+        );
+        assert!(parts(&p).is_empty(), "{p}");
+        assert_eq!(
+            p.contains(r#"href="/declarations/de-00000000000000aa""#),
+            admin,
+            "the screen's link is an admin's alone: {p}"
+        );
+    }
+}
+
+/// **A read that fails inside the pane is stated there**, never an error
+/// for the page: the head lookup, the other rows of the name and the head's
+/// author each read as unread and said so in the pane, which shows nothing
+/// it did not read; an admin's way back then leads to the declarations,
+/// never to a new one.
+#[tokio::test]
+async fn a_read_that_fails_inside_the_pane_is_stated_there() {
+    let Some((rig, ada, _, karl)) = setting().await else {
+        return;
+    };
+    let s = rig.store();
+    save(&rig.app, &ada, "/declarations", posted(&[], &[])).await;
+    let row = s.agent(&karl.parse().unwrap()).await.unwrap().unwrap();
+    let saved = s.declaration_named("karl").await.unwrap().unwrap();
+
+    let p = render(&DeclarePane::compose(&row, Head::Unread, None, None, true));
+    assert_eq!(
+        said(&p, "truth").as_deref(),
+        Some("Whether a declaration is saved under the name karl could not be read just now."),
+        "{p}"
+    );
+    assert!(
+        parts(&p).is_empty() && said(&p, "saved").is_none() && !p.contains("Declare one"),
+        "an unread head shows nothing and offers no new one: {p}"
+    );
+    assert_eq!(
+        said(&p, "others").as_deref(),
+        Some("The other live register rows of this name could not be read just now."),
+        "{p}"
+    );
+
+    let p = render(&DeclarePane::compose(
+        &row,
+        Head::Saved(&saved),
+        Some(Vec::new()),
+        None,
+        true,
+    ));
+    assert!(
+        said(&p, "saved")
+            .is_some_and(|t| t.contains("by an author that could not be read just now")),
+        "{p}"
+    );
+    assert!(!parts(&p).is_empty() && said(&p, "others").is_none(), "{p}");
+
+    let back = crate::surfaces::reading::DeclaredLink::of("karl", Head::Unread);
+    assert_eq!(back.href, "/declarations");
+    assert_eq!(
+        back.words,
+        "whether a declaration is saved under the name karl could not be read just now: the declarations"
+    );
+}
+
+/// **A head lookup that fails leaves the agent page standing**: the page
+/// answers with Run's panes, the pane says whether a declaration is saved
+/// could not be read, and an admin's way back and the rail's Declare lead
+/// to the declarations, never to a new one. The lookup is made to fail on
+/// this test's own store by renaming a column it reads, which no other
+/// read of the page touches.
+#[tokio::test]
+async fn a_head_lookup_that_fails_leaves_the_agent_page_standing() {
+    let Some((rig, ada, _, karl)) = setting().await else {
+        return;
+    };
+    let s = rig.store();
+    save(&rig.app, &ada, "/declarations", posted(&[], &[])).await;
+    sqlx::query("ALTER TABLE declaration RENAME COLUMN corpus_commit TO corpus_commit_away")
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    let page = page_of(&rig.app, &karl, &ada).await;
+    assert!(page.contains(r#"id="run""#), "Run's panes stand: {page}");
+    let p = pane(&page);
+    assert_eq!(
+        said(&p, "truth").as_deref(),
+        Some("Whether a declaration is saved under the name karl could not be read just now."),
+        "{p}"
+    );
+    let back = &page[page.find(r#"<p class="back">"#).expect("a way back")..];
+    assert!(
+        back.starts_with(r#"<p class="back">Back, <span class="stage"><b>1</b> Declare</span>: <a href="/declarations">"#),
+        "{back}"
+    );
+    assert!(
+        !page.contains(r#"href="/declarations/new""#),
+        "nothing offers a new declaration on a lookup that failed: {page}"
+    );
+}
+
+/// **A virtual-machine placement names its template, and nothing cloned**:
+/// the console is pointed at a machine that exists (the operator's ruling of
+/// 2026-11-13) and clones none, so the pane says where the template is
+/// named and never that the agent was cloned from it.
+#[tokio::test]
+async fn a_virtual_machine_placement_names_its_template_and_nothing_cloned() {
+    let Some((rig, ada, bea, karl)) = setting().await else {
+        return;
+    };
+    save(
+        &rig.app,
+        &ada,
+        "/declarations",
+        posted(
+            &[("placement", "virtual-machine"), ("template", "tpl-a")],
+            &[],
+        ),
+    )
+    .await;
+    let p = pane(&page_of(&rig.app, &karl, &bea).await);
+    assert_eq!(
+        part(&parts(&p), "placement"),
+        (
+            "a virtual-machine agent, from the template tpl-a".to_owned(),
+            "not reported by the agent".to_owned()
+        ),
+        "{p}"
+    );
 }

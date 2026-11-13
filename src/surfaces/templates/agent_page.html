@@ -43,36 +43,7 @@
     <footer>Choosing does not acknowledge the alert: it stays until acknowledged.</footer>
   </section>
   {%- endif %}
-  {#- The Declare pane (Spec 2.13): the declaration saved under the agent's
-      name, its parts, and each member the agent reports set beside it. By
-      name, never by digest, so it never says which version the agent was
-      loaded from; the prompt is shown by its length, its digest to an
-      admin alone. -#}
-  <section class="pane" id="declaration">
-    <header><span class="stage"><b>1</b> Declare</span><h2>Declaration</h2><span class="backing partly">partly</span><span class="source">the declaration saved under this name</span></header>
-    <div class="body">
-    {%- if let Some(saved) = declaration.saved %}
-    <p class="saved">The declaration saved under the name {{ declaration.name }}: version {{ saved.version }}, the head of its lineage, saved {{ saved.saved_at }} by {{ saved.author }}{% if let Some(href) = saved.href %}; <a href="{{ href }}">open it on the declaration screen</a>{% endif %}.</p>
-    {%- endif %}
-    <p class="truth">{{ declaration.truth }}{% if declaration.declare %} <a href="/declarations/new">Declare one</a>.{% endif %}</p>
-    {%- if !declaration.others.is_empty() %}
-    <p class="others">The same declaration stands behind the other live register rows of this name: {% for other in declaration.others %}{% if !loop.first %}, {% endif %}<span class="mono">{{ other }}</span>{% endfor %}.</p>
-    {%- endif %}
-    </div>
-    {%- if !declaration.parts.is_empty() %}
-    <div class="body flush">
-    <table class="parts">
-      <thead><tr><th>Part</th><th>Declared</th><th>Against the agent's report</th></tr></thead>
-      <tbody>
-      {%- for p in declaration.parts %}
-      <tr><th>{{ p.part }}</th><td class="mono">{{ p.declared }}</td><td>{% if p.status.is_empty() %}{{ p.against }}{% else %}<span class="status {{ p.status }}">{{ p.against }}</span>{% endif %}</td></tr>
-      {%- endfor %}
-      </tbody>
-    </table>
-    </div>
-    {%- endif %}
-    <footer>Every holder of a grant on this agent sees its declared parts; the declaration screen is an admin's, and the prompt is shown here by its length in characters, its digest to an admin alone. Partly: which saved version an agent's file was derived from waits on Provision writing the file the agent loads and recording its digest.</footer>
-  </section>
+  {%- include "declare_pane.html" %}
   <div class="stack" id="run" hx-get="/agents/{{ agent_id }}/run" hx-trigger="every 15s" hx-swap="innerHTML">{% include "agent_run.html" %}</div>
   <section class="pane">
     <header><span class="stage"><b>3</b> Run</span><h2>Turn</h2><span class="backing built">built</span><span class="source">gate-con</span></header>

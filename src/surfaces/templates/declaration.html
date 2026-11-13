@@ -121,7 +121,7 @@
   </div>
 </section>
 {%- endfor %}
-<p class="row"><a href="{{ slots_href }}?boxes={{ more_boxes }}">Another SPU box</a><span class="note">a link, so it carries nothing typed and unsaved: ask for the boxes before typing</span></p>
+<p class="row"><a href="{{ slots_href }}?boxes={{ more_boxes }}&amp;kinds={{ form.state_keys.len() }}">Another SPU box</a><span class="note">a link, so it carries nothing typed and unsaved: ask for the boxes before typing</span></p>
 <section class="pane">
   <header><h2>The tunable values</h2></header>
   <div class="body stack">
@@ -181,6 +181,39 @@
     </div>
   </div>
   <span class="note">Takes effect when the declaration reaches the agent (question 2). Who the gate admits is its gate-con, filled at Provision.</span>
+  </div>
+</section>
+<section class="pane">
+  <header><h2>The state election</h2></header>
+  <div class="body stack">
+  <div class="field">
+    <label for="state_election-all_kinds">Which kinds cross to the store</label>
+    <select id="state_election-all_kinds" name="state_election.all_kinds">
+      <option value="true"{% if form.state_all_kinds != "false" %} selected{% endif %}>every kind, with its envelope</option>
+      <option value="false"{% if form.state_all_kinds == "false" %} selected{% endif %}>only the kinds named below</option>
+    </select>
+  </div>
+  {%- for row in form.state_keys %}
+  {%- let i = loop.index0 %}
+  <div class="row">
+    <div class="field">
+      <label for="state_election-k{{ i }}-kind">Kind {{ i }}</label>
+      <select id="state_election-k{{ i }}-kind" name="state_election.k{{ i }}.kind">
+        <option value=""{% if row.kind.is_empty() %} selected{% endif %}>none</option>
+        {%- for kind in kinds %}
+        <option value="{{ kind }}"{% if row.kind == **kind %} selected{% endif %}>{{ kind }}</option>
+        {%- endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label for="state_election-k{{ i }}-paths">its paths, one per line</label>
+      <textarea id="state_election-k{{ i }}-paths" name="state_election.k{{ i }}.paths" rows="2" spellcheck="false">
+{{ row.paths }}</textarea>
+    </div>
+  </div>
+  {%- endfor %}
+  <p class="row"><a href="{{ slots_href }}?boxes={{ form.boxes.len() }}&amp;kinds={{ more_kinds }}">Another kind</a><span class="note">a link, so it carries nothing typed and unsaved: ask for the rows before typing</span></p>
+  <span class="note">It derives into the agent's [state-election] at WeaverAgent {{ corpus }}. Every kind crosses to the store with its envelope, or only the kinds named do; each row adds, for its kind, the payload key paths that cross beside the envelope, one dotted path per line from the payload root, at most 32 for a kind and 256 characters each. A kind with no paths is written: with every kind crossing it adds nothing, and with only the kinds named crossing it makes that kind cross with its envelope alone, presence itself being state. The kinds offered are the trace's canonical kinds but save_point, which no election matches; a kind named twice is refused, since the agent would take the first entry for it and drop the rest. Beside the store none, anything but every kind with no rows is refused, since admin refuses an election there, and no table is written. A path is not checked against its kind's payload, so a mistyped one saves and elects nothing, as at the agent; a payload key holding a dot cannot be spelled; and a kind outside the twenty-five cannot be named. A row saved before the screen held the election shows every kind and no rows, the default admin resolves its absence to, and a save beside sqlite writes it. Takes effect when the declaration reaches the agent (question 2).</span>
   </div>
 </section>
 <section class="pane">

@@ -1,6 +1,9 @@
 //! conforms: web-a-save-and-a-reopen-are-the-same-document
 //! conforms: web-a-stale-row-reopens-and-saves-once-filled
 //! conforms: web-a-row-without-the-elections-reopens-and-saves-once-chosen
+//! conforms: web-a-row-without-the-state-election-reopens-and-saves-the-default
+//! conforms: web-an-election-beside-no-store-is-refused-and-none-is-written
+//! conforms: web-an-agents-state-election-derives-as-its-file-holds-it
 //!
 //! **The agent's file a declaration becomes** (Spec 6.1): `agent.toml` in
 //! the agent's grammar, `weaver-types-Spec` section 2 at [`CORPUS_COMMIT`],
@@ -17,11 +20,12 @@
 //! `crates/weaver-types/src/config.rs` (`AgentConfig`, kebab-case, closed
 //! objects) and, for `tunable-values`, from the eight names a serving load
 //! requires, held to the agent's as read by `super::tunable_set`, and for
-//! the three elections held to the agent's as read by `super::elections`. This
-//! crate links no crate of the agent (Spec 1), so the file is checked as
-//! TOML 1.0 and nothing more.
+//! the three elections held to the agent's as read by `super::elections`,
+//! and for `[state-election]` held to the agent's as read by
+//! `super::state_election`. This crate links no crate of the agent (Spec
+//! 1), so the file is checked as TOML 1.0 and nothing more.
 
-use super::{Class, Document, Function, Part, Placement, Requirement, Value64};
+use super::{Class, Document, Engine, Function, Part, Placement, Requirement, Value64};
 
 /// **The WeaverAgent commit whose grammar the file follows**, a constant of
 /// the build and Spec 2.4's staleness rule: a row saved under another pin is
@@ -160,6 +164,39 @@ pub fn agent_toml(document: &Document, meta: &Meta<'_>) -> String {
         &mut out,
         &format!("engine = {}", string(document.store.word())),
     );
+    line(&mut out, "");
+    match (&document.state_election, document.store) {
+        (Some(election), _) => {
+            line(&mut out, "[state-election]");
+            line(&mut out, &format!("all-kinds = {}", election.all_kinds));
+            if election.keys.is_empty() {
+                line(&mut out, "keys = []");
+            } else {
+                line(&mut out, "keys = [");
+                for k in &election.keys {
+                    let paths = k
+                        .paths
+                        .iter()
+                        .map(|p| string(p))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    line(
+                        &mut out,
+                        &format!("  {{ kind = {}, paths = [{paths}] }},", string(&k.kind)),
+                    );
+                }
+                line(&mut out, "]");
+            }
+        }
+        (None, Engine::None) => line(
+            &mut out,
+            "# [state-election]: not written beside the store none, which admin refuses an election beside.",
+        ),
+        (None, Engine::Sqlite) => line(
+            &mut out,
+            "# [state-election]: not declared on this row; admin resolves its absence to the default election, the envelope of every kind.",
+        ),
+    }
     line(&mut out, "");
     line(
         &mut out,
@@ -314,10 +351,6 @@ pub fn agent_toml(document: &Document, meta: &Meta<'_>) -> String {
     line(
         &mut out,
         "# binding-kind: not declared on this screen; the agent reads its absence as serving, and every declaration this screen saves is serving.",
-    );
-    line(
-        &mut out,
-        "# [state-election]: not declared on this screen; admin resolves its absence to the default election, the envelope of every kind.",
     );
     line(
         &mut out,

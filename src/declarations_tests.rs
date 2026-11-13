@@ -44,7 +44,8 @@ fn tunables() -> Value {
 }
 
 /// A document every check admits, a save's among them: one box, one
-/// decoder on a named card, and the eight tunable values.
+/// decoder on a named card, the eight tunable values and the three
+/// elections, the surprisal's unchecked.
 fn base() -> Value {
     json!({
         "name": "karl",
@@ -57,6 +58,9 @@ fn base() -> Value {
         "store": "none",
         "gate": {"tools": []},
         "prompt": null,
+        "turn_context": "continuous",
+        "residual_readout_election": false,
+        "surprisal_election": false,
     })
 }
 
@@ -68,7 +72,7 @@ fn edit(f: impl FnOnce(&mut Value)) -> Value {
 }
 
 /// The base document's form, as the screen posts it.
-const BASE_FORM: [(&str, &str); 16] = [
+const BASE_FORM: [(&str, &str); 18] = [
     ("name", "karl"),
     ("placement", "host"),
     ("b0.m0.function", "decoder"),
@@ -85,6 +89,8 @@ const BASE_FORM: [(&str, &str); 16] = [
     ("sampler.max_tokens_per_turn", "512"),
     ("sampler.context_capacity", "4096"),
     ("store", "none"),
+    ("turn_context", "continuous"),
+    ("residual_readout_election", "false"),
 ];
 
 /// The base form with `set` replacing or adding fields and `drop` leaving
@@ -573,6 +579,43 @@ fn every_refusal_names_its_field_and_its_reason() {
             Kind::Tool,
             "gate.tools[1]",
         ),
+        // An election outside its values.
+        (
+            "a turn context the agent does not hold",
+            edit(|v| v["turn_context"] = json!("sometimes")),
+            Kind::Election,
+            "turn_context",
+        ),
+        (
+            "a turn context that is not text",
+            edit(|v| v["turn_context"] = json!(1)),
+            Kind::Election,
+            "turn_context",
+        ),
+        (
+            "a null turn context",
+            edit(|v| v["turn_context"] = Value::Null),
+            Kind::Election,
+            "turn_context",
+        ),
+        (
+            "a residual readout election that is text",
+            edit(|v| v["residual_readout_election"] = json!("false")),
+            Kind::Election,
+            "residual_readout_election",
+        ),
+        (
+            "a null residual readout election",
+            edit(|v| v["residual_readout_election"] = Value::Null),
+            Kind::Election,
+            "residual_readout_election",
+        ),
+        (
+            "a surprisal election that is a number",
+            edit(|v| v["surprisal_election"] = json!(1)),
+            Kind::Election,
+            "surprisal_election",
+        ),
         // An unknown member.
         (
             "an unknown member at the top",
@@ -642,6 +685,27 @@ fn every_refusal_names_its_field_and_its_reason() {
             edit(|v| {
                 v["boxes"][0]["gpu"] =
                     json!({"pair": [{"card": "card-0"}, {"class": {"family": "Hopper"}}]})
+            }),
+        ),
+        (
+            "an independent turn context and both elections true",
+            edit(|v| {
+                v["turn_context"] = json!("independent");
+                v["residual_readout_election"] = json!(true);
+                v["surprisal_election"] = json!(true);
+            }),
+        ),
+        (
+            "a row saved before the elections",
+            edit(|v| {
+                let top = v.as_object_mut().unwrap();
+                for member in [
+                    "turn_context",
+                    "residual_readout_election",
+                    "surprisal_election",
+                ] {
+                    top.remove(member);
+                }
             }),
         ),
     ] {
@@ -869,6 +933,21 @@ async fn the_screen_refuses_a_field_out_of_shape_and_saves_nothing() {
             "gate.tools: is a tool other than sh",
         ),
         (
+            "a turn context the agent does not hold",
+            posted(&[("turn_context", "sometimes")], &[]),
+            "turn_context: is continuous or independent",
+        ),
+        (
+            "a residual readout election neither true nor false",
+            posted(&[("residual_readout_election", "maybe")], &[]),
+            "residual_readout_election: is true or false",
+        ),
+        (
+            "a surprisal election other than its box checked",
+            posted(&[("surprisal_election", "yes")], &[]),
+            "surprisal_election: is true, its box checked, or absent",
+        ),
+        (
             "an unknown member",
             posted(&[("colour", "red")], &[]),
             "colour: is not a field",
@@ -1088,6 +1167,9 @@ async fn a_save_and_a_reopen_are_the_same_document() {
         ("store", "sqlite"),
         ("tools", "sh"),
         ("prompt", prompt),
+        ("turn_context", "independent"),
+        ("residual_readout_election", "true"),
+        ("surprisal_election", "true"),
     ];
     let expected = Form::read(form(&fields).as_bytes())
         .unwrap()
@@ -1154,7 +1236,27 @@ async fn a_save_and_a_reopen_are_the_same_document() {
     let table: toml::Table = toml::from_str(&file).expect("the agent's file is TOML 1.0");
     assert_eq!(table["tool-set"], toml::Value::Array(vec!["sh".into()]));
     assert_eq!(table["state-store"]["engine"].as_str(), Some("sqlite"));
+    assert_eq!(table["turn-context"].as_str(), Some("independent"));
     let decoder = &table["spu-instruction"]["decoder"];
+    assert_eq!(decoder["residual-readout-election"].as_bool(), Some(true));
+    assert_eq!(decoder["surprisal-election"].as_bool(), Some(true));
+    // What the screen does not declare is named and never written.
+    assert!(
+        !table.contains_key("binding-kind")
+            && !table.contains_key("state-election")
+            && decoder.get("field-election").is_none(),
+        "{file}"
+    );
+    let undeclared = &file[file
+        .find("# What the agent's grammar holds and this screen does not declare")
+        .unwrap_or_else(|| panic!("the file names what the screen does not declare: {file}"))..];
+    for words in [
+        "# binding-kind: not declared on this screen; the agent reads its absence as serving, and every declaration this screen saves is serving.",
+        "# [state-election]: not declared on this screen; admin resolves its absence to the default election, the envelope of every kind.",
+        "# [spu-instruction.decoder] field-election: not declared on this screen; its absence is the ordinary posture, no probability field elected, and the agent reads no default into it.",
+    ] {
+        assert!(undeclared.contains(words), "{words}\n{file}");
+    }
     // The eight tunable values, every one, under the agent's names.
     let values = decoder["tunable-values"].as_table().unwrap();
     let mut names: Vec<&str> = values.keys().map(String::as_str).collect();
@@ -1201,15 +1303,18 @@ async fn a_save_and_a_reopen_are_the_same_document() {
     }
     // A member dropped on the save shows: the reopen is no longer the
     // document.
-    let mut fewer = reposted.clone();
-    fewer.retain(|(k, _)| *k != "tools");
-    assert_ne!(
-        Form::read(form(&fewer).as_bytes())
-            .unwrap()
-            .document()
-            .unwrap(),
-        expected
-    );
+    for dropped in ["tools", "surprisal_election", "turn_context"] {
+        let mut fewer = reposted.clone();
+        fewer.retain(|(k, _)| *k != dropped);
+        assert_ne!(
+            Form::read(form(&fewer).as_bytes())
+                .unwrap()
+                .document()
+                .unwrap(),
+            expected,
+            "{dropped} dropped"
+        );
+    }
 }
 
 /// **A save from a row that is not its lineage's head is refused and writes
@@ -2020,5 +2125,302 @@ async fn a_row_lacking_a_tunable_value_reopens_stale_and_saves_once_filled() {
             "sampler.seed",
             "sampler.top_p",
         ]
+    );
+}
+
+/// **The residual readout's election is required, and a save lacking it
+/// is refused naming it** (Spec 6.1), since the agent's grammar gives it no
+/// default: on the document, a row lacking it parses, so a row saved before
+/// the act reopens, and is refused at save naming its field, while one
+/// lacking the turn context or the surprisal election is not, the agent
+/// reading their absence; end to end, the form lacking it, left out or
+/// posted empty, is answered 400 naming it, and neither a row nor an audit
+/// record is written. Whole, the form saves, and the row states all three,
+/// the surprisal election's unchecked box as false.
+#[tokio::test]
+async fn the_residual_readout_election_is_required_and_a_missing_one_is_refused_naming_it() {
+    let without = |member: &str| {
+        let member = member.to_owned();
+        edit(move |v| {
+            v.as_object_mut().unwrap().remove(&member);
+        })
+    };
+    let lacking = Document::parse(&without("residual_readout_election"))
+        .expect("a row lacking the readout's election reopens");
+    let refused = lacking
+        .serving()
+        .expect_err("a document lacking the readout's election would save");
+    assert_eq!(
+        (refused.kind, refused.field.as_str()),
+        (Kind::Missing, "residual_readout_election"),
+        "{refused}"
+    );
+    for member in ["turn_context", "surprisal_election"] {
+        let document = Document::parse(&without(member)).unwrap();
+        assert_eq!(document.serving(), Ok(()), "{member} is required");
+    }
+
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let app = app(s, Some(passkeys()));
+    let (_, session) = admin(&app, s, &mut authenticator(), "ada").await;
+    let (rows, audit) = (count(s, "declaration").await, count(s, "audit").await);
+    for (how, body) in [
+        ("left out", posted(&[], &["residual_readout_election"])),
+        (
+            "posted empty",
+            posted(&[("residual_readout_election", "")], &[]),
+        ),
+    ] {
+        let (status, _, page) = send_as(&app, "POST", "/declarations", Some(body), &session).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{how}: {page}");
+        assert!(
+            page.contains("residual_readout_election: is required"),
+            "{how}: the refusal names its field: {page}"
+        );
+        assert_eq!(
+            (count(s, "declaration").await, count(s, "audit").await),
+            (rows, audit),
+            "{how} wrote"
+        );
+    }
+    let de = save(&app, &session, "/declarations", posted(&[], &[])).await;
+    let row = s.declaration(&de).await.unwrap().unwrap();
+    assert_eq!(
+        (
+            &row.body["turn_context"],
+            &row.body["residual_readout_election"],
+            &row.body["surprisal_election"],
+        ),
+        (&json!("continuous"), &json!(false), &json!(false)),
+        "the row states the three elections"
+    );
+}
+
+/// **A new declaration's form starts with the turn context at continuous
+/// and the surprisal election unchecked, the agent's readings of their
+/// absence, and the residual readout's election unchosen** (Spec 6.1): the
+/// empty form and the new page's inputs, each editable, the page offering
+/// both turn contexts; posted as it starts, the form is refused naming the
+/// readout's election.
+#[tokio::test]
+async fn a_new_declarations_form_starts_with_two_elections_at_the_agents_absence() {
+    let form = Form::empty(1);
+    assert_eq!(
+        (
+            form.turn_context.as_str(),
+            form.residual_readout_election.as_str(),
+            form.surprisal_election,
+        ),
+        ("continuous", "", false),
+        "the empty form"
+    );
+
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let app = app(s, Some(passkeys()));
+    let (_, session) = admin(&app, s, &mut authenticator(), "ada").await;
+    let (status, _, page) = send_as(&app, "GET", "/declarations/new", None, &session).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let elections = [
+        "turn_context",
+        "residual_readout_election",
+        "surprisal_election",
+    ];
+    let shown: Vec<(String, String)> = posted_by(&page)
+        .into_iter()
+        .filter(|(k, _)| elections.contains(&k.as_str()))
+        .collect();
+    assert_eq!(
+        shown,
+        [
+            ("turn_context".to_owned(), "continuous".to_owned()),
+            ("residual_readout_election".to_owned(), String::new()),
+        ],
+        "the new page's elections, the surprisal box unchecked"
+    );
+    for field in elections {
+        let at = page
+            .find(&format!("name=\"{field}\""))
+            .unwrap_or_else(|| panic!("{field} is an input"));
+        let start = page[..at].rfind('<').unwrap();
+        let tag = &page[start..=page[at..].find('>').unwrap() + at];
+        assert!(
+            !tag.contains("readonly") && !tag.contains("disabled"),
+            "{field} is editable: {tag}"
+        );
+    }
+    assert!(
+        page.contains("<option value=\"independent\""),
+        "the page offers the independent turn context: {page}"
+    );
+
+    let mut fields: Vec<(&str, &str)> = BASE_FORM
+        .iter()
+        .filter(|(k, _)| !elections.contains(k))
+        .copied()
+        .collect();
+    fields.extend([
+        ("turn_context", "continuous"),
+        ("residual_readout_election", ""),
+    ]);
+    let (status, _, answer) = send_as(
+        &app,
+        "POST",
+        "/declarations",
+        Some(crate::admin_tests::form(&fields)),
+        &session,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{answer}");
+    assert!(
+        answer.contains("residual_readout_election: is required"),
+        "{answer}"
+    );
+}
+
+/// **A row saved before the three elections reopens, and its save is
+/// refused until the residual readout's election is chosen** (Spec 2.4 and
+/// 6.1): a row under this build's pin lacking the three reopens with the
+/// turn context at continuous, the surprisal box unchecked and the readout
+/// unchosen, its file saying each absence in a comment and writing none;
+/// its save as reopened is refused naming the readout's election and writes
+/// nothing; with the readout chosen it saves, the three named as moved.
+#[tokio::test]
+async fn a_row_without_the_elections_reopens_and_saves_once_the_readout_is_chosen() {
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let app = app(s, Some(passkeys()));
+    let (ada, session) = admin(&app, s, &mut authenticator(), "ada").await;
+    let body = edit(|v| {
+        let top = v.as_object_mut().unwrap();
+        for member in [
+            "turn_context",
+            "residual_readout_election",
+            "surprisal_election",
+        ] {
+            top.remove(member);
+        }
+    });
+    let de = "de-00000000000000c1";
+    sqlx::query(
+        "INSERT INTO declaration (declaration_ref, name, body, corpus_commit, version, \
+         what_moved, author) VALUES ($1, 'karl', $2, $3, 1, '{}', $4)",
+    )
+    .bind(de)
+    .bind(&body)
+    .bind(CORPUS_COMMIT)
+    .bind(&ada)
+    .execute(&s.pool)
+    .await
+    .unwrap();
+
+    let (status, _, page) =
+        send_as(&app, "GET", &format!("/declarations/{de}"), None, &session).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(
+        !page.contains("status hold\">stale"),
+        "a row under this build's pin is named stale: {page}"
+    );
+    let reposted = posted_by(&page);
+    let shown: Vec<(&str, &str)> = reposted
+        .iter()
+        .filter(|(k, _)| {
+            [
+                "turn_context",
+                "residual_readout_election",
+                "surprisal_election",
+            ]
+            .contains(&k.as_str())
+        })
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    assert_eq!(
+        shown,
+        [
+            ("turn_context", "continuous"),
+            ("residual_readout_election", "")
+        ],
+        "the reopen shows the agent's readings of the absences and no readout chosen"
+    );
+    let file = pre(&page, 0);
+    for words in [
+        "# turn-context: not declared on this row; the agent reads its absence as continuous.",
+        "# residual-readout-election: not declared on this row: a serving load refuses this file, and the row's save is refused until it is chosen.",
+        "# surprisal-election: not declared on this row; the agent reads its absence as false.",
+    ] {
+        assert!(file.contains(words), "{words}\n{file}");
+    }
+    let table = toml::from_str::<toml::Table>(&file).expect("the row's file is TOML 1.0");
+    let decoder = table["spu-instruction"]["decoder"].as_table().unwrap();
+    assert!(
+        !table.contains_key("turn-context")
+            && !decoder.contains_key("residual-readout-election")
+            && !decoder.contains_key("surprisal-election"),
+        "an absent election is written as a member: {file}"
+    );
+
+    let as_reopened: Vec<(&str, &str)> = reposted
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    let (rows, audit) = (count(s, "declaration").await, count(s, "audit").await);
+    let (status, _, answer) = send_as(
+        &app,
+        "POST",
+        &format!("/declarations/{de}"),
+        Some(crate::admin_tests::form(&as_reopened)),
+        &session,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{answer}");
+    assert!(
+        answer.contains("residual_readout_election: is required"),
+        "{answer}"
+    );
+    assert_eq!(
+        (count(s, "declaration").await, count(s, "audit").await),
+        (rows, audit)
+    );
+
+    let chosen: Vec<(&str, &str)> = as_reopened
+        .iter()
+        .map(|(k, v)| match *k {
+            "residual_readout_election" => (*k, "true"),
+            _ => (*k, *v),
+        })
+        .collect();
+    let child = save(
+        &app,
+        &session,
+        &format!("/declarations/{de}"),
+        crate::admin_tests::form(&chosen),
+    )
+    .await;
+    let row = s.declaration(&child).await.unwrap().unwrap();
+    assert_eq!(row.version, 2);
+    let mut moved = row.what_moved.clone();
+    moved.sort_unstable();
+    assert_eq!(
+        moved,
+        [
+            "residual_readout_election",
+            "surprisal_election",
+            "turn_context",
+        ]
+    );
+    assert_eq!(
+        (
+            &row.body["turn_context"],
+            &row.body["residual_readout_election"],
+            &row.body["surprisal_election"],
+        ),
+        (&json!("continuous"), &json!(true), &json!(false))
     );
 }

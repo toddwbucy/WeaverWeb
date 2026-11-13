@@ -1,4 +1,5 @@
 //! conforms: web-the-install-is-staged-unprivileged-from-named-parameters
+//! conforms: web-a-staged-backfill-is-bounded-as-admin-con-bounds-it
 //!
 //! **The install's staging tool** (Spec 8.1): it reads a parameter file the
 //! operator keeps outside the repository, renders the three units from the
@@ -15,7 +16,7 @@
 //! refuses) removes everything the tool wrote, so `<out>` is left as it was
 //! found.
 
-use crate::link::admin_con::{AdminConConfig, STOP_GRACE};
+use crate::link::admin_con::{AdminConConfig, MAX_BACKFILL_BYTES, STOP_GRACE};
 use crate::link::gate_con::GateConConfig;
 use anyhow::{Context, bail};
 use serde::Deserialize;
@@ -101,6 +102,10 @@ pub struct Agent {
     pub admin_log: String,
     pub stop_grace_secs: Option<u64>,
     pub verb_bound_secs: Option<u64>,
+    /// admin-con's `backfill_bytes`, its default where absent, refused above
+    /// [`MAX_BACKFILL_BYTES`] as admin-con refuses it, and zero admitted as
+    /// admin-con admits it.
+    pub backfill_bytes: Option<u64>,
 }
 
 /// What a successful staging wrote.
@@ -707,6 +712,17 @@ fn plan(params: &Params, euid: u32) -> anyhow::Result<(Vec<Entry>, Vec<PlannedFi
                         i64::try_from(v).with_context(|| format!("{} is too large", member(m)))?;
                     admin_facts.insert(m.into(), v.into());
                 }
+            }
+            if let Some(b) = agent.backfill_bytes {
+                if b > MAX_BACKFILL_BYTES {
+                    bail!(
+                        "{} is {b}, over the {MAX_BACKFILL_BYTES} admin-con admits",
+                        member("backfill_bytes")
+                    );
+                }
+                let b = i64::try_from(b)
+                    .with_context(|| format!("{} is too large", member("backfill_bytes")))?;
+                admin_facts.insert("backfill_bytes".into(), b.into());
             }
 
             let dir = connectors.join(n);

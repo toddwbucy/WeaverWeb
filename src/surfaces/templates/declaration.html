@@ -137,6 +137,33 @@
   </div>
 </section>
 <section class="pane">
+  <header><h2>The elections</h2></header>
+  <div class="body stack">
+  <div class="row">
+    <div class="field">
+      <label for="turn_context">Turn context</label>
+      <select id="turn_context" name="turn_context">
+        <option value="continuous"{% if form.turn_context != "independent" %} selected{% endif %}>continuous</option>
+        <option value="independent"{% if form.turn_context == "independent" %} selected{% endif %}>independent</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="residual_readout_election">Residual readout</label>
+      <select id="residual_readout_election" name="residual_readout_election" required>
+        <option value=""{% if form.residual_readout_election.is_empty() %} selected{% endif %}>choose</option>
+        <option value="true"{% if form.residual_readout_election == "true" %} selected{% endif %}>elected</option>
+        <option value="false"{% if form.residual_readout_election == "false" %} selected{% endif %}>not elected</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="surprisal_election">Per-position surprisal</label>
+      <label class="row"><input id="surprisal_election" type="checkbox" name="surprisal_election" value="true"{% if form.surprisal_election %} checked{% endif %}> elected</label>
+    </div>
+  </div>
+  <span class="note">They derive into the agent's turn-context and, under spu-instruction.decoder, its residual-readout-election and surprisal-election, at WeaverAgent {{ corpus }}. Continuous keeps the session's context accumulating turn by turn; independent answers each turn from the prefix the open seated and its own request alone. The residual readout has no default in the agent's grammar and is required. The surprisal election makes the per-position surprisal exist; unelected, the generation's perplexity stands in its place. A row saved before the screen held them shows the turn context at continuous and the surprisal unchecked, the agent's readings of their absence, and a save writes all three. Takes effect when the declaration reaches the agent (question 2).</span>
+  </div>
+</section>
+<section class="pane">
   <header><h2>The store and the gate</h2></header>
   <div class="body stack">
   <div class="row">

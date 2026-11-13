@@ -654,7 +654,11 @@ the declaration screen of section 6.1 and by nothing else, and it carries:
   Planner's default of 2026-11-12. A row saved under this pin before the
   act of 2026-11-13 lacks the three elections of section 6.1 and is not
   named stale, since the pin did not move; its reopen refuses its save
-  until the residual readout's election is chosen. No row is migrated,
+  until the residual readout's election is chosen. A row saved under this
+  pin before the second act of 2026-11-13 lacks the state election of
+  section 6.1 and is not named stale either; since the agent reads its
+  absence as the default election, its save asks for nothing new, and a
+  save beside the store `sqlite` writes the default. No row is migrated,
   since the body is stored whole and no member of the schema moves
 - **its parent, the row it was opened from**, none for the first save of a
   declaration, and **its lineage's root**, none for the root itself, so a
@@ -3704,6 +3708,10 @@ prompt      text, or null for no prompt
 turn_context               "continuous" | "independent", optional
 residual_readout_election  true | false, required at save
 surprisal_election         true | false, optional
+state_election  {"all_kinds": true | false,
+                 "keys": [{"kind": kind, "paths": [path, ...]}, ...]},
+                optional, both members and both of each entry's required,
+                absent beside the store "none"
 ```
 
 **The fields**, and what each may hold:
@@ -3892,6 +3900,56 @@ surprisal_election         true | false, optional
   load requires it, what its absence means, or the turn context's values.
   The copy's commit is held to the build's pin, so the pin moves only with
   a reread.
+- **The state election**, on the Planner's word of 2026-11-13 after the
+  Executor's scope: the tee's election, `[state-election]` in the agent's
+  file, a member of `AgentConfig` at this build's corpus commit. **Which
+  kinds cross to the store**: every kind with its envelope
+  (`all_kinds` true), or only the kinds named. **Its rows**, each a kind
+  and the payload key paths that cross beside that kind's envelope, each
+  path dotted from the payload root:
+  - **the kind is closed** to the twenty-five kinds that can cross: the
+    trace's canonical kinds, twenty-six by ruling, less `save_point`, which
+    the tee never sends whatever the election. The agent's own parse
+    admits any text there, an entry naming another kind electing nothing;
+    the screen refuses it, since nothing it could mean is lost. A kind is
+    named once: **a kind named twice is refused**, since the agent would
+    take the first entry for a kind and drop the rest;
+  - **the paths are open**, at most 32 for a kind and 256 characters
+    each, with no empty segment and no control character. **A kind with
+    no paths is admitted and written**: with every kind crossing it adds
+    nothing, and with only the kinds named crossing it makes that kind
+    cross with its envelope alone, presence itself being state.
+
+  **What the rows cannot state**, by design: a path is not checked
+  against its kind's payload, so a mistyped path saves and elects
+  nothing, as it does at the agent, since checking it needs every kind's
+  payload shape copied from the trace; a payload key holding a dot cannot
+  be spelled, as the agent's dotted spelling cannot spell it either; and a
+  kind outside the twenty-five cannot be named, which could never match.
+  **The agent reads the table's absence as the default election**, every
+  kind with its envelope and no paths, which admin resolves at inventory,
+  so the document admits it absent. **Admin refuses a present table
+  beside the store `none`**, the default's spelling among them, so the
+  screen refuses an election beside `none` and writes no table there: the
+  screen saying at save what the agent refuses at load, as the tunable
+  ranges do. **The form** is a choice of which kinds cross and a row for
+  each kind, its kind a choice of the twenty-five or none and its paths a
+  text of one path per line, each line trimmed and a blank line none;
+  rows are offered one past the last filled, at least two, and `?kinds=`
+  asks for that many in all, at most twenty-five. Beside `sqlite` it
+  writes the election at every save; beside `none` its default writes
+  nothing and anything else is refused. **A new declaration's form starts
+  at the default**, every kind and no rows; a row saved before the act
+  reopens at the default and its save asks for nothing new. **The test of
+  membership**: the passages that declare it (`AgentConfig`'s head and
+  its `state_election`; `StateElection`, its default and
+  `ElectedKindConfig`; the trace's `Kind`; the tee's refusal to send
+  `save_point`; admin's refusal beside `none`) are carried as read at the
+  pin, a dated copy named for its commit, and a test fails where the
+  screen and the copy differ: the kinds a row may name, each member's
+  name and place in the file, whether a present table requires it, the
+  default's spelling, or the refusal beside `none`. The copy's commit is
+  held to the build's pin.
 - **The system prompt**, ruling 7: text, or none. The declaration act writes
   it into whatever state was declared; from then on it is read from state
   and never from a file, and it is locked for the session, a change being a
@@ -3915,10 +3973,14 @@ line feed and a tab, since a prompt is lines; a tunable value missing,
 outside its kind or outside its range in the table above; the residual
 readout's election missing; an election outside its values (a turn
 context other than `continuous` or `independent`, a boolean election that
-is not true or false, null among them); a tool other than `sh`; and an
+is not true or false, null among them); a state election out of its
+shape (a member missing, a kind outside the twenty-five, a kind named
+twice, a path with an empty segment or a control character, more than 32
+paths for a kind or a path over 256 characters), or present beside the
+store `none`; a tool other than `sh`; and an
 unknown member. **A refusal names its
-field by the document's path**, its box and model numbered as the screen
-numbers its slots. At save it also refuses, as section 2.4 rules, a name another lineage holds, a
+field by the document's path**, its box and model, and a state election's
+row, numbered as the screen numbers its slots. At save it also refuses, as section 2.4 rules, a name another lineage holds, a
 changed name within a lineage, and a save from a row that is not its
 lineage's head. **A class spanning more than one compute capability is not
 among these refusals**, under any of them: on the operator's word of
@@ -3957,6 +4019,7 @@ field:
 | the sampler's mechanism and the other settings fixed at load | an agent reports them (question 5) |
 | the store and the gate's tools | the declaration reaches the agent (question 2); the gate admits its gate-con, filled at Provision |
 | the three elections | they derive into the agent's `turn-context`, `residual-readout-election` and `surprisal-election` at the pin; the declaration reaches the agent (question 2) |
+| the state election | it derives into the agent's `[state-election]` at the pin; the declaration reaches the agent (question 2) |
 | the system prompt | the declaration act writes it into declared state (question 3), and a declaration with no store has no answer yet (question 4); on the agent's side today the prompt is seeded by a turn through the gate |
 
 **What is saved and shown.** A save writes one row of section 2.4, and the
@@ -3977,7 +4040,12 @@ read the document back**:
   written as the grammar's members: the decoder's and the classifier's
   model bindings with their artifacts, the adapter, the eight tunable
   values as `tunable-values`, every one, the store's engine, the tool
-  set, the turn context and the decoder's two elections. A stale row
+  set, the turn context, the decoder's two elections and the state
+  election, its keys an array of inline tables in the rows' order. A
+  row lacking the state election beside `sqlite` is rendered with a
+  comment saying that admin resolves its absence to the default election,
+  and beside `none` with a comment saying that no table is written there,
+  admin refusing one. A stale row
   lacking a tunable value is rendered with a comment
   naming each name it lacks, since that file is one the load would refuse
   and its save is refused until they are filled. A row lacking an election
@@ -3997,11 +4065,9 @@ read the document back**:
   box's GPU requirement, and every box beyond the first. **A last block
   names what the grammar holds and the screen does not declare**:
   `binding-kind`, whose absence the agent reads as serving, every
-  declaration the screen saves being serving; `[state-election]`, whose
-  absence admin resolves to the default election, the envelope of every
-  kind; and the decoder's `field-election`, whose absence is the ordinary
-  posture, no probability field elected, with no default read into it.
-  None is written. The file is TOML
+  declaration the screen saves being serving; and the decoder's
+  `field-election`, whose absence is the ordinary posture, no probability
+  field elected, with no default read into it. Neither is written. The file is TOML
   1.0, the grammar every reader of a declaration shares, and it is checked
   by a TOML parser; the agent's `weaver-types` is not linked, since this
   crate links no crate of the agent (section 1).
@@ -5636,18 +5702,23 @@ an unmerged contract.
 | the manifest names every directory and file with its owner, group, mode and sum, parents first | perturbation in `src/stage_tests.rs`, the manifest read line by line against the parameters: give a connector config another mode or owner, list a file before its directory, or leave a binary's sum out, and the read fails |
 | a staged backfill is bounded as admin-con bounds it | perturbation in `src/stage_tests.rs`, `a_staged_backfill_is_bounded_as_admin_con_bounds_it`: absent, the staged admin-con config carries no member and loads with admin-con's default; zero and admin-con's bound each stage and load as given, the other agent untouched, and gate-con's config carries none; one past the bound is refused naming the agent's parameter, and no `<out>` is made; drop the bound, tighten it to refuse the bound itself, refuse zero, leave the value out of admin-con's config or put it in gate-con's, and the case fails |
 | the staging tool never runs as root | perturbation in `src/stage_tests.rs`: the refusal is a function of the effective uid it is handed, and dropping it lets a uid of 0 stage |
-| the declaration screen refuses every field out of shape and saves nothing | perturbation in `src/declarations_tests.rs`: `every_refusal_names_its_field_and_its_reason`, one case per refusal of section 6.1 judged on the document by its field and its kind (a missing required field, a requirement that names nothing, a class giving both a family and a list, a requirement naming more than one kind, a roster the framework would not load, a format other than GGUF, an adapter out of shape, a name outside its grammar, a control character, a tunable value outside its kind (a count above the largest whole number TOML holds among them), an election outside its values (a turn context neither `continuous` nor `independent`, one not text, a null one; a boolean election that is text, a number or null), a tool other than `sh`, an unknown member): drop each check and its case is admitted, or refused for another reason, which the case's kind and field catch; and `the_screen_refuses_a_field_out_of_shape_and_saves_nothing`, every refusal the form can carry posted end to end, each answered 400 naming its field by the screen's slot, after which the table and the audit hold what they held; a class spanning two compute capabilities is no refusal's case, and saves (the next row); and `a_long_class_is_judged_in_one_pass`: a class of 20,000 distinct models, parsed before the session is read, is judged inside 5 s, and its first model typed again at its end is refused naming that slot; restore the scan of every earlier name, and the judgement takes minutes (101 s for 16,000 in the test build, measured 2026-11-12) |
+| the declaration screen refuses every field out of shape and saves nothing | perturbation in `src/declarations_tests.rs`: `every_refusal_names_its_field_and_its_reason`, one case per refusal of section 6.1 judged on the document by its field and its kind (a missing required field, a requirement that names nothing, a class giving both a family and a list, a requirement naming more than one kind, a roster the framework would not load, a format other than GGUF, an adapter out of shape, a name outside its grammar, a control character, a tunable value outside its kind (a count above the largest whole number TOML holds among them), an election outside its values (a turn context neither `continuous` nor `independent`, one not text, a null one; a boolean election that is text, a number or null), a state election out of its shape (a member of it or of an entry missing or of another shape, `all_kinds` not true or false, a kind outside the twenty-five or `save_point`, a kind named twice, the refusal saying the agent would take the first entry and drop the rest, a path empty, with an empty segment or a control character, more than 32 paths or a path of 257 characters, an unknown member; 32 paths of 256 characters admitted, and a path of 256 characters of two bytes each, a path's length being counted in characters) and the default election beside the store `none`, the refusal naming admin's, a tool other than `sh`, an unknown member): drop each check and its case is admitted, or refused for another reason, which the case's kind and field catch; and `the_screen_refuses_a_field_out_of_shape_and_saves_nothing`, every refusal the form can carry posted end to end, each answered 400 naming its field by the screen's slot (a state election's row after two empty ones named by its own number among them), after which the table and the audit hold what they held; a class spanning two compute capabilities is no refusal's case, and saves (the next row); and `a_long_class_is_judged_in_one_pass`: a class of 20,000 distinct models, parsed before the session is read, is judged inside 5 s, and its first model typed again at its end is refused naming that slot; restore the scan of every earlier name, and the judgement takes minutes (101 s for 16,000 in the test build, measured 2026-11-12) |
 | a declaration the screen saves carries every tunable value a serving load requires at the pin, and a save lacking one is refused naming it and writes nothing | perturbation in `src/declarations_tests.rs`, `every_tunable_value_is_required_and_a_missing_one_is_refused_naming_it`: one case per name of the eight, the document otherwise whole, each refused naming that name's field, and posted end to end each answered 400 by the screen's slot with the table and the audit holding what they held; drop the requirement of any one name, and its case saves |
 | every tunable value is judged on the agent's range at the pin, and a real again as narrowed to a 32-bit float | perturbation in `src/declarations_tests.rs`, `every_tunable_value_is_judged_on_the_agents_range`: on each side of every edge of section 6.1's table one case, the edge itself admitted and its neighbour refused naming the field (a negative or infinite temperature, a temperature narrowing to infinity and a nonzero one narrowing to zero, a top-p of 0 and above 1, a repetition penalty of 0, a top-k and a repetition window at 2^31, a context capacity of 0 and at 2^32, a seed and a maximum tokens per turn above 9223372036854775807), the two stated edges admitted; drop or loosen any bound, and its case saves; tighten one, and its edge is refused |
 | a new declaration's form starts with the five values the SPU froze until the carrier, and the other three empty | perturbation in `src/declarations_tests.rs`, `a_new_declarations_form_starts_with_five_tunable_values`: the new form's temperature, top-k, top-p, repetition penalty and repetition window carry 0.7, 40, 0.95, 1.1 and 64, editable, and the seed, the maximum tokens per turn and the context capacity carry nothing; change a value or fill one of the three, and the case fails |
 | a declaration the screen saves carries the residual readout's election, and a save lacking it is refused naming it and writes nothing | perturbation in `src/declarations_tests.rs`, `the_residual_readout_election_is_required_and_a_missing_one_is_refused_naming_it`: a document lacking it parses, so a row saved before the act reopens, and is refused at save naming it, while one lacking the turn context or the surprisal election is admitted; posted end to end, left out or empty, it is answered 400 naming it with the table and the audit holding what they held, and the whole form saves a row stating all three; drop the requirement, and the case saves |
 | the screen's three elections are the agent's at the build's pin, as read | perturbation in `src/declaration/elections.rs`: `the_three_elections_are_the_agents_as_read`, each member's name, its table in the file, whether a serving load requires it and what its absence means read from the passages held in `elections-5ec7ecf8.md` (`AgentConfig`'s `turn_context` and the enum `TurnContext`, `DecoderInstruction`'s `residual_readout_election` and `surprisal_election`), and the turn context's values from the enum, and the decoder's `field_election` read as an option with a default that the file names in its last block and never writes; give a member a default in the copy or take one away, rename it, or write a member at another place, and the case fails; and `the_elections_were_read_at_the_builds_pin`: move `CORPUS_COMMIT` alone, and the case fails |
+| the screen's state election is the agent's at the build's pin, as read, and its rows name only the kinds that cross | perturbation in `src/declaration/state_election.rs`: `the_kinds_a_row_may_name_are_the_canonical_kinds_less_save_point`, the twenty-six renames of the trace's `Kind` and the kind the tee never sends read from the passages held in `state-election-5ec7ecf8.md`, the screen's twenty-five the rest in the enum's order, each admitted in a row, and `save_point`, a misspelt kind and an empty one refused; add, drop or reorder a kind, or admit `save_point`, and the case fails; `the_state_election_is_the_agents_as_read`, `AgentConfig`'s `state_election` an option with a default, `StateElection` and `ElectedKindConfig` closed and kebab-case with no member defaulted, the default spelled every kind and no keys, each member written under its kebab-case name at its place and refused naming its path where a present table lacks it, the absence said in a comment and never written, and admin's refusal beside `none` held as the screen's; give a member a default, rename it, write it elsewhere, or admit the default beside `none`, and the case fails; and `the_state_election_was_read_at_the_builds_pin`: move `CORPUS_COMMIT` alone, and the case fails |
+| an agent's state election typed into the screen derives as the agent's own file holds it | perturbation in `src/declarations_tests.rs`, `an_agents_state_election_derives_as_its_file_holds_it`: every kind with the content of each user and each assistant message, typed as two rows beside `sqlite`, derives a `[state-election]` that parses equal to the agent's file's, and the file no longer names the table undeclared; write a member under another name, drop a row, or reorder the keys, and the case fails |
+| an election beside no store is refused, and none is written | perturbation in `src/declarations_tests.rs`, `an_election_beside_no_store_is_refused_and_none_is_written`: beside `none` the form's default writes no member and the file says why; only the kinds named, or a kind's row, is refused naming the member and admin's refusal; beside `sqlite` the default is written as the agent spells it; write the default beside `none`, or drop the refusal, and the case fails |
+| a new declaration's form starts at the default state election, offering the kinds that cross | perturbation in `src/declarations_tests.rs`, `a_new_form_starts_at_the_default_state_election_and_offers_the_kinds`: the empty form at every kind with two empty rows, the new page's choices of which kinds cross and of each row's kind (none and the twenty-five), the note's sentences on a kind with no paths and on what the rows cannot state, the link asking for one more row, a reopened row's own rows in order and one empty row past the last, and `?kinds=` giving that many rows in all, at most twenty-five, on the new screen and a reopened row; start the form at only the kinds named, drop a kind from the select, offer no row past a reopened row's last, ignore `?kinds=` on a reopened row, or let `?kinds=` pass the bound, and the case fails |
+| a row saved before the state election reopens, is not named stale, and saves the default | perturbation in `src/declarations_tests.rs`, `a_row_without_the_state_election_reopens_and_saves_the_default`: a row placed under this build's pin beside `sqlite` lacking the member reopens, not named stale, at every kind and no rows, its file saying the absence in a comment and writing no table; saved as reopened it writes the default, the member named as moved; make the reopen refuse, show another election, or let the save write nothing, and the case fails |
 | a new declaration's form starts with the turn context at continuous and the surprisal unchecked, the agent's readings of their absence, and the residual readout's election unchosen | perturbation in `src/declarations_tests.rs`, `a_new_declarations_form_starts_with_two_elections_at_the_agents_absence`: the empty form and the new page's inputs, each editable, the page offering both turn contexts; posted as it starts, the form is refused naming the readout's election; start the readout chosen, or the turn context at independent, and the case fails |
 | a row saved before the three elections reopens, is not named stale, and its save is refused until the residual readout's election is chosen | perturbation in `src/declarations_tests.rs`, `a_row_without_the_elections_reopens_and_saves_once_the_readout_is_chosen`: a row placed under this build's pin lacking the three reopens, not named stale, showing the turn context at continuous, the surprisal unchecked and the readout unchosen, its file saying each absence in a comment and writing no member; its save as reopened is refused naming the readout's election and writes nothing, and with the readout chosen it saves version 2, the three named as moved; make the reopen refuse, or the save admit the row as it stood, and the case fails |
 | the screen's required tunable set is the agent's at the build's pin, as read | perturbation in `src/declaration/tunable_set.rs`: `the_tunable_set_is_the_agents_as_read`, the eight names read from the passages held in `tunable-set-5ec7ecf8.md` (the six of `SAMPLING_DEFAULT_NAMES`, and the `OperatorTunable` members of `SESSION_PARAMETERS` under the names `tunable_names` gives them; the conditional field-election rule held and not required); add a name to the copy or drop one from the screen, and the case fails; and `the_tunable_set_was_read_at_the_builds_pin`: move `CORPUS_COMMIT` alone, and the case fails |
 | a row saved before the eight were required reopens, is named stale by its pin, and its save is refused until the eight are filled | perturbation in `src/declarations_tests.rs`, `a_row_lacking_a_tunable_value_reopens_stale_and_saves_once_filled`: a row placed under the earlier pin with the old document's optional sampler reopens, names its pin stale and shows what it holds and empty fields for the rest, its file naming each missing name in a comment; its save as reopened is refused naming the first missing field and writes nothing, and filled it saves under this build's pin; make the reopen refuse, or the save admit the row as it stood, and the case fails |
 | a class spanning more than one compute capability is warned of, and a model the capability table does not know is named unknown and admitted | perturbation in `src/declarations_tests.rs`, `a_class_spanning_capabilities_is_warned_of_and_an_unknown_is_named`: drop the warning, and a class of two capabilities saves with none; make it a refusal, and the case fails, since the class must save; a family spanning two capabilities by the table's rows, typed in another case, is warned of, and each saved class keeps the form typed, family or list; render an unknown capability, of a model or of a family, as a blank, or refuse it, and the case fails; and `the_capability_table_is_the_page_as_read_and_every_row_cites_its_source`: the table against the vendor's page as read, row for row, every capability and family citing its source, a family by statement citing a guide's passage and one by name holding the name |
-| a save and a reopen are the same document, and the agent's file is derived from it | perturbation in `src/declarations_tests.rs`, `a_save_and_a_reopen_are_the_same_document`: a document holding every member saved, the row holding its canonical form, and the reopened page's form posted as a browser posts it read back as the same document, its re-save moving nothing; drop a member on the save or on the reopen, and the comparison fails; both panes are what the document derives; the agent's file parses as TOML, names the pinned corpus commit, writes the eight tunable values in `tunable-values` under the agent's names, writes the turn context and the decoder's two elections as the document gives them, writes each placeless member in its trailing block and names `binding-kind`, `[state-election]` and the decoder's `field-election` in its last, writing none, and a reopen with the turn context or the surprisal box dropped is no longer the document; and `the_agents_file_writes_every_admitted_value_in_its_toml_type`: a whole real at or above 1e15 and the adapter's scale read back as floats, a count at the largest whole number TOML holds as that integer, and the header names this build's pin; write a whole real as its digits alone, and the case fails |
+| a save and a reopen are the same document, and the agent's file is derived from it | perturbation in `src/declarations_tests.rs`, `a_save_and_a_reopen_are_the_same_document`: a document holding every member saved, the row holding its canonical form, and the reopened page's form posted as a browser posts it read back as the same document, its re-save moving nothing; drop a member on the save or on the reopen, and the comparison fails; both panes are what the document derives; the agent's file parses as TOML, names the pinned corpus commit, writes the eight tunable values in `tunable-values` under the agent's names, writes the turn context, the decoder's two elections and the state election as the document gives them (three rows, one of no paths, their paths typed with a carriage return, padding and a blank line, read back one path per line), writes each placeless member in its trailing block and names `binding-kind` and the decoder's `field-election` in its last, writing neither, never naming the declared `[state-election]` undeclared, and a reopen with the turn context, the surprisal box or a row's paths dropped is no longer the document; and `the_agents_file_writes_every_admitted_value_in_its_toml_type`: a whole real at or above 1e15 and the adapter's scale read back as floats, a count at the largest whole number TOML holds as that integer, and the header names this build's pin; write a whole real as its digits alone, and the case fails |
 | a save from a row that is not its lineage's head is refused and writes nothing, and the schema admits a second child of one parent | perturbation in `src/declarations_tests.rs`, `a_save_from_a_row_not_the_head_is_refused_and_two_children_are_admitted`: drop the screen's head check, or the store's under the key, and the stale save lands, each check exercised alone; and two children of one parent inserted through the store's own insert, which succeeds |
 | a declaration row's authored half never changes | perturbation in `src/declarations_tests.rs`, `a_declaration_rows_authored_half_never_changes`: an update of each authored member, a delete and a truncate are refused by the trigger, and the last `validate` reading moves; drop the trigger, and the update lands. The key is an identity column no update may set |
 | no two lineages share a name, and a lineage keeps its name | perturbation in `src/declarations_tests.rs`, `no_two_lineages_share_a_name_and_a_lineage_keeps_its_name`: drop the screen's check, or the store's under the key, and a second lineage saves under a held name, or a save renames its lineage, each check exercised alone; the index on a root's name stands beneath both |

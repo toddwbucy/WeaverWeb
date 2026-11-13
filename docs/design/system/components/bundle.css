@@ -179,3 +179,8 @@ input[type=password] { height: var(--control-h); padding: 0 var(--space-2); bord
 .stream li { grid-template-columns: 56px 8em 1fr; }
 /* The Live trace pane bounds its stream, which holds what the window holds, at most the ring's 10,000 events, and scrolls it within the pane (ObservePane). */
 .pane .stream { max-height: 60vh; overflow-y: auto; }
+/* An ask's slot below the pane that asked takes no place of its own: its asking line and its answer's panes stand in the stack as the stack's own, and an empty slot draws nothing (Controls). */
+.asked, .answer { display: contents; }
+/* While an ask is in flight its slot shows the asking line in place of the last answer, by the class htmx sets on the slot for the request's life (Controls). */
+.asked:not(.htmx-request) > .asking,
+.asked.htmx-request > .answer { display: none; }

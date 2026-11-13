@@ -1040,6 +1040,17 @@ it already carried, `here`, and one table (`surfaces::tab_of`) names each
 sub-tab's tab, so no page names both and none can name a pair that does
 not stand. A person who is not an admin sees Your agents, The Record and
 Passkeys, the sub-tabs they may open.
+
+**A refusal is drawn at its own status** (on the Planner's ruling of
+2026-11-13, for the operator's ruling by the merge). The page's htmx
+configuration, one `htmx-config` meta in the frame and no script, swaps a
+2xx or 3xx answer and 400, 401, 403, 404, 409 and 503, and leaves the
+target as it stood on every other error, a fault (500) among them. So an
+ask's refusal is drawn in the pane that asked it (section 2.13), and a
+poll's in the pane it re-fetches: Run's panes and the agent page's
+connectors answer an agent without a grant with a fragment saying so, at
+404, rather than keep what they last drew. The status stays the truth: an
+htmx answer is never 200 with a refusal inside it.
 **`GET /` sends the browser on**, as built on 2026-11-10: to `/sign-in` where
 the request names no session that serves, and to The Record where it names
 one, The Record being where every sign-in lands. It reads the session as any use
@@ -2123,8 +2134,69 @@ it decides are stated here and in section 2.8, and the reasons are there.
   and before it neither is. The frame names the person by
   their `pe-` identity. The page offers the verbs the person's grants carry
   and the connection's ceiling grants, and after an ask waits for admin's
-  answer to the silence bound and shows it, or answers 202 naming the first
-  record, whose outcome is written when admin answers. **Beside the answer,
+  answer to the silence bound and shows it. **The answer is drawn in the
+  pane that asked** (the operator's words of 2026-11-13, on the Planner's
+  ruling of that day): each verb form, the decision prompt's two options
+  and the turn form post through the vendored htmx, which sends
+  `HX-Request`, and the server answers that request with one fragment
+  (`answer.html`, the decision's `decision_steps.html`) drawn in a slot
+  below the pane that asked; a post without htmx gets the same fragment on
+  a page of its own with the way back, so the two cannot drift. The
+  fragment carries admin's answer as JSON, pretty-printed and escaped, its
+  exit status as a mark, "admin's answer" or "admin's refusal", admin's
+  stderr as below, the first record's identity, and the decision an
+  `unload` stopped at its save point leaves (section 2.14); for a turn, the
+  close's text, marked truncated at `finish = length`, or its stopped or
+  refused reason; gate-con's or admin-con's fault; or that the connection
+  ended with the ask in flight. A refusal is the same fragment, marked "not
+  asked", at its own status (section 2.8), and carries no agent's label and
+  no record, so an agent without a grant still answers exactly as an
+  unknown one; without htmx it is its bare words, as before. A turn's
+  refusal names gate-con and the turn, not admin-con and a verb. **At the
+  press**, htmx disables the pressed verb's button, the turn's button or
+  the decision's two buttons for the request's life, drops a second submit
+  of the same form while its request is in flight, and shows the asking
+  line of the form's own slot, which names the page's wait. **Each verb
+  has a queue and a slot of its own** (on the Planner's ruling of
+  2026-11-14): a different verb is never held behind another's request,
+  so `stop` or `force-unload` pressed during a long `load` leaves at once
+  and is answered in its own slot, for a hung or wrong load is what those
+  two verbs exist for. admin-con still runs one invocation at a time and
+  queues the second behind the first, which is the box's order and not
+  the page's. htmx tracks one request per element a request syncs on, so
+  a queue the verbs shared would hold every verb behind the first; the
+  15 s re-fetch of Run's panes therefore runs while a verb is in flight,
+  abortable and dropped only behind a re-fetch of its own, and never
+  redraws a pending form: each verb form carries its id and
+  `hx-preserve`, so the swap keeps the form element itself, with its
+  request, its disabled button and its listeners, in place of the one the
+  re-fetch drew. Every lifecycle verb has its slot below Run's panes,
+  offered or not, so a verb a re-fetch offers later has one. The re-fetch
+  settles at once, so the forms it draws are htmx's in the swap's own
+  task: under htmx's default 20 ms settle, a press in that window posted
+  the plain form and left the page (measured in the browser check of
+  2026-11-13). **Past the
+  silence bound** the answer is 202, drawn in place as on the page: when
+  the server took the ask, its first record, that it was not answered
+  within the wait and the connection still holds it, a connection that
+  ended having answered it unanswered instead, and that its outcome is
+  written to the audit when admin or the gate answers, the agent page's
+  load state following the agent's trace. No answer is kept for a later
+  read. **The console holds a second identical verb itself** (on the
+  Planner's ruling of 2026-11-13): while the listener holds a person's
+  verb on an agent in flight, from the check that claims it on its
+  connection to its answer, a second ask of the same verb from the same
+  person on the same agent is answered at once past the grant check, 409,
+  naming when the first was taken and its first record (or that the
+  record is still being written), with no frame sent, one refusal record,
+  `already_asked` naming the first, and no alert (section 2.14). The claim
+  is taken under the live map's lock with the check, and moves into the
+  connection's map of asks at the enqueue under the same lock, so of two
+  identical asks at once one is claimed and the other held. It lives in the
+  listener's memory and goes with the connection, so a teardown or a
+  restart strands no hold. Not held: a different verb, another person's
+  same verb (an option for the operator), the server's own `show`, and a
+  turn, since two turns are two turns. **Beside the answer,
   admin's own words** (on the Planner's ruling of 2026-11-12): the outcome's
   stderr, cut at 2048 bytes at a character boundary as an alert's reason
   cuts it (section 2.14), the page saying where it cut. They are
@@ -2693,7 +2765,10 @@ past their share; admitted again for each step, one recovery would take
 two places, and the person's other asks could shed its own steps.
 
 The page shows each step's status, or, past the silence bound, that the
-choice runs on and its outcomes are written when admin answers.
+choice runs on and its outcomes are written when admin answers; through
+htmx the steps are drawn below the decision pane (section 2.13), a refusal
+at its own status. **A held second verb is no alert**: a person's second
+press is not a system reason, and its refusal record is its trace.
 
 **`show` cannot tell S9 from S2 on the wire**, a run at rest after a missed
 save point and an idle one both answering `State { state: Idle }`; **an S9
@@ -5697,6 +5772,11 @@ an unmerged contract.
 | every verb a person asks has its first record before its frame, and every refusal of one its record | perturbation, in `src/verbs_tests.rs`: send the frame before the record step, and it reaches admin-con though the audit holds no record of it; drop a refusal's record, and a refused verb leaves no trace. The outcome naming the first is written at the door of the server's asks' row, which a person's answer passes through alike |
 | every turn a person places has its first record before its frame, naming `turn`, and its outcome only by the gate contract's evidence | perturbation, in `src/verbs_tests.rs`: write `ok` for any close, and a stopped turn reads `ok`; write `failed` for `delivery_lost`, and an unknown outcome reads `failed`; drop the door's shape check, and an answer carrying both a close and a fault is taken. The first before the frame is the record step's, shown on the verb's row and the server's asks' |
 | the verb's answer page shows admin's own words, escaped and cut at the alert's bound, never parsed | perturbation, in `src/verbs_tests.rs`, `the_answer_page_shows_admins_own_words`, against the real listener and a fake admin-con: a refused `load` whose stderr carries markup and runs past 2048 bytes, a two-byte character straddling the bound, shows the words escaped, ending before that character and saying it cut, beside the refusal object, and a blank stderr is not shown; drop the stderr from the page, the cut or the escaping, and the case fails |
+| an ask through htmx is answered in the pane that asked, with everything the answer page shows, from the one fragment both draw | perturbation, in `src/verbs_tests.rs` and `src/alerts_tests.rs` against the real listener and fake connectors, and `the_answer_page_carries_the_panes_fragment_whole` in `src/surfaces/reading.rs`: answer the htmx ask, turn or choice with the framed page, and `an_htmx_ask_is_answered_in_its_pane_with_all_of_admins_answer`, `a_turn_placed_through_htmx_is_answered_in_its_pane` or `a_decision_chosen_through_htmx_is_drawn_in_its_pane` finds a document in the pane; drop the exit mark, the pretty-printing, the stderr's cut or the first record from the fragment, and the first fails; leave the decision out, and `an_unload_stopped_at_its_save_point_draws_its_decision_in_the_pane` fails; draw the page's answer from markup of its own, and the page no longer carries the fragment; drop an option's htmx attributes, and the choice leaves the page (10 cases, each caught) |
+| a refusal is drawn at its own status, in the pane that asked and in the pane a poll re-fetches, and no grant still answers as an unknown agent | perturbation, in `src/verbs_tests.rs`: answer an htmx refusal with its bare words, and `a_refusal_of_an_htmx_ask_is_drawn_in_its_pane_at_its_status` finds no fragment; put the agent's label in a refusal, and no grant answers otherwise than an unknown agent; answer the unconnected turn in admin-con's words, and the pane names the wrong connector; answer a poll's 404 with bare words, and `the_polls_draw_their_refusal_in_their_pane` fails; drop a status from the page's configuration, and `the_agent_page_asks_in_place` fails (8 cases, each caught) |
+| the console holds a person's second identical verb while the first is in flight, from its check to its answer, and nothing else | perturbation, in `src/verbs_tests.rs` against the real listener and a fake admin-con: drop the hold, and `a_second_identical_verb_is_held_while_the_first_is_in_flight` finds the second `load` at admin-con; keep the hold past the answer, and the third is held; raise an alert for it, record no refusal, or name no first, and it fails; claim the ask only at its enqueue, and `a_second_ask_is_held_from_the_firsts_check` sends two frames; hold by verb alone or by person alone, and `a_different_verb_and_another_persons_same_verb_are_not_held` holds one; keep the connection's asks beyond it, and `the_hold_ends_with_its_connection` holds the load after the reconnection; leave a claim on the connection when its ask ends before its frame, and `a_claim_ends_with_an_ask_that_ends_before_its_frame` holds the next (11 cases, each caught) |
+| past the page's wait an ask through htmx says in its pane when it was taken, as what, and where its outcome goes | perturbation, in `src/verbs_tests.rs`, `past_the_bound_an_htmx_ask_says_so_in_its_pane`: drop the time, the first record, the wait, or the connection's hold from the line, of a verb or a turn, and it fails (6 cases, each caught) |
+| the agent page asks in place: each form posts through htmx and without it, each verb on a queue and in a slot of its own outside `#run`, a pending verb form kept through the poll's swap, and the asking line names the wait | perturbation, in `src/verbs_tests.rs`, `the_agent_page_asks_in_place`: put a verb's slot inside `#run`, and the poll's fragment carries it; drop the poll's `abort` or its immediate settle, a verb form's own queue, disabled button, indicator, id or `hx-preserve` (a warned verb's in `transition_tests::the_run_panes_re_read_by_themselves`), or the turn form's dropped second submit or disabled button, and a pending form can be redrawn, pressed again unseen or posted plain; put the verbs back on one queue, and a verb is held behind another's request; name a wait not the bound, and the asking line misstates it; drop the stylesheet's rule, and the asking line never shows; the browser checks of 2026-11-13 and 2026-11-14 under the CSP header hold what the attributes do (16 cases, each caught) |
 | the agent page states admin's `[restore]` rule with its source, read at the build's pin | `the_agent_page_states_admins_restore_rule_with_its_source` in `src/reading_tests.rs`: the page carries the rule, its refusal and its two remedies beside the verbs, naming the commit it was read at; drop the statement, and the case fails; and `the_restore_rule_was_read_at_the_builds_pin`: move `CORPUS_COMMIT` alone, and the case fails |
 | a verb admin's state table refuses in the row's last reading is warned of beside its form and offered still, read at the build's pin | perturbation, in `src/transition_tests.rs`, `the_agent_page_warns_of_a_verb_the_state_table_refuses`, against the real listener and a fake admin-con: read idle, `load` is warned `AgentRunning` and `save-point` and `unload` are not; read active, `load` and `save-point` are warned; read in transition, both are warned with the lock held and free told apart, dated by the transition; read unloaded, `save-point` alone; each warning names the reading and its date and every form stays; drop the warning from the template, change a cell, or ignore a standing transition, and the case fails; `the_state_table_cells_follow_the_contract_as_read` in `src/surfaces/admin_table.rs`: every cell stands on the words of the contract's section 4.1 as held in `admin-table-5ec7ecf8.md`, and every warning is the derivation's; change a cell or a copy's word, and the case fails; and `the_state_table_was_read_at_the_builds_pin`: move `CORPUS_COMMIT` alone, and the case fails |
 | a turn's text is in no audit record and no log line | perturbation, in `src/verbs_tests.rs`: put the text in the first record, and the row carries it; log it at debug in the held section, and the process's capture of every line finds it |

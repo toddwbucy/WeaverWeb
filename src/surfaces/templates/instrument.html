@@ -5,10 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}weaver-web{% endblock %}</title>
   <link rel="stylesheet" href="/assets/surfaces/instrument.css">
-  {#- A 401 to a re-fetched fragment is swapped in, so an ended session's
-      banners go and its sign-in notice shows; every other error leaves the
-      fragment as it stood. Configuration, not script. -#}
-  <meta name="htmx-config" content='{"responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"401","swap":true},{"code":"...","swap":false,"error":true}]}'>
+  {#- **A refusal is drawn at its own status** (Spec 2.8): a 401 to a
+      re-fetched fragment is swapped in, so an ended session's banners go
+      and its sign-in notice shows; so are 400, 403, 404, 409 and 503, so
+      an ask's refusal is drawn in the pane that asked and a poll's in the
+      pane it re-fetches, rather than leaving either as it stood. Every
+      other error, a fault among them, leaves the target as it stood.
+      Configuration, not script. -#}
+  <meta name="htmx-config" content='{"responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"40[01349]","swap":true},{"code":"503","swap":true},{"code":"...","swap":false,"error":true}]}'>
 </head>
 <body>
   {#- **The bar in two rows** (Spec 2.8; the operator's words of

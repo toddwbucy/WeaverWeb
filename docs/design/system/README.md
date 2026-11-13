@@ -77,7 +77,7 @@ The trace is the record of the whole lifecycle and no stage's own (ruling of 202
 A mark is a word in a pill, never a bare color and never a blank.
 
 - Absence (`.absent`, dashed): `absent` (the record did not carry the member), `not served` (a seam with no party yet), `no state` (no `show` has answered), `none` (admin named none).
-- Status (`.status`): `connected`, `live`, `loaded`, `answered` in `ok`; `in transition`, `waiting`, `replayed`, `decision standing` in `hold`; `not connected`, `revoked`, `retired`, `failed`, `lost contact` in `fail`. Each carries a dot and its word.
+- Status (`.status`): `connected`, `live`, `loaded`, `answered` in `ok`; `in transition`, `waiting`, `replayed`, `decision standing`, `in flight` (an ask past the page's wait), `not asked` (an ask the console refused or held) in `hold`; `not connected`, `revoked`, `retired`, `failed`, `lost contact` in `fail`. Each carries a dot and its word.
 - Backing (`.backing`): `built` (solid, filled), `partly` (half filled), `unbuilt` (dashed). These say whether a pane's backing exists today and nothing about the agent.
 - Query (`.pill.query`): a chip on The Record is a query clause; clearing it widens the list in place.
 - A discontinuity in a stream is a hatched row (`.stream li.mark`) carrying the mark's reason as admin-con or the server wrote it, a sentence naming what was not relayed and why: a record past the relay's bound, a backfill begun inside the file, a file truncated, rewritten or replaced, admin-con reconnected, the link to admin-con lost (`src/link/admin_con.rs`, `src/link/listener.rs`).
@@ -86,7 +86,7 @@ A zero, a blank cell and an empty string are values. None of them stands in for 
 
 ## Controls
 
-Every control is a real button, link, input, label or form. A verb is a form with one button in `.verb` (`control-h-verb`, `id`); the button's text is the verb's word. A verb that does not apply is disabled, not hidden, with a note saying why, one of three: "not in your roles", "admin-con not connected", "above the ceiling". A turn is a `textarea` in `mono` and a `.verb` button reading "Place the turn". The focus ring is `focus`, 2px, offset 2px, on every control. Targets are 32px or taller, 36px where the action changes the agent.
+Every control is a real button, link, input, label or form. A verb is a form with one button in `.verb` (`control-h-verb`, `id`); the button's text is the verb's word. A verb that does not apply is disabled, not hidden, with a note saying why, one of three: "not in your roles", "admin-con not connected", "above the ceiling". A turn is a `textarea` in `mono` and a `.verb` button reading "Place the turn". An ask's answer is drawn in place, below the pane that asked, with an asking line standing in its place while the ask is in flight; the form still posts without a script, its answer then a page of its own. The focus ring is `focus`, 2px, offset 2px, on every control. Targets are 32px or taller, 36px where the action changes the agent.
 
 A field on the declaration screen carries, beside its label, when a mistake there is caught: `.when.now` ("caught now", admin holds custody or can ask) or `.when.load` ("caught at load", only the organ can answer). The artifact is the clearest field of the second kind. Under the label, in `dim`, the field says what it waits on before it takes effect (Spec 6.1). Every field is edited in place on the screen; there is no pop-up.
 

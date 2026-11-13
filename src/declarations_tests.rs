@@ -1242,7 +1242,9 @@ async fn a_save_and_a_reopen_are_the_same_document() {
     assert_eq!(decoder["surprisal-election"].as_bool(), Some(true));
     // What the screen does not declare is named and never written.
     assert!(
-        !table.contains_key("binding-kind") && !table.contains_key("state-election"),
+        !table.contains_key("binding-kind")
+            && !table.contains_key("state-election")
+            && decoder.get("field-election").is_none(),
         "{file}"
     );
     let undeclared = &file[file
@@ -1251,6 +1253,7 @@ async fn a_save_and_a_reopen_are_the_same_document() {
     for words in [
         "# binding-kind: not declared on this screen; the agent reads its absence as serving, and every declaration this screen saves is serving.",
         "# [state-election]: not declared on this screen; admin resolves its absence to the default election, the envelope of every kind.",
+        "# [spu-instruction.decoder] field-election: not declared on this screen; its absence is the ordinary posture, no probability field elected, and the agent reads no default into it.",
     ] {
         assert!(undeclared.contains(words), "{words}\n{file}");
     }

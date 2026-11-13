@@ -327,6 +327,33 @@ mod tests {
                 }
             }
         }
+        // The field's election, beside the two: an option the copy
+        // declares with a serde default, so a file without it parses; the
+        // screen declares it nowhere, and the file names it in its last
+        // block and writes no member.
+        let decoder = code(passage("271 to 306"));
+        let pos = decoder
+            .iter()
+            .position(|l| *l == "pub field_election: Option<FieldElection>,")
+            .expect("the copy declares field_election as an option");
+        assert!(
+            decoder[pos - 1].starts_with("#[serde(default"),
+            "field_election carries a serde default"
+        );
+        let field = Member {
+            name: kebab("field_election"),
+            table: vec!["spu-instruction", "decoder"],
+            absent: None,
+        };
+        let (text, table) = file_of(&whole());
+        assert!(at(&table, &field).is_none(), "field-election is written");
+        assert!(
+            text.contains(&format!(
+                "# [spu-instruction.decoder] {}: not declared on this screen; its absence is the ordinary posture, no probability field elected, and the agent reads no default into it.",
+                field.name
+            )),
+            "the file names field-election: {text}"
+        );
         assert!(
             READ.lines()
                 .next()

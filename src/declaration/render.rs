@@ -319,6 +319,10 @@ pub fn agent_toml(document: &Document, meta: &Meta<'_>) -> String {
         &mut out,
         "# [state-election]: not declared on this screen; admin resolves its absence to the default election, the envelope of every kind.",
     );
+    line(
+        &mut out,
+        "# [spu-instruction.decoder] field-election: not declared on this screen; its absence is the ordinary posture, no probability field elected, and the agent reads no default into it.",
+    );
     out
 }
 

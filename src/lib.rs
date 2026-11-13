@@ -23,6 +23,8 @@ pub mod declaration;
 #[cfg(all(test, feature = "passkeys"))]
 mod declarations_tests;
 #[cfg(all(test, feature = "passkeys"))]
+mod declare_pane_tests;
+#[cfg(all(test, feature = "passkeys"))]
 mod entries_tests;
 pub mod fault;
 #[cfg(all(test, feature = "passkeys"))]

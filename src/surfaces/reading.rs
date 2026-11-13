@@ -53,6 +53,7 @@ use crate::link::register::{Agent, CredentialState};
 use crate::store::alerts::{STDERR_BOUND, bounded};
 use crate::store::identity::{VOCABULARY, is_agent_id};
 use crate::store::{AgentId, Store};
+use crate::surfaces::declare_pane::DeclarePane;
 use crate::surfaces::gate::{self, Policy, Session};
 use crate::surfaces::record::NoSession;
 use crate::traceview::TraceViews;
@@ -463,6 +464,8 @@ struct AgentPage {
     left: String,
     /// The way back to the agent's declaration, an admin's alone.
     declared: Option<DeclaredLink>,
+    /// The Declare pane: the declaration saved under the agent's name.
+    declaration: DeclarePane,
 }
 
 /// **Run's two panes, the load state and the verbs** (Spec 2.13): the agent
@@ -905,14 +908,18 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, agent: String) ->
     // **The way back to the declaration, and the rail's links**, an
     // admin's alone (Spec 2.13): Declare to the declaration saved under the
     // agent's name, Provision to the register.
-    let declared = if admin {
-        match store.declaration_named(&row.name).await {
-            Ok(saved) => Some(DeclaredLink::of(&row.name, saved.as_ref())),
-            Err(e) => return fault(e),
-        }
-    } else {
-        None
+    // **The declaration saved under the agent's name** (Spec 2.13), for
+    // every reader: the Declare pane, and an admin's way back.
+    let named = match store.declaration_named(&row.name).await {
+        Ok(named) => named,
+        Err(e) => return fault(e),
     };
+    let declaration =
+        match DeclarePane::of(&store, &row, named.as_ref(), admin, &session.person_id).await {
+            Ok(pane) => pane,
+            Err(e) => return fault(e),
+        };
+    let declared = admin.then(|| DeclaredLink::of(&row.name, named.as_ref()));
     let links: Vec<(u8, String)> = match &declared {
         Some(link) => vec![(1, link.href.clone()), (2, "/admin/agents".to_owned())],
         None => Vec::new(),
@@ -997,6 +1004,7 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, agent: String) ->
         stages: stages(&links),
         left: left(),
         declared,
+        declaration,
     };
     match page.render() {
         Ok(html) => Html(html).into_response(),

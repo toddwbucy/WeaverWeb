@@ -185,8 +185,8 @@ async fn the_agent_page_carries_the_eight_stages_with_run_current() {
     assert!(page.contains("3 of 8 \u{b7} Observe next"), "{page}");
     assert_eq!(
         page.matches(r#"<span class="backing "#).count(),
-        8 + 6,
-        "a backing badge on each stage and on each of the six panes, no decision standing"
+        8 + 7,
+        "a backing badge on each stage and on each of the seven panes, Declare's among them, no decision standing"
     );
 }
 

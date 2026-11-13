@@ -1,10 +1,13 @@
 //! conforms: web-the-install-is-staged-unprivileged-from-named-parameters
+//! conforms: web-a-staged-backfill-is-bounded-as-admin-con-bounds-it
 //!
 //! The staging tool (Spec 8.1) against invented parameters in a temporary
 //! directory: every location, account and box fact here is made up, and
 //! nothing is placed anywhere but under the test's own directory.
 
-use crate::link::admin_con::{AdminConConfig, STOP_GRACE, VERB_BOUND};
+use crate::link::admin_con::{
+    AdminConConfig, DEFAULT_BACKFILL_BYTES, MAX_BACKFILL_BYTES, STOP_GRACE, VERB_BOUND,
+};
 use crate::link::gate_con::GateConConfig;
 use crate::stage::{self, MANIFEST_HEADER};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
@@ -363,6 +366,75 @@ fn a_staged_config_is_the_handover_and_the_box_facts_and_loads() {
         assert_eq!(admin.stop_grace, grace);
         assert_eq!(admin.verb_bound, bound);
     }
+}
+
+/// **An agent's `backfill_bytes` is staged into its admin-con config,
+/// bounded as admin-con bounds it** (Spec 8.1): absent, the staged config
+/// carries none and admin-con takes its default; zero and admin-con's own
+/// bound each stage and load as given; one past the bound is refused naming
+/// the agent's parameter, before anything is written; and gate-con's config
+/// never carries it.
+#[test]
+fn a_staged_backfill_is_bounded_as_admin_con_bounds_it() {
+    let staged_config = |rig: &Rig, agent: &str, plane: &str| {
+        rig.staged(&format!(
+            "{}/connectors/{agent}/{plane}-con.toml",
+            rig.s("config")
+        ))
+    };
+    let admin_of = |rig: &Rig, agent: &str| staged_config(rig, agent, "admin");
+    let gate_of = |rig: &Rig, agent: &str| staged_config(rig, agent, "gate");
+
+    let rig = Rig::new();
+    // Absent: no member staged, admin-con's default.
+    rig.stage(&rig.params()).expect("stages");
+    let text = std::fs::read_to_string(admin_of(&rig, "a1")).unwrap();
+    assert!(!text.contains("backfill_bytes"), "{text}");
+    let admin = AdminConConfig::load(&admin_of(&rig, "a1")).unwrap();
+    assert_eq!(admin.backfill_bytes, DEFAULT_BACKFILL_BYTES);
+
+    // Zero and the bound: staged and loaded as given.
+    for given in [0, MAX_BACKFILL_BYTES] {
+        let rig = Rig::new();
+        let params = format!(
+            "{}{}{}{}",
+            rig.locations(),
+            rig.connectors(),
+            rig.agent("a1", &format!("backfill_bytes = {given}\n")),
+            rig.agent("a2", ""),
+        );
+        rig.stage(&params)
+            .unwrap_or_else(|e| panic!("{given} stages: {e:#}"));
+        let admin = AdminConConfig::load(&admin_of(&rig, "a1")).unwrap();
+        assert_eq!(admin.backfill_bytes, given, "a1 as given");
+        let other = AdminConConfig::load(&admin_of(&rig, "a2")).unwrap();
+        assert_eq!(other.backfill_bytes, DEFAULT_BACKFILL_BYTES, "a2 untouched");
+        let gate = std::fs::read_to_string(gate_of(&rig, "a1")).unwrap();
+        assert!(
+            !gate.contains("backfill_bytes"),
+            "gate-con's config: {gate}"
+        );
+    }
+
+    // One past the bound: refused naming the parameter, nothing written.
+    let rig = Rig::new();
+    let params = format!(
+        "{}{}{}",
+        rig.locations(),
+        rig.connectors(),
+        rig.agent(
+            "a1",
+            &format!("backfill_bytes = {}\n", MAX_BACKFILL_BYTES + 1)
+        ),
+    );
+    let e = rig.stage(&params).expect_err("past the bound stages");
+    let words = format!("{e:#}");
+    assert!(
+        words.contains("agent a1's backfill_bytes")
+            && words.contains(&MAX_BACKFILL_BYTES.to_string()),
+        "{words}"
+    );
+    assert!(!rig.out().exists(), "a refusal leaves no directory");
 }
 
 #[test]

@@ -2,20 +2,20 @@
 
 Each row is one pane the grammar expects, with its stage mark, its backing today and where its facts come from. A pane with `unbuilt` backing is a drawing; a pane with `partly` names what is missing in its footer.
 
-## 1 Declare, unbuilt
+## 1 Declare, partly
 
-Declare is two screens (operator's rulings of 2026-11-11, Spec 6.1): the declaration screen, below, and the board, which wires what was declared and is unbuilt with no panes drawn yet.
+Declare is two screens (operator's rulings of 2026-11-11, Spec 6.1): the declaration screen, below, and the board, which wires what was declared and is unbuilt with no panes drawn yet. The declaration screen is built; the agent page's rail links this stage to the declaration saved under the agent's name, for an admin.
 
 | pane | shows | source | backing |
 | --- | --- | --- | --- |
-| Agent | the name, and host agent or virtual-machine agent with the template a virtual-machine agent is cloned from by the console itself; the template's digest and the machine's, once recorded; no Hosts page, and no virtual machine managed as an object of its own | the saved declaration | unbuilt |
-| SPU box | one per box: its models, each with its function from the roster the framework charters (decoder, exactly one; classifier, optional), artifact, format (GGUF offered, the rest named as later) and a decoder's adapter; the box's GPU requirement, a card, a class (a family or a list of models) or a pair, which start satisfies or refuses, never substituting | the saved declaration; the compute-capability table for the warning | unbuilt |
-| Sampler | the eight tunable values a serving load requires, each required: the six sampler defaults every generation carries and the session's two parameters; what else is fixed at load read-only once an agent reports it, and until then what that waits on | the saved declaration | unbuilt |
-| Store and gate | the store (`none` or `sqlite`) and the gate's tool election | the saved declaration | unbuilt |
-| Prompt | the system prompt, its own field, written into declared state by the declaration act | the saved declaration | unbuilt |
-| agent.toml | the file the declaration becomes, derived at the pinned corpus commit and never edited; what the screen does not declare as comments naming what fills it, what the grammar has no place for as a trailing block | derived from the saved declaration | unbuilt |
-| Version | the row's version, last save and author, and whether it is its lineage's head | the store (Spec 2.4) | unbuilt |
-| Refusals and warning | what the form refuses on its own (a missing required field, a requirement that names nothing, a field out of its shape), each naming the field; the warning where a class spans more than one compute capability; per field, what it waits on | the form | unbuilt |
+| Agent | the name, and host agent or virtual-machine agent with the template a virtual-machine agent is cloned from by the console itself; the template's digest and the machine's, once recorded; no Hosts page, and no virtual machine managed as an object of its own | the saved declaration | partly: the template's digest and the machine's are not recorded |
+| SPU box | one per box: its models, each with its function from the roster the framework charters (decoder, exactly one; classifier, optional), artifact, format (GGUF offered, the rest named as later) and a decoder's adapter; the box's GPU requirement, a card, a class (a family or a list of models) or a pair, which start satisfies or refuses, never substituting | the saved declaration; the compute-capability table for the warning | built |
+| Sampler | the eight tunable values a serving load requires, each required: the six sampler defaults every generation carries and the session's two parameters; what else is fixed at load read-only once an agent reports it, and until then what that waits on | the saved declaration | partly: nothing else fixed at load is shown, since no agent reports it yet |
+| Store and gate | the store (`none` or `sqlite`) and the gate's tool election | the saved declaration | built |
+| Prompt | the system prompt, its own field, written into declared state by the declaration act | the saved declaration | built |
+| agent.toml | the file the declaration becomes, derived at the pinned corpus commit and never edited; what the screen does not declare as comments naming what fills it, what the grammar has no place for as a trailing block | derived from the saved declaration | built |
+| Version | the row's version, last save and author, and whether it is its lineage's head | the store (Spec 2.4) | built |
+| Refusals and warning | what the form refuses on its own (a missing required field, a requirement that names nothing, a field out of its shape), each naming the field; the warning where a class spans more than one compute capability; per field, what it waits on | the form | built |
 
 ## 2 Provision, partly
 

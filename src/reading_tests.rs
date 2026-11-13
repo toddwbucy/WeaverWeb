@@ -127,11 +127,12 @@ async fn the_page_shows_the_rows_facts_and_the_persons_roles() {
 }
 
 /// The stage rail's marks in the page's order, each with whether it is the
-/// current one: the numeral and the name of every `.step`.
-fn rail(page: &str) -> Vec<(String, bool)> {
+/// current one: the numeral and the name of every `.step`, a span or a
+/// link.
+pub(crate) fn rail(page: &str) -> Vec<(String, bool)> {
     let start = page.find(r#"<nav class="rail""#).expect("a rail");
     let rail = &page[start..start + page[start..].find("</nav>").unwrap()];
-    rail.split(r#"<span class="step"#)
+    rail.split(r#"class="step"#)
         .skip(1)
         .map(|step| {
             let here = step.starts_with(" here\"");

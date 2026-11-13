@@ -1013,7 +1013,21 @@ nothing that changes state is served**, since nothing can sign in without
 one. **Sign-out** is a `POST` that closes the session's row, clears the
 cookie and sends the browser to the sign-in page. **A signed-in page's
 navigation** links to Record and to the person's own passkeys and carries
-the sign-out as a plain form; a page without a session links to sign-in.
+the sign-out as a plain form; a page without a session links to Record and
+to sign-in. **The masthead stands in the path's order** (the operator's word
+of 2026-11-13; `docs/design/system/components/Masthead`). On the left is the
+work, in the order a person does it, each page carrying the stage marks it
+serves:
+
+- Declarations, 1 Declare, for an admin;
+- Register, 2 Provision, for an admin;
+- Agents, 3 Run and 4 Observe, with the open-alert count after it;
+- Record, last and unmarked, the record of the whole lifecycle and no
+  stage's own.
+
+On the right, after who is signed in, come Persons and Grants for an admin,
+then Passkeys and the sign-out. A person who is not an admin sees the same
+order less the four links an admin alone opens.
 **`GET /` sends the browser on**, as built on 2026-11-10: to `/sign-in` where
 the request names no session that serves, and to Record where it names one,
 Record being where every sign-in lands. It reads the session as any use
@@ -2013,7 +2027,18 @@ it decides are stated here and in section 2.8, and the reasons are there.
   connection, and no other, a person with none seeing an empty list;
   `GET /agents/{ag}` shows one agent's register row (presence per plane,
   the declared ceiling, the trace door, the load state with its source and
-  date, the run's tuple and constituents) and the person's roles on it;
+  date, the run's tuple and constituents) and the person's roles on it.
+  As built on 2026-11-13 it also carries the ways on and back, at the foot
+  of its main column:
+  - for every reader, a link to Record that says it is the whole record,
+    not filtered by the agent, since a landed run names no register row
+    yet;
+  - for an admin, a link back to the declaration saved under the agent's
+    name (section 2.4, the head of the one lineage of that name), or to a
+    new declaration where none is saved.
+
+  On its stage rail, for an admin, Declare links to that same declaration
+  and Provision to the register. Every other mark is a span;
   `GET /agents/{ag}/trace` is the live view, an event stream of the
   listener's window, which says it is that window and not a record. Each
   event carries the window's members as the listener landed them and its
@@ -2264,6 +2289,21 @@ it decides are stated here and in section 2.8, and the reasons are there.
   taken, after which the admin rotates. The
   page says each holds its connector's private key and goes to the box with
   the install script, readable only by the connector's own user at 0600.
+  **The way forward**, as built on 2026-11-13: the hand-over page's last
+  line is the next step.
+  - Where the admin holds a live grant on the agent, it is a link to the
+    agent's page.
+  - Otherwise it says that the page answers only to a grant and that the
+    admin holds none, and links to Grants. Another admin adds the grant
+    there, or the host's `grant add` does.
+
+  Either way it says, in one sentence, what is done on the box between the
+  two steps, since no console verb installs the file: the configs and the
+  file derived from the declaration, the connectors started, then
+  `validate` from the agent's page. **The register's form reads `name` from
+  the query** (`GET /admin/agents?name=`), so a saved declaration's link
+  fills it. A name out of section 2.12's grammar fills nothing, and the
+  register judges what is posted either way.
   **`revoke` (one plane) and `retire` (every live plane in one write)**, as
   built on 2026-10-09, take the same four steps: the `ag-` and the plane
   parsed, the first gate, the agent resolved for the admin (unknown: not
@@ -3642,6 +3682,11 @@ outside it are not on this screen.
   two panes below
 - `POST /declarations/{de}`: save from that row, a new row whose parent it
   is
+
+**A saved row's way forward**, as built on 2026-11-13: the pane holding a
+reopened row's version ends with the next step on the path. It is a link,
+"register an agent named" the lineage's name, to the register's form with
+that name filled (section 2.13). The empty screen carries none.
 
 **The screen's slots are the form's, not the document's.** Each `GET` takes
 `?boxes=`, the box slots offered in all, one by default and at most sixteen,
@@ -5724,6 +5769,9 @@ an unmerged contract.
 | no two lineages share a name, and a lineage keeps its name | perturbation in `src/declarations_tests.rs`, `no_two_lineages_share_a_name_and_a_lineage_keeps_its_name`: drop the screen's check, or the store's under the key, and a second lineage saves under a held name, or a save renames its lineage, each check exercised alone; the index on a root's name stands beneath both |
 | only the server-wide admin grant reads or writes a declaration, and a refused save is one record | perturbation in `src/declarations_tests.rs`, `only_the_admin_grant_reads_or_writes_a_declaration`: drop the gate, and a person holding only a per-agent role reads the list and saves; a refused save writes exactly one audit record, carrying the refusal, and no row |
 | the declaration screen reaches no agent and no host | `the_declaration_screen_reaches_no_agent_and_no_host` in `src/declarations_tests.rs`, with a real listener and a fake connector of each plane connected and admitted: every route is exercised, a save, a save from it and two refusals among them, and neither connector is sent a line, the server sending a connector no heartbeat of its own |
+| the masthead stands in the path's order, each work page carrying its stage marks and Record last and unmarked, and a person sees it less the links an admin alone opens | perturbation in `src/navigation_tests.rs`, `the_masthead_stands_in_the_paths_order`, on the base template: swap Declarations and Register, put Record before Agents, who before Record or Passkeys before Persons, and the admin's masthead fails on its order; drop any of the four marks or number Declare 2, and it fails on that page's text; mark Record, and it fails on Record's; move Declarations, Register, Persons or Grants out of the admin's condition, and a person's masthead names it; drop Record from a page without a session, or put sign-in before it, and that order fails (16 cases, each caught) |
+| a page's way forward stands where its condition holds and nowhere else | perturbation in `src/navigation_tests.rs`: drop a saved declaration's way forward, or the name its link carries, or plant one on the empty screen, and `a_saved_declaration_leads_on_to_registering_its_name` fails; let the register's form fill any name, or none, or drop the field's value, and it fails on the prefill; invert the hand-over's read of the admin's grant, or fix it either way, drop the box sentence under a grant, or point the Grants link at the agent's page, and `the_hand_over_leads_on_to_the_agents_page_or_says_why_not` fails (11 cases, each caught) |
+| the agent page leads every reader on to Record and an admin alone back to the declaration saved under the agent's name, the rail linking Declare and Provision for an admin alone | perturbation in `src/navigation_tests.rs`, `the_agent_page_leads_on_to_record_and_back_to_its_declaration`: offer the way back to every reader, or to none, and it fails on the person's page or the admin's; drop the way on to Record, or its words that the record is not filtered by the agent, and it fails; name the lineage's root, or a lineage of another name, and it fails on version 2; link no mark, render a linked mark as a span or point Provision at another page, and it fails on the rail; send an agent with no declaration to the list, and it fails on the way back (10 cases, each caught) |
 
 **A watch that cannot fail is not a test.** For each perturbation above, the
 act that lands it states what removal makes it fail and confirms it does.

@@ -11,26 +11,36 @@
   <meta name="htmx-config" content='{"responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"401","swap":true},{"code":"...","swap":false,"error":true}]}'>
 </head>
 <body>
+  {#- **The masthead in the path's order** (Spec 2.8; the operator's word of
+      2026-11-13). On the left, the work in the order a person does it, each
+      page marked with the stages it serves, then Record, last and unmarked:
+      the record of the whole lifecycle, no stage's own. On the right, after
+      who is signed in, the person and the house. A person sees the same
+      order less what they may not open. -#}
   <nav class="masthead">
     <span class="brand">weaver-web</span>
-    <a href="/record"{% if here == "record" %} class="here"{% endif %}>Record</a>
     {%- if who.is_empty() %}
+    <a href="/record"{% if here == "record" %} class="here"{% endif %}>Record</a>
     <a href="/sign-in"{% if here == "sign-in" %} class="here"{% endif %}>Sign in</a>
     {%- else %}
-    <a href="/agents"{% if here == "agents" %} class="here"{% endif %}>Agents</a>
+    {%- if admin %}
+    <a href="/declarations"{% if here == "declarations" %} class="here"{% endif %}><span class="stage"><b>1</b> Declare</span> Declarations</a>
+    <a href="/admin/agents"{% if here == "register" %} class="here"{% endif %}><span class="stage"><b>2</b> Provision</span> Register</a>
+    {%- endif %}
+    <a href="/agents"{% if here == "agents" %} class="here"{% endif %}><span class="stage"><b>3</b> Run</span> <span class="stage"><b>4</b> Observe</span> Agents</a>
     {%- if chrome.open_alerts > 0 %}
     <a href="/agents" class="status fail">{{ chrome.open_alerts }} open alert{% if chrome.open_alerts != 1 %}s{% endif %}</a>
     {%- endif %}
-    <a href="/passkeys"{% if here == "passkeys" %} class="here"{% endif %}>Passkeys</a>
+    <a href="/record"{% if here == "record" %} class="here"{% endif %}>Record</a>
+    {#- The highest role the masthead names is the server-wide one, admin;
+        a person's roles on an agent are per agent, on that agent's page.
+        The bar splits here: `.who` takes the free width before it. -#}
+    <span class="who">{{ who }}{% if admin %} &middot; admin{% endif %}</span>
     {%- if admin %}
     <a href="/admin/persons"{% if here == "admin" %} class="here"{% endif %}>Persons</a>
     <a href="/admin/grants"{% if here == "grants" %} class="here"{% endif %}>Grants</a>
-    <a href="/admin/agents"{% if here == "register" %} class="here"{% endif %}>Register</a>
-    <a href="/declarations"{% if here == "declarations" %} class="here"{% endif %}>Declarations</a>
     {%- endif %}
-    {#- The highest role the masthead names is the server-wide one, admin;
-        a person's roles on an agent are per agent, on that agent's page. -#}
-    <span class="who">{{ who }}{% if admin %} &middot; admin{% endif %}</span>
+    <a href="/passkeys"{% if here == "passkeys" %} class="here"{% endif %}>Passkeys</a>
     <form method="post" action="/sign-out" class="sign-out"><button type="submit">Sign out</button></form>
     {%- endif %}
   </nav>

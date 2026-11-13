@@ -317,7 +317,7 @@ async fn a_turns_close_keeps_the_transition_and_the_unload_ends_it() {
 /// form stands bare; panics where the verb is not offered.
 fn warning_beside(page: &str, karl: &str, verb: &str) -> Option<String> {
     let form = format!(
-        "<form method=\"post\" action=\"/agents/{karl}/verb\"><input type=\"hidden\" name=\"verb\" value=\"{verb}\"><button type=\"submit\" class=\"verb\">{verb}</button></form>"
+        "<form method=\"post\" action=\"/agents/{karl}/verb\" id=\"verb-{verb}\" hx-preserve hx-post=\"/agents/{karl}/verb\" hx-target=\"#answer-{verb}\" hx-swap=\"innerHTML\" hx-sync=\"this:drop\" hx-disabled-elt=\"find button\" hx-indicator=\"#asked-{verb}\"><input type=\"hidden\" name=\"verb\" value=\"{verb}\"><button type=\"submit\" class=\"verb\">{verb}</button></form>"
     );
     let at = page
         .find(&form)
@@ -460,7 +460,7 @@ async fn the_run_panes_re_read_by_themselves() {
     let p = page(&o).await;
     assert!(
         p.contains(&format!(
-            "<div class=\"stack\" id=\"run\" hx-get=\"{uri}\" hx-trigger=\"every 15s\" hx-swap=\"innerHTML\">"
+            "<div class=\"stack\" id=\"run\" hx-get=\"{uri}\" hx-trigger=\"every 15s\" hx-swap=\"innerHTML settle:0ms\" hx-sync=\"this:abort\">"
         )),
         "{p}"
     );

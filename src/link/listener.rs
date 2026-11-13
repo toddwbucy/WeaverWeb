@@ -53,6 +53,7 @@ use crate::store::identity::session_stands;
 use crate::store::{AgentId, Store};
 use crate::traceview::{TraceEvent, TraceViews};
 use chrono::{DateTime, Utc};
+use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap};
 use std::future::Future;
 use std::net::SocketAddr;
@@ -127,6 +128,13 @@ struct LiveConnection {
     /// It goes with the connection, and an entry still in it then is a
     /// first record with no second, the audit's "unknown".
     asks: Asks,
+    /// **Each person's verb from its check to its enqueue** (Spec 2.13),
+    /// the claims the hold of a second identical ask reads beside `asks`:
+    /// claimed under the live map's lock at the check and moved into `asks`
+    /// under it at the enqueue, so a second ask finds the first in one map
+    /// or the other and never in neither. Never drained into an alert: an
+    /// ask still claimed has sent no frame.
+    claims: Claims,
     /// The places of `PERSON_SLOTS` on this connection.
     person_slots: Arc<tokio::sync::Semaphore>,
     /// **When the server last read a frame from this connection**, any
@@ -142,10 +150,51 @@ struct Asked {
     /// The act's principal, `server` or a person's `pe-`, for an alert's
     /// operations-log line.
     principal: String,
+    /// When the server took the ask, which a held second ask names.
+    at: DateTime<Utc>,
 }
 
 /// The connection's map from an ask's id to its record.
 type Asks = Arc<Mutex<HashMap<u64, Asked>>>;
+
+/// **A person's verb claimed on its connection**, from its check to its
+/// enqueue: its verb, its person, when the server took it, and its first
+/// record once that is durable.
+struct Claimed {
+    verb: String,
+    person: String,
+    at: DateTime<Utc>,
+    first: Option<String>,
+}
+
+/// The connection's map from an ask's id to its claim.
+type Claims = Arc<Mutex<HashMap<u64, Claimed>>>;
+
+/// **The claim's guard** (Spec 2.13): whatever ends the ask before its
+/// enqueue, a refusal, a lost connection or the bound, takes its claim off
+/// the connection, so a hold never outlives the ask it holds for. At the
+/// enqueue the claim moves into `asks`, and the guard's removal then finds
+/// nothing.
+struct Claim {
+    claims: Claims,
+    id: u64,
+}
+
+impl Claim {
+    /// The claim's first record, durable: a second ask held from now names
+    /// it.
+    fn recorded(&self, first: &str) {
+        if let Some(claimed) = self.claims.lock().unwrap().get_mut(&self.id) {
+            claimed.first = Some(first.to_owned());
+        }
+    }
+}
+
+impl Drop for Claim {
+    fn drop(&mut self) {
+        self.claims.lock().unwrap().remove(&self.id);
+    }
+}
 
 /// The connection's map from an ask's id to its asker's reply.
 type Pending = Arc<Mutex<HashMap<u64, oneshot::Sender<FromClient>>>>;
@@ -219,6 +268,14 @@ impl Drop for Unsent {
     }
 }
 
+/// **Who claims a verb on its connection** (Spec 2.13): the ask, its person
+/// and when the server took it.
+struct Claimant<'a> {
+    ask: u64,
+    person: &'a str,
+    at: DateTime<Utc>,
+}
+
 /// Why an ask did not reach a connection.
 enum AskError {
     /// No ready connection on the plane, or the ask could not be enqueued
@@ -281,6 +338,15 @@ pub enum VerbError {
     /// The server is taking no more asks now, or none more of this
     /// person's: nothing was asked and nothing recorded.
     Shed,
+    /// **The same person's same verb on the agent is in flight** (Spec
+    /// 2.13): held by the console with one refusal record, no frame sent,
+    /// naming when the first was taken and its first record (none while
+    /// that record is still being written).
+    AlreadyAsked {
+        verb: String,
+        at: DateTime<Utc>,
+        first: Option<String>,
+    },
 }
 
 impl std::fmt::Display for VerbError {
@@ -329,6 +395,15 @@ impl std::fmt::Display for VerbError {
             VerbError::Shed => write!(
                 f,
                 "the server is taking no more asks now; nothing was asked, ask again"
+            ),
+            VerbError::AlreadyAsked { verb, at, first } => write!(
+                f,
+                "{verb} was already asked at {}, {}, and is not yet answered: this ask was not sent",
+                at.format("%Y-%m-%d %H:%M:%S UTC"),
+                match first {
+                    Some(first) => format!("recorded as {first}"),
+                    None => "its record still being written".to_owned(),
+                }
             ),
         }
     }
@@ -420,6 +495,8 @@ pub struct Asker {
 /// the answer whatever the caller does.
 pub struct Enqueued {
     pub first: String,
+    /// When the server took the ask, which the page names past its wait.
+    pub at: DateTime<Utc>,
     verb: String,
     reply: oneshot::Receiver<FromClient>,
     _unask: Unask,
@@ -1561,6 +1638,7 @@ impl Inner {
                             verb: verb.to_owned(),
                             first: first.clone(),
                             principal: "server".to_owned(),
+                            at: Utc::now(),
                         },
                     );
                     (
@@ -1646,6 +1724,9 @@ impl Inner {
         authorized: &mut bool,
     ) -> Result<Enqueued, VerbError> {
         let id = self.next_ask.fetch_add(1, Ordering::Relaxed);
+        // **When the server took the ask**, which a held second ask and the
+        // page past its wait name.
+        let at = Utc::now();
         let plane = act.plane();
         // **The verb the grant must carry and the first record's action**:
         // the verb, or `turn`; never a turn's text, which only the frame
@@ -1707,17 +1788,29 @@ impl Inner {
         } else {
             None
         };
-        let refusal = match &verbs {
-            None => Some((VerbError::NoGrant, "no grant on the agent")),
+        let mut claim = None;
+        let refusal: Option<(VerbError, Cow<'static, str>)> = match &verbs {
+            None => Some((VerbError::NoGrant, "no grant on the agent".into())),
             Some(verbs) if !verbs.contains(verb) => Some((
                 VerbError::NotGranted {
                     verb: verb.to_owned(),
                 },
-                "the roles held on the agent do not carry the verb",
+                "the roles held on the agent do not carry the verb".into(),
             )),
             Some(_) => {
                 *authorized = true;
-                self.connection_refusal(agent, plane, &reserved, act.ceilinged())
+                let claimant = Claimant {
+                    ask: id,
+                    person: &asker.person_id,
+                    at,
+                };
+                match self.connection_check(agent, plane, &reserved, act.ceilinged(), claimant) {
+                    Ok(claimed) => {
+                        claim = claimed;
+                        None
+                    }
+                    Err(refused) => Some(refused),
+                }
             }
         };
         if let Some((answer, why)) = refusal {
@@ -1730,7 +1823,7 @@ impl Inner {
             hold::bound(Point::Refusal, deadline);
             let recorded = deadline::before(
                 self.store
-                    .audit_refusal(principal, Target::Agent(agent.as_str()), verb, why),
+                    .audit_refusal(principal, Target::Agent(agent.as_str()), verb, &why),
                 deadline,
             )
             .await;
@@ -1753,7 +1846,12 @@ impl Inner {
         )
         .await
         {
-            Ok(Ok(unsent)) => unsent,
+            Ok(Ok(unsent)) => {
+                if let (Some(claim), Some(first)) = (&claim, &unsent.first) {
+                    claim.recorded(first);
+                }
+                unsent
+            }
             Ok(Err(e)) => {
                 tracing::error!(
                     "{agent}: the first record of a person's {verb} could not be written, nothing asked: {e:#}"
@@ -1778,19 +1876,23 @@ impl Inner {
         let (reply_tx, reply_rx) = oneshot::channel();
         // **Inserted where the ceiling was read**, the same incarnation
         // under the live map's lock: a teardown since leaves nothing to
-        // send on, and the first is answered `failed`.
+        // send on, and the first is answered `failed`. **A verb's claim
+        // moves into `asks` here**, under the same lock as the check that
+        // reads both, so the hold sees the ask throughout.
         let found = {
             let live = self.live.lock().unwrap();
             live.get(&(agent.clone(), plane))
                 .filter(|c| c.ready && c.incarnation == incarnation)
                 .map(|conn| {
                     conn.pending.lock().unwrap().insert(id, reply_tx);
+                    conn.claims.lock().unwrap().remove(&id);
                     conn.asks.lock().unwrap().insert(
                         id,
                         Asked {
                             verb: verb.to_owned(),
                             first: Some(first.clone()),
                             principal: asker.person_id.clone(),
+                            at,
                         },
                     );
                     (conn.pending.clone(), conn.asks.clone())
@@ -1818,6 +1920,7 @@ impl Inner {
         }
         Ok(Enqueued {
             first,
+            at,
             verb: verb.to_owned(),
             reply: reply_rx,
             _unask: Unask(pending, id),
@@ -1871,52 +1974,104 @@ impl Inner {
 
     /// **The connection's half of the check**, under the hold: the
     /// connection the slot was reserved on still live and ready, and its
-    /// ceiling granting the verb.
-    fn connection_refusal(
+    /// ceiling granting the verb. **Then, for a verb, the hold of a second
+    /// identical ask** (Spec 2.13): the same person's same verb already in
+    /// flight on this connection, claimed or enqueued, refuses this one as
+    /// `already_asked`, naming the first; otherwise this ask is claimed,
+    /// both under the live map's lock, so of two identical asks at once one
+    /// is claimed and the other held. Not held: a different verb, another
+    /// person's same verb, the server's own `show`, and a turn, since two
+    /// turns are two turns.
+    fn connection_check(
         &self,
         agent: &AgentId,
         plane: Plane,
         reserved: &Slot,
         ceilinged: Option<&str>,
-    ) -> Option<(VerbError, &'static str)> {
-        let not_connected = Some((
-            VerbError::NotConnected,
-            match plane {
-                Plane::Admin => "admin-con is not connected",
-                Plane::Gate => "gate-con is not connected",
-            },
-        ));
+        claimant: Claimant<'_>,
+    ) -> Result<Option<Claim>, (VerbError, Cow<'static, str>)> {
+        let not_connected = || {
+            (
+                VerbError::NotConnected,
+                Cow::Borrowed(match plane {
+                    Plane::Admin => "admin-con is not connected",
+                    Plane::Gate => "gate-con is not connected",
+                }),
+            )
+        };
         let reserved = match reserved {
             Slot::Reserved(reserved) => reserved,
             Slot::Busy => {
-                return Some((
+                return Err((
                     VerbError::Busy,
-                    "the connection's slots for persons' asks are all taken",
+                    "the connection's slots for persons' asks are all taken".into(),
                 ));
             }
-            Slot::None => return not_connected,
+            Slot::None => return Err(not_connected()),
         };
         let live = self.live.lock().unwrap();
         let Some(conn) = live
             .get(&(agent.clone(), plane))
             .filter(|c| c.ready && c.incarnation == reserved.incarnation)
         else {
-            return not_connected;
+            return Err(not_connected());
         };
         // **A turn has no ceiling**: the gate's own admission is the box's.
-        let verb = ceilinged?;
+        let Some(verb) = ceilinged else {
+            return Ok(None);
+        };
         let ceiling = conn.ceiling.as_deref().cloned().unwrap_or_default();
-        if ceiling.contains(verb) {
-            None
-        } else {
-            Some((
+        if !ceiling.contains(verb) {
+            return Err((
                 VerbError::OutsideCeiling {
                     verb: verb.to_owned(),
                     ceiling: ceiling.into_iter().collect(),
                 },
-                "outside the connection's ceiling",
-            ))
+                "outside the connection's ceiling".into(),
+            ));
         }
+        let Claimant { ask, person, at } = claimant;
+        let in_flight = conn
+            .asks
+            .lock()
+            .unwrap()
+            .values()
+            .find(|a| a.principal == person && a.verb == verb)
+            .map(|a| (a.at, a.first.clone()));
+        let mut claims = conn.claims.lock().unwrap();
+        let held = in_flight.or_else(|| {
+            claims
+                .values()
+                .find(|c| c.person == person && c.verb == verb)
+                .map(|c| (c.at, c.first.clone()))
+        });
+        if let Some((at, first)) = held {
+            let why = match &first {
+                Some(first) => format!("already_asked: in flight as {first}"),
+                None => "already_asked: in flight, its first record still being written".to_owned(),
+            };
+            return Err((
+                VerbError::AlreadyAsked {
+                    verb: verb.to_owned(),
+                    at,
+                    first,
+                },
+                why.into(),
+            ));
+        }
+        claims.insert(
+            ask,
+            Claimed {
+                verb: verb.to_owned(),
+                person: person.to_owned(),
+                at,
+                first: None,
+            },
+        );
+        Ok(Some(Claim {
+            claims: conn.claims.clone(),
+            id: ask,
+        }))
     }
 
     /// A test's stop, where one was set for this point.
@@ -2247,6 +2402,7 @@ async fn ask_show(
             verb: "show".into(),
             first: Some(first),
             principal: "server".to_owned(),
+            at: Utc::now(),
         },
     );
     unsent.asks = Some(asks.clone());
@@ -3297,6 +3453,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                         ready: false,
                         ceiling: ceiling.clone(),
                         asks: asks.clone(),
+                        claims: Arc::new(Mutex::new(HashMap::new())),
                         person_slots: Arc::new(tokio::sync::Semaphore::new(PERSON_SLOTS)),
                         heard: heard.clone(),
                     },

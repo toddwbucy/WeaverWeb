@@ -18,7 +18,26 @@
 {% block body %}
 {#- One agent, for a person holding a grant on it: Run's panes in the main
     column, Observe's in the side stack, each with its own stage mark. No
-    inline script. -#}
+    inline script.
+    **An ask is answered in place** (Spec 2.13): each form still posts
+    without a script, and htmx draws its answer in the slot below the pane
+    that asked, disables the form's buttons for the request's life, drops a
+    second submit, and shows the slot's asking line while the request is
+    in flight. **Each verb has a queue and a slot of its own** (the
+    Planner's ruling of 2026-11-14): a verb's second submit is dropped
+    while its own request is in flight, and a different verb, `stop` or
+    `force-unload` during a long `load`, leaves at once and is answered in
+    its own slot. htmx tracks one request per element it syncs on, so a
+    shared queue would hold every verb behind the first. The 15 s poll
+    therefore runs while a verb is in flight, and never redraws a pending
+    form: each verb form carries its id and `hx-preserve`, so a swap of
+    `#run` keeps the form element itself, its request, its disabled
+    button and its listeners, in place of the one the poll drew. The poll
+    settles at once (`settle:0ms`), so the forms it draws are htmx's in
+    the same task as the swap, where htmx's default 20 ms settle left a
+    window in which a press posted the plain form (the browser check of
+    2026-11-13). Every lifecycle verb has its slot, offered or not, so a
+    verb the poll offers later has one. -#}
 <h1>{{ label }}</h1>
 <p class="lede"><span class="mono">{{ agent_id }}</span>; your roles: {{ roles }}</p>
 <div class="grid two">
@@ -34,7 +53,7 @@
       {% else %}
       <div class="row">
       {% for (option, label) in prompt.options %}
-      <form method="post" action="/agents/{{ agent_id }}/alerts/{{ prompt.alert_id }}/choose"><input type="hidden" name="option" value="{{ option }}"><button type="submit" class="verb">{{ label }}</button></form>
+      <form method="post" action="/agents/{{ agent_id }}/alerts/{{ prompt.alert_id }}/choose" hx-post="/agents/{{ agent_id }}/alerts/{{ prompt.alert_id }}/choose" hx-target="#decision-answer" hx-swap="innerHTML" hx-sync="closest .decision:drop" hx-disabled-elt=".decision form button" hx-indicator="#decision-asked"><input type="hidden" name="option" value="{{ option }}"><button type="submit" class="verb">{{ label }}</button></form>
       {% endfor %}
       </div>
       {% endif %}
@@ -42,14 +61,24 @@
     </div>
     <footer>Choosing does not acknowledge the alert: it stays until acknowledged.</footer>
   </section>
+  <div class="asked" id="decision-asked">
+    <p class="asking note read" role="status">Asking admin-con: the decision's steps are drawn here within the page's wait of {{ wait }} s.</p>
+    <div class="answer" id="decision-answer" aria-live="polite"></div>
+  </div>
   {%- endif %}
   {%- include "declare_pane.html" %}
-  <div class="stack" id="run" hx-get="/agents/{{ agent_id }}/run" hx-trigger="every 15s" hx-swap="innerHTML">{% include "agent_run.html" %}</div>
+  <div class="stack" id="run" hx-get="/agents/{{ agent_id }}/run" hx-trigger="every 15s" hx-swap="innerHTML settle:0ms" hx-sync="this:abort">{% include "agent_run.html" %}</div>
+  {%- for v in run.verbs %}
+  <div class="asked" id="asked-{{ v.verb }}">
+    <p class="asking note read" role="status">Asking admin-con for {{ v.verb }}: its answer is drawn here within the page's wait of {{ wait }} s.</p>
+    <div class="answer" id="answer-{{ v.verb }}" aria-live="polite"></div>
+  </div>
+  {%- endfor %}
   <section class="pane">
     <header><span class="stage"><b>3</b> Run</span><h2>Turn</h2><span class="backing built">built</span><span class="source">gate-con</span></header>
     <div class="body">
     {% if turn_form %}
-    <form method="post" action="/agents/{{ agent_id }}/turn" class="field">
+    <form method="post" action="/agents/{{ agent_id }}/turn" class="field" hx-post="/agents/{{ agent_id }}/turn" hx-target="#turn-answer" hx-swap="innerHTML" hx-sync="this:drop" hx-disabled-elt="find button" hx-indicator="#turn-asked">
       <label for="turn-text">Your turn{% if shared %}. More than one person holds turn on this agent: your turns interleave with theirs in the agent's one conversation, and each of you reads the other's.{% endif %}</label>
       <textarea id="turn-text" name="text" rows="4" required></textarea>
       <div class="row"><button type="submit" class="verb primary">Place the turn</button></div>
@@ -58,8 +87,12 @@
     <p>No turn: your roles do not carry turn on this agent, or gate-con is not connected.</p>
     {% endif %}
     </div>
-    <footer>A turn goes to gate-con as your held ask and is answered on a page of its own; its text is carried in the frame and kept in no record or log line.</footer>
+    <footer>A turn goes to gate-con as your held ask and its answer is drawn below; its text is carried in the frame and kept in no record or log line.</footer>
   </section>
+  <div class="asked" id="turn-asked">
+    <p class="asking note read" role="status">Placing the turn through gate-con: its answer is drawn here within the page's wait of {{ wait }} s.</p>
+    <div class="answer" id="turn-answer" aria-live="polite"></div>
+  </div>
   {#- The ways on and back (Spec 2.13): The Record, the whole record, and for an
       admin the declaration saved under the agent's name. -#}
   <p class="next">Onward: <a href="/record">The Record</a>, the record of the whole lifecycle and no stage's own. It is the whole record, not filtered by this agent: a landed run names no register row yet.</p>

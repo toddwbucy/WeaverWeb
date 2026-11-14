@@ -20,6 +20,17 @@
     {% endfor %}
   </ul>
   <p><a href="/admin/agents">Back to agents</a></p>
+  {#- The way forward (Spec 2.13): the agent's page, which answers only to a
+      grant on the agent, and the box's work between the two steps. A grant
+      that could not be read is said to be unread, with both ways. -#}
+  {%- match granted %}
+  {%- when Some with (true) %}
+  <p class="next">Next, <span class="stage"><b>3</b> Run</span>: <a href="/agents/{{ agent_id }}">the agent's page</a>. Between the two, the work is on the agent's box, which this server never reaches: install both configs and the file derived from the agent's declaration, start both connectors, then ask <code>validate</code> from the agent's page.</p>
+  {%- when Some with (false) %}
+  <p class="next">Next, <span class="stage"><b>3</b> Run</span>: the agent's page answers only to a grant on the agent, and you hold none. Another admin adds one on <a href="/admin/grants">Grants</a>, or the host's <code>grant add</code> does. Between the two, the work is on the agent's box, which this server never reaches: install both configs and the file derived from the agent's declaration, start both connectors, then ask <code>validate</code> from the agent's page.</p>
+  {%- when None %}
+  <p class="next">Next, <span class="stage"><b>3</b> Run</span>: whether you hold a grant on the agent could not be read just now. <a href="/agents/{{ agent_id }}">The agent's page</a> answers if you do, and <a href="/admin/grants">Grants</a> is where one is added. Between the two, the work is on the agent's box, which this server never reaches: install both configs and the file derived from the agent's declaration, start both connectors, then ask <code>validate</code> from the agent's page.</p>
+  {%- endmatch %}
   </div>
   <footer>Each config holds its connector's private key. Carry it to the agent's box with the install script, readable only by the connector's own user, at mode 0600, and keep it out of every repository.</footer>
 </section>

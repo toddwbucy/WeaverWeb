@@ -1,11 +1,16 @@
 {% extends "instrument.html" %}
 {% block title %}{{ label }} - weaver-web{% endblock %}
 {% block rail %}
-{#- The agent's eight stages, Run current; the marks are not links until a
-    stage has a page of its own. -#}
+{#- The agent's eight stages, Run current. A mark is a link where its stage
+    has a page for this agent that the person may open (for an admin,
+    Declare and Provision); every other mark is a span. -#}
 <nav class="rail" aria-label="Stages of {{ label }}">
   {%- for stage in stages %}
+  {%- if let Some(href) = stage.href %}
+  <a class="step" href="{{ href }}"><span class="stage"><b>{{ stage.number }}</b> {{ stage.name }}</span><span class="backing {{ stage.backing }}">{{ stage.backing }}</span></a>
+  {%- else %}
   <span class="step{% if stage.here %} here{% endif %}"><span class="stage"><b>{{ stage.number }}</b> {{ stage.name }}</span><span class="backing {{ stage.backing }}">{{ stage.backing }}</span></span>
+  {%- endif %}
   {%- endfor %}
   <span class="left">{{ left }}</span>
 </nav>
@@ -54,6 +59,12 @@
     </div>
     <footer>A turn goes to gate-con as your held ask and is answered on a page of its own; its text is carried in the frame and kept in no record or log line.</footer>
   </section>
+  {#- The ways on and back (Spec 2.13): Record, the whole record, and for an
+      admin the declaration saved under the agent's name. -#}
+  <p class="next">Onward: <a href="/record">Record</a>, the record of the whole lifecycle and no stage's own. It is the whole record, not filtered by this agent: a landed run names no register row yet.</p>
+  {%- if let Some(back) = declared %}
+  <p class="back">Back, <span class="stage"><b>1</b> Declare</span>: <a href="{{ back.href }}">{{ back.words }}</a>.</p>
+  {%- endif %}
 </div>
 <div class="stack">
   <section class="pane">

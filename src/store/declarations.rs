@@ -216,6 +216,23 @@ impl Store {
         Ok(rows.iter().map(saved).collect())
     }
 
+    /// **The declaration saved under a name** (Spec 2.4, 2.13): the head of
+    /// the one lineage whose root holds the name, none where no lineage
+    /// does. A declaration names no box, so every register row of the name
+    /// finds the same lineage.
+    pub async fn declaration_named(&self, name: &str) -> anyhow::Result<Option<Saved>> {
+        Ok(sqlx::query(sqlx::AssertSqlSafe(select_saved(
+            "d.declaration_id = (SELECT max(h.declaration_id) FROM declaration h \
+             JOIN declaration n ON n.declaration_id = coalesce(h.lineage_root_id, h.declaration_id) \
+             WHERE n.name = $1 AND n.parent_declaration_id IS NULL)",
+        )))
+        .bind(name)
+        .fetch_optional(&self.pool)
+        .await?
+        .as_ref()
+        .map(saved))
+    }
+
     /// Whether any row holds the name.
     pub async fn declaration_name_held(&self, name: &str) -> anyhow::Result<bool> {
         let mut conn = self.pool.acquire().await?;

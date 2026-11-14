@@ -39,6 +39,10 @@
     </tbody>
   </table>
   </div>
+  {#- The way forward (Spec 6.1): the next step on the path, by the name
+      this lineage keeps, which the register's grammar holds and so needs
+      no escaping in the query. -#}
+  <footer><p class="next">Next, <span class="stage"><b>2</b> Provision</span>: <a href="/admin/agents?name={{ o.name }}">register an agent named {{ o.name }}</a>, which asks only the box it stands on.</p></footer>
 </section>
 {%- endif %}
 <form method="post" action="{{ action }}" autocomplete="off" class="stack">

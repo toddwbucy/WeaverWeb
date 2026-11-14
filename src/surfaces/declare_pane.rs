@@ -324,7 +324,7 @@ fn compared(
     };
     let verdict = reported::verdict(document, member, report.tuple, report.source);
     let status = match verdict {
-        Verdict::Equal => "ok",
+        Verdict::Equal | Verdict::EqualAsReported(_) => "ok",
         Verdict::Differs { .. } => "fail",
         Verdict::NotInReport | Verdict::Unreadable(_) => "hold",
     };

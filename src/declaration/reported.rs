@@ -112,6 +112,10 @@ const ALL_KINDS_TEE: &str = "all_kinds";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Verdict {
     Equal,
+    /// Equal by what the agent takes, where the report's words are not the
+    /// declaration's: they say what the report carried that the agent does
+    /// not use, a state election's kind named again.
+    EqualAsReported(String),
     Differs {
         declared: String,
         reported: String,
@@ -126,6 +130,7 @@ impl Verdict {
     pub fn words(&self) -> String {
         match self {
             Verdict::Equal => "equal".to_owned(),
+            Verdict::EqualAsReported(reported) => format!("equal (reported {reported})"),
             Verdict::Differs { declared, reported } => {
                 format!("differs (declared {declared}, reported {reported})")
             }
@@ -228,15 +233,34 @@ pub fn declared(document: &Document, member: Member) -> Declared {
     }
 }
 
-/// **A state election in words and as its key**, its kinds in order of name
-/// and each kind's paths sorted, once each, so that two spellings of one
-/// election read alike: the agent takes the kinds as a set and a path as
-/// electing itself however often it is named. The key is that normalized
-/// structure as JSON. The words are for showing alone, since a path may
-/// hold ", " or read "no paths" (Spec 6.1 admits both), and the key tells
-/// such elections apart.
+/// **A state election in words and as its key** (Spec 2.13): the first
+/// entry for each kind, as the agent's tee takes it, the kinds in any order
+/// and each kind's paths as a set, so that two spellings of one effective
+/// election read alike. The tee finds a kind's entry by its first match
+/// and drops any later one, and a path elects itself however often it is
+/// named (WeaverAgent `crates/weaver-trace/src/tee.rs`, `distill`). A
+/// document the console saved never names a kind twice, since its parse
+/// refuses one ([`super::state_election`]), so both sides are read by one
+/// rule; a report may, from a file the console did not write, and its words
+/// then say the kind was named again, the later entry unused. The key is
+/// the normalized structure as JSON. The words are for showing alone, since
+/// a path may hold ", " or read "no paths" (Spec 6.1 admits both), and the
+/// key tells such elections apart.
 fn election(all_kinds: bool, keys: &[ElectedKind]) -> (String, String) {
-    let mut keys: Vec<(String, Vec<String>)> = keys
+    // Each kind's first entry, and how many later entries name it again.
+    let mut firsts: Vec<&ElectedKind> = Vec::new();
+    let mut again: Vec<(&str, usize)> = Vec::new();
+    for k in keys {
+        if firsts.iter().any(|f| f.kind == k.kind) {
+            match again.iter_mut().find(|(kind, _)| *kind == k.kind) {
+                Some((_, n)) => *n += 1,
+                None => again.push((&k.kind, 1)),
+            }
+        } else {
+            firsts.push(k);
+        }
+    }
+    let mut keys: Vec<(String, Vec<String>)> = firsts
         .iter()
         .map(|k| {
             let mut paths = k.paths.clone();
@@ -265,10 +289,15 @@ fn election(all_kinds: bool, keys: &[ElectedKind]) -> (String, String) {
     let named: Vec<String> = keys
         .iter()
         .map(|(kind, paths)| {
-            if paths.is_empty() {
+            let entry = if paths.is_empty() {
                 format!("{kind} (no paths)")
             } else {
                 format!("{kind} ({})", paths.join(", "))
+            };
+            match again.iter().find(|(k, _)| k == kind) {
+                Some((_, 1)) => format!("{entry}, named again, the later entry unused"),
+                Some((_, n)) => format!("{entry}, named {n} more times, the later entries unused"),
+                None => entry,
             }
         })
         .collect();
@@ -357,7 +386,13 @@ pub fn verdict(document: &Document, member: Member, tuple: &Value, source: Sourc
                     reported,
                 }
             } else if declared.key == key {
-                Verdict::Equal
+                // Equal keys and other words: the report carried what the
+                // agent does not use, which the page says.
+                if declared.words == reported {
+                    Verdict::Equal
+                } else {
+                    Verdict::EqualAsReported(reported)
+                }
             } else if declared.words == reported {
                 // Two values that read alike and differ: the page shows
                 // what was compared, so that "differs" names a difference.
@@ -893,6 +928,83 @@ mod tests {
         );
         assert_eq!(digest(&show()), Some("d0"));
         assert_eq!(digest(&elections()), Some("d0"));
+    }
+
+    /// A report whose state election names `kind` twice: first `first`'s
+    /// paths, then `later`'s.
+    fn naming_again(first: Value, later: Value) -> Value {
+        let mut t = show();
+        t["state_election"] = json!({"all-kinds": true, "keys": [
+            {"kind": "message.user", "paths": first},
+            {"kind": "message.assistant", "paths": ["content"]},
+            {"kind": "message.user", "paths": later}
+        ]});
+        t
+    }
+
+    /// **A kind named again reads by its first entry**, as the agent's tee
+    /// takes it (Codex on #109): a report naming a kind a second time,
+    /// whose first entry is the declared one, reads equal, and the pane
+    /// says the kind was named again, the later entry unused, so it hides
+    /// nothing the report carried. The load event's tee reads the same.
+    #[test]
+    fn a_kind_named_again_whose_first_entry_is_declared_reads_equal() {
+        let d = document();
+        let again = naming_again(json!(["content"]), json!(["role"]));
+        let v = verdict(&d, Member::StateElection, &again, Source::Show);
+        assert!(
+            matches!(v, Verdict::EqualAsReported(_)),
+            "a later entry the tee never uses: {v:?}"
+        );
+        assert_eq!(
+            v.words(),
+            "equal (reported every kind with its envelope; message.assistant (content); \
+             message.user (content), named again, the later entry unused)"
+        );
+        let mut thrice = show();
+        thrice["state_election"] = json!({"all-kinds": true, "keys": [
+            {"kind": "message.user", "paths": ["content"]},
+            {"kind": "message.assistant", "paths": ["content"]},
+            {"kind": "message.user", "paths": ["content"]},
+            {"kind": "message.user", "paths": []}
+        ]});
+        assert_eq!(
+            verdict(&d, Member::StateElection, &thrice, Source::Show).words(),
+            "equal (reported every kind with its envelope; message.assistant (content); \
+             message.user (content), named 2 more times, the later entries unused)"
+        );
+        let mut event = elections();
+        event["tee"] = json!({"all_kinds": true, "keys": [
+            {"kind": "message.user", "paths": ["content"]},
+            {"kind": "message.assistant", "paths": ["content"]},
+            {"kind": "message.user", "paths": ["role"]}
+        ]});
+        assert!(matches!(
+            verdict(&d, Member::StateElection, &event, Source::Event),
+            Verdict::EqualAsReported(_)
+        ));
+        // The declared side cannot name a kind twice: the console's parse
+        // refuses it, so both sides are read by one rule.
+        let mut twice = d.to_value();
+        twice["state_election"]["keys"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"kind": "message.user", "paths": ["role"]}));
+        assert!(Document::parse(&twice).is_err(), "a kind declared twice");
+    }
+
+    /// **A kind named again whose first entry is not the declared one
+    /// differs**, whatever its later entry holds: the tee takes the first.
+    #[test]
+    fn a_kind_named_again_whose_first_entry_is_not_declared_differs() {
+        let d = document();
+        let again = naming_again(json!(["role"]), json!(["content"]));
+        assert_eq!(
+            verdict(&d, Member::StateElection, &again, Source::Show).words(),
+            "differs (declared every kind with its envelope; message.assistant (content); \
+             message.user (content), reported every kind with its envelope; \
+             message.assistant (content); message.user (role), named again, the later entry unused)"
+        );
     }
 
     /// **An absence is set beside the report as the agent reads it**: the

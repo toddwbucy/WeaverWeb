@@ -1012,25 +1012,37 @@ fallback included, beside `SameSite=Strict`. **With no origin configured,
 nothing that changes state is served**, since nothing can sign in without
 one. **Sign-out** is a `POST` that closes the session's row, clears the
 cookie and sends the browser to the sign-in page. **A signed-in page's
-navigation** links to Record and to the person's own passkeys and carries
-the sign-out as a plain form; a page without a session links to Record and
-to sign-in. **The masthead stands in the path's order** (the operator's word
-of 2026-11-13; `docs/design/system/components/Masthead`). On the left is the
-work, in the order a person does it, each page carrying the stage marks it
-serves:
+navigation** is the bar, and carries the sign-out as a plain form; a page
+without a session names Agent Operations and sign-in, and has no second
+row, since The Record answers a reader without a session with the way to
+sign in. **The bar stands in two rows** (the operator's words of
+2026-11-13; `docs/design/system/components/Masthead`). The top row holds
+three tabs, in this order:
 
-- Declarations, 1 Declare, for an admin;
-- Register, 2 Provision, for an admin;
-- Agents, 3 Run and 4 Observe, with the open-alert count after it;
-- Record, last and unmarked, the record of the whole lifecycle and no
-  stage's own.
+- **Agents**, the agents' work. Its sub-tabs stand in the path's order,
+  each carrying the stage marks it serves: Declarations, 1 Declare, and
+  Register, 2 Provision, for an admin; then Your agents, 3 Run and
+  4 Observe, the agents the person holds a grant on.
+- **Agent Operations**, holding The Record, the record of the whole
+  lifecycle and no stage's own. The operator's word of 2026-11-13 places
+  experiments, the conversation with an agent, multi-agent workflow
+  coordination and foundation-model support under this tab later, and puts
+  the work outside it first: none of them is built here.
+- **IAM**, identity and access: Persons and Grants for an admin, then
+  Passkeys, the person's own.
 
-On the right, after who is signed in, come Persons and Grants for an admin,
-then Passkeys and the sign-out. A person who is not an admin sees the same
-order less the four links an admin alone opens.
+A tab opens the first of its sub-tabs the person may open. At the right of
+the top row stand who is signed in, the open-alert count, a status and not
+a tab, linking to the agents, and the sign-out. The second row holds the
+sub-tabs of the tab the page belongs to, the current one marked and the
+row named by its tab. **Every page declares its sub-tab** by the one field
+it already carried, `here`, and one table (`surfaces::tab_of`) names each
+sub-tab's tab, so no page names both and none can name a pair that does
+not stand. A person who is not an admin sees Your agents, The Record and
+Passkeys, the sub-tabs they may open.
 **`GET /` sends the browser on**, as built on 2026-11-10: to `/sign-in` where
-the request names no session that serves, and to Record where it names one,
-Record being where every sign-in lands. It reads the session as any use
+the request names no session that serves, and to The Record where it names
+one, The Record being where every sign-in lands. It reads the session as any use
 does, and is a redirect (`303 See Other`) and never a page of its own.
 
 **Sign-in by passkey is name-first**, as built on 2026-10-09 (`/sign-in`): the person
@@ -1082,7 +1094,7 @@ session and the other is refused; the person checked again as enabled under
 a share lock and the name again as theirs; a bearer drawn under section
 2.13's rule and stored as its digest; and the session naming the person,
 the method `sign-in token` and no passkey, its outcome committed with it.
-The browser is sent to Record (`303 See Other`) with the `__Host-` cookie
+The browser is sent to The Record (`303 See Other`) with the `__Host-` cookie
 set. **The session it opens is an ordinary session** in every other way:
 the `Origin` check, the cookie, both limits, the grants and the audit of
 everything done in it hold as for one a passkey opened.
@@ -2030,7 +2042,7 @@ it decides are stated here and in section 2.8, and the reasons are there.
   date, the run's tuple and constituents) and the person's roles on it.
   As built on 2026-11-13 it also carries the ways on and back, at the foot
   of its main column:
-  - for every reader, a link to Record that says it is the whole record,
+  - for every reader, a link to The Record that says it is the whole record,
     not filtered by the agent, since a landed run names no register row
     yet;
   - for an admin, a link back to the declaration saved under the agent's
@@ -3217,13 +3229,13 @@ on a load-time sweep**, where section 5.2 has the comparison structural
 rather than byte-exact and a parting position says only that two different
 models wrote different essays.
 
-5. **Every run's tuple, filtered.** This is Record, and it is the one read whose unit
+5. **Every run's tuple, filtered.** This is The Record, and it is the one read whose unit
    is the set rather than a member of it. The charter's section 3.6 has that surface
    hold every run and branch with the tuple that produced it, and a chip narrows the set
    rather than naming a place, so what the surface asks for is the rows a filter admits
    and never a run it already knows. **The four above answer a reader who has a run or
    an experiment, and this one answers a reader who has neither**, which is why none of
-   them could serve Record and why no arrangement of them would: read three takes a
+   them could serve The Record and why no arrangement of them would: read three takes a
    run's identity as its argument and read four takes an experiment's.
 
    **The filters are four and section 2.7 indexes each.** The record identity for the
@@ -3313,7 +3325,7 @@ deposits because no query answered them, and a sweep that cannot be read is a sw
 nobody would author.
 
 **The fifth is that rule working twice.** This document counted four reads sufficient
-for Record until 2026-09-11, and the seat that came to build Record found the store
+for The Record until 2026-09-11, and the seat that came to build it found the store
 could not list. The surface returned here before it was built and the read landed first,
 which is the whole of what the rule below asks.
 
@@ -3335,7 +3347,7 @@ than deferred**, and section 6 counts these six against the surfaces they serve 
 than against all of them. **Two were owed until 2026-09-11**, the plan's read being the
 sixth above.
 
-**A deposit is not a row here and Record holds one through its run.** The charter's
+**A deposit is not a row here and The Record holds one through its run.** The charter's
 section 3.6 says every run, branch and deposit, and section 2.2 has a deposit reach this
 store as the device and the engine a run's row carries, per
 `weaver-analysis-web-contract` section 2.2. **So a deposit is shown where its run is
@@ -3550,8 +3562,8 @@ is a file of the binary, each is served under section 2.13's
 stands.
 
 **A surface that renders what is kept reads the store and nothing else** - Open a trace,
-Record, Experiments, the matrix, and the returned half of Stage. **Section 4's six reads
-serve Open a trace, Record, the matrix and the returned half of Stage, and not
+The Record, Experiments, the matrix, and the returned half of Stage. **Section 4's six reads
+serve Open a trace, The Record, the matrix and the returned half of Stage, and not
 Experiments.** That surface is a list and read four takes an experiment's identity, so
 it has no query, and its read is owed at the act that builds it.
 
@@ -3622,7 +3634,7 @@ the last step has thrown away what the store was built to hold.
 alternative is one surface at a time deciding, and the first one that draws a
 blank teaches every reader that a blank means zero. The record identity's
 sentinel is the case that shows the shape: an empty identity is a hash the SPU
-could not compute, so Record draws what it is rather than an empty cell, per
+could not compute, so The Record draws what it is rather than an empty cell, per
 section 2.3.
 
 ```graph
@@ -5626,7 +5638,7 @@ an unmerged contract.
 |---|---|
 | a position is addressed by run, turn and position | compile-pin on the key type |
 | ingest is idempotent on that key | perturbation: replay one window twice |
-| nothing is computed at read time except where the query is recorded | review, over the four reads the crate served, the fifth joining them with Record and the sixth with the plan |
+| nothing is computed at read time except where the query is recorded | review, over the four reads the crate served, the fifth joining them with The Record and the sixth with the plan |
 | a recorded query names every run it addressed | perturbation: drop one, the row refuses |
 | an incomplete shard set joins to nothing | perturbation: drop one file the index names, the join returns none |
 | presence never gates a load | review, over the load path: this crate's catalog is not read there |
@@ -5650,7 +5662,7 @@ an unmerged contract.
 | the sentinel joins to nothing | perturbation: register the empty string as an identity, a run whose hash failed joins to an artifact it never named |
 | the record's session and digest are absent where unsent | perturbation: fill an absent digest from the landed rows, a row from a record cut short vouches for bytes nobody drained |
 | the record's session and digest agree across a run | perturbation: land a run whose generations name two sessions, the row holds two truths about which record it came from |
-| a chip filters only on a column section 2.7 indexes | review, over Record's filters: a chip on an unindexed column is a sequential scan the surface offers as though it were cheap |
+| a chip filters only on a column section 2.7 indexes | review, over The Record's filters: a chip on an unindexed column is a sequential scan the surface offers as though it were cheap |
 | the run list is paged and records nothing | perturbation: page on the ingest's clock alone, a tie larger than the page drops its remainder, and record a query row per page, section 2.6 fills with a list nobody reruns |
 | the seated prefix's length is landed and never derived | perturbation: derive it here from the two counts, every row reads the first draw's position as the prefix and every whole-run arm branches one input too late |
 | an authored identity says what it addresses, and a received one is left as the record spelled it | compile-pin on the key types, and perturbation at the schema: drop a kind's domain and a plan takes an arm's identity, which a sequence could not have refused at all |
@@ -5702,11 +5714,11 @@ an unmerged contract.
 | a credential ID belongs to one passkey of one person | perturbation in `src/passkeys_tests.rs` and `src/keys_tests.rs`, through a soft passkey: drop the addition's check of a credential ID already held, under the identity exclusion, and a registration whose ID another person holds fails at the store's key rather than refusing, its grant spent either way; drop that key too (the passkey table's primary key on the credential ID) with the checks, and the ID lands a second passkey row, so one credential signs in as either person |
 | a signature counter that did not rise refuses the sign-in, and the stored passkey is updated by a locked read, merge and write | perturbation in `src/sign_in_tests.rs`, the counter rule driven through its `Assertion` seam where a soft passkey cannot reach: drop the library's `CredentialPossibleCompromise` arm, and a clone's sign-in is refused unaudited; swallow the error where the possible clone's refusal cannot be recorded, and it answers the ordinary refusal over a record the audit lost; drop the rule's own comparison, and a counter raised between the options and the finish signs in; drop the write of the merged passkey, and the stored counter never rises; drop the row's lock, and of two concurrent assertions with one nonzero counter both succeed, and a concurrent assertion erases another's backup-eligibility upgrade; apply the refusal to a zero counter, and two zero-counter assertions are refused; drop the rule's commit, and the counter does not persist where the opening then fails |
 | a signature counter that did not rise refuses the fresh assertion before adding a passkey, its update committed before the addition's | perturbation in `src/keys_tests.rs`: drop the library's `CredentialPossibleCompromise` arm at the fresh assertion, and a clone's assertion is refused unaudited; the rule's own comparison is the one sign-in's row shows, by the same function. The counter's transaction commits before the grant is minted and the grant is held in memory alone, so no addition's failure can roll it back |
-| a session carries a person and the method that opened it, ends where its person does or, where a passkey opened it, its passkey does, and its cookie is neither readable by script nor carried by another site | perturbation, against sessions opened in the store in `src/surfaces/gate_tests.rs`: drop `HttpOnly`, `Secure`, `SameSite=Strict` or `Path=/`, or set the cookie under another name, and the cookie's test finds it changed; read the old `weaver_session` name too, and a claimed-name cookie names a session; drop the check of a session's close, of its person's disable, of its passkey's presence, of the absolute limit or of the idle limit, and a session so ended is served; read a session no passkey opened as one whose passkey is removed, and a session a sign-in token opened ends at its first use, and re-check a write's session by its passkey alone, and every write under such a session is refused as its authority gone (`src/sign_in_token_tests.rs`); name the passkey by its credential ID rather than its own identity, reset the person and enroll the same credential again, and the session opened before the reset is served; leave the row open where a use finds it ended, and the next read finds it open; drop the `Origin` check, admit a request with no origin configured, or take the first of two `Origin` headers, and a POST from another origin changes state; refresh the last use unconditionally, and two uses within a minute write twice and a time ahead of the clock moves back; close unconditionally where a read found a session ended, hold a use between its read and its close, refresh the session from another request meanwhile, and the refreshed session is closed on the stale read (`src/surfaces/gate_tests.rs`); drop the absolute limit's seven-day bound, and an absolute limit of the largest integer a config holds loads (`src/config.rs`), an interval the database cannot make at every use; drop the idle limit's five-minute floor, and an idle limit of 30 seconds is accepted at load (`src/config.rs`), where a session in active use would end; and a session used every 50 seconds is held open at the floor itself (`src/surfaces/gate_tests.rs`); let sign-out leave the row open, and the cookie it cleared still names a session; write the person's name as the author, or resolve every member as a claim, and an authored row stops naming its person or their current name; let a host's `--author` claim of the whole `pe-` shape through, and each register verb and identity command acts on it (`src/link/verbs_audit_tests.rs`, `src/host_tests.rs`), its claim then resolving as that person. `tests/startup.rs` (ignored, the real binary) reads Record under a person's session, refuses `POST /sign-out` at the `Origin` check with the session's cookie and without, and refuses a `POST` to a path no route serves at the same check |
+| a session carries a person and the method that opened it, ends where its person does or, where a passkey opened it, its passkey does, and its cookie is neither readable by script nor carried by another site | perturbation, against sessions opened in the store in `src/surfaces/gate_tests.rs`: drop `HttpOnly`, `Secure`, `SameSite=Strict` or `Path=/`, or set the cookie under another name, and the cookie's test finds it changed; read the old `weaver_session` name too, and a claimed-name cookie names a session; drop the check of a session's close, of its person's disable, of its passkey's presence, of the absolute limit or of the idle limit, and a session so ended is served; read a session no passkey opened as one whose passkey is removed, and a session a sign-in token opened ends at its first use, and re-check a write's session by its passkey alone, and every write under such a session is refused as its authority gone (`src/sign_in_token_tests.rs`); name the passkey by its credential ID rather than its own identity, reset the person and enroll the same credential again, and the session opened before the reset is served; leave the row open where a use finds it ended, and the next read finds it open; drop the `Origin` check, admit a request with no origin configured, or take the first of two `Origin` headers, and a POST from another origin changes state; refresh the last use unconditionally, and two uses within a minute write twice and a time ahead of the clock moves back; close unconditionally where a read found a session ended, hold a use between its read and its close, refresh the session from another request meanwhile, and the refreshed session is closed on the stale read (`src/surfaces/gate_tests.rs`); drop the absolute limit's seven-day bound, and an absolute limit of the largest integer a config holds loads (`src/config.rs`), an interval the database cannot make at every use; drop the idle limit's five-minute floor, and an idle limit of 30 seconds is accepted at load (`src/config.rs`), where a session in active use would end; and a session used every 50 seconds is held open at the floor itself (`src/surfaces/gate_tests.rs`); let sign-out leave the row open, and the cookie it cleared still names a session; write the person's name as the author, or resolve every member as a claim, and an authored row stops naming its person or their current name; let a host's `--author` claim of the whole `pe-` shape through, and each register verb and identity command acts on it (`src/link/verbs_audit_tests.rs`, `src/host_tests.rs`), its claim then resolving as that person. `tests/startup.rs` (ignored, the real binary) reads The Record under a person's session, refuses `POST /sign-out` at the `Origin` check with the session's cookie and without, and refuses a `POST` to a path no route serves at the same check |
 | a passkey is added only after a fresh assertion, and a person's last is never removed | perturbation in `src/keys_tests.rs`: start a registration with no grant, and a session alone adds a passkey, a stolen cookie gaining access that outlasts it; drop the grant's binding to its session, and another session of the same person spends a grant it did not earn; drop the refusal of the last, and a person removes their last passkey; drop the addition's re-check of its session and of the passkey that earned its grant, hold the addition after its session read, run the host reset, and the device the reset cut off lands while the reset's token is stranded; drop the re-check of the passkey that earned the grant alone, remove that passkey while the session stands, and the addition lands on a removed passkey's grant; drop the removal's re-check of its session, and a removal asked under a session that no longer stands lands; take the removal's count outside the identity exclusion, hold one removal after its count, and two concurrent removals of the last two both land; list passkeys without the session's person, and the page shows another person's. A grant is taken once by the ceremony table, whose own test shows it |
 | an enrollment token is issued only for a person holding no passkey, lives at most seven days, is kept as its digest, and is its person's one live token | perturbation in `src/host_tests.rs`: drop the passkey check, and a token is issued for a person holding a credential, which an admin could redeem over theirs; drop the command's lifetime bound, and a token past seven days is refused only by the store, as a fault; drop the store's lifetime check, and a row past seven days lands; store the token in the clear, and a read of the token table is a set of usable tokens; leave an earlier token live when issuing, and the newest is refused against the one live token per person. And in `src/config.rs`: configure a lifetime past seven days, and it is taken |
 | a sign-in token is issued by the host alone and only where the config names `token`, lives at most an hour, is kept as its digest, is its person's one live token, is revoked by a disable or the host reset, and opens one session, by its person's name, naming its method and no passkey; and a person issued one takes an enrollment token from the host alone | perturbation in `src/sign_in_token_tests.rs`: drop the command's refusal where the config names no `token`, and a server configured as before issues one; mount the token's route whatever the config, and such a server serves it; drop the store's lifetime check, and a row past an hour lands; store the token in the clear, and a read of the token table is a set of usable tokens; leave an earlier token live when issuing, and the newest is refused against the one live token per person; drop the redemption's match on a token still live, and one token opens two sessions, one after the other or two at once; drop the check of the name, and a token signs in under another person's name; drop the expiry, and an expired token signs in; drop the check of its person, at the lookup and at the opening, and a disabled person's token opens a session; drop the disable's revocation, and a token issued before a disable signs in after an enable; drop the host reset's revocation, and a token printed before a reset signs in after it; drop the admin's refusal, and an admin issues an enrollment token for a person who signs in by token; drop the revocation at a sign-in token's issue, and an admin's enrollment token issued before it still starts an enrollment after; drop the session's check of its method against its passkey, and a session of a passkey's method naming no passkey lands. And in `src/config.rs`: take an empty `sign_in` or one naming a method twice, and it loads |
-| `GET /` sends a browser to sign-in without a session and to Record with one | test in `src/sign_in_token_tests.rs`: a request with no cookie, one whose cookie names no session and one naming a live session each get their redirect, and the first two never Record |
+| `GET /` sends a browser to sign-in without a session and to The Record with one | test in `src/sign_in_token_tests.rs`: a request with no cookie, one whose cookie names no session and one naming a live session each get their redirect, and the first two never The Record |
 | an enrollment token is single-use and redeemed only within its lifetime | perturbation, against a soft passkey (`webauthn-authenticator-rs`, a dev-dependency) in `src/passkeys_tests.rs`: drop the token's expiry, its end, its person's enable or the person's holding no passkey from what makes a token redeemable, and that token starts a ceremony; drop the transaction's re-check, and a passkey appearing between the options and the finish leaves the person holding two; leave the token unended at the redemption, and it redeems again; drop the check of a credential ID already held, and the finish fails at the store rather than refusing. A redemption sets no cookie and writes no session row, which the end-to-end test asserts |
 | an enrollment token is 32 bytes of the operating system's cryptographic randomness | perturbation in `src/store/identity_tests.rs`: draw bearers from a counter, and consecutive bearers share a prefix, the next guessed from the last |
 | a ceremony identity is drawn as every bearer the server issues is | perturbation in `src/passkeys_tests.rs`: draw ceremony identities from a counter, and consecutive identities share a prefix, the next guessed from the last |
@@ -5773,9 +5785,10 @@ an unmerged contract.
 | no two lineages share a name, and a lineage keeps its name | perturbation in `src/declarations_tests.rs`, `no_two_lineages_share_a_name_and_a_lineage_keeps_its_name`: drop the screen's check, or the store's under the key, and a second lineage saves under a held name, or a save renames its lineage, each check exercised alone; the index on a root's name stands beneath both |
 | only the server-wide admin grant reads or writes a declaration, and a refused save is one record | perturbation in `src/declarations_tests.rs`, `only_the_admin_grant_reads_or_writes_a_declaration`: drop the gate, and a person holding only a per-agent role reads the list and saves; a refused save writes exactly one audit record, carrying the refusal, and no row |
 | the declaration screen reaches no agent and no host | `the_declaration_screen_reaches_no_agent_and_no_host` in `src/declarations_tests.rs`, with a real listener and a fake connector of each plane connected and admitted: every route is exercised, a save, a save from it and two refusals among them, and neither connector is sent a line, the server sending a connector no heartbeat of its own |
-| the masthead stands in the path's order, each work page carrying its stage marks and Record last and unmarked, and a person sees it less the links an admin alone opens | perturbation in `src/navigation_tests.rs`, `the_masthead_stands_in_the_paths_order`, on the base template: swap Declarations and Register, put Record before Agents, who before Record or Passkeys before Persons, and the admin's masthead fails on its order; drop any of the four marks or number Declare 2, and it fails on that page's text; mark Record, and it fails on Record's; move Declarations, Register, Persons or Grants out of the admin's condition, and a person's masthead names it; drop Record from a page without a session, or put sign-in before it, and that order fails (16 cases, each caught) |
+| the bar stands in two rows: Agents, Agent Operations and IAM on top in that order, each opening the first sub-tab the person may open, then who is signed in, the open-alert count as a status and the sign-out at the right; beneath, the sub-tabs of the page's tab in their order, the agents' carrying their stage marks, the current one marked and the row named by its tab; a person sees the sub-tabs they may open, and a page without a session Agent Operations and sign-in alone | perturbation in `src/navigation_tests.rs`, `the_top_row_holds_three_tabs_and_the_status_at_the_right` and `the_second_row_holds_the_sub_tabs_of_the_pages_tab`, on the base template: swap Agents and Agent Operations or put IAM before Agent Operations, and the admin's top row fails on its order; open an admin's Agents at Your agents or IAM at Passkeys, or a person's IAM at Persons, and that person's top row fails; set the open-alert count among the tabs, before who or between Agents and Agent Operations, and it fails on its place; drop Agent Operations from a page without a session, put sign-in before it, or name the tab The Record, and that row fails; give a page of no tab the agents' tab, and the sign-in page fails on its second row; mark Agent Operations on every page, and the second row's test fails on the tab (12 cases); swap Declarations and Register or Persons and Grants, or put Your agents before Register or Passkeys before Persons, and the second row fails on its order; drop any of the four stage marks or number Declare 2, and it fails on the agents' row; move Declarations, Register, Persons or Grants out of the admin's condition, and a person's row names it; leave The Record unmarked or mark Register on Declarations, and it fails on the current sub-tab; name the agents' row Your agents or leave the IAM row unnamed, and it fails on the row's name; name the sub-tab Agents, or head The Record's page Record or Your agents' page Agents, and it fails on the name (20 cases); each caught |
+| every page declares its sub-tab, and one table names each sub-tab's tab | perturbation in `src/navigation_tests.rs`, `every_page_declares_its_tab_and_sub_tab`, over every page an admin opens and a scan of every `here` the surfaces declare: put Register under IAM, Persons under Agents or The Record under Agents, or leave Passkeys of no tab, and a page fails on its tab; have the agent page declare The Record, the hand-over Your agents or the declaration screen Register, and that page fails on its tab and sub-tab; have the passkeys page name no sub-tab, and it fails on the page and the scan (8 cases, each caught) |
 | a page's way forward stands where its condition holds and nowhere else | perturbation in `src/navigation_tests.rs`: drop a saved declaration's way forward, or the name its link carries, or plant one on the empty screen, and `a_saved_declaration_leads_on_to_registering_its_name` fails; let the register's form fill any name, or none, or drop the field's value, and it fails on the prefill; invert the hand-over's read of the admin's grant, or fix it either way, drop the box sentence under a grant, or point the Grants link at the agent's page, and `the_hand_over_leads_on_to_the_agents_page_or_says_why_not` fails (11 cases, each caught); in `src/surfaces/agents.rs`, read a failed grant read as none held, and `a_grant_read_is_held_not_held_or_unread` fails; render an unread grant as none held, or drop either of its two links, and `the_hand_over_says_an_unread_grant_is_unread` fails (4 cases, each caught) |
-| the agent page leads every reader on to Record and an admin alone back to the declaration saved under the agent's name, the rail linking Declare and Provision for an admin alone | perturbation in `src/navigation_tests.rs`, `the_agent_page_leads_on_to_record_and_back_to_its_declaration`: offer the way back to every reader, or to none, and it fails on the person's page or the admin's; drop the way on to Record, or its words that the record is not filtered by the agent, and it fails; name the lineage's root, or a lineage of another name, and it fails on version 2; link no mark, render a linked mark as a span or point Provision at another page, and it fails on the rail; send an agent with no declaration to the list, and it fails on the way back (10 cases, each caught) |
+| the agent page leads every reader on to The Record and an admin alone back to the declaration saved under the agent's name, the rail linking Declare and Provision for an admin alone | perturbation in `src/navigation_tests.rs`, `the_agent_page_leads_on_to_record_and_back_to_its_declaration`: offer the way back to every reader, or to none, and it fails on the person's page or the admin's; drop the way on to The Record or its words that the record is not filtered by the agent, or name it Record, and it fails; name the lineage's root, or a lineage of another name, and it fails on version 2; link no mark, render a linked mark as a span or point Provision at another page, and it fails on the rail; send an agent with no declaration to the list, and it fails on the way back (11 cases, each caught) |
 
 **A watch that cannot fail is not a test.** For each perturbation above, the
 act that lands it states what removal makes it fail and confirms it does.

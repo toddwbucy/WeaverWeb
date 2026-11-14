@@ -46,6 +46,21 @@ pub(crate) struct Chrome {
     pub(crate) banners: Vec<Banner>,
 }
 
+/// **The tab a page belongs to** (Spec 2.8; the operator's words of
+/// 2026-11-13), by the sub-tab the page declares as its `here`: `agents`
+/// for Declarations, Register and Your agents, `operations` for The Record,
+/// `iam` for Persons, Grants and Passkeys. A sub-tab belongs to one tab, so
+/// this one table names it and no page names both. A page of no tab, the
+/// sign-in and enrollment pages, has none.
+pub(crate) fn tab_of(here: &str) -> &'static str {
+    match here {
+        "declarations" | "register" | "agents" => "agents",
+        "record" => "operations",
+        "admin" | "grants" | "passkeys" => "iam",
+        _ => "",
+    }
+}
+
 /// One unavailable plane, as its banner says it.
 #[derive(Debug)]
 pub(crate) struct Banner {
@@ -116,7 +131,7 @@ pub fn routes(policy: gate::Policy) -> Router<Store> {
 }
 
 /// **`GET /` sends the browser on** (Spec 2.8): to sign-in where the request
-/// names no session that serves, and to Record, where every sign-in lands,
+/// names no session that serves, and to The Record, where every sign-in lands,
 /// where it names one. It reads the session as any use does, and is a
 /// redirect (`303 See Other`), never a page of its own.
 async fn landing(store: Store, policy: gate::Policy, headers: HeaderMap) -> Response {

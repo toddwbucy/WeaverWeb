@@ -629,17 +629,15 @@ the declaration screen of section 6.1 and by nothing else, and it carries:
   at the corpus commit below, never stored beside it. **Better way, ruled
   by the Planner on 2026-11-11**: the row held the agent's grammar whole
   until then, and that grammar has no place for what the operator's
-  rulings of 2026-11-11 put on the declaration screen, a GPU requirement, a
-  further model function, or whether the agent is a host agent or a
-  virtual-machine agent. So the console's document holds them, and what
+  rulings of 2026-11-11 put on the declaration screen, a GPU requirement or
+  a further model function. So the console's document holds them, and what
   the agent's grammar has no place for is shown as such (section 6.1)
   rather than dropped
 - **its identity, `de-` and sixteen lowercase hexadecimal digits**, minted
   by the server before the save's first audit record, as an agent's `ag-`
   is at register, so the record can name the row it is about to write
 - **the agent's name**, in the grammar `register` holds a name to (section
-  8), the declaration naming no box: a host agent's box is Provision's, and
-  a virtual-machine agent's box is the machine the console will clone
+  8), the declaration naming no box, which is Provision's
 - **the corpus commit its derived file was written against**, which is
   this row's staleness rule per section 7.2: when the agent's grammar
   moves, the pin says so, and the draft is named stale before it is offered
@@ -3734,8 +3732,6 @@ refusing.
 
 ```text
 name        text: letters, digits, _ and -, the grammar register holds a name to
-placement   {"kind": "host"}
-          | {"kind": "virtual-machine", "template": text}
 boxes       one or more SPU boxes, each
               {"models": [model, ...], "gpu": requirement}
 model       {"function": "decoder" | "classifier",
@@ -3767,19 +3763,6 @@ state_election  {"all_kinds": true | false,
 
 - **The agent's name**, required. It names the lineage and never changes
   within it (section 2.4).
-- **Host agent or virtual-machine agent**, required, ruling 5. A
-  virtual-machine agent names the template it will be cloned from, as the
-  operator types it. **The console does the clone itself, at declaration**,
-  once a host plane exists, with no operator script between; after it, load
-  is the machine's start, unload its stop and retire its destroy. **The
-  template holds no keys.** Its image digest and the configured machine's
-  own digest are two facts, and both are recorded: the configured machine
-  hashes differently from the template, and the template is the parent it
-  descends from, so the template's digest goes on the run card as the
-  agent's provenance and the machine's is recorded as descending from it
-  (the operator's clarification of 2026-11-11). There is no Hosts page, and
-  **the console never manages a virtual machine as an object of its own**: a
-  machine is an agent's, made and ended by that agent's own steps.
 - **SPU boxes**, one or more, ruling 3: one box stands for the models it
   holds, so four models declared apart are four boxes and one decoder with
   its adapter is one box, spread out or collapsed as the operator chooses.
@@ -3795,9 +3778,9 @@ state_election  {"all_kinds": true | false,
   hexadecimal digits, and a finite scale.
 - **Each box's GPU requirement**, required, ruling 6: a requirement and not
   a device. **A card** is one physical card, named by an identifier the
-  operator types and held as opaque text: a card's identity is a fact a host
-  reports, nothing reports one yet, and it is checked against what the host
-  reports once a host plane exists. **A class** is the card models any one
+  operator types and held as opaque text, as typed: nothing the console
+  reads reports a card, and what checks the identifier against the card it
+  names is left open (section 10). **A class** is the card models any one
   of which may be drawn, given in one of two forms, and the stored form says
   which was typed: **a family**, a name the capability table below lists
   models under, standing for every model the table lists under it, or **a
@@ -4005,12 +3988,12 @@ state_election  {"all_kinds": true | false,
   reload.
 
 **What the form refuses on its own, saving nothing and naming the field**:
-a missing required field (the name, the placement, a virtual-machine
-agent's template, a box, a box with no model, a model's function, artifact
-or format, a box's GPU requirement, the store); a requirement that names
-nothing (a card with no identifier, a class giving neither a family nor a
-list, a family with no name, a list with no model or a model with no name,
-a pair that is not two, a pair inside a pair, a list naming a model twice,
+a missing required field (the name, a box, a box with no model, a model's
+function, artifact or format, a box's GPU requirement, the store); a
+requirement that names nothing (a card with no identifier, a class giving
+neither a family nor a list, a family with no name, a list with no model or
+a model with no name, a pair that is not two, a pair inside a pair, a list
+naming a model twice,
 judged with case and spacing folded); a class giving both a family and a
 list; a requirement naming more than one of a card, a class and a pair; a
 roster the framework would not load (no decoder, a second decoder, a
@@ -4061,9 +4044,8 @@ field:
 | field | takes effect when |
 | --- | --- |
 | the name | Provision's register names the agent's row; the box's accounts are the box's |
-| host or virtual machine, the template | a host agent: nothing more. A virtual-machine agent: the host plane's Spec, which waits on a measurement in progress; then the console's clone at declaration, and the template's digest and the machine's recorded |
 | the boxes, models, artifacts, formats and adapters | the declaration reaches the agent (interface question 2), then `validate` and the SPU's admission; a second box has no place in the agent's grammar (question 1) |
-| a GPU requirement | the agent's grammar holds device ordinals, not requirements (question 1); start satisfies the requirement or refuses, never substituting, and stamps the card drawn on every load event; a card's identifier is checked once a host reports cards |
+| a GPU requirement | the agent's grammar holds device ordinals, not requirements (question 1); start satisfies the requirement or refuses, never substituting, and stamps the card drawn on every load event; what checks a card's identifier is left open (section 10) |
 | the tunable values | they derive into the agent's `tunable-values`, every name a serving load requires at the pin, so no file is refused for a missing one; the harness reads the sampler's six at load and every generation carries them, the record stating them; values a turn carries of its own wait on the console sending a turn with them (question 6) |
 | the sampler's mechanism and the other settings fixed at load | an agent reports them (question 5) |
 | the store and the gate's tools | the declaration reaches the agent (question 2); the gate admits its gate-con, filled at Provision |
@@ -4110,8 +4092,8 @@ read the document back**:
   rule and each binding's devices stay such comments, Provision's and
   start's to fill, and requiring the tunable values changes none of them.
   A trailing block of comments lists what the grammar has no place for,
-  each naming its interface question: the placement and its template, each
-  box's GPU requirement, and every box beyond the first. **A last block
+  each naming its interface question: each box's GPU requirement, and
+  every box beyond the first. **A last block
   names what the grammar holds and the screen does not declare**:
   `binding-kind`, whose absence the agent reads as serving, every
   declaration the screen saves being serving; and the decoder's
@@ -5769,6 +5751,7 @@ an unmerged contract.
 | a class spanning more than one compute capability is warned of, and a model the capability table does not know is named unknown and admitted | perturbation in `src/declarations_tests.rs`, `a_class_spanning_capabilities_is_warned_of_and_an_unknown_is_named`: drop the warning, and a class of two capabilities saves with none; make it a refusal, and the case fails, since the class must save; a family spanning two capabilities by the table's rows, typed in another case, is warned of, and each saved class keeps the form typed, family or list; render an unknown capability, of a model or of a family, as a blank, or refuse it, and the case fails; and `the_capability_table_is_the_page_as_read_and_every_row_cites_its_source`: the table against the vendor's page as read, row for row, every capability and family citing its source, a family by statement citing a guide's passage and one by name holding the name |
 | a save and a reopen are the same document, and the agent's file is derived from it | perturbation in `src/declarations_tests.rs`, `a_save_and_a_reopen_are_the_same_document`: a document holding every member saved, the row holding its canonical form, and the reopened page's form posted as a browser posts it read back as the same document, its re-save moving nothing; drop a member on the save or on the reopen, and the comparison fails; both panes are what the document derives; the agent's file parses as TOML, names the pinned corpus commit, writes the eight tunable values in `tunable-values` under the agent's names, writes the turn context, the decoder's two elections and the state election as the document gives them (three rows, one of no paths, their paths typed with a carriage return, padding and a blank line, read back one path per line), writes each placeless member in its trailing block and names `binding-kind` and the decoder's `field-election` in its last, writing neither, never naming the declared `[state-election]` undeclared, and a reopen with the turn context, the surprisal box or a row's paths dropped is no longer the document; and `the_agents_file_writes_every_admitted_value_in_its_toml_type`: a whole real at or above 1e15 and the adapter's scale read back as floats, a count at the largest whole number TOML holds as that integer, and the header names this build's pin; write a whole real as its digits alone, and the case fails |
 | a save from a row that is not its lineage's head is refused and writes nothing, and the schema admits a second child of one parent | perturbation in `src/declarations_tests.rs`, `a_save_from_a_row_not_the_head_is_refused_and_two_children_are_admitted`: drop the screen's head check, or the store's under the key, and the stale save lands, each check exercised alone; and two children of one parent inserted through the store's own insert, which succeeds |
+| a row saved with the withdrawn placement reads, reopens and derives without it, a document or a post carrying it is refused naming it, and the row's child records it leaving | perturbation in `src/declarations_tests.rs`: `a_document_or_a_form_carrying_placement_is_refused_as_an_unknown_member`, admit the member on the parse, or on the form, and a document or a post carrying it is judged a declaration; `a_saved_body_carrying_placement_reads_without_it`, read a saved body with the parse alone, and a row saved before 2026-11-14 does not read, or discard every unknown member on read, and a body carrying a member no grammar held reads; `a_row_saved_with_placement_reopens_without_it_and_its_child_records_it_leaving`, a row placed with the member reopens with no word of it on the screen, the form or the file, the reopened form posted with it is refused naming it and saves nothing, and posted as reopened its child names `placement` alone among what moved and holds none: open a saved row with the parse alone, and the row answers the server's failure; diff the child against its parent read through the reader, and nothing is named as moved |
 | a declaration row's authored half never changes | perturbation in `src/declarations_tests.rs`, `a_declaration_rows_authored_half_never_changes`: an update of each authored member, a delete and a truncate are refused by the trigger, and the last `validate` reading moves; drop the trigger, and the update lands. The key is an identity column no update may set |
 | no two lineages share a name, and a lineage keeps its name | perturbation in `src/declarations_tests.rs`, `no_two_lineages_share_a_name_and_a_lineage_keeps_its_name`: drop the screen's check, or the store's under the key, and a second lineage saves under a held name, or a save renames its lineage, each check exercised alone; the index on a root's name stands beneath both |
 | only the server-wide admin grant reads or writes a declaration, and a refused save is one record | perturbation in `src/declarations_tests.rs`, `only_the_admin_grant_reads_or_writes_a_declaration`: drop the gate, and a person holding only a per-agent role reads the list and saves; a refused save writes exactly one audit record, carrying the refusal, and no row |
@@ -6105,15 +6088,16 @@ a `web-` assertion beside `weaver-admin`'s.
   were "which gate", and he has spoken of an agent with several callers
   through one gate, so the field may grow.
 - **A card's identity, opened 2026-11-11** (section 6.1). A specific card is
-  held as the text the operator typed until a host plane reports the cards
-  a host holds, and only then is it checked. A class's family is the
-  capability table's word, so a host that names a card's family otherwise
-  would need the table to map it.
+  held as the text the operator typed, and nothing the console reads
+  reports a card, so what checks the identifier against the card it names
+  is open. A class's family is the capability table's word, so a report
+  that names a card's family otherwise would need the table to map it.
 - **A host's reserved card, opened 2026-11-11** (section 6.1). The
   operator's clarification is that a host may reserve a card for itself,
-  which then satisfies no requirement and belongs to no class. Where the
-  reservation is declared and how start reads it wait on the host plane's
-  Spec; the declaration screen declares nothing of it.
+  which then satisfies no requirement and belongs to no class. It is kept,
+  by the operator's choice of 2026-11-14, for the single-host install of
+  the Spark class of machine. Where the reservation is declared and how
+  start reads it are open; the declaration screen declares nothing of it.
 - **The session parameters' starting values, opened 2026-11-12** (section
   6.1). The Planner's default: the maximum tokens per turn and the context
   capacity start empty in a new declaration's form, and the operator enters

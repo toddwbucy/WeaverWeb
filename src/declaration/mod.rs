@@ -7,6 +7,7 @@
 //! conforms: web-a-new-form-starts-with-two-elections-at-the-agents-absence
 //! conforms: web-an-election-beside-no-store-is-refused-and-none-is-written
 //! conforms: web-a-new-form-starts-at-the-default-state-election
+//! conforms: web-a-row-saved-with-the-withdrawn-placement-reads-without-it
 //!
 //! **The declaration's document** (Spec 6.1): the console's own grammar, a
 //! superset of the agent's, which the declaration screen saves and the
@@ -121,7 +122,6 @@ pub const MAX_KINDS: usize = state_election::KINDS.len();
 #[derive(Debug, Clone, PartialEq)]
 pub struct Document {
     pub name: String,
-    pub placement: Placement,
     pub boxes: Vec<SpuBox>,
     pub sampler: Sampler,
     pub store: Engine,
@@ -164,12 +164,6 @@ impl TurnContext {
             TurnContext::Independent => "independent",
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Placement {
-    Host,
-    VirtualMachine { template: String },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -487,6 +481,24 @@ fn naming_text(value: &Value, field: String, nothing: &str) -> Result<String, Re
 }
 
 impl Document {
+    /// **The document a saved row's body is** (Spec 2.4): [`Document::parse`]
+    /// after one member is discarded, the top-level `placement` a row saved
+    /// before 2026-11-14 carries. The operator's rulings of that date
+    /// withdrew the field, and a row's authored half never changes, so the
+    /// row keeps it and the reader alone drops it. Every other member is
+    /// judged as the parse judges it, and a document posted or about to be
+    /// saved goes through the parse alone, which refuses the member.
+    pub fn read_saved(value: &Value) -> Result<Document, Refused> {
+        match value {
+            Value::Object(map) if map.contains_key("placement") => {
+                let mut map = map.clone();
+                map.remove("placement");
+                Document::parse(&Value::Object(map))
+            }
+            _ => Document::parse(value),
+        }
+    }
+
     /// **The document a JSON value is, or the refusal naming its field.**
     pub fn parse(value: &Value) -> Result<Document, Refused> {
         let top = object(
@@ -494,7 +506,6 @@ impl Document {
             "",
             &[
                 "name",
-                "placement",
                 "boxes",
                 "sampler",
                 "store",
@@ -514,7 +525,6 @@ impl Document {
                 "is letters, digits, _ and - alone, the register's grammar",
             ));
         }
-        let placement = placement(top.get("placement"))?;
         let boxes = boxes(top.get("boxes"))?;
         let sampler = sampler(top.get("sampler"))?;
         let store = match top.get("store") {
@@ -575,7 +585,6 @@ impl Document {
         }
         let document = Document {
             name,
-            placement,
             boxes,
             sampler,
             store,
@@ -680,12 +689,6 @@ impl Document {
     /// sampler values and absent elections left out, the prompt null where
     /// there is none.
     pub fn to_value(&self) -> Value {
-        let placement = match &self.placement {
-            Placement::Host => json!({"kind": "host"}),
-            Placement::VirtualMachine { template } => {
-                json!({"kind": "virtual-machine", "template": template})
-            }
-        };
         let boxes: Vec<Value> = self
             .boxes
             .iter()
@@ -725,7 +728,6 @@ impl Document {
         }
         let mut value = json!({
             "name": self.name,
-            "placement": placement,
             "boxes": boxes,
             "sampler": sampler,
             "store": self.store.word(),
@@ -798,34 +800,6 @@ fn requirement_value(requirement: &Requirement) -> Value {
         Requirement::Card(card) => json!({"card": card}),
         Requirement::Class(class) => json!({"class": class_value(class)}),
         Requirement::Pair(parts) => json!({"pair": [part_value(&parts[0]), part_value(&parts[1])]}),
-    }
-}
-
-fn placement(value: Option<&Value>) -> Result<Placement, Refused> {
-    let Some(value) = value.filter(|v| !v.is_null()) else {
-        return Err(refused("placement", Kind::Missing, "is required"));
-    };
-    let map = object(value, "placement", &["kind", "template"])?;
-    let kind = required_text(map, "placement", "kind")?;
-    match kind.as_str() {
-        "host" => {
-            if map.contains_key("template") {
-                return Err(refused(
-                    "placement.template",
-                    Kind::Unknown,
-                    "is a virtual-machine agent's member, not a host agent's",
-                ));
-            }
-            Ok(Placement::Host)
-        }
-        "virtual-machine" => Ok(Placement::VirtualMachine {
-            template: required_text(map, "placement", "template")?,
-        }),
-        _ => Err(refused(
-            "placement.kind",
-            Kind::Shape,
-            "is host or virtual-machine",
-        )),
     }
 }
 
@@ -1285,8 +1259,6 @@ fn diff(path: &str, before: &Value, after: &Value, out: &mut Vec<String>) {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Form {
     pub name: String,
-    pub placement: String,
-    pub template: String,
     pub boxes: Vec<FormBox>,
     /// Each sampler member's text, in [`SAMPLER`]'s order.
     pub sampler: Vec<(&'static str, String)>,
@@ -1394,8 +1366,6 @@ impl Form {
             let parts: Vec<&str> = key.split('.').collect();
             match parts.as_slice() {
                 ["name"] => form.name = value,
-                ["placement"] => form.placement = value,
-                ["template"] => form.template = value,
                 ["store"] => form.store = value,
                 ["tools"] if value == "sh" && !form.sh => form.sh = true,
                 ["tools"] => {
@@ -1499,13 +1469,6 @@ impl Form {
         let mut top = Map::new();
         if !self.name.is_empty() {
             top.insert("name".into(), json!(self.name));
-        }
-        if !self.placement.is_empty() {
-            let mut placement = json!({"kind": self.placement});
-            if self.placement == "virtual-machine" {
-                placement["template"] = json!(self.template);
-            }
-            top.insert("placement".into(), placement);
         }
         let mut boxes = Vec::new();
         for (i, b) in self.boxes.iter().enumerate() {
@@ -1733,14 +1696,6 @@ impl Form {
     pub fn of(document: &Document, extra_boxes: usize) -> Form {
         let mut form = Form {
             name: document.name.clone(),
-            placement: match &document.placement {
-                Placement::Host => "host".to_owned(),
-                Placement::VirtualMachine { .. } => "virtual-machine".to_owned(),
-            },
-            template: match &document.placement {
-                Placement::Host => String::new(),
-                Placement::VirtualMachine { template } => template.clone(),
-            },
             boxes: document
                 .boxes
                 .iter()

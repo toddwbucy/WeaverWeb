@@ -1,6 +1,7 @@
 //! conforms: web-a-save-from-a-row-not-its-lineages-head-is-refused
 //! conforms: web-no-two-lineages-share-a-name
 //! conforms: web-a-declaration-rows-authored-half-never-changes
+//! conforms: web-a-row-saved-with-the-withdrawn-placement-reads-without-it
 //!
 //! **The saved declarations** (Spec 2.4): every save appends a row whose
 //! authored half never changes, the lineage identified by its root, a row's
@@ -283,6 +284,9 @@ impl Store {
                 if let Err(refusal) = saveable(&parent, document) {
                     return Ok(Err(refusal));
                 }
+                // The parent's body as stored, never as the reader takes it:
+                // a member a row keeps from an earlier grammar (Spec 6.1's
+                // withdrawn `placement`) is named once, at the save it leaves.
                 let what_moved = moved(&parent.body, &body);
                 let under = Under {
                     declaration_id: parent.declaration_id,

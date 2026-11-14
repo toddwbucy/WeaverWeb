@@ -164,7 +164,7 @@ agent in a way that blocks many.
 
 | stage | what it holds | backing |
 | --- | --- | --- |
-| 1 Declare | two screens (the operator's rulings of 2026-11-11): declare the components (the models on their SPU boxes with each box's GPU requirement, the store, the gate, host or virtual machine, the system prompt, the tunable values a serving load requires), then wire them on a board that shows only what was declared | partly: the declaration screen saves versioned declarations and shows the file each will become (Spec 6.1); the board is unbuilt and waits on contracts WeaverAgent has yet to write |
+| 1 Declare | two screens (the operator's rulings of 2026-11-11): declare the components (the models on their SPU boxes with each box's GPU requirement, the store, the gate, the system prompt, the tunable values a serving load requires), then wire them on a board that shows only what was declared | partly: the declaration screen saves versioned declarations and shows the file each will become (Spec 6.1); the board is unbuilt and waits on contracts WeaverAgent has yet to write |
 | 2 Provision | first the operator's work on the box, which this server never reaches: stage the binaries, create the kernel account, install the declaration Declare saved; then this server's: register the agent, mint its two connector credentials; then `validate`, which reads the installed declaration | partly: the register page and the one-time config handover are built; the box steps and the validate step are not |
 | 3 Run | load, serve turns through the gate, unload | built; `load` is offered as every verb is, where the person's grants and the connection's ceiling carry it |
 | 4 Observe | availability, alerts, the live trace | built |
@@ -207,14 +207,7 @@ decoder and its free placement of pieces. Spec section 6.1 states the first scre
   versioned document, read back as the file it will become. One SPU box stands for the
   models it holds, four models declared apart being four boxes and one decoder with its
   adapter one box, spread out or collapsed as the operator chooses. The engine follows
-  from the model's format, GGUF offered first and the other formats named as later.
-  Whether the agent is a host agent or a virtual-machine agent is one field, and there
-  is no Hosts page: the console never manages a virtual machine as an object of its own.
-  A virtual-machine agent is cloned by the console itself from a template at
-  declaration, with no operator script between, load being the machine's start, unload
-  its stop and retire its destroy. The template holds no keys, and its image digest goes
-  on the run card as the agent's provenance; the configured machine hashes differently
-  and its own digest is recorded too, the template being the parent it descends from. A
+  from the model's format, GGUF offered first and the other formats named as later. A
   GPU is declared as a requirement, not as a device: a specific card, a class, given as
   a family (any card of one architecture) or as a list of models, or a pair of two
   requirements in shard order. The screen warns, and does not refuse, where a class

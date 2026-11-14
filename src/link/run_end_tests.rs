@@ -70,27 +70,27 @@ async fn running(grants: &[&str]) -> Option<Run> {
 }
 
 /// A `show` the server asked of its own: its first record's date, and the
-/// outcome naming it, if one has landed.
-#[derive(Debug)]
+/// outcome naming it and that record's date, the answer's, if one has
+/// landed.
+#[derive(Debug, sqlx::FromRow)]
 struct Shown {
     at: DateTime<Utc>,
     outcome: Option<String>,
+    answered: Option<DateTime<Utc>>,
 }
 
 /// The server's own `show` asks the audit holds on `id`, oldest first.
 async fn server_shows(lab: &Lab, id: &AgentId) -> Vec<Shown> {
-    let rows: Vec<(DateTime<Utc>, Option<String>)> = sqlx::query_as(
-        "SELECT f.at, o.outcome FROM audit f LEFT JOIN audit o ON o.answers = f.audit_id \
-         WHERE f.target_id = $1 AND f.action = 'show' AND f.principal = 'server' \
-         AND f.answers IS NULL AND f.refusal IS NULL ORDER BY f.at, f.audit_id",
+    sqlx::query_as::<_, Shown>(
+        "SELECT f.at, o.outcome, o.at AS answered FROM audit f LEFT JOIN audit o \
+         ON o.answers = f.audit_id WHERE f.target_id = $1 AND f.action = 'show' \
+         AND f.principal = 'server' AND f.answers IS NULL AND f.refusal IS NULL \
+         ORDER BY f.at, f.audit_id",
     )
     .bind(id.as_str())
     .fetch_all(&lab.store.pool)
     .await
-    .unwrap();
-    rows.into_iter()
-        .map(|(at, outcome)| Shown { at, outcome })
-        .collect()
+    .unwrap()
 }
 
 /// Wait until the audit holds `n` of the server's `show` asks, each
@@ -276,8 +276,17 @@ async fn a_relay_hiccup_asks_show_at_its_close_and_again_at_the_reopening() {
 /// The door closes on a run whose `show` answers `in_transition` `n`
 /// times before its state, the state `unloaded`; the run as it then stands.
 async fn closed_in_transition(n: usize) -> Option<Run> {
+    closed_in_transition_answering_after(n, Duration::ZERO).await
+}
+
+/// As [`closed_in_transition`], each `show` from the close on answered
+/// `delay` after it is asked.
+async fn closed_in_transition_answering_after(n: usize, delay: Duration) -> Option<Run> {
     let mut r = running(&["show"]).await?;
     r.lab.listener.set_close_reask(GAP);
+    if !delay.is_zero() {
+        r.invoker.slow("show", delay);
+    }
     r.trace.append(1, "load");
     r.lab
         .wait_for(&r.id, "idle by the trace", |a| {
@@ -341,21 +350,25 @@ async fn a_close_show_in_transition_twice_is_asked_twice_more() {
 /// **`in_transition` past the bound**: the close's `show` and its three
 /// re-asks all answer it, each re-ask asked no sooner than the gap after
 /// the answer before it; then nothing is asked, and the row keeps its last
-/// state with the transition beside it, dated.
+/// state with the transition beside it, dated. Each answer is held a gap
+/// after its ask, so a gap measured from the ask would re-ask at the
+/// answer: the gap is read from the answer's outcome record.
 ///
 /// Perturbations: (1) re-ask without a bound, and a fifth `show` is asked;
-/// (2) re-ask at once, and the asks stand closer than the gap.
+/// (2) re-ask at once, and a re-ask stands closer than the gap to the
+/// answer before it; (3) measure the gap from the ask, and the same.
 #[tokio::test]
 async fn a_close_show_in_transition_past_the_bound_leaves_the_transition() {
-    let Some(r) = closed_in_transition(10).await else {
+    let Some(r) = closed_in_transition_answering_after(10, GAP).await else {
         return;
     };
     let shows = wait_shows(&r.lab, &r.id, 5).await;
     for pair in shows[1..].windows(2) {
-        let apart = (pair[1].at - pair[0].at).to_std().unwrap();
+        let answered = pair[0].answered.expect("each show answered");
+        let apart = (pair[1].at - answered).to_std().unwrap_or_default();
         assert!(
             apart >= GAP,
-            "a re-ask stands {apart:?} after the ask before it: {shows:?}"
+            "a re-ask stands {apart:?} after the answer before it: {shows:?}"
         );
     }
     tokio::time::sleep(GAP * 5).await;

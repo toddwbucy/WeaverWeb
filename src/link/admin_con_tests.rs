@@ -166,7 +166,7 @@ impl FakeInvoker {
         *self.fails.lock().unwrap() = Some(verb.to_owned());
     }
 
-    fn slow(&self, verb: &str, delay: Duration) {
+    pub(super) fn slow(&self, verb: &str, delay: Duration) {
         *self.slow.lock().unwrap() = Some((verb.to_owned(), delay));
     }
 

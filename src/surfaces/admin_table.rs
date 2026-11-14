@@ -108,14 +108,85 @@ pub fn refused(verb: &str, reading: Reading) -> Option<&'static str> {
 
 /// **The warning beside an offered verb**, where the row's last reading is
 /// one the table refuses it in: the refusal, the reading and its date.
-pub fn warning(verb: &str, row: &Agent) -> Option<String> {
+/// **A state by event under a door that closed after it says so**
+/// ([`closed_after`]), both dates to the millisecond, with what reads it
+/// ([`CloseRead`]).
+pub fn warning(verb: &str, row: &Agent, read: CloseRead) -> Option<String> {
     let (reading, at) = Reading::of(row)?;
     let refusal = refused(verb, reading)?;
     let words = reading.words();
+    let read = match closed_after_row(row).filter(|_| reading != Reading::InTransition) {
+        Some((state_at, door_at)) => format!(
+            "Read {words} at {}, by event. The trace door closed after it, at {}: no event has moved it since, and {}.",
+            state_at.format(TO_THE_MS),
+            door_at.format(TO_THE_MS),
+            who_reads(read, "it")
+        ),
+        None => format!("Read {words} {}.", at.format("%Y-%m-%d %H:%M:%S UTC")),
+    };
     Some(format!(
-        "admin refuses this while the agent reads {words}: {refusal}. Read {words} {}.",
-        at.format("%Y-%m-%d %H:%M:%S UTC")
+        "admin refuses this while the agent reads {words}: {refusal}. {read}"
     ))
+}
+
+/// A date as the page writes it to the millisecond.
+pub const TO_THE_MS: &str = "%Y-%m-%d %H:%M:%S%.3f UTC";
+
+/// **A state by event under a door that closed at or after it** (Spec
+/// 2.12): no event can move the state while the door stays closed, so the
+/// page says when the state was read and when the door closed after it,
+/// both to the millisecond. `None` where the state is not by event, where
+/// the door is open or not reported, or where it closed before the state's
+/// date. Compared to the millisecond, the precision the page shows.
+pub fn closed_after(
+    source: Option<&str>,
+    state_at: Option<DateTime<Utc>>,
+    door: Option<bool>,
+    door_at: Option<DateTime<Utc>>,
+) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
+    let (state_at, door_at) = (state_at?, door_at?);
+    (source == Some("event")
+        && door == Some(false)
+        && door_at.timestamp_millis() >= state_at.timestamp_millis())
+    .then_some((state_at, door_at))
+}
+
+/// [`closed_after`] of the row's load state and trace door.
+pub fn closed_after_row(row: &Agent) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
+    closed_after(
+        row.state_source.as_deref(),
+        row.load_state_at,
+        row.trace_door,
+        row.trace_door_at,
+    )
+}
+
+/// **What reads a state under a closed door** (Spec 2.13, 7.2): `show`,
+/// asked at every close of a live admin-con whose ceiling grants it and
+/// whose hello stated the capability, and otherwise nothing, which the page
+/// says rather than claim a read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloseRead {
+    /// `show`, asked at the close.
+    Show,
+    /// Nothing: the live admin-con states no `close_show` (Spec 8), as one
+    /// built before the capability does.
+    NotAsked,
+    /// Nothing: the live ceiling does not grant `show`.
+    OutsideCeiling,
+}
+
+/// [`CloseRead`] in the page's words.
+pub fn who_reads(read: CloseRead, it: &str) -> String {
+    match read {
+        CloseRead::Show => format!("show reads {it}"),
+        CloseRead::NotAsked => format!(
+            "this admin-con is asked no show at a close, so nothing reads {it} until the door opens or admin-con is admitted again"
+        ),
+        CloseRead::OutsideCeiling => {
+            format!("show, which would read {it}, is outside the live ceiling")
+        }
+    }
 }
 
 #[cfg(test)]
@@ -546,6 +617,57 @@ mod tests {
             crate::declaration::render::CORPUS_COMMIT,
             "the build's pin moved: reread the contract's section 4.1 at the new commit, \
              refresh admin-table-<commit>.md and this module, then move STATE_TABLE_READ_AT"
+        );
+    }
+
+    /// **A state by event stands under a closed door where the door closed
+    /// at or after it** (Spec 2.12): by `show`, under an open door or one
+    /// not reported, or under a door that closed before the state's date,
+    /// it does not; at the same millisecond and after, it does.
+    ///
+    /// Perturbations: compare strictly, and a close in the state's own
+    /// millisecond says nothing; drop the source, and a state by `show`
+    /// is named stale; drop the door's state, and an open door is.
+    #[test]
+    fn a_state_by_event_stands_under_a_door_that_closed_at_or_after_it() {
+        use super::closed_after;
+        use chrono::{DateTime, Utc};
+        let at = |ms: i64| DateTime::<Utc>::from_timestamp_millis(1_794_000_000_000 + ms).unwrap();
+        let state = Some(at(402));
+        assert_eq!(
+            closed_after(Some("event"), state, Some(false), Some(at(962))),
+            Some((at(402), at(962))),
+            "closed after"
+        );
+        assert_eq!(
+            closed_after(Some("event"), state, Some(false), Some(at(402))),
+            Some((at(402), at(402))),
+            "closed in the same millisecond"
+        );
+        assert_eq!(
+            closed_after(Some("event"), state, Some(false), Some(at(401))),
+            None,
+            "closed before"
+        );
+        assert_eq!(
+            closed_after(Some("show"), state, Some(false), Some(at(962))),
+            None,
+            "by show"
+        );
+        assert_eq!(
+            closed_after(Some("event"), state, Some(true), Some(at(962))),
+            None,
+            "open"
+        );
+        assert_eq!(
+            closed_after(Some("event"), state, None, None),
+            None,
+            "not reported"
+        );
+        assert_eq!(
+            closed_after(Some("event"), None, Some(false), Some(at(962))),
+            None,
+            "no state"
         );
     }
 }

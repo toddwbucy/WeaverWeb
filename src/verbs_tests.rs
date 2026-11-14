@@ -77,7 +77,16 @@ pub(crate) async fn operated_with(ceiling: &[&str], silence: Duration) -> Option
 /// An admin-con dialed with the config and admitted: the hello, the
 /// admission's `show` answered idle, and `caught_up`.
 pub(crate) async fn admitted_admin(config: &str, ceiling: &[&str]) -> Connector {
-    let mut admin_con = Connector::dial_with(config, ceiling).await;
+    admitted(Connector::dial_with(config, ceiling).await).await
+}
+
+/// As [`admitted_admin`], an admin-con older than the first capability
+/// (Spec 8), its hello stating none.
+pub(crate) async fn admitted_older_admin(config: &str, ceiling: &[&str]) -> Connector {
+    admitted(Connector::dial_older(config, ceiling).await).await
+}
+
+async fn admitted(mut admin_con: Connector) -> Connector {
     assert!(matches!(
         admin_con.recv().await,
         Some(ToClient::HelloAnswer { .. })
@@ -760,8 +769,9 @@ pub(crate) async fn bea_asker(o: &Operated) -> Asker {
 /// **Persons' asks never fill the connection's channel**: three asks stop
 /// under their holds and take every place, and seventy more park behind
 /// them, each having tried for a slot first. The connection's own frames
-/// still go out: an opening of the trace door has its `show` asked and its
-/// `landed` reported, and the connection stands. The asks name three verbs,
+/// still go out: a close of the trace door has its `show` asked, an
+/// opening its own `show` and its `landed` reported, and the connection
+/// stands. The asks name three verbs,
 /// since a person's second identical verb in flight is held at its check
 /// and would never stop under its hold.
 ///
@@ -809,6 +819,10 @@ async fn persons_asks_never_fill_the_connections_channel() {
             tail: None,
         })
         .await;
+    match o.admin_con.recv().await {
+        Some(ToClient::Verb { verb, .. }) if verb == "show" => {}
+        other => panic!("the close's show did not go out: {other:?}"),
+    }
     o.admin_con
         .send(FromClient::Door {
             open: true,

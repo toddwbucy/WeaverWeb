@@ -762,6 +762,12 @@ async fn a_transition_read_after_the_close_takes_no_line_on_the_warning_or_the_c
         .await;
     let (ask, verb, _) = take_verb(&mut o.admin_con).await;
     assert_eq!(verb, "show", "the close asks show");
+    // The door is dated by the client's clock, the transition and its
+    // constituents by the listener's at the answer: answer only once that
+    // clock has passed the door, so they are read after the close.
+    while chrono::Utc::now().timestamp_millis() <= state_ms + 40 {
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
     o.admin_con
         .send(FromClient::Verb {
             id: ask,

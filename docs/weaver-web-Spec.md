@@ -1396,7 +1396,11 @@ never a bare socket's. Each row carries:
   with it, per `toddwbucy/WeaverAgent#59`, so a state from an event can
   outlive the process: a turn's start and close keep it no older than the
   agent's last turn, and the full answer, the reset event of
-  `toddwbucy/WeaverAgent#58`, is owed until that lands
+  `toddwbucy/WeaverAgent#58`, is owed until that lands. **Every close of
+  the trace door asks `show`** where the ceiling grants it (section 7.2),
+  so a run's end is read by admin's word however it came, and while a
+  state by event stands under a door that closed at or after it, the agent
+  page says so (section 2.13)
 - **which source each of the tuple and the load state stands on**, one
   source per member, a `show` answer or a live trace event, each dated with
   its member. The load state's source lets a surface say a state is
@@ -2321,7 +2325,20 @@ it decides are stated here and in section 2.8, and the reasons are there.
   and its two paragraphs byte-identical to the copy. Where the contract and
   the page differ, the contract wins. A reading is the row's and can be older than the agent's
   state, which is why the warning carries its date and the box's own rule
-  decides last. **Run's two panes re-read by themselves** (on the
+  decides last. **A state by event under a closed door says so** (on the
+  Planner's ruling of 2026-11-14): where the load state's source is a
+  trace event and the trace door closed at or after the state's date, no
+  event can move the state, so the page writes the load state and the
+  warning beside a verb each with the state's date and the door's close,
+  both to the millisecond, and says that no event has moved it since and
+  that `show` reads it; the run's constituents, where they were read at or
+  before the close, carry their date and the close the same way, and say
+  that nothing has read them since. Where admin-con's live ceiling does not
+  grant `show`, nothing is asked at the close, and the line says that
+  `show` is outside the live ceiling rather than claim a read. A
+  transition standing beside the state is the warning's reading, by
+  `show`, and takes no line there. The close's own `show` (section 7.2),
+  once it answers with a state, ends the line. **Run's two panes re-read by themselves** (on the
   Planner's ruling of 2026-11-12): the load state and the verbs are one
   fragment, `GET /agents/{ag}/run`, which the vendored htmx re-fetches
   every 15 s with no inline script, so a state that a load answered past
@@ -4599,6 +4616,30 @@ what the server holds from what is new, and a door's opening is the same
 seam as a reconnection, so it takes the same rule rather than a second
 ordering regime.
 
+**Every close of the door asks `show`** (on the Planner's ruling of
+2026-11-14), where the ceiling grants it, as the server's own ask, audited
+as the opening's is, and holding nothing: no deadline closes the
+connection on it, and no hold of admin-con's waits for its landing. A
+run's end closes the door however it came, and the trace's `unload`
+reaches the row only where the relay carried it before ending. On
+2026-11-13 a relay ended without carrying it, and the row kept the
+wind-down turn's `idle`, by event, while the agent was unloaded. A run
+ended from the box's own shell ends the same way, and a crashed run writes
+no `unload` at all. Only `show` and a live event write the state, and no
+verb's answer but `show`'s writes it, so the close's `show` is what makes
+the row true in each. **It leans on one thing: admin-con serves it right
+after the close.** admin-con reads the door only while no invocation is in
+flight, so it sees the close only once the verb that ended the run has
+answered, and with the door closed there is nothing to drain; a slot still
+held by a timed-out verb's process holds it as it holds any ask. **Where
+it answers `in_transition`** and the door stays closed, the server asks
+again 5 s after that answer (`CLOSE_REASK`), at most three times
+(`CLOSE_REASKS`). Past them the row keeps its transition, dated, and
+nothing asks again until the next admission or opening, whose own `show`
+ends the re-asks. A state, a refusal or a fault ends them as well. A
+re-ask resumes the connection's read without starting its silence window
+again, so the re-asks never stretch the silence bound.
+
 **The trace is replayed from an acknowledged position, and this is this
 document's election of 2026-10-01 and not a ruling.** A reader that relays
 what it reads and sends none of what it read while the link was down leaves
@@ -5899,6 +5940,8 @@ an unmerged contract.
 | the door checks an entry once, its source on the plane's allow-list | perturbation in `src/entries_tests.rs`: give the gate plane the admin plane's sources, and gate-con's entry claiming `admin_log` is taken and classified rather than refused as malformed |
 | a load that reset the agent is a `data_lost` alert, raised once | perturbation in `src/entries_tests.rs`: drop the reset check, and the trace's `load` event carrying `reset` raises nothing |
 | a `show` answering `in_transition` claims no state, and the next state ends it | perturbation in `src/transition_tests.rs`: write the load state from an `in_transition` answer, and the row reads a state admin never claimed; let a state leave the transition standing, and the page shows a transition over a newer state; let a turn's close end it, and the page reads `idle` with no transition while the unload still runs; drop the constituents from the transition, and the leftovers' pids vanish from the row and the page |
+| every close of the trace door asks `show` where the ceiling grants it, as the server's audited ask holding nothing, and while the door stays closed and it answers `in_transition` asks again at most three times, each 5 s after the answer before it, never stretching the silence bound | perturbation, in `src/link/run_end_tests.rs` against the real listener and admin-con, a fake relay and a fake invoker, and in `src/transition_tests.rs` against the real listener and a fake admin-con: drop the close's `show`, and a run ended with its `unload` relayed, one ended without it, and a crashed run each keep the event's state, and a relay's hiccup asks nothing at its close; ask it whatever the ceiling, and a `show` outside it is asked; drop the re-ask, bound it at one, or leave it unbounded, and `in_transition` once, twice or past the bound reads otherwise; re-ask at once, and the asks stand closer than the gap; keep it past an opening, and a fourth is asked; re-ask after a state, and a fourth is asked once a state answered; ask a second `show` at an opening, and a relay's hiccup asks four; start the silence window again at a re-ask, and a silent admin-con stands a re-ask's gap past the bound (13 cases, each caught) |
+| a state by event under a door that closed at or after it says so on the load state, the warning beside a verb and the constituents, each to the millisecond, until a `show` reads it, and says `show` is outside the live ceiling where it is | perturbation, in `src/transition_tests.rs`, `a_state_by_event_under_a_closed_door_says_so` and `a_state_by_event_under_a_closed_door_without_show_says_nothing_reads_it`, against the real listener and a fake admin-con, and `src/surfaces/admin_table.rs`, `a_state_by_event_stands_under_a_door_that_closed_at_or_after_it`: drop the line from the load state, the warning or the constituents, or date it to the second, and the page says the state as if it were current; compare strictly, drop the source or drop the door's state, and a close in the state's own millisecond, a state by `show` or an open door reads otherwise; say that `show` reads it whatever the ceiling, and the page claims a read nothing makes; in `a_transition_read_after_the_close_takes_no_line_on_the_warning_or_the_constituents`, let the warning take the line under a transition, and it dates the transition by the event, or let constituents read after the close take it, and the page says nothing has read them since (10 cases, each caught) |
 | a recovery holds exactly one of the person's places for its whole life | perturbation in `src/alerts_tests.rs`: admit again inside the sequence, and with the person's other three asks outstanding the choice's save-point is shed |
 | the prompt's `unload` follows only a hash-confirmed save point | perturbation in `src/alerts_tests.rs`: ask `unload` on any `save-point` answer, and a `save_point_not_taken`, or a `save_point_taken` with no report, is followed by an unload |
 | no privileged invocation exists outside admin-con's sudo invoker | perturbation, two instruments. A test, `tests/no_privilege.rs`: it reads every tracked file outside `docs/`, never following a symlink, comment lines aside by each file's syntax and Markdown read in its fences only, for a privilege-escalating program named as a word, a setuid family call, a child's user or group set on a command, and a setuid or setgid mode bit, with the program's word allowed in `src/link/sudo_invoker.rs` and its test module alone; shown to fail when one of each family is planted, in Rust and in a README fence, when the program is planted in another file of the invoker's name, and when another family is planted in the invoker's own files. And the argv instrument in `src/link/sudo_invoker_tests.rs`: plant the principal's name from the ask into the command, and the line the fake records is no longer exactly `sudo -n <weaver_admin> <verb> <agent>` |

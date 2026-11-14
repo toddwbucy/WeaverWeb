@@ -288,9 +288,10 @@ async fn a_ceiling_without_show_asks_and_records_nothing() {
 /// **Each opening of the trace door asks its own `show` with its own first
 /// record, and each answer is matched to its own record only**: the
 /// admission's `show` is left in flight while the door closes and opens
-/// again, the opening's `show` is answered first with admin's answer and
-/// the admission's after it with admin's refusal, and each outcome names
-/// the first its ask's id was kept against.
+/// again (the close asking its own `show`, left in flight too), the
+/// opening's `show` is answered first with admin's answer and the
+/// admission's after it with admin's refusal, and each outcome names the
+/// first its ask's id was kept against.
 ///
 /// Perturbation: take the oldest entry of the connection's map instead of
 /// the one the answer's id names. The opening's answer then lands as the
@@ -308,6 +309,7 @@ async fn each_opening_of_the_door_asks_its_own_show_and_each_answer_names_its_ow
             tail: None,
         })
         .await;
+    let close = take_show(&mut admin).await;
     admin
         .send(FromClient::Door {
             open: true,
@@ -317,9 +319,12 @@ async fn each_opening_of_the_door_asks_its_own_show_and_each_answer_names_its_ow
         .await;
     let opening = take_show(&mut admin).await;
     assert_ne!(admission, opening);
-    let both = wait_records(&lab, &karl.id, "two firsts", |r| firsts(r).len() == 2).await;
-    let (first_admission, first_opening) = (both[0].clone(), both[1].clone());
+    assert_ne!(close, opening);
+    let all = wait_records(&lab, &karl.id, "three firsts", |r| firsts(r).len() == 3).await;
+    let (first_admission, first_close, first_opening) =
+        (all[0].clone(), all[1].clone(), all[2].clone());
     assert_servers_show(&first_admission);
+    assert_servers_show(&first_close);
     assert_servers_show(&first_opening);
 
     admin
@@ -340,9 +345,14 @@ async fn each_opening_of_the_door_asks_its_own_show_and_each_answer_names_its_ow
             error: None,
         })
         .await;
-    let answered = wait_records(&lab, &karl.id, "two outcomes", |r| r.len() == 4).await;
+    let answered = wait_records(&lab, &karl.id, "two outcomes", |r| r.len() == 5).await;
     assert_eq!(outcome_of(&answered, &first_opening), Some("ok"));
     assert_eq!(outcome_of(&answered, &first_admission), Some("failed"));
+    assert_eq!(
+        outcome_of(&answered, &first_close),
+        None,
+        "the close's in flight"
+    );
     assert!(lab.listener.connected(&karl.id, Plane::Admin));
 }
 

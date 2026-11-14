@@ -12,7 +12,9 @@ use crate::link::frames::{FromClient, Position, Refusal, ToClient};
 use crate::link::register::Agent;
 use crate::store::AgentId;
 use crate::traceview::TraceEvent;
-use crate::verbs_tests::{Operated, answer, operated, operated_with, take_verb};
+use crate::verbs_tests::{
+    Operated, admitted_older_admin, answer, no_frame, operated, operated_with, take_verb,
+};
 
 /// The server asks `show` of karl, and admin-con answers it with `object`
 /// and `exit`; the row as it stands after.
@@ -810,4 +812,107 @@ async fn a_transition_read_after_the_close_takes_no_line_on_the_warning_or_the_c
         )),
         "{shown_page}"
     );
+}
+
+/// karl's admin-con admitted again as one older than the first capability
+/// (Spec 8): its hello states none, its ceiling `ceiling`.
+async fn readmitted_older(o: Operated, ceiling: &[&str]) -> Operated {
+    let Operated {
+        rig,
+        karl,
+        gate_config,
+        admin_config,
+        ada,
+        ada_session,
+        bea,
+        bea_session,
+        admin_con,
+    } = o;
+    drop(admin_con);
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    let admin_con = admitted_older_admin(&admin_config, ceiling).await;
+    let o = Operated {
+        rig,
+        karl,
+        gate_config,
+        admin_config,
+        ada,
+        ada_session,
+        bea,
+        bea_session,
+        admin_con,
+    };
+    wait_row(&o, "the older admin-con admitted", |r| {
+        r.admin.connected && r.state_source.as_deref() == Some("show")
+    })
+    .await;
+    o
+}
+
+/// **An admin-con older than the first capability is asked no `show` at a
+/// close** (Spec 7.2, 8; Codex on #113): its hello states no `close_show`,
+/// so its opening hold may take a close's `show` and never end. The close
+/// lands the door's state alone, as before the close's `show` existed.
+///
+/// Perturbation: ask the close's `show` whatever the hello says, and a
+/// `show` reaches the older admin-con at the close.
+#[tokio::test]
+async fn an_admin_con_stating_no_capability_is_asked_no_show_at_a_close() {
+    let Some(o) = operated(&["show", "load", "save-point"]).await else {
+        return;
+    };
+    let mut o = readmitted_older(o, &["show", "load", "save-point"]).await;
+    o.admin_con
+        .send(FromClient::Door {
+            open: false,
+            wall_ms: chrono::Utc::now().timestamp_millis() as u64,
+            tail: None,
+        })
+        .await;
+    wait_row(&o, "the door closed", |r| r.trace_door == Some(false)).await;
+    no_frame(&mut o.admin_con).await;
+}
+
+/// **Where the live admin-con is asked no `show` at a close, the line says
+/// nothing reads the state** (Spec 2.13): an admin-con older than the
+/// first capability, its ceiling granting `show`, leaves a state by event
+/// under the closed door standing until the door opens or admin-con is
+/// admitted again, and the page says so rather than claim a read.
+///
+/// Perturbation: drop the third wording, and the page says `show` reads a
+/// state nothing will read.
+#[tokio::test]
+async fn a_state_by_event_under_a_door_an_older_admin_con_closed_says_nothing_reads_it() {
+    let Some(o) = operated(&["show", "load", "save-point"]).await else {
+        return;
+    };
+    let o = readmitted_older(o, &["show", "load", "save-point"]).await;
+    let mut o = o;
+    let state_ms = chrono::Utc::now().timestamp_millis();
+    o.admin_con.send(live_at(1, "turn.closed", state_ms)).await;
+    wait_row(&o, "idle by the turn's close", |r| {
+        r.state_source.as_deref() == Some("event")
+    })
+    .await;
+    o.admin_con
+        .send(FromClient::Door {
+            open: false,
+            wall_ms: (state_ms + 40) as u64,
+            tail: None,
+        })
+        .await;
+    let row = wait_row(&o, "the door closed", |r| r.trace_door == Some(false)).await;
+    let state_at = to_the_ms(row.load_state_at.unwrap());
+    let door_at = to_the_ms(row.trace_door_at.unwrap());
+    let shown_page = page(&o).await;
+    let said = format!(
+        "<tr><th>Load state</th><td>idle, by event at {state_at}. The trace door closed after it, at {door_at}: no event has moved it since, and this admin-con is asked no show at a close, so nothing reads it until the door opens or admin-con is admitted again.</td></tr>"
+    );
+    assert!(shown_page.contains(&said), "{said}: {shown_page}");
+    let warning = warning_beside(&shown_page, &o.karl, "load").expect("load is warned");
+    assert!(
+        warning.contains("no event has moved it since, and this admin-con is asked no show at a close, so nothing reads it until the door opens or admin-con is admitted again."),
+        "{warning}"
+    );
+    assert!(!shown_page.contains("show reads it"), "{shown_page}");
 }

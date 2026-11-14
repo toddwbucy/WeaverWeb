@@ -53,7 +53,7 @@ use crate::link::register::{Agent, CredentialState};
 use crate::store::alerts::{STDERR_BOUND, bounded};
 use crate::store::identity::{VOCABULARY, is_agent_id};
 use crate::store::{AgentId, Store};
-use crate::surfaces::admin_table::TO_THE_MS;
+use crate::surfaces::admin_table::{CloseRead, TO_THE_MS};
 use crate::surfaces::declare_pane::{DeclarePane, Head};
 use crate::surfaces::gate::{self, Policy, Session};
 use crate::surfaces::record::NoSession;
@@ -543,9 +543,21 @@ impl RunView {
     /// everything again. **An offered verb that admin's state table refuses
     /// in the row's last reading carries a warning** and stays offered
     /// ("warn, do not refuse").
-    fn of(row: &Agent, granted: &std::collections::BTreeSet<String>) -> RunView {
+    /// `asks_show_at_close` is the listener's word on the live admin
+    /// connection ([`Listener::asks_show_at_close`]).
+    fn of(
+        row: &Agent,
+        granted: &std::collections::BTreeSet<String>,
+        asks_show_at_close: Option<bool>,
+    ) -> RunView {
         let ceiling = live_ceiling(row);
-        let show_live = ceiling.iter().any(|c| c == "show");
+        let read = if !ceiling.iter().any(|c| c == "show") {
+            CloseRead::OutsideCeiling
+        } else if asks_show_at_close == Some(true) {
+            CloseRead::Show
+        } else {
+            CloseRead::NotAsked
+        };
         // **A state by event under a door that closed after it** (Spec
         // 2.12): the load state, the warnings and the constituents read
         // before the close say so.
@@ -568,7 +580,7 @@ impl RunView {
                     why,
                     warning: why
                         .is_none()
-                        .then(|| super::admin_table::warning(verb, row, show_live))
+                        .then(|| super::admin_table::warning(verb, row, read))
                         .flatten(),
                 }
             })
@@ -584,7 +596,7 @@ impl RunView {
                         "{state}, by event at {}. The trace door closed after it, at {}: no event has moved it since, and {}.",
                         state_at.format(TO_THE_MS),
                         door_at.format(TO_THE_MS),
-                        super::admin_table::who_reads(show_live, "it")
+                        super::admin_table::who_reads(read, "it")
                     ),
                     None => format!(
                         "{state}, by {}{}",
@@ -620,7 +632,7 @@ impl RunView {
                             pids.join(" "),
                             read_at.format(TO_THE_MS),
                             door_at.format(TO_THE_MS),
-                            super::admin_table::who_reads(show_live, "them")
+                            super::admin_table::who_reads(read, "them")
                         ),
                         None => format!("{}{}", pids.join(" "), stamp(row.constituents_at)),
                     }
@@ -879,7 +891,7 @@ async fn agent_run(store: Store, seams: &Seams, headers: HeaderMap, agent: Strin
     };
     fragment(
         RunFragment {
-            run: RunView::of(&row, &granted),
+            run: RunView::of(&row, &granted, seams.asker.asks_show_at_close(&id)),
         }
         .render(),
     )
@@ -1049,7 +1061,11 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, agent: String) ->
         admin_plane: plane(&row.admin),
         door: door_said(&row),
         window: LIVE_WINDOW,
-        run: RunView::of(&row, &granted),
+        run: RunView::of(
+            &row,
+            &granted,
+            seams.asker.asks_show_at_close(&row.agent_id),
+        ),
         turn_form,
         shared,
         chrome,

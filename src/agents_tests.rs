@@ -17,7 +17,9 @@ use tokio::net::TcpStream;
 use crate::admin_tests::{admin, form, hold, send_as, signed_in};
 use crate::host;
 use crate::link::authority::{Authority, client_tls};
-use crate::link::frames::{FromClient, Plane, Position, Refusal as LinkRefusal, ToClient};
+use crate::link::frames::{
+    FromClient, Plane, Position, Refusal as LinkRefusal, ToClient, capability,
+};
 use crate::link::listener::Listener;
 use crate::passkeys_tests::{ORIGIN, app, authenticator, passkeys};
 use crate::sign_in_tests::rows;
@@ -247,8 +249,19 @@ impl Connector {
         Self::dial_with(config, &["show"]).await
     }
 
-    /// Dial on a client config, an admin plane declaring `ceiling`.
+    /// Dial on a client config, an admin plane declaring `ceiling`, as an
+    /// admin-con of this build.
     pub(crate) async fn dial_with(config: &str, ceiling: &[&str]) -> Self {
+        Self::dial_stating(config, ceiling, false).await
+    }
+
+    /// As [`Connector::dial_with`], as an admin-con older than the first
+    /// capability (Spec 8): its hello states none.
+    pub(crate) async fn dial_older(config: &str, ceiling: &[&str]) -> Self {
+        Self::dial_stating(config, ceiling, true).await
+    }
+
+    async fn dial_stating(config: &str, ceiling: &[&str], older: bool) -> Self {
         let table: toml::Table = config.parse().expect("a client config is TOML");
         let field = |key: &str| table[key].as_str().unwrap().to_owned();
         let tls = client_tls(
@@ -284,6 +297,8 @@ impl Connector {
                 ceiling: (plane == Plane::Admin)
                     .then(|| ceiling.iter().map(|v| (*v).to_owned()).collect()),
                 door: (plane == Plane::Admin).then_some(true),
+                capabilities: (plane == Plane::Admin && !older)
+                    .then(|| vec![capability::CLOSE_SHOW.to_owned()]),
             })
             .await;
         connector

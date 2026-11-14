@@ -187,6 +187,7 @@ pub async fn run(
                 tail: None,
                 ceiling: None,
                 door: None,
+                capabilities: None,
             }))
         },
         reload,

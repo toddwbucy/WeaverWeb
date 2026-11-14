@@ -109,9 +109,9 @@ pub fn refused(verb: &str, reading: Reading) -> Option<&'static str> {
 /// **The warning beside an offered verb**, where the row's last reading is
 /// one the table refuses it in: the refusal, the reading and its date.
 /// **A state by event under a door that closed after it says so**
-/// ([`closed_after`]), both dates to the millisecond; `show_live` is whether
-/// admin-con's live ceiling grants `show`.
-pub fn warning(verb: &str, row: &Agent, show_live: bool) -> Option<String> {
+/// ([`closed_after`]), both dates to the millisecond, with what reads it
+/// ([`CloseRead`]).
+pub fn warning(verb: &str, row: &Agent, read: CloseRead) -> Option<String> {
     let (reading, at) = Reading::of(row)?;
     let refusal = refused(verb, reading)?;
     let words = reading.words();
@@ -120,7 +120,7 @@ pub fn warning(verb: &str, row: &Agent, show_live: bool) -> Option<String> {
             "Read {words} at {}, by event. The trace door closed after it, at {}: no event has moved it since, and {}.",
             state_at.format(TO_THE_MS),
             door_at.format(TO_THE_MS),
-            who_reads(show_live, "it")
+            who_reads(read, "it")
         ),
         None => format!("Read {words} {}.", at.format("%Y-%m-%d %H:%M:%S UTC")),
     };
@@ -161,14 +161,31 @@ pub fn closed_after_row(row: &Agent) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
     )
 }
 
-/// **What reads a state under a closed door**: `show`, asked at every close
-/// where admin-con's live ceiling grants it (Spec 7.2), and nothing where
-/// it does not, which the page says rather than claim a read.
-pub fn who_reads(show_live: bool, it: &str) -> String {
-    if show_live {
-        format!("show reads {it}")
-    } else {
-        format!("show, which would read {it}, is outside the live ceiling")
+/// **What reads a state under a closed door** (Spec 2.13, 7.2): `show`,
+/// asked at every close of a live admin-con whose ceiling grants it and
+/// whose hello stated the capability, and otherwise nothing, which the page
+/// says rather than claim a read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloseRead {
+    /// `show`, asked at the close.
+    Show,
+    /// Nothing: the live admin-con states no `close_show` (Spec 8), as one
+    /// built before the capability does.
+    NotAsked,
+    /// Nothing: the live ceiling does not grant `show`.
+    OutsideCeiling,
+}
+
+/// [`CloseRead`] in the page's words.
+pub fn who_reads(read: CloseRead, it: &str) -> String {
+    match read {
+        CloseRead::Show => format!("show reads {it}"),
+        CloseRead::NotAsked => format!(
+            "this admin-con is asked no show at a close, so nothing reads {it} until the door opens or admin-con is admitted again"
+        ),
+        CloseRead::OutsideCeiling => {
+            format!("show, which would read {it}, is outside the live ceiling")
+        }
     }
 }
 

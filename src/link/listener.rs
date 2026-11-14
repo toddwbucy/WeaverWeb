@@ -40,7 +40,7 @@ use crate::deadline::{self, Passed};
 use crate::link::authority::{Authority, fingerprint};
 use crate::link::frames::{
     FromClient, Line, LineReader, Plane, Position, Principal, Refusal, ToClient, TurnFault,
-    VerbFault, VerbOutcome,
+    VerbFault, VerbOutcome, capability,
 };
 use crate::link::register::{
     ConstituentsWrite, CredentialState, Observation, REVOCATION_CHANNEL, TransitionWrite,
@@ -140,6 +140,11 @@ struct LiveConnection {
     /// reconnection that narrows the ceiling cannot race an ask. The row's
     /// copy is what surfaces read and never the authorization input.
     ceiling: Option<Arc<BTreeSet<String>>>,
+    /// **Whether a close of the trace door asks `show` of this connection**
+    /// (Spec 7.2, 8): its ceiling grants `show` and its hello stated
+    /// [`capability::CLOSE_SHOW`]. Fixed for its life, and read by the
+    /// agent page's line on a state under a closed door.
+    close_shows: bool,
     /// **Each verb ask's record, by its ask** (Spec 2.13, 7.2): the verb
     /// asked and its first record, where the ask is audited. The
     /// connection task's own, filled before the frame enters the channel
@@ -1126,6 +1131,17 @@ impl Listener {
         live.get(&(agent.clone(), plane))
             .filter(|c| c.ready)
             .map(|c| c.heard.lock().unwrap().elapsed())
+    }
+
+    /// **Whether a close of the agent's trace door asks `show`** (Spec 7.2,
+    /// 8): the live admin connection's ceiling grants it and its hello
+    /// stated [`capability::CLOSE_SHOW`]; `None` where no admitted admin
+    /// connection stands.
+    pub fn asks_show_at_close(&self, agent: &AgentId) -> Option<bool> {
+        let live = self.inner.live.lock().unwrap();
+        live.get(&(agent.clone(), Plane::Admin))
+            .filter(|c| c.ready)
+            .map(|c| c.close_shows)
     }
 
     /// **The silence bound**, which a caller waiting for a verb's answer
@@ -3384,7 +3400,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
             return;
         }
     };
-    let (name, said_plane, tail, ceiling, door) = match hello {
+    let (name, said_plane, tail, ceiling, door, capabilities) = match hello {
         Ok(Line::Frame(line)) => match serde_json::from_str::<FromClient>(&line) {
             Ok(FromClient::Hello {
                 agent,
@@ -3392,7 +3408,8 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                 tail,
                 ceiling,
                 door,
-            }) => (agent, plane, tail, ceiling, door),
+                capabilities,
+            }) => (agent, plane, tail, ceiling, door, capabilities),
             _ => {
                 tracing::warn!("link from {peer}: the first frame was not a hello, refused");
                 refuse(tx, writer, Refusal::Malformed).await;
@@ -3472,6 +3489,16 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
         }
     };
     let ceiling_copy: Option<Vec<String>> = ceiling.as_deref().map(|c| c.iter().cloned().collect());
+    // **The close's `show` is asked only of an admin-con that states it can
+    // take one** (Spec 7.2, 8), and whose ceiling grants `show`. One built
+    // before the capability may take a close's `show` met during an
+    // opening as that opening's hold and wait on its landing for the
+    // connection's life (Codex on #113), so its closes land the door's
+    // state alone, as before the close's `show` existed.
+    let close_shows = ceiling.as_deref().is_some_and(|c| c.contains("show"))
+        && capabilities
+            .as_deref()
+            .is_some_and(|c| c.iter().any(|name| name == capability::CLOSE_SHOW));
 
     let incarnation = (inner.epoch << 32) | inner.next_incarnation.fetch_add(1, Ordering::Relaxed);
     let pending = Arc::new(Mutex::new(HashMap::new()));
@@ -3518,6 +3545,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                         silent: silent.clone(),
                         ready: false,
                         ceiling: ceiling.clone(),
+                        close_shows,
                         asks: asks.clone(),
                         claims: Arc::new(Mutex::new(HashMap::new())),
                         person_slots: Arc::new(tokio::sync::Semaphore::new(PERSON_SLOTS)),
@@ -4164,7 +4192,14 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                     caught_up = !open;
                     boundary = tail;
                     close_show = None;
-                    if ceiling.as_deref().is_some_and(|c| c.contains("show")) {
+                    // An opening asks where the ceiling grants `show`; a
+                    // close only of a connection that takes one.
+                    let asks_show = if open {
+                        ceiling.as_deref().is_some_and(|c| c.contains("show"))
+                    } else {
+                        close_shows
+                    };
+                    if asks_show {
                         match ask_show(&inner, &agent.agent_id, &tx, &asks, &mut close_rx).await {
                             Ok(id) if open => {
                                 admission_show =

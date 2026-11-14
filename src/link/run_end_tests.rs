@@ -23,6 +23,7 @@ use super::tests::{Lab, SOON};
 use crate::store::AgentId;
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 /// The re-ask's gap in these tests, where the service's 5 s would hold
@@ -423,5 +424,87 @@ async fn a_ceiling_without_show_asks_nothing_at_the_close() {
     assert!(server_shows(&r.lab, &r.id).await.is_empty());
     assert!(r.invoker.ran().is_empty(), "{:?}", r.invoker.ran());
     assert!(r.con.status().admitted);
+    r.con.stop().await;
+}
+
+/// **A `show` met while an opening is measured never holds the verbs**
+/// (Spec 7.2; Codex on #113): admin-con queues the server's asks while it
+/// measures and verifies an opening, and serves the queued `show` first
+/// under the opening's hold. A close's re-ask that arrives then is one; the
+/// hold ends at the landing of any `show` it served, so the opening's own
+/// landing ends it, a person's verb is answered, and the door opens again
+/// after a later close.
+///
+/// Perturbation: keep the hold for the first `show` it served alone, and
+/// the verb is never answered.
+#[tokio::test]
+async fn a_show_met_while_an_opening_is_measured_never_holds_the_verbs() {
+    let Some(mut r) = running(&["show", "load"]).await else {
+        return;
+    };
+    let gap = Duration::from_millis(600);
+    r.lab.listener.set_close_reask(gap);
+    r.trace.append(1, "load");
+    r.lab
+        .wait_for(&r.id, "idle by the trace", |a| {
+            a.state_source.as_deref() == Some("event")
+        })
+        .await;
+    r.invoker.set_state("unloaded");
+    r.invoker.in_transition_for(1);
+    // The next run holds each header three gaps, so the close's re-ask
+    // reaches admin-con while it measures the opening.
+    let held = (gap * 3).as_millis() as u64;
+    r.trace
+        .relay
+        .counts
+        .header_delay_ms
+        .store(held, Ordering::SeqCst);
+    r.trace.relay.stop().await;
+    r.lab
+        .wait_for(&r.id, "the door closed", |a| a.trace_door == Some(false))
+        .await;
+    // The admission's, and the close's, answered in transition.
+    wait_shows(&r.lab, &r.id, 2).await;
+    let sized = r.trace.relay.counts.sized.load(Ordering::SeqCst);
+    r.trace.relay.start();
+    let until = tokio::time::Instant::now() + SOON;
+    while r.trace.relay.counts.sized.load(Ordering::SeqCst) == sized {
+        assert!(
+            tokio::time::Instant::now() < until,
+            "admin-con never asked the relay"
+        );
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    let measured_from = Utc::now();
+    r.lab
+        .wait_for(&r.id, "the door open again", |a| a.trace_door == Some(true))
+        .await;
+    // The re-ask, then the opening's own.
+    let shows = wait_shows(&r.lab, &r.id, 4).await;
+    assert!(
+        shows[2].at > measured_from,
+        "the re-ask reached admin-con while it measured the opening: {shows:?}"
+    );
+    verb(&r.lab.listener, &r.id, "load").await.unwrap();
+    assert_eq!(r.invoker.ran().last().map(String::as_str), Some("load"));
+    // A later close and opening: the door is not held shut.
+    r.trace
+        .relay
+        .counts
+        .header_delay_ms
+        .store(0, Ordering::SeqCst);
+    r.trace.relay.stop().await;
+    r.lab
+        .wait_for(&r.id, "the door closed again", |a| {
+            a.trace_door == Some(false)
+        })
+        .await;
+    r.trace.relay.start();
+    r.lab
+        .wait_for(&r.id, "the door open once more", |a| {
+            a.trace_door == Some(true)
+        })
+        .await;
     r.con.stop().await;
 }

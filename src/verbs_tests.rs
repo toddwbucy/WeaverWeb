@@ -77,7 +77,16 @@ pub(crate) async fn operated_with(ceiling: &[&str], silence: Duration) -> Option
 /// An admin-con dialed with the config and admitted: the hello, the
 /// admission's `show` answered idle, and `caught_up`.
 pub(crate) async fn admitted_admin(config: &str, ceiling: &[&str]) -> Connector {
-    let mut admin_con = Connector::dial_with(config, ceiling).await;
+    admitted(Connector::dial_with(config, ceiling).await).await
+}
+
+/// As [`admitted_admin`], an admin-con older than the first capability
+/// (Spec 8), its hello stating none.
+pub(crate) async fn admitted_older_admin(config: &str, ceiling: &[&str]) -> Connector {
+    admitted(Connector::dial_older(config, ceiling).await).await
+}
+
+async fn admitted(mut admin_con: Connector) -> Connector {
     assert!(matches!(
         admin_con.recv().await,
         Some(ToClient::HelloAnswer { .. })

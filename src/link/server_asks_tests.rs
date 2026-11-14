@@ -7,7 +7,9 @@
 //! Every perturbation below names its guard, and the act that landed it
 //! showed the test failing with the guard removed, per Spec section 9.
 
-use super::frames::{FromClient, Plane, Principal, Refusal, ToClient, VerbFault, VerbOutcome};
+use super::frames::{
+    FromClient, Plane, Principal, Refusal, ToClient, VerbFault, VerbOutcome, capability,
+};
 use super::listener::VerbError;
 use super::tests::{Fake, Lab, Registered, SOON, position, position_in, show_answer, trace_event};
 use crate::store::AgentId;
@@ -125,7 +127,9 @@ fn assert_servers_show(first: &Record) {
     assert_eq!(first.action, "show");
 }
 
-/// Connect admin-con with the ceiling given and take the hello's answer.
+/// Connect admin-con with the ceiling given and take the hello's answer. It
+/// stands for a current admin-con, so it states [`capability::CLOSE_SHOW`]
+/// (Spec 8).
 pub(super) async fn hello(lab: &Lab, agent: &Registered, ceiling: &[&str]) -> Fake {
     let mut fake = lab.connect(&agent.admin).await;
     fake.send(FromClient::Hello {
@@ -134,6 +138,7 @@ pub(super) async fn hello(lab: &Lab, agent: &Registered, ceiling: &[&str]) -> Fa
         tail: Some(position(100)),
         ceiling: Some(ceiling.iter().map(|v| (*v).to_owned()).collect()),
         door: Some(true),
+        capabilities: Some(vec![capability::CLOSE_SHOW.to_owned()]),
     })
     .await;
     match fake.recv().await {

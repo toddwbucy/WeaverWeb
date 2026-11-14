@@ -32,6 +32,7 @@ use crate::link::client::{
 use crate::link::entries::Entries;
 use crate::link::frames::{
     FromClient, LINE_BOUND, Plane, Position, Principal, ToClient, VerbFault, VerbOutcome,
+    capability,
 };
 use crate::link::relay::{self, Dial, Read};
 use crate::traceview::{TraceEvent, parse_line};
@@ -1401,6 +1402,10 @@ pub async fn run<I: Invoker>(
                     door: Some(tail.is_some()),
                     tail,
                     ceiling: Some(ceiling.into_iter().collect()),
+                    // **Its hold ends at the landing of any `show` it
+                    // served under it** (Spec 7.2), so a close's `show`
+                    // can be asked of it (Spec 8).
+                    capabilities: Some(vec![capability::CLOSE_SHOW.to_owned()]),
                 })
             }
         },
@@ -1818,18 +1823,25 @@ async fn relay<I: Invoker>(
     // its own deadline or refusal closes the connection, which ends the
     // hold.
     let mut opening_show = owes_show(&ceiling);
-    // The `show` taken under the hold, whose landing releases it.
-    let mut hold_show: Option<u64> = None;
+    // **Every `show` the server asked and this served under the hold**,
+    // the landing of any of which releases it (Spec 7.2). Each was invoked
+    // after the opening's boundary, so each is the opening's `show` in the
+    // hold's sense: a close's `show` or re-ask met while the opening was
+    // measured is queued, served under the hold ahead of the opening's own,
+    // and the server reports no landing of it (Codex on #113). Kept for
+    // its first alone, the hold would wait on that landing for the
+    // connection's life.
+    let mut held_shows: Vec<u64> = Vec::new();
     loop {
         if *shutdown.borrow_and_update() {
             decline_waiting(conn, &mut queue).await;
             return Ended::Shutdown;
         }
-        // Only the held ask's landing releases the hold; any other is
+        // Only a held `show`'s landing releases the hold; any other is
         // ignored.
         for id in queue.landed.drain(..) {
-            if hold_show == Some(id) {
-                hold_show = None;
+            if held_shows.contains(&id) {
+                held_shows.clear();
                 opening_show = false;
             }
         }
@@ -1845,8 +1857,8 @@ async fn relay<I: Invoker>(
             && let Ok(permit) = opts.slot.permit.clone().try_acquire_owned()
             && let Some(ask) = queue.next(restricted)
         {
-            if opening_show && hold_show.is_none() && ask.served_during_the_replay() {
-                hold_show = Some(ask.id);
+            if opening_show && ask.served_during_the_replay() {
+                held_shows.push(ask.id);
             }
             // **During the replay only a `show` the server asked is served,
             // at once and with no drain** (Spec 7.2): the admission's held

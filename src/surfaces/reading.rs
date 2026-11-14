@@ -53,6 +53,7 @@ use crate::link::register::{Agent, CredentialState};
 use crate::store::alerts::{STDERR_BOUND, bounded};
 use crate::store::identity::{VOCABULARY, is_agent_id};
 use crate::store::{AgentId, Store};
+use crate::surfaces::admin_table::{CloseRead, TO_THE_MS};
 use crate::surfaces::declare_pane::{DeclarePane, Head};
 use crate::surfaces::gate::{self, Policy, Session};
 use crate::surfaces::record::NoSession;
@@ -63,7 +64,7 @@ pub const RECHECK: Duration = Duration::from_secs(15);
 
 /// The answer to an agent the person may not read, identical to the one
 /// for an agent that does not exist.
-const NO_SUCH_AGENT: &str = "no such agent";
+pub(super) const NO_SUCH_AGENT: &str = "no such agent";
 
 /// **The eight stages and their backing today**, as
 /// `docs/design/system/stages.md` states them, its source (a test below
@@ -473,6 +474,9 @@ struct AgentPage {
     left: String,
     /// The way back to the agent's declaration, an admin's alone.
     declared: Option<DeclaredLink>,
+    /// **The page's wait for an ask's answer**, the silence bound in
+    /// seconds, which the asking lines name.
+    wait: u64,
     /// The Declare pane: the declaration saved under the agent's name.
     declaration: DeclarePane,
 }
@@ -539,8 +543,25 @@ impl RunView {
     /// everything again. **An offered verb that admin's state table refuses
     /// in the row's last reading carries a warning** and stays offered
     /// ("warn, do not refuse").
-    fn of(row: &Agent, granted: &std::collections::BTreeSet<String>) -> RunView {
+    /// `asks_show_at_close` is the listener's word on the live admin
+    /// connection ([`Listener::asks_show_at_close`]).
+    fn of(
+        row: &Agent,
+        granted: &std::collections::BTreeSet<String>,
+        asks_show_at_close: Option<bool>,
+    ) -> RunView {
         let ceiling = live_ceiling(row);
+        let read = if !ceiling.iter().any(|c| c == "show") {
+            CloseRead::OutsideCeiling
+        } else if asks_show_at_close == Some(true) {
+            CloseRead::Show
+        } else {
+            CloseRead::NotAsked
+        };
+        // **A state by event under a door that closed after it** (Spec
+        // 2.12): the load state, the warnings and the constituents read
+        // before the close say so.
+        let closed = super::admin_table::closed_after_row(row);
         let verbs: Vec<VerbView> = VOCABULARY
             .into_iter()
             .filter(|verb| lifecycle(verb))
@@ -559,7 +580,7 @@ impl RunView {
                     why,
                     warning: why
                         .is_none()
-                        .then(|| super::admin_table::warning(verb, row))
+                        .then(|| super::admin_table::warning(verb, row, read))
                         .flatten(),
                 }
             })
@@ -570,12 +591,18 @@ impl RunView {
             load_state: row
                 .load_state
                 .as_ref()
-                .map(|state| {
-                    format!(
+                .map(|state| match closed {
+                    Some((state_at, door_at)) => format!(
+                        "{state}, by event at {}. The trace door closed after it, at {}: no event has moved it since, and {}.",
+                        state_at.format(TO_THE_MS),
+                        door_at.format(TO_THE_MS),
+                        super::admin_table::who_reads(read, "it")
+                    ),
+                    None => format!(
                         "{state}, by {}{}",
                         row.state_source.as_deref().unwrap_or("an unnamed source"),
                         stamp(row.load_state_at)
-                    )
+                    ),
                 })
                 .unwrap_or_else(none),
             tuple: row
@@ -594,7 +621,21 @@ impl RunView {
                 .as_ref()
                 .map(|pids| {
                     let pids: Vec<String> = pids.iter().map(i32::to_string).collect();
-                    format!("{}{}", pids.join(" "), stamp(row.constituents_at))
+                    // Read by `show` at or before the close, under a state
+                    // by event the close left standing.
+                    let before_close = closed.zip(row.constituents_at).filter(|((_, door_at), read_at)| {
+                        read_at.timestamp_millis() <= door_at.timestamp_millis()
+                    });
+                    match before_close {
+                        Some(((_, door_at), read_at)) => format!(
+                            "{}, by show at {}. The trace door closed after it, at {}: nothing has read them since, and {}.",
+                            pids.join(" "),
+                            read_at.format(TO_THE_MS),
+                            door_at.format(TO_THE_MS),
+                            super::admin_table::who_reads(read, "them")
+                        ),
+                        None => format!("{}{}", pids.join(" "), stamp(row.constituents_at)),
+                    }
                 })
                 .unwrap_or_else(none),
             ceiling: row
@@ -721,6 +762,22 @@ struct RunFragment {
     run: RunView,
 }
 
+#[derive(Template)]
+#[template(path = "refused.html")]
+struct RefusedFragment<'a> {
+    words: &'a str,
+}
+
+/// **A poll's refusal, drawn in the pane it re-fetches** (Spec 2.8), at its
+/// own status, which the page-wide configuration swaps in.
+fn refused_fragment(status: StatusCode, words: &str) -> Response {
+    let mut answer = fragment(RefusedFragment { words }.render());
+    if answer.status() == StatusCode::OK {
+        *answer.status_mut() = status;
+    }
+    answer
+}
+
 /// A fragment, kept from every cache.
 fn fragment(rendered: askama::Result<String>) -> Response {
     match rendered {
@@ -779,7 +836,9 @@ async fn readable_in_background(
     let id: AgentId = agent.parse().map_err(|e| fault(anyhow::Error::msg(e)))?;
     let session = background_session(store, policy, headers).await?;
     match store.roles_on(&session.person_id, &id).await {
-        Ok(roles) if roles.is_empty() => Err(not_found()),
+        Ok(roles) if roles.is_empty() => {
+            Err(refused_fragment(StatusCode::NOT_FOUND, NO_SUCH_AGENT))
+        }
         Ok(_) => Ok((session, id)),
         Err(e) => Err(fault(e)),
     }
@@ -804,7 +863,7 @@ async fn agent_availability(
             }
             .render(),
         ),
-        Ok(None) => not_found(),
+        Ok(None) => refused_fragment(StatusCode::NOT_FOUND, NO_SUCH_AGENT),
         Err(e) => fault(e),
     }
 }
@@ -823,7 +882,7 @@ async fn agent_run(store: Store, seams: &Seams, headers: HeaderMap, agent: Strin
     };
     let row = match store.agent(&id).await {
         Ok(Some(row)) => row,
-        Ok(None) => return not_found(),
+        Ok(None) => return refused_fragment(StatusCode::NOT_FOUND, NO_SUCH_AGENT),
         Err(e) => return fault(e),
     };
     let granted = match store.verbs_on(&session.person_id, &id).await {
@@ -832,7 +891,7 @@ async fn agent_run(store: Store, seams: &Seams, headers: HeaderMap, agent: Strin
     };
     fragment(
         RunFragment {
-            run: RunView::of(&row, &granted),
+            run: RunView::of(&row, &granted, seams.asker.asks_show_at_close(&id)),
         }
         .render(),
     )
@@ -1002,7 +1061,11 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, agent: String) ->
         admin_plane: plane(&row.admin),
         door: door_said(&row),
         window: LIVE_WINDOW,
-        run: RunView::of(&row, &granted),
+        run: RunView::of(
+            &row,
+            &granted,
+            seams.asker.asks_show_at_close(&row.agent_id),
+        ),
         turn_form,
         shared,
         chrome,
@@ -1013,6 +1076,7 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, agent: String) ->
         stages: stages(&links),
         left: left(),
         declared,
+        wait: seams.asker.silence().as_secs(),
         declaration,
     };
     match page.render() {
@@ -1052,28 +1116,145 @@ struct VerbPage {
     here: &'static str,
     who: String,
     admin: bool,
+    chrome: super::Chrome,
+    answer: Answer,
+}
+
+/// **An ask's answer, as the pane that asked and the answer page both draw
+/// it** (Spec 2.13): one fragment, `answer.html`, so the two cannot drift.
+#[derive(Clone)]
+struct Answer {
     agent_id: String,
     label: String,
+    /// The verb asked, or `turn`.
     verb: String,
+    /// The first record's identity; empty where nothing was asked.
     first: String,
+    /// The mark before the words where admin or the gate did not answer:
+    /// [`NOT_ASKED`] for a refusal, [`IN_FLIGHT`] past the page's wait.
+    mark: Option<&'static str>,
     kind: String,
     detail: String,
     /// admin's exit status where it answered; `None` where it was not run
     /// or not answered, and for a turn.
     exit: Option<i32>,
-    chrome: super::Chrome,
     /// **The leg an `unload` stopped at its save point missed** (Spec
-    /// 2.14), whose prompt the page states, its options chosen on the
+    /// 2.14), whose prompt the answer states, its options chosen on the
     /// agent's page, where the alert stands.
     missed: Option<String>,
     /// admin's stderr beside its answer, where it wrote any.
     stderr: Option<Said>,
 }
 
+#[derive(Template)]
+#[template(path = "answer.html")]
+struct AnswerFragment {
+    answer: Answer,
+}
+
+/// The mark of an ask the console refused or held: nothing left it.
+const NOT_ASKED: &str = "not asked";
+/// The mark of an ask not answered within the page's wait.
+const IN_FLIGHT: &str = "in flight";
+
+/// **Whether the page's htmx made the request** (Spec 2.13): its
+/// `HX-Request` header, which a post made without a script never carries.
+pub(super) fn in_place(headers: &HeaderMap) -> bool {
+    headers
+        .get("hx-request")
+        .is_some_and(|v| v.as_bytes() == b"true")
+}
+
+/// **An answer drawn in the pane that asked** (Spec 2.13), at its status,
+/// kept from every cache.
+fn answered_in_place(status: StatusCode, answer: Answer) -> Response {
+    let mut drawn = fragment(AnswerFragment { answer }.render());
+    if drawn.status() == StatusCode::OK {
+        *drawn.status_mut() = status;
+    }
+    drawn
+}
+
+/// **An ask refused before anything left the server**, at its status: in
+/// the pane that asked, through htmx, marked [`NOT_ASKED`] and carrying no
+/// agent's label and no record, so an agent without a grant answers as an
+/// unknown one; as its bare words otherwise, as before.
+pub(super) fn refuse(
+    htmx: bool,
+    status: StatusCode,
+    asked: &str,
+    words: impl Into<String>,
+) -> Response {
+    let words = words.into();
+    if !htmx {
+        return (status, words).into_response();
+    }
+    answered_in_place(
+        status,
+        Answer {
+            agent_id: String::new(),
+            label: String::new(),
+            verb: asked.to_owned(),
+            first: String::new(),
+            mark: Some(NOT_ASKED),
+            kind: words,
+            detail: String::new(),
+            exit: None,
+            missed: None,
+            stderr: None,
+        },
+    )
+}
+
+/// **A refusal's words in the plane's own terms**: a turn's connector is
+/// gate-con, and what it places is a turn, where the listener's words name
+/// admin-con and a verb.
+/// **The status a refusal of a person's ask is answered at** (Spec 2.8,
+/// 2.13), one rule for an ask in place and a decision's steps (Spec 2.14):
+/// no grant as an unknown agent (404); the grants' verbs or the ceiling not
+/// carrying it (403); the same person's same verb in flight, held, its
+/// first named and nothing sent (409); not connected, the persons' slots
+/// all taken, the connection lost after the first, or the ask's bound
+/// passed on the server's own waits (503). Everything else is the server's
+/// own failure, a fault (500).
+pub(super) fn refusal_status(refused: &VerbError) -> StatusCode {
+    match refused {
+        VerbError::NoGrant => StatusCode::NOT_FOUND,
+        VerbError::NotGranted { .. } | VerbError::OutsideCeiling { .. } => StatusCode::FORBIDDEN,
+        VerbError::AlreadyAsked { .. } => StatusCode::CONFLICT,
+        VerbError::NotConnected | VerbError::Busy | VerbError::Lost | VerbError::Stalled => {
+            StatusCode::SERVICE_UNAVAILABLE
+        }
+        VerbError::Unanswered
+        | VerbError::Fault(_)
+        | VerbError::ServerAsksShowOnly { .. }
+        | VerbError::Audit
+        | VerbError::Server(_)
+        | VerbError::Shed => StatusCode::INTERNAL_SERVER_ERROR,
+    }
+}
+
+fn refusal_words(refused: &VerbError, turn: bool) -> String {
+    match (refused, turn) {
+        (VerbError::NotConnected, true) => {
+            "no gate-con is connected for this agent: the turn was not placed".to_owned()
+        }
+        (VerbError::Busy, true) => {
+            "gate-con's slots for persons' asks are all taken: the turn was not placed, place it again"
+                .to_owned()
+        }
+        (VerbError::Lost, true) => {
+            "the connection ended before the turn left: it was not placed".to_owned()
+        }
+        _ => refused.to_string(),
+    }
+}
+
 /// **admin's own words beside its answer** (Spec 2.13): text admin wrote,
 /// cut at [`STDERR_BOUND`] bytes at a character boundary as an alert's
 /// reason cuts it, shown on the page escaped as every value is, and never
 /// parsed or read for meaning by this console.
+#[derive(Clone)]
 struct Said {
     text: String,
     /// The bound, where the text was cut at it.
@@ -1090,9 +1271,10 @@ impl Said {
     }
 }
 
-/// admin's answer to a verb as its page shows it.
+/// admin's or the gate's answer to an ask as its pane shows it.
 struct Shown {
     status: StatusCode,
+    mark: Option<&'static str>,
     kind: String,
     detail: String,
     exit: Option<i32>,
@@ -1102,21 +1284,38 @@ struct Shown {
 
 impl Shown {
     /// An answer that carried none of admin's words.
-    fn bare(status: StatusCode, kind: String, detail: String) -> Shown {
+    fn bare(kind: impl Into<String>, detail: String) -> Shown {
         Shown {
-            status,
-            kind,
+            status: StatusCode::OK,
+            mark: None,
+            kind: kind.into(),
             detail,
             exit: None,
             missed: None,
             stderr: None,
         }
     }
+
+    /// **Not answered within the page's wait** (Spec 2.13): 202, when the
+    /// server took the ask, the wait, that the connection still holds it,
+    /// and where its outcome goes. The connection holds it in fact: one
+    /// that ended would have answered the ask unanswered, not run out the
+    /// wait.
+    fn in_flight(said: String) -> Shown {
+        Shown {
+            status: StatusCode::ACCEPTED,
+            mark: Some(IN_FLIGHT),
+            ..Shown::bare(said, String::new())
+        }
+    }
 }
 
 /// **A person's verb, asked through the server** (Spec 2.13): parsed,
 /// resolved, asked under the listener's hold, and its answer shown, or
-/// 202 past the silence bound naming its first record.
+/// 202 past the silence bound naming its first record. **Through htmx the
+/// answer is drawn in the pane that asked**, refusals among it at their
+/// own status; a post without htmx gets the answer page, and a refusal its
+/// bare words, as before.
 async fn act(
     store: Store,
     seams: &Seams,
@@ -1124,29 +1323,33 @@ async fn act(
     agent: String,
     asking: Asking,
 ) -> Response {
+    let htmx = in_place(&headers);
+    let (asked, turn) = match &asking {
+        Asking::Verb(verb) => (verb.clone(), false),
+        Asking::Turn(_) => ("turn".to_owned(), true),
+    };
+    let refused = |status: StatusCode, words: String| refuse(htmx, status, &asked, words);
     if !is_agent_id(&agent) {
-        return (
+        return refused(
             StatusCode::BAD_REQUEST,
-            "the agent asked for is not of its identity's shape",
-        )
-            .into_response();
+            "the agent asked for is not of its identity's shape".to_owned(),
+        );
     }
     // **The payload parsed first**: a turn's text is checked against the
     // gate's own line bound here, so a `line_too_long` is the ask's fault
     // and never reaches gate-con. Nothing of the text is answered back.
     match &asking {
         Asking::Verb(verb) if !lifecycle(verb) => {
-            return (StatusCode::BAD_REQUEST, "not a lifecycle verb").into_response();
+            return refused(StatusCode::BAD_REQUEST, "not a lifecycle verb".to_owned());
         }
         Asking::Turn(text) if text.trim().is_empty() => {
-            return (StatusCode::BAD_REQUEST, "a turn needs its text").into_response();
+            return refused(StatusCode::BAD_REQUEST, "a turn needs its text".to_owned());
         }
         Asking::Turn(text) if request_line(text).is_err() => {
-            return (
+            return refused(
                 StatusCode::BAD_REQUEST,
-                "the turn is longer than the gate's line bound",
-            )
-                .into_response();
+                "the turn is longer than the gate's line bound".to_owned(),
+            );
         }
         _ => {}
     }
@@ -1164,54 +1367,59 @@ async fn act(
     // recorded, as for a malformed one; a record per shed request would
     // rebuild the growth the bound prevents.
     let Some(admission) = seams.asker.admit_ask(&session.person_id) else {
-        return (StatusCode::SERVICE_UNAVAILABLE, VerbError::Shed.to_string()).into_response();
+        return refused(StatusCode::SERVICE_UNAVAILABLE, VerbError::Shed.to_string());
     };
     // **Resolved before any record**: an agent the register does not hold
     // is unknown, and nothing is recorded of it.
     let row = match store.agent(&id).await {
         Ok(Some(row)) => row,
-        Ok(None) => return not_found(),
+        Ok(None) => return refused(StatusCode::NOT_FOUND, NO_SUCH_AGENT.to_owned()),
         Err(e) => return fault(e),
     };
     let asker = Asker {
         session_id: session.session_id,
         person_id: session.person_id.clone(),
     };
-    let (shown, act) = match asking {
-        Asking::Verb(verb) => (verb.clone(), Act::Verb(verb)),
-        Asking::Turn(text) => ("turn".to_owned(), Act::Turn(TurnText::new(text))),
+    let act = match asking {
+        Asking::Verb(verb) => Act::Verb(verb),
+        Asking::Turn(text) => Act::Turn(TurnText::new(text)),
     };
     let enqueued = match seams.asker.ask_as_person(admission, &asker, &id, act).await {
         Ok(enqueued) => enqueued,
-        // **No grant answers as an unknown agent**, so the page is no
-        // oracle for agent identities.
-        Err(VerbError::NoGrant) => return not_found(),
-        Err(refused @ (VerbError::NotGranted { .. } | VerbError::OutsideCeiling { .. })) => {
-            return (StatusCode::FORBIDDEN, refused.to_string()).into_response();
+        Err(refusal) => {
+            return match refusal_status(&refusal) {
+                // **No grant answers as an unknown agent**, so the page is
+                // no oracle for agent identities.
+                StatusCode::NOT_FOUND => refused(StatusCode::NOT_FOUND, NO_SUCH_AGENT.to_owned()),
+                StatusCode::INTERNAL_SERVER_ERROR => fault(anyhow::Error::new(refusal)),
+                status => refused(status, refusal_words(&refusal, turn)),
+            };
         }
-        // Not connected, the persons' slots all taken, the connection lost
-        // after the first, or the ask's bound passed on the server's own
-        // waits (logged at error): nothing was asked.
-        Err(
-            refused @ (VerbError::NotConnected
-            | VerbError::Busy
-            | VerbError::Lost
-            | VerbError::Stalled),
-        ) => {
-            return (StatusCode::SERVICE_UNAVAILABLE, refused.to_string()).into_response();
-        }
-        Err(e) => return fault(anyhow::Error::new(e)),
     };
     let first = enqueued.first.clone();
     // **The page's wait is its own**, bounding nothing of the ask: the
     // outcome is written at the answer whatever this does.
     let bound = seams.asker.silence();
-    let answered = if shown == "turn" {
-        let (status, kind, detail) = turn_shown(bound, enqueued).await;
-        Shown::bare(status, kind, detail)
+    let shown = if turn {
+        turn_shown(bound, enqueued).await
     } else {
-        verb_shown(bound, &shown, enqueued).await
+        verb_shown(bound, &asked, enqueued).await
     };
+    let answer = Answer {
+        agent_id: row.agent_id.as_str().to_owned(),
+        label: format!("{}/{}", row.r#box, row.name),
+        verb: asked.clone(),
+        first,
+        mark: shown.mark,
+        kind: shown.kind,
+        detail: shown.detail,
+        exit: shown.exit,
+        missed: shown.missed,
+        stderr: shown.stderr,
+    };
+    if htmx {
+        return answered_in_place(shown.status, answer);
+    }
     let (admin, chrome) = match (
         store.is_admin(&session.person_id).await,
         super::Chrome::of(&store, &session.person_id).await,
@@ -1223,19 +1431,11 @@ async fn act(
         here: "agents",
         who: session.name,
         admin,
-        agent_id: row.agent_id.as_str().to_owned(),
-        label: format!("{}/{}", row.r#box, row.name),
-        verb: shown,
-        first,
-        kind: answered.kind,
-        detail: answered.detail,
-        exit: answered.exit,
         chrome,
-        missed: answered.missed,
-        stderr: answered.stderr,
+        answer,
     };
     match page.render() {
-        Ok(html) => (answered.status, Html(html)).into_response(),
+        Ok(html) => (shown.status, Html(html)).into_response(),
         Err(e) => fault(e),
     }
 }
@@ -1243,9 +1443,11 @@ async fn act(
 /// admin's answer to a verb, as the page shows it, with its exit status
 /// and the leg an `unload` stopped at its save point missed.
 async fn verb_shown(bound: Duration, verb: &str, enqueued: Enqueued) -> Shown {
+    let at = enqueued.at;
     match tokio::time::timeout(bound, enqueued.answer()).await {
         Ok(Ok(outcome)) => Shown {
             status: StatusCode::OK,
+            mark: None,
             kind: if outcome.exit_code == Some(0) {
                 "admin's answer"
             } else {
@@ -1258,26 +1460,23 @@ async fn verb_shown(bound: Duration, verb: &str, enqueued: Enqueued) -> Shown {
                 .map(|a| serde_json::to_string_pretty(a).unwrap_or_default())
                 .unwrap_or_default(),
             exit: outcome.exit_code,
-            missed: crate::link::listener::stopped_at_save_point(verb, &outcome)
-                .map(str::to_owned),
+            missed: crate::link::listener::stopped_at_save_point(verb, &outcome).map(str::to_owned),
             stderr: Said::of(outcome.stderr.as_deref()),
         },
         Ok(Err(VerbError::Fault(fault))) => Shown::bare(
-            StatusCode::OK,
-            "admin-con's fault".to_owned(),
+            "admin-con's fault",
             format!("{}: {}", fault.kind, fault.message),
         ),
         Ok(Err(VerbError::Unanswered)) => Shown::bare(
-            StatusCode::OK,
-            "the connection ended with the verb in flight: its outcome is unknown here, and the trace and the next show hold it".to_owned(),
+            "the connection ended with the verb in flight: its outcome is unknown here, and the trace and the next show hold it",
             String::new(),
         ),
-        Ok(Err(e)) => Shown::bare(StatusCode::OK, "no answer".to_owned(), e.to_string()),
-        Err(_) => Shown::bare(
-            StatusCode::ACCEPTED,
-            "asked, and not answered within the bound: its outcome is written when admin answers".to_owned(),
-            String::new(),
-        ),
+        Ok(Err(e)) => Shown::bare("no answer", e.to_string()),
+        Err(_) => Shown::in_flight(format!(
+            "Asked at {} and not answered within {} s: the connection to admin-con still holds it. Its outcome is written to the audit when admin answers, and the agent page's load state follows the agent's trace.",
+            when(at),
+            bound.as_secs()
+        )),
     }
 }
 
@@ -1285,46 +1484,41 @@ async fn verb_shown(bound: Duration, verb: &str, enqueued: Enqueued) -> Shown {
 /// answered close's text, marked truncated where `finish` is `length`; a
 /// stopped or refused close's reason; gate-con's fault; or the connection
 /// ended with the turn in flight.
-async fn turn_shown(bound: Duration, enqueued: Enqueued) -> (StatusCode, String, String) {
+async fn turn_shown(bound: Duration, enqueued: Enqueued) -> Shown {
+    let at = enqueued.at;
     match tokio::time::timeout(bound, enqueued.close()).await {
         Ok(Ok(close)) => match close.kind.as_str() {
-            "answered" => (
-                StatusCode::OK,
+            "answered" => Shown::bare(
                 if close.finish.as_deref() == Some("length") {
                     "the agent's answer, truncated at the turn's token limit"
                 } else {
                     "the agent's answer"
-                }
-                .to_owned(),
+                },
                 close.text.unwrap_or_default(),
             ),
-            kind @ ("stopped" | "refused") => (
-                StatusCode::OK,
+            kind @ ("stopped" | "refused") => Shown::bare(
                 format!("the agent {kind} the turn"),
                 close.reason.unwrap_or_default(),
             ),
-            other => (
-                StatusCode::OK,
+            other => Shown::bare(
                 format!("a close of kind {other}"),
                 close.text.or(close.reason).unwrap_or_default(),
             ),
         },
-        Ok(Err(TurnError::Gate(fault))) => (
-            StatusCode::OK,
-            "gate-con's fault".to_owned(),
+        Ok(Err(TurnError::Gate(fault))) => Shown::bare(
+            "gate-con's fault",
             format!("{}: {}", fault.kind, fault.message),
         ),
-        Ok(Err(TurnError::Unanswered)) => (
-            StatusCode::OK,
-            "the connection ended with the turn in flight: its outcome is unknown here, and the agent's trace holds it".to_owned(),
+        Ok(Err(TurnError::Unanswered)) => Shown::bare(
+            "the connection ended with the turn in flight: its outcome is unknown here, and the agent's trace holds it",
             String::new(),
         ),
-        Ok(Err(e)) => (StatusCode::OK, "no answer".to_owned(), e.to_string()),
-        Err(_) => (
-            StatusCode::ACCEPTED,
-            "placed, and not answered within the bound: its outcome is written when the gate answers".to_owned(),
-            String::new(),
-        ),
+        Ok(Err(e)) => Shown::bare("no answer", e.to_string()),
+        Err(_) => Shown::in_flight(format!(
+            "Placed at {} and not answered within {} s: the connection to gate-con still holds it. Its outcome is written to the audit when the gate answers, and the agent's answer is in its trace.",
+            when(at),
+            bound.as_secs()
+        )),
     }
 }
 
@@ -1568,5 +1762,77 @@ mod tests {
             .map(|(n, name, backing)| (n, name.to_owned(), backing.to_owned()))
             .collect();
         assert_eq!(table, headings);
+    }
+
+    /// **A turn's refusal names gate-con and the turn**, never admin-con or
+    /// a verb, where the listener's words name the admin plane's: not
+    /// connected, the slots taken, the connection lost before the frame;
+    /// a verb's keep the listener's words.
+    ///
+    /// Perturbation: answer a turn in the listener's words, and the pane
+    /// names admin-con for a turn.
+    #[test]
+    fn a_turns_refusal_names_its_own_connector() {
+        use crate::link::listener::VerbError;
+        for refused in [VerbError::NotConnected, VerbError::Busy, VerbError::Lost] {
+            let words = super::refusal_words(&refused, true);
+            assert!(
+                words.contains("turn") && !words.contains("admin-con") && !words.contains("verb"),
+                "{refused:?}: {words}"
+            );
+            assert_eq!(super::refusal_words(&refused, false), refused.to_string());
+        }
+        assert!(super::refusal_words(&VerbError::NotConnected, true).contains("gate-con"));
+        assert!(super::refusal_words(&VerbError::Busy, true).contains("gate-con"));
+    }
+
+    /// **The answer page and the pane draw one fragment** (Spec 2.13), so
+    /// what the pane shows cannot drift from what the page shows: the page
+    /// carries the fragment's rendering whole, its decision, its exit mark
+    /// and admin's words escaped among it.
+    ///
+    /// Perturbation: draw the page's answer from markup of its own, and the
+    /// page no longer carries the fragment.
+    #[test]
+    fn the_answer_page_carries_the_panes_fragment_whole() {
+        use askama::Template;
+        let answer = super::Answer {
+            agent_id: "ag-0123456789abcdef".into(),
+            label: "box-a/karl".into(),
+            verb: "unload".into(),
+            first: "au-0123456789abcdef0123456789abcdef".into(),
+            mark: None,
+            kind: "admin's refusal".into(),
+            detail: "{\n  \"kind\": \"save_point_not_taken\"\n}".into(),
+            exit: Some(1),
+            missed: Some("finished".into()),
+            stderr: super::Said::of(Some("<words> & more")),
+        };
+        let fragment = super::AnswerFragment {
+            answer: answer.clone(),
+        }
+        .render()
+        .unwrap();
+        for part in [
+            "<dialog open>",
+            r#"<span class="status fail">exit 1</span>"#,
+            "&#60;words&#62; &#38; more",
+            "au-0123456789abcdef0123456789abcdef",
+        ] {
+            assert!(fragment.contains(part), "{part}: {fragment}");
+        }
+        let page = super::VerbPage {
+            here: "agents",
+            who: "ada".into(),
+            admin: false,
+            chrome: super::super::Chrome::default(),
+            answer,
+        }
+        .render()
+        .unwrap();
+        assert!(
+            page.contains(fragment.trim()),
+            "the page carries the fragment whole: {page}"
+        );
     }
 }

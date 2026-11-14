@@ -40,6 +40,8 @@ mod deadline_tests;
 #[cfg(test)]
 pub(crate) mod fake_relay;
 #[cfg(test)]
+mod run_end_tests;
+#[cfg(test)]
 mod server_asks_tests;
 #[cfg(test)]
 mod sudo_invoker_tests;

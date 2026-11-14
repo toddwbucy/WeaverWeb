@@ -17,7 +17,9 @@ use tokio::net::TcpStream;
 use crate::admin_tests::{admin, form, hold, send_as, signed_in};
 use crate::host;
 use crate::link::authority::{Authority, client_tls};
-use crate::link::frames::{FromClient, Plane, Position, Refusal as LinkRefusal, ToClient};
+use crate::link::frames::{
+    FromClient, Plane, Position, Refusal as LinkRefusal, ToClient, capability,
+};
 use crate::link::listener::Listener;
 use crate::passkeys_tests::{ORIGIN, app, authenticator, passkeys};
 use crate::sign_in_tests::rows;
@@ -247,8 +249,35 @@ impl Connector {
         Self::dial_with(config, &["show"]).await
     }
 
-    /// Dial on a client config, an admin plane declaring `ceiling`.
+    /// Dial on a client config, an admin plane declaring `ceiling`, as an
+    /// admin-con of this build.
     pub(crate) async fn dial_with(config: &str, ceiling: &[&str]) -> Self {
+        Self::dial_stating(config, ceiling, false).await
+    }
+
+    /// **Dial again until the listener admits**, past the teardown of a
+    /// connection just dropped: the old one is live at the server until its
+    /// reader sees the close, and a dial meeting it is refused
+    /// `already_connected` (Spec 8), so a fixed wait before the dial races
+    /// that teardown. Each such refusal is dialed again, for at most five
+    /// seconds; the hello's answer is taken here.
+    pub(crate) async fn redial(config: &str, ceiling: &[&str], older: bool) -> Self {
+        let until = tokio::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let mut connector = Self::dial_stating(config, ceiling, older).await;
+            match connector.recv().await {
+                Some(ToClient::HelloAnswer { .. }) => return connector,
+                Some(ToClient::Refusal {
+                    reason: LinkRefusal::AlreadyConnected,
+                }) if tokio::time::Instant::now() < until => {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+                other => panic!("expected the hello's answer, got {other:?}"),
+            }
+        }
+    }
+
+    async fn dial_stating(config: &str, ceiling: &[&str], older: bool) -> Self {
         let table: toml::Table = config.parse().expect("a client config is TOML");
         let field = |key: &str| table[key].as_str().unwrap().to_owned();
         let tls = client_tls(
@@ -284,6 +313,8 @@ impl Connector {
                 ceiling: (plane == Plane::Admin)
                     .then(|| ceiling.iter().map(|v| (*v).to_owned()).collect()),
                 door: (plane == Plane::Admin).then_some(true),
+                capabilities: (plane == Plane::Admin && !older)
+                    .then(|| vec![capability::CLOSE_SHOW.to_owned()]),
             })
             .await;
         connector
@@ -301,6 +332,27 @@ impl Connector {
         match tokio::time::timeout(Duration::from_secs(5), self.reader.read_line(&mut line)).await {
             Ok(Ok(0)) | Err(_) | Ok(Err(_)) => None,
             Ok(Ok(_)) => serde_json::from_str(line.trim_end()).ok(),
+        }
+    }
+
+    /// **Every frame the server sends within `within`, and whether it closed
+    /// the connection**, where [`recv`](Self::recv) reads a close and a
+    /// quiet wait alike: a test that claims the connection stands reads it
+    /// here.
+    pub(crate) async fn frames_within(&mut self, within: Duration) -> (Vec<ToClient>, bool) {
+        let until = tokio::time::Instant::now() + within;
+        let mut frames = Vec::new();
+        loop {
+            let mut line = String::new();
+            match tokio::time::timeout_at(until, self.reader.read_line(&mut line)).await {
+                Err(_) => return (frames, false),
+                Ok(Ok(0)) | Ok(Err(_)) => return (frames, true),
+                Ok(Ok(_)) => {
+                    if let Ok(frame) = serde_json::from_str(line.trim_end()) {
+                        frames.push(frame);
+                    }
+                }
+            }
         }
     }
 

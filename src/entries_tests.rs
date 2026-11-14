@@ -18,7 +18,7 @@ use crate::link::frames::{ENTRY_BOUND, FromClient, Position, Refusal, ToClient};
 use crate::store::AgentId;
 use crate::store::alerts::Alert;
 use crate::traceview::TraceEvent;
-use crate::verbs_tests::{Operated, admitted_admin, dial_gate, operated};
+use crate::verbs_tests::{Operated, dial_gate, operated, readmitted_admin};
 
 /// A run as a connector draws one.
 const RUN: &str = "0123456789abcdef";
@@ -286,8 +286,7 @@ async fn a_resent_entry_is_logged_once() {
         ..
     } = o;
     drop(admin_con);
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    let mut again = admitted_admin(&admin_config, &["show"]).await;
+    let mut again = readmitted_admin(&admin_config, &["show"]).await;
     send_entry(&mut again, 1, "admin-con", entry).await;
     assert_eq!(entry_ack(&mut again).await, (RUN.to_owned(), 1));
     tokio::time::sleep(Duration::from_millis(300)).await;
@@ -322,8 +321,7 @@ async fn an_entry_not_taken_closes_so_its_resend_is_taken() {
         ..
     } = o;
     drop(admin_con);
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    let mut again = admitted_admin(&admin_config, &["show"]).await;
+    let mut again = readmitted_admin(&admin_config, &["show"]).await;
     send_entry(&mut again, 1, "admin-con", first).await;
     send_entry(&mut again, 2, "admin-con", second).await;
     entry_ack(&mut again).await;
@@ -378,8 +376,7 @@ async fn an_entry_outside_its_shape_is_refused_at_the_door() {
             json!({"kind": "x", "message": "p".repeat(ENTRY_BOUND)}),
         ),
     ] {
-        tokio::time::sleep(Duration::from_millis(300)).await;
-        let mut c = admitted_admin(&admin_config, &["show"]).await;
+        let mut c = readmitted_admin(&admin_config, &["show"]).await;
         send_entry(&mut c, 1, source, entry).await;
         assert_eq!(refused(&mut c).await, Some(Refusal::Malformed), "{source}");
     }
@@ -629,8 +626,7 @@ async fn entries_acknowledged_are_applied_from_their_durable_copy() {
         ..
     } = o;
     drop(admin_con);
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    let mut again = admitted_admin(&admin_config, &["show"]).await;
+    let mut again = readmitted_admin(&admin_config, &["show"]).await;
     let held = alerts.stall_worker().await;
     let count = 1000u64;
     for seq in 1..=count {

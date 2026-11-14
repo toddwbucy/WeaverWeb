@@ -51,7 +51,7 @@ pub(super) struct Trace {
 }
 
 /// One trace record: its kind, and `n` in its payload to tell events apart.
-fn record(n: u64, kind: &str) -> String {
+pub(super) fn record(n: u64, kind: &str) -> String {
     format!(
         "{}\n",
         json!({
@@ -106,7 +106,7 @@ impl Trace {
         f.sync_all().unwrap();
     }
 
-    fn append(&self, n: u64, kind: &str) {
+    pub(super) fn append(&self, n: u64, kind: &str) {
         self.append_raw(record(n, kind).as_bytes());
     }
 
@@ -117,20 +117,20 @@ impl Trace {
 
 /// One scripted invocation of the fake invoker.
 #[derive(Default)]
-struct Step {
-    delay: Duration,
+pub(super) struct Step {
+    pub(super) delay: Duration,
     /// Written to the trace file before the snapshot, as admin would have
     /// written it just ahead of the invocation.
-    first_append: Option<(PathBuf, String)>,
+    pub(super) first_append: Option<(PathBuf, String)>,
     /// Written to the trace file after the snapshot, as admin would while
     /// the verb ran.
-    then_append: Option<(PathBuf, String)>,
-    then_state: Option<String>,
+    pub(super) then_append: Option<(PathBuf, String)>,
+    pub(super) then_state: Option<String>,
 }
 
 /// A fake invoker: permits a configured set, answers `show` with the state
 /// it holds at the invocation's start, and records what ran.
-struct FakeInvoker {
+pub(super) struct FakeInvoker {
     grants: Vec<String>,
     state: Mutex<String>,
     steps: Mutex<VecDeque<Step>>,
@@ -139,10 +139,13 @@ struct FakeInvoker {
     slow: Mutex<Option<(String, Duration)>>,
     /// A verb whose every run faults.
     fails: Mutex<Option<String>>,
+    /// How many `show` runs answer `in_transition` before one answers its
+    /// state: a run's processes still being ended.
+    transitions: Mutex<usize>,
 }
 
 impl FakeInvoker {
-    fn new(grants: &[&str], state: &str) -> Arc<Self> {
+    pub(super) fn new(grants: &[&str], state: &str) -> Arc<Self> {
         Arc::new(Self {
             grants: grants.iter().map(|g| (*g).to_owned()).collect(),
             state: Mutex::new(state.to_owned()),
@@ -150,26 +153,32 @@ impl FakeInvoker {
             ran: Mutex::new(Vec::new()),
             slow: Mutex::new(None),
             fails: Mutex::new(None),
+            transitions: Mutex::new(0),
         })
+    }
+
+    /// The next `n` runs of `show` answer `in_transition`.
+    pub(super) fn in_transition_for(&self, n: usize) {
+        *self.transitions.lock().unwrap() = n;
     }
 
     fn fail(&self, verb: &str) {
         *self.fails.lock().unwrap() = Some(verb.to_owned());
     }
 
-    fn slow(&self, verb: &str, delay: Duration) {
+    pub(super) fn slow(&self, verb: &str, delay: Duration) {
         *self.slow.lock().unwrap() = Some((verb.to_owned(), delay));
     }
 
-    fn script(&self, step: Step) {
+    pub(super) fn script(&self, step: Step) {
         self.steps.lock().unwrap().push_back(step);
     }
 
-    fn set_state(&self, state: &str) {
+    pub(super) fn set_state(&self, state: &str) {
         *self.state.lock().unwrap() = state.to_owned();
     }
 
-    fn ran(&self) -> Vec<String> {
+    pub(super) fn ran(&self) -> Vec<String> {
         self.ran.lock().unwrap().clone()
     }
 }
@@ -219,11 +228,23 @@ impl Invoker for FakeInvoker {
         } else {
             serde_json::Value::Null
         };
+        let in_transition = verb == "show" && {
+            let mut left = self.transitions.lock().unwrap();
+            let some = *left > 0;
+            if some {
+                *left -= 1;
+            }
+            some
+        };
         Ok(VerbOutcome {
             verb: verb.to_owned(),
             agent: agent.to_owned(),
             exit_code: Some(0),
-            answer: Some(json!({"kind": "state", "state": snapshot, "load": load})),
+            answer: Some(if in_transition {
+                json!({"kind": "in_transition", "constituents": [4100]})
+            } else {
+                json!({"kind": "state", "state": snapshot, "load": load})
+            }),
             raw_stdout: None,
             stderr: None,
         })
@@ -265,7 +286,7 @@ impl Running {
         Self { stop, status, task }
     }
 
-    fn status(&self) -> LinkStatus {
+    pub(super) fn status(&self) -> LinkStatus {
         self.status.borrow().clone()
     }
 
@@ -361,7 +382,7 @@ pub(super) fn config(path: &Path) -> AdminConConfig {
     cfg
 }
 
-fn window(lab: &Lab, id: &AgentId) -> Vec<TraceEvent> {
+pub(super) fn window(lab: &Lab, id: &AgentId) -> Vec<TraceEvent> {
     lab.listener
         .windows()
         .snapshot(id.as_str())
@@ -369,7 +390,7 @@ fn window(lab: &Lab, id: &AgentId) -> Vec<TraceEvent> {
 }
 
 /// The `n` of every relayed record, in window order.
-fn ns(events: &[TraceEvent]) -> Vec<u64> {
+pub(super) fn ns(events: &[TraceEvent]) -> Vec<u64> {
     events
         .iter()
         .filter(|e| e.mark.is_none())

@@ -40,7 +40,7 @@ use crate::deadline::{self, Passed};
 use crate::link::authority::{Authority, fingerprint};
 use crate::link::frames::{
     FromClient, Line, LineReader, Plane, Position, Principal, Refusal, ToClient, TurnFault,
-    VerbFault, VerbOutcome,
+    VerbFault, VerbOutcome, capability,
 };
 use crate::link::register::{
     ConstituentsWrite, CredentialState, Observation, REVOCATION_CHANNEL, TransitionWrite,
@@ -53,6 +53,7 @@ use crate::store::identity::session_stands;
 use crate::store::{AgentId, Store};
 use crate::traceview::{TraceEvent, TraceViews};
 use chrono::{DateTime, Utc};
+use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap};
 use std::future::Future;
 use std::net::SocketAddr;
@@ -95,6 +96,26 @@ pub const LISTENER_LOCK_KEY: i64 = i64::from_be_bytes(*b"weaverwb");
 /// for its life and a verb must not wait on the server.
 pub const AUTHORITY_LOCK_KEY: i64 = i64::from_be_bytes(*b"weaverca");
 
+/// **The re-asks of a door's close** (Spec 2.12, 7.2): where the `show`
+/// the server asks at a close of the trace door answers `in_transition`
+/// and the door stays closed, it is asked again at most this many times,
+/// each `CLOSE_REASK` after the answer before it. Past them the row keeps
+/// its transition, dated, and nothing asks again until the next admission
+/// or opening of the door.
+pub const CLOSE_REASKS: u32 = 3;
+
+/// The gap before each re-ask of a door's close (`CLOSE_REASKS`).
+pub const CLOSE_REASK: Duration = Duration::from_secs(5);
+
+/// **The `show` asked at a door's close**, while its answer or its re-ask
+/// is owed: the ask's id, the re-asks already made, and when the next is
+/// due once an answer said `in_transition`.
+struct CloseShow {
+    id: u64,
+    reasks: u32,
+    due: Option<tokio::time::Instant>,
+}
+
 /// A live connection as the listener holds it: the credential it was
 /// admitted on, the write path, the incarnation that every link-state write
 /// about it names, the asks it has not answered, and the close the revoking
@@ -119,6 +140,11 @@ struct LiveConnection {
     /// reconnection that narrows the ceiling cannot race an ask. The row's
     /// copy is what surfaces read and never the authorization input.
     ceiling: Option<Arc<BTreeSet<String>>>,
+    /// **Whether a close of the trace door asks `show` of this connection**
+    /// (Spec 7.2, 8): its ceiling grants `show` and its hello stated
+    /// [`capability::CLOSE_SHOW`]. Fixed for its life, and read by the
+    /// agent page's line on a state under a closed door.
+    close_shows: bool,
     /// **Each verb ask's record, by its ask** (Spec 2.13, 7.2): the verb
     /// asked and its first record, where the ask is audited. The
     /// connection task's own, filled before the frame enters the channel
@@ -127,6 +153,13 @@ struct LiveConnection {
     /// It goes with the connection, and an entry still in it then is a
     /// first record with no second, the audit's "unknown".
     asks: Asks,
+    /// **Each person's verb from its check to its enqueue** (Spec 2.13),
+    /// the claims the hold of a second identical ask reads beside `asks`:
+    /// claimed under the live map's lock at the check and moved into `asks`
+    /// under it at the enqueue, so a second ask finds the first in one map
+    /// or the other and never in neither. Never drained into an alert: an
+    /// ask still claimed has sent no frame.
+    claims: Claims,
     /// The places of `PERSON_SLOTS` on this connection.
     person_slots: Arc<tokio::sync::Semaphore>,
     /// **When the server last read a frame from this connection**, any
@@ -142,10 +175,51 @@ struct Asked {
     /// The act's principal, `server` or a person's `pe-`, for an alert's
     /// operations-log line.
     principal: String,
+    /// When the server took the ask, which a held second ask names.
+    at: DateTime<Utc>,
 }
 
 /// The connection's map from an ask's id to its record.
 type Asks = Arc<Mutex<HashMap<u64, Asked>>>;
+
+/// **A person's verb claimed on its connection**, from its check to its
+/// enqueue: its verb, its person, when the server took it, and its first
+/// record once that is durable.
+struct Claimed {
+    verb: String,
+    person: String,
+    at: DateTime<Utc>,
+    first: Option<String>,
+}
+
+/// The connection's map from an ask's id to its claim.
+type Claims = Arc<Mutex<HashMap<u64, Claimed>>>;
+
+/// **The claim's guard** (Spec 2.13): whatever ends the ask before its
+/// enqueue, a refusal, a lost connection or the bound, takes its claim off
+/// the connection, so a hold never outlives the ask it holds for. At the
+/// enqueue the claim moves into `asks`, and the guard's removal then finds
+/// nothing.
+struct Claim {
+    claims: Claims,
+    id: u64,
+}
+
+impl Claim {
+    /// The claim's first record, durable: a second ask held from now names
+    /// it.
+    fn recorded(&self, first: &str) {
+        if let Some(claimed) = self.claims.lock().unwrap().get_mut(&self.id) {
+            claimed.first = Some(first.to_owned());
+        }
+    }
+}
+
+impl Drop for Claim {
+    fn drop(&mut self) {
+        self.claims.lock().unwrap().remove(&self.id);
+    }
+}
 
 /// The connection's map from an ask's id to its asker's reply.
 type Pending = Arc<Mutex<HashMap<u64, oneshot::Sender<FromClient>>>>;
@@ -219,6 +293,14 @@ impl Drop for Unsent {
     }
 }
 
+/// **Who claims a verb on its connection** (Spec 2.13): the ask, its person
+/// and when the server took it.
+struct Claimant<'a> {
+    ask: u64,
+    person: &'a str,
+    at: DateTime<Utc>,
+}
+
 /// Why an ask did not reach a connection.
 enum AskError {
     /// No ready connection on the plane, or the ask could not be enqueued
@@ -281,6 +363,15 @@ pub enum VerbError {
     /// The server is taking no more asks now, or none more of this
     /// person's: nothing was asked and nothing recorded.
     Shed,
+    /// **The same person's same verb on the agent is in flight** (Spec
+    /// 2.13): held by the console with one refusal record, no frame sent,
+    /// naming when the first was taken and its first record (none while
+    /// that record is still being written).
+    AlreadyAsked {
+        verb: String,
+        at: DateTime<Utc>,
+        first: Option<String>,
+    },
 }
 
 impl std::fmt::Display for VerbError {
@@ -329,6 +420,15 @@ impl std::fmt::Display for VerbError {
             VerbError::Shed => write!(
                 f,
                 "the server is taking no more asks now; nothing was asked, ask again"
+            ),
+            VerbError::AlreadyAsked { verb, at, first } => write!(
+                f,
+                "{verb} was already asked at {}, {}, and is not yet answered: this ask was not sent",
+                at.format("%Y-%m-%d %H:%M:%S UTC"),
+                match first {
+                    Some(first) => format!("recorded as {first}"),
+                    None => "its record still being written".to_owned(),
+                }
             ),
         }
     }
@@ -420,6 +520,8 @@ pub struct Asker {
 /// the answer whatever the caller does.
 pub struct Enqueued {
     pub first: String,
+    /// When the server took the ask, which the page names past its wait.
+    pub at: DateTime<Utc>,
     verb: String,
     reply: oneshot::Receiver<FromClient>,
     _unask: Unask,
@@ -670,6 +772,9 @@ struct Inner {
     /// The stops a test set in persons' asks.
     #[cfg(test)]
     pauses: Mutex<Vec<Pause>>,
+    /// The gap before a re-ask of a door's close, in milliseconds:
+    /// `CLOSE_REASK`, which a test shortens.
+    close_reask_ms: AtomicU64,
 }
 
 /// The server's handle on the link: the asks it routes and the window it
@@ -823,6 +928,7 @@ impl Listener {
                 delay_next_outcome: Mutex::new(None),
                 #[cfg(test)]
                 pauses: Mutex::new(Vec::new()),
+                close_reask_ms: AtomicU64::new(CLOSE_REASK.as_millis() as u64),
             }),
         };
         tracing::info!("link listening on {address} under epoch {epoch}");
@@ -1027,6 +1133,17 @@ impl Listener {
             .map(|c| c.heard.lock().unwrap().elapsed())
     }
 
+    /// **Whether a close of the agent's trace door asks `show`** (Spec 7.2,
+    /// 8): the live admin connection's ceiling grants it and its hello
+    /// stated [`capability::CLOSE_SHOW`]; `None` where no admitted admin
+    /// connection stands.
+    pub fn asks_show_at_close(&self, agent: &AgentId) -> Option<bool> {
+        let live = self.inner.live.lock().unwrap();
+        live.get(&(agent.clone(), Plane::Admin))
+            .filter(|c| c.ready)
+            .map(|c| c.close_shows)
+    }
+
     /// **The silence bound**, which a caller waiting for a verb's answer
     /// holds its own wait to.
     pub fn silence(&self) -> Duration {
@@ -1082,6 +1199,15 @@ impl Listener {
     #[cfg(test)]
     pub fn fail_next_land(&self) {
         self.inner.fault_next_land.store(true, Ordering::Relaxed);
+    }
+
+    /// Set the gap before a re-ask of a door's close, `CLOSE_REASK` in
+    /// service.
+    #[cfg(test)]
+    pub fn set_close_reask(&self, gap: Duration) {
+        self.inner
+            .close_reask_ms
+            .store(gap.as_millis() as u64, Ordering::Relaxed);
     }
 
     /// Make the next store write of an observation never complete, once.
@@ -1388,6 +1514,12 @@ impl Listener {
 }
 
 impl Inner {
+    /// The gap before a re-ask of a door's close: `CLOSE_REASK`, or what a
+    /// test set.
+    fn close_reask(&self) -> Duration {
+        Duration::from_millis(self.close_reask_ms.load(Ordering::Relaxed))
+    }
+
     /// **The record step** (Spec 2.13): a verb's first record, written
     /// before its frame enters the channel, for `Inner::ask` and `ask_show`
     /// alike. **The duty to answer the first `failed` is owned from before
@@ -1561,6 +1693,7 @@ impl Inner {
                             verb: verb.to_owned(),
                             first: first.clone(),
                             principal: "server".to_owned(),
+                            at: Utc::now(),
                         },
                     );
                     (
@@ -1646,6 +1779,9 @@ impl Inner {
         authorized: &mut bool,
     ) -> Result<Enqueued, VerbError> {
         let id = self.next_ask.fetch_add(1, Ordering::Relaxed);
+        // **When the server took the ask**, which a held second ask and the
+        // page past its wait name.
+        let at = Utc::now();
         let plane = act.plane();
         // **The verb the grant must carry and the first record's action**:
         // the verb, or `turn`; never a turn's text, which only the frame
@@ -1707,17 +1843,29 @@ impl Inner {
         } else {
             None
         };
-        let refusal = match &verbs {
-            None => Some((VerbError::NoGrant, "no grant on the agent")),
+        let mut claim = None;
+        let refusal: Option<(VerbError, Cow<'static, str>)> = match &verbs {
+            None => Some((VerbError::NoGrant, "no grant on the agent".into())),
             Some(verbs) if !verbs.contains(verb) => Some((
                 VerbError::NotGranted {
                     verb: verb.to_owned(),
                 },
-                "the roles held on the agent do not carry the verb",
+                "the roles held on the agent do not carry the verb".into(),
             )),
             Some(_) => {
                 *authorized = true;
-                self.connection_refusal(agent, plane, &reserved, act.ceilinged())
+                let claimant = Claimant {
+                    ask: id,
+                    person: &asker.person_id,
+                    at,
+                };
+                match self.connection_check(agent, plane, &reserved, act.ceilinged(), claimant) {
+                    Ok(claimed) => {
+                        claim = claimed;
+                        None
+                    }
+                    Err(refused) => Some(refused),
+                }
             }
         };
         if let Some((answer, why)) = refusal {
@@ -1730,7 +1878,7 @@ impl Inner {
             hold::bound(Point::Refusal, deadline);
             let recorded = deadline::before(
                 self.store
-                    .audit_refusal(principal, Target::Agent(agent.as_str()), verb, why),
+                    .audit_refusal(principal, Target::Agent(agent.as_str()), verb, &why),
                 deadline,
             )
             .await;
@@ -1753,7 +1901,12 @@ impl Inner {
         )
         .await
         {
-            Ok(Ok(unsent)) => unsent,
+            Ok(Ok(unsent)) => {
+                if let (Some(claim), Some(first)) = (&claim, &unsent.first) {
+                    claim.recorded(first);
+                }
+                unsent
+            }
             Ok(Err(e)) => {
                 tracing::error!(
                     "{agent}: the first record of a person's {verb} could not be written, nothing asked: {e:#}"
@@ -1778,19 +1931,23 @@ impl Inner {
         let (reply_tx, reply_rx) = oneshot::channel();
         // **Inserted where the ceiling was read**, the same incarnation
         // under the live map's lock: a teardown since leaves nothing to
-        // send on, and the first is answered `failed`.
+        // send on, and the first is answered `failed`. **A verb's claim
+        // moves into `asks` here**, under the same lock as the check that
+        // reads both, so the hold sees the ask throughout.
         let found = {
             let live = self.live.lock().unwrap();
             live.get(&(agent.clone(), plane))
                 .filter(|c| c.ready && c.incarnation == incarnation)
                 .map(|conn| {
                     conn.pending.lock().unwrap().insert(id, reply_tx);
+                    conn.claims.lock().unwrap().remove(&id);
                     conn.asks.lock().unwrap().insert(
                         id,
                         Asked {
                             verb: verb.to_owned(),
                             first: Some(first.clone()),
                             principal: asker.person_id.clone(),
+                            at,
                         },
                     );
                     (conn.pending.clone(), conn.asks.clone())
@@ -1818,6 +1975,7 @@ impl Inner {
         }
         Ok(Enqueued {
             first,
+            at,
             verb: verb.to_owned(),
             reply: reply_rx,
             _unask: Unask(pending, id),
@@ -1871,52 +2029,104 @@ impl Inner {
 
     /// **The connection's half of the check**, under the hold: the
     /// connection the slot was reserved on still live and ready, and its
-    /// ceiling granting the verb.
-    fn connection_refusal(
+    /// ceiling granting the verb. **Then, for a verb, the hold of a second
+    /// identical ask** (Spec 2.13): the same person's same verb already in
+    /// flight on this connection, claimed or enqueued, refuses this one as
+    /// `already_asked`, naming the first; otherwise this ask is claimed,
+    /// both under the live map's lock, so of two identical asks at once one
+    /// is claimed and the other held. Not held: a different verb, another
+    /// person's same verb, the server's own `show`, and a turn, since two
+    /// turns are two turns.
+    fn connection_check(
         &self,
         agent: &AgentId,
         plane: Plane,
         reserved: &Slot,
         ceilinged: Option<&str>,
-    ) -> Option<(VerbError, &'static str)> {
-        let not_connected = Some((
-            VerbError::NotConnected,
-            match plane {
-                Plane::Admin => "admin-con is not connected",
-                Plane::Gate => "gate-con is not connected",
-            },
-        ));
+        claimant: Claimant<'_>,
+    ) -> Result<Option<Claim>, (VerbError, Cow<'static, str>)> {
+        let not_connected = || {
+            (
+                VerbError::NotConnected,
+                Cow::Borrowed(match plane {
+                    Plane::Admin => "admin-con is not connected",
+                    Plane::Gate => "gate-con is not connected",
+                }),
+            )
+        };
         let reserved = match reserved {
             Slot::Reserved(reserved) => reserved,
             Slot::Busy => {
-                return Some((
+                return Err((
                     VerbError::Busy,
-                    "the connection's slots for persons' asks are all taken",
+                    "the connection's slots for persons' asks are all taken".into(),
                 ));
             }
-            Slot::None => return not_connected,
+            Slot::None => return Err(not_connected()),
         };
         let live = self.live.lock().unwrap();
         let Some(conn) = live
             .get(&(agent.clone(), plane))
             .filter(|c| c.ready && c.incarnation == reserved.incarnation)
         else {
-            return not_connected;
+            return Err(not_connected());
         };
         // **A turn has no ceiling**: the gate's own admission is the box's.
-        let verb = ceilinged?;
+        let Some(verb) = ceilinged else {
+            return Ok(None);
+        };
         let ceiling = conn.ceiling.as_deref().cloned().unwrap_or_default();
-        if ceiling.contains(verb) {
-            None
-        } else {
-            Some((
+        if !ceiling.contains(verb) {
+            return Err((
                 VerbError::OutsideCeiling {
                     verb: verb.to_owned(),
                     ceiling: ceiling.into_iter().collect(),
                 },
-                "outside the connection's ceiling",
-            ))
+                "outside the connection's ceiling".into(),
+            ));
         }
+        let Claimant { ask, person, at } = claimant;
+        let in_flight = conn
+            .asks
+            .lock()
+            .unwrap()
+            .values()
+            .find(|a| a.principal == person && a.verb == verb)
+            .map(|a| (a.at, a.first.clone()));
+        let mut claims = conn.claims.lock().unwrap();
+        let held = in_flight.or_else(|| {
+            claims
+                .values()
+                .find(|c| c.person == person && c.verb == verb)
+                .map(|c| (c.at, c.first.clone()))
+        });
+        if let Some((at, first)) = held {
+            let why = match &first {
+                Some(first) => format!("already_asked: in flight as {first}"),
+                None => "already_asked: in flight, its first record still being written".to_owned(),
+            };
+            return Err((
+                VerbError::AlreadyAsked {
+                    verb: verb.to_owned(),
+                    at,
+                    first,
+                },
+                why.into(),
+            ));
+        }
+        claims.insert(
+            ask,
+            Claimed {
+                verb: verb.to_owned(),
+                person: person.to_owned(),
+                at,
+                first: None,
+            },
+        );
+        Ok(Some(Claim {
+            claims: conn.claims.clone(),
+            id: ask,
+        }))
     }
 
     /// A test's stop, where one was set for this point.
@@ -2247,6 +2457,7 @@ async fn ask_show(
             verb: "show".into(),
             first: Some(first),
             principal: "server".to_owned(),
+            at: Utc::now(),
         },
     );
     unsent.asks = Some(asks.clone());
@@ -2258,6 +2469,14 @@ async fn ask_show(
     enqueue(tx, frame, inner.silence, close).await?;
     unsent.disarm();
     Ok(id)
+}
+
+/// **Wait for a close's re-ask to fall due**, or forever where none is.
+async fn reask_at(due: Option<tokio::time::Instant>) {
+    match due {
+        Some(due) => tokio::time::sleep_until(due).await,
+        None => std::future::pending().await,
+    }
 }
 
 /// **A verb's answer, classified once**: admin's outcome, or a fault,
@@ -2333,6 +2552,25 @@ impl Answer {
             },
             Answer::Fault(fault) if NEVER_RAN.contains(&fault.kind.as_str()) => Some(false),
             Answer::Fault(_) => None,
+        }
+    }
+
+    /// **A `show` in transition**: admin's answer, exit 0, of kind
+    /// `in_transition`, which claims no state (Spec 2.12) and, at a door's
+    /// close, is asked again (Spec 7.2).
+    fn in_transition(&self) -> bool {
+        match self {
+            Answer::Outcome(outcome) => {
+                outcome.verb == "show"
+                    && outcome.exit_code == Some(0)
+                    && outcome
+                        .answer
+                        .as_ref()
+                        .and_then(|a| a.get("kind"))
+                        .and_then(|k| k.as_str())
+                        == Some("in_transition")
+            }
+            Answer::Fault(_) => false,
         }
     }
 
@@ -3162,7 +3400,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
             return;
         }
     };
-    let (name, said_plane, tail, ceiling, door) = match hello {
+    let (name, said_plane, tail, ceiling, door, capabilities) = match hello {
         Ok(Line::Frame(line)) => match serde_json::from_str::<FromClient>(&line) {
             Ok(FromClient::Hello {
                 agent,
@@ -3170,7 +3408,8 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                 tail,
                 ceiling,
                 door,
-            }) => (agent, plane, tail, ceiling, door),
+                capabilities,
+            }) => (agent, plane, tail, ceiling, door, capabilities),
             _ => {
                 tracing::warn!("link from {peer}: the first frame was not a hello, refused");
                 refuse(tx, writer, Refusal::Malformed).await;
@@ -3250,6 +3489,16 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
         }
     };
     let ceiling_copy: Option<Vec<String>> = ceiling.as_deref().map(|c| c.iter().cloned().collect());
+    // **The close's `show` is asked only of an admin-con that states it can
+    // take one** (Spec 7.2, 8), and whose ceiling grants `show`. One built
+    // before the capability may take a close's `show` met during an
+    // opening as that opening's hold and wait on its landing for the
+    // connection's life (Codex on #113), so its closes land the door's
+    // state alone, as before the close's `show` existed.
+    let close_shows = ceiling.as_deref().is_some_and(|c| c.contains("show"))
+        && capabilities
+            .as_deref()
+            .is_some_and(|c| c.iter().any(|name| name == capability::CLOSE_SHOW));
 
     let incarnation = (inner.epoch << 32) | inner.next_incarnation.fetch_add(1, Ordering::Relaxed);
     let pending = Arc::new(Mutex::new(HashMap::new()));
@@ -3296,7 +3545,9 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                         silent: silent.clone(),
                         ready: false,
                         ceiling: ceiling.clone(),
+                        close_shows,
                         asks: asks.clone(),
+                        claims: Arc::new(Mutex::new(HashMap::new())),
                         person_slots: Arc::new(tokio::sync::Semaphore::new(PERSON_SLOTS)),
                         heard: heard.clone(),
                     },
@@ -3407,17 +3658,47 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
         // frame that decides what is replayed and what is live. **A closed
         // door's hello has no replay**, so it is taken as sent.
         let mut caught_up = door == Some(false);
+        // **The `show` asked at the door's last close** (Spec 2.12, 7.2),
+        // while its answer or a re-ask is owed. Any door frame ends it.
+        let mut close_show: Option<CloseShow> = None;
+        // When the read's silence window began. A re-ask resumes the read
+        // without starting the window again, so a re-ask never stretches
+        // the silence bound.
+        let mut quiet_since = tokio::time::Instant::now();
+        let mut resumed = false;
         loop {
+            if !resumed {
+                quiet_since = tokio::time::Instant::now();
+            }
+            resumed = false;
             // The read waits to the silence bound, or to the admission
             // show's deadline where that is sooner.
+            let quiet = (quiet_since + inner.silence)
+                .saturating_duration_since(tokio::time::Instant::now());
             let wait = match admission_show {
                 Some((_, deadline)) => deadline
                     .saturating_duration_since(tokio::time::Instant::now())
-                    .min(inner.silence),
-                None => inner.silence,
+                    .min(quiet),
+                None => quiet,
             };
             let line = tokio::select! {
                 l = tokio::time::timeout(wait, reader.next()) => l,
+                // **A close's re-ask** (Spec 7.2): its `show` answered
+                // `in_transition`, the door is still closed, and the gap
+                // has passed. The read is cancel-safe, so the arm drops
+                // nothing.
+                _ = reask_at(close_show.as_ref().and_then(|c| c.due)) => {
+                    let reasks = close_show.as_ref().map_or(0, |c| c.reasks) + 1;
+                    match ask_show(&inner, &agent.agent_id, &tx, &asks, &mut close_rx).await {
+                        Ok(id) => close_show = Some(CloseShow { id, reasks, due: None }),
+                        Err(why) => {
+                            reason = why;
+                            break;
+                        }
+                    }
+                    resumed = true;
+                    continue;
+                }
                 _ = close_rx.changed() => {
                     if *close_rx.borrow() {
                         tracing::info!(
@@ -3798,6 +4079,18 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                             break;
                         }
                     }
+                    // **The close's `show` answered** (Spec 7.2): where it
+                    // says `in_transition` and re-asks remain, the next is
+                    // due a gap from now; any other answer, or the last
+                    // re-ask's, ends them, the row keeping what landed.
+                    if close_show.as_ref().is_some_and(|c| c.id == id) {
+                        close_show = close_show.take().and_then(|c| {
+                            (answer.in_transition() && c.reasks < CLOSE_REASKS).then(|| CloseShow {
+                                due: Some(tokio::time::Instant::now() + inner.close_reask()),
+                                ..c
+                            })
+                        });
+                    }
                     resolve(&pending, id, answer.into_frame(id));
                 }
                 (
@@ -3898,11 +4191,34 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                     }
                     caught_up = !open;
                     boundary = tail;
-                    if open && ceiling.as_deref().is_some_and(|c| c.contains("show")) {
+                    close_show = None;
+                    // An opening asks where the ceiling grants `show`; a
+                    // close only of a connection that takes one.
+                    let asks_show = if open {
+                        ceiling.as_deref().is_some_and(|c| c.contains("show"))
+                    } else {
+                        close_shows
+                    };
+                    if asks_show {
                         match ask_show(&inner, &agent.agent_id, &tx, &asks, &mut close_rx).await {
-                            Ok(id) => {
+                            Ok(id) if open => {
                                 admission_show =
                                     Some((id, tokio::time::Instant::now() + inner.silence))
+                            }
+                            // **Every close of the door asks `show`** (Spec
+                            // 2.12, 7.2): a run's end need not reach the
+                            // server as a trace event (a stream ended before
+                            // the run's `unload`, a run ended from the box's
+                            // shell, a crash), and no event can move the
+                            // state once the door is closed. The server's
+                            // own ask, audited as the opening's is, and it
+                            // holds nothing: no deadline, no landing frame.
+                            Ok(id) => {
+                                close_show = Some(CloseShow {
+                                    id,
+                                    reasks: 0,
+                                    due: None,
+                                })
                             }
                             Err(why) => {
                                 reason = why;

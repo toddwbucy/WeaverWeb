@@ -382,6 +382,7 @@ impl Lab {
             tail: Some(position(100)),
             ceiling: (plane == Plane::Admin).then(|| vec!["show".to_owned()]),
             door: (plane == Plane::Admin).then_some(true),
+            capabilities: None,
         })
         .await;
         match fake.recv().await {
@@ -473,6 +474,7 @@ async fn one_live_connection_per_credential() {
             tail: None,
             ceiling: None,
             door: None,
+            capabilities: None,
         })
         .await;
     second.expect_refusal(Refusal::AlreadyConnected).await;
@@ -572,6 +574,7 @@ async fn identity_is_the_certificates_binding_never_the_roster() {
             tail: None,
             ceiling: None,
             door: None,
+            capabilities: None,
         })
         .await;
     other_name.expect_refusal(Refusal::RosterMismatch).await;
@@ -584,6 +587,7 @@ async fn identity_is_the_certificates_binding_never_the_roster() {
             tail: None,
             ceiling: Some(vec!["show".to_owned()]),
             door: Some(true),
+            capabilities: None,
         })
         .await;
     other_plane.expect_refusal(Refusal::RosterMismatch).await;
@@ -617,6 +621,7 @@ async fn the_trace_door_and_its_boundary_agree() {
             tail,
             ceiling: Some(vec!["show".to_owned()]),
             door,
+            capabilities: None,
         })
         .await;
         fake.expect_refusal(Refusal::Malformed).await;
@@ -628,6 +633,7 @@ async fn the_trace_door_and_its_boundary_agree() {
         tail: None,
         ceiling: None,
         door: Some(true),
+        capabilities: None,
     })
     .await;
     gate.expect_refusal(Refusal::Malformed).await;
@@ -640,6 +646,7 @@ async fn the_trace_door_and_its_boundary_agree() {
             tail: None,
             ceiling: Some(vec!["show".to_owned()]),
             door: Some(false),
+            capabilities: None,
         })
         .await;
     match closed.recv().await {
@@ -868,6 +875,7 @@ async fn a_credential_of_another_authority_fails_the_handshake() {
                 tail: None,
                 ceiling: None,
                 door: None,
+                capabilities: None,
             })
             .await;
             assert!(
@@ -1095,6 +1103,7 @@ async fn nothing_crosses_the_link_in_the_clear() {
         tail: None,
         ceiling: None,
         door: None,
+        capabilities: None,
     })
     .unwrap();
     plain
@@ -1161,6 +1170,7 @@ async fn the_acknowledged_position_is_per_process() {
             tail: Some(position(200)),
             ceiling: Some(vec!["show".to_owned()]),
             door: Some(true),
+            capabilities: None,
         })
         .await;
     match again.recv().await {
@@ -1182,6 +1192,7 @@ async fn the_acknowledged_position_is_per_process() {
             tail: Some(position(200)),
             ceiling: Some(vec!["show".to_owned()]),
             door: Some(true),
+            capabilities: None,
         })
         .await;
     match fresh.recv().await {
@@ -1377,6 +1388,7 @@ async fn rotation_closes_both_live_connections_and_admits_the_new_pair() {
             tail: None,
             ceiling: None,
             door: None,
+            capabilities: None,
         })
         .await;
     raced.expect_refusal(Refusal::NotLive).await;
@@ -1412,6 +1424,7 @@ async fn a_tailless_admin_hello_and_a_line_past_the_bound_are_malformed() {
             tail: None,
             ceiling: Some(vec!["show".to_owned()]),
             door: Some(true),
+            capabilities: None,
         })
         .await;
     tailless.expect_refusal(Refusal::Malformed).await;
@@ -1432,6 +1445,7 @@ async fn a_tailless_admin_hello_and_a_line_past_the_bound_are_malformed() {
             tail: None,
             ceiling: None,
             door: None,
+            capabilities: None,
         })
         .await;
     twice.expect_refusal(Refusal::Malformed).await;
@@ -1911,6 +1925,7 @@ async fn an_observation_the_register_never_took_is_not_acknowledged() {
             tail: Some(position(200)),
             ceiling: Some(vec!["show".to_owned()]),
             door: Some(true),
+            capabilities: None,
         })
         .await;
     match again.recv().await {
@@ -2303,6 +2318,7 @@ async fn the_listener_halts_when_its_lock_session_is_lost() {
             tail: None,
             ceiling: None,
             door: None,
+            capabilities: None,
         })
         .await;
     lena_gate.expect_refusal(Refusal::StoreUnavailable).await;
@@ -2590,6 +2606,7 @@ async fn an_admission_whose_answer_was_lost_is_reconciled() {
         tail: None,
         ceiling: None,
         door: None,
+        capabilities: None,
     })
     .await;
     assert!(
@@ -3168,6 +3185,7 @@ async fn an_admission_whose_show_is_not_answered_is_closed() {
                 tail: Some(position(100)),
                 ceiling: Some(vec!["show".to_owned()]),
                 door: Some(true),
+                capabilities: None,
             })
             .await;
         assert!(matches!(
@@ -3311,6 +3329,7 @@ async fn a_landing_that_stalls_closes_the_connection_without_an_ack() {
                 tail: Some(position(100)),
                 ceiling: Some(vec!["show".to_owned()]),
                 door: Some(true),
+                capabilities: None,
             })
             .await;
         assert!(matches!(

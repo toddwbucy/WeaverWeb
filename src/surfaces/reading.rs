@@ -53,6 +53,7 @@ use crate::link::register::{Agent, CredentialState};
 use crate::store::alerts::{STDERR_BOUND, bounded};
 use crate::store::identity::{VOCABULARY, is_agent_id};
 use crate::store::{AgentId, Store};
+use crate::surfaces::admin_table::{CloseRead, TO_THE_MS};
 use crate::surfaces::gate::{self, Policy, Session};
 use crate::surfaces::record::NoSession;
 use crate::traceview::TraceViews;
@@ -530,8 +531,25 @@ impl RunView {
     /// everything again. **An offered verb that admin's state table refuses
     /// in the row's last reading carries a warning** and stays offered
     /// ("warn, do not refuse").
-    fn of(row: &Agent, granted: &std::collections::BTreeSet<String>) -> RunView {
+    /// `asks_show_at_close` is the listener's word on the live admin
+    /// connection ([`Listener::asks_show_at_close`]).
+    fn of(
+        row: &Agent,
+        granted: &std::collections::BTreeSet<String>,
+        asks_show_at_close: Option<bool>,
+    ) -> RunView {
         let ceiling = live_ceiling(row);
+        let read = if !ceiling.iter().any(|c| c == "show") {
+            CloseRead::OutsideCeiling
+        } else if asks_show_at_close == Some(true) {
+            CloseRead::Show
+        } else {
+            CloseRead::NotAsked
+        };
+        // **A state by event under a door that closed after it** (Spec
+        // 2.12): the load state, the warnings and the constituents read
+        // before the close say so.
+        let closed = super::admin_table::closed_after_row(row);
         let verbs: Vec<VerbView> = VOCABULARY
             .into_iter()
             .filter(|verb| lifecycle(verb))
@@ -550,7 +568,7 @@ impl RunView {
                     why,
                     warning: why
                         .is_none()
-                        .then(|| super::admin_table::warning(verb, row))
+                        .then(|| super::admin_table::warning(verb, row, read))
                         .flatten(),
                 }
             })
@@ -561,12 +579,18 @@ impl RunView {
             load_state: row
                 .load_state
                 .as_ref()
-                .map(|state| {
-                    format!(
+                .map(|state| match closed {
+                    Some((state_at, door_at)) => format!(
+                        "{state}, by event at {}. The trace door closed after it, at {}: no event has moved it since, and {}.",
+                        state_at.format(TO_THE_MS),
+                        door_at.format(TO_THE_MS),
+                        super::admin_table::who_reads(read, "it")
+                    ),
+                    None => format!(
                         "{state}, by {}{}",
                         row.state_source.as_deref().unwrap_or("an unnamed source"),
                         stamp(row.load_state_at)
-                    )
+                    ),
                 })
                 .unwrap_or_else(none),
             tuple: row
@@ -585,7 +609,21 @@ impl RunView {
                 .as_ref()
                 .map(|pids| {
                     let pids: Vec<String> = pids.iter().map(i32::to_string).collect();
-                    format!("{}{}", pids.join(" "), stamp(row.constituents_at))
+                    // Read by `show` at or before the close, under a state
+                    // by event the close left standing.
+                    let before_close = closed.zip(row.constituents_at).filter(|((_, door_at), read_at)| {
+                        read_at.timestamp_millis() <= door_at.timestamp_millis()
+                    });
+                    match before_close {
+                        Some(((_, door_at), read_at)) => format!(
+                            "{}, by show at {}. The trace door closed after it, at {}: nothing has read them since, and {}.",
+                            pids.join(" "),
+                            read_at.format(TO_THE_MS),
+                            door_at.format(TO_THE_MS),
+                            super::admin_table::who_reads(read, "them")
+                        ),
+                        None => format!("{}{}", pids.join(" "), stamp(row.constituents_at)),
+                    }
                 })
                 .unwrap_or_else(none),
             ceiling: row
@@ -841,7 +879,7 @@ async fn agent_run(store: Store, seams: &Seams, headers: HeaderMap, agent: Strin
     };
     fragment(
         RunFragment {
-            run: RunView::of(&row, &granted),
+            run: RunView::of(&row, &granted, seams.asker.asks_show_at_close(&id)),
         }
         .render(),
     )
@@ -1007,7 +1045,11 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, agent: String) ->
         admin_plane: plane(&row.admin),
         door: door_said(&row),
         window: LIVE_WINDOW,
-        run: RunView::of(&row, &granted),
+        run: RunView::of(
+            &row,
+            &granted,
+            seams.asker.asks_show_at_close(&row.agent_id),
+        ),
         turn_form,
         shared,
         chrome,

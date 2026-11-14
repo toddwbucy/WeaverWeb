@@ -867,6 +867,7 @@ async fn a_server_line_past_the_bound_ends_the_connection() {
                 tail: None,
                 ceiling: None,
                 door: None,
+                capabilities: None,
             })
             .await
         else {
@@ -1271,6 +1272,7 @@ async fn a_hello_answer_naming_an_absurd_cadence_is_a_protocol_fault() {
             tail: None,
             ceiling: None,
             door: None,
+            capabilities: None,
         })
     );
     match attempt {

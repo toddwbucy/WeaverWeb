@@ -138,7 +138,7 @@ async fn reader(store: &Store, policy: &Policy, headers: &HeaderMap) -> Result<S
     }
 }
 
-fn author_words(author: Author) -> String {
+pub(crate) fn author_words(author: Author) -> String {
     match author {
         Author::Person { name, .. } => name,
         Author::Claim(claim) => format!("{claim} (a claim)"),

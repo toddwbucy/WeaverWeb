@@ -33,6 +33,7 @@
 pub mod capability;
 pub mod elections;
 pub mod render;
+pub mod reported;
 pub mod state_election;
 pub mod tunable_set;
 

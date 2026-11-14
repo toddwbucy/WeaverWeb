@@ -40,7 +40,7 @@ use crate::deadline::{self, Passed};
 use crate::link::authority::{Authority, fingerprint};
 use crate::link::frames::{
     FromClient, Line, LineReader, Plane, Position, Principal, Refusal, ToClient, TurnFault,
-    VerbFault, VerbOutcome,
+    VerbFault, VerbOutcome, capability,
 };
 use crate::link::register::{
     ConstituentsWrite, CredentialState, Observation, REVOCATION_CHANNEL, TransitionWrite,
@@ -96,6 +96,26 @@ pub const LISTENER_LOCK_KEY: i64 = i64::from_be_bytes(*b"weaverwb");
 /// for its life and a verb must not wait on the server.
 pub const AUTHORITY_LOCK_KEY: i64 = i64::from_be_bytes(*b"weaverca");
 
+/// **The re-asks of a door's close** (Spec 2.12, 7.2): where the `show`
+/// the server asks at a close of the trace door answers `in_transition`
+/// and the door stays closed, it is asked again at most this many times,
+/// each `CLOSE_REASK` after the answer before it. Past them the row keeps
+/// its transition, dated, and nothing asks again until the next admission
+/// or opening of the door.
+pub const CLOSE_REASKS: u32 = 3;
+
+/// The gap before each re-ask of a door's close (`CLOSE_REASKS`).
+pub const CLOSE_REASK: Duration = Duration::from_secs(5);
+
+/// **The `show` asked at a door's close**, while its answer or its re-ask
+/// is owed: the ask's id, the re-asks already made, and when the next is
+/// due once an answer said `in_transition`.
+struct CloseShow {
+    id: u64,
+    reasks: u32,
+    due: Option<tokio::time::Instant>,
+}
+
 /// A live connection as the listener holds it: the credential it was
 /// admitted on, the write path, the incarnation that every link-state write
 /// about it names, the asks it has not answered, and the close the revoking
@@ -120,6 +140,11 @@ struct LiveConnection {
     /// reconnection that narrows the ceiling cannot race an ask. The row's
     /// copy is what surfaces read and never the authorization input.
     ceiling: Option<Arc<BTreeSet<String>>>,
+    /// **Whether a close of the trace door asks `show` of this connection**
+    /// (Spec 7.2, 8): its ceiling grants `show` and its hello stated
+    /// [`capability::CLOSE_SHOW`]. Fixed for its life, and read by the
+    /// agent page's line on a state under a closed door.
+    close_shows: bool,
     /// **Each verb ask's record, by its ask** (Spec 2.13, 7.2): the verb
     /// asked and its first record, where the ask is audited. The
     /// connection task's own, filled before the frame enters the channel
@@ -747,6 +772,9 @@ struct Inner {
     /// The stops a test set in persons' asks.
     #[cfg(test)]
     pauses: Mutex<Vec<Pause>>,
+    /// The gap before a re-ask of a door's close, in milliseconds:
+    /// `CLOSE_REASK`, which a test shortens.
+    close_reask_ms: AtomicU64,
 }
 
 /// The server's handle on the link: the asks it routes and the window it
@@ -900,6 +928,7 @@ impl Listener {
                 delay_next_outcome: Mutex::new(None),
                 #[cfg(test)]
                 pauses: Mutex::new(Vec::new()),
+                close_reask_ms: AtomicU64::new(CLOSE_REASK.as_millis() as u64),
             }),
         };
         tracing::info!("link listening on {address} under epoch {epoch}");
@@ -1104,6 +1133,17 @@ impl Listener {
             .map(|c| c.heard.lock().unwrap().elapsed())
     }
 
+    /// **Whether a close of the agent's trace door asks `show`** (Spec 7.2,
+    /// 8): the live admin connection's ceiling grants it and its hello
+    /// stated [`capability::CLOSE_SHOW`]; `None` where no admitted admin
+    /// connection stands.
+    pub fn asks_show_at_close(&self, agent: &AgentId) -> Option<bool> {
+        let live = self.inner.live.lock().unwrap();
+        live.get(&(agent.clone(), Plane::Admin))
+            .filter(|c| c.ready)
+            .map(|c| c.close_shows)
+    }
+
     /// **The silence bound**, which a caller waiting for a verb's answer
     /// holds its own wait to.
     pub fn silence(&self) -> Duration {
@@ -1159,6 +1199,15 @@ impl Listener {
     #[cfg(test)]
     pub fn fail_next_land(&self) {
         self.inner.fault_next_land.store(true, Ordering::Relaxed);
+    }
+
+    /// Set the gap before a re-ask of a door's close, `CLOSE_REASK` in
+    /// service.
+    #[cfg(test)]
+    pub fn set_close_reask(&self, gap: Duration) {
+        self.inner
+            .close_reask_ms
+            .store(gap.as_millis() as u64, Ordering::Relaxed);
     }
 
     /// Make the next store write of an observation never complete, once.
@@ -1465,6 +1514,12 @@ impl Listener {
 }
 
 impl Inner {
+    /// The gap before a re-ask of a door's close: `CLOSE_REASK`, or what a
+    /// test set.
+    fn close_reask(&self) -> Duration {
+        Duration::from_millis(self.close_reask_ms.load(Ordering::Relaxed))
+    }
+
     /// **The record step** (Spec 2.13): a verb's first record, written
     /// before its frame enters the channel, for `Inner::ask` and `ask_show`
     /// alike. **The duty to answer the first `failed` is owned from before
@@ -2416,6 +2471,14 @@ async fn ask_show(
     Ok(id)
 }
 
+/// **Wait for a close's re-ask to fall due**, or forever where none is.
+async fn reask_at(due: Option<tokio::time::Instant>) {
+    match due {
+        Some(due) => tokio::time::sleep_until(due).await,
+        None => std::future::pending().await,
+    }
+}
+
 /// **A verb's answer, classified once**: admin's outcome, or a fault,
 /// admin-con's or the invocation's. A frame outside the contract's shape
 /// is no answer and has no classification.
@@ -2489,6 +2552,25 @@ impl Answer {
             },
             Answer::Fault(fault) if NEVER_RAN.contains(&fault.kind.as_str()) => Some(false),
             Answer::Fault(_) => None,
+        }
+    }
+
+    /// **A `show` in transition**: admin's answer, exit 0, of kind
+    /// `in_transition`, which claims no state (Spec 2.12) and, at a door's
+    /// close, is asked again (Spec 7.2).
+    fn in_transition(&self) -> bool {
+        match self {
+            Answer::Outcome(outcome) => {
+                outcome.verb == "show"
+                    && outcome.exit_code == Some(0)
+                    && outcome
+                        .answer
+                        .as_ref()
+                        .and_then(|a| a.get("kind"))
+                        .and_then(|k| k.as_str())
+                        == Some("in_transition")
+            }
+            Answer::Fault(_) => false,
         }
     }
 
@@ -3318,7 +3400,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
             return;
         }
     };
-    let (name, said_plane, tail, ceiling, door) = match hello {
+    let (name, said_plane, tail, ceiling, door, capabilities) = match hello {
         Ok(Line::Frame(line)) => match serde_json::from_str::<FromClient>(&line) {
             Ok(FromClient::Hello {
                 agent,
@@ -3326,7 +3408,8 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                 tail,
                 ceiling,
                 door,
-            }) => (agent, plane, tail, ceiling, door),
+                capabilities,
+            }) => (agent, plane, tail, ceiling, door, capabilities),
             _ => {
                 tracing::warn!("link from {peer}: the first frame was not a hello, refused");
                 refuse(tx, writer, Refusal::Malformed).await;
@@ -3406,6 +3489,16 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
         }
     };
     let ceiling_copy: Option<Vec<String>> = ceiling.as_deref().map(|c| c.iter().cloned().collect());
+    // **The close's `show` is asked only of an admin-con that states it can
+    // take one** (Spec 7.2, 8), and whose ceiling grants `show`. One built
+    // before the capability may take a close's `show` met during an
+    // opening as that opening's hold and wait on its landing for the
+    // connection's life (Codex on #113), so its closes land the door's
+    // state alone, as before the close's `show` existed.
+    let close_shows = ceiling.as_deref().is_some_and(|c| c.contains("show"))
+        && capabilities
+            .as_deref()
+            .is_some_and(|c| c.iter().any(|name| name == capability::CLOSE_SHOW));
 
     let incarnation = (inner.epoch << 32) | inner.next_incarnation.fetch_add(1, Ordering::Relaxed);
     let pending = Arc::new(Mutex::new(HashMap::new()));
@@ -3452,6 +3545,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                         silent: silent.clone(),
                         ready: false,
                         ceiling: ceiling.clone(),
+                        close_shows,
                         asks: asks.clone(),
                         claims: Arc::new(Mutex::new(HashMap::new())),
                         person_slots: Arc::new(tokio::sync::Semaphore::new(PERSON_SLOTS)),
@@ -3564,17 +3658,47 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
         // frame that decides what is replayed and what is live. **A closed
         // door's hello has no replay**, so it is taken as sent.
         let mut caught_up = door == Some(false);
+        // **The `show` asked at the door's last close** (Spec 2.12, 7.2),
+        // while its answer or a re-ask is owed. Any door frame ends it.
+        let mut close_show: Option<CloseShow> = None;
+        // When the read's silence window began. A re-ask resumes the read
+        // without starting the window again, so a re-ask never stretches
+        // the silence bound.
+        let mut quiet_since = tokio::time::Instant::now();
+        let mut resumed = false;
         loop {
+            if !resumed {
+                quiet_since = tokio::time::Instant::now();
+            }
+            resumed = false;
             // The read waits to the silence bound, or to the admission
             // show's deadline where that is sooner.
+            let quiet = (quiet_since + inner.silence)
+                .saturating_duration_since(tokio::time::Instant::now());
             let wait = match admission_show {
                 Some((_, deadline)) => deadline
                     .saturating_duration_since(tokio::time::Instant::now())
-                    .min(inner.silence),
-                None => inner.silence,
+                    .min(quiet),
+                None => quiet,
             };
             let line = tokio::select! {
                 l = tokio::time::timeout(wait, reader.next()) => l,
+                // **A close's re-ask** (Spec 7.2): its `show` answered
+                // `in_transition`, the door is still closed, and the gap
+                // has passed. The read is cancel-safe, so the arm drops
+                // nothing.
+                _ = reask_at(close_show.as_ref().and_then(|c| c.due)) => {
+                    let reasks = close_show.as_ref().map_or(0, |c| c.reasks) + 1;
+                    match ask_show(&inner, &agent.agent_id, &tx, &asks, &mut close_rx).await {
+                        Ok(id) => close_show = Some(CloseShow { id, reasks, due: None }),
+                        Err(why) => {
+                            reason = why;
+                            break;
+                        }
+                    }
+                    resumed = true;
+                    continue;
+                }
                 _ = close_rx.changed() => {
                     if *close_rx.borrow() {
                         tracing::info!(
@@ -3955,6 +4079,18 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                             break;
                         }
                     }
+                    // **The close's `show` answered** (Spec 7.2): where it
+                    // says `in_transition` and re-asks remain, the next is
+                    // due a gap from now; any other answer, or the last
+                    // re-ask's, ends them, the row keeping what landed.
+                    if close_show.as_ref().is_some_and(|c| c.id == id) {
+                        close_show = close_show.take().and_then(|c| {
+                            (answer.in_transition() && c.reasks < CLOSE_REASKS).then(|| CloseShow {
+                                due: Some(tokio::time::Instant::now() + inner.close_reask()),
+                                ..c
+                            })
+                        });
+                    }
                     resolve(&pending, id, answer.into_frame(id));
                 }
                 (
@@ -4055,11 +4191,34 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                     }
                     caught_up = !open;
                     boundary = tail;
-                    if open && ceiling.as_deref().is_some_and(|c| c.contains("show")) {
+                    close_show = None;
+                    // An opening asks where the ceiling grants `show`; a
+                    // close only of a connection that takes one.
+                    let asks_show = if open {
+                        ceiling.as_deref().is_some_and(|c| c.contains("show"))
+                    } else {
+                        close_shows
+                    };
+                    if asks_show {
                         match ask_show(&inner, &agent.agent_id, &tx, &asks, &mut close_rx).await {
-                            Ok(id) => {
+                            Ok(id) if open => {
                                 admission_show =
                                     Some((id, tokio::time::Instant::now() + inner.silence))
+                            }
+                            // **Every close of the door asks `show`** (Spec
+                            // 2.12, 7.2): a run's end need not reach the
+                            // server as a trace event (a stream ended before
+                            // the run's `unload`, a run ended from the box's
+                            // shell, a crash), and no event can move the
+                            // state once the door is closed. The server's
+                            // own ask, audited as the opening's is, and it
+                            // holds nothing: no deadline, no landing frame.
+                            Ok(id) => {
+                                close_show = Some(CloseShow {
+                                    id,
+                                    reasks: 0,
+                                    due: None,
+                                })
                             }
                             Err(why) => {
                                 reason = why;

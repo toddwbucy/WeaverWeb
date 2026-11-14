@@ -18,6 +18,19 @@ pub const LINE_BOUND: usize = 4 * 1024 * 1024;
 /// configuration (a timer that far out would overflow).
 pub const CADENCE_MAX_SECS: u64 = 86_400;
 
+/// **A capability a connector states in its hello** (Spec 8): a name for
+/// something the connector can take from the server that a connector built
+/// before the name existed cannot, so the server offers it only to one
+/// that states the name. An absent list is read as none, and a name a
+/// server does not know is ignored.
+pub mod capability {
+    /// **The server may ask `show` at a close of the trace door and again
+    /// while it answers `in_transition`** (Spec 7.2): the connector's
+    /// opening hold ends at the landing of any `show` it served under the
+    /// hold, so a close's `show` met during an opening never holds it.
+    pub const CLOSE_SHOW: &str = "close_show";
+}
+
 /// One read of a frame line.
 #[derive(Debug)]
 pub enum Line {
@@ -229,6 +242,11 @@ pub enum FromClient {
         /// grant its user. Absent on the gate plane, which declares none.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         ceiling: Option<Vec<String>>,
+        /// **On the admin plane, the capabilities admin-con states**
+        /// ([`capability`], Spec 8): absent from a connector built before
+        /// the first, and read as none. Absent on the gate plane.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        capabilities: Option<Vec<String>>,
     },
     /// At the cadence the hello's answer named.
     Heartbeat,
@@ -326,9 +344,10 @@ pub enum ToClient {
     /// **The server landed the observation of a `show` it asked itself**,
     /// at an admission or at an opening (Spec 7.2): sent only after the
     /// store took it, so a `show` whose landing fails, stalls or carries no
-    /// state gets none and the connection closes instead. admin-con's hold
-    /// on ordinary asks ends here and nowhere else but the connection's
-    /// end.
+    /// state gets none and the connection closes instead. A close's `show`
+    /// gets none either. admin-con's hold on ordinary asks ends here, at
+    /// the landing of any `show` it served under the hold, and nowhere else
+    /// but the connection's end.
     Landed {
         id: u64,
     },
@@ -409,10 +428,12 @@ mod shape {
             }),
             ceiling: Some(vec!["show".to_owned()]),
             door: Some(true),
+            capabilities: Some(vec![capability::CLOSE_SHOW.to_owned()]),
         };
         let line = serde_json::to_string(&hello).unwrap();
         assert!(line.starts_with("{\"svc\":\"hello\""), "{line}");
         assert!(line.contains("\"plane\":\"admin\""), "{line}");
+        assert!(line.contains("\"capabilities\":[\"close_show\"]"), "{line}");
         let back: FromClient = serde_json::from_str(&line).unwrap();
         assert!(matches!(
             back,
@@ -448,6 +469,28 @@ mod shape {
         assert!(serde_json::from_str::<FromClient>("{\"svc\":\"heartbeat\"}").is_ok());
         assert!(serde_json::from_str::<FromClient>("{\"svc\":\"caught_up\"}").is_ok());
         assert!(serde_json::from_str::<FromClient>("{\"svc\":\"nonsense\"}").is_err());
+
+        // **A hello's member a side does not know is ignored** (Spec 8):
+        // a server reads a newer connector's hello, and a connector built
+        // before the first capability says hello without the list, which is
+        // read as none.
+        let newer = r#"{"svc":"hello","agent":"karl","plane":"admin","door":false,"ceiling":["show"],"capabilities":["close_show","a_later_one"],"a_later_member":1}"#;
+        assert!(matches!(
+            serde_json::from_str::<FromClient>(newer).unwrap(),
+            FromClient::Hello {
+                capabilities: Some(c),
+                ..
+            } if c == ["close_show", "a_later_one"]
+        ));
+        let older =
+            r#"{"svc":"hello","agent":"karl","plane":"admin","door":false,"ceiling":["show"]}"#;
+        assert!(matches!(
+            serde_json::from_str::<FromClient>(older).unwrap(),
+            FromClient::Hello {
+                capabilities: None,
+                ..
+            }
+        ));
     }
 }
 

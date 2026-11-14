@@ -422,6 +422,59 @@ async fn the_other_rows_of_the_name_are_listed_as_far_as_the_reader_may_see() {
     }
 }
 
+/// **The other rows' sentence claims only what was read of the head**:
+/// with nothing saved under the name, the other rows share it and no
+/// declaration is saved under it; with the head unread, the rows are named
+/// and nothing is said of a declaration; with the head saved, the same
+/// declaration stands behind them.
+///
+/// Perturbation: say "the same declaration" whatever the head, and the rows
+/// of a name with nothing saved, or with its head unread, are said to stand
+/// behind one.
+#[tokio::test]
+async fn the_other_rows_claim_only_what_was_read_of_the_head() {
+    let Some((rig, ada, _, karl)) = setting().await else {
+        return;
+    };
+    let (karl_b, _) = rig.register(&ada, "box-b", "karl").await;
+    let listed = format!("box-b/karl ({karl_b})");
+    let others = said(&pane(&page_of(&rig.app, &karl, &ada).await), "others")
+        .expect("an admin sees the other row");
+    assert!(
+        others.starts_with(
+            "The other live register rows of this name share it, and no declaration is saved under it:"
+        ) && others.contains(&listed),
+        "{others}"
+    );
+
+    let s = rig.store();
+    let row = s.agent(&karl.parse().unwrap()).await.unwrap().unwrap();
+    let p = render(&DeclarePane::compose(
+        &row,
+        Head::Unread,
+        Some(vec![listed.clone()]),
+        None,
+        true,
+    ));
+    let others = said(&p, "others").expect("the rows read, the head not");
+    assert!(
+        others.starts_with("The other live register rows of this name:")
+            && others.contains(&listed)
+            && !others.contains("declaration"),
+        "{others}"
+    );
+
+    save(&rig.app, &ada, "/declarations", posted(&[], &[])).await;
+    let others = said(&pane(&page_of(&rig.app, &karl, &ada).await), "others")
+        .expect("an admin sees the other row");
+    assert!(
+        others.starts_with(
+            "The same declaration stands behind the other live register rows of this name:"
+        ) && others.contains(&listed),
+        "{others}"
+    );
+}
+
 /// The Declare pane alone, rendered from what its reads returned.
 fn render(declaration: &DeclarePane) -> String {
     use askama::Template;

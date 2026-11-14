@@ -15,7 +15,7 @@ use sha2::{Digest, Sha256};
 
 use crate::admin_tests::{admin, form, send_as, signed_in};
 use crate::agents_tests::rig;
-use crate::declarations_tests::{posted, save};
+use crate::declarations_tests::{legacy, posted, save};
 use crate::host;
 use crate::passkeys_tests::authenticator;
 use crate::store::Store;
@@ -468,6 +468,56 @@ async fn a_head_that_does_not_read_fails_in_the_pane_alone() {
             admin,
             "the screen's link is an admin's alone: {p}"
         );
+    }
+}
+
+/// **A head saved with the withdrawn placement reads in the pane** (Spec
+/// 2.4 and 6.1; the operator's rulings of 2026-11-14): a row's authored half
+/// never changes, so a row saved before that date keeps the member, and the
+/// pane reads the head as the declaration screen does, the member discarded
+/// on read. It shows the head's parts, no part named placement, and no word
+/// of the template.
+///
+/// Perturbation: read the head by the parse alone, and the pane says the
+/// head does not read in this build and shows no parts.
+#[tokio::test]
+async fn a_head_saved_with_the_withdrawn_placement_reads_in_the_pane() {
+    let Some((rig, ada, bea, karl)) = setting().await else {
+        return;
+    };
+    let s = rig.store();
+    sqlx::query(
+        "INSERT INTO declaration (declaration_ref, name, body, corpus_commit, \
+         parent_declaration_id, lineage_root_id, version, what_moved, \
+         the_one_thing_that_moved, author) \
+         VALUES ('de-00000000000000d2', 'karl', $1, $2, NULL, NULL, 1, '{}', NULL, NULL)",
+    )
+    .bind(legacy(
+        json!({"kind": "virtual-machine", "template": "template-a"}),
+    ))
+    .bind(crate::declaration::render::CORPUS_COMMIT)
+    .execute(&s.pool)
+    .await
+    .unwrap();
+    for session in [&bea, &ada] {
+        let p = pane(&page_of(&rig.app, &karl, session).await);
+        assert!(
+            said(&p, "truth").is_some_and(|t| t.contains("holds no load")),
+            "the head reads: {p}"
+        );
+        let rows = parts(&p);
+        assert_eq!(
+            part(&rows, "SPU box 1, the decoder"),
+            (
+                "decoder-a".to_owned(),
+                "no load to set it beside".to_owned()
+            )
+        );
+        assert!(
+            rows.iter().all(|(name, _, _)| name != "placement"),
+            "{rows:?}"
+        );
+        assert!(!p.contains("template-a"), "{p}");
     }
 }
 

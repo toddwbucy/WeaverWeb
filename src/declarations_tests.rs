@@ -3141,7 +3141,7 @@ async fn a_row_without_the_state_election_reopens_and_saves_the_default() {
 /// The base document as a row saved before 2026-11-14 holds it: the
 /// placement member the operator's rulings of that date withdrew, as a
 /// host agent or as a virtual-machine agent with its template.
-fn legacy(placement: Value) -> Value {
+pub(crate) fn legacy(placement: Value) -> Value {
     edit(|v| {
         v.as_object_mut()
             .unwrap()

@@ -208,7 +208,10 @@ impl DeclarePane {
             author: author.unwrap_or_else(|| AUTHOR_UNREAD.to_owned()),
             href: admin.then(|| format!("/declarations/{}", saved.de)),
         };
-        let document = match Document::parse(&saved.body) {
+        // The head is read as the declaration screen reads a saved row, a
+        // member a row keeps from an earlier grammar discarded (Spec 6.1's
+        // withdrawn placement), so a row saved before 2026-11-14 reads here.
+        let document = match Document::read_saved(&saved.body) {
             Ok(document) => document,
             Err(e) => {
                 tracing::warn!(agent = %row.agent_id.as_str(), declaration = %saved.de, "the declaration saved under the name does not read in this build: {e}");

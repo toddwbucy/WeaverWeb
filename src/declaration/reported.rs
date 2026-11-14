@@ -638,7 +638,6 @@ mod tests {
     fn document() -> Document {
         Document::parse(&json!({
             "name": "karl",
-            "placement": {"kind": "host"},
             "boxes": [{
                 "models": [{"function": "decoder", "artifact": "decoder-a", "format": "gguf"}],
                 "gpu": {"card": "card-0"}

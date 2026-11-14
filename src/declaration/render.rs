@@ -25,7 +25,7 @@
 //! `super::state_election`. This crate links no crate of the agent (Spec
 //! 1), so the file is checked as TOML 1.0 and nothing more.
 
-use super::{Class, Document, Engine, Function, Part, Placement, Requirement, Value64};
+use super::{Class, Document, Engine, Function, Part, Requirement, Value64};
 
 /// **The WeaverAgent commit whose grammar the file follows**, a constant of
 /// the build and Spec 2.4's staleness rule: a row saved under another pin is
@@ -309,16 +309,6 @@ pub fn agent_toml(document: &Document, meta: &Meta<'_>) -> String {
         &mut out,
         "# What the agent's grammar has no place for (interface question 1):",
     );
-    match &document.placement {
-        Placement::Host => line(&mut out, "# placement: a host agent."),
-        Placement::VirtualMachine { template } => line(
-            &mut out,
-            &format!(
-                "# placement: a virtual-machine agent, cloned from the template {}.",
-                string(template)
-            ),
-        ),
-    }
     for (i, b) in document.boxes.iter().enumerate() {
         let holds = b
             .models

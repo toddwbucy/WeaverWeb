@@ -8,7 +8,7 @@ Declare is two screens (operator's rulings of 2026-11-11, Spec 6.1): the declara
 
 | pane | shows | source | backing |
 | --- | --- | --- | --- |
-| Agent | the name, and host agent or virtual-machine agent with the template a virtual-machine agent is cloned from by the console itself; the template's digest and the machine's, once recorded; no Hosts page, and no virtual machine managed as an object of its own | the saved declaration | partly: the template's digest and the machine's are not recorded |
+| Agent | the name, which names the lineage and never changes within it | the saved declaration | built |
 | SPU box | one per box: its models, each with its function from the roster the framework charters (decoder, exactly one; classifier, optional), artifact, format (GGUF offered, the rest named as later) and a decoder's adapter; the box's GPU requirement, a card, a class (a family or a list of models) or a pair, which start satisfies or refuses, never substituting | the saved declaration; the compute-capability table for the warning | built |
 | Sampler | the eight tunable values a serving load requires, each required: the six sampler defaults every generation carries and the session's two parameters; what else is fixed at load read-only once an agent reports it, and until then what that waits on | the saved declaration | partly: nothing else fixed at load is shown, since no agent reports it yet |
 | Store and gate | the store (`none` or `sqlite`) and the gate's tool election | the saved declaration | built |
@@ -21,7 +21,7 @@ Declare is two screens (operator's rulings of 2026-11-11, Spec 6.1): the declara
 
 | pane | shows | source | backing |
 | --- | --- | --- | --- |
-| Staging | staging the binaries is the operator's work on the box, which this server never reaches, and the pane shows what is done and what remains; host agent or virtual-machine agent is the declaration's field, not a pane here, and there is no Hosts page | nothing yet | unbuilt |
+| Staging | staging the binaries is the operator's work on the box, which this server never reaches, and the pane shows what is done and what remains | nothing yet | unbuilt |
 | Kernel account | the agent's user and the connectors' service users; creating them is the operator's work on the box, and the pane shows what is done and what remains | nothing yet | unbuilt |
 | Register | box and name, the row minted with two credentials | `POST /admin/agents/register` | built |
 | Handover | the two client configs, offered once, five minutes, this session only | `agents::Handover` | built |

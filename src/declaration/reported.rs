@@ -137,11 +137,15 @@ impl Verdict {
     }
 }
 
-/// **One member as the document declares it**: its words, and whether they
-/// stand by the agent's reading of an absence.
+/// **One member as the document declares it**: its words, what a verdict
+/// compares, and whether they stand by the agent's reading of an absence.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Declared {
     pub words: String,
+    /// What a verdict compares: the words, but a state election's
+    /// normalized structure, since two elections can read alike (a path
+    /// holding ", " against two paths).
+    key: String,
     /// How the absence is read, where the row states no value.
     pub by_absence: Option<&'static str>,
 }
@@ -149,9 +153,24 @@ pub struct Declared {
 impl Declared {
     fn stated(words: String) -> Declared {
         Declared {
+            key: words.clone(),
             words,
             by_absence: None,
         }
+    }
+
+    /// A member compared by a key other than its words.
+    fn keyed((words, key): (String, String), by_absence: Option<&'static str>) -> Declared {
+        Declared {
+            words,
+            key,
+            by_absence,
+        }
+    }
+
+    /// The words and the key of a member stated as an absence is read.
+    fn absent(words: &str, how: &'static str) -> Declared {
+        Declared::keyed((words.to_owned(), words.to_owned()), Some(how))
     }
 
     /// The words the pane shows: the value, and how an absence is read.
@@ -176,50 +195,47 @@ pub fn declared(document: &Document, member: Member) -> Declared {
             .flat_map(|b| &b.models)
             .find(|m| m.function == Function::Decoder)
             .map(|m| Declared::stated(m.artifact.clone()))
-            .unwrap_or(Declared {
-                words: NOT_DECLARED.to_owned(),
-                by_absence: Some("no decoder on this row"),
-            }),
+            .unwrap_or(Declared::absent(NOT_DECLARED, "no decoder on this row")),
         Member::ResidualReadout => match document.residual_readout_election {
             Some(b) => Declared::stated(b.to_string()),
-            None => Declared {
-                words: NOT_DECLARED.to_owned(),
-                by_absence: Some("not declared on this row; a serving load refuses its absence"),
-            },
+            None => Declared::absent(
+                NOT_DECLARED,
+                "not declared on this row; a serving load refuses its absence",
+            ),
         },
         Member::Surprisal => match document.surprisal_election {
             Some(b) => Declared::stated(b.to_string()),
-            None => Declared {
-                words: "false".to_owned(),
-                by_absence: Some("by absence, as the agent reads it"),
-            },
+            None => Declared::absent("false", "by absence, as the agent reads it"),
         },
         Member::TurnContext => match document.turn_context {
             Some(t) => Declared::stated(t.word().to_owned()),
-            None => Declared {
-                words: TurnContext::Continuous.word().to_owned(),
-                by_absence: Some("by absence, as the agent reads it"),
-            },
+            None => Declared::absent(
+                TurnContext::Continuous.word(),
+                "by absence, as the agent reads it",
+            ),
         },
         Member::StateElection => match &document.state_election {
-            Some(e) => Declared::stated(election_words(e.all_kinds, &e.keys)),
+            Some(e) => Declared::keyed(election(e.all_kinds, &e.keys), None),
             None => {
                 let d = StateElection::agents_default();
-                Declared {
-                    words: election_words(d.all_kinds, &d.keys),
-                    by_absence: Some("by absence, the default admin resolves"),
-                }
+                Declared::keyed(
+                    election(d.all_kinds, &d.keys),
+                    Some("by absence, the default admin resolves"),
+                )
             }
         },
         Member::Store => Declared::stated(document.store.word().to_owned()),
     }
 }
 
-/// **A state election in words**, its kinds in order of name and each
-/// kind's paths sorted, once each, so that two spellings of one election
-/// read alike: the agent takes the kinds as a set and a path as electing
-/// itself however often it is named.
-fn election_words(all_kinds: bool, keys: &[ElectedKind]) -> String {
+/// **A state election in words and as its key**, its kinds in order of name
+/// and each kind's paths sorted, once each, so that two spellings of one
+/// election read alike: the agent takes the kinds as a set and a path as
+/// electing itself however often it is named. The key is that normalized
+/// structure as JSON. The words are for showing alone, since a path may
+/// hold ", " or read "no paths" (Spec 6.1 admits both), and the key tells
+/// such elections apart.
+fn election(all_kinds: bool, keys: &[ElectedKind]) -> (String, String) {
     let mut keys: Vec<(String, Vec<String>)> = keys
         .iter()
         .map(|k| {
@@ -230,13 +246,21 @@ fn election_words(all_kinds: bool, keys: &[ElectedKind]) -> String {
         })
         .collect();
     keys.sort();
+    let key = serde_json::json!({
+        "all_kinds": all_kinds,
+        "keys": keys
+            .iter()
+            .map(|(kind, paths)| serde_json::json!({"kind": kind, "paths": paths}))
+            .collect::<Vec<_>>(),
+    })
+    .to_string();
     let head = if all_kinds {
         "every kind with its envelope"
     } else {
         "only the kinds named"
     };
     if keys.is_empty() {
-        return format!("{head}, no key paths");
+        return (format!("{head}, no key paths"), key);
     }
     let named: Vec<String> = keys
         .iter()
@@ -248,20 +272,23 @@ fn election_words(all_kinds: bool, keys: &[ElectedKind]) -> String {
             }
         })
         .collect();
-    format!("{head}; {}", named.join("; "))
+    (format!("{head}; {}", named.join("; ")), key)
 }
 
 /// **A member as the report carries it**: none where it is not in the
-/// report, its words where it reads, and the raw value where it does not.
-fn read(member: Member, value: &Value, source: Source) -> Result<String, String> {
+/// report, its words and its key where it reads, and the raw value where
+/// it does not.
+fn read(member: Member, value: &Value, source: Source) -> Result<(String, String), String> {
     let raw = || cut(&value.to_string());
+    let words = |w: String| (w.clone(), w);
     match member {
-        Member::Artifact => value.as_str().map(str::to_owned).ok_or_else(raw),
-        Member::ResidualReadout | Member::Surprisal => {
-            value.as_bool().map(|b| b.to_string()).ok_or_else(raw)
-        }
+        Member::Artifact => value.as_str().map(|w| words(w.to_owned())).ok_or_else(raw),
+        Member::ResidualReadout | Member::Surprisal => value
+            .as_bool()
+            .map(|b| words(b.to_string()))
+            .ok_or_else(raw),
         Member::TurnContext => match value.as_str() {
-            Some(w @ ("continuous" | "independent")) => Ok(w.to_owned()),
+            Some(w @ ("continuous" | "independent")) => Ok(words(w.to_owned())),
             _ => Err(raw()),
         },
         Member::StateElection => {
@@ -290,10 +317,10 @@ fn read(member: Member, value: &Value, source: Source) -> Result<String, String>
                 })
                 .collect::<Option<Vec<_>>>()
                 .ok_or_else(raw)?;
-            Ok(election_words(all_kinds, &keys))
+            Ok(election(all_kinds, &keys))
         }
         Member::Store => match value.get("engine").and_then(Value::as_str) {
-            Some(w @ ("none" | "sqlite")) => Ok(w.to_owned()),
+            Some(w @ ("none" | "sqlite")) => Ok(words(w.to_owned())),
             _ => Err(raw()),
         },
     }
@@ -322,15 +349,22 @@ pub fn verdict(document: &Document, member: Member, tuple: &Value, source: Sourc
         return Verdict::NotInReport;
     };
     match read(member, value, source) {
-        Ok(reported) => {
+        Ok((reported, key)) => {
             let declared = declared(document, member);
             if declared.by_absence.is_some() && declared.words == NOT_DECLARED {
                 Verdict::Differs {
                     declared: declared.shown(),
                     reported,
                 }
-            } else if declared.words == reported {
+            } else if declared.key == key {
                 Verdict::Equal
+            } else if declared.words == reported {
+                // Two values that read alike and differ: the page shows
+                // what was compared, so that "differs" names a difference.
+                Verdict::Differs {
+                    declared: declared.key,
+                    reported: key,
+                }
             } else {
                 Verdict::Differs {
                     declared: declared.words,
@@ -791,6 +825,58 @@ mod tests {
             verdict(&d, Member::StateElection, &twice, Source::Show),
             Verdict::Equal,
             "a path named twice"
+        );
+        // Two elections whose words read alike are told apart (Codex on
+        // #108): a path holding ", " against two paths, and a path named
+        // "no paths" against none. Each elects other payload fields.
+        let declaring = |paths: Value| {
+            let mut v = document().to_value();
+            v["state_election"] = json!({"all_kinds": true, "keys": [
+                {"kind": "message.user", "paths": paths}
+            ]});
+            Document::parse(&v).unwrap()
+        };
+        let reporting = |paths: Value| {
+            let mut t = show();
+            t["state_election"] = json!({"all-kinds": true, "keys": [
+                {"kind": "message.user", "paths": paths}
+            ]});
+            t
+        };
+        for (declared, reported, what) in [
+            (
+                json!(["a, b"]),
+                json!(["a", "b"]),
+                "a path holding a comma against two paths",
+            ),
+            (
+                json!(["no paths"]),
+                json!([]),
+                "a path named no paths against none",
+            ),
+        ] {
+            match verdict(
+                &declaring(declared),
+                Member::StateElection,
+                &reporting(reported),
+                Source::Show,
+            ) {
+                // The page names a difference it can show.
+                Verdict::Differs { declared, reported } => {
+                    assert_ne!(declared, reported, "{what}")
+                }
+                other => panic!("{what}: {other:?}"),
+            }
+        }
+        assert_eq!(
+            verdict(
+                &declaring(json!(["a, b"])),
+                Member::StateElection,
+                &reporting(json!(["a, b"])),
+                Source::Show
+            ),
+            Verdict::Equal,
+            "the same path holding a comma"
         );
         // The tee's spelling read by show's name is not read.
         let mut misspelled = show();

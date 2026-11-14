@@ -307,7 +307,7 @@ async fn the_host_issues_a_short_lived_token_kept_as_its_digest() {
 }
 
 /// **A token signs its person in once** (Spec 2.8): the name in any case,
-/// the browser sent to Record with the cookie, the session naming its
+/// the browser sent to The Record with the cookie, the session naming its
 /// method and no passkey, the opening audited by `sign-in token` on the
 /// person with its outcome, the token ended `redeemed`; the same token again
 /// gets the one answer and no record.
@@ -641,7 +641,7 @@ async fn landed(
 }
 
 /// **`GET /` sends a browser on** (Spec 2.8): to sign-in with no cookie or
-/// one naming no session, to Record with a live session.
+/// one naming no session, to The Record with a live session.
 #[tokio::test]
 async fn the_root_sends_a_browser_on() {
     let Some(fresh) = fresh_store().await else {

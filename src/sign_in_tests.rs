@@ -153,7 +153,7 @@ pub(crate) async fn rows(s: &Store, query: &str) -> i64 {
 
 /// **A person enrolled signs in, and the session serves** (design section
 /// 6): the finish sets the `__Host-` cookie, the session names the person
-/// and the passkey's `pk-` identity, the cookie reads Record under the
+/// and the passkey's `pk-` identity, the cookie reads The Record under the
 /// person's name, the stored counter rose to the authenticator's, and the
 /// audit holds the opening's first record (the person, by passkey
 /// assertion) and its `ok` outcome.
@@ -205,7 +205,7 @@ async fn a_person_enrolled_signs_in_and_the_session_serves() {
     assert_eq!(
         response.status(),
         StatusCode::OK,
-        "the session serves Record"
+        "the session serves The Record"
     );
 
     let opened: Vec<AuditRow> = sqlx::query_as(

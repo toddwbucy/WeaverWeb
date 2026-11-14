@@ -1,6 +1,6 @@
 //! conforms: web-a-chip-filters-only-on-an-indexed-column
 //!
-//! Record, per the charter's section 3.6: **every run and branch with the
+//! The Record, per the charter's section 3.6: **every run and branch with the
 //! tuple that produced it.** A reading without its tuple is a reading of an
 //! unnamed compound, and a registry that cannot hold a failure is a
 //! marketing surface, so this surface shows what ran and says what it does

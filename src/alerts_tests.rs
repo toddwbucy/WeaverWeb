@@ -595,6 +595,109 @@ async fn a_decision_chosen_through_htmx_is_drawn_in_its_pane() {
     );
 }
 
+/// **A decision refused through htmx is drawn at its own status** (Spec
+/// 2.8, 2.14): admin-con gone, the force-unload is not asked, and the step
+/// that says so is drawn in the decision pane at 503, never inside a 200.
+///
+/// Perturbation: answer every finished sequence 200, and the refusal is
+/// drawn inside a 200.
+#[tokio::test]
+async fn a_decision_refused_through_htmx_is_drawn_at_its_status() {
+    let Some(mut o) = operated(&["show", "unload", "save-point", "force-unload"]).await else {
+        return;
+    };
+    let prompt = a_prompt(&mut o).await;
+    let Operated {
+        rig,
+        karl,
+        admin_con,
+        bea_session,
+        ..
+    } = o;
+    drop(admin_con);
+    // Raised where the live entry comes out, so no admin-con is connected.
+    wait_alerts(&rig, &karl, "lost contact", |a| {
+        a.iter().any(|x| x.kind == "lost_contact")
+    })
+    .await;
+    let (status, _, shown) = send_hx(
+        &rig.app,
+        "POST",
+        &format!("/agents/{karl}/alerts/{prompt}/choose"),
+        Some(form(&[("option", "force_unload")])),
+        &bea_session,
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{shown}");
+    assert_fragment(&shown);
+    assert!(
+        shown.contains("force-unload")
+            && shown.contains("not asked: no admin-con is connected for this agent"),
+        "{shown}"
+    );
+}
+
+/// **A refusal after a step that ran is drawn at the refusal's status**
+/// (Spec 2.8, 2.14): bea's own unload in flight, "save point, then unload"
+/// takes the save point and its unload is held as hers already asked; the
+/// steps, the save point taken among them, are drawn at 409, and no unload
+/// is sent.
+///
+/// Perturbation: answer every finished sequence 200, and the held unload
+/// is drawn inside a 200.
+#[tokio::test]
+async fn a_decision_refused_after_its_save_point_is_drawn_at_the_refusals_status() {
+    let Some(mut o) = operated(&["show", "unload", "save-point", "force-unload"]).await else {
+        return;
+    };
+    let prompt = a_prompt(&mut o).await;
+    let held = ask(&o.rig, &o.bea_session, &o.karl, "unload");
+    let (held_id, verb, _) = take_verb(&mut o.admin_con).await;
+    assert_eq!(verb, "unload", "bea's own unload is in flight");
+    let (app, session, uri, body) = (
+        o.rig.app.clone(),
+        o.bea_session.clone(),
+        format!("/agents/{}/alerts/{prompt}/choose", o.karl),
+        form(&[("option", "save_point_then_unload")]),
+    );
+    let chosen =
+        tokio::spawn(async move { send_hx(&app, "POST", &uri, Some(body), &session).await });
+    let (id, verb, _) = take_verb(&mut o.admin_con).await;
+    assert_eq!(verb, "save-point");
+    let report = json!({"save_point": "d0c0ffee", "name": "n-1", "run": "r-1",
+        "sequence": 1, "turn": 1, "event_run": "r-1", "position": 9});
+    o.admin_con
+        .send(FromClient::Verb {
+            id,
+            outcome: Some(answered(
+                "save-point",
+                json!({"kind": "save_point_taken", "report": report}),
+            )),
+            error: None,
+        })
+        .await;
+    let (status, _, shown) = chosen.await.unwrap();
+    assert_eq!(status, StatusCode::CONFLICT, "{shown}");
+    assert_fragment(&shown);
+    assert!(
+        shown.contains("d0c0ffee") && shown.contains("not asked: "),
+        "{shown}"
+    );
+    no_frame(&mut o.admin_con).await;
+    o.admin_con
+        .send(FromClient::Verb {
+            id: held_id,
+            outcome: Some(answered(
+                "unload",
+                json!({"kind": "state", "state": "unloaded"}),
+            )),
+            error: None,
+        })
+        .await;
+    let (status, _, page) = held.await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{page}");
+}
+
 /// **One recovery holds exactly one place for its whole life**: bea holds
 /// three asks' places and chooses "save point, then unload"; the choice
 /// takes the fourth and its save-point and its unload are both asked under

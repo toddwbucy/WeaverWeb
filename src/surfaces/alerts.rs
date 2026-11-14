@@ -32,7 +32,7 @@ use crate::store::audit::{PersonMethod, Principal, Target};
 use crate::store::identity::{is_agent_id, session_stands};
 use crate::store::{AgentId, Store};
 use crate::surfaces::reading::{
-    NO_SUCH_AGENT, Seams, fault, in_place, not_found, refuse, session_of,
+    NO_SUCH_AGENT, Seams, fault, in_place, not_found, refusal_status, refuse, session_of,
 };
 
 /// An alert's identity in its shape: `al-` and sixteen hex digits.
@@ -237,11 +237,14 @@ pub fn confirmed(outcome: &VerbOutcome) -> Option<String> {
 }
 
 /// One step of a decision's sequence, as the page shows it.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Step {
     pub verb: String,
     pub first: String,
     pub status: String,
+    /// **The server's refusal of the step's ask**, kept typed so the
+    /// answer takes its status (Spec 2.8): none where the step was asked.
+    pub refused: Option<VerbError>,
 }
 
 /// **"Save point, then unload"** (ruling 2), run in the task the request
@@ -279,6 +282,7 @@ pub async fn save_point_then_unload(
                 verb: "save-point".into(),
                 first: String::new(),
                 status: format!("not asked: {refused}"),
+                refused: Some(refused),
             });
             return steps;
         }
@@ -321,6 +325,7 @@ pub async fn save_point_then_unload(
             verb: "save-point".into(),
             first,
             status,
+            refused: None,
         });
         return steps;
     };
@@ -328,12 +333,16 @@ pub async fn save_point_then_unload(
         verb: "save-point".into(),
         first,
         status: format!("taken and read back to its manifest line, {digest}"),
+        refused: None,
     });
     let Some(admission) = admission else {
         steps.push(Step {
             verb: "unload".into(),
             first: String::new(),
             status: "not asked: the save point's ask ended abnormally".into(),
+            refused: Some(VerbError::Server(
+                "the save point's ask ended abnormally".into(),
+            )),
         });
         return steps;
     };
@@ -360,12 +369,14 @@ pub async fn save_point_then_unload(
                 verb: "unload".into(),
                 first,
                 status,
+                refused: None,
             });
         }
         Err(refused) => steps.push(Step {
             verb: "unload".into(),
             first: String::new(),
             status: format!("not asked: {refused}"),
+            refused: Some(refused),
         }),
     }
     steps
@@ -481,12 +492,14 @@ pub(super) async fn choose(
                         verb: "force-unload".into(),
                         first,
                         status,
+                        refused: None,
                     });
                 }
                 Err(refused) => steps.push(Step {
                     verb: "force-unload".into(),
                     first: String::new(),
                     status: format!("not asked: {refused}"),
+                    refused: Some(refused),
                 }),
             }
             steps
@@ -494,7 +507,24 @@ pub(super) async fn choose(
     };
     let (status, steps, pending) = match tokio::time::timeout(seams.asker.silence(), sequence).await
     {
-        Ok(Ok(steps)) => (StatusCode::OK, steps, false),
+        // **A refusal at its own status** (Spec 2.8, 2.14), by the rule an
+        // ask in place takes: a sequence stops at its first refusal, so the
+        // steps carry at most one. No grant answers as an unknown agent; a
+        // fault is not a state to draw, so it answers 500 and htmx leaves
+        // the pane as it stood, what was taken before it being in the audit
+        // and the row. admin's own refusal is an asked verb answering, 200.
+        Ok(Ok(steps)) => match steps.iter().find_map(|s| s.refused.as_ref()) {
+            None => (StatusCode::OK, steps, false),
+            Some(refusal) => match refusal_status(refusal) {
+                StatusCode::NOT_FOUND => return refused(StatusCode::NOT_FOUND, NO_SUCH_AGENT),
+                StatusCode::INTERNAL_SERVER_ERROR => {
+                    return fault(anyhow::anyhow!(
+                        "a decision's step was not asked: {refusal}"
+                    ));
+                }
+                status => (status, steps, false),
+            },
+        },
         Ok(Err(e)) => return fault(anyhow::anyhow!("the decision's task ended: {e}")),
         Err(_) => (StatusCode::ACCEPTED, Vec::new(), true),
     };

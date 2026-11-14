@@ -1209,6 +1209,31 @@ pub(super) fn refuse(
 /// **A refusal's words in the plane's own terms**: a turn's connector is
 /// gate-con, and what it places is a turn, where the listener's words name
 /// admin-con and a verb.
+/// **The status a refusal of a person's ask is answered at** (Spec 2.8,
+/// 2.13), one rule for an ask in place and a decision's steps (Spec 2.14):
+/// no grant as an unknown agent (404); the grants' verbs or the ceiling not
+/// carrying it (403); the same person's same verb in flight, held, its
+/// first named and nothing sent (409); not connected, the persons' slots
+/// all taken, the connection lost after the first, or the ask's bound
+/// passed on the server's own waits (503). Everything else is the server's
+/// own failure, a fault (500).
+pub(super) fn refusal_status(refused: &VerbError) -> StatusCode {
+    match refused {
+        VerbError::NoGrant => StatusCode::NOT_FOUND,
+        VerbError::NotGranted { .. } | VerbError::OutsideCeiling { .. } => StatusCode::FORBIDDEN,
+        VerbError::AlreadyAsked { .. } => StatusCode::CONFLICT,
+        VerbError::NotConnected | VerbError::Busy | VerbError::Lost | VerbError::Stalled => {
+            StatusCode::SERVICE_UNAVAILABLE
+        }
+        VerbError::Unanswered
+        | VerbError::Fault(_)
+        | VerbError::ServerAsksShowOnly { .. }
+        | VerbError::Audit
+        | VerbError::Server(_)
+        | VerbError::Shed => StatusCode::INTERNAL_SERVER_ERROR,
+    }
+}
+
 fn refusal_words(refused: &VerbError, turn: bool) -> String {
     match (refused, turn) {
         (VerbError::NotConnected, true) => {
@@ -1361,34 +1386,15 @@ async fn act(
     };
     let enqueued = match seams.asker.ask_as_person(admission, &asker, &id, act).await {
         Ok(enqueued) => enqueued,
-        // **No grant answers as an unknown agent**, so the page is no
-        // oracle for agent identities.
-        Err(VerbError::NoGrant) => {
-            return refused(StatusCode::NOT_FOUND, NO_SUCH_AGENT.to_owned());
+        Err(refusal) => {
+            return match refusal_status(&refusal) {
+                // **No grant answers as an unknown agent**, so the page is
+                // no oracle for agent identities.
+                StatusCode::NOT_FOUND => refused(StatusCode::NOT_FOUND, NO_SUCH_AGENT.to_owned()),
+                StatusCode::INTERNAL_SERVER_ERROR => fault(anyhow::Error::new(refusal)),
+                status => refused(status, refusal_words(&refusal, turn)),
+            };
         }
-        Err(refusal @ (VerbError::NotGranted { .. } | VerbError::OutsideCeiling { .. })) => {
-            return refused(StatusCode::FORBIDDEN, refusal.to_string());
-        }
-        // **The same person's same verb is in flight**: held, its first
-        // named, nothing sent.
-        Err(refusal @ VerbError::AlreadyAsked { .. }) => {
-            return refused(StatusCode::CONFLICT, refusal.to_string());
-        }
-        // Not connected, the persons' slots all taken, the connection lost
-        // after the first, or the ask's bound passed on the server's own
-        // waits (logged at error): nothing was asked.
-        Err(
-            refusal @ (VerbError::NotConnected
-            | VerbError::Busy
-            | VerbError::Lost
-            | VerbError::Stalled),
-        ) => {
-            return refused(
-                StatusCode::SERVICE_UNAVAILABLE,
-                refusal_words(&refusal, turn),
-            );
-        }
-        Err(e) => return fault(anyhow::Error::new(e)),
     };
     let first = enqueued.first.clone();
     // **The page's wait is its own**, bounding nothing of the ask: the

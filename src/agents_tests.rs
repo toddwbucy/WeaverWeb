@@ -255,10 +255,26 @@ impl Connector {
         Self::dial_stating(config, ceiling, false).await
     }
 
-    /// As [`Connector::dial_with`], as an admin-con older than the first
-    /// capability (Spec 8): its hello states none.
-    pub(crate) async fn dial_older(config: &str, ceiling: &[&str]) -> Self {
-        Self::dial_stating(config, ceiling, true).await
+    /// **Dial again until the listener admits**, past the teardown of a
+    /// connection just dropped: the old one is live at the server until its
+    /// reader sees the close, and a dial meeting it is refused
+    /// `already_connected` (Spec 8), so a fixed wait before the dial races
+    /// that teardown. Each such refusal is dialed again, for at most five
+    /// seconds; the hello's answer is taken here.
+    pub(crate) async fn redial(config: &str, ceiling: &[&str], older: bool) -> Self {
+        let until = tokio::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let mut connector = Self::dial_stating(config, ceiling, older).await;
+            match connector.recv().await {
+                Some(ToClient::HelloAnswer { .. }) => return connector,
+                Some(ToClient::Refusal {
+                    reason: LinkRefusal::AlreadyConnected,
+                }) if tokio::time::Instant::now() < until => {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+                other => panic!("expected the hello's answer, got {other:?}"),
+            }
+        }
     }
 
     async fn dial_stating(config: &str, ceiling: &[&str], older: bool) -> Self {

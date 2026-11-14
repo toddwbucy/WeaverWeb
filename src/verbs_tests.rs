@@ -80,10 +80,16 @@ pub(crate) async fn admitted_admin(config: &str, ceiling: &[&str]) -> Connector 
     admitted(Connector::dial_with(config, ceiling).await).await
 }
 
-/// As [`admitted_admin`], an admin-con older than the first capability
+/// As [`admitted_admin`], dialed again past the teardown of the
+/// connection just dropped ([`Connector::redial`]).
+pub(crate) async fn readmitted_admin(config: &str, ceiling: &[&str]) -> Connector {
+    admission(Connector::redial(config, ceiling, false).await).await
+}
+
+/// As [`readmitted_admin`], an admin-con older than the first capability
 /// (Spec 8), its hello stating none.
-pub(crate) async fn admitted_older_admin(config: &str, ceiling: &[&str]) -> Connector {
-    admitted(Connector::dial_older(config, ceiling).await).await
+pub(crate) async fn readmitted_older_admin(config: &str, ceiling: &[&str]) -> Connector {
+    admission(Connector::redial(config, ceiling, true).await).await
 }
 
 async fn admitted(mut admin_con: Connector) -> Connector {
@@ -91,6 +97,12 @@ async fn admitted(mut admin_con: Connector) -> Connector {
         admin_con.recv().await,
         Some(ToClient::HelloAnswer { .. })
     ));
+    admission(admin_con).await
+}
+
+/// The admission after the hello's answer: its `show` answered idle, and
+/// `caught_up`.
+async fn admission(mut admin_con: Connector) -> Connector {
     let show = match admin_con.recv().await {
         Some(ToClient::Verb { id, verb, .. }) if verb == "show" => id,
         other => panic!("expected the admission's show, got {other:?}"),

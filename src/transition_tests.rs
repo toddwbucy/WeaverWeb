@@ -13,7 +13,7 @@ use crate::link::register::Agent;
 use crate::store::AgentId;
 use crate::traceview::TraceEvent;
 use crate::verbs_tests::{
-    Operated, admitted_older_admin, answer, no_frame, operated, operated_with, take_verb,
+    Operated, answer, no_frame, operated, operated_with, readmitted_older_admin, take_verb,
 };
 
 /// The server asks `show` of karl, and admin-con answers it with `object`
@@ -200,9 +200,7 @@ async fn an_admission_meeting_a_transition_completes() {
         ..
     } = o;
     drop(admin_con);
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-    let mut c = Connector::dial_with(&admin_config, &["show"]).await;
-    assert!(matches!(c.recv().await, Some(ToClient::HelloAnswer { .. })));
+    let mut c = Connector::redial(&admin_config, &["show"], false).await;
     let ask = match c.recv().await {
         Some(ToClient::Verb { id, verb, .. }) if verb == "show" => id,
         other => panic!("expected the admission's show, got {other:?}"),
@@ -630,9 +628,7 @@ async fn a_state_by_event_under_a_closed_door_without_show_says_nothing_reads_it
         admin_con,
     } = o;
     drop(admin_con);
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-    let mut c = Connector::dial_with(&admin_config, &["load", "save-point"]).await;
-    assert!(matches!(c.recv().await, Some(ToClient::HelloAnswer { .. })));
+    let mut c = Connector::redial(&admin_config, &["load", "save-point"], false).await;
     c.send(FromClient::CaughtUp).await;
     let mut o = Operated {
         rig,
@@ -829,8 +825,7 @@ async fn readmitted_older(o: Operated, ceiling: &[&str]) -> Operated {
         admin_con,
     } = o;
     drop(admin_con);
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-    let admin_con = admitted_older_admin(&admin_config, ceiling).await;
+    let admin_con = readmitted_older_admin(&admin_config, ceiling).await;
     let o = Operated {
         rig,
         karl,

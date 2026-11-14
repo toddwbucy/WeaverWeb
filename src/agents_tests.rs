@@ -335,6 +335,27 @@ impl Connector {
         }
     }
 
+    /// **Every frame the server sends within `within`, and whether it closed
+    /// the connection**, where [`recv`](Self::recv) reads a close and a
+    /// quiet wait alike: a test that claims the connection stands reads it
+    /// here.
+    pub(crate) async fn frames_within(&mut self, within: Duration) -> (Vec<ToClient>, bool) {
+        let until = tokio::time::Instant::now() + within;
+        let mut frames = Vec::new();
+        loop {
+            let mut line = String::new();
+            match tokio::time::timeout_at(until, self.reader.read_line(&mut line)).await {
+                Err(_) => return (frames, false),
+                Ok(Ok(0)) | Ok(Err(_)) => return (frames, true),
+                Ok(Ok(_)) => {
+                    if let Ok(frame) = serde_json::from_str(line.trim_end()) {
+                        frames.push(frame);
+                    }
+                }
+            }
+        }
+    }
+
     /// **The first line the server sends within `within`**, raw and
     /// whatever it parses as, or none where it sends nothing: a frame of no
     /// variant [`recv`](Self::recv) knows counts here too.

@@ -13,7 +13,7 @@ use crate::link::register::Agent;
 use crate::store::AgentId;
 use crate::traceview::TraceEvent;
 use crate::verbs_tests::{
-    Operated, answer, no_frame, operated, operated_with, readmitted_older_admin, take_verb,
+    Operated, answer, operated, operated_with, readmitted_older_admin, take_verb,
 };
 
 /// The server asks `show` of karl, and admin-con answers it with `object`
@@ -853,10 +853,13 @@ async fn readmitted_older(o: Operated, ceiling: &[&str]) -> Operated {
 /// **An admin-con older than the first capability is asked no `show` at a
 /// close** (Spec 7.2, 8; Codex on #113): its hello states no `close_show`,
 /// so its opening hold may take a close's `show` and never end. The close
-/// lands the door's state alone, as before the close's `show` existed.
+/// lands the door's state alone, as before the close's `show` existed, and
+/// the connection stands: read for two seconds, far under the rig's silence
+/// bound, with no verb and no close.
 ///
-/// Perturbation: ask the close's `show` whatever the hello says, and a
-/// `show` reaches the older admin-con at the close.
+/// Perturbations: ask the close's `show` whatever the hello says, and a
+/// `show` reaches the older admin-con at the close; close the older
+/// admin-con's connection at the close, and the read finds it closed.
 #[tokio::test]
 async fn an_admin_con_stating_no_capability_is_asked_no_show_at_a_close() {
     let Some(o) = operated(&["show", "load", "save-point"]).await else {
@@ -871,7 +874,18 @@ async fn an_admin_con_stating_no_capability_is_asked_no_show_at_a_close() {
         })
         .await;
     wait_row(&o, "the door closed", |r| r.trace_door == Some(false)).await;
-    no_frame(&mut o.admin_con).await;
+    let (frames, closed) = o
+        .admin_con
+        .frames_within(std::time::Duration::from_secs(2))
+        .await;
+    assert!(
+        !closed,
+        "the close ended the older admin-con's connection: {frames:?}"
+    );
+    assert!(
+        !frames.iter().any(|f| matches!(f, ToClient::Verb { .. })),
+        "a verb reached the older admin-con at the close: {frames:?}"
+    );
 }
 
 /// **Where the live admin-con is asked no `show` at a close, the line says

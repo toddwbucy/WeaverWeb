@@ -77,6 +77,11 @@ pub struct DeclarePane {
     pub saved: Option<SavedView>,
     /// The other live register rows of the name the reader may see.
     pub others: Vec<String>,
+    /// **What the other rows' sentence claims**, only what was read of the
+    /// head: the same declaration behind them where one is saved, nothing
+    /// saved under the name where none is, and no claim where the head
+    /// could not be read.
+    pub others_lead: &'static str,
     /// Whether the read of the other rows failed, which the pane says.
     pub others_unread: bool,
     /// The truth line.
@@ -86,6 +91,15 @@ pub struct DeclarePane {
     /// The way to a new declaration, an admin's alone, where none is saved.
     pub declare: bool,
 }
+
+/// The other rows' sentence where a declaration is saved under the name.
+const OTHERS_SAME: &str =
+    "The same declaration stands behind the other live register rows of this name";
+/// The other rows' sentence where none is.
+const OTHERS_NONE_SAVED: &str =
+    "The other live register rows of this name share it, and no declaration is saved under it";
+/// The other rows' sentence where whether one is could not be read.
+const OTHERS_HEAD_UNREAD: &str = "The other live register rows of this name";
 
 /// The head, as the pane names it.
 pub struct SavedView {
@@ -182,6 +196,7 @@ impl DeclarePane {
                     saved: None,
                     others,
                     others_unread,
+                    others_lead: OTHERS_NONE_SAVED,
                     truth: format!("No declaration is saved under the name {}.", row.name),
                     parts: Vec::new(),
                     declare: admin,
@@ -193,6 +208,7 @@ impl DeclarePane {
                     saved: None,
                     others,
                     others_unread,
+                    others_lead: OTHERS_HEAD_UNREAD,
                     truth: format!(
                         "Whether a declaration is saved under the name {} could not be read just now.",
                         row.name
@@ -220,6 +236,7 @@ impl DeclarePane {
                     saved: Some(view),
                     others,
                     others_unread,
+                    others_lead: OTHERS_SAME,
                     truth: format!(
                         "The declaration saved under the name {}, version {}, does not read in this \
                          build, so its parts are not shown.",
@@ -265,6 +282,7 @@ impl DeclarePane {
             saved: Some(view),
             others,
             others_unread,
+            others_lead: OTHERS_SAME,
             truth,
             parts: parts(&document, report.as_ref(), admin),
             declare: false,

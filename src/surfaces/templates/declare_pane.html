@@ -14,7 +14,7 @@
     {%- if declaration.others_unread %}
     <p class="others">The other live register rows of this name could not be read just now.</p>
     {%- else if !declaration.others.is_empty() %}
-    <p class="others">The same declaration stands behind the other live register rows of this name: {% for other in declaration.others %}{% if !loop.first %}, {% endif %}<span class="mono">{{ other }}</span>{% endfor %}.</p>
+    <p class="others">{{ declaration.others_lead }}: {% for other in declaration.others %}{% if !loop.first %}, {% endif %}<span class="mono">{{ other }}</span>{% endfor %}.</p>
     {%- endif %}
     <p class="note read">Every holder of a grant on this agent sees its declared parts; the declaration screen is an admin's, and the prompt is shown here by its length in characters, its digest to an admin alone.</p>
     </div>

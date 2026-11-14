@@ -129,6 +129,12 @@ impl Rig {
         )
     }
 
+    /// `[connectors]` as an appliance image stages it: no handover.
+    fn connectors_image(&self) -> String {
+        self.connectors()
+            .replace(&format!("handover = \"{}\"\n", self.s("handover")), "")
+    }
+
     fn admin_path(&self) -> String {
         format!("{}:{}", self.s("path1"), self.s("path2"))
     }
@@ -524,9 +530,14 @@ fn every_parameter_out_of_shape_is_refused_and_writes_nothing() {
             "[connectors] is missing",
         ),
         (
-            "[connectors] without an agent",
+            "a handover with no agent",
             no_agents.clone(),
-            "no [[agent]] is",
+            "connectors.handover is given and no [[agent]] is",
+        ),
+        (
+            "an agent with no handover",
+            full.replace(&rig.connectors(), &rig.connectors_image()),
+            "an [[agent]] is given and connectors.handover is missing",
         ),
         ("nothing to stage", rig.locations(), "stages nothing"),
         (
@@ -739,6 +750,89 @@ fn the_manifest_names_every_directory_and_file_parents_first() {
     ] {
         assert!(dirs.contains(&d), "{d}");
     }
+}
+
+/// **An appliance image stages the connectors' half and nothing of an
+/// agent** (Spec 8.1; the operator's rulings of 2026-11-14): `[connectors]`
+/// with no handover and no `[[agent]]` stages the two programs, the two
+/// templates rendered with the image's accounts and locations, and the
+/// directories, and no config, drop-in, handover or server unit; the
+/// manifest is exactly these.
+#[test]
+fn an_image_stages_the_connectors_programs_and_templates_and_nothing_of_an_agent() {
+    use sha2::{Digest, Sha256};
+    let rig = Rig::new();
+    let staged = rig
+        .stage(&format!("{}{}", rig.locations(), rig.connectors_image()))
+        .expect("an image stages");
+    let (bin, cfg, units) = (rig.s("bin"), rig.s("config"), rig.s("units"));
+    let sum = |bytes: &[u8]| -> String {
+        Sha256::digest(bytes)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    };
+    let program = |name: &str| {
+        let path = format!("{bin}/{name}");
+        let bytes = std::fs::read(&path).unwrap();
+        format!("file\t{path}\t{path}\troot\t-\t0755\t{}", sum(&bytes))
+    };
+    let unit = |name: &str| {
+        let destination = format!("{units}/{name}");
+        let source = rig.staged(&destination);
+        let bytes = std::fs::read(&source).unwrap();
+        format!(
+            "file\t{}\t{destination}\troot\t-\t0644\t{}",
+            source.display(),
+            sum(&bytes)
+        )
+    };
+    let expected = [
+        MANIFEST_HEADER.to_owned(),
+        format!("dir\t-\t{bin}\troot\t-\t0755\t-"),
+        format!("dir\t-\t{cfg}\troot\t-\t0755\t-"),
+        format!("dir\t-\t{units}\troot\t-\t0755\t-"),
+        format!("dir\t-\t{cfg}/connectors\troot\t-\t0755\t-"),
+        program("gate-con"),
+        program("admin-con"),
+        unit(stage::GATE_UNIT),
+        unit(stage::ADMIN_UNIT),
+    ]
+    .join("\n")
+        + "\n";
+    assert_eq!(std::fs::read_to_string(&staged.manifest).unwrap(), expected);
+    assert_eq!(staged.lines, 8);
+
+    let gate = rig.read_staged(&format!("{units}/{}", stage::GATE_UNIT));
+    for line in [
+        "User=gate-acct".to_owned(),
+        format!("ExecStart={bin}/gate-con --config {cfg}/connectors/%i/gate-con.toml"),
+    ] {
+        assert!(has_line(&gate, &line), "{line}: {gate}");
+    }
+    let admin = rig.read_staged(&format!("{units}/{}", stage::ADMIN_UNIT));
+    for line in [
+        "User=admin-acct".to_owned(),
+        format!("Environment=PATH={}", rig.admin_path()),
+        "TimeoutStopSec=1140".to_owned(),
+        format!("ExecStart={bin}/admin-con --config {cfg}/connectors/%i/admin-con.toml"),
+    ] {
+        assert!(has_line(&admin, &line), "{line}: {admin}");
+    }
+    let written: Vec<PathBuf> = snapshot(&rig.out()).into_iter().map(|(p, _)| p).collect();
+    assert_eq!(
+        written,
+        {
+            let mut w = vec![
+                staged.manifest.clone(),
+                rig.staged(&format!("{units}/{}", stage::GATE_UNIT)),
+                rig.staged(&format!("{units}/{}", stage::ADMIN_UNIT)),
+            ];
+            w.sort();
+            w
+        },
+        "nothing of an agent and no server unit is staged"
+    );
 }
 
 /// Every staged file under `<out>`, with its bytes, and the manifest's text.

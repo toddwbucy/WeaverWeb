@@ -5,7 +5,10 @@
 //! operator keeps outside the repository, renders the three units from the
 //! templates under `install/units/`, composes each agent's two connector
 //! configs from `register`'s handover files and the box facts, and writes
-//! them with a manifest into a directory the operator names. It runs as the
+//! them with a manifest into a directory the operator names. **An appliance
+//! image stages the connectors' half alone**: `[connectors]` with no
+//! handover and no agent places the two programs and renders their
+//! templates, and nothing of an agent. It runs as the
 //! operator's own user, refuses to run as root, and applies nothing: placing
 //! the staged files is the operator's (Spec 8.1, section 10).
 //!
@@ -86,8 +89,10 @@ pub struct Connectors {
     pub admin_path: String,
     pub gate_con_binary: String,
     pub admin_con_binary: String,
-    /// The directory `register` wrote into (its `--out`).
-    pub handover: String,
+    /// The directory `register` wrote into (its `--out`), given with an
+    /// agent and only then: an appliance image stages no agent and takes
+    /// no handover.
+    pub handover: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -600,8 +605,8 @@ fn plan(params: &Params, euid: u32) -> anyhow::Result<(Vec<Entry>, Vec<PlannedFi
     let binaries = path_ok("locations.binaries", &loc.binaries)?;
     let units = path_ok("locations.units", &loc.units)?;
     let config_root = path_ok("locations.config_root", &loc.config_root)?;
-    if params.server.is_none() && params.agents.is_empty() {
-        bail!("the parameter file stages nothing: give [server], or [connectors] and an [[agent]]");
+    if params.server.is_none() && params.connectors.is_none() && params.agents.is_empty() {
+        bail!("the parameter file stages nothing: give [server], or [connectors]");
     }
     let mut dirs: BTreeSet<PathBuf> = BTreeSet::new();
     let mut files: Vec<PlannedFile> = Vec::new();
@@ -631,16 +636,27 @@ fn plan(params: &Params, euid: u32) -> anyhow::Result<(Vec<Entry>, Vec<PlannedFi
         ));
     }
 
-    match (&params.connectors, params.agents.is_empty()) {
-        (None, false) => bail!("an [[agent]] is given and [connectors] is missing"),
-        (Some(_), true) => bail!("[connectors] is given and no [[agent]] is"),
-        _ => {}
+    if params.connectors.is_none() && !params.agents.is_empty() {
+        bail!("an [[agent]] is given and [connectors] is missing");
     }
     if let Some(c) = &params.connectors {
         account_ok("connectors.gate_account", &c.gate_account)?;
         account_ok("connectors.admin_account", &c.admin_account)?;
         admin_path_ok(&c.admin_path)?;
-        let handover = path_ok("connectors.handover", &c.handover)?;
+        // **A handover goes with an agent and only then** (Spec 8.1; the
+        // operator's rulings of 2026-11-14): an appliance image stages the
+        // connectors' half and nothing of an agent, so a handover with no
+        // agent is refused and never rides one; the full path, an agent
+        // with its handover, is the single-host install's.
+        let handover = match (&c.handover, params.agents.is_empty()) {
+            (Some(_), true) => bail!(
+                "connectors.handover is given and no [[agent]] is: an image stages no agent and takes no handover"
+            ),
+            (None, false) => bail!("an [[agent]] is given and connectors.handover is missing"),
+            (Some(h), false) => path_ok("connectors.handover", h)?,
+            // An image: no agent reads it.
+            (None, true) => PathBuf::new(),
+        };
         let (gate_bin, gate_sum) = program("connectors.gate_con_binary", &c.gate_con_binary)?;
         let (admin_bin, admin_sum) = program("connectors.admin_con_binary", &c.admin_con_binary)?;
         dirs.insert(binaries.clone());

@@ -761,14 +761,16 @@ pub(crate) async fn bea_asker(o: &Operated) -> Asker {
 /// under their holds and take every place, and seventy more park behind
 /// them, each having tried for a slot first. The connection's own frames
 /// still go out: an opening of the trace door has its `show` asked and its
-/// `landed` reported, and the connection stands.
+/// `landed` reported, and the connection stands. The asks name three verbs,
+/// since a person's second identical verb in flight is held at its check
+/// and would never stop under its hold.
 ///
 /// Perturbation: drop the per-connection cap. The parked asks' slots take
 /// the channel, the opening's `show` waits on it, and the healthy
 /// connection would close as a silent peer.
 #[tokio::test]
 async fn persons_asks_never_fill_the_connections_channel() {
-    let Some(mut o) = operated(&["show", "load"]).await else {
+    let Some(mut o) = operated(&["show", "load", "stop", "validate"]).await else {
         return;
     };
     let asker = bea_asker(&o).await;
@@ -784,9 +786,10 @@ async fn persons_asks_never_fill_the_connections_channel() {
             continue;
         };
         let (listener, asker, id) = (o.rig.listener.clone(), asker.clone(), id.clone());
+        let verb = ["load", "stop", "validate"][n % 3];
         tokio::spawn(async move {
             listener
-                .ask_as_person(admission, &asker, &id, Act::Verb("load".into()))
+                .ask_as_person(admission, &asker, &id, Act::Verb(verb.into()))
                 .await
         });
     }
@@ -915,7 +918,9 @@ async fn a_stalled_store_answers_within_the_bound_and_frees_its_place() {
 
 /// **Detached work is admitted against a bound before it is detached**:
 /// with every held place taken, bea's asks past her share answer 503 at
-/// once and record nothing, and the asks outstanding stay at her share;
+/// once and record nothing, and the asks outstanding stay at her share
+/// (her asks name the eight lifecycle verbs, since a person's second
+/// identical verb in flight is held at its check);
 /// cara still gets in within hers; past the server's bound, a request is
 /// shed before its agent is resolved, a known agent and an unknown one
 /// alike; and once released, the held asks finish normally.
@@ -924,7 +929,17 @@ async fn a_stalled_store_answers_within_the_bound_and_frees_its_place() {
 /// not answered at once, and the asks outstanding pass her share.
 #[tokio::test]
 async fn asks_past_the_bound_are_shed_with_no_record() {
-    let Some(mut o) = operated(&["show", "load"]).await else {
+    const LIFECYCLE: [&str; 8] = [
+        "show",
+        "validate",
+        "load",
+        "unload",
+        "stop",
+        "save-point",
+        "restore",
+        "force-unload",
+    ];
+    let Some(mut o) = operated(&LIFECYCLE).await else {
         return;
     };
     let s = o.rig.store().clone();
@@ -936,15 +951,16 @@ async fn asks_past_the_bound_are_shed_with_no_record() {
     let pauses: Vec<_> = (0..3)
         .map(|_| o.rig.listener.pause_ask_at(AskPoint::UnderHold))
         .collect();
-    let beas: Vec<_> = (0..10)
-        .map(|_| ask(&o.rig, &o.bea_session, &o.karl, "load"))
+    let beas: Vec<_> = LIFECYCLE
+        .iter()
+        .map(|verb| ask(&o.rig, &o.bea_session, &o.karl, verb))
         .collect();
     for (reached, _) in &pauses {
         reached.notified().await;
     }
     tokio::time::sleep(Duration::from_millis(500)).await;
     let (shed, admitted): (Vec<_>, Vec<_>) = beas.into_iter().partition(|a| a.is_finished());
-    assert_eq!(shed.len(), 10 - 4, "bea's share is four");
+    assert_eq!(shed.len(), LIFECYCLE.len() - 4, "bea's share is four");
     for answer in shed {
         let (status, _, body) = answer.await.unwrap();
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
@@ -985,11 +1001,11 @@ async fn asks_past_the_bound_are_shed_with_no_record() {
     }
     for _ in 0..5 {
         let (id, verb, _) = take_verb(&mut o.admin_con).await;
-        assert_eq!(verb, "load");
+        assert!(LIFECYCLE.contains(&verb.as_str()), "{verb}");
         o.admin_con
             .send(FromClient::Verb {
                 id,
-                outcome: Some(answer("load", json!({"kind": "loaded"}), 0)),
+                outcome: Some(answer(&verb, json!({"kind": "agent_running"}), 1)),
                 error: None,
             })
             .await;
@@ -1610,4 +1626,714 @@ async fn a_stalled_turn_answers_within_the_bound() {
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     assert!(records(&o).await.is_empty());
     no_turn(&mut gate).await;
+}
+
+// ---- The answer in place (Spec 2.13; brief 2026-11-13) ----
+
+/// A request as the page's htmx sends it: under the session's cookie, with
+/// `HX-Request: true`, a form's body or none.
+pub(crate) async fn send_hx(
+    app: &axum::Router,
+    method: &str,
+    uri: &str,
+    form: Option<String>,
+    session: &str,
+) -> (StatusCode, axum::http::HeaderMap, String) {
+    use axum::body::Body;
+    use axum::http::{Request, header};
+    use tower::ServiceExt;
+    let mut request = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header(header::ORIGIN, crate::passkeys_tests::ORIGIN)
+        .header(header::COOKIE, format!("__Host-weaver_session={session}"))
+        .header("hx-request", "true");
+    let body = match form {
+        Some(form) => {
+            request = request.header(header::CONTENT_TYPE, "application/x-www-form-urlencoded");
+            Body::from(form)
+        }
+        None => Body::empty(),
+    };
+    let response = app
+        .clone()
+        .oneshot(request.body(body).unwrap())
+        .await
+        .unwrap();
+    let (status, headers) = (response.status(), response.headers().clone());
+    let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    (status, headers, String::from_utf8(bytes.to_vec()).unwrap())
+}
+
+/// A verb asked from the page through htmx, its request its own task.
+pub(crate) fn ask_hx(
+    rig: &Rig,
+    session: &str,
+    agent: &str,
+    verb: &str,
+) -> tokio::task::JoinHandle<(StatusCode, axum::http::HeaderMap, String)> {
+    let (app, session, uri, body) = (
+        rig.app.clone(),
+        session.to_owned(),
+        format!("/agents/{agent}/verb"),
+        form(&[("verb", verb)]),
+    );
+    tokio::spawn(async move { send_hx(&app, "POST", &uri, Some(body), &session).await })
+}
+
+/// A turn placed from the page through htmx, its request its own task.
+fn place_hx(
+    rig: &Rig,
+    session: &str,
+    agent: &str,
+    text: &str,
+) -> tokio::task::JoinHandle<(StatusCode, axum::http::HeaderMap, String)> {
+    let (app, session, uri, body) = (
+        rig.app.clone(),
+        session.to_owned(),
+        format!("/agents/{agent}/turn"),
+        form(&[("text", text)]),
+    );
+    tokio::spawn(async move { send_hx(&app, "POST", &uri, Some(body), &session).await })
+}
+
+/// An ask through htmx answered at once, which a refusal and a held ask are.
+async fn at_once(
+    asked: tokio::task::JoinHandle<(StatusCode, axum::http::HeaderMap, String)>,
+) -> (StatusCode, String) {
+    let (status, _, body) = tokio::time::timeout(REFUSED_WITHIN, asked)
+        .await
+        .expect("answered at once, not asked")
+        .unwrap();
+    (status, body)
+}
+
+/// **An answer drawn in its pane is a fragment**, never a framed page: no
+/// document, no masthead, no stylesheet link.
+pub(crate) fn assert_fragment(body: &str) {
+    for mark in [
+        "<!doctype",
+        "<html",
+        r#"<nav class="masthead">"#,
+        "instrument.css",
+    ] {
+        assert!(!body.contains(mark), "a fragment carries no {mark}: {body}");
+    }
+}
+
+/// **An ask through htmx is answered in its pane with everything the page
+/// shows** (Spec 2.13): admin's refusal object pretty-printed and escaped,
+/// the exit status as a mark, "admin's refusal", admin's stderr cut at 2048
+/// bytes and saying so, and the first record's identity; as a fragment.
+///
+/// Perturbations: answer the htmx ask with the framed page, and the pane
+/// draws a page inside a page; drop the exit mark, the pretty-printing or
+/// the cut's words from the fragment, and the pane loses what the page
+/// shows.
+#[tokio::test]
+async fn an_htmx_ask_is_answered_in_its_pane_with_all_of_admins_answer() {
+    let Some(mut o) = operated(&["show", "load"]).await else {
+        return;
+    };
+    let asked = ask_hx(&o.rig, &o.bea_session, &o.karl, "load");
+    let (id, _, _) = take_verb(&mut o.admin_con).await;
+    let first = records(&o).await[0].clone();
+    let mut outcome = answer(
+        "load",
+        json!({"kind": "config_invalid", "field": "<restore>"}),
+        1,
+    );
+    outcome.stderr = Some(format!("<b>{}", "x".repeat(3000)));
+    o.admin_con
+        .send(FromClient::Verb {
+            id,
+            outcome: Some(outcome),
+            error: None,
+        })
+        .await;
+    let (status, _, body) = asked.await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_fragment(&body);
+    assert!(body.contains("admin&#39;s refusal"), "{body}");
+    assert!(
+        body.contains(r#"<span class="status fail">exit 1</span>"#),
+        "the exit mark: {body}"
+    );
+    assert!(
+        body.contains("{\n  &#34;field&#34;: &#34;&#60;restore&#62;&#34;,"),
+        "pretty-printed and escaped: {body}"
+    );
+    assert!(
+        body.contains("admin's stderr, its first 2048 bytes"),
+        "the cut is said: {body}"
+    );
+    assert!(
+        body.contains("&#60;b&#62;xxx") && !body.contains("<b>x"),
+        "the words escaped: {body}"
+    );
+    assert!(body.contains(&first.audit_id), "the first record: {body}");
+}
+
+/// **An `unload` stopped at its save point draws its decision in the pane**
+/// (Spec 2.14), as the page states it.
+///
+/// Perturbation: leave the decision out of the fragment, and the pane
+/// drops the prompt the page shows.
+#[tokio::test]
+async fn an_unload_stopped_at_its_save_point_draws_its_decision_in_the_pane() {
+    let Some(mut o) = operated(&["show", "unload", "save-point", "force-unload"]).await else {
+        return;
+    };
+    let asked = ask_hx(&o.rig, &o.bea_session, &o.karl, "unload");
+    let (id, _, _) = take_verb(&mut o.admin_con).await;
+    o.admin_con
+        .send(FromClient::Verb {
+            id,
+            outcome: Some(answer(
+                "unload",
+                json!({"kind": "save_point_not_taken", "missed": "finished"}),
+                1,
+            )),
+            error: None,
+        })
+        .await;
+    let (status, _, body) = asked.await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_fragment(&body);
+    assert!(
+        body.contains("<dialog open>") && body.contains("missed: finished"),
+        "{body}"
+    );
+}
+
+/// **A turn placed through htmx is answered in its pane**: the close's text
+/// escaped, marked truncated at `finish = length`, and its first record;
+/// a stopped close's reason; never the turn's own text.
+///
+/// Perturbation: answer the htmx turn with the framed page, and the pane
+/// draws a page inside a page.
+#[tokio::test]
+async fn a_turn_placed_through_htmx_is_answered_in_its_pane() {
+    let Some(o) = operated(&["show"]).await else {
+        return;
+    };
+    let mut gate = dial_gate(&o).await;
+    let placed = place_hx(&o.rig, &o.bea_session, &o.karl, SAID);
+    let (id, _) = take_turn(&mut gate).await;
+    let first = records(&o).await[0].clone();
+    gate.send(FromClient::Turn {
+        id,
+        close: Some(close(
+            "answered",
+            Some("<i>and then</i>"),
+            None,
+            Some("length"),
+        )),
+        error: None,
+    })
+    .await;
+    let (status, _, body) = placed.await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_fragment(&body);
+    assert!(body.contains("truncated at the turn"), "{body}");
+    assert!(
+        body.contains("&#60;i&#62;and then") && !body.contains("<i>"),
+        "{body}"
+    );
+    assert!(body.contains(&first.audit_id), "{body}");
+    assert!(!body.contains(SAID), "never the turn's text: {body}");
+
+    let placed = place_hx(&o.rig, &o.bea_session, &o.karl, SAID);
+    let (id, _) = take_turn(&mut gate).await;
+    gate.send(FromClient::Turn {
+        id,
+        close: Some(close("stopped", None, Some("the gate is lowered"), None)),
+        error: None,
+    })
+    .await;
+    let (_, _, body) = placed.await.unwrap();
+    assert_fragment(&body);
+    assert!(
+        body.contains("the agent stopped the turn") && body.contains("the gate is lowered"),
+        "{body}"
+    );
+}
+
+/// **A refusal of an htmx ask is drawn in its pane at its own status**
+/// (Spec 2.8, 2.13): a grant without the verb 403, no grant 404 and the
+/// same body as an unknown agent's, a turn with no gate-con 503 naming
+/// gate-con, a turn past the gate's line bound 400; each a fragment saying
+/// nothing was asked.
+///
+/// Perturbations: answer an htmx refusal with its bare text, and the pane
+/// draws words with no frame; answer the unconnected turn in admin-con's
+/// words, and the pane names the wrong connector.
+#[tokio::test]
+async fn a_refusal_of_an_htmx_ask_is_drawn_in_its_pane_at_its_status() {
+    let Some(o) = operated(&["show", "load", "stop"]).await else {
+        return;
+    };
+    let s = o.rig.store().clone();
+    let (cara, cara_session) = signed_in(&o.rig.app, &s, &mut authenticator(), "cara").await;
+    let granted = host::grant_add(&s, &cara, "observer", Some(&o.karl), None).await;
+    assert!(granted.ok, "{}", granted.value);
+    let (status, body) = at_once(ask_hx(&o.rig, &cara_session, &o.karl, "stop")).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_fragment(&body);
+    assert!(
+        body.contains("not asked") && body.contains("do not carry stop"),
+        "{body}"
+    );
+
+    let (_, dan_session) = signed_in(&o.rig.app, &s, &mut authenticator(), "dan").await;
+    let (status, no_grant) = at_once(ask_hx(&o.rig, &dan_session, &o.karl, "load")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{no_grant}");
+    assert_fragment(&no_grant);
+    assert!(no_grant.contains("not asked"), "{no_grant}");
+    let (status, unknown) = at_once(ask_hx(&o.rig, &dan_session, UNKNOWN, "load")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        no_grant.replace(&o.karl, UNKNOWN),
+        unknown,
+        "no grant answers as an unknown agent"
+    );
+
+    let (status, body) = at_once(place_hx(&o.rig, &o.bea_session, &o.karl, SAID)).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_fragment(&body);
+    assert!(
+        body.contains("gate-con") && !body.contains("admin-con"),
+        "the unconnected turn names its own connector: {body}"
+    );
+    let long = "x".repeat(crate::adapters::gate::LINE_BOUND);
+    let (status, body) = at_once(place_hx(&o.rig, &o.bea_session, &o.karl, &long)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_fragment(&body);
+    assert!(
+        body.contains("line bound") && !body.contains("xxx"),
+        "{body}"
+    );
+}
+
+/// **The console holds a second identical verb itself** (Spec 2.13, 2.14):
+/// while bea's `load` is in flight, her second `load` on the agent is
+/// answered at once, 409, naming when the first was asked and its first
+/// record; no frame leaves, one refusal record `already_asked` naming the
+/// first, and no alert. Once the first is answered, the hold is gone.
+///
+/// Perturbations: drop the hold, and the second load reaches admin-con;
+/// keep the hold past the answer, and the third load is held; raise an
+/// alert for it, and a person's second press is an alert; record no
+/// refusal, and the held ask leaves no trace.
+#[tokio::test]
+async fn a_second_identical_verb_is_held_while_the_first_is_in_flight() {
+    let Some(mut o) = operated(&["show", "load", "stop"]).await else {
+        return;
+    };
+    let asked = ask_hx(&o.rig, &o.bea_session, &o.karl, "load");
+    let (id, _, _) = take_verb(&mut o.admin_con).await;
+    let first = records(&o).await[0].clone();
+    let (status, body) = at_once(ask_hx(&o.rig, &o.bea_session, &o.karl, "load")).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_fragment(&body);
+    assert!(
+        body.contains("already asked") && body.contains(&first.audit_id) && body.contains(" UTC"),
+        "when and as what the first was asked: {body}"
+    );
+    // The plain post is held the same way, at the same status.
+    let (status, plain) = refused(&o.rig, &o.bea_session, &o.karl, "load").await;
+    assert_eq!(status, StatusCode::CONFLICT, "{plain}");
+    let held = records(&o).await;
+    assert_eq!(held.len(), 3, "the first and two refusals: {held:#?}");
+    for refusal in &held[1..] {
+        assert_eq!(refusal.action, "load");
+        assert_eq!(refusal.person_id.as_deref(), Some(o.bea.as_str()));
+        let why = refusal.refusal.as_deref().unwrap_or_default();
+        assert!(
+            why.starts_with("already_asked") && why.contains(&first.audit_id),
+            "{refusal:?}"
+        );
+    }
+    no_frame(&mut o.admin_con).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let raised = crate::alerts_tests::alerts(&o.rig, &o.karl).await;
+    assert!(raised.is_empty(), "a held ask raises nothing: {raised:#?}");
+    o.admin_con
+        .send(FromClient::Verb {
+            id,
+            outcome: Some(answer("load", json!({"kind": "loaded"}), 0)),
+            error: None,
+        })
+        .await;
+    assert_eq!(asked.await.unwrap().0, StatusCode::OK);
+    let again = ask_hx(&o.rig, &o.bea_session, &o.karl, "load");
+    let (id, verb, _) = take_verb(&mut o.admin_con).await;
+    assert_eq!(verb, "load", "the hold ends with the first's answer");
+    o.admin_con
+        .send(FromClient::Verb {
+            id,
+            outcome: Some(answer("load", json!({"kind": "agent_running"}), 1)),
+            error: None,
+        })
+        .await;
+    assert_eq!(again.await.unwrap().0, StatusCode::OK);
+}
+
+/// **A second ask is held from the first's check, before its frame**: the
+/// first stopped under its hold, its first record durable and its frame not
+/// yet sent; the second is held naming that record, and one frame leaves.
+///
+/// Perturbation: claim the ask only at its enqueue, and two identical asks
+/// under their holds both reach admin-con.
+#[tokio::test]
+async fn a_second_ask_is_held_from_the_firsts_check() {
+    let Some(mut o) = operated(&["show", "load"]).await else {
+        return;
+    };
+    let (reached, release) = o.rig.listener.pause_ask_at(AskPoint::UnderHold);
+    let asked = ask_hx(&o.rig, &o.bea_session, &o.karl, "load");
+    reached.notified().await;
+    let first = records(&o).await[0].clone();
+    let (status, body) = at_once(ask_hx(&o.rig, &o.bea_session, &o.karl, "load")).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(body.contains(&first.audit_id), "{body}");
+    release.notify_one();
+    let (id, verb, _) = take_verb(&mut o.admin_con).await;
+    assert_eq!(verb, "load");
+    no_frame(&mut o.admin_con).await;
+    o.admin_con
+        .send(FromClient::Verb {
+            id,
+            outcome: Some(answer("load", json!({"kind": "loaded"}), 0)),
+            error: None,
+        })
+        .await;
+    assert_eq!(asked.await.unwrap().0, StatusCode::OK);
+}
+
+/// **Not held: a different verb, or another person's same verb** (Spec
+/// 2.13): bea's `stop` while her `load` is in flight, and cara's `load`
+/// beside it, each reach admin-con.
+///
+/// Perturbations: hold by verb alone, and cara's load is held; hold by
+/// person alone, and bea's stop is held.
+#[tokio::test]
+async fn a_different_verb_and_another_persons_same_verb_are_not_held() {
+    let Some(mut o) = operated(&["show", "load", "stop"]).await else {
+        return;
+    };
+    let s = o.rig.store().clone();
+    let (cara, cara_session) = signed_in(&o.rig.app, &s, &mut authenticator(), "cara").await;
+    let granted = host::grant_add(&s, &cara, "operator", Some(&o.karl), None).await;
+    assert!(granted.ok, "{}", granted.value);
+    let mut asked = vec![ask_hx(&o.rig, &o.bea_session, &o.karl, "load")];
+    let mut ids = vec![take_verb(&mut o.admin_con).await];
+    asked.push(ask_hx(&o.rig, &o.bea_session, &o.karl, "stop"));
+    ids.push(take_verb(&mut o.admin_con).await);
+    asked.push(ask_hx(&o.rig, &cara_session, &o.karl, "load"));
+    ids.push(take_verb(&mut o.admin_con).await);
+    let verbs: Vec<_> = ids.iter().map(|(_, verb, _)| verb.as_str()).collect();
+    assert_eq!(verbs, ["load", "stop", "load"]);
+    for (id, verb, _) in &ids {
+        o.admin_con
+            .send(FromClient::Verb {
+                id: *id,
+                outcome: Some(answer(verb, json!({"kind": "agent_running"}), 1)),
+                error: None,
+            })
+            .await;
+    }
+    for asked in asked {
+        assert_eq!(asked.await.unwrap().0, StatusCode::OK);
+    }
+}
+
+/// **The hold ends with its connection**: the connection ends with bea's
+/// `load` in flight, admin-con connects again, and her next `load` is
+/// asked.
+///
+/// Perturbation: keep the holds beyond the connection, and the load after
+/// the reconnection is held.
+#[tokio::test]
+async fn the_hold_ends_with_its_connection() {
+    let Some(mut o) = operated(&["show", "load"]).await else {
+        return;
+    };
+    let asked = ask_hx(&o.rig, &o.bea_session, &o.karl, "load");
+    let _ = take_verb(&mut o.admin_con).await;
+    let Operated {
+        rig,
+        karl,
+        admin_config,
+        bea_session,
+        admin_con,
+        ..
+    } = o;
+    drop(admin_con);
+    let (_, _, body) = asked.await.unwrap();
+    assert!(body.contains("unknown here"), "{body}");
+    let mut admin_con = admitted_admin(&admin_config, &["show", "load"]).await;
+    let again = ask_hx(&rig, &bea_session, &karl, "load");
+    let (id, verb, _) = take_verb(&mut admin_con).await;
+    assert_eq!(verb, "load", "the hold went with the connection");
+    admin_con
+        .send(FromClient::Verb {
+            id,
+            outcome: Some(answer("load", json!({"kind": "loaded"}), 0)),
+            error: None,
+        })
+        .await;
+    assert_eq!(again.await.unwrap().0, StatusCode::OK);
+}
+
+/// **A claim ends with its ask**: bea's `load`, claimed at its check, ends
+/// before its frame when the audit refuses its first record, and leaves no
+/// hold, so her next `load` on the same connection is asked.
+///
+/// Perturbation: leave the claim on the connection when its ask ends
+/// before the enqueue, and the next load is held for an ask that never
+/// left.
+#[tokio::test]
+async fn a_claim_ends_with_an_ask_that_ends_before_its_frame() {
+    let Some(mut o) = operated(&["show", "load"]).await else {
+        return;
+    };
+    FAIL_FIRST_RECORD.with(|f| f.set(true));
+    let (status, body) = at_once(ask_hx(&o.rig, &o.bea_session, &o.karl, "load")).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    let again = ask_hx(&o.rig, &o.bea_session, &o.karl, "load");
+    let (id, verb, _) = take_verb(&mut o.admin_con).await;
+    assert_eq!(verb, "load", "the claim went with its ask");
+    o.admin_con
+        .send(FromClient::Verb {
+            id,
+            outcome: Some(answer("load", json!({"kind": "loaded"}), 0)),
+            error: None,
+        })
+        .await;
+    assert_eq!(again.await.unwrap().0, StatusCode::OK);
+}
+
+/// **Past the silence bound an htmx ask says so in its pane** (Spec 2.13):
+/// 202, a fragment naming when it was asked, its first record, the bound,
+/// that the connection still holds it, and where its outcome goes; a turn
+/// the same in gate-con's words. The outcome still lands.
+///
+/// Perturbations: drop the time or the first record from the line, and
+/// the pane cannot say what is outstanding.
+#[tokio::test]
+async fn past_the_bound_an_htmx_ask_says_so_in_its_pane() {
+    let Some(mut o) = operated_with(&["show", "load"], Duration::from_secs(4)).await else {
+        return;
+    };
+    let mut gate = dial_gate(&o).await;
+    let mut asked = ask_hx(&o.rig, &o.bea_session, &o.karl, "load");
+    let (id, _, _) = take_verb(&mut o.admin_con).await;
+    let (status, _, body) = loop {
+        tokio::select! {
+            done = &mut asked => break done.unwrap(),
+            _ = tokio::time::sleep(Duration::from_millis(500)) => {
+                o.admin_con.send(FromClient::Heartbeat).await;
+                gate.send(FromClient::Heartbeat).await;
+            }
+        }
+    };
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    assert_fragment(&body);
+    let first = records(&o).await[0].clone();
+    for said in [
+        first.audit_id.as_str(),
+        " UTC",
+        "not answered within 4 s",
+        "admin-con still holds it",
+        "written to the audit",
+    ] {
+        assert!(body.contains(said), "the line says {said}: {body}");
+    }
+    o.admin_con
+        .send(FromClient::Verb {
+            id,
+            outcome: Some(answer("load", json!({"kind": "loaded"}), 0)),
+            error: None,
+        })
+        .await;
+    let answered = wait_records(&o, "the late outcome", |r| r.len() == 2).await;
+    assert_eq!(outcome_of(&answered, &first), Some("ok"));
+
+    let mut placed = place_hx(&o.rig, &o.bea_session, &o.karl, SAID);
+    let _ = take_turn(&mut gate).await;
+    let (status, _, body) = loop {
+        tokio::select! {
+            done = &mut placed => break done.unwrap(),
+            _ = tokio::time::sleep(Duration::from_millis(500)) => {
+                o.admin_con.send(FromClient::Heartbeat).await;
+                gate.send(FromClient::Heartbeat).await;
+            }
+        }
+    };
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    assert_fragment(&body);
+    assert!(
+        body.contains("gate-con still holds it") && body.contains(" UTC"),
+        "{body}"
+    );
+    assert!(!body.contains(SAID), "never the turn's text: {body}");
+}
+
+/// **The agent page asks in place** (Spec 2.13, the Controls guideline):
+/// each verb form and the turn form post through htmx and still post
+/// without it; each verb is on a queue of its own, dropping only its own
+/// second submit, and is answered in a slot of its own outside `#run`,
+/// which the poll's fragment never carries; each verb form carries its id
+/// and `hx-preserve`, so the poll's swap keeps a pending form; every
+/// lifecycle verb has its slot, offered or not; the asking line names the
+/// page's wait; the page-wide configuration swaps the refusals'
+/// statuses; and no surface evaluates an attribute.
+///
+/// Perturbations: put a slot inside `#run`, and the poll redraws it; drop
+/// the poll's `abort`, a form's id or `hx-preserve`, and the poll replaces
+/// a pending form; put the verbs back on one queue, and a verb waits
+/// behind another's request; drop a status from the configuration, and
+/// its refusal draws nothing.
+#[tokio::test]
+async fn the_agent_page_asks_in_place() {
+    let Some(o) = operated(&["show", "load", "stop"]).await else {
+        return;
+    };
+    let _gate = dial_gate(&o).await;
+    let karl = &o.karl;
+    let (status, _, page) = send_as(
+        &o.rig.app,
+        "GET",
+        &format!("/agents/{karl}"),
+        None,
+        &o.bea_session,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(
+        page.contains(&format!(
+            r##"<div class="stack" id="run" hx-get="/agents/{karl}/run" hx-trigger="every 15s" hx-swap="innerHTML settle:0ms" hx-sync="this:abort">"##
+        )),
+        "the poll is abortable, dropped only behind its own re-fetch, and settles at once: {page}"
+    );
+    let verb_form = |verb: &str| {
+        format!(
+            r##"<form method="post" action="/agents/{karl}/verb" id="verb-{verb}" hx-preserve hx-post="/agents/{karl}/verb" hx-target="#answer-{verb}" hx-swap="innerHTML" hx-sync="this:drop" hx-disabled-elt="find button" hx-indicator="#asked-{verb}"><input type="hidden" name="verb" value="{verb}">"##
+        )
+    };
+    for verb in ["show", "load", "stop"] {
+        assert!(
+            page.contains(&verb_form(verb)),
+            "{verb} asks in place on its own queue, kept through the poll: {page}"
+        );
+    }
+    assert!(
+        !page.contains("closest #run") && !page.contains("#run form button"),
+        "no verb waits behind another's request: {page}"
+    );
+    assert!(
+        page.contains(&format!(
+            r##"<form method="post" action="/agents/{karl}/turn" class="field" hx-post="/agents/{karl}/turn" hx-target="#turn-answer" hx-swap="innerHTML" hx-sync="this:drop" hx-disabled-elt="find button" hx-indicator="#turn-asked">"##
+        )),
+        "the turn asks in place: {page}"
+    );
+    // Every lifecycle verb's slot, offered or not: `unload` and
+    // `force-unload` are not offered here.
+    for verb in [
+        "show",
+        "validate",
+        "load",
+        "unload",
+        "stop",
+        "save-point",
+        "restore",
+        "force-unload",
+    ] {
+        for slot in [
+            format!(r#"<div class="asked" id="asked-{verb}">"#),
+            format!(r#"<div class="answer" id="answer-{verb}" aria-live="polite"></div>"#),
+        ] {
+            assert_eq!(page.matches(&slot).count(), 1, "{slot}: {page}");
+        }
+    }
+    for slot in [
+        r#"<div class="asked" id="turn-asked">"#,
+        r#"<div class="answer" id="turn-answer" aria-live="polite"></div>"#,
+    ] {
+        assert!(page.contains(slot), "{slot}: {page}");
+    }
+    assert!(
+        page.contains("within the page&#39;s wait of 60 s")
+            || page.contains("within the page's wait of 60 s"),
+        "the asking line names the wait: {page}"
+    );
+    for code in [
+        r#"{"code":"40[01349]","swap":true}"#,
+        r#"{"code":"503","swap":true}"#,
+    ] {
+        assert!(page.contains(code), "the page swaps {code}: {page}");
+    }
+    assert!(!page.contains("hx-on"), "no attribute is evaluated");
+    let (status, _, run) = send_as(
+        &o.rig.app,
+        "GET",
+        &format!("/agents/{karl}/run"),
+        None,
+        &o.bea_session,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{run}");
+    for verb in ["show", "load", "stop"] {
+        assert!(
+            run.contains(&verb_form(verb)),
+            "the poll's fragment asks in place too, its {verb} form kept by its id"
+        );
+    }
+    assert!(
+        !run.contains(r#"id="answer"#) && !run.contains(r#"id="asked"#),
+        "the slots stand outside #run: {run}"
+    );
+    let css = include_str!("../assets/surfaces/instrument.css");
+    assert!(
+        css.contains(
+            ".asked:not(.htmx-request) > .asking,\n.asked.htmx-request > .answer { display: none; }"
+        ),
+        "the asking line's one rule"
+    );
+}
+
+/// **The polls draw their refusal in their pane** (Spec 2.8): a person
+/// whose grant is gone gets 404 from `/run` and `/availability` as a
+/// fragment saying so, the page-wide configuration swapping it in.
+///
+/// Perturbation: answer a poll's 404 with bare text, and the pane draws
+/// words with no element.
+#[tokio::test]
+async fn the_polls_draw_their_refusal_in_their_pane() {
+    let Some(o) = operated(&["show", "load"]).await else {
+        return;
+    };
+    let s = o.rig.store().clone();
+    let removed = host::grant_remove(&s, &o.bea, "operator", Some(&o.karl), None).await;
+    assert!(removed.ok, "{}", removed.value);
+    for poll in ["run", "availability"] {
+        let (status, _, body) = send_hx(
+            &o.rig.app,
+            "GET",
+            &format!("/agents/{}/{poll}", o.karl),
+            None,
+            &o.bea_session,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{poll}: {body}");
+        assert_fragment(&body);
+        assert!(
+            body.starts_with(r#"<p class="note read" role="status">"#)
+                && body.contains("no such agent"),
+            "{poll}: {body}"
+        );
+    }
 }

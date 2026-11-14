@@ -20,8 +20,8 @@ use crate::passkeys_tests::authenticator;
 use crate::store::AgentId;
 use crate::store::alerts::{Alert, AlertKind, Raise};
 use crate::verbs_tests::{
-    Operated, SAID, admitted_admin, ask, close, dial_gate, no_frame, operated, operated_with,
-    place, take_turn, take_verb,
+    Operated, SAID, admitted_admin, ask, assert_fragment, close, dial_gate, no_frame, operated,
+    operated_with, place, send_hx, take_turn, take_verb,
 };
 
 /// The agent's alerts, open first, newest first.
@@ -526,6 +526,72 @@ async fn save_point_then_unload_asks_unload_only_on_a_confirmed_save_point() {
             .iter()
             .any(|a| a.subject == "save-point" && a.summary.contains("hash-confirmed")),
         "the unconfirmed save point raised its own alert: {found:#?}"
+    );
+}
+
+/// **A decision chosen through htmx is drawn in its pane** (Spec 2.14,
+/// 2.13): the agent page's two options post in place, their steps drawn in
+/// the decision pane's own slot as a fragment, and choosing never
+/// acknowledges.
+///
+/// Perturbations: answer the htmx choice with the framed page, and the
+/// pane draws a page inside a page; drop an option's htmx attributes, and
+/// the choice leaves the page.
+#[tokio::test]
+async fn a_decision_chosen_through_htmx_is_drawn_in_its_pane() {
+    let Some(mut o) = operated(&["show", "unload", "save-point", "force-unload"]).await else {
+        return;
+    };
+    let prompt = a_prompt(&mut o).await;
+    let (_, _, page) = send_as(
+        &o.rig.app,
+        "GET",
+        &format!("/agents/{}", o.karl),
+        None,
+        &o.bea_session,
+    )
+    .await;
+    let choose_at = format!("/agents/{}/alerts/{prompt}/choose", o.karl);
+    let option_form = format!(
+        r##"<form method="post" action="{choose_at}" hx-post="{choose_at}" hx-target="#decision-answer" hx-swap="innerHTML" hx-sync="closest .decision:drop" hx-disabled-elt=".decision form button" hx-indicator="#decision-asked">"##
+    );
+    assert_eq!(page.matches(&option_form).count(), 2, "{page}");
+    assert!(
+        page.contains(r#"<div class="answer" id="decision-answer" aria-live="polite"></div>"#),
+        "{page}"
+    );
+    let (app, session, body) = (
+        o.rig.app.clone(),
+        o.bea_session.clone(),
+        form(&[("option", "force_unload")]),
+    );
+    let chosen =
+        tokio::spawn(async move { send_hx(&app, "POST", &choose_at, Some(body), &session).await });
+    let (id, verb, _) = take_verb(&mut o.admin_con).await;
+    assert_eq!(verb, "force-unload");
+    o.admin_con
+        .send(FromClient::Verb {
+            id,
+            outcome: Some(answered(
+                "force-unload",
+                json!({"kind": "state", "state": "unloaded"}),
+            )),
+            error: None,
+        })
+        .await;
+    let (status, _, shown) = chosen.await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{shown}");
+    assert_fragment(&shown);
+    assert!(
+        shown.contains("force-unload") && shown.contains("forced"),
+        "{shown}"
+    );
+    let still = alerts(&o.rig, &o.karl).await;
+    assert!(
+        still
+            .iter()
+            .any(|a| a.alert_id == prompt && a.acknowledged_at.is_none()),
+        "choosing does not acknowledge"
     );
 }
 

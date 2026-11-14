@@ -31,7 +31,9 @@ use crate::store::alerts::{AlertKind, Raise, acknowledge_in};
 use crate::store::audit::{PersonMethod, Principal, Target};
 use crate::store::identity::{is_agent_id, session_stands};
 use crate::store::{AgentId, Store};
-use crate::surfaces::reading::{Seams, fault, not_found, session_of};
+use crate::surfaces::reading::{
+    NO_SUCH_AGENT, Seams, fault, in_place, not_found, refuse, session_of,
+};
 
 /// An alert's identity in its shape: `al-` and sixteen hex digits.
 pub fn is_alert_id(id: &str) -> bool {
@@ -382,11 +384,23 @@ struct DecisionPage {
     pending: bool,
 }
 
+/// **A decision's steps drawn below the decision pane** (Spec 2.14, 2.13),
+/// the fragment the decision page carries too.
+#[derive(Template)]
+#[template(path = "decision_steps.html")]
+struct DecisionSteps {
+    option: String,
+    steps: Vec<Step>,
+    pending: bool,
+}
+
 /// **Choose a decision prompt's option** (ruling 2): parse, the session,
 /// the admission, resolve the open prompt on the agent naming the option;
 /// then the choice runs as the person's own asks, each checked as any ask,
 /// and the page shows each step, or that it runs on past the bound.
-/// Choosing never acknowledges the prompt.
+/// Choosing never acknowledges the prompt. **Through htmx the steps are
+/// drawn below the decision pane**, a refusal among them at its own
+/// status; a choice made without htmx gets the decision page, as before.
 pub(super) async fn choose(
     store: Store,
     seams: &Seams,
@@ -395,15 +409,16 @@ pub(super) async fn choose(
     alert: String,
     option: String,
 ) -> Response {
+    let htmx = in_place(&headers);
+    let refused = |status: StatusCode, words: &str| refuse(htmx, status, "the decision", words);
     if !is_agent_id(&agent) || !is_alert_id(&alert) {
-        return (
+        return refused(
             StatusCode::BAD_REQUEST,
             "the agent or the alert is not of its identity's shape",
-        )
-            .into_response();
+        );
     }
     if option != SAVE_POINT_THEN_UNLOAD && option != FORCE_UNLOAD {
-        return (StatusCode::BAD_REQUEST, "not an option").into_response();
+        return refused(StatusCode::BAD_REQUEST, "not an option");
     }
     let id: AgentId = match agent.parse() {
         Ok(id) => id,
@@ -414,13 +429,16 @@ pub(super) async fn choose(
         Err(answer) => return answer,
     };
     let Some(admission) = seams.asker.admit_ask(&session.person_id) else {
-        return (StatusCode::SERVICE_UNAVAILABLE, VerbError::Shed.to_string()).into_response();
+        return refused(
+            StatusCode::SERVICE_UNAVAILABLE,
+            &VerbError::Shed.to_string(),
+        );
     };
     // **No grant answers as an unknown agent before the alert is looked
     // up**, so the page is no oracle for alert identities; the grants' verbs
     // are each ask's own check, under its hold, with its refusal record.
     match store.roles_on(&session.person_id, &id).await {
-        Ok(roles) if roles.is_empty() => return not_found(),
+        Ok(roles) if roles.is_empty() => return refused(StatusCode::NOT_FOUND, NO_SUCH_AGENT),
         Ok(_) => {}
         Err(e) => return fault(e),
     }
@@ -430,7 +448,7 @@ pub(super) async fn choose(
             if found.agent_id == id.as_str()
                 && found.acknowledged_at.is_none()
                 && found.options.iter().any(|o| o == &option) => {}
-        Ok(_) => return not_found(),
+        Ok(_) => return refused(StatusCode::NOT_FOUND, NO_SUCH_AGENT),
         Err(e) => return fault(e),
     }
     let asker = Asker {
@@ -480,6 +498,18 @@ pub(super) async fn choose(
         Ok(Err(e)) => return fault(anyhow::anyhow!("the decision's task ended: {e}")),
         Err(_) => (StatusCode::ACCEPTED, Vec::new(), true),
     };
+    if htmx {
+        return match (DecisionSteps {
+            option,
+            steps,
+            pending,
+        })
+        .render()
+        {
+            Ok(html) => (status, [(header::CACHE_CONTROL, "no-store")], Html(html)).into_response(),
+            Err(e) => fault(e),
+        };
+    }
     let (admin, chrome) = match (
         store.is_admin(&session.person_id).await,
         super::Chrome::of(&store, &session.person_id).await,

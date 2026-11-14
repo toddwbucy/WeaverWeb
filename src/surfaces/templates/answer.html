@@ -1,0 +1,38 @@
+{#- **The answer to an ask** (Spec 2.13): the pane that asked draws it in
+    place through htmx, and the answer page, for a post made without htmx,
+    draws this same fragment, so the two cannot drift. admin's answer
+    verbatim with its exit status as a mark, admin's own words cut and
+    escaped, the first record, and the decision an unload stopped at its
+    save point leaves; or why nothing was asked. No inline script. -#}
+{%- if let Some(missed) = answer.missed %}
+<section class="pane decision">
+  <header><span class="stage"><b>4</b> Observe</span><h2>A decision is yours</h2><span class="backing built">built</span><span class="source">the alert's prompt</span></header>
+  <div class="body">
+  <dialog open>
+    <p>The unload stopped at its save point (missed: {{ missed }}). The run stands at rest, its gate lowered, and nothing is lost yet.</p>
+    <ul>
+      <li>Save point, then unload: the unload is asked only once the save point is taken and read back to its manifest line.</li>
+      <li>Force-unload: loses the state since the last published save point.</li>
+    </ul>
+    <p><a href="/agents/{{ answer.agent_id }}">Choose on {{ answer.label }}'s page</a>, where its alert stands and the options your roles and the connection's ceiling carry are offered.</p>
+  </dialog>
+  </div>
+  <footer>Choosing does not acknowledge the alert.</footer>
+</section>
+{%- endif %}
+<section class="pane">
+  <header><span class="stage"><b>3</b> Run</span><h2>Answer</h2><span class="backing built">built</span><span class="source">{% if answer.verb == "turn" %}gate-con{% else %}admin-con, <code>{{ answer.verb }}</code>{% endif %}</span></header>
+  <div class="body">
+  <p>{% if let Some(mark) = answer.mark %}<span class="status hold">{{ mark }}</span> {% endif %}{{ answer.kind }}{% match answer.exit %}{% when Some with (code) %} <span class="status {% if *code == 0 %}ok{% else %}fail{% endif %}">exit {{ code }}</span>{% when None %}{% endmatch %}</p>
+  {%- if !answer.first.is_empty() %}
+  <p class="note read">Recorded as <span class="mono">{{ answer.first }}</span>.</p>
+  {%- endif %}
+  {%- if !answer.detail.is_empty() %}
+  <pre class="raw">{{ answer.detail }}</pre>
+  {%- endif %}
+  {%- if let Some(said) = answer.stderr %}
+  <p class="note">admin's stderr{% if let Some(n) = said.cut_at %}, its first {{ n }} bytes{% endif %}: admin's own words, shown as written and never read by this console.</p>
+  <pre class="raw words">{{ said.text }}</pre>
+  {%- endif %}
+  </div>
+</section>

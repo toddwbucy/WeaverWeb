@@ -50,7 +50,6 @@ fn tunables() -> Value {
 fn base() -> Value {
     json!({
         "name": "karl",
-        "placement": {"kind": "host"},
         "boxes": [{
             "models": [{"function": "decoder", "artifact": "decoder-a", "format": "gguf"}],
             "gpu": {"card": "card-0"},
@@ -73,9 +72,8 @@ fn edit(f: impl FnOnce(&mut Value)) -> Value {
 }
 
 /// The base document's form, as the screen posts it.
-const BASE_FORM: [(&str, &str); 18] = [
+const BASE_FORM: [(&str, &str); 17] = [
     ("name", "karl"),
-    ("placement", "host"),
     ("b0.m0.function", "decoder"),
     ("b0.m0.artifact", "decoder-a"),
     ("b0.m0.format", "gguf"),
@@ -280,20 +278,6 @@ fn every_refusal_names_its_field_and_its_reason() {
             edit(|v| v["name"] = json!("")),
             Kind::Missing,
             "name",
-        ),
-        (
-            "no placement",
-            edit(|v| {
-                v.as_object_mut().unwrap().remove("placement");
-            }),
-            Kind::Missing,
-            "placement",
-        ),
-        (
-            "a machine with no template",
-            edit(|v| v["placement"] = json!({"kind": "virtual-machine"})),
-            Kind::Missing,
-            "placement.template",
         ),
         (
             "no box",
@@ -531,12 +515,6 @@ fn every_refusal_names_its_field_and_its_reason() {
             "boxes[0].gpu.card",
         ),
         (
-            "a line feed in a template",
-            edit(|v| v["placement"] = json!({"kind": "virtual-machine", "template": "t\na"})),
-            Kind::Control,
-            "placement.template",
-        ),
-        (
             "a carriage return in the prompt",
             edit(|v| v["prompt"] = json!("one\rtwo")),
             Kind::Control,
@@ -629,12 +607,6 @@ fn every_refusal_names_its_field_and_its_reason() {
             edit(|v| v["boxes"][0]["models"][0]["engine"] = json!("x")),
             Kind::Unknown,
             "boxes[0].models[0].engine",
-        ),
-        (
-            "a template on a host agent",
-            edit(|v| v["placement"] = json!({"kind": "host", "template": "t"})),
-            Kind::Unknown,
-            "placement.template",
         ),
         (
             "the trace declared",
@@ -1063,16 +1035,6 @@ async fn the_screen_refuses_a_field_out_of_shape_and_saves_nothing() {
     let cases: Vec<(&str, String, &str)> = vec![
         ("no name", posted(&[], &["name"]), "name: is required"),
         (
-            "no placement",
-            posted(&[], &["placement"]),
-            "placement: is required",
-        ),
-        (
-            "a machine with no template",
-            posted(&[("placement", "virtual-machine")], &[]),
-            "placement.template: is required",
-        ),
-        (
             "no box",
             posted(
                 &[],
@@ -1480,8 +1442,6 @@ async fn a_save_and_a_reopen_are_the_same_document() {
     let prompt = "\nYou are\ta test & <nothing> \"else\".\nLine two.";
     let fields: Vec<(&str, &str)> = vec![
         ("name", "karl-7"),
-        ("placement", "virtual-machine"),
-        ("template", "template-a"),
         ("b0.m0.function", "decoder"),
         ("b0.m0.artifact", "decoder-a"),
         ("b0.m0.format", "gguf"),
@@ -1697,7 +1657,6 @@ async fn a_save_and_a_reopen_are_the_same_document() {
         .find("# What the agent's grammar has no place for")
         .unwrap()..];
     for words in [
-        "# placement: a virtual-machine agent, cloned from the template \"template-a\".",
         "# boxes[0], holding the decoder: GPU requirement a pair in shard order, the card \"card-0\" then any card of the family \"Hopper\".",
         "# boxes[1], a box of its own, holding the classifier: GPU requirement any card of the models \"NVIDIA A10\", \"NVIDIA L40S\".",
     ] {
@@ -3177,4 +3136,162 @@ async fn a_row_without_the_state_election_reopens_and_saves_the_default() {
         Some(true),
         "{file}"
     );
+}
+
+/// The base document as a row saved before 2026-11-14 holds it: the
+/// placement member the operator's rulings of that date withdrew, as a
+/// host agent or as a virtual-machine agent with its template.
+fn legacy(placement: Value) -> Value {
+    edit(|v| {
+        v.as_object_mut()
+            .unwrap()
+            .insert("placement".into(), placement);
+    })
+}
+
+/// **A document or a form carrying `placement` is refused as an unknown
+/// member** (Spec 6.1; the operator's rulings of 2026-11-14): the field
+/// left the grammar, and a new save never writes it again.
+///
+/// Perturbation: admit the member on a parse, and a document carrying it
+/// is judged a declaration; on the form, and a post carrying it is.
+#[test]
+fn a_document_or_a_form_carrying_placement_is_refused_as_an_unknown_member() {
+    for placement in [
+        json!({"kind": "host"}),
+        json!({"kind": "virtual-machine", "template": "template-a"}),
+    ] {
+        let refused = Document::parse(&legacy(placement.clone()))
+            .expect_err("a document carrying placement is admitted");
+        assert_eq!(
+            (refused.field.as_str(), refused.kind),
+            ("placement", Kind::Unknown),
+            "{refused}"
+        );
+    }
+    for set in [
+        vec![("placement", "host")],
+        vec![("placement", "virtual-machine"), ("template", "template-a")],
+    ] {
+        let refused = Form::read(posted(&set, &[]).as_bytes())
+            .expect_err("a form carrying placement is admitted");
+        assert_eq!(refused.kind, Kind::Unknown, "{refused}");
+        assert!(
+            ["placement", "template"].contains(&refused.field.as_str()),
+            "{refused}"
+        );
+    }
+}
+
+/// **A saved body carrying `placement` reads without it, and nothing else
+/// unknown is admitted** (Spec 2.4): a row's authored half never changes,
+/// so a row saved before 2026-11-14 keeps the member, and the reader
+/// discards it on read alone.
+///
+/// Perturbations: read a saved body with the parse alone, and a legacy row
+/// does not read; discard every unknown member, and a body carrying a
+/// member no grammar held reads.
+#[test]
+fn a_saved_body_carrying_placement_reads_without_it() {
+    let current = Document::parse(&base()).unwrap();
+    for placement in [
+        json!({"kind": "host"}),
+        json!({"kind": "virtual-machine", "template": "template-a"}),
+    ] {
+        let read = Document::read_saved(&legacy(placement)).expect("a legacy row reads");
+        assert_eq!(read, current);
+        assert_eq!(read.to_value(), base(), "the member is gone from its value");
+    }
+    assert_eq!(Document::read_saved(&base()).unwrap(), current);
+    let refused = Document::read_saved(&edit(|v| v["host"] = json!("box-a")))
+        .expect_err("a member no grammar held reads");
+    assert_eq!(
+        (refused.field.as_str(), refused.kind),
+        ("host", Kind::Unknown)
+    );
+}
+
+/// **A row saved with `placement` reopens without it, a post carrying it is
+/// refused, and its child records it leaving** (Spec 2.4 and 6.1): the
+/// screen, the form and the derived file name no placement; the reopened
+/// form posted with `placement` added is refused naming it and saves
+/// nothing; posted as reopened, the child names `placement` alone among
+/// what moved, and its body holds none.
+///
+/// Perturbation: open a saved row with the parse alone, and the legacy row
+/// answers the server's failure.
+#[tokio::test]
+async fn a_row_saved_with_placement_reopens_without_it_and_its_child_records_it_leaving() {
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let app = app(s, Some(passkeys()));
+    let (ada, session) = admin(&app, s, &mut authenticator(), "ada").await;
+    let de = "de-00000000000000d1";
+    sqlx::query(
+        "INSERT INTO declaration (declaration_ref, name, body, corpus_commit, version, \
+         what_moved, author) VALUES ($1, 'karl', $2, $3, 1, '{}', $4)",
+    )
+    .bind(de)
+    .bind(legacy(
+        json!({"kind": "virtual-machine", "template": "template-a"}),
+    ))
+    .bind(CORPUS_COMMIT)
+    .bind(&ada)
+    .execute(&s.pool)
+    .await
+    .unwrap();
+
+    let (status, _, page) =
+        send_as(&app, "GET", &format!("/declarations/{de}"), None, &session).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    for gone in [
+        "placement",
+        "virtual machine",
+        "virtual-machine",
+        "template-a",
+    ] {
+        assert!(
+            !page.contains(gone),
+            "the reopened row names {gone}: {page}"
+        );
+    }
+    let reposted = posted_by(&page);
+    let as_reopened: Vec<(&str, &str)> = reposted
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+
+    let mut with_it = as_reopened.clone();
+    with_it.push(("placement", "host"));
+    let (rows, audit) = (count(s, "declaration").await, count(s, "audit").await);
+    let (status, _, answer) = send_as(
+        &app,
+        "POST",
+        &format!("/declarations/{de}"),
+        Some(form(&with_it)),
+        &session,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{answer}");
+    assert!(answer.contains("placement"), "{answer}");
+    assert_eq!(
+        (count(s, "declaration").await, count(s, "audit").await),
+        (rows, audit),
+        "a refused post saved or recorded something"
+    );
+
+    let child = save(
+        &app,
+        &session,
+        &format!("/declarations/{de}"),
+        form(&as_reopened),
+    )
+    .await;
+    let row = s.declaration(&child).await.unwrap().unwrap();
+    assert_eq!(row.version, 2);
+    assert_eq!(row.what_moved, ["placement"]);
+    assert!(row.body.get("placement").is_none(), "{}", row.body);
+    assert_eq!(row.body, base());
 }

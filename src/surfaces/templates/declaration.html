@@ -54,21 +54,6 @@
     <input id="name" type="text" name="name" value="{{ form.name }}" spellcheck="false" required{% if opened.is_some() %} readonly{% endif %}>
     <span class="note">Letters, digits, _ and -. It names the lineage and never changes within it. Takes effect when Provision's register names the agent's row; the box's accounts are the box's.</span>
   </div>
-  <div class="row">
-    <div class="field">
-      <label for="placement">Host or virtual machine</label>
-      <select id="placement" name="placement" required>
-        <option value=""{% if form.placement.is_empty() %} selected{% endif %}>choose</option>
-        <option value="host"{% if form.placement == "host" %} selected{% endif %}>a host agent</option>
-        <option value="virtual-machine"{% if form.placement == "virtual-machine" %} selected{% endif %}>a virtual-machine agent</option>
-      </select>
-    </div>
-    <div class="field">
-      <label for="template">Template, for a virtual-machine agent</label>
-      <input id="template" type="text" name="template" value="{{ form.template }}" spellcheck="false">
-    </div>
-  </div>
-  <span class="note">A host agent takes effect as it stands. A virtual-machine agent waits on the host plane's Spec, which waits on a measurement in progress; then the console clones the template itself, at declaration, and records the template's digest and the machine's. The template holds no keys.</span>
   </div>
 </section>
 {%- for b in form.boxes %}

@@ -1,6 +1,7 @@
 //! conforms: web-only-the-admin-grant-reads-or-writes-a-declaration
 //! conforms: web-the-declaration-screen-reaches-no-agent-and-no-host
 //! conforms: web-a-pages-way-forward-stands-where-its-condition-holds
+//! conforms: web-a-row-saved-with-the-withdrawn-placement-reads-without-it
 //!
 //! **The declaration screen** (Spec 6.1): the first of the two screens
 //! Declare becomes. A signed-in admin declares an agent's components, saves
@@ -358,7 +359,7 @@ async fn open(
         Ok(None) => return refused(&Refusal::NoSuchDeclaration),
         Err(e) => return fault(e),
     };
-    let document = match Document::parse(&row.body) {
+    let document = match Document::read_saved(&row.body) {
         Ok(document) => document,
         Err(e) => return fault(anyhow::anyhow!("a saved declaration does not read: {e}")),
     };

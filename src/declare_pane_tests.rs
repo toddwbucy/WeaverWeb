@@ -195,8 +195,11 @@ async fn a_saved_declaration_with_no_load_shows_its_parts() {
         part(&rows, "the store"),
         ("none".to_owned(), "no load to set it beside".to_owned())
     );
+    assert!(
+        rows.iter().all(|(name, _, _)| name != "placement"),
+        "no placement: the operator withdrew it on 2026-11-14: {rows:?}"
+    );
     for (name, declared) in [
-        ("placement", "a host agent"),
         ("the tunable value seed", "7"),
         ("the gate's tools", "none"),
         ("the prompt", "none"),
@@ -293,7 +296,6 @@ async fn a_load_the_agent_reports_is_set_beside_the_head() {
         ("the turn context", "not in this report"),
         ("the state election", "equal"),
         ("the store", "equal"),
-        ("placement", "not reported by the agent"),
     ] {
         assert_eq!(part(&rows, name).1, against, "{name}");
     }
@@ -555,35 +557,5 @@ async fn a_head_lookup_that_fails_leaves_the_agent_page_standing() {
     assert!(
         !page.contains(r#"href="/declarations/new""#),
         "nothing offers a new declaration on a lookup that failed: {page}"
-    );
-}
-
-/// **A virtual-machine placement names its template, and nothing cloned**:
-/// the console is pointed at a machine that exists (the operator's ruling of
-/// 2026-11-13) and clones none, so the pane says where the template is
-/// named and never that the agent was cloned from it.
-#[tokio::test]
-async fn a_virtual_machine_placement_names_its_template_and_nothing_cloned() {
-    let Some((rig, ada, bea, karl)) = setting().await else {
-        return;
-    };
-    save(
-        &rig.app,
-        &ada,
-        "/declarations",
-        posted(
-            &[("placement", "virtual-machine"), ("template", "tpl-a")],
-            &[],
-        ),
-    )
-    .await;
-    let p = pane(&page_of(&rig.app, &karl, &bea).await);
-    assert_eq!(
-        part(&parts(&p), "placement"),
-        (
-            "a virtual-machine agent, from the template tpl-a".to_owned(),
-            "not reported by the agent".to_owned()
-        ),
-        "{p}"
     );
 }

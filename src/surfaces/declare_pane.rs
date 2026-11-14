@@ -43,7 +43,7 @@ use sha2::{Digest, Sha256};
 
 use crate::declaration::render::{real, requirement_words};
 use crate::declaration::reported::{self, Member, Source, Verdict};
-use crate::declaration::{Document, Function, Placement, Value64};
+use crate::declaration::{Document, Function, Value64};
 use crate::link::register::{Agent, CredentialState};
 use crate::store::Store;
 use crate::store::declarations::Saved;
@@ -338,15 +338,6 @@ fn compared(
 /// prompt's digest an admin's alone.
 fn parts(document: &Document, report: Option<&Report<'_>>, admin: bool) -> Vec<PartRow> {
     let mut rows = Vec::new();
-    rows.push(unreported(
-        "placement".to_owned(),
-        match &document.placement {
-            Placement::Host => "a host agent".to_owned(),
-            Placement::VirtualMachine { template } => {
-                format!("a virtual-machine agent, from the template {template}")
-            }
-        },
-    ));
     for (i, spu) in document.boxes.iter().enumerate() {
         let n = i + 1;
         for model in &spu.models {

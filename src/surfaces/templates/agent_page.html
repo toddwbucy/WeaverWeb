@@ -43,6 +43,7 @@
     <footer>Choosing does not acknowledge the alert: it stays until acknowledged.</footer>
   </section>
   {%- endif %}
+  {%- include "declare_pane.html" %}
   <div class="stack" id="run" hx-get="/agents/{{ agent_id }}/run" hx-trigger="every 15s" hx-swap="innerHTML">{% include "agent_run.html" %}</div>
   <section class="pane">
     <header><span class="stage"><b>3</b> Run</span><h2>Turn</h2><span class="backing built">built</span><span class="source">gate-con</span></header>

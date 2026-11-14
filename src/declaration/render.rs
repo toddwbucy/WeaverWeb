@@ -67,7 +67,7 @@ fn string(text: &str) -> String {
 /// exponent, so that TOML reads it as a float (Spec 6.1). Rust's `{}` writes
 /// a whole value at or above 1e15 as its digits alone, which TOML reads as
 /// an integer, or refuses past its range, so that value takes its exponent.
-fn real(x: f64) -> String {
+pub(crate) fn real(x: f64) -> String {
     if x.fract() != 0.0 {
         format!("{x}")
     } else if x.abs() < 1e15 {
@@ -77,7 +77,7 @@ fn real(x: f64) -> String {
     }
 }
 
-fn requirement_words(requirement: &Requirement) -> String {
+pub(crate) fn requirement_words(requirement: &Requirement) -> String {
     match requirement {
         Requirement::Card(card) => format!("the card {}", string(card)),
         Requirement::Class(class) => class_words(class),

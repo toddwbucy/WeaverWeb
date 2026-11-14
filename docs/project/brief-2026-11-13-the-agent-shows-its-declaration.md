@@ -19,7 +19,7 @@ Read from WeaverAgent at this build's pin, `5ec7ecf8fe9cb37a45e2d65298a02fc395aa
   - `state_store`, `state_member` and `composer`;
   - the drain and wind-down bounds.
 
-  It reports no turn context, no adapter, no tunable value, no placement or GPU requirement, no tool and no prompt.
+  It reports no turn context, no adapter, no tunable value, no GPU requirement, no tool and no prompt.
 - **What a load event carries.** Two payloads stand at the pin:
   - `Elections` (`crates/weaver-trace/src/event.rs`), which the harness's lifecycle authors. It carries `turn_context` and `tee`, the state election in snake_case.
   - `LoadRecord` (`crates/weaver-trace/src/serving/payloads/records.rs`), which the serving flow authors. Its own doc comment calls it "the former load elections with the tee election removed". It carries neither the turn context nor the tee.

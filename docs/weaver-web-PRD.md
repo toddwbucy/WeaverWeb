@@ -111,9 +111,7 @@ shown, from the tool's own labels, to be wrong.
   ruling of 2026-11-14. It does not create, clone, start, stop, snapshot, network or
   destroy a virtual machine. Those acts belong to the operator and the operator's
   hypervisor, and the suite holds no opinion about them. To start and stop an agent is
-  to load and unload it through admin, inside a running appliance (section 10.5). The
-  earlier direction, in which the console drove the lifecycle of a virtual machine, is
-  withdrawn.
+  to load and unload it through admin, inside a running appliance (section 10.5).
 - **Not a knowledge-graph governance layer.** No axioms, smells, gates, or
   conformance as product features.
 
@@ -173,7 +171,7 @@ agent in a way that blocks many.
 | stage | what it holds | backing |
 | --- | --- | --- |
 | 1 Declare | two screens (the operator's rulings of 2026-11-11): declare the components (the models on their SPU boxes with each box's GPU requirement, the store, the gate, the system prompt, the tunable values a serving load requires), then wire them on a board that shows only what was declared | partly: the declaration screen saves versioned declarations and shows the file each will become (Spec 6.1); the board is unbuilt and waits on contracts WeaverAgent has yet to write |
-| 2 Provision | first the operator's work on the box, which this server never reaches: stage the binaries, create the kernel account, install the declaration Declare saved; then this server's: register the agent, mint its two connector credentials; then `validate`, which reads the installed declaration. On an appliance the binaries ride the sealed image, and an appliance's enrollment replaces registration's minting: the connectors make their keys and this server signs the public halves (section 10) | partly: the register page and the one-time config handover are built; an appliance's enrollment, the box steps and the validate step are not |
+| 2 Provision | first the operator's work on the box, which this server never reaches: stage the binaries, create the kernel account, install the declaration Declare saved. Then this server's: register the agent, mint its two connector credentials. Then `validate`, which reads the installed declaration. On an appliance the binaries ride the sealed image, and an appliance's enrollment replaces registration's minting: the connectors make their keys and this server signs the public halves (section 10) | partly: the register page and the one-time config handover are built, and an appliance's enrollment, the box steps and the validate step are not |
 | 3 Run | load, serve turns through the gate, unload | built; `load` is offered as every verb is, where the person's grants and the connection's ceiling carry it |
 | 4 Observe | availability, alerts, the live trace | built |
 | 5 Preserve | `save-point`, `restore`, the decision on a missed save point | partly: both verbs are offered where a role carries them and the ceiling grants them; no list of save points is served, and `restore` carries no argument (the invoker's fixed line `sudo -n <weaver_admin> <verb> <agent>`, Spec 7.2), so the page names no save point |
@@ -484,18 +482,16 @@ its parent and the one thing that moved where it is derived.
 
 <!-- figure: Library | Agents -->
 
-**Models** holds the artifacts, which is the catalog two surfaces above
-already assume. Section 3.1's roster resolves each component's artifact and
-section 5's qualification runs a reference against one, and neither says
-where the artifact came from or what is known about it. This surface does:
-**the artifact's identity per file**, following the model's own index and
-verifying each shard under its own name. Its provenance, downloaded from a
-repository at a revision or converted from another artifact by a named
-converter at a pin. Which box holds it, since this crate runs on one
-machine and the agents on another. And its relations, the lens
-artifacts fitted to these weights, the readings taken through a lens fitted
-to other weights where the operator elected that reuse, and the reference
-trials taken against them.
+**Models** holds the artifacts, which is the catalog two surfaces above already assume.
+Section 3.1's roster resolves each component's artifact and section 5's qualification
+runs a reference against one, and neither says where the artifact came from or what is
+known about it. This surface does: **the artifact's identity per file**, following the
+model's own index and verifying each shard under its own name. Its provenance,
+downloaded from a repository at a revision or converted from another artifact by a named
+converter at a pin. Which box holds it, since this crate runs on one machine and the
+agents on others. And its relations, the lens artifacts fitted to these weights, the
+readings taken through a lens fitted to other weights where the operator elected that
+reuse, and the reference trials taken against them.
 
 **Models is the one surface on this side that authors, and its motion is
 import.** The others list what other surfaces produced. Import registers an
@@ -508,19 +504,17 @@ sources section 10.4 names, and keeps them as the model store an appliance pulls
 Whether that fetch is this surface's import, so a fetched model ends as an artifact
 other surfaces can name, is not ruled, and section 9 holds it.
 
-**An identity is computed and never accepted, and where it is computed
-depends on which box holds the weights.** An operator who types a digest has
-told the catalog what they believe, and a catalog that records a belief
-cannot later say two boxes hold one artifact. **On this crate's own box the
-surface reads the files and derives the identity**, following the artifact's
-own membership rule, which is an index where the container carries one and a
-name pattern where it does not, per the Spec's section 2.3. **On the agents'
-box it cannot read anything**, this crate running on one machine and the
-agents on another, so an artifact there registers from what the record
-reports of it rather than from a read, and until that path stands an entry
-for it is a presence observation and not a registration. Which of the two
-this surface offers first is section 9's open cell on presence, and the
-answer chosen there is the answer here.
+**An identity is computed and never accepted, and where it is computed depends on which
+box holds the weights.** An operator who types a digest has told the catalog what they
+believe, and a catalog that records a belief cannot later say two boxes hold one
+artifact. **On this crate's own box the surface reads the files and derives the
+identity**, following the artifact's own membership rule, which is an index where the
+container carries one and a name pattern where it does not, per the Spec's section 2.3.
+**On an agent's box it cannot read anything**, this crate running on one machine and the
+agents on others, so an artifact there registers from what the record reports of it
+rather than from a read, and until that path stands an entry for it is a presence
+observation and not a registration. Which of the two this surface offers first is
+section 9's open cell on presence, and the answer chosen there is the answer here.
 
 **An artifact is the complete set its own index names, and one rule decides
 identity** - the corpus's own. `weaver-analysis-PRD` section 3 carries the
@@ -768,21 +762,19 @@ a security feature: whatever is declared becomes part of the trial's
 identity, so a reading can never be quoted without saying what was holding
 the boundary when it was taken.
 
-**This crate's own crossing is a declared boundary like any other.** Nothing
-in the read or write path requires the viewer, the store, or the queue to
-sit on the machine that runs the agents. The reader is a store client and
-the runner is a queue consumer, so the front end and its store run on one
-machine while the agents run on another, and that crossing appears in the
-trial record.
+**This crate's own crossing is a declared boundary like any other.** Nothing in the read
+or write path requires the viewer, the store, or the queue to sit on a machine that runs
+an agent. The reader is a store client and the runner is a queue consumer, so the front
+end and its store run on one machine while the agents run on others, and that crossing
+appears in the trial record.
 
-**What stands on the agents' machine is this crate's own two connectors**,
-gate-con on the data plane and admin-con on the management plane, per the
-design session of 2026-09-30 and the operator's ruling of 2026-10-01. They
-are the one party that reaches an agent, each a client of the server's
-listener, and the server never reaches one. The link between them and the
-server is the Spec's section 8, and the register of agents it rests on is the
-Spec's section 2.12. The crossing is this crate's at both ends, which is what
-lets it be declared whole. **On an appliance the two connectors ride its sealed
+**What stands on each agent's machine is this crate's own two connectors**, gate-con on
+the data plane and admin-con on the management plane, per the design session of
+2026-09-30 and the operator's ruling of 2026-10-01. They are the one party that reaches
+an agent, each a client of the server's listener, and the server never reaches one. The
+link between them and the server is the Spec's section 8, and the register of agents it
+rests on is the Spec's section 2.12. The crossing is this crate's at both ends, which is
+what lets it be declared whole. **On an appliance the two connectors ride its sealed
 image**, and an appliance's enrollment, section 10, gives them their credentials.
 
 ## 6. Identity and roles
@@ -802,11 +794,12 @@ since credentials will cross it. The Spec's section 2.13 charters what the
 act builds: the authenticated person, roles and per-agent grants,
 server-side authorization of every verb and turn, and an audit record of
 each, the
-first of the three gates its section 8 names. **Reading surfaces could stand
-before the act**, and for them identity, authentication and transport encryption
-stayed deferred with the named triggers below. As built since the act, Record and the
-reading surfaces are read under a session (the Spec's section 2.8), and the browser's
-pages that answer before one are sign-in and a person's enrollment (section 10.3).
+first of the three gates its section 8 names. **Reading surfaces may stand before the
+act**, and for them identity, authentication and transport encryption stay deferred with
+the named triggers below. As built, the act has reached them: Record is read under a
+person's session since 2026-10-08, and the reading surfaces since 2026-10-12 (the Spec's
+section 2.8). The browser's pages that answer before a session exists are sign-in and a
+person's enrollment (section 10.3).
 
 **The act is the IAM act, and this section names it because the rewrite
 dropped the name.** The prior Spec's section 14 named it plainly and stated
@@ -915,13 +908,24 @@ this crate designs around the gap until it closes.
   how the WeaverAgent system's storage check at each load reaches admin-con and so the
   console, which is `weaver-admin-operator-contract`'s, so the console can say where an
   appliance's storage is not sufficient (section 10.4).
-- **The record of an upgrade**, unfiled on 2026-11-15, on `toddwbucy/WeaverAgent`: the
-  member of WeaverAgent's record, the trace's `load` event or `show`'s answer, that
-  carries an appliance's upgrade as a change of the deployment tuple (section 10.5).
+- **The record of an upgrade**, unfiled on 2026-11-15, on `toddwbucy/WeaverAgent`:
+  whether WeaverAgent's record of a load names the version that a restored state was
+  made under (section 10.5).
 - **The trace's destination**, unfiled on 2026-11-15, on `toddwbucy/WeaverAgent`: the
   member that carries to admin the destination the operator declares for the trace, a
-  path on the state mount, a sink off the machine or nowhere, which crosses
-  `weaver-admin-operator-contract` (section 10.6).
+  path on the state mount, a sink off the machine or nowhere (section 10.6). It crosses
+  `weaver-admin-operator-contract`, which as merged says against the ruling that
+  "Whatever its kind, the sink stands in the agent's territory, and only a file sink is
+  served through the trace door", and which refuses a load whose sink cannot be opened.
+- **The port member**, unfiled on 2026-11-15, on `toddwbucy/WeaverAgent`: the member of
+  the agent's grammar that names the ports a declaration opens (section 10.3).
+- **The connector accounts on an appliance**, unfiled on 2026-11-15, on
+  `toddwbucy/WeaverAgent`: the accounts each connector's key and config stand under on
+  an appliance, which WeaverAgent's documents name and this repository never records
+  (`weaver-web-Spec` section 10).
+- **What tells a stopped service from a machine that is down**, unfiled on 2026-11-15,
+  on `toddwbucy/WeaverAgent`: what an appliance exposes, past its two connectors, that
+  lets the console tell the two apart (section 10.5).
 
 ## 9. Open cells, each named rather than implied
 
@@ -997,7 +1001,9 @@ this crate designs around the gap until it closes.
   records the ports a declaration opens (section 10.3), the tuple as shipped (section
   10.5), and the trace's destination (section 10.6). No document of any repository
   defines it, and this charter coins no definition. What the console holds about a run
-  as built is stated as fact in `weaver-web-Spec` section 10. Settled by the operator.
+  as built is stated as fact in `weaver-web-Spec` section 10. The nearest standing use
+  of "card" is section 3.0's, as a fact: an agent is binaries by hash plus wires by
+  hash, and "the two screens are a rendering of that card". Settled by the operator.
 - **The trace's destination against the declaration screens.** Section 10.6 carries the
   operator's ruling of 2026-11-15 that where the trace goes is a field the operator
   declares in Weaver Web. Section 3.0, on the operator's rulings of 2026-11-11, says the
@@ -1012,7 +1018,17 @@ this crate designs around the gap until it closes.
 - **Declared ports against the connectors' network.** Section 10.3 carries the
   operator's ruling of 2026-11-15 that ports opened by a declaration belong to the
   operator's arrangement. Section 3.0 says the network belongs to the two connectors
-  alone, which `weaver-web-Spec` section 8.3 cites. Settled by the operator.
+  alone, which `weaver-web-Spec` section 8.3 cites, and section 5 says the connectors
+  are the one party that reaches an agent. Settled by the operator.
+- **The port member.** As built on 2026-11-15, no declaration can name a port, since the
+  declaration has no port member (`weaver-web-Spec` section 6.1). The member is the
+  agent's grammar's, an ask upstream (section 8). Settled by WeaverAgent's grammar, and
+  then by the act that adds the member to the declaration screen.
+- **A trace path on the state mount for an agent that elects no state.** Section 10.6
+  lets the trace go to a path on the state mount, and section 10.4 requires the state
+  mount only where the declaration elects state. Whether an agent that elects no state
+  may name a trace path on the state mount, and whether that path then requires the
+  mount, is stated nowhere. Settled by the operator.
 - **The host install against the single-host install.** Section 10 names the host
   install beside the Spark-class machine, on the operator's ruling of 2026-11-15. The
   ruling of 2026-11-14 keeps the single-host install, with registration and its
@@ -1020,8 +1036,8 @@ this crate designs around the gap until it closes.
   8.2). Open: whether the host install is that install, and whether registration serves
   it. Settled by the operator.
 - **Trust on first use**, the hazard of section 10.1. Settled by one first boot of the
-  sealed image, with the host key fingerprints read from the machine's own screen, which
-  is not this crate's (section 10.7).
+  sealed image, with the host key's fingerprints read at the appliance's console before
+  the first SSH.
 - **The console as the model store.** The model count or fleet size at which its cache
   stops being tolerable. No measurement exists, because the fleet is one. Settled by a
   measurement on a fleet larger than one.
@@ -1050,7 +1066,7 @@ what runs, and the mounts carry what the agent keeps. Whatever an operator adds 
 changes after boot is the operator's to account for, and the suite offers no guarantee
 about a changed machine. Inbound is the suite's, and outbound is the operator's. The
 suite builds the virtual machine and the service as simply as will work, and anything
-that adds machinery for a later enterprise is a later item.
+that adds machinery for a later need is a later item.
 
 **Five terms carry one meaning each in this section.**
 
@@ -1103,9 +1119,10 @@ operator is waiting on.
 
 **Trust on first use is a hazard to enrollment.** The operator's first SSH into an
 appliance trusts the host key it meets, so a wrong machine at the given address could be
-enrolled. The operator compares that host key with the host key fingerprints read from
-the appliance's own screen. How the image shows them is not this crate's (section 10.7),
-and section 9 names the cell.
+enrolled. The image prints nothing by itself, on the operator's ruling of 2026-11-15.
+The operator is at the appliance's console before the first SSH, reads the host key's
+fingerprints there, and compares them with the key the first SSH meets. Section 9 names
+the cell.
 
 **This is an appliance's enrollment, and it is not a person's.** A person's enrollment,
 the one-time token that registers a first passkey (`weaver-web-Spec` section 2.13),
@@ -1126,11 +1143,11 @@ says what stays, what is replaced and what coexists.
 operator's ruling of 2026-11-15. **A new image is a new enrollment**, made from the
 console with one pairing line, on the same ruling.
 
-**The console refuses a second live holder of a certificate it issued**, the ruling of
-2026-11-14. As built, the link refuses a second connection on a credential that is
-connected (`weaver-web-Spec` section 8). A machine cloned after its enrollment is a note
-in `weaver-web-Spec` section 8.2 and nothing more, on the operator's ruling of
-2026-11-15.
+**Each appliance is meant to hold its own certificates, and the console refuses a second
+live holder of a certificate it issued**, the operator's rulings of 2026-11-14.
+`weaver-web-Spec` section 8.2 says how the built link meets the refusal. A machine
+cloned after its enrollment is a note there and nothing more, on the operator's ruling
+of 2026-11-15.
 
 ### 10.3 The link's one unauthenticated surface, and the posture
 
@@ -1153,9 +1170,12 @@ enrollment surface admits a party before that party is known. That is why the se
 carries three bounds. Where the console stands, and who can reach its ports, is the
 operator's choice, as the deployment shape is. **Ports opened by a declaration belong to
 the operator's arrangement and are recorded on the run card**, on the operator's ruling
-of 2026-11-15. Section 9 holds the term, and holds for the operator this ruling's
-conflict with section 3.0, which gives the network to the two connectors alone. This
-charter names no address of a machine and no rule of a firewall.
+of 2026-11-15. As built on 2026-11-15, no declaration can name a port, since the
+declaration has no port member (`weaver-web-Spec` section 6.1), and the member is an ask
+upstream (section 8). Section 9 holds the term and the member. It also holds for the
+operator this ruling's conflict with section 3.0, which gives the network to the two
+connectors alone, and with section 5, where the connectors are the one party that
+reaches an agent. This charter names no address of a machine and no rule of a firewall.
 
 ### 10.4 Models, the image and storage
 
@@ -1185,18 +1205,18 @@ later and are named as later.
 
 **The WeaverAgent system checks storage at every load and reports the sizes to the
 console. Where storage is not sufficient, the console says so and asks the operator to
-add storage.** The model mount is required, and a load is refused where it is not a
-separate filesystem. The state mount is required only where the declaration elects
-state, and then a load is refused on the same test. An agent whose declaration elects no
-state runs on the model mount alone. **The refusal is admin's, at the load, on the
-operator's ruling of 2026-11-15, and the console renders admin's answer as it came**
-(`weaver-web-Spec` section 7.2). The check runs at every load and not once at
-enrollment, because the refusal is a load's: a required mount that is not a separate
-filesystem refuses that load. The console attaches and mounts nothing: the operator
-attaches the disks in the hypervisor and mounts them over SSH. The form of the size
-report is WeaverAgent's (section 10.7), the report's way to the console is an ask
-upstream (section 8), and the sizes that count as sufficient are open (`weaver-web-Spec`
-section 10).
+add storage.** On the operator's ruling of 2026-11-15, the model mount is required, and
+a load is refused where it is not a separate filesystem. The state mount is required
+only where the declaration elects state, and then a load is refused on the same test. An
+agent whose declaration elects no state runs on the model mount alone, and it is a
+legitimate agent. **The refusal is admin's, since load is admin's verb, and the console
+renders admin's answer as it came** (`weaver-web-Spec` section 7.2). The check runs at
+every load and not once at enrollment, because the refusal is a load's: a required mount
+that is not a separate filesystem refuses that load. The console attaches and mounts
+nothing: the operator attaches the disks in the hypervisor and mounts them over SSH. The
+form of the size report is WeaverAgent's (section 10.7), the report's way to the console
+is an ask upstream (section 8), and the sizes that count as sufficient are open
+(`weaver-web-Spec` section 10).
 
 ### 10.5 Load and unload, and no hypervisor
 
@@ -1210,18 +1230,20 @@ account for, as the stance says. To start and stop the agent is to load and unlo
 through admin, and the console's whole reach into an appliance is its two connectors.
 
 **An upgrade moves state and model to a new harness version**, on the operator's ruling
-of 2026-11-15. State is transferable, and nothing is claimed across versions. An upgrade
-that brings a new image is a new enrollment (section 10.2). **An upgrade of an appliance
-is a change of the deployment tuple and is recorded as one**, the ruling of 2026-11-14:
-state made under an older version is recorded as made under it and, from the load
-onward, as used under the newer version. **The run card records the tuple as shipped**,
-on the ruling of 2026-11-15, and no guarantee is offered about the tuple as it runs. The
-record of an upgrade is WeaverAgent's, an ask upstream (section 8), and how the console
-shows it is `weaver-web-Spec` section 10's.
+of 2026-11-15. State is transferable, and an upgrade moves it. Reproducibility is
+claimed within one version on one hardware set. Nothing is claimed about it across
+versions. An upgrade that brings a new image is a new enrollment (section 10.2). **An
+upgrade of an appliance is a change of the deployment tuple and is recorded as one**,
+the ruling of 2026-11-14: state made under an older version is recorded as made under it
+and, from the load onward, as used under the newer version. **The run card records the
+tuple as shipped**, on the ruling of 2026-11-15, and no guarantee is offered about the
+tuple as it runs. The record of an upgrade is WeaverAgent's, an ask upstream (section
+8), and how the console shows it is `weaver-web-Spec` section 10's.
 
 **What lets the operator tell a stopped service from a machine that is down is open, and
-it is the console's to show.** What the appliance exposes for it is settled when the
-first stop is run from the console (`weaver-web-Spec` section 10).
+it is the console's to show.** What the appliance exposes for it is an ask upstream
+(section 8), and it is settled when the first stop is run from the console
+(`weaver-web-Spec` section 10).
 
 **Weaver Web never touches a hypervisor**, per section 2, and nothing in this section
 reaches one. The console makes, starts, stops and destroys no machine, attaches no disk
@@ -1230,16 +1252,20 @@ neither reaches into the side of the other.
 
 ### 10.6 The trace's destination
 
-**The agent hands off its trace, and where the trace goes is a field the operator
-declares in Weaver Web**, on the operator's ruling of 2026-11-15. The field names a path
-on the state mount, a sink off the machine, or nowhere. **A null sink is legitimate**,
-and the run card records the choice, on the same ruling. The member that carries the
-declared destination to admin crosses `weaver-admin-operator-contract`, which is
-WeaverAgent's, and section 8 carries the ask. **This requirement meets two sentences of
-section 3.0**, that the trace is declared on neither screen and that it is the record of
-the whole lifecycle, and section 9 holds both for the operator. Where the field stands
-among this crate's surfaces, and what the console's pages show of an agent whose trace
-goes off the machine or nowhere, are `weaver-web-Spec` section 10's.
+**The suite's duty is to make the trace available**, on the operator's ruling of
+2026-11-15. **The agent does not write the trace to disk. It hands the trace off, and
+where the trace goes is a field the operator declares in Weaver Web**, on the same
+ruling. The field names a path on the state mount, a sink off the machine, or nowhere.
+**A null sink is legitimate**, and the run card records the choice, on the same ruling.
+The member that carries the declared destination to admin crosses
+`weaver-admin-operator-contract`, which is WeaverAgent's, and section 8 carries the ask.
+**This requirement meets two sentences of section 3.0**, that the trace is declared on
+neither screen and that it is the record of the whole lifecycle, and section 9 holds
+both for the operator, with a trace path on the state mount of an agent that elects no
+state. It meets the Spec's file-sink ruling of 2026-10-01 too, and `weaver-web-Spec`
+section 10 holds that for the operator. Where the field stands among this crate's
+surfaces, and what the console's pages show of an agent whose trace goes off the machine
+or nowhere, are `weaver-web-Spec` section 10's.
 
 ### 10.7 What is not this crate's
 
@@ -1249,7 +1275,7 @@ an appliance enters this repository. None of them is cited here as authority, si
 every requirement above is an operator's ruling.
 
 - **The environment inside an appliance**: the operating system, SSH, the mounts and the
-  storage check, and whether a newer version loads state made under an older one. What
+  storage check, and how an upgrade moves state and model to a new harness version. What
   of it runs or bounds the agent is the WeaverAgent system's, in
   `toddwbucy/WeaverAgent`.
 - **The image's build and its proof** are in `toddwbucy/WeaverTools`: the binaries

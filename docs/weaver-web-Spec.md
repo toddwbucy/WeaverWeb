@@ -590,11 +590,11 @@ reference trial relation each name one unambiguous artifact and never a
 shard of one, and an elected lens reuse is legible here with the fitted
 weights and the read weights both resolving by the same rule.
 
-**Presence is a dated observation by a named reporter, and it is
-advisory.** Each entry carries the box, the reporter, and when it was last
-confirmed. A box that has not reported is unknown rather than empty,
-because this crate runs on one machine and the agents on another, and
-silence from a box that is merely offline is not evidence about its disk.
+**Presence is a dated observation by a named reporter, and it is advisory.** Each entry
+carries the box, the reporter, and when it was last confirmed. A box that has not
+reported is unknown rather than empty, because this crate runs on one machine and the
+agents on others, and silence from a box that is merely offline is not evidence about
+its disk.
 
 **No load consults it.** The load resolves the artifact on the box it runs
 on and is refused there under that box's own rules. Presence here is an
@@ -5118,11 +5118,12 @@ server stores the fingerprint of each client certificate and never the key, per 
 the client's, which is the operator's two-way confirmation, and the traffic is encrypted
 by the same handshake, so **nothing crosses the link in the clear** and no plaintext
 accept path exists. The ruled exception is an appliance's enrollment exchange (section
-8.2), the one connection the link is to admit with no client certificate, TLS from its
-first byte. How the listener tells it from a plane connection is section 10's, since as
-built the listener requires a client certificate at every handshake. Where a certificate
-and key are configured, the browser's listener serves TLS only, per section 2.13. The
-link's encryption is its own and holds without configuration.
+8.2), the one connection the link admits before its party is known, TLS from its first
+byte. That it presents no client certificate is this document's election, not the
+ruling's words. How the listener tells it from a plane connection is section 10's, since
+as built the listener requires a client certificate at every handshake. Where a
+certificate and key are configured, the browser's listener serves TLS only, per section
+2.13. The link's encryption is its own and holds without configuration.
 
 **The server's authority is durable state and is never minted at start.**
 Its key and certificate are created once by an explicit register verb, the
@@ -5972,45 +5973,50 @@ certificate or the authority's, and how the authority's certificate reaches the
 appliance to be pinned, are section 10's. So are whether the line is shown once and the
 program it runs.
 
-**The one-time secret.** The rulings fix three bounds: it is single-use, it is
-short-lived on the order of ten minutes, and it is bound to one pending enrollment. It
-is the only secret on a command line, the operator's single exception of 2026-11-14.
-**It is a bearer the server issues, so section 2.13's rule makes it 32 bytes from the
-operating system's cryptographic random source.** Its exact lifetime, its encoding on
-the line, and where and in what form the console holds it, are section 10's. Every token
-the store holds as built is kept as its digest (sections 2.8 and 2.13).
+**The one-time secret.** The rulings fix three bounds (`weaver-web-PRD` section 10.1):
+it is single-use, it is short-lived on the order of ten minutes, and it is bound to one
+pending enrollment. It is the only secret on a command line, the operator's single
+exception of 2026-11-14. **It is a bearer the server issues, so section 2.13's rule
+makes it 32 bytes from the operating system's cryptographic random source.** Its exact
+lifetime, its encoding on the line, and where and in what form the console holds it, are
+section 10's. Every token the store holds as built is kept as its digest (sections 2.8
+and 2.13).
 
 **The exchange.** The appliance dials the link port and opens TLS under the console's
 certificate, checking it against the line's fingerprint before it sends anything. Over
 that TLS it presents the secret and two public halves, gate-con's and admin-con's, and
-receives its certificates, and the secret is spent. One single-use secret enrolls the
-pair, since both connectors must match on one row (the operator's ruling of 2026-10-01,
-section 8). The console checks the secret against its pending enrollment, signs each
-half under the authority, bound to the row and its plane as registration binds a
-certificate, and writes the row of section 2.12 with both fingerprints live. **Nothing
-crosses in the clear**, since the exchange is TLS from its first byte, so section 8's
-claim holds as written. **How the link port tells an enrollment from a plane connection
-is open.** The ruling makes the enrollment connection the link's one unauthenticated
-surface, so it presents no client certificate. As built, the listener requires one at
-every handshake (`server_tls`), and section 8's refusal of a credential that is not
-live, before its roster is read, binds every connection that presents one. How the two
-are told apart, and what the exchange answers beyond the two certificates, are section
-10's. The exchange writes the register, and every register write is audited (section
-2.13), so it is audited. Its principal is section 10's.
+receives its certificates, and the secret is spent. **This document elects that one
+single-use secret enrolls the pair**, since both connectors must match on one row (the
+operator's ruling of 2026-10-01, section 8). The console checks the secret against its
+pending enrollment, signs each half under the authority, bound to the row and its plane
+as registration binds a certificate, and writes the row of section 2.12 with both
+fingerprints live. **Nothing crosses in the clear**, since the exchange is TLS from its
+first byte, so section 8's claim holds as written. **How the link port tells an
+enrollment from a plane connection is open.** The ruling makes the enrollment connection
+the link's one unauthenticated surface, and this document elects that it presents no
+client certificate. As built, the listener requires one at every handshake
+(`server_tls`), and section 8's refusal of a credential that is not live, before its
+roster is read, binds every connection that presents one. How the two are told apart,
+and what the exchange answers beyond the two certificates, are section 10's. The
+exchange writes the register, and every register write is audited (section 2.13), so it
+is audited. Its principal is section 10's.
 
 **Each connector's key is made inside the appliance and never leaves it.** The console
 receives the public half alone, so the row's fingerprints are of certificates whose keys
 the console never held, and section 2.12's rule that the server holds fingerprints and
-never keys holds with nothing to forget. **The keys and certificates live on the
-appliance's root disk**, on the operator's ruling of 2026-11-15, and a new image is a
-new enrollment, made from the console with one pairing line. After the exchange every
+never keys holds with nothing to forget. **Each appliance is meant to hold its own
+certificates**, the operator's ruling of 2026-11-14. **The keys and certificates live on
+the appliance's root disk**, and a new image is a new enrollment, made from the console
+with one pairing line, on the operator's ruling of 2026-11-15 (`weaver-web-PRD` section
+10.2). No representation is elected for them here, since where on that disk they stand
+is a fact of the box this repository does not record. After the exchange every
 connection a connector makes is section 8's mutual TLS.
 
-**A second live holder.** The charter's ruling of 2026-11-14 is that the console refuses
-a second live holder of a certificate it issued. As built, a second connection on a
-credential that is connected is refused rather than replacing the first, as a line of
-the server's log (section 8), and it raises no alert, never having been admitted
-(section 2.14).
+**A second live holder.** The operator ruled on 2026-11-14 that the console refuses a
+second live holder of a certificate it issued, and the charter carries it
+(`weaver-web-PRD` section 10.2). As built, a second connection on a credential that is
+connected is refused rather than replacing the first, as a line of the server's log
+(section 8), and it raises no alert, never having been admitted (section 2.14).
 
 **A clone, as a note and nothing more**, on the operator's ruling of 2026-11-15. A
 machine cloned after its enrollment holds the same keys, so it can take one plane while
@@ -6020,10 +6026,13 @@ tell the two apart.
 
 **The link's one unauthenticated surface.** The ruling makes an appliance's enrollment
 connection the link's one unauthenticated surface, in the operator's wording of
-2026-11-15, and this document names it as one: the one connection the link port admits
-before its party is known. **Two pages of the browser's listener answer before a session
-exists**, the sign-in page and a person's enrollment page, each to its own proof
-(section 2.13). The posture is the charter's (`weaver-web-PRD` section 10.3).
+2026-11-15 (`weaver-web-PRD` section 10.3), and this document names it as one: the one
+connection the link port admits before its party is known. **Two pages of the browser's
+listener answer before a session exists**, the sign-in page and a person's enrollment
+page, each to its own proof (section 2.13). The representation is this document's
+election above, an exchange that presents no client certificate, and how the link port
+tells it apart is section 10's. The posture is the charter's (`weaver-web-PRD` section
+10.3).
 
 ### 8.3 What the console serves an appliance
 
@@ -6050,25 +6059,28 @@ their published hashes come from, are section 10's.
 
 **The storage report.** **A load whose model mount is not a separate filesystem is
 refused, and so is a load whose declaration elects state where the state mount is not
-one**, on the operator's ruling of 2026-11-15. The refusal is admin's, at the load, and
-renders as it came, as every refusal does (section 7.2). The report of the sizes crosses
-from the WeaverAgent system through admin-con to the link, so its carrier at the box's
-seam is `weaver-admin-operator-contract`'s, and this document builds against the
-contract once it is merged. The form of the report, how it reaches the console, and
-where the console says that storage is not sufficient, are section 10's. So are the
-sizes that count as sufficient, which no ruling assigns to a document.
+one**, on the operator's ruling of 2026-11-15 (`weaver-web-PRD` section 10.4). The
+refusal is admin's, since load is admin's verb, so the representation this document
+holds is admin's answer to `load`, which renders as it came, as every refusal does
+(section 7.2). The report of the sizes reaches the console through admin-con, the
+console's one reach into an appliance, so its carrier at the box's seam is
+`weaver-admin-operator-contract`'s, and this document builds against the contract once
+it is merged. The form of the report, which carrier it takes at that seam, and where the
+console says that storage is not sufficient, are section 10's. So are the sizes that
+count as sufficient, which no ruling assigns to a document.
 
 **Load and unload.** **Nothing in this framework or in the image autostarts the agent**,
 on the operator's ruling of 2026-11-15, and load and unload need no management of a
-machine. As built, the server's own asks are `show` alone (section 2.13), and `load` is
-asked only for a person whose grant carries it, through the page, so nothing in this
-crate starts an agent at an admission. How an appliance's connector instances come to be
-enabled after its enrollment, since the image enables none (section 8.1), is section
-10's. **State is transferable, and nothing is claimed across versions**, on the same
-ruling: whether a newer version loads state made under an older one is admin's answer at
-the load, and it renders as it came, as every answer does (section 7.2). How the console
-shows an upgrade as a change of the deployment tuple, and what lets the operator tell a
-stopped service from a machine that is down, are section 10's.
+machine (`weaver-web-PRD` section 10.5). The representation is what is built: the
+server's own asks are `show` alone (section 2.13), and `load` is asked only for a person
+whose grant carries it, through the page, so nothing in this crate starts an agent at an
+admission. How an appliance's connector instances come to be enabled after its
+enrollment, since the image enables none (section 8.1), is section 10's. **State is
+transferable, and an upgrade moves state and model**, on the same ruling.
+Reproducibility is claimed within one version on one hardware set. Nothing is claimed
+about it across versions. How the console shows an upgrade as a change of the deployment
+tuple, and what lets the operator tell a stopped service from a machine that is down,
+are section 10's.
 
 **The trace's destination.** The charter's requirement is a field the operator declares
 in Weaver Web that names where the agent hands its trace: a path on the state mount, a
@@ -6081,7 +6093,8 @@ sections 1 and 3). As built on this side, admin-con reads the trace only through
 door (section 7.2), the register row records the door's state (section 2.12), and the
 door never gates a verb. Where the field stands among this crate's surfaces, and what
 the agent's pages show where the trace goes off the machine or nowhere, are section
-10's.
+10's. So is its meeting with section 7.2's file-sink ruling and section 6.1's sink
+filled at Provision, which the operator settles.
 
 **No hypervisor reach of any kind.** No code path, configuration member or dependency of
 this crate reaches a hypervisor. What it knows of an appliance is what the appliance's
@@ -6645,10 +6658,11 @@ a `web-` assertion beside `weaver-admin`'s.
   pinned. Settled by the enrollment's code act, with the operator's review.
 - **How the link port tells an enrollment from a plane connection, opened 2026-11-15**
   (section 8.2). The ruling makes the enrollment connection the link's one
-  unauthenticated surface, so it presents no client certificate. As built, the listener
-  requires a client certificate at every handshake (`server_tls`), and section 8 states
-  that every connection presents one. Settled by the enrollment's code act, which amends
-  those sentences of section 8 with the code.
+  unauthenticated surface, and this document elects that it presents no client
+  certificate. As built, the listener requires a client certificate at every handshake
+  (`server_tls`), and section 8 says a plane connection presents one and names the
+  enrollment exchange as the one connection with none. Settled by the enrollment's code
+  act, which amends section 8 with the code.
 - **What the exchange answers, opened 2026-11-15** (section 8.2). Beyond the two
   certificates, a built connector config carries the server's link address, the name the
   server's certificate is verified under, the agent's name, the row's identity, the
@@ -6673,7 +6687,8 @@ a `web-` assertion beside `weaver-admin`'s.
   and no other (section 7.2). So which process makes each key and writes each config,
   and how an appliance's connector instances come to be enabled, is answered without a
   second privileged program in this repository. Settled by the enrollment's code act,
-  with WeaverAgent's documents naming the accounts.
+  with WeaverAgent's documents naming the accounts, an ask upstream (`weaver-web-PRD`
+  section 8).
 - **The exchange's audit principal and the row's author, opened 2026-11-15** (section
   8.2). The exchange writes the register, every register write is audited (section
   2.13), and the register row carries the author member of section 3.2 (section 2.12).
@@ -6718,27 +6733,30 @@ a `web-` assertion beside `weaver-admin`'s.
   or fleet size at which its cache stops being tolerable. No measurement exists, because
   the fleet is one. Settled by a measurement on a fleet larger than one.
 - **The storage report, opened 2026-11-15** (section 8.3): the form of the size report,
-  how it reaches the console, and where the console says that storage is not sufficient.
-  The refusal of a mount that is not a separate filesystem is admin's, at the load, on
-  the operator's ruling of 2026-11-15, and renders as it came. The carrier at the box's
-  seam is `weaver-admin-operator-contract`'s, an ask upstream (`weaver-web-PRD` section
-  8). Settled by that contract's amendment in `toddwbucy/WeaverAgent`, and then by this
+  which carrier it takes at the box's seam, and where the console says that storage is
+  not sufficient. The refusal of a required mount that is not a separate filesystem, on
+  the operator's ruling of 2026-11-15, is admin's, since load is admin's verb, and
+  renders as it came. The carrier at the box's seam is
+  `weaver-admin-operator-contract`'s, an ask upstream (`weaver-web-PRD` section 8).
+  Settled by that contract's amendment in `toddwbucy/WeaverAgent`, and then by this
   document. The sizes that count as sufficient are assigned to no document by any
   ruling, and the operator assigns them.
 - **Where images are published, opened 2026-11-15** (section 8.3), for the console to
   find, with their published hashes. Later, and named as later. Settled by the
   operator's ruling of the place, which the act that builds the image download needs.
 - **An upgrade on the console's pages, opened 2026-11-15** (section 8.3). On the
-  operator's ruling of 2026-11-15, an upgrade moves state and model to a new harness
-  version, state is transferable, nothing is claimed across versions, and an upgrade
-  that brings a new image is a new enrollment. An upgrade of an appliance is a change of
-  the deployment tuple and is recorded as one (`weaver-web-PRD` section 10.5), and the
-  run card records the tuple as shipped. The record of an upgrade is WeaverAgent's, an
-  ask upstream. Open: how the console shows it. Settled by the act that reads
-  WeaverAgent's member once it is written.
+  operator's ruling of 2026-11-15, state is transferable, an upgrade moves state and
+  model to a new harness version, reproducibility is claimed within one version on one
+  hardware set and not across versions, and an upgrade that brings a new image is a new
+  enrollment. An upgrade of an appliance is a change of the deployment tuple and is
+  recorded as one (`weaver-web-PRD` section 10.5), and the run card records the tuple as
+  shipped. The record of an upgrade is WeaverAgent's, an ask upstream. Open: how the
+  console shows it. Settled by the act that reads WeaverAgent's member once it is
+  written.
 - **A stopped service against a machine that is down, opened 2026-11-15** (section 8.3).
-  Open: what the appliance exposes so that the operator can tell the two apart, and how
-  the console shows it. Settled when the first stop is run from the console.
+  Open: what the appliance exposes so that the operator can tell the two apart, an ask
+  upstream (`weaver-web-PRD` section 8), and how the console shows it. Settled when the
+  first stop is run from the console.
 - **The trace's destination, opened 2026-11-15** (section 8.3). The charter requires a
   field the operator declares in Weaver Web, naming a path on the state mount, a sink
   off the machine, or nowhere (`weaver-web-PRD` section 10.6). Open: which surface holds
@@ -6749,6 +6767,16 @@ a `web-` assertion beside `weaver-admin`'s.
   holds, for the operator, the requirement's conflicts with the charter's section 3.0.
   Settled, past those, by that contract's amendment in `toddwbucy/WeaverAgent`, an ask
   upstream (`weaver-web-PRD` section 8), and then by the act that builds the field.
+- **The trace's destination against the file-sink ruling, opened 2026-11-15** (sections
+  6.1, 7.2 and 8.3). Section 7.2 states the operator's ruling of 2026-10-01 that the
+  agent's declaration names a `File` sink, root-owned and append-only, the file being
+  the durable record itself, and states it again where the live trace has no durable
+  copy here. Section 6.1 makes the trace sink a member the declaration screen does not
+  declare, written as a comment that Provision fills (as built,
+  `src/declaration/render.rs`). The operator's ruling of 2026-11-15 makes the
+  destination a field the operator declares in Weaver Web, a sink off the machine or
+  none included (`weaver-web-PRD` section 10.6), which meets all three. None of that
+  standing text changes until the operator rules. Settled by the operator.
 - **The run card, opened 2026-11-15** (`weaver-web-PRD` sections 10.3, 10.5 and 10.6).
   The operator's rulings of 2026-11-15 name it as the record of the ports a declaration
   opens, of the tuple as shipped, and of the trace's destination, and no document of any
@@ -6759,5 +6787,7 @@ a `web-` assertion beside `weaver-admin`'s.
   ceiling, the run's constituents as the last `show` named them, the trace door's state,
   and a transition standing beside the last state. The third is the versioned
   declarations of sections 2.4 and 6.1, and the fourth is the audit's record of each
-  verb and its outcome (section 2.13). Which of them, if any, carries the run card is
-  not elected here. Settled by the operator, who defines the term.
+  verb and its outcome (section 2.13). The nearest standing use of "card" is the
+  charter's section 3.0, where an agent is binaries by hash plus wires by hash and "the
+  two screens are a rendering of that card". Which of them, if any, carries the run card
+  is not elected here. Settled by the operator, who defines the term.

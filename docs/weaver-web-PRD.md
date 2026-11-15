@@ -185,11 +185,12 @@ owns it. Train draws its selection from it, builds the dataset from the selectio
 frontier-model or reviewer text enters a dataset. The adapter Train hands back is a piece
 of the declaration like any other: it enters through Declare and Provision at the load
 boundary, never by a path of its own into a running agent.
-**Where the operator sends the trace anywhere but a file on the agent's machine, no
-trace is kept for that agent**, on the operator's ruling of 2026-11-15 (section 10.6).
-The trace door then has nothing to serve, so Record, the live view and Train have
-nothing to read for that agent, and the console says that no trace is kept. That is the
-operator's choice.
+**Where the operator sends the trace anywhere but a file on the agent's machine, the
+console holds no trace for that agent**, on the operator's ruling of 2026-11-15 (section
+10.6). The trace door then has nothing to serve, so Record, the live view and Train have
+nothing to read for that agent, and the console says that it holds no trace for that
+agent. Whatever keeps the trace past its destination is the operator's, and the console
+states nothing about it. That is the operator's choice.
 
 The ten surfaces by stage. On the path: Compose is stage 1, Live is stages 3 and 4, and
 Measure, Open a trace and Stage are stage 6. The five on the list side feed a stage
@@ -1023,9 +1024,11 @@ this crate designs around the gap until it closes.
   operator: the destination is a field of the declaration page, set when the agent is
   created, and the trace stays the record and not a component (sections 3.0 and 10.6).
 - **The trace's destination against the record, closed 2026-11-15** by the operator:
-  where the destination is not a file on the agent's machine, no trace is kept for that
-  agent, so Record, the live view and Train have nothing to read for it, and the
-  console says so. That is the operator's choice (sections 3.0 and 10.6).
+  where the destination is not a file on the agent's machine, the console holds no trace
+  for that agent, so Record, the live view and Train have nothing to read for it, and
+  the console says so. Whatever keeps the trace past its destination is the operator's,
+  and the console states nothing about it. That is the operator's choice (sections 3.0
+  and 10.6).
 - **Declared ports against the connectors' network.** Section 10.3 carries the
   operator's ruling of 2026-11-15 that ports opened by a declaration belong to the
   operator's arrangement. Section 3.0 says the network belongs to the two connectors
@@ -1279,22 +1282,24 @@ declaration page, set when the agent is created**, on the operator's ruling of
 what stands behind the destination is the operator's. **A null sink is legitimate**, and
 the run card records the choice.
 
-**Where the destination is not a file on the agent's machine, no trace is kept for that
-agent** (section 3.0). The trace door has nothing to serve, so Record, the live view and
-Train have nothing to read for that agent, and the console says that no trace is kept.
-That is the operator's choice. **A destination that cannot be opened refuses the load**,
-admin's standing rule (`weaver-admin-operator-contract` section 5), and an agent that
-elects no state is held to it like any other: an operator who wants an agent that keeps
-no state declares none, on the operator's ruling of 2026-11-15.
+**Where the destination is not a file on the agent's machine, the console holds no trace
+for that agent** (section 3.0). The trace door has nothing to serve, so Record, the live
+view and Train have nothing to read for that agent, and the console says that it holds
+no trace for that agent. Whatever keeps the trace past its destination is the
+operator's, and the console states nothing about it. That is the operator's choice. **A
+destination that cannot be opened refuses the load**, admin's standing rule
+(`weaver-admin-operator-contract` section 5), and an agent that elects no state is held
+to it like any other: an operator who wants an agent that keeps no state declares none,
+on the operator's ruling of 2026-11-15.
 
 **The field is not built.** As built on 2026-11-15, the declaration renders the trace
 sink as a comment, filled at Provision (`weaver-web-Spec` section 6.1). The field is the
 next act's work, carried in `weaver-web-Spec` section 10 with what the console's pages
-show where no trace is kept. The field writes the grammar's `trace-sink`, which names a
-file, a pipe or a socket (`weaver-types-Spec` section 2). As merged, WeaverAgent places
-every sink in the agent's territory and admin refuses one whose directory stands
-elsewhere, so `/dev/null` and a destination outside the territory wait on WeaverAgent's
-amendment, and section 8 carries the ask.
+show where the console holds no trace. The field writes the grammar's `trace-sink`,
+which names a file, a pipe or a socket (`weaver-types-Spec` section 2). As merged,
+WeaverAgent places every sink in the agent's territory and admin refuses one whose
+directory stands elsewhere, so `/dev/null` and a destination outside the territory wait
+on WeaverAgent's amendment, and section 8 carries the ask.
 
 ### 10.7 What is not this crate's
 

@@ -4521,9 +4521,9 @@ operator's own. **A file is one destination an operator may choose, and
 `/dev/null` is another**, on the operator's ruling of 2026-11-15: the
 destination is a field of the declaration screen (section 6.1), what
 stands behind it is the operator's, and where it is not a file on the
-agent's machine the trace door has nothing to serve, so no trace is kept
-for that agent (`weaver-web-PRD` section 10.6). Section 8.3 says where
-WeaverAgent's documents as merged refuse a sink outside the agent's
+agent's machine the trace door has nothing to serve, so the console holds
+no trace for that agent (`weaver-web-PRD` section 10.6). Section 8.3 says
+where WeaverAgent's documents as merged refuse a sink outside the agent's
 territory. **Where the operator
 chooses a file, the sink is root-owned and append-only**, per the
 operator's ruling of 2026-10-01, whose reason stands: a file sink loses
@@ -6111,17 +6111,18 @@ not built**: as built the declaration renders the trace sink as a comment filled
 Provision (section 6.1), and the field is the next act's work (section 10). Where the
 destination is not a file on the agent's machine, the trace door has nothing to serve,
 so Record, the live view and Train have nothing to read for that agent, and the console
-says that no trace is kept. A destination that cannot be opened refuses the load,
-admin's standing rule, and the refusal renders as it came (section 7.2). The field
-writes the grammar's `trace-sink`, a file, a pipe or a socket (`weaver-types-Spec`
-section 2), validated by admin at load. As merged, `weaver-admin-operator-contract`
-places the sink in the agent's territory whatever its kind and serves only a file sink
-through the trace door (its sections 1 and 3), and admin refuses a declaration whose
-sink's directory is not the agent's territory (`weaver-admin-Spec` section 9). So
-`/dev/null` and a destination outside the territory wait on WeaverAgent's amendment, an
-ask upstream (`weaver-web-PRD` section 8). As built on this side, admin-con reads the
-trace only through that door (section 7.2), the register row records the door's state
-(section 2.12), and the door never gates a verb.
+says that it holds no trace for that agent. Whatever keeps the trace past its
+destination is the operator's, and the console states nothing about it. A destination
+that cannot be opened refuses the load, admin's standing rule, and the refusal renders
+as it came (section 7.2). The field writes the grammar's `trace-sink`, a file, a pipe or
+a socket (`weaver-types-Spec` section 2), validated by admin at load. As merged,
+`weaver-admin-operator-contract` places the sink in the agent's territory whatever its
+kind and serves only a file sink through the trace door (its sections 1 and 3), and
+admin refuses a declaration whose sink's directory is not the agent's territory
+(`weaver-admin-Spec` section 9). So `/dev/null` and a destination outside the territory
+wait on WeaverAgent's amendment, an ask upstream (`weaver-web-PRD` section 8). As built
+on this side, admin-con reads the trace only through that door (section 7.2), the
+register row records the door's state (section 2.12), and the door never gates a verb.
 
 **No hypervisor reach of any kind.** No code path, configuration member or dependency of
 this crate reaches a hypervisor. What it knows of an appliance is what the appliance's
@@ -6794,9 +6795,9 @@ a `web-` assertion beside `weaver-admin`'s.
   else the operator sends it (`weaver-web-PRD` section 10.6). As built on 2026-11-15 the
   declaration renders the trace sink as a comment filled at Provision
   (`src/declaration/render.rs`). Open: the field's form, which record keeps it, and how
-  the agent's pages, the live view and the alerts of section 2.14 say that no trace is
-  kept where the destination is not a file on the agent's machine. Settled by the next
-  act, which builds the field. The field writes the grammar's `trace-sink`
+  the agent's pages, the live view and the alerts of section 2.14 say that the console
+  holds no trace where the destination is not a file on the agent's machine. Settled by
+  the next act, which builds the field. The field writes the grammar's `trace-sink`
   (`weaver-types-Spec` section 2). `/dev/null` and a destination outside the agent's
   territory wait on WeaverAgent's amendment, since as merged admin refuses a sink whose
   directory is not the agent's territory (`weaver-admin-Spec` section 9), an ask

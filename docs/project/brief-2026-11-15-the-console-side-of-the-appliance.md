@@ -28,9 +28,9 @@ most of the act's open cells. The act lands them in one commit:
   created. A file is one destination and `/dev/null` another, and what stands behind the
   destination is the operator's. It amends the charter's "declared on neither screen"
   for the destination alone, and the Spec's sink filled at Provision and its file-sink
-  ruling. Where the destination is not a file on the agent's machine, no trace is kept
-  for that agent, and the console says so. The field is the next act's to build, not
-  this act's.
+  ruling. Where the destination is not a file on the agent's machine, the console holds
+  no trace for that agent and says so, and whatever keeps the trace past its destination
+  is the operator's. The field is the next act's to build, not this act's.
 - An agent that elects no state, with a trace path on a missing disk: a destination that
   cannot be opened refuses the load, admin's standing rule.
 - State and save points on an appliance are later, since the first production agent

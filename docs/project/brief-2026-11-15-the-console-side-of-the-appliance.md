@@ -19,9 +19,10 @@ the operator bear on the writing. The first, of about 20:15Z on 2026-11-14: a do
 never says the agent has, owns or controls an operating system, kernel or firewall,
 since the agent is bounded by the operating system under a UID. It names the component
 that holds a privilege, and it states the deployment shape as a recommendation and never
-a rule. The second, of 2026-11-15: the pairing line carries the one-time secret on the
-line itself, the single exception ("a one-time use password on the line after that
-none"), and Proxmox is out of scope for now (`toddwbucy/WeaverTools` issue 29).
+a rule. The second, of the same day: the pairing line carries the one-time secret on
+the line itself, the single exception ("a one-time use password on the line after that
+none"), and Proxmox is out of scope as of that ruling (`toddwbucy/WeaverTools` issue
+29).
 
 ## The act
 
@@ -43,8 +44,8 @@ none"), and Proxmox is out of scope for now (`toddwbucy/WeaverTools` issue 29).
    operator suggested in the range 6000 to 7000, the cache layout, what happens to the
    appliance that connected second), state it where a ruling or the built code fixes it,
    and otherwise carry it as an open cell with what settles it. Say plainly how an
-   appliance's enrollment stands against registration as built today: what stays, what
-   it replaces, what coexists.
+   appliance's enrollment stands against registration as built on 2026-11-15: what
+   stays, what it replaces, what coexists.
 3. **A short section naming what is held elsewhere**: the environment (the WeaverAgent
    Spec), the image build and its proof (WeaverTools), the evidence and measurements
    (WeaverTools issue 28).

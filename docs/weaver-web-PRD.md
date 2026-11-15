@@ -13,8 +13,8 @@ purpose clause is what changed and every section below it was that clause's
 consequence.
 
 **Placement is held.** The deployment topology is ruled: this crate's server
-and its store run on one machine, the agents and this crate's two connectors
-on another, and the crossings are store traffic, a queue, and since
+and its store run on one machine, the agents on others, each with this crate's
+two connectors beside it, and the crossings are store traffic, a queue, and since
 2026-10-01 the connectors' link of the Spec's section 8. Whether these papers eventually move to a
 separate corpus follows from that but is not identical to it, and stays
 decision two of #439.
@@ -106,6 +106,13 @@ shown, from the tool's own labels, to be wrong.
   its declared tuple, addressed by run, turn and position, and rerunnable by
   someone who was not there. Claiming the picture as the novelty would be
   the overclaim section 1 forbids, pointed at ourselves.
+- **Not a hypervisor driver.** Weaver Web never touches a hypervisor, on the operator's
+  ruling of 2026-11-14. It does not create, clone, start, stop, snapshot, network or
+  destroy a virtual machine. Those acts belong to the operator and the operator's
+  hypervisor, and the suite holds no opinion about them. To start and stop an agent is
+  to load and unload it through admin, inside a running appliance (section 10.5). The
+  earlier direction, in which the console drove the lifecycle of a virtual machine, is
+  withdrawn.
 - **Not a knowledge-graph governance layer.** No axioms, smells, gates, or
   conformance as product features.
 
@@ -165,7 +172,7 @@ agent in a way that blocks many.
 | stage | what it holds | backing |
 | --- | --- | --- |
 | 1 Declare | two screens (the operator's rulings of 2026-11-11): declare the components (the models on their SPU boxes with each box's GPU requirement, the store, the gate, the system prompt, the tunable values a serving load requires), then wire them on a board that shows only what was declared | partly: the declaration screen saves versioned declarations and shows the file each will become (Spec 6.1); the board is unbuilt and waits on contracts WeaverAgent has yet to write |
-| 2 Provision | first the operator's work on the box, which this server never reaches: stage the binaries, create the kernel account, install the declaration Declare saved; then this server's: register the agent, mint its two connector credentials; then `validate`, which reads the installed declaration | partly: the register page and the one-time config handover are built; the box steps and the validate step are not |
+| 2 Provision | first the operator's work on the box, which this server never reaches: stage the binaries, create the kernel account, install the declaration Declare saved; then this server's: register the agent, mint its two connector credentials; then `validate`, which reads the installed declaration. On an appliance the binaries ride the sealed image and nothing is installed after its seal, and an appliance's enrollment replaces registration's minting: the connectors make their keys and this server signs the public halves (section 10) | partly: the register page and the one-time config handover are built; an appliance's enrollment, the box steps and the validate step are not |
 | 3 Run | load, serve turns through the gate, unload | built; `load` is offered as every verb is, where the person's grants and the connection's ceiling carry it |
 | 4 Observe | availability, alerts, the live trace | built |
 | 5 Preserve | `save-point`, `restore`, the decision on a missed save point | partly: both verbs are offered where a role carries them and the ceiling grants them; no list of save points is served, and `restore` carries no argument (the invoker's fixed line `sudo -n <weaver_admin> <verb> <agent>`, Spec 7.2), so the page names no save point |
@@ -231,8 +238,9 @@ decoder and its free placement of pieces. Spec section 6.1 states the first scre
   rendering of that card: a wire edit is a new link in the lineage, not a reload of the
   same agent. **The trace is the record, not a component**, declared on neither screen.
 - The agent's edge, its two sockets and the two connectors outside it are not on the
-  declaration screen. The connectors are minted at register in Provision, and the
-  network belongs to them alone, as every other surface keeps saying.
+  declaration screen. The connectors are minted at register in Provision, or for an
+  appliance signed at its enrollment (section 10), and the network belongs to them
+  alone, as every other surface keeps saying.
 - Only pieces that exist today are offered, section 3.1's roster rule applied: a kind is
   a charter act before it is a row.
 
@@ -493,6 +501,11 @@ import.** The others list what other surfaces produced. Import registers an
 artifact, which is what gives Compose something to resolve against and
 qualification something to run a reference against, and **it ends with an
 artifact other surfaces can name.**
+
+**The console fetches models**, on the operator's ruling of 2026-11-14, from the four
+sources section 10.4 names, and keeps them as the model store an appliance pulls from.
+Whether that fetch is this surface's import, so a fetched model ends as an artifact
+other surfaces can name, is not ruled, and section 9 holds it.
 
 **An identity is computed and never accepted, and where it is computed
 depends on which box holds the weights.** An operator who types a digest has
@@ -768,7 +781,8 @@ are the one party that reaches an agent, each a client of the server's
 listener, and the server never reaches one. The link between them and the
 server is the Spec's section 8, and the register of agents it rests on is the
 Spec's section 2.12. The crossing is this crate's at both ends, which is what
-lets it be declared whole.
+lets it be declared whole. **On an appliance the two connectors ride its sealed
+image**, and an appliance's enrollment, section 10, gives them their credentials.
 
 ## 6. Identity and roles
 
@@ -787,9 +801,11 @@ since credentials will cross it. The Spec's section 2.13 charters what the
 act builds: the authenticated person, roles and per-agent grants,
 server-side authorization of every verb and turn, and an audit record of
 each, the
-first of the three gates its section 8 names. **Reading surfaces may stand
-before the act as they do today**, and for them identity, authentication and
-transport encryption stay deferred with the named triggers below.
+first of the three gates its section 8 names. **Reading surfaces could stand
+before the act**, and for them identity, authentication and transport encryption
+stayed deferred with the named triggers below. As built since the act, Record and the
+reading surfaces are read under a session (the Spec's section 2.8), and the browser's
+pages that answer before one are sign-in and a person's enrollment (section 10.3).
 
 **The act is the IAM act, and this section names it because the rewrite
 dropped the name.** The prior Spec's section 14 named it plainly and stated
@@ -815,8 +831,10 @@ without the other. Naming a single trigger would leave the second deferral
 standing against nothing, which is the state this section was in until
 2026-09-07. **The connectors' link is not under either deferral.** It
 crosses machines by construction and carries the agent's record, so it is
-mutually authenticated and encrypted from its first act, per the Spec's
-section 8; the deferrals above are the browser's listener's and no other's.
+encrypted from its first act and mutually authenticated on every connection but
+one, per the Spec's sections 8 and 8.2. The one is an appliance's enrollment
+exchange, whose party proves itself with the one-time secret of section 10.1. The
+deferrals above are the browser's listener's and no other's.
 
 **The act changes the proof and adds the grant.** A session that proves who
 it is attaches to standing roles, as this section promised, and the roles
@@ -892,6 +910,13 @@ this crate designs around the gap until it closes.
   5's ladder has rungs that mean nothing.
 - **A session stands from a record**, #432. It is section 3.5 entire.
 - **The queue runner and forced decoding**, #442.
+- **The storage report's carrier**, unfiled on 2026-11-15, on `toddwbucy/WeaverAgent`:
+  how the WeaverAgent system's storage check at each load reaches admin-con and so the
+  console, which is `weaver-admin-operator-contract`'s, so the console can say where an
+  appliance's storage is not sufficient (section 10.4).
+- **The record of an upgrade**, unfiled on 2026-11-15, on `toddwbucy/WeaverAgent`: the
+  run record's member for an appliance's upgrade, recorded as a change of the deployment
+  tuple (section 10.5).
 
 ## 9. Open cells, each named rather than implied
 
@@ -948,13 +973,223 @@ this crate designs around the gap until it closes.
   the honest reading of an artifact no box has loaded. The third fits this
   crate's measure-rather-than-testify rule and is the seat's
   recommendation, and the choice is the operator's.
-- **Whether import fetches.** Section 3.6 records provenance by repository
-  and revision, which is what a fetch would need, and this crate has no
-  ruling that it may reach the network. Until one lands, import records an
-  artifact already on a box.
+- **Whether a fetch is an import.** The operator ruled on 2026-11-14 that the console
+  fetches models (section 10.4), so this crate reaches the network for them. Section 3.6
+  records provenance by repository and revision. Whether the console's fetch is this
+  surface's import, so a fetched model ends as an artifact other surfaces can name, and
+  how a model from a local store or an S3 bucket records its provenance, are not ruled.
+  Settled by the model store's act, which brings both to the operator.
 - **Whether a trained-weights lineage should exist at all.** Section 5
   makes reuse across a conversion an operator election because
   `weaver-analysis-PRD` section 3 versions a lens by the weights content
   hash. A lineage would let the tool answer instead. It would be that
   charter's fact to state and its Spec's record to change, so this cell is
   named here and owned there.
+- **The one-time secret's lifetime and form.** Section 10.1 carries its three bounds and
+  the order of ten minutes. The rest is `weaver-web-Spec` section 10's, settled by the
+  enrollment's code act.
+- **Whether the one unauthenticated surface of section 10.3 reaches the browser
+  listener's sign-in page and a person's enrollment page**, which answer before a
+  session as built, or reads of the link alone. It is the operator's word.
+- **What the console does with the appliance that connected second**, and how it notices
+  a second holder of a certificate it issued. Settled by the enrollment's code act,
+  which writes the answer into `weaver-web-Spec` section 10, with the operator's review.
+- **Trust on first use**, the hazard of section 10.1. Settled by one first boot of the
+  sealed image, with the host key fingerprints it printed read from the machine's own
+  screen, which is the environment's (section 10.6).
+- **The console as the model store.** The model count or fleet size at which its cache
+  stops being tolerable. No measurement exists, because the fleet is one. Settled by a
+  measurement on a fleet larger than one.
+- **Where images are published for the console to find**, with their published hashes.
+  Later, and named as later. Settled by the operator's ruling of the place, which the
+  act that builds the image download needs.
+
+## 10. The appliance, the console's side
+
+On the operator's ruling of 2026-11-15, the appliance charter drafted for the suite on
+2026-11-14 (`toddwbucy/WeaverTools` pull request 30, unmerged) is recast in two. The
+environment inside an appliance becomes a Spec under `weaver-admin-PRD` in
+`toddwbucy/WeaverAgent`, written there, and the console's side is chartered here.
+**Every requirement in this section is the operator's ruling of 2026-11-14**, which that
+draft carries, with the operator's later rulings of the same day on how a document names
+the agent's bound and the deployment shape, and on the one-time secret on the pairing
+line. The section adds no ruling of its own. A question the rulings leave open is named
+in section 9, or in `weaver-web-Spec` section 10 where it is the Spec's.
+
+**Five terms carry one meaning each in this section.**
+
+- The **image** is the sealed disk image. One image exists for each version, and it is
+  published with its hash.
+- An **appliance** is a virtual machine an operator made from the image.
+- The **console** is the Weaver Web server, the operator's management surface for many
+  agents.
+- The **agent** is the bounded thing, the processes of one WeaverAgent under their own
+  UIDs.
+- The **WeaverAgent system** is everything installed to run and to bound that agent:
+  admin, the gate, the harness, the SPU, state management, and this crate's two
+  connectors.
+
+**The agent is bounded by the operating system under a UID**, as on any install. Where
+this section gives a privilege it names the component that holds it, and a privilege an
+operator gives the agent past what the WeaverAgent system needs is the operator's
+business and outside this charter. **The deployment shape is a recommendation and never
+a rule.** The suite recommends a machine given to one agent, a single-use machine or a
+virtual machine, and in the operator's words "the deployment shape is up to the
+operator. we just bring the board and the wires".
+
+### 10.1 Pairing
+
+**The console begins pairing, and the appliance makes the connection.** The appliance
+never listens for the console. It dials the console's link port, and the console
+listens, since to listen is a network service's work. Both connectors have kept that
+direction since 2026-10-01 (section 5), and pairing carries it to the first connection
+an appliance makes, so an appliance opens no port for the console at any point.
+
+**The console shows one line for the operator to run in the appliance over SSH.** The
+line carries the console's address, a one-time secret and the console's certificate
+fingerprint. The appliance dials, checks the fingerprint, presents the secret, hands
+over the public halves of keys it made itself, and receives its certificates. From then
+on every connection between the two is mutual TLS, and the secret is spent. **The reason
+is that trust has to be carried by hand once, in each direction.** The fingerprint lets
+the appliance know it reached this console before it says anything, and the secret lets
+the console know the party is the one the operator expected. No shared key or secret
+ships in the image to do this, so the line does it and nothing that every copy of the
+image carries does.
+
+**The one-time secret is the only secret that travels on a command line**, the single
+exception the operator accepts, in the operator's words of 2026-11-14: "a one-time use
+password on the line after that none". It is the exception because no other way to begin
+exists. **Three bounds hold it.** It is single-use. It is short-lived, on the order of
+ten minutes. It is bound to one pending enrollment the operator opened, so it cannot
+enroll an appliance the operator did not expect. Each bound narrows what a leaked line
+is worth: it is spent once, it expires in minutes, and it serves only the enrollment the
+operator is waiting on.
+
+**Trust on first use is a hazard to enrollment.** The operator's first SSH into an
+appliance trusts the host key it meets, so a wrong machine at the given address could be
+enrolled. The operator compares that host key with the fingerprints the appliance
+printed at its first boot, which the environment keeps (section 10.6). Section 9 names
+the cell.
+
+**This is an appliance's enrollment, and it is not a person's.** A person's enrollment,
+the one-time token that registers a first passkey (`weaver-web-Spec` section 2.13),
+keeps its name, and this charter and its Spec write "an appliance's enrollment" wherever
+the two could be confused.
+
+### 10.2 Keys, and a second holder
+
+**Each connector makes its own private key inside the appliance, and the key never
+leaves it.** The console signs the public half. Each appliance is meant to hold its own
+certificates, and the one case that breaks this is a machine cloned after its
+enrollment, below. **The reason** is section 5's standing rule that the server keeps
+fingerprints and never keys, carried one step further: the console never holds the
+private key at all, so no file carries one from the console to the machine. For an
+appliance this replaces the making of keys on the server at registration, the operator's
+ruling of 2026-10-01, and `weaver-web-Spec` section 8.2 says what stays, what is
+replaced and what coexists.
+
+**The console refuses a second live holder of a certificate it issued.** The console
+makes no machine, so an operator can clone a configured appliance and get two machines
+with one identity. Refusing the second keeps two agents from filing under one row. How
+far the built link meets this is `weaver-web-Spec` section 8.2's, and what the console
+does with the appliance that connected second is section 9's.
+
+### 10.3 The one unauthenticated surface, and the posture
+
+**An appliance's enrollment connection is the one unauthenticated surface of the
+console, and this charter names it as one.** It is the one connection the link port
+admits before its party is known, and its party proves itself with the one-time secret
+alone. The browser listener's sign-in page and a person's enrollment page also answer
+before a session, each to a proof of its own, a passkey or a one-time token, as built
+(`weaver-web-Spec` section 2.13). Whether the ruling's "one" reaches those two pages, or
+reads of the link alone, is section 9's.
+
+**The link is encrypted from its first act, the enrollment included**, as section 6
+says, and it is mutually authenticated from the end of the enrollment onward.
+
+**The posture.** The console is the operator's infrastructure and never faces the
+public, the operator's standing statement (`weaver-web-Spec` section 2.13). Its link
+port is reached by the appliances the operator places, and the enrollment surface admits
+a party before that party is known. That is why the secret carries three bounds. Where
+the console stands, and who can reach its ports, is the operator's choice, as the
+deployment shape is. This charter names no address of a machine and no rule of a
+firewall.
+
+### 10.4 Models, the image and storage
+
+**The console fetches models, and the appliance never reaches the internet.** The
+console offers four sources: a Hugging Face search limited to what the engine supports,
+a local store, an S3 bucket, and a list of recommended models that are known to work.
+**Every fetched model is pinned by exact revision and digest, and it is verified after
+download.** The model's bytes are a member of the deployment tuple that a replay names,
+which is why the pin is exact. Whether a fetch is the Models surface's import (section
+3.6) is section 9's. **Access tokens live in the console's store and never in an
+appliance**, so a credential for a source stays where the operator administers the
+console and reaches no machine an agent runs on.
+
+**The console keeps what it fetched, for other agents to use.** An appliance pulls a
+model from the console's cache over the same mutual TLS trust, and it checks the digest.
+That keeps the rule that an appliance only dials out, and one fetch serves every agent
+that declares the model. **The cost is stated.** The console becomes the model store,
+and on a network larger than one site that is a question of disk and of bandwidth that
+the console has to answer. Section 9 carries it.
+
+**The console offers the image for download, and it checks the hash of the image against
+the published hash before it hands the file over.** An image is the held object of a
+deployment tuple, named by its version and its hash, so a file that does not match its
+published hash is not that version. One image comes first, for KVM. Proxmox is out of
+scope on the operator's ruling of 2026-11-14 and is the first format named as later, and
+`toddwbucy/WeaverTools` issue 29 records one condition to settle then. Other formats are
+later and are named as later.
+
+**The WeaverAgent system checks storage at every load and reports to the console. It
+checks that each of the appliance's two mount points is a separate filesystem, and it
+reports the sizes. Where storage is not sufficient, the console says so and asks the
+operator to add storage.** The check runs at every load and not once at enrollment,
+because a state mount that went missing between two loads would otherwise put the trace
+into the sealed root. The console attaches and mounts nothing: the operator attaches the
+disks in the hypervisor and mounts them over SSH. The component that makes the check and
+the form of its report are the environment's (section 10.6), the report's way to the
+console is an ask upstream (section 8), and the sizes that count as sufficient are open
+(`weaver-web-Spec` section 10).
+
+### 10.5 Load and unload, and no hypervisor
+
+**Load and unload are the verbs of admin as built, and the console asks for them through
+admin-con** (`weaver-admin-PRD` section 4, `weaver-web-Spec` section 7.2). After a
+reboot the connectors come up and the console sees the appliance, and the agent stays
+unloaded until the console loads it: no autostart exists. To start and stop the agent is
+to load and unload it through admin, and the console's whole reach into an appliance is
+its two connectors.
+
+**An upgrade of an appliance is a change of the deployment tuple and is recorded as
+one.** State made under an older version is recorded as made under it and, from the load
+onward, as used under the newer version. The record is the run record's, an ask upstream
+(section 8), and how the console shows it is `weaver-web-Spec` section 10's.
+
+**What lets the operator tell a stopped service from a machine that is down is open, and
+it is the console's to show.** What the appliance exposes for it is settled when the
+first stop is run from the console (`weaver-web-Spec` section 10).
+
+**Weaver Web never touches a hypervisor**, per section 2, and nothing in this section
+reaches one. The console makes, starts, stops and destroys no machine, attaches no disk
+and maps no card. The console knows the agent and the hypervisor knows the machine, and
+neither reaches into the side of the other.
+
+### 10.6 What is held elsewhere
+
+Three bodies of the appliance are not this crate's. This crate builds against each once
+it is merged and carries none of its facts, so no location, mount, account or address of
+an appliance enters this repository.
+
+- **The environment**, a Spec under `weaver-admin-PRD` in `toddwbucy/WeaverAgent`: the
+  operating system and the driver of the image, SSH as the one way in, the first-boot
+  settings and the host key fingerprints printed at first boot, the two fixed mounts and
+  the storage check, the firewall table admin opens at load and closes at unload, and
+  the refusal of state that a newer version cannot read.
+- **The image build and its proof**, in `toddwbucy/WeaverTools`: the binaries compiled
+  inside the image from named commits, the seal, one image for each version with its
+  hash, and whether a rebuild can confirm an image.
+- **The evidence and the measurements**, `toddwbucy/WeaverTools` issue 28: what the
+  claim that an image holds a deployment tuple rests on, and what is owed before a Spec
+  relies on it.

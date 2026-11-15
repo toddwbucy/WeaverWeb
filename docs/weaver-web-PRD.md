@@ -1191,10 +1191,10 @@ state, and then a load is refused on the same test. An agent whose declaration e
 state runs on the model mount alone. **The refusal is admin's, at the load, on the
 operator's ruling of 2026-11-15, and the console renders admin's answer as it came**
 (`weaver-web-Spec` section 7.2). The check runs at every load and not once at
-enrollment, because a state mount that went missing between two loads would otherwise
-put the trace into the sealed root. The console attaches and mounts nothing: the
-operator attaches the disks in the hypervisor and mounts them over SSH. The form of the
-size report is WeaverAgent's (section 10.7), the report's way to the console is an ask
+enrollment, because the refusal is a load's: a required mount that is not a separate
+filesystem refuses that load. The console attaches and mounts nothing: the operator
+attaches the disks in the hypervisor and mounts them over SSH. The form of the size
+report is WeaverAgent's (section 10.7), the report's way to the console is an ask
 upstream (section 8), and the sizes that count as sufficient are open (`weaver-web-Spec`
 section 10).
 

@@ -67,3 +67,33 @@ hardening enters, which the hard boundaries keep out.
 The Executor reports the branch, the commits, the map from the source's sections to this
 repository's documents, every open cell left, and the check above. Push on the Planner's
 word only.
+
+## The amendment of 2026-11-15
+
+From the Planner, 2026-11-15, after the stack was opened, on the operator's rulings of
+that date. The act takes them in local commits on the stack, with no push until the
+Planner gives the word.
+
+- **The class.** The appliance is one deployment profile for a Weaver agent, beside the
+  host install and the Spark-class machine. A profile is neither a charter nor a Spec,
+  decides nothing about any component and binds no Spec, and what it asks lands in the
+  charters. The documents cite the operator's rulings by date and their own charter, and
+  cite neither the profile, the draft named above, nor the image build as authority.
+- **The stance**, carried into `weaver-web-PRD` section 10 as the operator ruled it.
+- **The wording.** An appliance's enrollment connection is the link's one
+  unauthenticated surface, and the browser's sign-in and person-enrollment pages are
+  named apart as pages that answer before a session exists. The sentence in
+  `weaver-web-PRD` section 2 that set production agents aside is replaced by the
+  operator's description of the console as management-plane software that never faces
+  the public.
+- **The rulings carried.** Nothing in this framework or the image autostarts the agent.
+  The trace's destination is a field the operator declares, a null sink included, and
+  its member is an ask on WeaverAgent. Ports a declaration opens are the operator's
+  arrangement. The connectors' keys live on the root disk, and a new image is a new
+  enrollment. A clone is a note in the Spec and nothing more. The run card records the
+  tuple as shipped. State is transferable, and nothing is claimed across versions.
+- **Withdrawn**: the claim that an appliance never reaches the internet.
+- **The term owed.** "Run card" is defined in no document, and the act coins no
+  definition. An open cell names the operator as the one who settles it.
+- **A conflict with a standing charter** goes back through the Planner to the operator,
+  listed and not resolved.

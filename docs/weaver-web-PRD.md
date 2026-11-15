@@ -185,11 +185,11 @@ owns it. Train draws its selection from it, builds the dataset from the selectio
 frontier-model or reviewer text enters a dataset. The adapter Train hands back is a piece
 of the declaration like any other: it enters through Declare and Provision at the load
 boundary, never by a path of its own into a running agent.
-**Where the operator sends the trace anywhere but a file on the agent's machine, no trace
-is kept for that agent**, on the operator's ruling of 2026-11-15 (section 10.6). The
-trace door then has nothing to serve, so Record, the live view and Train have nothing to
-read for that agent, and the console says that no trace is kept. That is the operator's
-choice.
+**Where the operator sends the trace anywhere but a file on the agent's machine, no
+trace is kept for that agent**, on the operator's ruling of 2026-11-15 (section 10.6).
+The trace door then has nothing to serve, so Record, the live view and Train have
+nothing to read for that agent, and the console says that no trace is kept. That is the
+operator's choice.
 
 The ten surfaces by stage. On the path: Compose is stage 1, Live is stages 3 and 4, and
 Measure, Open a trace and Stage are stage 6. The five on the list side feed a stage

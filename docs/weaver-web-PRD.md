@@ -998,6 +998,27 @@ this crate designs around the gap until it closes.
   10.5), and the trace's destination (section 10.6). No document of any repository
   defines it, and this charter coins no definition. What the console holds about a run
   as built is stated as fact in `weaver-web-Spec` section 10. Settled by the operator.
+- **The trace's destination against the declaration screens.** Section 10.6 carries the
+  operator's ruling of 2026-11-15 that where the trace goes is a field the operator
+  declares in Weaver Web. Section 3.0, on the operator's rulings of 2026-11-11, says the
+  trace is the record, not a component, declared on neither screen. Settled by the
+  operator.
+- **The trace's destination against the record.** Section 3.0, on the operator's ruling
+  of 2026-11-07 (#54), makes the trace the record of the whole lifecycle, which Observe
+  reads live and Diagnose and Train read landed. Under section 10.6 a null sink leaves
+  no landed record, and a sink off the machine, or none, leaves no trace door to read
+  live, since `weaver-admin-operator-contract` section 1 stands the door only for a file
+  sink. Settled by the operator.
+- **Declared ports against the connectors' network.** Section 10.3 carries the
+  operator's ruling of 2026-11-15 that ports opened by a declaration belong to the
+  operator's arrangement. Section 3.0 says the network belongs to the two connectors
+  alone, which `weaver-web-Spec` section 8.3 cites. Settled by the operator.
+- **The host install against the single-host install.** Section 10 names the host
+  install beside the Spark-class machine, on the operator's ruling of 2026-11-15. The
+  ruling of 2026-11-14 keeps the single-host install, with registration and its
+  handover, for the Spark class of machine alone (`weaver-web-Spec` sections 8.1 and
+  8.2). Open: whether the host install is that install, and whether registration serves
+  it. Settled by the operator.
 - **Trust on first use**, the hazard of section 10.1. Settled by one first boot of the
   sealed image, with the host key fingerprints read from the machine's own screen, which
   is not this crate's (section 10.7).
@@ -1017,9 +1038,11 @@ it asks of a component lands in that component's charter. This section is where 
 console's side lands. **Every requirement here is an operator's ruling, cited by its
 date**: the rulings of 2026-11-14 on the appliance, the operator's later rulings of that
 day on how a document names the agent's bound and the deployment shape and on the
-one-time secret on the pairing line, and the rulings of 2026-11-15. The section adds no
-ruling of its own. A question the rulings leave open is named in section 9, or in
-`weaver-web-Spec` section 10 where it is the Spec's.
+one-time secret on the pairing line, and the rulings of 2026-11-15. How the host install
+stands beside the single-host install that the ruling of 2026-11-14 keeps for the Spark
+class is section 9's, for the operator. The section adds no ruling of its own. A
+question the rulings leave open is named in section 9, or in `weaver-web-Spec` section
+10 where it is the Spec's.
 
 **The stance**, on the operator's ruling of 2026-11-15. The suite ships a tuple, and
 each operator produces tuples of the operator's own. The image is disposable and carries
@@ -1130,8 +1153,9 @@ enrollment surface admits a party before that party is known. That is why the se
 carries three bounds. Where the console stands, and who can reach its ports, is the
 operator's choice, as the deployment shape is. **Ports opened by a declaration belong to
 the operator's arrangement and are recorded on the run card**, on the operator's ruling
-of 2026-11-15, and section 9 holds the term. This charter names no address of a machine
-and no rule of a firewall.
+of 2026-11-15. Section 9 holds the term, and holds for the operator this ruling's
+conflict with section 3.0, which gives the network to the two connectors alone. This
+charter names no address of a machine and no rule of a firewall.
 
 ### 10.4 Models, the image and storage
 
@@ -1159,16 +1183,20 @@ scope on the operator's ruling of 2026-11-14 and is the first format named as la
 `toddwbucy/WeaverTools` issue 29 records one condition to settle then. Other formats are
 later and are named as later.
 
-**The WeaverAgent system checks storage at every load and reports to the console. It
-checks that each of the appliance's two mount points is a separate filesystem, and it
-reports the sizes. Where storage is not sufficient, the console says so and asks the
-operator to add storage.** The check runs at every load and not once at enrollment,
-because a state mount that went missing between two loads would otherwise put the trace
-into the sealed root. The console attaches and mounts nothing: the operator attaches the
-disks in the hypervisor and mounts them over SSH. The component that makes the check and
-the form of its report are WeaverAgent's (section 10.7), the report's way to the console
-is an ask upstream (section 8), and the sizes that count as sufficient are open
-(`weaver-web-Spec` section 10).
+**The WeaverAgent system checks storage at every load and reports the sizes to the
+console. Where storage is not sufficient, the console says so and asks the operator to
+add storage.** The model mount is required, and a load is refused where it is not a
+separate filesystem. The state mount is required only where the declaration elects
+state, and then a load is refused on the same test. An agent whose declaration elects no
+state runs on the model mount alone. **The refusal is admin's, at the load, on the
+operator's ruling of 2026-11-15, and the console renders admin's answer as it came**
+(`weaver-web-Spec` section 7.2). The check runs at every load and not once at
+enrollment, because a state mount that went missing between two loads would otherwise
+put the trace into the sealed root. The console attaches and mounts nothing: the
+operator attaches the disks in the hypervisor and mounts them over SSH. The form of the
+size report is WeaverAgent's (section 10.7), the report's way to the console is an ask
+upstream (section 8), and the sizes that count as sufficient are open (`weaver-web-Spec`
+section 10).
 
 ### 10.5 Load and unload, and no hypervisor
 
@@ -1207,9 +1235,11 @@ declares in Weaver Web**, on the operator's ruling of 2026-11-15. The field name
 on the state mount, a sink off the machine, or nowhere. **A null sink is legitimate**,
 and the run card records the choice, on the same ruling. The member that carries the
 declared destination to admin crosses `weaver-admin-operator-contract`, which is
-WeaverAgent's, and section 8 carries the ask. Where the field stands among this crate's
-surfaces, and what the console's pages show of an agent whose trace goes off the machine
-or nowhere, are `weaver-web-Spec` section 10's.
+WeaverAgent's, and section 8 carries the ask. **This requirement meets two sentences of
+section 3.0**, that the trace is declared on neither screen and that it is the record of
+the whole lifecycle, and section 9 holds both for the operator. Where the field stands
+among this crate's surfaces, and what the console's pages show of an agent whose trace
+goes off the machine or nowhere, are `weaver-web-Spec` section 10's.
 
 ### 10.7 What is not this crate's
 
@@ -1218,9 +1248,9 @@ it is merged and carries none of its facts, so no location, mount, account or ad
 an appliance enters this repository. None of them is cited here as authority, since
 every requirement above is an operator's ruling.
 
-- **The environment inside an appliance**: the operating system, SSH, the two mounts and
-  the storage check, and whether a newer version loads state made under an older one.
-  What of it runs or bounds the agent is the WeaverAgent system's, in
+- **The environment inside an appliance**: the operating system, SSH, the mounts and the
+  storage check, and whether a newer version loads state made under an older one. What
+  of it runs or bounds the agent is the WeaverAgent system's, in
   `toddwbucy/WeaverAgent`.
 - **The image's build and its proof** are in `toddwbucy/WeaverTools`: the binaries
   compiled inside the image from named commits, one image for each version with its

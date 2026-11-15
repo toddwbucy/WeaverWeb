@@ -5933,7 +5933,9 @@ None of it is built.
   10's.
 - **What coexists.** Registration and its handover stay the single-host install's path,
   for the Spark class of machine, on the operator's rulings of 2026-11-14 (sections 8.1
-  and 10). Both paths write the same row and the same two credentials.
+  and 10). Both paths write the same row and the same two credentials. How the host
+  install, which the operator's ruling of 2026-11-15 names beside the Spark-class
+  machine, stands to this path is the charter's section 9's, for the operator.
 - **What is open where the two meet**, each in section 10 with what settles it:
   - rotation of an enrolled appliance
   - rotation of the authority, which section 8 makes a re-registration of every agent.
@@ -6046,12 +6048,15 @@ model is an artifact of section 2.3.
 **The image download.** Where images are published for the console to find, and where
 their published hashes come from, are section 10's.
 
-**The storage report.** The report crosses from the WeaverAgent system through admin-con
-to the link, so its carrier at the box's seam is `weaver-admin-operator-contract`'s, and
-this document builds against the contract once it is merged. Which component makes the
-check, the form of the report, how it reaches the console, and where the console says
-that storage is not sufficient, are section 10's. So are the sizes that count as
-sufficient, which no ruling assigns to a document.
+**The storage report.** **A load whose model mount is not a separate filesystem is
+refused, and so is a load whose declaration elects state where the state mount is not
+one**, on the operator's ruling of 2026-11-15. The refusal is admin's, at the load, and
+renders as it came, as every refusal does (section 7.2). The report of the sizes crosses
+from the WeaverAgent system through admin-con to the link, so its carrier at the box's
+seam is `weaver-admin-operator-contract`'s, and this document builds against the
+contract once it is merged. The form of the report, how it reaches the console, and
+where the console says that storage is not sufficient, are section 10's. So are the
+sizes that count as sufficient, which no ruling assigns to a document.
 
 **Load and unload.** **Nothing in this framework or in the image autostarts the agent**,
 on the operator's ruling of 2026-11-15, and load and unload need no management of a
@@ -6712,11 +6717,12 @@ a `web-` assertion beside `weaver-admin`'s.
 - **The console as the model store, opened 2026-11-15** (section 8.3): the model count
   or fleet size at which its cache stops being tolerable. No measurement exists, because
   the fleet is one. Settled by a measurement on a fleet larger than one.
-- **The storage report, opened 2026-11-15** (section 8.3): which component makes the
-  check, the form of its report, how it reaches the console, and where the console says
-  that storage is not sufficient. The carrier at the box's seam is
-  `weaver-admin-operator-contract`'s, an ask upstream (`weaver-web-PRD` section 8).
-  Settled by that contract's amendment in `toddwbucy/WeaverAgent`, and then by this
+- **The storage report, opened 2026-11-15** (section 8.3): the form of the size report,
+  how it reaches the console, and where the console says that storage is not sufficient.
+  The refusal of a mount that is not a separate filesystem is admin's, at the load, on
+  the operator's ruling of 2026-11-15, and renders as it came. The carrier at the box's
+  seam is `weaver-admin-operator-contract`'s, an ask upstream (`weaver-web-PRD` section
+  8). Settled by that contract's amendment in `toddwbucy/WeaverAgent`, and then by this
   document. The sizes that count as sufficient are assigned to no document by any
   ruling, and the operator assigns them.
 - **Where images are published, opened 2026-11-15** (section 8.3), for the console to
@@ -6739,9 +6745,10 @@ a `web-` assertion beside `weaver-admin`'s.
   the field, which record keeps it, and what the agent's pages, the live view and the
   alerts of section 2.14 show where the trace goes off the machine or nowhere, since
   admin-con reads the trace only through the trace door, which
-  `weaver-admin-operator-contract` serves only for a file sink. Settled by that
-  contract's amendment in `toddwbucy/WeaverAgent`, an ask upstream (`weaver-web-PRD`
-  section 8), and then by the act that builds the field.
+  `weaver-admin-operator-contract` serves only for a file sink. The charter's section 9
+  holds, for the operator, the requirement's conflicts with the charter's section 3.0.
+  Settled, past those, by that contract's amendment in `toddwbucy/WeaverAgent`, an ask
+  upstream (`weaver-web-PRD` section 8), and then by the act that builds the field.
 - **The run card, opened 2026-11-15** (`weaver-web-PRD` sections 10.3, 10.5 and 10.6).
   The operator's rulings of 2026-11-15 name it as the record of the ports a declaration
   opens, of the tuple as shipped, and of the trace's destination, and no document of any

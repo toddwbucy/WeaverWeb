@@ -1360,7 +1360,9 @@ never a bare socket's. Each row carries:
   run's progress
 - **the two credentials**, each as the fingerprint of its client certificate
   and never the key, each with its plane, gate or admin, its state, live or
-  revoked, and the date the state was set. The posture is section 2.8's
+  revoked, and the date the state was set. Registration mints them (section
+  8), and for an appliance its enrollment signs them over public halves made
+  inside it (section 8.2). The posture is section 2.8's
   digest rule applied to a certificate: a read of this table is not a set of
   credentials anyone can present
 - **each connector's link state**, connected or not, with the date it last
@@ -5169,7 +5171,10 @@ credentials are revoked by it, as they are by any re-registration of a live
 box and name, so one agent never holds live credentials on two rows. **A
 credential is bound to one instance of this server**: it names the server
 whose authority signed it and no other, so moving an agent to another
-instance is a re-registration there rather than a copy.
+instance is a re-registration there rather than a copy. **For an appliance,
+an appliance's enrollment replaces this** (section 8.2): its connectors make their
+keys inside it and the server signs the public halves, so no key and no client config
+leaves the server for it.
 
 **The hello is refused before its roster is read when the credential is not
 live in the register.** A connection presents its certificate at the
@@ -5878,6 +5883,169 @@ WeaverAgent's layout of two connector accounts per box would change, waiting
 on `toddwbucy/WeaverAgent#533`'s merge, since no repository builds against
 an unmerged contract.
 
+### 8.2 An appliance's enrollment
+
+**An appliance's enrollment is how a machine made from the sealed image comes under the
+console**, chartered at `weaver-web-PRD` section 10 on the operator's rulings of
+2026-11-14 and 2026-11-15. This section states it to the level those rulings fix, from
+what the built link already holds. Where neither a ruling nor the built code fixes a
+point, section 10 carries it with what settles it. It is never a person's enrollment of
+section 2.13, and this document writes "an appliance's enrollment" wherever the two
+could be confused. Nothing in it is built yet.
+
+**How it stands against registration as built today:**
+
+- **What stays.** The register row of section 2.12 with every member, and its rule of
+  one live row per box and name. The authority, durable and never minted at start, which
+  signs every certificate. Fingerprints stored and never keys. Every rule of section 8
+  for a connection whose credential is live: the hello refused before its roster where
+  the credential is not live, identity by the certificate's binding, one connection per
+  credential, the heartbeat, the reconnect policy, the ceiling, the capabilities, and
+  revocation per credential, which closes the live connection. Revoke and retire on the
+  register page, as built. The server still never reaches an agent, since an enrollment
+  is the appliance dialing in.
+- **What it replaces, for an appliance.** Section 8's making of keys on the server at
+  registration and the two client configs that carry them to the machine, the operator's
+  ruling of 2026-10-01, with the register page's handover of those configs (section
+  2.13) and the staging tool's `handover` member, which an image already refuses
+  (section 8.1). No key and no client config leaves the console for an appliance, since
+  the console never holds the key.
+- **What coexists.** Registration and its handover stay the single-host install's path,
+  for the Spark class of machine, as sections 8.1 and 10 say on the operator's rulings
+  of 2026-11-14. Both paths write the same row and the same two credentials. Rotation of
+  an enrolled appliance, and whether a single-host install may enroll, are section 10's.
+
+**The pending enrollment.** The one-time secret is bound to one pending enrollment that
+the operator opened, so it cannot enroll an appliance the operator did not expect. It
+names one box and name, the members a register row requires (section 2.12, as built).
+**The row is written by the exchange and not at opening**, because a row holding no live
+credential is retired and never live again (section 2.12, as built), so a pending
+enrollment is held apart from the register until its exchange writes the row with both
+credentials live. Who opens one, where it is held, and what ends it besides its exchange
+and its expiry, are section 10's. Registration, the act it stands beside, is an admin's
+write (section 2.13).
+
+**The pairing line.** The console shows one line for the operator to run in the
+appliance over SSH, once, as every one-time value it shows is shown once (section 2.13).
+Its three members are ruled: the console's address, the one-time secret, and the
+console's certificate fingerprint. **The address is the link address `register` writes
+into a client config today**, `link_address` and else `link_listen` (section 8). **The
+fingerprint is of the authority's certificate**, the certificate every connector pins
+today (section 8). An enrolled appliance's connectors pin what every connector pins, so
+the line's fingerprint is what lets the appliance take that certificate from the
+exchange and pin it, and the server is then verified under the authority's persisted
+name as any connector verifies it. The program the line runs is section 10's.
+
+**The one-time secret.** The rulings fix three bounds: it is single-use, it is
+short-lived on the order of ten minutes, and it is bound to one pending enrollment. It
+is the only secret on a command line, the operator's single exception of 2026-11-15.
+**It is held as its digest alone**, as the session bearer and every token the server
+issues are held (sections 2.8 and 2.13), so a read of the store is not a secret anyone
+can present. Its exact lifetime, its length and its encoding on the line are section
+10's.
+
+**The exchange.** The appliance dials the link port and opens TLS under the console's
+certificate, which it checks against the line's fingerprint before it sends anything. It
+presents no client certificate, and **a connection that presents none is admitted to
+this exchange alone and never to a plane**. Section 8's refusal of a credential that is
+not live, before its roster is read, stands for every connection that presents one. Over
+that TLS the appliance presents the secret and two public halves, gate-con's and
+admin-con's, in one exchange: one single-use secret enrolls the pair, and the operator's
+ruling that both connectors match is why rotation is a pair (section 8). The console
+checks the secret against its pending enrollment, signs each half under the authority,
+bound to the row and its plane as registration binds a certificate, writes the row of
+section 2.12 with both fingerprints live, and answers the two certificates. The secret
+is spent. **Nothing crosses in the clear**, since the exchange is TLS from its first
+byte, so section 8's claim stands as written. The exchange writes the register, and
+every register write is audited (section 2.13), so it is audited too. Its principal is
+section 10's.
+
+**Each connector's key is made inside the appliance and never leaves it.** The console
+receives the public half alone, so the row's fingerprints are of certificates whose keys
+the console never held, and section 2.12's rule that the server holds fingerprints and
+never keys holds with nothing to forget. After the exchange each connector holds its
+key, its certificate and the authority's certificate, and every connection it makes is
+section 8's mutual TLS.
+
+**A second live holder is refused.** The ruling is that the console refuses a second
+live holder of a certificate it issued. As built, a second connection on a credential
+that is already connected is refused rather than replacing the first, and it is a line
+of the server's log (section 8). That refuses a clone while the first holder is
+connected. It does not tell a clone that connects while the first is down from the first
+itself, since both present one certificate, and a duplicate's refusal raises no alert,
+never having been admitted (section 2.14). What the console does with the appliance that
+connected second, and how it notices a second holder while the first is not connected,
+are section 10's, settled by this document as the appliance charter says.
+
+**The one unauthenticated surface.** The exchange is the console's one unauthenticated
+surface, named as one on the link: the one connection the link port admits with no
+client certificate, whose whole reach is the presentation of a secret and two public
+halves and whose whole answer is two certificates or a refusal. **It is named because a
+surface that admits a party before the party is known is where an attack begins**, so
+the code that builds it is held to reaching nothing else. The browser listener's
+pre-session pages, sign-in and a person's enrollment, stand as built, each to its own
+proof (section 2.13). Whether the charter's "one" reaches them is section 10's.
+
+**The posture.** The console is the operator's infrastructure and never faces the
+public, the operator's standing statement (section 2.13). Its link port is reached by
+the appliances the operator places, and the enrollment exchange admits a party before it
+is known. That is why the secret carries three bounds, and why the exchange reaches
+nothing but the presentation of one. Where the console stands, and who can reach its
+ports, is the operator's, and this document names no address of a machine and no rule of
+a firewall.
+
+### 8.3 What the console serves an appliance
+
+**The model store.** The console fetches models, and an appliance never reaches the
+internet, on the operator's ruling of 2026-11-14 (`weaver-web-PRD` section 10.4). It
+offers four sources: a Hugging Face search limited to what the engine supports, a local
+store, an S3 bucket, and a list of recommended models that are known to work. **A
+fetched model is pinned by exact revision and digest and verified after download.** The
+fetch lands on the console's own box, its identity is derived from its bytes by section
+2.3's rule, and a model whose derived identity is not its pin is refused and not kept.
+Its revision is its provenance, section 2.3's record of a download from a repository at
+a revision. **Access tokens live in the console's store and never in an appliance**, and
+none enters a frame, a record, a log line or an error, as a turn's text enters none
+(section 2.13). Every secret the store holds today is a digest, and a token must be
+presented as it is, so a token would be the first secret the store holds in a usable
+form. How it is held at rest is section 10's. **The console keeps what it fetched for
+other agents**, and an appliance pulls a model from that cache over the same mutual TLS
+trust and checks the digest, so it only dials out. Which component in the appliance
+pulls, over which connection, the layout of the cache and how an interrupted transfer
+continues, are section 10's. As built, a frame on the link is one line bounded at 4 MiB
+(`link::frames::LINE_BOUND`), so a model's transfer is not a frame on it.
+
+**The image download.** The console offers the image for download, and it checks the
+hash of the image against the published hash before it hands the file over, so a file
+whose hash differs is not handed over. One image comes first, for KVM. Proxmox is out of
+scope for now (`toddwbucy/WeaverTools` issue 29). Where images are published for the
+console to find, and where their published hashes come from, are later and named as
+later (section 10).
+
+**The storage report.** At every load the WeaverAgent system checks that each of the
+appliance's two mounts is a separate filesystem, and it reports the sizes to the
+console. Where storage is not sufficient, **the console says so on the agent's page and
+asks the operator to add storage**. The console attaches and mounts nothing. The
+component that checks, the form of its report and the sizes that count as sufficient are
+the environment's Spec's, under `weaver-admin-PRD` in `toddwbucy/WeaverAgent`, and how
+the report reaches the console waits on it (section 10). A load that admin refuses for
+state a newer version cannot read arrives as admin's refusal and renders as it came, as
+every refusal does (section 7.2).
+
+**Load and unload.** They are the verbs of admin as built, asked through admin-con
+(section 7.2). After a reboot the connectors come up and the console sees the appliance,
+and the agent stays unloaded until the console loads it. As built, the server's own asks
+are `show` alone (section 2.13), and `load` is asked only for a person whose grant
+carries it, through the page, so nothing in this crate starts an agent at an admission.
+How an appliance's connector instances come to be enabled after its enrollment, since
+the image enables none (section 8.1), is section 10's.
+
+**No hypervisor reach of any kind**, on the operator's ruling of 2026-11-14. No code
+path, configuration member or dependency of this crate reaches a hypervisor. The console
+makes, clones, starts, stops, snapshots, networks and destroys no machine, attaches no
+disk and maps no card. What it knows of an appliance is what the appliance's two
+connectors report.
+
 ## 9. What is enforced, and by which instrument
 
 | claim | instrument |
@@ -6414,3 +6582,64 @@ a `web-` assertion beside `weaver-admin`'s.
   2026-11-12, section 2.13's first records, outcomes and refusals and section
   2.14's raises, restorations, claims and back-offs, each one statement's
   flight, and the ruling that closes it here closes it there.
+- **The one-time secret's lifetime and form, opened 2026-11-15** (section 8.2). The
+  rulings fix it as single-use, short-lived on the order of ten minutes, and bound to
+  one pending enrollment, and the standing rule holds it as its digest. Open: the exact
+  lifetime, the secret's length, and its encoding on the line. Settled by the
+  enrollment's code act, with the operator's confirmation in review.
+- **The link port's default, opened 2026-11-15** (section 8.2). As built, `link_listen`
+  defaults to `127.0.0.1:8081`, a loopback address that no appliance on another machine
+  can dial, so an operator who enrolls appliances sets it, and the pairing line's
+  address follows `link_address`, else `link_listen`. The operator suggested a default
+  in the range 6000 to 7000, which the operator can change. Settled by the operator's
+  ruling of the number.
+- **The appliance that connected second, opened 2026-11-15** (section 8.2). As built, a
+  second connection on a credential that is connected is refused, as a line of the
+  server's log, and raises no alert. Open: whether the console raises an alert or
+  revokes on it, and how it notices a second holder while the first is not connected,
+  since both present one certificate. Settled by this document, as the appliance charter
+  says.
+- **The pending enrollment, opened 2026-11-15** (section 8.2): who opens one, where it
+  is held, and what ends it besides its exchange and its expiry. Registration is an
+  admin's write, and the register page holds one-time values in the server's memory
+  alone, five minutes and taken once (section 2.13), which is one precedent, and the
+  store is the other. Settled by the enrollment's code act.
+- **The program the pairing line runs, opened 2026-11-15** (sections 8.1 and 8.2), and
+  how each connector's key and config come to stand under that connector's own account.
+  Each connector makes its own key, and its config is its own account's at `0600`
+  (section 8.1). The line is run by the operator over SSH, and this repository holds one
+  privileged invocation, admin-con's sudo invoker, and no other (section 7.2). So which
+  process makes each key and writes each config, and how an appliance's connector
+  instances come to be enabled, is answered without a second privileged program in this
+  repository. Settled by the enrollment's code act, with the environment's Spec naming
+  the accounts.
+- **The exchange's audit principal, opened 2026-11-15** (section 8.2). The exchange
+  writes the register, and every register write is audited (section 2.13). Open: whether
+  its principal is the server acting on the pending enrollment or the admin who opened
+  it. Settled by the enrollment's code act.
+- **Rotation of an enrolled appliance, opened 2026-11-15** (section 8.2). As built,
+  rotation mints a pair on the server and writes two configs, which an enrolled
+  appliance's keys cannot take. Open: whether rotation is a new pending enrollment for
+  the same row. Settled by the enrollment's code act and the operator.
+- **Whether a single-host install may enroll, opened 2026-11-15** (section 8.2).
+  Registration and its handover stay its path (section 8.1). Settled by the operator's
+  ruling.
+- **Whether the one unauthenticated surface reaches the browser's pre-session pages,
+  opened 2026-11-15** (section 8.2). The ruling names an appliance's enrollment
+  connection the console's one unauthenticated surface. As built, the browser listener's
+  sign-in page and a person's enrollment page also answer before a session, each to its
+  own proof. Settled by the operator's word.
+- **Access tokens at rest, opened 2026-11-15** (section 8.3). A source's token is held
+  in the console's store in a usable form, the first secret the store would hold so.
+  Settled by the model store's act, with the operator's review.
+- **The model store's transfer, opened 2026-11-15** (section 8.3): which component in
+  the appliance pulls, over which connection, the layout of the cache, and how an
+  interrupted transfer continues. Settled by the model store's act.
+- **The console as the model store, opened 2026-11-15** (section 8.3): the model count
+  or fleet size at which its cache stops being tolerable. No measurement exists, because
+  the fleet is one.
+- **The storage report's carrier, opened 2026-11-15** (section 8.3): how the WeaverAgent
+  system's report reaches the console, and which sizes count as sufficient. Settled by
+  the environment's Spec under `weaver-admin-PRD`, and then by this document.
+- **Where images are published, opened 2026-11-15** (section 8.3), for the console to
+  find, with their published hashes. Later, and named as later.

@@ -22,6 +22,26 @@ The second: the pairing line carries the one-time secret on the line itself, the
 exception ("a one-time use password on the line after that none"), and Proxmox is out of
 scope as of that ruling (`toddwbucy/WeaverTools` issue 29).
 
+**The operator's answers of 2026-11-15, about 18:25Z**, relayed by the Planner, close
+most of the act's open cells. The act lands them in one commit:
+- The trace's destination is a field of the declaration page, set when the agent is
+  created. A file is one destination and `/dev/null` another, and what stands behind the
+  destination is the operator's. It amends the charter's "declared on neither screen"
+  for the destination alone, and the Spec's sink filled at Provision and its file-sink
+  ruling. Where the destination is not a file on the agent's machine, no trace is kept
+  for that agent, and the console says so. The field is the next act's to build, not
+  this act's.
+- An agent that elects no state, with a trace path on a missing disk: a destination that
+  cannot be opened refuses the load, admin's standing rule.
+- State and save points on an appliance are later, since the first production agent
+  keeps no state.
+- The Spark-class machine is later.
+- The run card is the operator's term for a JSON file, defined in the operator's paper,
+  which is in no repository as of 2026-11-15.
+
+Declared ports against the connectors' network stays an open cell for the operator, and
+nothing waits on it while no declaration can name a port.
+
 ## The act
 
 1. **The amendment to `weaver-web-PRD`**, a requirement and its reason for each.
@@ -49,9 +69,9 @@ scope as of that ruling (`toddwbucy/WeaverTools` issue 29).
    - Load and unload, asked through admin-con, with nothing that autostarts the agent.
      An upgrade moves state and model, and the run card records the tuple as shipped. No
      hypervisor reach of any kind.
-   - The trace's destination, a field the operator declares, a null sink included, with
-     its member an ask on WeaverAgent. Ports a declaration opens are the operator's
-     arrangement.
+   - The trace's destination, a field of the declaration page, a null sink included,
+     with its member an ask on WeaverAgent and the field itself the next act's. Ports a
+     declaration opens are the operator's arrangement.
 2. **The matching Spec sections**, to the level the rulings fix. Where a point is open
    (the secret's lifetime and form, the link port's default, which the operator
    suggested in the range 6000 to 7000, the cache layout), state it where a ruling or
@@ -64,8 +84,9 @@ scope as of that ruling (`toddwbucy/WeaverTools` issue 29).
 
 **Withdrawn:** the claim that an appliance never reaches the internet.
 
-**The term owed.** "Run card" is defined in no document, and the act coins no
-definition. An open cell names the operator as the one who settles it.
+**The term owed.** "Run card" is the operator's term, defined in a paper that is in no
+repository as of 2026-11-15, and the act coins no definition. Its open cell closes when
+the definition is placed.
 
 **A conflict with a standing charter** goes back through the Planner to the operator,
 listed and not resolved, and stands in the documents as an open cell naming the

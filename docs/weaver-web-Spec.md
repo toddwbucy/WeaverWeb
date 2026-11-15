@@ -3875,8 +3875,12 @@ pre-wired to, a wire is one ask and one return written in Python by the
 operator, and a function that makes several asks is a node the wires
 converge on. No page draws a wire or carries Python until then. **An agent
 is binaries by hash plus wires by hash**, and the screens render that card;
-**the trace is the record and not a component**, so it is declared on
-neither screen. The agent's edge, its two sockets and the two connectors
+**the trace is the record and not a component**, so neither screen
+declares a component for it. **Its destination is a field of this screen,
+set when the agent is created**, on the operator's ruling of 2026-11-15,
+which amends the rulings of 2026-11-11 for the destination alone
+(`weaver-web-PRD` section 10.6). The field is not built (section 10). The
+agent's edge, its two sockets and the two connectors
 outside it are not on this screen. **The screen is an admin's; the agent
 page shows its saved parts** to every holder of a grant on an agent of the
 lineage's name, the prompt by its length, its digest to an admin alone
@@ -4301,6 +4305,10 @@ read the document back**:
   by itself, by design**: the session, the trace sink, the gate's access
   rule and each binding's devices stay such comments, Provision's and
   start's to fill, and requiring the tunable values changes none of them.
+  **As built on 2026-11-15 the trace sink is such a comment, filled at
+  Provision** (`src/declaration/render.rs`). On the operator's ruling of
+  2026-11-15 the trace's destination is a field of this screen, and the act
+  that builds the field writes the member from it (section 10).
   A trailing block of comments lists what the grammar has no place for,
   each naming its interface question: each box's GPU requirement, and
   every box beyond the first. **A last block
@@ -4509,11 +4517,20 @@ through the trace door, the relay the agent's start step launches.** The
 trace crosses as NDJSON, one event per line, to a sink admin opens at load
 under root, per `weaver-admin-Spec` section 5, and the contract's section 3
 names a file as a conforming sink and the record behind it as the
-operator's own. **Per the operator's ruling of 2026-10-01, the agent's
-declaration names a `File` sink, root-owned and append-only**, and the
-reason that ruling gave still stands: a file sink loses nothing to an
-admin-con restart, a load needs nothing of this crate's to succeed, and the
-file is the durable record itself, so nothing needs teeing. **Per the
+operator's own. **A file is one destination an operator may choose, and
+`/dev/null` is another**, on the operator's ruling of 2026-11-15: the
+destination is a field of the declaration screen (section 6.1), what
+stands behind it is the operator's, and where it is not a file on the
+agent's machine the trace door has nothing to serve, so no trace is kept
+for that agent (`weaver-web-PRD` section 10.6). Section 8.3 says where
+WeaverAgent's documents as merged refuse a sink outside the agent's
+territory. **Where the operator
+chooses a file, the sink is root-owned and append-only**, per the
+operator's ruling of 2026-10-01, whose reason stands: a file sink loses
+nothing to an admin-con restart, a load needs nothing of this crate's to
+succeed, and the file is the durable record itself, so nothing needs
+teeing. What follows is the trace door where the destination is a file.
+**Per the
 operator's rulings of 2026-10-03, admin-con reads that file through the
 relay and never by a grant of its own**, per `weaver-admin-operator-contract`
 sections 1 to 3 and `weaver-admin-Spec` section 6. The relay runs beside the
@@ -4729,8 +4746,10 @@ error and never the outcome.
 **The acknowledged position lives for the life of a server process and is
 not persisted**, per the operator's ruling of 2026-10-01: the server's copy
 of the live trace is a live window and not a record, and durability stays
-on the agent's box, per the contract's section 3 and the file-sink ruling
-above. **The live trace has no durable copy here, and that is scoped to the
+on the agent's box where the destination is a file, per the contract's
+section 3 and the file sink above, and is the operator's where the
+destination is another (`weaver-web-PRD` section 10.6). **The live trace
+has no durable copy here, and that is scoped to the
 live trace**: series derived from the record reach this crate's store
 lawfully through `weaver-analysis-web-contract`, per section 7.3. A
 persisted position would outlive the events it names, since the server
@@ -5934,9 +5953,10 @@ None of it is built.
   10's.
 - **What coexists.** Registration and its handover stay the single-host install's path,
   for the Spark class of machine, on the operator's rulings of 2026-11-14 (sections 8.1
-  and 10). Both paths write the same row and the same two credentials. How the host
-  install, which the operator's ruling of 2026-11-15 names beside the Spark-class
-  machine, stands to this path is the charter's section 9's, for the operator.
+  and 10). Both paths write the same row and the same two credentials. The Spark-class
+  machine is later, on the operator's ruling of 2026-11-15, and with it how the host
+  install, which the same ruling names beside it, stands to this path (the charter's
+  section 9).
 - **What is open where the two meet**, each in section 10 with what settles it:
   - rotation of an enrolled appliance
   - rotation of the authority, which section 8 makes a re-registration of every agent.
@@ -5947,7 +5967,7 @@ None of it is built.
     the old row (section 2.12). A new image is a new enrollment, on the operator's
     ruling of 2026-11-15, so an upgrade that brings a new image meets this case.
   - the row's author member (sections 2.12 and 3.2), with the exchange's audit principal
-  - whether a single-host install may enroll
+  - whether a single-host install may enroll, later with the Spark-class machine
 
 **The pending enrollment.** The one-time secret is bound to one pending enrollment the
 operator opened, so it cannot enroll an appliance the operator did not expect. What a
@@ -6076,25 +6096,32 @@ server's own asks are `show` alone (section 2.13), and `load` is asked only for 
 whose grant carries it, through the page, so nothing in this crate starts an agent at an
 admission. How an appliance's connector instances come to be enabled after its
 enrollment, since the image enables none (section 8.1), is section 10's. **State is
-transferable, and an upgrade moves state and model**, on the same ruling.
-Reproducibility is claimed within one version on one hardware set. Nothing is claimed
-about it across versions. How the console shows an upgrade as a change of the deployment
-tuple, and what lets the operator tell a stopped service from a machine that is down,
-are section 10's.
+transferable, and an upgrade moves state and model**, on the same ruling, and state and
+save points on an appliance are later, on the operator's ruling of 2026-11-15, since the
+first production agent keeps no state. Reproducibility is claimed within one version on
+one hardware set. Nothing is claimed about it across versions. How the console shows an
+upgrade as a change of the deployment tuple, and what lets the operator tell a stopped
+service from a machine that is down, are section 10's.
 
-**The trace's destination.** The charter's requirement is a field the operator declares
-in Weaver Web that names where the agent hands its trace: a path on the state mount, a
-sink off the machine, or nowhere, a null sink being legitimate (`weaver-web-PRD` section
-10.6). The member that carries it to admin crosses `weaver-admin-operator-contract`, an
-ask upstream (`weaver-web-PRD` section 8). As merged, that contract names the sink in
-the agent's configuration, validated by admin at load, places it in the agent's
-territory whatever its kind, and serves only a file sink through the trace door (its
-sections 1 and 3). As built on this side, admin-con reads the trace only through that
-door (section 7.2), the register row records the door's state (section 2.12), and the
-door never gates a verb. Where the field stands among this crate's surfaces, and what
-the agent's pages show where the trace goes off the machine or nowhere, are section
-10's. So is its meeting with section 7.2's file-sink ruling and section 6.1's sink
-filled at Provision, which the operator settles.
+**The trace's destination.** The charter's requirement is a field of the declaration
+screen, set when the agent is created, naming where the agent hands its trace: a file,
+`/dev/null` or anywhere else the operator sends it, a null sink being legitimate
+(`weaver-web-PRD` section 10.6, on the operator's ruling of 2026-11-15). **The field is
+not built**: as built the declaration renders the trace sink as a comment filled at
+Provision (section 6.1), and the field is the next act's work (section 10). Where the
+destination is not a file on the agent's machine, the trace door has nothing to serve,
+so Record, the live view and Train have nothing to read for that agent, and the console
+says that no trace is kept. A destination that cannot be opened refuses the load,
+admin's standing rule, and the refusal renders as it came (section 7.2). The field
+writes the grammar's `trace-sink`, a file, a pipe or a socket (`weaver-types-Spec`
+section 2), validated by admin at load. As merged, `weaver-admin-operator-contract`
+places the sink in the agent's territory whatever its kind and serves only a file sink
+through the trace door (its sections 1 and 3), and admin refuses a declaration whose
+sink's directory is not the agent's territory (`weaver-admin-Spec` section 9). So
+`/dev/null` and a destination outside the territory wait on WeaverAgent's amendment, an
+ask upstream (`weaver-web-PRD` section 8). As built on this side, admin-con reads the
+trace only through that door (section 7.2), the register row records the door's state
+(section 2.12), and the door never gates a verb.
 
 **No hypervisor reach of any kind.** No code path, configuration member or dependency of
 this crate reaches a hypervisor. What it knows of an appliance is what the appliance's
@@ -6602,12 +6629,13 @@ a `web-` assertion beside `weaver-admin`'s.
   reports a card, so what checks the identifier against the card it names
   is open. A class's family is the capability table's word, so a report
   that names a card's family otherwise would need the table to map it.
-- **A host's reserved card, opened 2026-11-11** (section 6.1). The
-  operator's clarification is that a host may reserve a card for itself,
-  which then satisfies no requirement and belongs to no class. It is kept,
-  by the operator's choice of 2026-11-14, for the single-host install of
-  the Spark class of machine. Where the reservation is declared and how
-  start reads it are open; the declaration screen declares nothing of it.
+- **A host's reserved card, opened 2026-11-11** (section 6.1). The operator's
+  clarification is that a host may reserve a card for itself, which then satisfies no
+  requirement and belongs to no class. It is kept, by the operator's choice of
+  2026-11-14, for the single-host install of the Spark class of machine. Where the
+  reservation is declared and how start reads it are open, and the declaration screen
+  declares nothing of it. The Spark-class machine is later, on the operator's ruling of
+  2026-11-15, so this cell waits on it.
 - **The session parameters' starting values, opened 2026-11-12** (section
   6.1). The Planner's default: the maximum tokens per turn and the context
   capacity start empty in a new declaration's form, and the operator enters
@@ -6712,8 +6740,9 @@ a `web-` assertion beside `weaver-admin`'s.
   it, is refused, or takes the row's identity. Settled by the enrollment's code act and
   the operator.
 - **Whether a single-host install may enroll, opened 2026-11-15** (section 8.2).
-  Registration and its handover stay its path (section 8.1). Settled by the operator's
-  ruling.
+  Registration and its handover stay its path (section 8.1). Later with the Spark-class
+  machine, on the operator's ruling of 2026-11-15, which puts that machine out of scope
+  until one is had. Settled by the operator's ruling then.
 - **Access tokens at rest, opened 2026-11-15** (section 8.3). A source's token is held
   in the console's store in a usable form, the first secret the store would hold so.
   Open: how it is held at rest, and whether a frame, a record, a log line or an error
@@ -6750,44 +6779,44 @@ a `web-` assertion beside `weaver-admin`'s.
   hardware set and not across versions, and an upgrade that brings a new image is a new
   enrollment. An upgrade of an appliance is a change of the deployment tuple and is
   recorded as one (`weaver-web-PRD` section 10.5), and the run card records the tuple as
-  shipped. The record of an upgrade is WeaverAgent's, an ask upstream. Open: how the
-  console shows it. Settled by the act that reads WeaverAgent's member once it is
-  written.
+  shipped. The record of an upgrade is WeaverAgent's, an ask upstream, held. Open: how
+  the console shows it. Settled by the act that reads WeaverAgent's member once it is
+  written. What of it waits on state is later, on the operator's ruling of 2026-11-15
+  that state and save points on an appliance are out of scope until the first production
+  agent, which keeps no state, works from the console.
 - **A stopped service against a machine that is down, opened 2026-11-15** (section 8.3).
   Open: what the appliance exposes so that the operator can tell the two apart, an ask
   upstream (`weaver-web-PRD` section 8), and how the console shows it. Settled when the
   first stop is run from the console.
-- **The trace's destination, opened 2026-11-15** (section 8.3). The charter requires a
-  field the operator declares in Weaver Web, naming a path on the state mount, a sink
-  off the machine, or nowhere (`weaver-web-PRD` section 10.6). Open: which surface holds
-  the field, which record keeps it, and what the agent's pages, the live view and the
-  alerts of section 2.14 show where the trace goes off the machine or nowhere, since
-  admin-con reads the trace only through the trace door, which
-  `weaver-admin-operator-contract` serves only for a file sink. The charter's section 9
-  holds, for the operator, the requirement's conflicts with the charter's section 3.0.
-  Settled, past those, by that contract's amendment in `toddwbucy/WeaverAgent`, an ask
-  upstream (`weaver-web-PRD` section 8), and then by the act that builds the field.
-- **The trace's destination against the file-sink ruling, opened 2026-11-15** (sections
-  6.1, 7.2 and 8.3). Section 7.2 states the operator's ruling of 2026-10-01 that the
-  agent's declaration names a `File` sink, root-owned and append-only, the file being
-  the durable record itself, and states it again where the live trace has no durable
-  copy here. Section 6.1 makes the trace sink a member the declaration screen does not
-  declare, written as a comment that Provision fills (as built,
-  `src/declaration/render.rs`). The operator's ruling of 2026-11-15 makes the
-  destination a field the operator declares in Weaver Web, a sink off the machine or
-  none included (`weaver-web-PRD` section 10.6), which meets all three. None of that
-  standing text changes until the operator rules. Settled by the operator.
+- **The trace's destination field, opened 2026-11-15** (sections 6.1, 7.2 and 8.3), the
+  next act's work. On the operator's ruling of 2026-11-15 the destination is a field of
+  the declaration screen, set when the agent is created: a file, `/dev/null` or anywhere
+  else the operator sends it (`weaver-web-PRD` section 10.6). As built on 2026-11-15 the
+  declaration renders the trace sink as a comment filled at Provision
+  (`src/declaration/render.rs`). Open: the field's form, which record keeps it, and how
+  the agent's pages, the live view and the alerts of section 2.14 say that no trace is
+  kept where the destination is not a file on the agent's machine. Settled by the next
+  act, which builds the field. The field writes the grammar's `trace-sink`
+  (`weaver-types-Spec` section 2). `/dev/null` and a destination outside the agent's
+  territory wait on WeaverAgent's amendment, since as merged admin refuses a sink whose
+  directory is not the agent's territory (`weaver-admin-Spec` section 9), an ask
+  upstream (`weaver-web-PRD` section 8).
+- **The trace's destination against the file-sink ruling, closed 2026-11-15** by the
+  operator: a file is one destination an operator may choose and `/dev/null` is another,
+  and what stands behind the destination is the operator's. Sections 6.1 and 7.2 say so,
+  each citing the ruling.
 - **The run card, opened 2026-11-15** (`weaver-web-PRD` sections 10.3, 10.5 and 10.6).
-  The operator's rulings of 2026-11-15 name it as the record of the ports a declaration
-  opens, of the tuple as shipped, and of the trace's destination, and no document of any
-  repository defines it. As built on 2026-11-15, the console holds four things about a
-  run. The first is the run's row of section 2.2, landed by ingest, with the conditions
-  its record names. The second is the register row of section 2.12, with the declared
-  tuple as the agent's side last reported it, the load state, the source of each, the
-  ceiling, the run's constituents as the last `show` named them, the trace door's state,
-  and a transition standing beside the last state. The third is the versioned
-  declarations of sections 2.4 and 6.1, and the fourth is the audit's record of each
-  verb and its outcome (section 2.13). The nearest standing use of "card" is the
+  The term is the operator's, for a JSON file, defined in the operator's run card paper
+  (v1.4), which is in no repository as of 2026-11-15. The operator's rulings of
+  2026-11-15 name it as the record of the ports a declaration opens, of the tuple as
+  shipped, and of the trace's destination. As built on 2026-11-15, the console holds
+  four things about a run. The first is the run's row of section 2.2, landed by ingest,
+  with the conditions its record names. The second is the register row of section 2.12,
+  with the declared tuple as the agent's side last reported it, the load state, the
+  source of each, the ceiling, the run's constituents as the last `show` named them, the
+  trace door's state, and a transition standing beside the last state. The third is the
+  versioned declarations of sections 2.4 and 6.1, and the fourth is the audit's record
+  of each verb and its outcome (section 2.13). The nearest standing use of "card" is the
   charter's section 3.0, where an agent is binaries by hash plus wires by hash and "the
   two screens are a rendering of that card". Which of them, if any, carries the run card
-  is not elected here. Settled by the operator, who defines the term.
+  is not elected here. Closes when the operator's definition is placed in a repository.

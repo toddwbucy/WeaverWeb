@@ -3022,12 +3022,16 @@ CDN host for an LFS file and to a relative path for a file kept in git (both mea
 redirect names. Whether the account may fetch a gated repository is read from a `HEAD`
 of one of its files through the commit, its redirect not followed: Hugging Face refuses
 a gated file the account lacks with `x-error-code: GatedRepo`, and the console shows
-the repository's page, where the terms are accepted, and a check again.
+the repository's page, where the terms are accepted, and a check again. **The client
+reads no proxy from the environment**: reqwest reads `HTTP_PROXY`, `HTTPS_PROXY` and
+`ALL_PROXY` whatever its features, and the client speaks to its one fixed endpoint
+directly, so the token reaches no host the operator did not name.
 
 **A pull is one row, and each of its files another** (migration `0025`). The pull's row
 names its identity, `mp-` and sixteen lowercase hex, the repository, the commit, the
 account's name as `whoami-v2` gave it, the person who asked, when it was asked and when
-it finished, and its state, `running`, `verified` or `failed` with its reason. Each
+it finished, and its state, `running`, `verified`, `failed` with its reason, or
+`cancelled` naming the admin who cancelled it. Each
 file's row names its path, its size, its SHA-256, its git blob id, the bytes done and
 its source, `downloaded` or `found`. That is the rulings' record: the repository, the
 commit, every file's SHA-256 and size, the account that pulled and the time. Hugging
@@ -3037,14 +3041,23 @@ asks a pull, audited with the target kind `model_pull`, through the connected ac
 or, with none connected, with no token, as a public repository allows. **A pull asked
 through an account never runs without its token**: where the account is disconnected or
 replaced, or its seal no longer opens, the pull fails saying so before any request.
-**One pull runs at a time**, file after file, since a pull of one model fills the link
-alone and one at a time keeps the free-space check true. An ask while a pull runs is
-refused and names the pull that runs, of the same repository and commit or of another,
-so the page can show it. A pull running when the server stops resumes at the next start.
-The Hugging Face page's section on the cache shows whether `model_cache` is set, its
-free space, and the latest twenty pulls with their record and progress, re-fetched every
-15 s through the session's background read. The models page that asks a pull is a later
-act's.
+**The account is read again before each file and before each retry**, so a pull whose
+account is disconnected or replaced while it runs stops there and fails saying so. **An
+admin cancels a running pull** on the Hugging Face page (`POST
+/admin/hugging-face/pulls/{mp}/cancel`), in the admin writes' order of section 2.13,
+audited with the target kind `model_pull`: the identity is parsed to its `mp-` shape, a
+pull no one knows is not found and one that has ended is the ask's fault, each recorded
+nowhere, and the write ends the pull `cancelled`, naming the admin. The running file
+stops at its next read or wait, and **its partial stays**, so a later pull of the same
+file resumes from it by range. A blob's check or a partial's hash already under way
+finishes first. **One pull runs at a time**, file after file, since a pull of one model
+fills the link alone and one at a time keeps the free-space check true. An ask while a
+pull runs is refused and names the pull that runs, of the same repository and commit or
+of another, so the page can show it. A pull running when the server stops resumes at the
+next start. The Hugging Face page's section on the cache shows whether `model_cache` is
+set, its free space, and the latest twenty pulls with their record and progress, a
+running pull with its cancel, re-fetched every 15 s through the session's background
+read. The models page that asks a pull is a later act's.
 
 **The cache is the directory `model_cache` names**, optional and with no default. Unset,
 a pull is refused and the page says why. Set, the server refuses to start where it is
@@ -3060,7 +3073,9 @@ no Hugging Face tool is needed on the machine:
 - `models--<owner>--<name>/blobs/<id>`, where `<id>` is the SHA-256 for an LFS file and
   the git blob id for a file kept in git, and `<id>.incomplete` beside it while the file
   downloads
-- `snapshots/<commit>/<path>`, a relative symbolic link to its blob
+- `snapshots/<commit>/<path>`, a relative symbolic link to its blob, written under a
+  random name beside its place and renamed over it, so a reader meets the old link or
+  the new, and no file of a fixed name the repository holds is replaced by the staging
 - no `refs/`, since the console reads by commit and a branch's ref would move what
   another tool on a host reads as that branch
 - no lock file, since the pulls are serialized and on a host the console is the only
@@ -3075,18 +3090,22 @@ no Hugging Face tool is needed on the machine:
    no `..`, no absolute path, no empty component, no NUL. A refusal comes before any
    write.
 2. Where the file's blob stands and hashes to the expected identity, the file is
-   recorded as found and not fetched, and its snapshot's link is written where it is
-   missing, so a blob another snapshot of the repository holds serves. A blob that does
-   not hash to it is not trusted and is fetched again.
-3. The free space is checked against the bytes that remain. Too little refuses before
-   any byte, and the page says how much is needed.
+   recorded as found and not fetched, and its snapshot's link is written again, so a
+   blob another snapshot of the repository holds serves. A blob that does not hash to it
+   is not trusted and is fetched again.
+3. The free space is checked against the bytes this run has yet to write: the file at
+   hand and the files after it, each less what its partial holds, a later file whose
+   blob stands at its size counting nothing, since step 2 finds it. A file verified
+   earlier in the run is not counted again. Too little refuses before any byte, and the
+   page says how much is needed.
 4. The file is fetched through the commit, following the redirect, with `Authorization`
    sent to `huggingface.co` alone.
 5. `<id>.incomplete` is opened without following a symbolic link and written while it is
    hashed. An interrupted file resumes by range, after the bytes already on disk are
-   hashed again. A read that brings no byte within 60 s is a stall. A stall or a cut is
-   retried by range after a pause of 5 s times the setbacks so far, and the sixth
-   setback fails the pull.
+   hashed again, and a server that answers the range with the whole body restarts the
+   file from its first byte. A read that brings no byte within 60 s is a stall. A stall
+   or a cut is retried by range after a pause of 5 s times the setbacks so far, and the
+   sixth setback fails the pull.
 6. The digest is compared. Only a match renames the file to `<id>` and links the
    snapshot. A mismatch removes the partial and fails the pull with its reason.
 
@@ -6425,12 +6444,17 @@ two connectors report.
 | each reported member reads equal, differs or not in this report, by the shape its source names, a state election by the first entry for each kind, and an absence is set beside the report as the agent reads it | `each_member_reads_equal_differs_or_not_in_this_report`, `an_absence_is_set_beside_the_report_as_the_agent_reads_it`, `a_kind_named_again_whose_first_entry_is_declared_reads_equal` and `a_kind_named_again_whose_first_entry_is_not_declared_differs` in `src/declaration/reported.rs`: read a state election's kinds in their order or a path named twice twice, compare a state election by its words, or show a difference between two elections that read alike by those words, read a null member as reported, read the tee's election in `show`'s spelling, read any engine or turn context word, or swap a difference's two sides, and the first fails; read an absent turn context as independent, an absent surprisal as true, an absent residual readout as false or an absent state election as the other default, and the second fails; keep every entry of a kind named again, and `a_kind_named_again_whose_first_entry_is_declared_reads_equal` fails; keep its last entry rather than its first, and that test and `a_kind_named_again_whose_first_entry_is_not_declared_differs` fail; drop the words that say the kind was named again, and both fail (16 cases, each caught) |
 | the agent page sets what the agent reports beside the declaration saved under its name, to every grant holder, never says which version the agent was loaded from, and fails by itself where its head does not read or a read inside it fails | perturbation in `src/declare_pane_tests.rs`: change the empty state's sentence, or offer a new declaration to every reader or to none, and `with_no_declaration_saved_the_pane_says_so` fails; give the screen's link to every reader or to none, mark a reported part with no load as never reported or the reverse, read the pane for an admin alone, name the lineage's root for its head, or show the declared value as the verdict, and `a_saved_declaration_with_no_load_shows_its_parts` fails; never compare the decoder, drop the sentence that a difference may only mean an older version, plant "loaded from", or read a load event as `show`'s answer, and `a_load_the_agent_reports_is_set_beside_the_head` fails; read a tuple of no named source as `show`'s, or say it is no load, and `a_load_whose_source_the_row_does_not_name_is_set_beside_nothing` fails; show the prompt's text or its length in bytes, render its digest for a person who is not an admin, or for no one, and `the_prompt_is_shown_by_its_length_and_its_digest_to_an_admin_alone` fails; drop the name, the row's own identity or the live credential from the others' filter, show a person every row of the register, or never render the others, and `the_other_rows_of_the_name_are_listed_as_far_as_the_reader_may_see` fails; say the same declaration stands behind the other rows whatever the head, or say none is saved under the name where the head could not be read, and `the_other_rows_claim_only_what_was_read_of_the_head` fails (27 cases); panic where a head does not read, say it reads, or give its screen's link to every reader, and `a_head_that_does_not_read_fails_in_the_pane_alone` fails; offer a new declaration on an unread head or say none is saved, read unread others as none or never render their sentence, or show an unread author as nothing, and `a_read_that_fails_inside_the_pane_is_stated_there` fails; read a failed lookup as none saved, fault the page on it, or lead the way back to a new declaration, and `a_head_lookup_that_fails_leaves_the_agent_page_standing`; read the head by the parse alone, and `a_head_saved_with_the_withdrawn_placement_reads_in_the_pane` fails (12 cases); each caught |
 | a person without an admin grant causes no request to Hugging Face | perturbation in `src/hugging_face_tests.rs` against a fake Hugging Face: check the token before the admin gate, and the fake counts a request from a person holding no admin grant |
-| the Hugging Face token is held sealed and enters no page, log line, audit record or error | perturbation in `src/hugging_face_tests.rs`: store the token as given, and the row's columns carry its bytes |
+| the Hugging Face token is held sealed and enters no page, log line, audit record or error | perturbation in `src/hugging_face_tests.rs`: store the token as given, and the row's columns carry its bytes. In `the_token_enters_no_audit_row_log_line_page_or_error`, every log line at every level captured: log the token in a connect, and the capture holds it. Echo it in a refused connect's answer, and the body holds it. Write it into the refusal's record, and the audit holds it. In `src/model_pull_tests.rs`, `a_pull_carries_its_token_into_no_log_line_page_or_error`: log the token in the puller's fetch, or write it into a failed pull's reason, and the capture holds it. Each capture holds a second dispatcher, since with one scoped dispatcher alone tracing-core 0.1.36 takes a callsite's interest from the first thread that meets it |
 | `Authorization` goes to `huggingface.co` alone | perturbation in `src/model_pull_tests.rs` against a fake Hugging Face and a fake CDN on a second listener: send the header on every hop, and the CDN listener sees it |
 | every download names the commit and never a branch | perturbation in `src/model_pull_tests.rs`: let an ask name a branch, and the store's check on the pull's commit refuses its row where the test expects the ask's refusal before any row. The fake answers a 40-hex commit alone, and every request it sees names the commit |
 | no file takes its blob's name before its digest matches | perturbation in `src/model_pull_tests.rs`: rename before the compare, and a body whose digest differs stands under the blob's name |
 | a repository's file names write nothing outside `model_cache` | perturbation in `src/model_pull_tests.rs`: let the path check pass a `..` component, and the ask is taken where the test expects its refusal before any row. The cache's own walk refuses a `..` directory component as a second guard (`src/hugging_face/cache.rs`) |
-| a pull asked through an account never runs without its token | perturbation in `src/model_pull_tests.rs`: let a seal that does not open run the pull without a token, and the fake Hugging Face is asked for the file |
+| a pull asked through an account never runs without its token | perturbation in `src/model_pull_tests.rs`: let a seal that does not open run the pull without a token, and the fake Hugging Face is asked for the file. Read the account once at the run's start, and a pull whose account is disconnected during a stall asks its retry, and one whose account is replaced while its first file downloads asks Hugging Face for the next file |
+| the free space is checked against what the run has yet to write | perturbation in `src/model_pull_tests.rs` against a disk with room for the model and the config exactly: count every file unverified when the run began, and the config's check counts the model again and fails the pull. Count a later file whose blob stands, and a commit whose model the cache holds fails on the config |
+| a server that answers a range with the whole body restarts the file | perturbation in `src/model_pull_tests.rs`: keep the progress mark where the bytes reset, and after a cut the puller panics on the first chunk of the whole body (a debug build), the pull left running |
+| an admin's cancel stops the running pull and keeps its partial | perturbation in `src/model_pull_tests.rs`: drop the puller's signal, and a pull stalled past any wait holds the puller, so the next ask of the file never runs. `a_cancel_takes_the_admin_writes_order` holds the parse, the gate's one record, and the unknown and ended pulls recorded nowhere |
+| the Hugging Face client reads no proxy from the environment | perturbation in `tests/hugging_face_proxy.rs`, a test binary of its own: drop `.no_proxy()`, and with the proxy variables naming a port where nothing listens, a request to the fake fails to connect |
+| a snapshot's link never replaces a file the repository holds | perturbation in `src/hugging_face/cache.rs`'s tests: stage the link under a fixed name beside its place, and a repository file of that name loses its link |
 
 **A watch that cannot fail is not a test.** For each perturbation above, the
 act that lands it states what removal makes it fail and confirms it does.

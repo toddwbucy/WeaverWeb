@@ -52,9 +52,13 @@ mod passkeys_tests;
 #[cfg(all(test, feature = "passkeys"))]
 mod reading_tests;
 #[cfg(all(test, feature = "passkeys"))]
+mod setup_tests;
+#[cfg(all(test, feature = "passkeys"))]
 mod sign_in_tests;
 #[cfg(all(test, feature = "passkeys"))]
 mod sign_in_token_tests;
+#[cfg(all(test, feature = "passkeys"))]
+mod ssh_key_tests;
 pub mod stage;
 #[cfg(test)]
 mod stage_tests;

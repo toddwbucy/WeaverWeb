@@ -524,6 +524,15 @@ async fn serve(cfg: Arc<ServerConfig>) -> anyhow::Result<()> {
                 puller,
             }),
         ))
+        // **Declare's path, the start page and the setup pages, and the
+        // operator's SSH keys** (Spec 6.2): an admin's, drawn from the store
+        // and the config alone, reaching no agent and no box.
+        .merge(weaver_web::surfaces::script_policy(
+            weaver_web::surfaces::setup::routes(weaver_web::surfaces::setup::Seams {
+                policy: policy.clone(),
+                cfg: cfg.clone(),
+            }),
+        ))
         // **The register of agents through the server** (Spec 2.13): the
         // two client configs a write mints wait in this process's memory
         // alone, so a restart drops any not taken.

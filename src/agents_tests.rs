@@ -51,7 +51,10 @@ impl Drop for Rig {
     }
 }
 
-fn server_config(dir: &std::path::Path, link: std::net::SocketAddr) -> crate::config::ServerConfig {
+pub(crate) fn server_config(
+    dir: &std::path::Path,
+    link: std::net::SocketAddr,
+) -> crate::config::ServerConfig {
     crate::config::ServerConfig {
         listen: "127.0.0.1:0".into(),
         link_listen: "127.0.0.1:0".into(),
@@ -109,7 +112,7 @@ async fn rig_of(handover: Handover, silence: Duration) -> Option<Rig> {
     let agents = gate::guard(
         crate::surfaces::script_policy(routes(Seams {
             policy: policy.clone(),
-            cfg,
+            cfg: cfg.clone(),
             authority: authority.clone(),
             handover: handover.clone(),
         }))
@@ -149,10 +152,23 @@ async fn rig_of(handover: Handover, silence: Duration) -> Option<Rig> {
         .with_state(fresh.store.clone()),
         policy.clone(),
     );
+    // **The start page, the setup pages and the SSH keys' page**, for the
+    // bar's tests and the start page's New agent.
+    let setup = gate::guard(
+        crate::surfaces::script_policy(crate::surfaces::setup::routes(
+            crate::surfaces::setup::Seams {
+                policy: policy.clone(),
+                cfg: cfg.clone(),
+            },
+        ))
+        .with_state(fresh.store.clone()),
+        policy.clone(),
+    );
     let app = app(&fresh.store, Some(passkeys()))
         .merge(agents)
         .merge(reading)
-        .merge(hugging_face);
+        .merge(hugging_face)
+        .merge(setup);
     Some(Rig {
         fresh,
         dir,

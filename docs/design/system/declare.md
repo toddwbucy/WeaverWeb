@@ -1,10 +1,25 @@
-# Declare: two screens
+# Declare: the setup pages
 
-Declare is a loop builder in two steps, on the operator's rulings of 2026-11-11. On the first screen the operator declares the components: which models, on which GPUs, which store, which gate. On the second, the board, the operator wires them, and the board shows only what was declared. The first screen is specified in Spec section 6.1; the board is unbuilt and waits on contracts WeaverAgent has yet to write. An agent is binaries by hash plus wires by hash, and the two screens are a rendering of that card. The trace is the record and not a component, so neither screen declares it.
+Declare is a start page, the setup pages and the build page, on the operator's rulings of 2026-11-16 (setup pages) and their addendum, which replace the two screens of the rulings of 2026-11-11 as the stage's path. The start page asks the agent's name. The setup pages run the pairing, the models, the drives, the placement and the confirmed deployment tuple, in that order, on their addendum. The build page holds the board, where the operator wires what was declared and sees only that, and the prompt tuple panel, both held. Spec section 6.1 carries the pages. An agent is binaries by hash plus wires by hash, and the setup pages and the board are a rendering of that card. The trace is the record and not a component, so no page declares it.
 
-## The declaration screen
+## The setup pages
 
-The screen is a form of panes, under the pane grammar every surface uses, and never a canvas. Nothing on it is dragged or placed.
+None of the pages is built. The act that builds them ends at the confirm page, a confirmed deployment tuple, so the first agent can be declared and set up through Confirm, and a load refuses it until the prompt tuple carries the six sampling values. Every page is panes under the pane grammar, each pane carrying its stage, its backing and its status, healthy states included.
+
+- **Before the start page**, the console connects the operator's Hugging Face account once, as a console setting. The setting accepts a read-only or a read-write token, and the console never writes to Hugging Face except on an explicit push in Train.
+- **The start page** asks the agent's name, one field.
+- **The pairing.** The page shows the box waiting, which dialed this server from its setup. The operator compares the fingerprint the box shows with this server's own and enters the short one-time code the box shows, and the running report of the box's survey follows. A checkbox says whether the box is a virtual machine or a host, and the page warns where the address is localhost and the checkbox says virtual machine.
+- **The models.** A Hugging Face repository, then a pick from its files, a split model shown as one choice with all its parts, and the precision read from the file. Hugging Face is the one source, and a local source is later. What the first agent does not need, extra models, adapter roles beyond the one decoder adapter, a classifier-only agent and placement on the CPU, is drawn and marked unbuilt, never live, so a page never accepts what a load refuses.
+- **The drives.** On an appliance, once the model is picked, the page shows the command to run at the appliance's console, which starts its drive setup, then the state drive, at least 10 GB, and the models drive, sized from the chosen files, as the box mounted them at the state mount and the models mount. On a host, which attaches and formats nothing, the page shows the state directory and the models directory the operator named, with free space against the need, on the operator's addendum. The models directory is prefilled with that user's default Hugging Face cache, so models already pulled there are found. The host form is drawn and marked unbuilt, since the host's own script is later.
+- **The placement.** Each model on a device, and the context length chosen against the model's maximum, read from the file's header. The fit is called planned, from the room plan without a load, since only a load measures. "In shard order" names the layer split across cards and says so.
+- **Confirm.** The deployment tuple in full: the model's repository, commit and per-part digests, the adapter likewise, the image version, the driver, the cards by identity, the guest CPU, the machine, the drives, the placement and the context length. Confirm goes to the build page.
+- **The build page** is a one-pane stub marked unbuilt until the board and the prompt tuple panel come.
+
+One unit, GiB, serves every size in the flow.
+
+## The declaration screen, as built
+
+The declaration screen of the rulings of 2026-11-11 is built and stands until the setup pages' act recuts Declare (Spec 6.1). The screen is a form of panes, under the pane grammar every surface uses, and never a canvas. Nothing on it is dragged or placed.
 
 - **The agent pane** holds the name, which names the lineage and never changes within it.
 - **One pane per SPU box.** A box stands for the models it holds: four models declared apart are four boxes, one decoder with its adapter is one box, and the operator chooses which. Each model row carries its function from the roster the framework charters (the decoder, exactly one; the classifier, optional), its artifact, its format and, on a decoder, its adapter. GGUF is the one format offered; the others are named as later and not offered. The box's GPU requirement sits in the box's pane: a card, a class (a family the capability table knows, or a list of models; the form typed is kept), or a pair in shard order. Start satisfies the requirement or refuses; it never substitutes.

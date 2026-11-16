@@ -2,9 +2,24 @@
 
 Each row is one pane the grammar expects, with its stage mark, its backing today and where its facts come from. A pane with `unbuilt` backing is a drawing; a pane with `partly` names what is missing in its footer.
 
+Every pane also carries its status, healthy states included, on the operator's rulings of 2026-11-16 (setup pages).
+
 ## 1 Declare, partly
 
-Declare is two screens (operator's rulings of 2026-11-11, Spec 6.1): the declaration screen, below, and the board, which wires what was declared and is unbuilt with no panes drawn yet. The declaration screen is built; the agent page's rail links this stage to the declaration saved under the agent's name, for an admin.
+Declare is a start page, the setup pages and the build page, on the operator's rulings of 2026-11-16 (setup pages) and their addendum, which replace the two screens of the rulings of 2026-11-11 as the stage's path (Spec 6.1). None of them is built, and the act that builds them ends at the confirm page. The setup pages run in this order: the pairing, the models, the drives, the placement and the confirm page. The declaration screen of the rulings of 2026-11-11, in the second table, is built and stands until that act recuts Declare, and the agent page's rail links this stage to the declaration saved under the agent's name, for an admin.
+
+| pane | shows | source | backing |
+| --- | --- | --- | --- |
+| Hugging Face account | the operator's account, connected once as a console setting before the start page, with a read-only or a read-write token; the console never writes except on an explicit push in Train | the console's store | unbuilt |
+| Start | the agent's name, one field | the form | unbuilt |
+| Pairing | the box waiting, which dialed this server from its setup; the fingerprint the box shows, compared with this server's own, and the short one-time code the box shows, entered here; the running report of the box's survey; a checkbox saying whether the box is a virtual machine or a host, and a warning where the address is localhost and the checkbox says virtual machine | the box over its enrollment connection, then the connectors | unbuilt |
+| Models | a Hugging Face repository, then a pick from its files, a split model shown as one choice with all its parts, the precision read from the file; a gated model the account lacks shown with the link to accept it and a button to check again; what the first agent does not need (extra models, adapter roles beyond the one decoder adapter, a classifier-only agent, placement on the CPU) drawn and marked unbuilt, never live | Hugging Face through the console, and the pull record (Spec 8.3) | unbuilt |
+| Drives | on an appliance, the command to run at the appliance's console that starts its drive setup, then the state drive, at least 10 GB, and the models drive, sized from the chosen files, as the box mounted them at the state mount and the models mount; on a host, the state directory and the models directory the operator named, with free space against the need, the models directory prefilled with that user's default Hugging Face cache so that models already pulled there are found, the host attaching and formatting nothing, drawn and marked unbuilt since the host's own script is later | the box's report over TLS | unbuilt |
+| Placement | each model on a device, the context length chosen against the model's maximum read from the file's header; the fit called planned, from the room plan without a load, since only a load measures; "in shard order" naming the layer split across cards | the room plan | unbuilt |
+| Confirm | the deployment tuple in full: model repository, commit and per-part digests, the adapter likewise, image version, driver, cards by identity, guest CPU, machine, drives, placement, context length; Confirm goes to the build page | the pages before it | unbuilt |
+| Build | a one-pane stub marked unbuilt, where the board and the prompt tuple panel will stand, both held | nothing yet | unbuilt |
+
+The declaration screen of the rulings of 2026-11-11, as built:
 
 | pane | shows | source | backing |
 | --- | --- | --- | --- |
@@ -19,6 +34,8 @@ Declare is two screens (operator's rulings of 2026-11-11, Spec 6.1): the declara
 | Declaration, on the agent page | the declaration saved under the agent's name, the head of that lineage: its version, last save and author; its parts, each the agent reports set beside the agent's report (equal, differs, or not in this report) and each it never reports marked so; the prompt by its length, its digest to an admin alone; the other live register rows of the name; the declaration screen's link for an admin | the saved declaration; the register row's tuple and its source | partly: which saved version the agent's file was derived from is not known until Provision writes the file and records its digest |
 
 ## 2 Provision, partly
+
+The pairing and the drives are setup pages (section 1), and on an appliance the box's side is the appliance's setup script, which this server never runs (the operator's rulings of 2026-11-16, setup pages, and their addendum, `weaver-web-PRD` section 10). The pairing belongs with the connectors and serves a host too, and the drive setup is the appliance's script alone. A host install points at a state directory and a models directory and attaches and formats nothing. The panes below stand as built, for registration and the steps on the box.
 
 | pane | shows | source | backing |
 | --- | --- | --- | --- |

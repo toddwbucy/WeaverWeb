@@ -358,7 +358,7 @@ async fn run(inner: &Inner, pull: &Pull) -> Result<(), Ended> {
             .ensure_dir(&blobs)
             .map_err(|e| failed(format!("{}: {e:#}", file.path)))?;
         // Step 2: a blob that stands and hashes right is found.
-        if let Some(sha256) = found(cache, &repo, &pull.commit, file).await? {
+        if let Some(sha256) = found(cache, &repo, pull, file, &cancel).await? {
             inner
                 .store
                 .pull_file_done(&pull.pull_id, &file.path, &sha256, Source::Found)
@@ -435,12 +435,14 @@ async fn cancelled(cancel: &mut watch::Receiver<HashSet<String>>, pull: &Pull) {
 /// **Step 2**: the file's blob, where it stands as a regular file of the
 /// file's size and hashes to its identity, linked from the snapshot and
 /// answered with its SHA-256. A blob that does not hash right is not
-/// trusted, and the file is fetched again.
+/// trusted, and the file is fetched again. A cancel that lands during the
+/// check stops the file once the check finishes, before the link.
 async fn found(
     cache: &Cache,
     repo: &RepoId,
-    commit: &str,
+    pull: &Pull,
     file: &RepoFile,
+    cancel: &watch::Receiver<HashSet<String>>,
 ) -> Result<Option<String>, Ended> {
     let id = file.identity().to_owned();
     let mut blob = match cache.open(repo, &id) {
@@ -452,16 +454,30 @@ async fn found(
         _ => return Ok(None),
     }
     let (size, in_git) = (file.size, file.in_git());
-    let hashed = tokio::task::spawn_blocking(move || hash_from_start(&mut blob, size, in_git))
-        .await
-        .map_err(|e| failed(format!("a blob's check stopped: {e}")))?;
+    #[cfg(test)]
+    let checked = cache
+        .blob(repo, &id)
+        .map_err(|e| failed(format!("{e:#}")))?;
+    let hashed = tokio::task::spawn_blocking(move || {
+        let digest = hash_from_start(&mut blob, size, in_git);
+        #[cfg(test)]
+        hold_after_hash(&checked);
+        digest
+    })
+    .await
+    .map_err(|e| failed(format!("a blob's check stopped: {e}")))?;
+    // A cancel that landed while the check ran stops the file before its
+    // link is written or it is recorded (Spec 2.15).
+    if is_cancelled(cancel, pull) {
+        return Err(Ended::Cancelled);
+    }
     let Ok((hasher, _)) = hashed else {
         return Ok(None);
     };
     match hasher.verify(file) {
         Ok(sha256) => {
             cache
-                .link(repo, commit, &file.path, &id)
+                .link(repo, &pull.commit, &file.path, &id)
                 .map_err(|e| failed(format!("{}: {e:#}", file.path)))?;
             Ok(Some(sha256))
         }
@@ -469,11 +485,6 @@ async fn found(
     }
 }
 
-/// **Steps 4 to 6 for one file**: the partial opened without following a
-/// symbolic link and hashed again, fetched by range from what it holds,
-/// written while it is hashed, and renamed to its blob only on a match.
-/// **Before each retry the account is read again**, and **a cancel stops
-/// the file at its next read or wait**, the partial flushed and kept.
 /// **The partials this process re-hashed**, for the tests alone, as
 /// `link::authority`'s faults are: a fixture hashes too fast for a test to
 /// time a cancel into it, so a test reads whether a partial was hashed after
@@ -483,6 +494,46 @@ async fn found(
 pub(crate) static HASHED_PARTIALS: std::sync::Mutex<Vec<PathBuf>> =
     std::sync::Mutex::new(Vec::new());
 
+/// **The hashes a test holds once they finish**, by the path hashed:
+/// whether the hold was reached, and whether the test has released it. A
+/// fixture hashes too fast for a test to time a cancel into it, so a test
+/// holds the hash's end as a long hash would, on the blocking thread the
+/// hash runs on, within ten seconds.
+#[cfg(test)]
+#[allow(clippy::type_complexity)]
+pub(crate) static HOLD_AFTER_HASH: std::sync::Mutex<
+    Vec<(
+        PathBuf,
+        Arc<(std::sync::atomic::AtomicBool, std::sync::atomic::AtomicBool)>,
+    )>,
+> = std::sync::Mutex::new(Vec::new());
+
+#[cfg(test)]
+fn hold_after_hash(path: &Path) {
+    use std::sync::atomic::Ordering;
+    let held = HOLD_AFTER_HASH
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|(hashed, _)| hashed.as_path() == path)
+        .map(|(_, held)| held.clone());
+    if let Some(held) = held {
+        held.0.store(true, Ordering::SeqCst);
+        for _ in 0..1000 {
+            if held.1.load(Ordering::SeqCst) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+
+/// **Steps 4 to 6 for one file**: the partial opened without following a
+/// symbolic link and hashed again, fetched by range from what it holds,
+/// written while it is hashed, and renamed to its blob only on a match.
+/// **Before each retry the account is read again**, and **a cancel stops
+/// the file at its next read or wait**, or once a hash under way finishes,
+/// before its blob takes its name, the partial flushed and kept.
 async fn download(
     inner: &Inner,
     cache: &Cache,
@@ -507,11 +558,17 @@ async fn download(
     let mut reading = out.try_clone().map_err(|e| named(&e))?;
     #[cfg(test)]
     HASHED_PARTIALS.lock().unwrap().push(partial.clone());
-    let (mut hasher, mut have) =
-        tokio::task::spawn_blocking(move || hash_from_start(&mut reading, size, in_git))
-            .await
-            .map_err(|e| named(&e))?
-            .map_err(|e| named(&e))?;
+    #[cfg(test)]
+    let hashed = partial.clone();
+    let (mut hasher, mut have) = tokio::task::spawn_blocking(move || {
+        let digest = hash_from_start(&mut reading, size, in_git);
+        #[cfg(test)]
+        hold_after_hash(&hashed);
+        digest
+    })
+    .await
+    .map_err(|e| named(&e))?
+    .map_err(|e| named(&e))?;
     let mut out = tokio::fs::File::from_std(out);
     if have > size {
         out.set_len(0).await.map_err(|e| named(&e))?;
@@ -610,6 +667,18 @@ async fn download(
                 () = cancelled(cancel, pull) => return Err(Ended::Cancelled),
             }
         }
+    }
+    // A cancel that landed while the partial's hash ran, which a partial
+    // holding every byte never follows with a read, or after the last read,
+    // stops the file before its blob takes its name: the partial stays
+    // (Spec 2.15).
+    if is_cancelled(cancel, pull) {
+        out.flush().await.map_err(|e| named(&e))?;
+        inner
+            .store
+            .pull_progress(&pull.pull_id, &file.path, have)
+            .await?;
+        return Err(Ended::Cancelled);
     }
     out.sync_all().await.map_err(|e| named(&e))?;
     drop(out);

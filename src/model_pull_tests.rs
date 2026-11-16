@@ -1375,6 +1375,117 @@ async fn a_later_cancel_never_undoes_an_earlier_one() {
     puller.stop();
 }
 
+/// **A hash the test holds once it finishes**, by the path hashed, as a
+/// long hash would hold the one worker.
+fn hold_after_hash(path: &Path) -> Arc<(AtomicBool, AtomicBool)> {
+    let held = Arc::new((AtomicBool::new(false), AtomicBool::new(false)));
+    crate::hugging_face::pull::HOLD_AFTER_HASH
+        .lock()
+        .unwrap()
+        .push((path.to_owned(), held.clone()));
+    held
+}
+
+/// Waits until the pull reaches the hold, within five seconds.
+async fn reached(held: &(AtomicBool, AtomicBool), place: &str) {
+    for _ in 0..200 {
+        if held.0.load(Ordering::SeqCst) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    panic!("the pull never reached {place}");
+}
+
+/// The admin's cancel of `pull_id` through the page, answered `303`.
+async fn cancel_through_the_page(rig: &Rig, puller: &Puller, pull_id: &str) {
+    let uri = format!("/admin/hugging-face/pulls/{pull_id}/cancel");
+    let (status, _, body) = send_as(
+        &rig.surface(puller),
+        "POST",
+        &uri,
+        Some(String::new()),
+        &rig.cookie,
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+}
+
+/// **A cancel during a complete partial's hash names no blob**: the
+/// partial holds every byte, its hash is held as a long one would be, an
+/// admin's cancel lands, and once the hash finishes the file stops: the
+/// partial stays whole, no blob takes its name, no link is written and the
+/// file is not recorded.
+#[tokio::test]
+async fn a_cancel_during_a_complete_partials_hash_names_no_blob() {
+    let Some(rig) = rig().await else { return };
+    std::fs::create_dir_all(rig.blobs()).unwrap();
+    let id = model_file().sha256.unwrap();
+    let partial = rig.blobs().join(format!("{id}.incomplete"));
+    std::fs::write(&partial, model_bytes()).unwrap();
+    let held = hold_after_hash(&partial);
+    let puller = rig.puller(quick());
+    let (pull_id, asked) = rig.ask(&puller, &[model_file()]).await;
+    assert!(asked.is_ok(), "{asked:?}");
+    reached(&held, "its partial's hash").await;
+    cancel_through_the_page(&rig, &puller, &pull_id).await;
+    held.1.store(true, Ordering::SeqCst);
+    // The next ask verifies once the puller has left the cancelled pull.
+    let (again, asked) = rig.ask(&puller, &[config_file()]).await;
+    assert!(asked.is_ok(), "{asked:?}");
+    assert_eq!(rig.ended(&again).await, ("verified".into(), None));
+
+    assert!(
+        !rig.blobs().join(&id).exists(),
+        "a blob took its name after the cancel"
+    );
+    assert!(
+        std::fs::symlink_metadata(rig.snapshot("model.gguf")).is_err(),
+        "a link was written after the cancel"
+    );
+    assert_eq!(
+        std::fs::metadata(&partial).unwrap().len(),
+        MODEL_LEN as u64,
+        "the partial did not stay"
+    );
+    let files = rig.store().pull_files(&pull_id).await.unwrap();
+    assert_eq!(files[0].source, None, "{files:?}");
+    puller.stop();
+}
+
+/// **A cancel during a blob's check links nothing**: the blob stands and
+/// hashes right, its check is held as a long one would be, an admin's
+/// cancel lands, and once the check finishes the file stops: the blob
+/// stands as it was, no snapshot link is written and the file is not
+/// recorded `found`.
+#[tokio::test]
+async fn a_cancel_during_a_blobs_check_links_nothing() {
+    let Some(rig) = rig().await else { return };
+    std::fs::create_dir_all(rig.blobs()).unwrap();
+    let blob = rig.blobs().join(model_file().sha256.unwrap());
+    std::fs::write(&blob, model_bytes()).unwrap();
+    let held = hold_after_hash(&blob);
+    let puller = rig.puller(quick());
+    let (pull_id, asked) = rig.ask(&puller, &[model_file()]).await;
+    assert!(asked.is_ok(), "{asked:?}");
+    reached(&held, "its blob's check").await;
+    cancel_through_the_page(&rig, &puller, &pull_id).await;
+    held.1.store(true, Ordering::SeqCst);
+    let (again, asked) = rig.ask(&puller, &[config_file()]).await;
+    assert!(asked.is_ok(), "{asked:?}");
+    assert_eq!(rig.ended(&again).await, ("verified".into(), None));
+
+    assert!(
+        std::fs::symlink_metadata(rig.snapshot("model.gguf")).is_err(),
+        "a link was written after the cancel"
+    );
+    assert_eq!(std::fs::read(&blob).unwrap(), model_bytes());
+    let files = rig.store().pull_files(&pull_id).await.unwrap();
+    assert_eq!(files[0].source, None, "{files:?}");
+    assert_eq!(rig.fakes.fetched.load(Ordering::SeqCst), 0);
+    puller.stop();
+}
+
 /// **A FIFO at a blob's name is refused and never waited on**: step 2
 /// opens the blob without waiting, finds no regular file and fetches the
 /// file, whose blob then takes the name. An open that waited would hold the

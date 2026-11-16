@@ -61,9 +61,7 @@ the prompt rules, in the order it gives:
 4. **The pages.** The start page asks the agent's name. The setup pages follow in this
    order: the pairing (the code, the fingerprint and the survey's report), the models,
    the drives as the box mounted them, the placement, and the confirmed tuple. A
-   checkbox says whether the box is a virtual machine or a host, the console's shutdown
-   command, which on the addendum stops the agent service and never powers off the
-   machine, enabled on a virtual machine and disabled on a host, and the page warns
+   checkbox says whether the box is a virtual machine or a host, and the page warns
    where the address is localhost and the checkbox says virtual machine. The state mount
    is required for every agent, at a minimum of 10 GiB, and the models mount takes a
    plural name. One unit, GiB, across the whole flow.
@@ -82,9 +80,9 @@ mount and never their paths.
 
 ## The act
 
-1. **`weaver-web-PRD`.** Section 2's "Not a hypervisor driver", with the console's
-   shutdown command on a virtual machine and disabled on a host. Section 3.0's Declare
-   and Provision rows, its account of Declare, and the pane's labels. Section 8's asks.
+1. **`weaver-web-PRD`.** Section 2's "Not a hypervisor driver", with the console's stop
+   and start of an agent as admin's `unload` and `load`. Section 3.0's Declare and
+   Provision rows, its account of Declare, and the pane's labels. Section 8's asks.
    Section 9's cells on state and save points, the trace path on the state mount, the
    Spark-class machine, trust on first use, the one-time secret and the fetch. Section
    10's opening, 10.1 (pairing by a short one-time code the box shows and the operator

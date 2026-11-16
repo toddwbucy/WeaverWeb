@@ -27,6 +27,7 @@ pub mod identity;
 #[cfg(test)]
 mod identity_tests;
 pub mod key;
+pub mod model_pull;
 pub mod plan;
 pub mod read;
 

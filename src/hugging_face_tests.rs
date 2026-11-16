@@ -218,6 +218,13 @@ async fn rig() -> Option<Rig> {
             policy: policy.clone(),
             client: Client::with_base(&base).unwrap(),
             authority_dir: dir.path().join("authority"),
+            puller: crate::hugging_face::pull::Puller::start(
+                fresh.store.clone(),
+                Client::with_base(&base).unwrap(),
+                None,
+                dir.path().join("authority"),
+                crate::hugging_face::pull::Settings::default(),
+            ),
         }))
         .with_state(fresh.store.clone()),
         policy,
@@ -740,6 +747,7 @@ fn config(dir: &std::path::Path) -> crate::config::ServerConfig {
         session_idle_secs: 3600,
         session_absolute_secs: 43200,
         operations_log: None,
+        model_cache: None,
         sign_in: vec![crate::config::SignInMethod::Passkey],
     }
 }

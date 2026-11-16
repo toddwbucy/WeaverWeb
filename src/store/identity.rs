@@ -88,6 +88,12 @@ pub fn is_agent_id(spec: &str) -> bool {
     shaped("ag-", spec)
 }
 
+/// Whether `spec` is a model pull's identity: exactly `mp-` and sixteen
+/// lowercase hex (Spec 2.15).
+pub fn is_pull_id(spec: &str) -> bool {
+    shaped("mp-", spec)
+}
+
 /// **A name as given, trimmed of surrounding white space**, or why it is
 /// refused: empty, past the bound, holding a NUL, which the store refuses
 /// in text, or **of an identity's own shape**, which would shadow the

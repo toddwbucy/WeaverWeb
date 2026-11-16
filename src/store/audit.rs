@@ -125,6 +125,8 @@ pub enum Target<'a> {
     /// The Hugging Face account, the console's one setting of its kind,
     /// naming no row as the authority does (Spec 2.15).
     HuggingFace,
+    /// A model pull, by its own identity (`mp-`), for its ask (Spec 2.15).
+    ModelPull(&'a str),
 }
 
 impl Target<'_> {
@@ -139,6 +141,7 @@ impl Target<'_> {
             Target::Alert(_) => "alert",
             Target::Declaration(_) => "declaration",
             Target::HuggingFace => "hugging_face",
+            Target::ModelPull(_) => "model_pull",
         }
     }
 
@@ -151,7 +154,8 @@ impl Target<'_> {
             | Target::Role(id)
             | Target::Passkey(id)
             | Target::Alert(id)
-            | Target::Declaration(id) => Some(id),
+            | Target::Declaration(id)
+            | Target::ModelPull(id) => Some(id),
         }
     }
 }

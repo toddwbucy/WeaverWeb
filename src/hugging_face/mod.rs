@@ -10,13 +10,15 @@
 //! redirect by itself, so no request leaves with the token unless this module
 //! put it there, and it puts it only on a request to the base's own scheme,
 //! host and port (`Client::authorized`). A download's redirect to a CDN host
-//! (sub-act 3) is followed by the puller, without the header.
+//! is followed by the puller (`pull.rs`), without the header.
 //!
 //! **Every name that reaches a URL is checked first**: a repository's
 //! identity (`RepoId`), a revision (`is_revision`), a commit (`is_commit`) and
 //! a file's path (`is_repo_path`), each pushed as path segments, so none adds
 //! a segment, a query or a fragment of its own.
 
+pub mod cache;
+pub mod pull;
 pub mod seal;
 
 use std::time::Duration;
@@ -325,6 +327,25 @@ impl Client {
         &self.base
     }
 
+    /// The connection pool, which follows no redirect, for the puller's
+    /// fetches.
+    pub(crate) fn http(&self) -> &reqwest::Client {
+        &self.http
+    }
+
+    /// **A file's place through the commit**, `/<repo>/resolve/<commit>/<path>`,
+    /// refused for a revision that is not a commit or a path out of its shape.
+    pub(crate) fn resolve(&self, repo: &RepoId, commit: &str, path: &str) -> anyhow::Result<Url> {
+        anyhow::ensure!(
+            is_commit(commit),
+            "a fetch names a commit and never a branch"
+        );
+        anyhow::ensure!(is_repo_path(path), "a file's path is not of its shape");
+        let mut segments = vec![repo.owner(), repo.name(), "resolve", commit];
+        segments.extend(path.split('/'));
+        Ok(self.url(&segments))
+    }
+
     /// `base` joined with `segments`, each escaped as one segment.
     fn url(&self, segments: &[&str]) -> Url {
         let mut url = self.base.clone();
@@ -493,14 +514,7 @@ impl Client {
         commit: &str,
         file: &str,
     ) -> anyhow::Result<Access> {
-        anyhow::ensure!(
-            is_commit(commit),
-            "a fetch names a commit and never a branch"
-        );
-        anyhow::ensure!(is_repo_path(file), "a file's path is not of its shape");
-        let mut segments = vec![repo.owner(), repo.name(), "resolve", commit];
-        segments.extend(file.split('/'));
-        let url = self.url(&segments);
+        let url = self.resolve(repo, commit, file)?;
         let request = self.authorized(self.http.head(url.clone()), &url, token);
         let response = tokio::time::timeout(API_BOUND, request.send())
             .await

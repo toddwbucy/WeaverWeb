@@ -5,7 +5,8 @@
     is posted once, in the connect form, and never rendered: the page shows
     the account and role Hugging Face answered, and whether the stored
     token's seal opens. Each write posts a form carrying the version the
-    page read. No inline script. -#}
+    page read. The cache's section is re-fetched every 15 s. No inline
+    script. -#}
 <h1>Hugging Face</h1>
 <div class="stack">
 <section class="pane">
@@ -55,6 +56,11 @@
   {% endmatch %}
   </div>
   <footer>A read-only or a read-write token, made on <a href="{{ tokens }}" rel="noreferrer">Hugging Face's token page</a>. The console writes nothing to Hugging Face. It asks Hugging Face whose the token is before it keeps it, and keeps it sealed under the console's seal key: a lost key means the token is entered again.</footer>
+</section>
+<section class="pane">
+  <header><h2>The model cache</h2><span class="backing built">built</span><span class="source">the pulls' record in the store, and the cache's free space</span></header>
+  <div class="body" id="pulls" hx-get="/admin/hugging-face/pulls" hx-trigger="every 15s" hx-swap="innerHTML">{% include "hugging_face_pulls.html" %}</div>
+  <footer>Every download names the commit, never a branch, and each file takes its name only once its digest matches the one Hugging Face published. One pull runs at a time. The models page, a later act, asks a pull.</footer>
 </section>
 </div>
 {% endblock %}

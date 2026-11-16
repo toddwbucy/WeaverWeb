@@ -68,6 +68,7 @@ fn server_config(dir: &std::path::Path, link: std::net::SocketAddr) -> crate::co
         session_idle_secs: 3600,
         session_absolute_secs: 43200,
         operations_log: None,
+        model_cache: None,
         sign_in: vec![crate::config::SignInMethod::Passkey],
     }
 }
@@ -136,6 +137,13 @@ async fn rig_of(handover: Handover, silence: Duration) -> Option<Rig> {
                 policy: policy.clone(),
                 client: crate::hugging_face::Client::with_base("http://127.0.0.1:9/").unwrap(),
                 authority_dir: dir.path().join("authority"),
+                puller: crate::hugging_face::pull::Puller::start(
+                    fresh.store.clone(),
+                    crate::hugging_face::Client::with_base("http://127.0.0.1:9/").unwrap(),
+                    None,
+                    dir.path().join("authority"),
+                    crate::hugging_face::pull::Settings::default(),
+                ),
             },
         ))
         .with_state(fresh.store.clone()),

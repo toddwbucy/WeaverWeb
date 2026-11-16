@@ -125,9 +125,12 @@ pub(crate) fn refused(refusal: &Refusal) -> Response {
         | Refusal::NotHead
         | Refusal::NameHeld(_)
         | Refusal::NameChanged(_)
-        | Refusal::SealDoesNotOpen => StatusCode::CONFLICT,
+        | Refusal::SealDoesNotOpen
+        | Refusal::PullRunning(_) => StatusCode::CONFLICT,
         Refusal::TokenRefused => StatusCode::UNPROCESSABLE_ENTITY,
-        Refusal::HandoverFull | Refusal::NoSealKey => StatusCode::SERVICE_UNAVAILABLE,
+        Refusal::HandoverFull | Refusal::NoSealKey | Refusal::NoModelCache => {
+            StatusCode::SERVICE_UNAVAILABLE
+        }
     };
     (status, refusal.to_string()).into_response()
 }

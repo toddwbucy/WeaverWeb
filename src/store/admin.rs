@@ -89,6 +89,10 @@ pub enum Refusal {
     NoSealKey,
     /// The stored token's seal does not open under the seal key (Spec 2.15).
     SealDoesNotOpen,
+    /// No `model_cache` is set, so no pull can run (Spec 2.15).
+    NoModelCache,
+    /// A pull runs, named here, and one runs at a time (Spec 2.15).
+    PullRunning(String),
 }
 
 impl std::fmt::Display for Refusal {
@@ -179,6 +183,14 @@ impl std::fmt::Display for Refusal {
             Refusal::SealDoesNotOpen => write!(
                 f,
                 "the stored token does not open under the console's seal key, which was replaced or lost; connect the account again"
+            ),
+            Refusal::NoModelCache => write!(
+                f,
+                "no model_cache is set, so the console has nowhere to keep a model, and the install sets it"
+            ),
+            Refusal::PullRunning(which) => write!(
+                f,
+                "the pull {which} runs, and one pull runs at a time, so ask again once it ends"
             ),
         }
     }

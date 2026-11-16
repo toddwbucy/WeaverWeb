@@ -452,6 +452,12 @@ async fn serve(cfg: Arc<ServerConfig>) -> anyhow::Result<()> {
     };
     weaver_web::alerting::appendable(&operations_log)?;
 
+    // **The model cache** (Spec 2.15): optional, and where it is set, a
+    // directory the server can create a file in, or the server does not
+    // start.
+    let model_cache =
+        weaver_web::hugging_face::cache::Cache::configured(cfg.model_cache.as_deref())?;
+
     let store = store::Store::connect(&cfg.database).await?;
     tracing::info!("store connected, migrations applied");
 
@@ -472,6 +478,17 @@ async fn serve(cfg: Arc<ServerConfig>) -> anyhow::Result<()> {
     // **Enrollment by token** where passkeys are on (design section 7): the
     // relying party from `rp_id` and `origin`, checked above.
     let passkeys = weaver_web::passkeys::Passkeys::from_config(&cfg)?;
+    // **The puller** (Spec 2.15): one task, which first resumes a pull the
+    // last stop interrupted, then runs each pull an admin asks, one at a
+    // time.
+    let hugging_face = weaver_web::hugging_face::Client::new()?;
+    let puller = weaver_web::hugging_face::pull::Puller::start(
+        store.clone(),
+        hugging_face.clone(),
+        model_cache,
+        cfg.authority_dir.clone(),
+        weaver_web::hugging_face::pull::Settings::default(),
+    );
     let instrument = weaver_web::surfaces::routes(policy.clone())
         .merge(weaver_web::surfaces::script_policy(
             weaver_web::surfaces::enroll::routes(passkeys.clone()),
@@ -495,14 +512,16 @@ async fn serve(cfg: Arc<ServerConfig>) -> anyhow::Result<()> {
                 asker: link.clone(),
             }),
         ))
-        // **The Hugging Face account** (Spec 2.15): a console setting, the
-        // client fixed at `https://huggingface.co`, the seal key read from
-        // the authority's directory where it is used.
+        // **The Hugging Face account and the model cache** (Spec 2.15): a
+        // console setting, the client fixed at `https://huggingface.co`,
+        // the seal key read from the authority's directory where it is
+        // used, and the pulls the puller runs.
         .merge(weaver_web::surfaces::script_policy(
             weaver_web::surfaces::hugging_face::routes(weaver_web::surfaces::hugging_face::Seams {
                 policy: policy.clone(),
-                client: weaver_web::hugging_face::Client::new()?,
+                client: hugging_face,
                 authority_dir: cfg.authority_dir.clone(),
+                puller,
             }),
         ))
         // **The register of agents through the server** (Spec 2.13): the

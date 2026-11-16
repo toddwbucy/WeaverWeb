@@ -122,6 +122,11 @@ pub enum Target<'a> {
     Alert(&'a str),
     /// A declaration's row, by its own identity (`de-`), for its save.
     Declaration(&'a str),
+    /// The Hugging Face account, the console's one setting of its kind,
+    /// naming no row as the authority does (Spec 2.15).
+    HuggingFace,
+    /// A model pull, by its own identity (`mp-`), for its ask (Spec 2.15).
+    ModelPull(&'a str),
 }
 
 impl Target<'_> {
@@ -135,19 +140,22 @@ impl Target<'_> {
             Target::Passkey(_) => "passkey",
             Target::Alert(_) => "alert",
             Target::Declaration(_) => "declaration",
+            Target::HuggingFace => "hugging_face",
+            Target::ModelPull(_) => "model_pull",
         }
     }
 
     fn id(&self) -> Option<&str> {
         match self {
-            Target::Authority => None,
+            Target::Authority | Target::HuggingFace => None,
             Target::Agent(id)
             | Target::Person(id)
             | Target::Grant(id)
             | Target::Role(id)
             | Target::Passkey(id)
             | Target::Alert(id)
-            | Target::Declaration(id) => Some(id),
+            | Target::Declaration(id)
+            | Target::ModelPull(id) => Some(id),
         }
     }
 }

@@ -220,6 +220,7 @@ async fn the_second_row_holds_the_sub_tabs_of_the_pages_tab() {
     let iam = pairs(&[
         ("/admin/persons", "Persons"),
         ("/admin/grants", "Grants"),
+        ("/admin/hugging-face", "Hugging Face"),
         ("/passkeys", "Passkeys"),
     ]);
     for (uri, session, tab, want, here) in [
@@ -252,7 +253,14 @@ async fn the_second_row_holds_the_sub_tabs_of_the_pages_tab() {
             operations.clone(),
             "The Record",
         ),
-        ("/passkeys", &bea, "IAM", vec![iam[2].clone()], "Passkeys"),
+        (
+            "/admin/hugging-face",
+            &ada,
+            "IAM",
+            iam.clone(),
+            "Hugging Face",
+        ),
+        ("/passkeys", &bea, "IAM", vec![iam[3].clone()], "Passkeys"),
     ] {
         let page = page(&rig.app, uri, session).await;
         let (top, second) = bar(&page);
@@ -320,6 +328,7 @@ async fn every_page_declares_its_tab_and_sub_tab() {
         "/record",
         "/admin/persons",
         "/admin/grants",
+        "/admin/hugging-face",
         "/passkeys",
     ] {
         pages.push((uri.to_owned(), page(&rig.app, uri, &ada).await));
@@ -336,6 +345,7 @@ async fn every_page_declares_its_tab_and_sub_tab() {
         ("Agent Operations", Some("The Record")),
         ("IAM", Some("Persons")),
         ("IAM", Some("Grants")),
+        ("IAM", Some("Hugging Face")),
         ("IAM", Some("Passkeys")),
     ];
     for ((uri, page), (tab, sub)) in pages.iter().zip(want) {

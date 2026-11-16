@@ -542,6 +542,46 @@ async fn a_token_later_refused_is_shown_refused_and_stands_until_disconnect() {
     assert!(body.contains("No account is connected"), "{body}");
 }
 
+/// **A version is never repeated across a disconnect**: a page read before
+/// a disconnect and a connect again holds a version the new row never
+/// takes, so its connect, check and disconnect each answer stale, and the
+/// new account stands as connected.
+#[tokio::test]
+async fn a_version_read_before_a_disconnect_is_stale_after_a_connect_again() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (_, bea) = admin(&rig.app, s, &mut authenticator(), "bea").await;
+    assert_eq!(
+        connect(&rig, &ada, READ, "0").await.0,
+        StatusCode::SEE_OTHER
+    );
+    let read = s.hugging_face_account().await.unwrap().unwrap().version;
+    let read = read.to_string();
+    assert_eq!(
+        post(&rig, &bea, "disconnect", &read).await.0,
+        StatusCode::SEE_OTHER
+    );
+    assert_eq!(
+        connect(&rig, &bea, FINE, "0").await.0,
+        StatusCode::SEE_OTHER
+    );
+    let standing = s.hugging_face_account().await.unwrap().unwrap();
+
+    let (status, body) = connect(&rig, &ada, WRITE, &read).await;
+    assert_eq!(status, StatusCode::CONFLICT, "a stale connect: {body}");
+    let (status, body) = post(&rig, &ada, "check", &read).await;
+    assert_eq!(status, StatusCode::CONFLICT, "a stale check: {body}");
+    let (status, body) = post(&rig, &ada, "disconnect", &read).await;
+    assert_eq!(status, StatusCode::CONFLICT, "a stale disconnect: {body}");
+
+    let row = s.hugging_face_account().await.unwrap().unwrap();
+    assert_eq!(row.account, standing.account);
+    assert_eq!(row.role, standing.role);
+    assert_eq!(row.version, standing.version);
+    assert_eq!(row.checked_at, standing.checked_at);
+}
+
 /// **A lost key means the token is entered again**: under a new key the
 /// page says the stored token does not open, a check is refused saying so
 /// before any request, and a connect with the token restores the setting.

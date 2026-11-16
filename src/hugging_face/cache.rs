@@ -218,13 +218,15 @@ impl Cache {
         (is_identity(id) && target == relative_target(path, id)).then(|| id.to_owned())
     }
 
-    /// **A blob opened to read**, without following a symbolic link: what
-    /// the box's pull from the cache reads (Spec 8.3, a later act).
+    /// **A blob opened to read**, without following a symbolic link and
+    /// without waiting, so a FIFO at its name opens at once and is refused
+    /// as not a regular file: what the box's pull from the cache reads
+    /// (Spec 8.3, a later act).
     pub fn open(&self, repo: &RepoId, id: &str) -> anyhow::Result<File> {
         let path = self.blob(repo, id)?;
         let file = OpenOptions::new()
             .read(true)
-            .custom_flags(libc::O_NOFOLLOW)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
             .open(&path)?;
         anyhow::ensure!(file.metadata()?.is_file(), "a blob is not a regular file");
         Ok(file)

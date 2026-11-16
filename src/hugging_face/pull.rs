@@ -607,7 +607,14 @@ async fn download(
     };
     std::fs::rename(&partial, &blob).map_err(|e| named(&e))?;
     if let Some(blobs) = blob.parent() {
-        let _ = std::fs::File::open(blobs).and_then(|d| d.sync_all());
+        // Opened as a directory and never through a link, so a FIFO at the
+        // name is refused at once.
+        use std::os::unix::fs::OpenOptionsExt;
+        let _ = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
+            .open(blobs)
+            .and_then(|d| d.sync_all());
     }
     cache
         .link(repo, &pull.commit, &file.path, &id)

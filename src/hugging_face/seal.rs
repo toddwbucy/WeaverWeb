@@ -75,12 +75,13 @@ pub(crate) fn write_key(path: &Path, key: &[u8; 32]) -> anyhow::Result<()> {
 }
 
 /// The key's bytes as they stand in `path`, without following a symbolic
-/// link, or `None` where no file stands.
+/// link and without waiting, so a FIFO at its name is refused at once, or
+/// `None` where no file stands.
 pub(crate) fn read_key(path: &Path) -> anyhow::Result<Option<[u8; 32]>> {
     use std::os::unix::fs::OpenOptionsExt;
     let mut file = match std::fs::OpenOptions::new()
         .read(true)
-        .custom_flags(libc::O_NOFOLLOW)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
         .open(path)
     {
         Ok(file) => file,
@@ -166,6 +167,7 @@ impl SealKey {
 /// **`authority seal-key`'s act**: a key written beside an authority that
 /// stands, refused where none stands or where a key stands already.
 pub fn write_beside(authority_dir: &Path) -> anyhow::Result<()> {
+    use std::os::unix::fs::OpenOptionsExt;
     anyhow::ensure!(
         crate::link::authority::stands(authority_dir),
         "no authority stands at {}; `authority init` creates one, and its seal key with it",
@@ -179,8 +181,54 @@ pub fn write_beside(authority_dir: &Path) -> anyhow::Result<()> {
         );
     }
     write_key(&path, &mint())?;
-    std::fs::File::open(authority_dir)
+    // Opened as a directory, so a FIFO at the name is refused at once.
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY)
+        .open(authority_dir)
         .and_then(|dir| dir.sync_all())
         .map_err(|e| anyhow::anyhow!("syncing {}: {e}", authority_dir.display()))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::time::Duration;
+
+    use super::{SEAL_KEY, read_key};
+
+    /// **A FIFO at the key's name is refused and never waited on**: the
+    /// read opens without waiting and finds no regular file. An open that
+    /// waited would hold the server's start, or `authority seal-key`, until
+    /// a writer came.
+    #[test]
+    fn a_fifo_at_the_keys_name_is_refused_and_never_waited_on() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(SEAL_KEY);
+        let name = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+        // SAFETY: `name` is a NUL-terminated path.
+        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+        let (sent, read) = std::sync::mpsc::channel();
+        let reading = path.clone();
+        std::thread::spawn(move || {
+            let _ = sent.send(read_key(&reading).map(|key| key.is_some()));
+        });
+        let read = read.recv_timeout(Duration::from_secs(5));
+        if read.is_err() {
+            // A writer releases an open still waiting, so the test fails
+            // rather than hangs.
+            let _ = std::fs::OpenOptions::new()
+                .write(true)
+                .custom_flags(libc::O_NONBLOCK)
+                .open(&path);
+        }
+        let read = read.expect("the key's read waited on the FIFO");
+        let refused = read.expect_err("a FIFO was read as a key");
+        assert!(
+            refused.to_string().contains("not a regular file"),
+            "{refused:#}"
+        );
+    }
 }

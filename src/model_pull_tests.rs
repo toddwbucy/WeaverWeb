@@ -1374,6 +1374,57 @@ async fn a_later_cancel_never_undoes_an_earlier_one() {
     puller.stop();
 }
 
+/// **A FIFO at a blob's name is refused and never waited on**: step 2
+/// opens the blob without waiting, finds no regular file and fetches the
+/// file, whose blob then takes the name. An open that waited would hold the
+/// one worker in `open(2)` until a writer came, where no cancel reaches it.
+/// A watchdog thread, outside the runtime the open would hold, opens the
+/// FIFO's writing end after five seconds, so the test fails rather than
+/// hangs.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_fifo_at_a_blobs_name_is_refused_and_never_waited_on() {
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::OpenOptionsExt;
+    let Some(rig) = rig().await else { return };
+    std::fs::create_dir_all(rig.blobs()).unwrap();
+    let blob = rig.blobs().join(model_file().sha256.unwrap());
+    let name = std::ffi::CString::new(blob.as_os_str().as_bytes()).unwrap();
+    // SAFETY: `name` is a NUL-terminated path.
+    assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+    let watch = Arc::new((AtomicBool::new(false), AtomicBool::new(false)));
+    let watchdog = {
+        let (watch, fifo) = (watch.clone(), blob.clone());
+        std::thread::spawn(move || {
+            for _ in 0..50 {
+                if watch.0.load(Ordering::SeqCst) {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            // An open that waits for a writer returns once one opens.
+            let writer = std::fs::OpenOptions::new()
+                .write(true)
+                .custom_flags(libc::O_NONBLOCK)
+                .open(&fifo);
+            watch.1.store(writer.is_ok(), Ordering::SeqCst);
+        })
+    };
+    let puller = rig.puller(quick());
+    let (pull_id, asked) = rig.ask(&puller, &[model_file()]).await;
+    assert!(asked.is_ok(), "{asked:?}");
+    let ended = rig.ended(&pull_id).await;
+    watch.0.store(true, Ordering::SeqCst);
+    watchdog.join().unwrap();
+    assert!(
+        !watch.1.load(Ordering::SeqCst),
+        "the puller waited on the FIFO until the watchdog opened it"
+    );
+    assert_eq!(ended, ("verified".into(), None));
+    assert!(std::fs::symlink_metadata(&blob).unwrap().is_file());
+    assert_eq!(std::fs::read(&blob).unwrap(), model_bytes());
+    puller.stop();
+}
+
 /// **A cancel takes the admin writes' order**: an identity out of its
 /// shape is the ask's fault, recorded nowhere; a person holding no admin
 /// grant is refused with one record; an unknown pull is not found and a

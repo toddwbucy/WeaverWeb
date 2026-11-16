@@ -6194,18 +6194,20 @@ directory be writable with at least 10 GiB free and the models directory be read
 and asks no separate disk. On the addendum to the operator's rulings of 2026-11-16
 (setup pages) the agent is a real account on the box, and its home lives on the state
 drive, so the state mount's 10 GiB is that home. The agent's own folder, its
-declaration, logs, trace and save points, stands inside that home. The appliance ships
-the agent's account, and the connectors' two accounts on the same principle. The
-account's name, which the image fixes before the agent is named, and the home's exact
-place are the image's and WeaverAgent's, and neither enters this repository.
-(`weaver-web-PRD` section 10.4). The refusal is admin's, since load is admin's verb, so
-the representation this document holds is admin's answer to `load`, which renders as it
-came, as every refusal does (section 7.2). The report of the sizes reaches the console
-through admin-con, the console's one reach into an appliance, so its carrier at the
-box's seam is `weaver-admin-operator-contract`'s, and this document builds against the
-contract once it is merged. The form of the report, which carrier it takes at that seam,
-and where the console says that storage is not sufficient, are section 10's. So are the
-sizes that count as sufficient, which no ruling assigns to a document.
+declaration, logs, trace and save points, stands inside that home. The image ships a
+fixed agent account, and the connectors' two accounts on the same principle, and setup
+points the agent account's home at a folder named after the agent on the state drive,
+the agent's own folder inside it. A host uses a home named after the agent, with the
+same layout inside. The account's name and every path are the image's and WeaverAgent's,
+and none enters this repository. (`weaver-web-PRD` section 10.4). The refusal is
+admin's, since load is admin's verb, so the representation this document holds is
+admin's answer to `load`, which renders as it came, as every refusal does (section 7.2).
+The report of the sizes reaches the console through admin-con, the console's one reach
+into an appliance, so its carrier at the box's seam is
+`weaver-admin-operator-contract`'s, and this document builds against the contract once
+it is merged. The form of the report, which carrier it takes at that seam, and where the
+console says that storage is not sufficient, are section 10's. So are the sizes that
+count as sufficient, which no ruling assigns to a document.
 
 **Load and unload.** **Nothing in this framework or in the image autostarts the agent**,
 on the operator's ruling of 2026-11-15, and load and unload need no management of a
@@ -6245,19 +6247,17 @@ wait on WeaverAgent's amendment, an ask upstream (`weaver-web-PRD` section 8). A
 on this side, admin-con reads the trace only through that door (section 7.2), the
 register row records the door's state (section 2.12), and the door never gates a verb.
 
-**The shutdown command.** On the addendum to the operator's rulings of 2026-11-16 (setup
-pages) the console's shutdown command stops the agent service and never powers off the
-machine, which the operator does from the hypervisor (`weaver-web-PRD` section 2). The
-rulings enable it on a virtual machine and disable it on a host, the setup flow's
-checkbox saying which. Whether it stays disabled on a host, and whether the console can
-start the service again, are the operator's. It is not built. As built, admin-con runs
-the fixed lines of section 7.2 alone, among them `stop`, and whether `stop` is the stop
-of the agent service the addendum names is WeaverAgent's to say, so its path is an ask
-upstream (`weaver-web-PRD` section 8) and its representation is section 10's.
+**The console's stop and start.** On the addendum to the operator's rulings of
+2026-11-16 (setup pages) the console's stop of an agent is admin's `unload`, which
+writes the save point, and its start is admin's `load`, on a virtual machine and on a
+host alike, in place of the shutdown command the rulings first named (`weaver-web-PRD`
+section 2). Both are fixed lines of section 7.2, offered on the agent's page where the
+person's grants and the connection's ceiling carry them, so nothing new is asked of
+admin and its grant does not grow. Nothing the console offers powers off a machine.
 
 **No hypervisor reach of any kind.** No code path, configuration member or dependency of
-this crate reaches a hypervisor, the shutdown command included. What it knows of an
-appliance is what the appliance's two connectors report.
+this crate reaches a hypervisor. What it knows of an appliance is what the appliance's
+two connectors report.
 
 ## 9. What is enforced, and by which instrument
 
@@ -6994,14 +6994,6 @@ a `web-` assertion beside `weaver-admin`'s.
   connection, frame and bounds of each, and the image's or WeaverAgent's side of each,
   none of which exists, an ask upstream (`weaver-web-PRD` section 8). Settled by those
   asks, then by the model cache's act and the setup pages' act.
-- **The shutdown command, opened 2026-11-16** (section 8.3). On the addendum to the
-  operator's rulings of 2026-11-16 (setup pages) it stops the agent service and never
-  powers off the machine, and the rulings enable it on a virtual machine and disable it
-  on a host. Open: its path into the box through admin-con, and whether section 7.2's
-  `stop` is that stop, how the console records the checkbox that says which the machine
-  is, and, the operator's, whether it stays disabled on a host and whether the console
-  can start the service again. Settled by WeaverAgent's answer to the ask
-  (`weaver-web-PRD` section 8), then by the act that builds the command.
 - **Where the console holds the operator's SSH public key, opened 2026-11-16** (section
   8.2). On the addendum to the operator's rulings of 2026-11-16 (setup pages) the
   console sends the operator's SSH public key down the paired link after pairing. Open:

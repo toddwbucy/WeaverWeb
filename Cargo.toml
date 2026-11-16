@@ -139,8 +139,9 @@ libc = "0.2"
 # console reads a repository and fetches its files from huggingface.co, the
 # one outward request the server makes. `reqwest` 0.12 without its default
 # features, on rustls with `ring`, the provider the link already takes, and
-# the operating system's roots, which update with the system. No HTTP/2, no
-# system proxy, no charset decoding. The connectors never use it, and
+# the operating system's roots, which update with the system. No HTTP/2 and
+# no charset decoding. The proxy variables are read whatever the features, so
+# the client refuses them itself (`.no_proxy()`, `tests/hugging_face_proxy.rs`). The connectors never use it, and
 # `tests/connectors_link.rs` keeps their graph free of `openssl-sys`.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "stream"] }
 # **The Hugging Face token's seal** (Spec 2.15): ChaCha20-Poly1305 from

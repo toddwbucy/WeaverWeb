@@ -228,7 +228,7 @@ fn rename_noreplace(from: &Path, to: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-fn stands(dir: &Path) -> bool {
+pub(crate) fn stands(dir: &Path) -> bool {
     dir.join(AUTHORITY_CERT).exists() || dir.join(AUTHORITY_KEY).exists()
 }
 
@@ -352,6 +352,19 @@ impl Authority {
             write_private(&staging.join(SERVER_KEY), &server_key.serialize_pem())?;
             write_synced(&staging.join(SERVER_CERT), &server_certificate.pem())?;
             write_synced(&staging.join(SERVER_NAME), server_name)?;
+            // **The Hugging Face token's seal key** (Spec 2.15): a rotation
+            // carries the key that stands into the new set, so the sealed
+            // token still opens, and a new set or one without a key gets a
+            // fresh one.
+            use crate::hugging_face::seal;
+            let key = match replace {
+                true => seal::read_key(&dir.join(seal::SEAL_KEY))?,
+                false => None,
+            };
+            seal::write_key(
+                &staging.join(seal::SEAL_KEY),
+                &key.unwrap_or_else(seal::mint),
+            )?;
             Ok(())
         })();
         // The set is verified where it was written, before anything live

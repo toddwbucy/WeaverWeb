@@ -323,6 +323,25 @@ fn room_for_the_model(dir: &Path) -> std::io::Result<u64> {
     Ok((MODEL_LEN as u64).saturating_sub(held))
 }
 
+/// **The pulls a test cancels at step 3**, by the blobs directory of the
+/// test's own cache: the puller, the pull's identity, and whether the cancel
+/// was sent.
+static CANCEL_AT_STEP_THREE: Mutex<Vec<(std::path::PathBuf, Puller, String, bool)>> =
+    Mutex::new(Vec::new());
+
+/// **A free-space read that cancels the pull**, at step 3, between step 2's
+/// blob check and step 4's download, as an admin's cancel landing while the
+/// blob is checked arrives there. Plenty of room otherwise.
+fn cancel_at_step_three(dir: &Path) -> std::io::Result<u64> {
+    for (blobs, puller, pull_id, sent) in CANCEL_AT_STEP_THREE.lock().unwrap().iter_mut() {
+        if blobs.as_path() == dir && !*sent {
+            puller.cancel(pull_id);
+            *sent = true;
+        }
+    }
+    Ok(u64::MAX / 2)
+}
+
 impl Rig {
     fn store(&self) -> &Store {
         &self.fresh.store
@@ -345,33 +364,43 @@ impl Rig {
     /// An ask of `files`, its first record written first, as an admin's
     /// write does.
     async fn ask(&self, puller: &Puller, files: &[RepoFile]) -> (String, Result<(), Refusal>) {
+        let pull_id = self.store().mint_key("mp").await.unwrap();
+        let asked = self.ask_as(puller, &pull_id, files).await;
+        (pull_id, asked)
+    }
+
+    /// An ask of `files` under `pull_id`, minted by the test.
+    async fn ask_as(
+        &self,
+        puller: &Puller,
+        pull_id: &str,
+        files: &[RepoFile],
+    ) -> Result<(), Refusal> {
         let s = self.store();
-        let pull_id = s.mint_key("mp").await.unwrap();
         let first = s
             .audit_first(
                 Principal::Person {
                     person_id: &self.admin,
                     method: PersonMethod::Session,
                 },
-                Target::ModelPull(&pull_id),
+                Target::ModelPull(pull_id),
                 "model pull",
             )
             .await
             .unwrap();
-        let asked = puller
+        puller
             .ask(
                 &self.admin,
                 self.session_id,
                 &first,
-                &pull_id,
+                pull_id,
                 &repo(),
                 COMMIT,
                 Some("ada-hf"),
                 files,
             )
             .await
-            .unwrap();
-        (pull_id, asked)
+            .unwrap()
     }
 
     /// The pull's state once it is no longer `running`, within ten seconds.
@@ -1211,6 +1240,66 @@ async fn a_cancel_stops_a_pull_waiting_for_its_headers() {
     assert_eq!(rig.ended(&again).await, ("verified".into(), None));
     assert_eq!(rig.cdn().len(), 2, "{:?}", rig.cdn());
     rig.fakes.release.notify_one();
+    puller.stop();
+}
+
+/// **A cancel that lands during a blob's check starts no partial's hash**:
+/// step 2 hashes a blob that does not match, the cancel lands before step 4,
+/// and the download stops before its partial is opened or hashed, so the
+/// hash under way is the only one that finishes after the cancel.
+#[tokio::test]
+async fn a_cancel_during_a_blobs_check_starts_no_partials_hash() {
+    let Some(rig) = rig().await else { return };
+    std::fs::create_dir_all(rig.blobs()).unwrap();
+    let wrong: Vec<u8> = model_bytes().iter().map(|b| b.wrapping_add(1)).collect();
+    std::fs::write(rig.blobs().join(model_file().sha256.unwrap()), wrong).unwrap();
+    let puller = rig.puller(Settings {
+        free_space: cancel_at_step_three,
+        ..quick()
+    });
+    let pull_id = rig.store().mint_key("mp").await.unwrap();
+    CANCEL_AT_STEP_THREE.lock().unwrap().push((
+        rig.blobs(),
+        puller.clone(),
+        pull_id.clone(),
+        false,
+    ));
+    let asked = rig.ask_as(&puller, &pull_id, &[model_file()]).await;
+    assert!(asked.is_ok(), "{asked:?}");
+    let sent = || {
+        CANCEL_AT_STEP_THREE
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(_, _, p, sent)| *p == pull_id && *sent)
+    };
+    for _ in 0..200 {
+        if sent() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(sent(), "the pull never reached step 3");
+    // The admin's cancel written as the surface writes it, after the signal.
+    let web = rig.surface(&puller);
+    let uri = format!("/admin/hugging-face/pulls/{pull_id}/cancel");
+    let (status, _, body) = send_as(&web, "POST", &uri, Some(String::new()), &rig.cookie).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    // The next ask verifies once the puller has left the cancelled pull.
+    let (again, asked) = rig.ask(&puller, &[config_file()]).await;
+    assert!(asked.is_ok(), "{asked:?}");
+    assert_eq!(rig.ended(&again).await, ("verified".into(), None));
+
+    let partial = rig
+        .blobs()
+        .join(format!("{}.incomplete", model_file().sha256.unwrap()));
+    let hashed = crate::hugging_face::pull::HASHED_PARTIALS
+        .lock()
+        .unwrap()
+        .contains(&partial);
+    assert!(!hashed, "a partial was hashed after the cancel");
+    assert!(!partial.exists(), "a partial was opened after the cancel");
+    assert_eq!(rig.fakes.fetched.load(Ordering::SeqCst), 0);
     puller.stop();
 }
 

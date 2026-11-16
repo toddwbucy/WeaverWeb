@@ -428,6 +428,15 @@ async fn found(
 /// written while it is hashed, and renamed to its blob only on a match.
 /// **Before each retry the account is read again**, and **a cancel stops
 /// the file at its next read or wait**, the partial flushed and kept.
+/// **The partials this process re-hashed**, for the tests alone, as
+/// `link::authority`'s faults are: a fixture hashes too fast for a test to
+/// time a cancel into it, so a test reads whether a partial was hashed after
+/// a cancel. Each test's cache is a directory of its own, so a test reads
+/// its own paths whatever runs beside it.
+#[cfg(test)]
+pub(crate) static HASHED_PARTIALS: std::sync::Mutex<Vec<PathBuf>> =
+    std::sync::Mutex::new(Vec::new());
+
 async fn download(
     inner: &Inner,
     cache: &Cache,
@@ -437,6 +446,12 @@ async fn download(
     mut token: Option<Token>,
     cancel: &mut watch::Receiver<Option<String>>,
 ) -> Result<String, Ended> {
+    // A cancel that landed during step 2's blob check, or since the loop's
+    // own check, starts no partial's hash: only a hash already under way
+    // finishes after a cancel (Spec 2.15).
+    if is_cancelled(cancel, pull) {
+        return Err(Ended::Cancelled);
+    }
     let id = file.identity().to_owned();
     let named = |e: &dyn std::fmt::Display| failed(format!("{}: {e}", file.path));
     let partial = cache.incomplete(repo, &id).map_err(|e| named(&e))?;
@@ -444,6 +459,8 @@ async fn download(
     let out = open_partial(&partial).map_err(|e| named(&e))?;
     let (size, in_git) = (file.size, file.in_git());
     let mut reading = out.try_clone().map_err(|e| named(&e))?;
+    #[cfg(test)]
+    HASHED_PARTIALS.lock().unwrap().push(partial.clone());
     let (mut hasher, mut have) =
         tokio::task::spawn_blocking(move || hash_from_start(&mut reading, size, in_git))
             .await

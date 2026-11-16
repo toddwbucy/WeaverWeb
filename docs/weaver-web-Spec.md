@@ -4381,6 +4381,21 @@ Declare's sub-tab under Agents, Declarations with its stage mark 1 Declare, open
 start page. The declaration screen of section 6.1 stays as built, its rows untouched,
 reached from the build page's stub for the fields no setup page asks.
 
+**The start page's name is the name admin derives the agent's identities from.** On
+the operator's rulings of 2026-11-16 (setup pages) the appliance names its directories
+and its admin entry after the agent, and admin derives the agent's accounts, groups,
+cgroup and scope from `weaver-<name>`. **So the start page refuses every name
+`weaver-admin-Spec` section 4 refuses**, read at WeaverAgent's `6b91747e` (merged
+2026-11-15): its characters, its reserved suffixes and its two reserved names, which
+this document cites and does not restate, since they name a box's accounts. **It
+refuses too every name WeaverAgent's `create-agent.sh` refuses** at the same commit: a
+lowercase letter, then lowercase letters and digits, 2 to 16 characters in all. That
+rule is the stricter, and the only one of the two that bounds the length, since the
+name becomes an account, a group and a directory. A name either rule refuses could not
+stand on a box, so the start page takes neither. The register's own grammar (section
+2.12) is wider and does not change here. Whether the appliance's account takes the name
+or stays fixed is with the operator, and the rule binds either way.
+
 **Every pane carries its stage, its backing and its status**, healthy states included:
 the header's stage mark `1 Declare`, its backing (`built`, `partly` or `unbuilt`) and a
 status word in a status mark (`ok`, `hold` or `fail`, the design system's Marks). **A
@@ -4389,21 +4404,21 @@ blank field passed off as a value, no input holding a value, no default device, 
 precision taken from a file's name.
 
 **The setup is one row, mutable until Confirm** (migration `0026`). It names its
-identity, `su-` and sixteen lowercase hex, the agent's name in the register's grammar
-(section 2.12), the checkbox, the person who began it and when, its state, `open` or
-`confirmed`, and a version every write checks against the page's read, a stale write
-answering 409 and writing nothing. One open setup holds a name at a time. Beside it, one
-row per model role holds the role, the repository, the commit, the choice, the pull of
-section 2.15 that fetched it and the facts read from its header, and the setup holds the
-chosen context length. **The pages write no declaration row**, and the document's
-grammar of section 6.1 is not extended. Every write is audited with the target kind
-`setup`, naming the row.
+identity, `su-` and sixteen lowercase hex, the agent's name by the start page's rule
+above, the checkbox, the person who began it and when, its state, `open` or `confirmed`,
+and a version every write checks against the page's read, a stale write answering 409
+and writing nothing. One open setup holds a name at a time. Beside it, one row per model
+role holds the role, the repository, the commit, the choice, the pull of section 2.15
+that fetched it and the facts read from its header, and the setup holds the chosen
+context length. **The pages write no declaration row**, and the document's grammar of
+section 6.1 is not extended. Every write is audited with the target kind `setup`, naming
+the row.
 
 **Each page:**
 
 | page | live | held, and on what |
 | --- | --- | --- |
-| Start | the name, refused outside the register's grammar or where an open setup holds it; the open setups; New agent once an agent stands | nothing |
+| Start | the name, refused by the start page's rule or where an open setup holds it; the open setups; New agent once an agent stands | nothing |
 | Pairing | the checkbox, virtual machine or host; the warning where the console's own link address (`link_address`, else `link_listen`) is a loopback address and the checkbox says virtual machine, and the address the box dialed too once the enrollment brings it | the waiting box, its code and its fingerprint: the enrollment (section 8.2) and the image's setup script; the survey's report: its form, the image's or WeaverAgent's, and its frame |
 | Models | the repository and its revision, resolved to a commit; each choice with its size and its header's facts; a gated repository with its accept link and a check again; the pick, which asks a pull (section 2.15); the pulls' progress and record; the roster beyond the first agent drawn and marked unbuilt | nothing on the console's side; the box's pull from the cache is the enrollment's frame |
 | Drives | the appliance's form drawn with what it will show; the host's form drawn and marked unbuilt, its models directory prefilled from `model_cache` where set; the SSH key that goes down, by its fingerprint, with a link to change it | the command that starts the drive setup: the image's setup script names it; the drives as mounted: the box's report and its frame |
@@ -6468,6 +6483,7 @@ two connectors report.
 | each reported member reads equal, differs or not in this report, by the shape its source names, a state election by the first entry for each kind, and an absence is set beside the report as the agent reads it | `each_member_reads_equal_differs_or_not_in_this_report`, `an_absence_is_set_beside_the_report_as_the_agent_reads_it`, `a_kind_named_again_whose_first_entry_is_declared_reads_equal` and `a_kind_named_again_whose_first_entry_is_not_declared_differs` in `src/declaration/reported.rs`: read a state election's kinds in their order or a path named twice twice, compare a state election by its words, or show a difference between two elections that read alike by those words, read a null member as reported, read the tee's election in `show`'s spelling, read any engine or turn context word, or swap a difference's two sides, and the first fails; read an absent turn context as independent, an absent surprisal as true, an absent residual readout as false or an absent state election as the other default, and the second fails; keep every entry of a kind named again, and `a_kind_named_again_whose_first_entry_is_declared_reads_equal` fails; keep its last entry rather than its first, and that test and `a_kind_named_again_whose_first_entry_is_not_declared_differs` fail; drop the words that say the kind was named again, and both fail (16 cases, each caught) |
 | the agent page sets what the agent reports beside the declaration saved under its name, to every grant holder, never says which version the agent was loaded from, and fails by itself where its head does not read or a read inside it fails | perturbation in `src/declare_pane_tests.rs`: change the empty state's sentence, or offer a new declaration to every reader or to none, and `with_no_declaration_saved_the_pane_says_so` fails; give the screen's link to every reader or to none, mark a reported part with no load as never reported or the reverse, read the pane for an admin alone, name the lineage's root for its head, or show the declared value as the verdict, and `a_saved_declaration_with_no_load_shows_its_parts` fails; never compare the decoder, drop the sentence that a difference may only mean an older version, plant "loaded from", or read a load event as `show`'s answer, and `a_load_the_agent_reports_is_set_beside_the_head` fails; read a tuple of no named source as `show`'s, or say it is no load, and `a_load_whose_source_the_row_does_not_name_is_set_beside_nothing` fails; show the prompt's text or its length in bytes, render its digest for a person who is not an admin, or for no one, and `the_prompt_is_shown_by_its_length_and_its_digest_to_an_admin_alone` fails; drop the name, the row's own identity or the live credential from the others' filter, show a person every row of the register, or never render the others, and `the_other_rows_of_the_name_are_listed_as_far_as_the_reader_may_see` fails; say the same declaration stands behind the other rows whatever the head, or say none is saved under the name where the head could not be read, and `the_other_rows_claim_only_what_was_read_of_the_head` fails (27 cases); panic where a head does not read, say it reads, or give its screen's link to every reader, and `a_head_that_does_not_read_fails_in_the_pane_alone` fails; offer a new declaration on an unread head or say none is saved, read unread others as none or never render their sentence, or show an unread author as nothing, and `a_read_that_fails_inside_the_pane_is_stated_there` fails; read a failed lookup as none saved, fault the page on it, or lead the way back to a new declaration, and `a_head_lookup_that_fails_leaves_the_agent_page_standing`; read the head by the parse alone, and `a_head_saved_with_the_withdrawn_placement_reads_in_the_pane` fails (12 cases); each caught |
 | every pane of every setup page carries a stage, a backing and a status word, and a held pane names what it waits on with no input holding a value | test in `src/setup_tests.rs` walking every page's rendered panes: drop a pane's status mark, or fill a held pane's input, and the walk names the pane |
+| the start page refuses every name admin's name rule or the box's agent-creation rule refuses | perturbation in `src/setup_tests.rs`, one case per clause, each refused and opening no setup: an uppercase letter, a `-`, a `_`, a leading digit, one character, seventeen characters, and each of the two names `weaver-admin-Spec` section 4 reserves whole, which the character rule admits; drop each clause and its case opens a setup, and a name of sixteen characters opens one. A name ending in one of section 4's reserved suffixes carries a `-`, so the character rule refuses it |
 | a crafted post naming a second model, a second adapter role or the CPU is refused, saving nothing | perturbation in `src/setup_tests.rs`: take any role the form names, and a second model's row lands |
 | a pick asks Hugging Face only after the admin gate | perturbation in `src/setup_tests.rs` against a fake Hugging Face: read the listing before the gate, and the fake counts a request from a person holding no admin grant |
 | the GGUF reader refuses a length or a count past its buffer, a header cut short and a header past its bound, without a panic or an unbounded allocation | perturbation in `src/gguf.rs`'s tests: read a string's length before checking it against the bytes held, and a hostile header panics or asks an allocation of its claimed size |

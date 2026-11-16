@@ -183,6 +183,12 @@ enum AuthorityVerb {
         #[arg(long)]
         author: Option<String>,
     },
+    /// Write the Hugging Face token's seal key beside an authority made
+    /// before `init` wrote one. Refuses to overwrite one that stands.
+    SealKey {
+        #[arg(long)]
+        author: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -216,6 +222,15 @@ async fn run_verb(cfg: &ServerConfig, command: Command) -> verbs::Answer {
                     "ok": false,
                     "error": format!("the store could not be reached, so nothing was done: {e:#}"),
                 }),
+                ok: false,
+            },
+        },
+        Command::Authority {
+            verb: AuthorityVerb::SealKey { author },
+        } => match store::Store::connect(&cfg.database).await {
+            Ok(store) => verbs::authority_seal_key(&store, cfg, author.as_deref()).await,
+            Err(e) => verbs::Answer {
+                value: serde_json::json!({ "verb": "authority seal-key", "ok": false, "error": format!("the store could not be reached, so nothing was done: {e:#}") }),
                 ok: false,
             },
         },
@@ -478,6 +493,16 @@ async fn serve(cfg: Arc<ServerConfig>) -> anyhow::Result<()> {
                 windows: link.windows().clone(),
                 recheck: weaver_web::surfaces::reading::RECHECK,
                 asker: link.clone(),
+            }),
+        ))
+        // **The Hugging Face account** (Spec 2.15): a console setting, the
+        // client fixed at `https://huggingface.co`, the seal key read from
+        // the authority's directory where it is used.
+        .merge(weaver_web::surfaces::script_policy(
+            weaver_web::surfaces::hugging_face::routes(weaver_web::surfaces::hugging_face::Seams {
+                policy: policy.clone(),
+                client: weaver_web::hugging_face::Client::new()?,
+                authority_dir: cfg.authority_dir.clone(),
             }),
         ))
         // **The register of agents through the server** (Spec 2.13): the

@@ -22,6 +22,7 @@ pub(crate) mod commit;
 pub mod declarations;
 pub mod experiment;
 pub mod grants;
+pub mod hugging_face;
 pub mod identity;
 #[cfg(test)]
 mod identity_tests;

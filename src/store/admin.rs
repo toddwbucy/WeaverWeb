@@ -81,6 +81,14 @@ pub enum Refusal {
     NameHeld(String),
     /// A save would change its lineage's name (Spec 2.4).
     NameChanged(String),
+    /// No Hugging Face account is connected (Spec 2.15).
+    NotConnected,
+    /// Hugging Face refused the token (Spec 2.15).
+    TokenRefused,
+    /// The console holds no seal key (Spec 2.15).
+    NoSealKey,
+    /// The stored token's seal does not open under the seal key (Spec 2.15).
+    SealDoesNotOpen,
 }
 
 impl std::fmt::Display for Refusal {
@@ -158,6 +166,19 @@ impl std::fmt::Display for Refusal {
                 f,
                 "{verb} is not in the vocabulary ({})",
                 crate::store::identity::VOCABULARY.join(", ")
+            ),
+            Refusal::NotConnected => write!(f, "no Hugging Face account is connected"),
+            Refusal::TokenRefused => write!(
+                f,
+                "Hugging Face refused this token, so nothing was saved; check the token on Hugging Face and paste it again"
+            ),
+            Refusal::NoSealKey => write!(
+                f,
+                "the console holds no seal key, so it can keep no token; the host's `authority seal-key` writes one"
+            ),
+            Refusal::SealDoesNotOpen => write!(
+                f,
+                "the stored token does not open under the console's seal key, which was replaced or lost; connect the account again"
             ),
         }
     }

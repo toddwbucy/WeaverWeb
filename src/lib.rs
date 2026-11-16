@@ -32,6 +32,9 @@ mod grants_tests;
 pub mod host;
 #[cfg(test)]
 mod host_tests;
+pub mod hugging_face;
+#[cfg(all(test, feature = "passkeys"))]
+mod hugging_face_tests;
 #[cfg(all(test, feature = "passkeys"))]
 mod keys_tests;
 pub mod link;

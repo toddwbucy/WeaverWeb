@@ -431,6 +431,13 @@ async fn the_token_enters_no_audit_row_log_line_page_or_error() {
             .with_ansi(false)
             .finish(),
     );
+    // **A second dispatcher, held for the test's life**: with one scoped
+    // dispatcher alone, tracing-core 0.1.36 takes a callsite's interest from
+    // the default of whichever thread meets it first
+    // (`Dispatchers::rebuilder`), so a line a test running beside this one
+    // reaches first, on a thread with no subscriber, would go uncaught here.
+    // With two registered, it asks each of them.
+    let _second = tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default());
     let Some(rig) = rig().await else { return };
     let s = rig.store();
     let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;

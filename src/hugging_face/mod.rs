@@ -1,3 +1,5 @@
+//! conforms: web-the-hugging-face-client-reads-no-proxy-from-the-environment
+//!
 //! **The Hugging Face client** (Spec 2.15): the one outward request the
 //! server makes. It speaks to `https://huggingface.co` alone, fixed, with no
 //! mirror key (this document's election of 2026-11-16, the Spec's): its base
@@ -307,7 +309,12 @@ impl Client {
                 && base.password().is_none(),
             "a Hugging Face base is an origin and nothing more"
         );
+        // **No proxy from the environment**: reqwest reads `HTTP_PROXY`,
+        // `HTTPS_PROXY` and `ALL_PROXY` through hyper-util whatever its
+        // features, and the client speaks to its one fixed endpoint
+        // directly, so the token reaches no host the operator did not name.
         let http = reqwest::Client::builder()
+            .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(CONNECT_BOUND)
             .user_agent(concat!("weaver-web/", env!("CARGO_PKG_VERSION")))

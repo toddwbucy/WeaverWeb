@@ -1,4 +1,5 @@
 //! conforms: web-a-repositorys-file-names-write-nothing-outside-the-cache
+//! conforms: web-a-snapshots-link-never-replaces-a-file-the-repository-holds
 //!
 //! **The model cache** (Spec 2.15): the directory `model_cache` names, in
 //! Hugging Face's own layout, written by the console itself so no Hugging
@@ -184,19 +185,26 @@ impl Cache {
     /// tools write it: `../../blobs/<id>` for a file at the snapshot's top,
     /// one `../` more for each directory of its path. Written beside its
     /// place and renamed over it, so a reader meets the old link or the new.
+    /// **The staged link takes a random name**, created new and never
+    /// removed first, since a repository may hold a file of any fixed name
+    /// beside its place, and staging under that name would replace it.
     pub fn link(&self, repo: &RepoId, commit: &str, path: &str, id: &str) -> anyhow::Result<()> {
         let place = self.snapshot(repo, commit, path)?;
         anyhow::ensure!(is_identity(id), "a blob's name is not of its shape");
         let parent = place.parent().expect("a snapshot's file has a parent");
         self.ensure_dir(parent)?;
         let target = relative_target(path, id);
+        let mut tag = [0u8; 8];
+        getrandom::fill(&mut tag).expect("the operating system's random source answers");
         let staged = parent.join(format!(
-            ".{}.weaver-web-link",
-            place.file_name().unwrap().to_string_lossy()
+            ".weaver-web-link-{}",
+            crate::store::identity::hex(&tag)
         ));
-        let _ = std::fs::remove_file(&staged);
         std::os::unix::fs::symlink(&target, &staged)?;
-        std::fs::rename(&staged, &place)?;
+        if let Err(e) = std::fs::rename(&staged, &place) {
+            let _ = std::fs::remove_file(&staged);
+            return Err(e.into());
+        }
         Ok(())
     }
 
@@ -383,6 +391,34 @@ mod tests {
             cache.linked(&repo, commit, "onnx/sub/model.onnx"),
             Some(id.clone())
         );
+    }
+
+    /// **A link is never staged over a repository's own file**: a
+    /// repository may hold a file of any name beside another, so linking
+    /// `model.gguf` leaves the link of a file named as a fixed staging name
+    /// for it would be, and the snapshot's directory holds nothing staged.
+    #[test]
+    fn a_link_is_never_staged_over_a_repositorys_own_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::at(dir.path()).unwrap();
+        let repo = RepoId::parse("org/open").unwrap();
+        let commit = "27b350a791e81d9a4d1ddca1c49282e9ec533768";
+        let (first, second) = ("a".repeat(64), "b".repeat(64));
+        cache.ensure_dir(&cache.blobs(&repo)).unwrap();
+        std::fs::write(cache.blob(&repo, &first).unwrap(), b"first").unwrap();
+        std::fs::write(cache.blob(&repo, &second).unwrap(), b"second").unwrap();
+        let neighbour = ".model.gguf.weaver-web-link";
+        cache.link(&repo, commit, neighbour, &first).unwrap();
+        cache.link(&repo, commit, "model.gguf", &second).unwrap();
+        assert_eq!(cache.linked(&repo, commit, neighbour), Some(first));
+        assert_eq!(cache.linked(&repo, commit, "model.gguf"), Some(second));
+        let place = cache.snapshot(&repo, commit, "model.gguf").unwrap();
+        let mut names: Vec<_> = std::fs::read_dir(place.parent().unwrap())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        names.sort();
+        assert_eq!(names, [neighbour, "model.gguf"]);
     }
 
     /// **No name leaves the root**: a blob's name out of its shape, a

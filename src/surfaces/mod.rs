@@ -20,6 +20,7 @@ pub mod gate;
 #[cfg(test)]
 pub(crate) mod gate_tests;
 pub mod grants;
+pub mod hugging_face;
 #[cfg(feature = "passkeys")]
 pub mod keys;
 pub mod reading;
@@ -57,7 +58,7 @@ pub(crate) fn tab_of(here: &str) -> &'static str {
     match here {
         "declarations" | "register" | "agents" => "agents",
         "record" => "operations",
-        "admin" | "grants" | "passkeys" => "iam",
+        "admin" | "grants" | "hugging-face" | "passkeys" => "iam",
         _ => "",
     }
 }

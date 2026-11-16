@@ -1,3 +1,5 @@
+//! conforms: web-the-accounts-version-is-never-repeated-across-a-disconnect
+//!
 //! **The Hugging Face account's row** (Spec 2.15, migration `0024`): one
 //! row, a console setting, written by an admin alone. Each write takes the
 //! identity exclusion, re-checks the admin's session and grant inside its
@@ -65,7 +67,9 @@ impl Store {
 
     /// **An admin's connect**: the account Hugging Face named and the token
     /// sealed, written where none stands (`version` 0) or over the row read
-    /// at `version`. Stale where the row is not what the page read.
+    /// at `version`. Stale where the row is not what the page read. Every
+    /// write draws its version from migration `0024`'s sequence, so a version
+    /// read before a disconnect never matches the row a connect again makes.
     pub async fn hugging_face_connect(
         &self,
         admin: &str,
@@ -95,7 +99,8 @@ impl Store {
             sqlx::query(
                 "UPDATE hugging_face_account SET account = $1, role = $2, sealed = $3, \
                  nonce = $4, set_by = $5, set_at = now(), checked_at = now(), \
-                 refused_at = NULL, version = version + 1 WHERE version = $6",
+                 refused_at = NULL, version = nextval('hugging_face_account_version') \
+                 WHERE version = $6",
             )
             .bind(&account.name)
             .bind(account.role.as_str())
@@ -133,8 +138,8 @@ impl Store {
             Checked::Accepted(account) => {
                 sqlx::query(
                     "UPDATE hugging_face_account SET account = $1, role = $2, \
-                     checked_at = now(), refused_at = NULL, version = version + 1 \
-                     WHERE version = $3",
+                     checked_at = now(), refused_at = NULL, \
+                     version = nextval('hugging_face_account_version') WHERE version = $3",
                 )
                 .bind(&account.name)
                 .bind(account.role.as_str())
@@ -145,7 +150,7 @@ impl Store {
             Checked::Refused => {
                 sqlx::query(
                     "UPDATE hugging_face_account SET checked_at = now(), refused_at = now(), \
-                     version = version + 1 WHERE version = $1",
+                     version = nextval('hugging_face_account_version') WHERE version = $1",
                 )
                 .bind(version)
                 .execute(&mut *tx)

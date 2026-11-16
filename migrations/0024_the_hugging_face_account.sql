@@ -12,6 +12,12 @@
 --
 -- **Each CHECK is false, never unknown, on a missing value**, 0014's rule.
 
+-- **The version is drawn from a sequence**, at the insert and at every
+-- update, so it is never repeated across a disconnect: a page read before a
+-- disconnect and a connect again holds a version the new row never takes,
+-- and its write is stale.
+CREATE SEQUENCE hugging_face_account_version;
+
 CREATE TABLE hugging_face_account (
   -- **One row at most**: the key is the constant `true`.
   one BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (one IS NOT NULL AND one),
@@ -40,7 +46,8 @@ CREATE TABLE hugging_face_account (
   -- check it passes and by a connect. The setting stands until a
   -- disconnect.
   refused_at TIMESTAMPTZ,
-  version BIGINT NOT NULL DEFAULT 1 CHECK (version IS NOT NULL AND version >= 1)
+  version BIGINT NOT NULL DEFAULT nextval('hugging_face_account_version')
+    CHECK (version IS NOT NULL AND version >= 1)
 );
 
 -- **The audit's targets gain the account**, which names no row, as the

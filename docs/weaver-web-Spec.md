@@ -723,6 +723,15 @@ admission, per `weaver-admin-PRD` section 4.3. This table is where an
 engineer keeps what they are composing, and the two agree only where the
 operator has placed one.
 
+**The setup and the deployment tuple stand beside the lineage, not in it** (section
+6.2). The setup pages keep a mutable setup row until Confirm, then one immutable
+deployment tuple naming each model's repository, commit and per-part digests, the
+context length and the box's members, each with its source. Neither is a declaration
+row: a setup writes none, the document's grammar is not extended, and the lineage's rows
+are untouched. Which source wins when Provision renders a loadable declaration, the
+screen's artifact text or the tuple's repository, commit and digests, is open (section
+10).
+
 ### 2.5 The staged experiment
 
 The claims the charter's section 3.5 registers and section 3.6 lists, in the
@@ -1024,9 +1033,10 @@ sign in. **The bar stands in two rows** (the operator's words of
 three tabs, in this order:
 
 - **Agents**, the agents' work. Its sub-tabs stand in the path's order,
-  each carrying the stage marks it serves: Declarations, 1 Declare, and
-  Register, 2 Provision, for an admin; then Your agents, 3 Run and
-  4 Observe, the agents the person holds a grant on.
+  each carrying the stage marks it serves: Declarations, 1 Declare, which
+  opens the start page (section 6.2), and Register, 2 Provision, for an
+  admin; then Your agents, 3 Run and 4 Observe, the agents the person
+  holds a grant on.
 - **Agent Operations**, holding The Record, the record of the whole
   lifecycle and no stage's own. The operator's word of 2026-11-13 places
   experiments, the conversation with an agent, multi-agent workflow
@@ -4327,6 +4337,166 @@ read the document back**:
 nothing else: no frame leaves on the link, no verb is asked, no file is
 written, and nothing is installed, validated or seeded.
 
+### 6.2 The setup pages
+
+**Declare's path is the start page, the setup pages and the build page**, on the
+operator's rulings of 2026-11-16 (setup pages), items 1 to 20 of their addendum and the
+Planner's notes after item 17. The decisions this section takes are this document's
+election of 2026-11-16. The pages light what exists and draw the rest held: the start
+page, the models page, the placement page's context length and the pairing page's
+checkbox are live, and the pairing page's code and fingerprint, the survey's report, the
+drives as the box mounted them, the placement's devices and its planned fit, and the
+box's members of the deployment tuple are held, each waiting on the enrollment (section
+8.2), the image's setup script or WeaverAgent's terms. **So the pages alone reach no
+confirmed tuple**, and the rulings' first test (download fresh, set up a virtual machine
+through the pages, confirm the tuple) waits on the enrollment's act and the image's
+setup-script act.
+
+**The pages are an admin's**, the server-wide admin grant, as the declaration screen's
+(section 6.1): a setup comes before Provision's register, so no agent row exists for a
+per-agent role. Every route stands under section 2.13's session gate and `Origin` check,
+a session whose person holds no live admin grant is refused at every route, and every
+write is an admin write in section 2.13's one order, audited with the admin as principal
+by `session`. Reads are not audited.
+
+**The routes:**
+
+- `GET /setup`, the start page: the agent's name, one field, and the setups left open,
+  each a link to its next page. Once an agent stands in the register, a New agent
+  button stands in the field's place and opens it.
+- `POST /setup`: a new setup of the name
+- `GET /setup/{su}/{page}`, where `{page}` is `pairing`, `models`, `drives`,
+  `placement`, `confirm` or `build`, and `GET /setup/{su}` answers its pairing page
+- `POST /setup/{su}/pairing`: the checkbox
+- `POST /setup/{su}/models`: a pick
+- `GET /setup/{su}/models/header`: one choice's header, a fragment
+- `GET /setup/{su}/models/pull`: the setup's pulls with their progress, a fragment the
+  page re-fetches every 15 s through the session's background read
+- `POST /setup/{su}/placement`: the context length
+- `POST /setup/{su}/confirm`: Confirm
+- `GET /admin/ssh-key`, `POST /admin/ssh-key` and `POST /admin/ssh-key/{sk}/remove`: the
+  operator's SSH public keys
+
+Declare's sub-tab under Agents, Declarations with its stage mark 1 Declare, opens the
+start page. The declaration screen of section 6.1 stays as built, its rows untouched,
+reached from the build page's stub for the fields no setup page asks.
+
+**Every pane carries its stage, its backing and its status**, healthy states included:
+the header's stage mark `1 Declare`, its backing (`built`, `partly` or `unbuilt`) and a
+status word in a status mark (`ok`, `hold` or `fail`, the design system's Marks). **A
+held pane says in its footer what it waits on and shows no value it did not read**: no
+blank field passed off as a value, no input holding a value, no default device, and no
+precision taken from a file's name.
+
+**The setup is one row, mutable until Confirm** (migration `0026`). It names its
+identity, `su-` and sixteen lowercase hex, the agent's name in the register's grammar
+(section 2.12), the checkbox, the person who began it and when, its state, `open` or
+`confirmed`, and a version every write checks against the page's read, a stale write
+answering 409 and writing nothing. One open setup holds a name at a time. Beside it, one
+row per model role holds the role, the repository, the commit, the choice, the pull of
+section 2.15 that fetched it and the facts read from its header, and the setup holds the
+chosen context length. **The pages write no declaration row**, and the document's
+grammar of section 6.1 is not extended. Every write is audited with the target kind
+`setup`, naming the row.
+
+**Each page:**
+
+| page | live | held, and on what |
+| --- | --- | --- |
+| Start | the name, refused outside the register's grammar or where an open setup holds it; the open setups; New agent once an agent stands | nothing |
+| Pairing | the checkbox, virtual machine or host; the warning where the console's own link address (`link_address`, else `link_listen`) is a loopback address and the checkbox says virtual machine, and the address the box dialed too once the enrollment brings it | the waiting box, its code and its fingerprint: the enrollment (section 8.2) and the image's setup script; the survey's report: its form, the image's or WeaverAgent's, and its frame |
+| Models | the repository and its revision, resolved to a commit; each choice with its size and its header's facts; a gated repository with its accept link and a check again; the pick, which asks a pull (section 2.15); the pulls' progress and record; the roster beyond the first agent drawn and marked unbuilt | nothing on the console's side; the box's pull from the cache is the enrollment's frame |
+| Drives | the appliance's form drawn with what it will show; the host's form drawn and marked unbuilt, its models directory prefilled from `model_cache` where set; the SSH key that goes down, by its fingerprint, with a link to change it | the command that starts the drive setup: the image's setup script names it; the drives as mounted: the box's report and its frame |
+| Placement | the context length, bounded by the header's maximum; the block count and the parts in shard order, from the header | the devices: the survey's report; the fit, drawn "planned, from the box's room plan": the room plan's answer over TLS, an ask on WeaverAgent |
+| Confirm | every member of the tuple with its source, read or held | the box's members; Confirm stands only once every member is read |
+| Build | one pane, marked unbuilt, linking the declaration screen as built for the fields no setup page asks | the board and the prompt tuple panel, held by the rulings |
+
+**The models page's roster is the first agent's**: one decoder and one adapter on it.
+Extra models, adapter roles beyond the one decoder adapter, a classifier-only agent and
+placement on the CPU are drawn and marked unbuilt, never live, and a post that names
+any of them is refused, saving nothing. A pick for a role the setup holds replaces that
+role's row, and the files the earlier pick pulled stay in the cache.
+
+**A choice is a model, not a file.** Files named `<stem>-NNNNN-of-MMMMM.gguf` with one
+stem and one count group into one choice listing every part and their total size,
+offered only where every part from 1 to the count stands at the commit. Every other
+`.gguf` file is a choice of its own. The pick's form carries the repository, the commit,
+the choice and the role, and the console takes the sizes and digests from Hugging Face's
+listing at that commit, never from the form. **A pick asks Hugging Face for the listing
+and the header after the admin gate and before its audited write**, so a person without
+an admin grant causes no request to Hugging Face. **The pick asks a pull** of the
+choice's parts through section 2.15's puller, an ask while a pull runs being refused and
+naming it, and the setup's role row names the pull.
+
+**Each choice's header is read before any download**, by a range read of its first
+part through the commit with section 2.15's client and its `Authorization` rule. The
+read stops at the end of the metadata or at **16 MiB**, whichever comes first, a header
+running past it being "not read". Each choice's header is its own fragment, so a
+repository of many choices costs a read per choice shown, at most four reads in flight
+across the console, and the facts read are kept in the server's memory by repository,
+commit and path for the process's life, at most 1024 entries, since a file at a commit
+never changes. The pick reads its choice's header again where none is kept, and the role
+row keeps its facts.
+
+**The header is read by a GGUF reader of the console's own** (`src/gguf.rs`), linking
+no crate of the agent (section 1). It reads versions 2 and 3, and every value type,
+arrays included, an array of arrays one level deep and no deeper. **Every length and
+count is checked against the bytes held before anything is read or allocated for it**,
+so a string's length or an array's count past the buffer, and a header cut short, are
+refusals and never a panic or an unbounded allocation. It answers:
+
+- the precision, the word for `general.file_type` in llama.cpp's file types, or "file
+  type N" for a number it does not name, never a word guessed
+- the maximum context, `<general.architecture>.context_length`
+- the block count, the KV heads, `split.count` and `split.no`
+- `general.type`, so a decoder's pick of an adapter's file, or an adapter's pick of a
+  model's, is refused
+
+A fact the header does not carry is shown "not read", and a choice whose header's split
+count differs from its file names is shown with that reason and offered no pick.
+
+**The context length** is an integer from 1 to the header's maximum. One above it is
+refused, saving nothing, and one at it is kept. Where the maximum was not read, the
+placement page holds the field with that reason.
+
+**Confirm writes the deployment tuple**, one row, immutable (migration `0028`): a
+trigger of the kind migration `0023` uses refuses any update and any delete, and a
+second Confirm of a setup is refused. It names its identity, `dt-` and sixteen lowercase
+hex, the setup, the pulls, the person who confirmed and when, and every member with its
+source:
+
+| member | source |
+| --- | --- |
+| the model's repository, commit, per-part digests and sizes | the pull's record, verified (section 2.15) |
+| the adapter's, likewise | the pull's record, verified |
+| the context length | the setup, bounded by the header |
+| the virtual machine or host | the setup's checkbox |
+| the image version, the driver, the cards by identity, the guest CPU, the machine | the box's report |
+| the drives | the box's report |
+| the placement | the placement page, from the survey's report |
+
+**Confirm's way forward stands only where every member is read**: both pulls verified,
+the context length kept, and the box's members answered. The box's members come from a
+source the enrollment's act builds, and until it the source answers none, so Confirm
+holds and says which members it waits on. A post to Confirm with a member unread is
+refused, writing nothing. Confirm then goes to the build page.
+
+**The operator's SSH public keys are a console setting** (migration `0027`), one or
+more, an admin's write at `GET /admin/ssh-key`, audited with the target kind `ssh_key`
+naming the key's identity, `sk-` and sixteen lowercase hex. A key is a public half and
+no secret, so the store holds it in clear. The console checks the line's form alone: a
+key type of OpenSSH's public-key format, base64 that decodes, and the type name inside
+the decoded blob equal to the line's, a line of at most 16 KiB and at most 16 keys held.
+A key is shown by its SHA-256 fingerprint, OpenSSH's form, and the line's text enters no
+audit record. Which types a box's SSH door admits is the image's and enters no text
+here. The setup script's drive-setup run fetches the keys over the paired link and
+writes them, so a changed key reaches a box when the setup command runs there again,
+and the drives page says so (the Planner's notes after item 17).
+
+**The pages reach no agent and no box.** A write lands in the store and, for a pick, in
+the puller's queue: no frame leaves on the link, no verb is asked, and nothing is
+installed. The box's side of each held part is section 8.2's and section 10's.
+
 ## 7. The seams
 
 ### 7.1 The gate
@@ -6297,6 +6467,13 @@ two connectors report.
 | the reported members are the agent's as read: each member the Declare pane reads from `show`'s facts or a load event is a field of that shape's struct at the pin, of the type it reads, under the rename it reads, and each it takes as absent is not one | `the_reported_members_are_the_agents_as_read` and `the_reported_members_were_read_at_the_builds_pin` in `src/declaration/reported.rs`, against the dated copy `src/declaration/reported-5ec7ecf8.md`: misname `show`'s state election, read a turn context from `show` or an artifact from a load event, read the load event's election by `show`'s name, or spell either flag as the other shape does, and it fails on the reader's tables; rename `LoadFacts`'s members, name the tee otherwise, give the serving record a turn context, add an engine or a turn context the reader does not read, or make the artifact optional, and it fails on the copy; move the pin without a reread, and the second fails (13 cases, each caught) |
 | each reported member reads equal, differs or not in this report, by the shape its source names, a state election by the first entry for each kind, and an absence is set beside the report as the agent reads it | `each_member_reads_equal_differs_or_not_in_this_report`, `an_absence_is_set_beside_the_report_as_the_agent_reads_it`, `a_kind_named_again_whose_first_entry_is_declared_reads_equal` and `a_kind_named_again_whose_first_entry_is_not_declared_differs` in `src/declaration/reported.rs`: read a state election's kinds in their order or a path named twice twice, compare a state election by its words, or show a difference between two elections that read alike by those words, read a null member as reported, read the tee's election in `show`'s spelling, read any engine or turn context word, or swap a difference's two sides, and the first fails; read an absent turn context as independent, an absent surprisal as true, an absent residual readout as false or an absent state election as the other default, and the second fails; keep every entry of a kind named again, and `a_kind_named_again_whose_first_entry_is_declared_reads_equal` fails; keep its last entry rather than its first, and that test and `a_kind_named_again_whose_first_entry_is_not_declared_differs` fail; drop the words that say the kind was named again, and both fail (16 cases, each caught) |
 | the agent page sets what the agent reports beside the declaration saved under its name, to every grant holder, never says which version the agent was loaded from, and fails by itself where its head does not read or a read inside it fails | perturbation in `src/declare_pane_tests.rs`: change the empty state's sentence, or offer a new declaration to every reader or to none, and `with_no_declaration_saved_the_pane_says_so` fails; give the screen's link to every reader or to none, mark a reported part with no load as never reported or the reverse, read the pane for an admin alone, name the lineage's root for its head, or show the declared value as the verdict, and `a_saved_declaration_with_no_load_shows_its_parts` fails; never compare the decoder, drop the sentence that a difference may only mean an older version, plant "loaded from", or read a load event as `show`'s answer, and `a_load_the_agent_reports_is_set_beside_the_head` fails; read a tuple of no named source as `show`'s, or say it is no load, and `a_load_whose_source_the_row_does_not_name_is_set_beside_nothing` fails; show the prompt's text or its length in bytes, render its digest for a person who is not an admin, or for no one, and `the_prompt_is_shown_by_its_length_and_its_digest_to_an_admin_alone` fails; drop the name, the row's own identity or the live credential from the others' filter, show a person every row of the register, or never render the others, and `the_other_rows_of_the_name_are_listed_as_far_as_the_reader_may_see` fails; say the same declaration stands behind the other rows whatever the head, or say none is saved under the name where the head could not be read, and `the_other_rows_claim_only_what_was_read_of_the_head` fails (27 cases); panic where a head does not read, say it reads, or give its screen's link to every reader, and `a_head_that_does_not_read_fails_in_the_pane_alone` fails; offer a new declaration on an unread head or say none is saved, read unread others as none or never render their sentence, or show an unread author as nothing, and `a_read_that_fails_inside_the_pane_is_stated_there` fails; read a failed lookup as none saved, fault the page on it, or lead the way back to a new declaration, and `a_head_lookup_that_fails_leaves_the_agent_page_standing`; read the head by the parse alone, and `a_head_saved_with_the_withdrawn_placement_reads_in_the_pane` fails (12 cases); each caught |
+| every pane of every setup page carries a stage, a backing and a status word, and a held pane names what it waits on with no input holding a value | test in `src/setup_tests.rs` walking every page's rendered panes: drop a pane's status mark, or fill a held pane's input, and the walk names the pane |
+| a crafted post naming a second model, a second adapter role or the CPU is refused, saving nothing | perturbation in `src/setup_tests.rs`: take any role the form names, and a second model's row lands |
+| a pick asks Hugging Face only after the admin gate | perturbation in `src/setup_tests.rs` against a fake Hugging Face: read the listing before the gate, and the fake counts a request from a person holding no admin grant |
+| the GGUF reader refuses a length or a count past its buffer, a header cut short and a header past its bound, without a panic or an unbounded allocation | perturbation in `src/gguf.rs`'s tests: read a string's length before checking it against the bytes held, and a hostile header panics or asks an allocation of its claimed size |
+| a context length above the header's maximum is refused | perturbation in `src/setup_tests.rs`: drop the bound, and a context length past the maximum is kept |
+| the deployment tuple refuses any update or delete, and a setup is confirmed once | perturbation, at the schema: drop the trigger, and an update of a tuple lands. Drop the one tuple per setup, and a second Confirm writes a second tuple |
+| an SSH key's line is checked for its form, and its text enters no audit record | perturbation in `src/ssh_key_tests.rs`: drop the inner type's check, and a line whose blob names another type is kept |
 
 **A watch that cannot fail is not a test.** For each perturbation above, the
 act that lands it states what removal makes it fail and confirms it does.
@@ -6821,3 +6998,24 @@ a `web-` assertion beside `weaver-admin`'s.
   charter's section 3.0, where an agent is binaries by hash plus wires by hash and "the
   two screens are a rendering of that card". Which of them, if any, carries the run card
   is not elected here. Closes when the operator's definition is placed in a repository.
+- **The room plan's answer, opened 2026-11-16** (section 6.2). The placement page draws
+  the fit as planned, from the box's room plan, which runs on the box without a load and
+  crosses over TLS as the survey's report does. Open: the room plan's terms (the weights
+  per device in shard order, the KV term, the headroom) and its frame, an ask on
+  WeaverAgent (`weaver-web-PRD` section 8). Settled by WeaverAgent's answer, then by the
+  act that lights the placement page.
+- **The box's members of the tuple, opened 2026-11-16** (section 6.2). The image
+  version, the driver, the cards by identity, the guest CPU, the machine and the drives
+  come from the box's report over the paired link, and the devices the placement page
+  offers from the survey's report. Open: the report's form and its frame. Settled by the
+  enrollment's act and the image's or WeaverAgent's side of it.
+- **Two sources for a model, opened 2026-11-16** (sections 2.4, 6.1 and 6.2). The
+  declaration screen's artifact text and GPU requirement stand beside the setup's
+  repository, commit, digests and placement, and no load reads either as built.
+  Open: which wins when Provision renders a loadable declaration. Settled by the
+  operator.
+- **How the agent's name reaches the box, opened 2026-11-16** (section 6.2). The rulings
+  have the appliance name its directories and its admin entry after the start page's
+  name, and the image is built before the agent is named. Open: how the name crosses to
+  the box, at the pairing or over the paired link after it. Settled by the enrollment's
+  act.

@@ -534,6 +534,7 @@ fn quick() -> Settings {
         retries: 3,
         backoff: Duration::from_millis(10),
         free_space: plenty,
+        idle_recheck: crate::hugging_face::pull::IDLE_RECHECK,
     }
 }
 
@@ -1422,6 +1423,144 @@ async fn a_fifo_at_a_blobs_name_is_refused_and_never_waited_on() {
     assert_eq!(ended, ("verified".into(), None));
     assert!(std::fs::symlink_metadata(&blob).unwrap().is_file());
     assert_eq!(std::fs::read(&blob).unwrap(), model_bytes());
+    puller.stop();
+}
+
+/// **A commit that outlasts the read-back's bound**, by a deferred trigger
+/// on the act's `ok` outcome, as `admin_tests` slows a disable's.
+async fn slow_the_commit_of(s: &Store, action: &str, secs: f64) {
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "CREATE OR REPLACE FUNCTION slow_commit() RETURNS trigger LANGUAGE plpgsql AS \
+         $$ BEGIN PERFORM pg_sleep({secs}); RETURN NULL; END $$"
+    )))
+    .execute(&s.pool)
+    .await
+    .unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "CREATE CONSTRAINT TRIGGER slow_commit AFTER INSERT ON audit \
+         DEFERRABLE INITIALLY DEFERRED FOR EACH ROW \
+         WHEN (NEW.action = '{action}' AND NEW.outcome = 'ok') \
+         EXECUTE FUNCTION slow_commit()"
+    )))
+    .execute(&s.pool)
+    .await
+    .unwrap();
+}
+
+/// Gives up on the answer of the next commit of `kind` at 100 ms, with
+/// the read-back bounded at 200 ms, so a commit slowed past both answers
+/// with its outcome unknown and lands after.
+fn lose_the_next_commit_of(kind: &'static str) {
+    crate::store::commit::GIVE_UP_ON_COMMIT
+        .with(|g| g.set(Some((kind, Duration::from_millis(100)))));
+    crate::store::commit::READ_BACK_BOUND_FOR_TEST
+        .with(|b| b.set(Some(Duration::from_millis(200))));
+}
+
+/// **A pull whose ask's answer was lost still runs**: the ask's commit
+/// outlasts the read-back's bound, so the ask answers with its outcome
+/// unknown, and the pull lands after the ask has returned, with nothing to
+/// wake the puller for it. The idle puller reads the store again within
+/// `idle_recheck` and runs it.
+#[tokio::test]
+async fn a_pull_whose_asks_answer_was_lost_still_runs() {
+    let Some(rig) = rig().await else { return };
+    slow_the_commit_of(rig.store(), "model pull", 1.5).await;
+    let puller = rig.puller(Settings {
+        idle_recheck: Duration::from_millis(200),
+        ..quick()
+    });
+    let s = rig.store();
+    let pull_id = s.mint_key("mp").await.unwrap();
+    let first = s
+        .audit_first(
+            Principal::Person {
+                person_id: &rig.admin,
+                method: PersonMethod::Session,
+            },
+            Target::ModelPull(&pull_id),
+            "model pull",
+        )
+        .await
+        .unwrap();
+    lose_the_next_commit_of("model pull");
+    let asked = puller
+        .ask(
+            &rig.admin,
+            rig.session_id,
+            &first,
+            &pull_id,
+            &repo(),
+            COMMIT,
+            Some("ada-hf"),
+            &[model_file()],
+        )
+        .await;
+    crate::store::commit::READ_BACK_BOUND_FOR_TEST.with(|b| b.set(None));
+    assert!(crate::store::commit::outcome_unknown(&asked), "{asked:?}");
+    for _ in 0..100 {
+        if s.pull(&pull_id).await.unwrap().is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(rig.ended(&pull_id).await, ("verified".into(), None));
+    puller.stop();
+}
+
+/// **A cancel whose answer was lost still reaches the puller**: the
+/// cancel's commit outlasts the read-back's bound, so the page answers the
+/// server's failure, and the running file stops at once all the same.
+/// While the store still calls the pull running, the puller takes it again
+/// and resumes by range from its partial, so a signal for a cancel that has
+/// not landed costs one fetch again. The cancel then lands.
+#[tokio::test]
+async fn a_cancel_whose_answer_was_lost_still_reaches_the_puller() {
+    let Some(rig) = rig().await else { return };
+    {
+        let mut modes = rig.fakes.modes.lock().unwrap();
+        modes.push_back(Mode::Stall);
+        modes.push_back(Mode::Stall);
+    }
+    let puller = rig.puller(Settings {
+        stall: Duration::from_secs(60),
+        ..quick()
+    });
+    let (pull_id, _) = rig.ask(&puller, &[model_file()]).await;
+    cdn_asked(&rig, 1).await;
+    let partial = rig
+        .blobs()
+        .join(format!("{}.incomplete", model_file().sha256.unwrap()));
+    for _ in 0..100 {
+        if std::fs::metadata(&partial).map_or(0, |m| m.len()) > 0 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    slow_the_commit_of(rig.store(), "model pull cancel", 3.0).await;
+    lose_the_next_commit_of("model pull cancel");
+    let uri = format!("/admin/hugging-face/pulls/{pull_id}/cancel");
+    let (status, _, body) = send_as(
+        &rig.surface(&puller),
+        "POST",
+        &uri,
+        Some(String::new()),
+        &rig.cookie,
+    )
+    .await;
+    crate::store::commit::READ_BACK_BOUND_FOR_TEST.with(|b| b.set(None));
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    // The stalled read ended at the signal, before the cancel landed.
+    cdn_asked(&rig, 2).await;
+    assert_eq!(
+        rig.store().pull(&pull_id).await.unwrap().unwrap().state,
+        "running"
+    );
+    assert_eq!(
+        rig.cdn()[1].range,
+        Some(format!("bytes={}-", MODEL_LEN / 2))
+    );
+    assert_eq!(rig.ended(&pull_id).await, ("cancelled".into(), None));
     puller.stop();
 }
 

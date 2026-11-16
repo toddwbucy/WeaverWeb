@@ -532,7 +532,10 @@ async fn cancel(store: Store, seams: &Seams, headers: HeaderMap, pull_id: &str) 
         .cancel_pull(&session.person_id, session.session_id, &first, pull_id)
         .await;
     settled(&store, &first, &written).await;
-    if matches!(written, Ok(Ok(()))) {
+    // Only a definite refusal goes unsignalled: a cancel whose answer was
+    // lost may have landed, and a signal for a pull the store still runs
+    // makes the puller take it again from its partial.
+    if !matches!(written, Ok(Err(_))) {
         seams.puller.cancel(pull_id);
     }
     landed(written, PAGE)

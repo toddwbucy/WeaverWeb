@@ -54,6 +54,11 @@ pub const RETRIES: u32 = 5;
 /// asking for one later, times the setbacks so far.
 pub const BACKOFF: Duration = Duration::from_secs(5);
 
+/// **How long an idle puller waits before it reads the store again**,
+/// woken or not: a pull whose ask's commit answer was lost may land with
+/// nothing to wake the puller for it.
+pub const IDLE_RECHECK: Duration = Duration::from_secs(15);
+
 /// How many redirects a fetch follows.
 const REDIRECTS: usize = 5;
 
@@ -68,6 +73,8 @@ pub struct Settings {
     pub backoff: Duration,
     /// The bytes free where a repository's blobs are written.
     pub free_space: fn(&Path) -> io::Result<u64>,
+    /// How long an idle puller waits before it reads the store again.
+    pub idle_recheck: Duration,
 }
 
 impl Default for Settings {
@@ -77,6 +84,7 @@ impl Default for Settings {
             retries: RETRIES,
             backoff: BACKOFF,
             free_space: Cache::free_space,
+            idle_recheck: IDLE_RECHECK,
         }
     }
 }
@@ -88,12 +96,13 @@ struct Inner {
     authority_dir: PathBuf,
     settings: Settings,
     wake: Notify,
-    /// **Every pull an admin's cancel ended** that the puller may still be
-    /// in, which the running pull watches. A set, so a later cancel never
-    /// undoes an earlier one. An id is removed when the puller leaves its
-    /// pull, and every id when the store shows nothing running: the surface
-    /// writes a pull's `cancelled` before it signals, so an id held here is
-    /// a pull the store never hands the puller again.
+    /// **Every pull an admin's cancel ended, or may have ended where its
+    /// answer was lost**, that the puller may still be in, which the running
+    /// pull watches. A set, so a later cancel never undoes an earlier one.
+    /// An id is removed when the puller leaves its pull, and every id when
+    /// the store shows nothing running: the page signals a cancel only for a
+    /// pull it read running, and a pull that no longer runs never runs
+    /// again, so the clear drops no id of a pull the puller may yet take.
     cancel: watch::Sender<HashSet<String>>,
     task: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
@@ -170,7 +179,9 @@ impl Puller {
     }
 
     /// **The running pull told of its cancel**, once the cancel's row is
-    /// written: it stops at its next read or wait, and its partial stays.
+    /// written or where the write's answer was lost, since it may have
+    /// landed: it stops at its next read or wait, and its partial stays. A
+    /// pull the store still runs is taken again from its partial.
     pub fn cancel(&self, pull_id: &str) {
         self.inner.cancel.send_modify(|ids| {
             ids.insert(pull_id.to_owned());
@@ -224,9 +235,9 @@ impl Puller {
                 admin, session_id, first, pull_id, repo, commit, account, files,
             )
             .await;
-        if matches!(written, Ok(Ok(()))) {
-            self.inner.wake.notify_one();
-        }
+        // Every answer wakes the puller, which acts on the store's rows
+        // alone: a commit whose answer was lost may have landed.
+        self.inner.wake.notify_one();
         written
     }
 }
@@ -254,15 +265,20 @@ async fn work(inner: Arc<Inner>) {
                     .send_if_modified(|ids| ids.remove(&pull.pull_id));
             }
             Ok(None) => {
-                // Nothing runs, so every cancelled id is of a pull the store
-                // never hands the puller again: a cancel is signalled only
-                // once its row is written, and the next read follows this.
+                // Nothing runs, so every cancelled id is of a pull that has
+                // ended and never runs again: a cancel is signalled only for
+                // a pull the page read running, and the next read follows
+                // this.
                 inner.cancel.send_if_modified(|ids| {
                     let held = !ids.is_empty();
                     ids.clear();
                     held
                 });
-                inner.wake.notified().await
+                // Woken, or the store read again within `idle_recheck`: a
+                // pull whose ask's commit outlasted its read-back lands after
+                // the ask's wake, with nothing else to wake the puller.
+                let _ =
+                    tokio::time::timeout(inner.settings.idle_recheck, inner.wake.notified()).await;
             }
             Err(e) => {
                 tracing::error!("the puller could not read the running pull: {e:#}");

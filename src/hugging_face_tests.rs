@@ -805,3 +805,35 @@ async fn authority_seal_key_refuses_to_overwrite() {
     .unwrap();
     assert_eq!(records, (3, 1, 2));
 }
+
+/// **`authority seal-key` writes under the authority lock**, which
+/// `authority rotate` holds across its switch, so a rotation never puts
+/// live a set it staged without the key this command writes: with the lock
+/// held, the command waits and writes nothing, and once the lock is
+/// released the key stands.
+#[tokio::test]
+async fn authority_seal_key_waits_for_the_authority_lock() {
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = fresh.store.clone();
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = config(dir.path());
+    let key_path = cfg.authority_dir.join(SEAL_KEY);
+    Authority::init(&cfg.authority_dir, "weaver-web", &[]).unwrap();
+    std::fs::remove_file(&key_path).unwrap();
+
+    // Held by this test, as a concurrent rotation would hold it.
+    let held = s.authority_lock().await.unwrap();
+    let writing = tokio::spawn({
+        let (s, cfg) = (s.clone(), cfg.clone());
+        async move { crate::link::verbs::authority_seal_key(&s, &cfg, None).await }
+    });
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert!(!key_path.exists(), "a key was written under a held lock");
+    assert!(!writing.is_finished(), "seal-key ran under a held lock");
+    drop(held);
+    let answer = writing.await.unwrap();
+    assert!(answer.ok, "{}", answer.value);
+    assert!(SealKey::load(&cfg.authority_dir).unwrap().is_some());
+}

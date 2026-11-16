@@ -3005,12 +3005,12 @@ which a digest cannot serve. It is sealed with ChaCha20-Poly1305 (`ring`) under 
 32-byte key in `authority_dir`, with a fresh nonce for every seal, and the store holds
 the ciphertext and the nonce alone. `authority init` writes the key, `authority rotate`
 carries it into the new set, and for an authority made before it, the host command
-`authority seal-key` writes it, audited as the host's, and refuses to overwrite. The
-server reads the key where it uses it, so a key written while it runs serves without a
-restart. **A lost key means the operator enters the token again**: the row's seal no
-longer opens, and the page says so and offers the connect. A dump of the store holds no
-usable token. The token enters no page, log line, audit record or error, and the form
-that carries it is answered under `no-store`.
+`authority seal-key` writes it under the authority lock, audited as the host's, and
+refuses to overwrite. The server reads the key where it uses it, so a key written while
+it runs serves without a restart. **A lost key means the operator enters the token
+again**: the row's seal no longer opens, and the page says so and offers the connect. A
+dump of the store holds no usable token. The token enters no page, log line, audit
+record or error, and the form that carries it is answered under `no-store`.
 
 **The client** (`src/hugging_face/`) speaks to `https://huggingface.co` alone, fixed,
 with no mirror key. It reads a repository at a revision through `GET

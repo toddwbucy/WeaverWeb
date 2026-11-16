@@ -161,9 +161,23 @@ pub async fn authority_init(
 /// audited as the host's like `authority init`. It refuses where no
 /// authority stands and where a key stands already, since a token sealed
 /// under it would no longer open. A running server reads the key where it
-/// uses it, so no restart is needed.
+/// uses it, so no restart is needed. **It writes under the authority
+/// lock**, taken before its first record as `authority rotate` takes it and
+/// held until the key is synced: a rotation reads the key that stands into
+/// the set it stages and switches that set in under the lock, so a key
+/// written beside the live set in between would be retired with it, and a
+/// token sealed under it would no longer open.
 pub async fn authority_seal_key(store: &Store, cfg: &ServerConfig, author: Option<&str>) -> Answer {
     const VERB: &str = "authority seal-key";
+    let lock = match store.authority_lock().await {
+        Ok(lock) => lock,
+        Err(e) => {
+            return refused(
+                VERB,
+                format!("the authority lock could not be taken: {e:#}"),
+            );
+        }
+    };
     let first = match first_record(store, VERB, author, Target::Authority).await {
         Ok(first) => first,
         Err(refusal) => return refusal,
@@ -175,6 +189,7 @@ pub async fn authority_seal_key(store: &Store, cfg: &ServerConfig, author: Optio
         },
         Err(e) => refused(VERB, format!("{e:#}")),
     };
+    drop(lock);
     with_outcome(store, first, answer).await
 }
 

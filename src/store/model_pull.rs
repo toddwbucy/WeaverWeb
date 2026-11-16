@@ -32,6 +32,8 @@ pub struct Pull {
     pub finished_at: Option<DateTime<Utc>>,
     pub state: String,
     pub reason: Option<String>,
+    /// The name of the admin whose cancel ended the pull.
+    pub cancelled_by: Option<String>,
 }
 
 /// A file's row.
@@ -60,8 +62,9 @@ impl Source {
 }
 
 const PULL: &str = "SELECT m.pull_id, m.repository, m.commit_id, m.account, p.name AS asked_by, \
-     m.asked_at, m.finished_at, m.state, m.reason \
-     FROM model_pull m JOIN person p ON p.person_id = m.asked_by";
+     m.asked_at, m.finished_at, m.state, m.reason, c.name AS cancelled_by \
+     FROM model_pull m JOIN person p ON p.person_id = m.asked_by \
+     LEFT JOIN person c ON c.person_id = m.cancelled_by";
 
 fn pull_of(r: &sqlx::postgres::PgRow) -> Pull {
     Pull {
@@ -74,6 +77,7 @@ fn pull_of(r: &sqlx::postgres::PgRow) -> Pull {
         finished_at: r.get("finished_at"),
         state: r.get("state"),
         reason: r.get("reason"),
+        cancelled_by: r.get("cancelled_by"),
     }
 }
 
@@ -133,6 +137,36 @@ impl Store {
             .await?;
         }
         commit_with_outcome(tx, "model pull", self, first).await?;
+        Ok(Ok(()))
+    }
+
+    /// **An admin's cancel of a running pull**: the pull ends `cancelled`,
+    /// naming the admin, in the admin's transaction with the `ok` outcome.
+    /// Its files' partials stay on disk, so a later pull of the same files
+    /// resumes from them. Refused where the pull no longer runs.
+    pub async fn cancel_pull(
+        &self,
+        admin: &str,
+        session_id: i64,
+        first: &str,
+        pull_id: &str,
+    ) -> anyhow::Result<Result<(), Refusal>> {
+        let mut tx = self.identity_transaction().await?;
+        if let Err(refusal) = authorized(&mut tx, session_id, admin).await? {
+            return Ok(Err(refusal));
+        }
+        let written = sqlx::query(
+            "UPDATE model_pull SET state = 'cancelled', finished_at = now(), cancelled_by = $2 \
+             WHERE pull_id = $1 AND state = 'running'",
+        )
+        .bind(pull_id)
+        .bind(admin)
+        .execute(&mut *tx)
+        .await?;
+        if written.rows_affected() != 1 {
+            return Ok(Err(Refusal::PullNotRunning(pull_id.to_owned())));
+        }
+        commit_with_outcome(tx, "model pull cancel", self, first).await?;
         Ok(Ok(()))
     }
 

@@ -2,7 +2,7 @@
     re-fetches every 15 s: whether model_cache is set and its free space,
     then the latest pulls, each with the rulings' record (the repository,
     the commit, every file's SHA-256 and size, the account and the time)
-    and its progress. No inline script. -#}
+    and its progress, with a running pull's cancel. No inline script. -#}
 {%- if cache.set %}
 <p>The model cache is set, with {{ cache.free }} free. The console keeps each model it pulls there, in Hugging Face's own layout, and finds a file it already holds instead of fetching it again.</p>
 {%- else %}
@@ -17,7 +17,7 @@
   <tbody>
   <tr><th>Repository</th><td class="mono">{{ pull.repository }}</td></tr>
   <tr><th>Commit</th><td class="mono">{{ pull.commit }}</td></tr>
-  <tr><th>State</th><td><span class="status {{ pull.hue }}">{{ pull.state }}</span>{% if let Some(reason) = pull.reason %} <span class="note read">{{ reason }}</span>{% endif %}</td></tr>
+  <tr><th>State</th><td><span class="status {{ pull.hue }}">{{ pull.state }}</span>{% if let Some(reason) = pull.reason %} <span class="note read">{{ reason }}</span>{% endif %}{% if let Some(admin) = pull.cancelled_by %} <span class="note read">cancelled by {{ admin }}, its partials kept for a later pull to resume</span>{% endif %}</td></tr>
   <tr><th>Progress</th><td>{{ pull.done }} of {{ pull.size }}</td></tr>
   <tr><th>Account</th><td class="mono">{{ pull.account }}</td></tr>
   <tr><th>Asked</th><td>{{ pull.asked_by }}, {{ pull.asked_at }}</td></tr>
@@ -26,6 +26,11 @@
   {%- endif %}
   </tbody>
 </table>
+{%- if pull.running %}
+<form method="post" action="/admin/hugging-face/pulls/{{ pull.pull_id }}/cancel">
+  <button type="submit">Cancel this pull</button> <span class="note read">It stops at its next read, and what it has written stays for a later pull of the same files to resume.</span>
+</form>
+{%- endif %}
 <table>
   <thead><tr><th>File</th><th>Size</th><th>Done</th><th>SHA-256</th><th>Source</th></tr></thead>
   <tbody>

@@ -3,6 +3,10 @@
 //! conforms: web-no-file-takes-its-blobs-name-before-its-digest-matches
 //! conforms: web-a-repositorys-file-names-write-nothing-outside-the-cache
 //! conforms: web-a-pull-asked-through-an-account-never-runs-without-its-token
+//! conforms: web-the-free-space-is-checked-against-what-the-run-has-yet-to-write
+//! conforms: web-a-server-that-answers-a-range-with-the-whole-body-restarts-the-file
+//! conforms: web-an-admins-cancel-stops-the-running-pull-and-keeps-its-partial
+//! conforms: web-the-hugging-face-token-is-held-sealed
 //!
 //! The model pulls (Spec 2.15, `src/hugging_face/pull.rs`,
 //! `src/hugging_face/cache.rs`, `src/store/model_pull.rs`): a pull writes
@@ -85,6 +89,11 @@ enum Mode {
     Stall,
     /// Bytes of the right length that are not the file's.
     Wrong,
+    /// The whole body, `200`, whatever range was asked, as a server that
+    /// does not take ranges answers.
+    IgnoreRange,
+    /// The whole body, once the test releases it (`Fakes::release`).
+    Held,
 }
 
 #[derive(Default)]
@@ -94,6 +103,8 @@ struct Fakes {
     modes: Mutex<VecDeque<Mode>>,
     cdn_base: Mutex<String>,
     fetched: AtomicUsize,
+    /// What a `Held` fetch waits for.
+    release: tokio::sync::Notify,
 }
 
 fn seen(path: &str, headers: &HeaderMap) -> Seen {
@@ -186,8 +197,11 @@ async fn blob(
         .pop_front()
         .unwrap_or(Mode::Whole);
     let mut bytes = model_bytes();
-    if mode == Mode::Wrong {
-        bytes.iter_mut().for_each(|b| *b = b.wrapping_add(1));
+    match mode {
+        Mode::Wrong => bytes.iter_mut().for_each(|b| *b = b.wrapping_add(1)),
+        Mode::IgnoreRange => return serve(&HeaderMap::new(), bytes, Mode::Whole),
+        Mode::Held => fakes.release.notified().await,
+        _ => {}
     }
     serve(&headers, bytes, mode)
 }
@@ -207,7 +221,7 @@ fn serve(headers: &HeaderMap, bytes: Vec<u8>, mode: Mode) -> Response {
     let stream: std::pin::Pin<
         Box<dyn tokio_stream::Stream<Item = Result<Bytes, std::io::Error>> + Send>,
     > = match mode {
-        Mode::Whole | Mode::Wrong => Box::pin(tokio_stream::iter(
+        Mode::Whole | Mode::Wrong | Mode::IgnoreRange | Mode::Held => Box::pin(tokio_stream::iter(
             body.chunks(64 * 1024)
                 .map(|c| Ok(Bytes::copy_from_slice(c)))
                 .collect::<Vec<_>>(),
@@ -279,6 +293,21 @@ fn no_space(_: &Path) -> std::io::Result<u64> {
 
 fn plenty(_: &Path) -> std::io::Result<u64> {
     Ok(u64::MAX / 2)
+}
+
+/// **A disk that holds the model and the config and nothing more**: its
+/// free space is that capacity less every regular file in the blobs
+/// directory, so it shrinks as the pull writes.
+fn room_for_both(dir: &Path) -> std::io::Result<u64> {
+    let capacity = (MODEL_LEN + CONFIG.len()) as u64;
+    let mut held = 0;
+    for entry in std::fs::read_dir(dir)? {
+        let meta = entry?.metadata()?;
+        if meta.is_file() {
+            held += meta.len();
+        }
+    }
+    Ok(capacity.saturating_sub(held))
 }
 
 impl Rig {
@@ -909,5 +938,322 @@ async fn a_pull_through_an_account_never_runs_without_its_token() {
     assert_eq!(state, "failed");
     assert!(reason.unwrap().contains("does not open"));
     assert!(rig.hub().is_empty() && rig.cdn().is_empty());
+    puller.stop();
+}
+
+/// **The free space counts only what this run has yet to verify**: on a
+/// disk with room for the model and the config exactly, the config is
+/// checked against its own size once the model is written, never against
+/// the model's again.
+#[tokio::test]
+async fn free_space_counts_only_the_files_this_run_has_yet_to_verify() {
+    let Some(rig) = rig().await else { return };
+    let puller = rig.puller(Settings {
+        free_space: room_for_both,
+        ..quick()
+    });
+    let (pull_id, _) = rig.ask(&puller, &[model_file(), config_file()]).await;
+    assert_eq!(rig.ended(&pull_id).await, ("verified".into(), None));
+    puller.stop();
+}
+
+/// **A blob that already stands needs no free space**: a pull of a commit
+/// whose model the cache holds checks the config against its own size,
+/// and the model is found and not fetched.
+#[tokio::test]
+async fn a_blob_already_standing_needs_no_free_space() {
+    let Some(rig) = rig().await else { return };
+    std::fs::create_dir_all(rig.blobs()).unwrap();
+    std::fs::write(
+        rig.blobs().join(model_file().sha256.unwrap()),
+        model_bytes(),
+    )
+    .unwrap();
+    let puller = rig.puller(Settings {
+        free_space: room_for_both,
+        ..quick()
+    });
+    let (pull_id, _) = rig.ask(&puller, &[config_file(), model_file()]).await;
+    assert_eq!(rig.ended(&pull_id).await, ("verified".into(), None));
+    assert_eq!(rig.fakes.fetched.load(Ordering::SeqCst), 0);
+    let files = rig.store().pull_files(&pull_id).await.unwrap();
+    assert_eq!(files[1].source.as_deref(), Some("found"));
+    puller.stop();
+}
+
+/// **A server that answers a range with the whole body restarts the
+/// file**: after a cut, the resume asks from the bytes held, the server
+/// answers `200` from byte zero, and the file is written again from its
+/// start and verifies.
+#[tokio::test]
+async fn a_server_that_ignores_the_range_restarts_the_file() {
+    let Some(rig) = rig().await else { return };
+    rig.fakes
+        .modes
+        .lock()
+        .unwrap()
+        .extend([Mode::Cut, Mode::IgnoreRange]);
+    let puller = rig.puller(quick());
+    let (pull_id, _) = rig.ask(&puller, &[model_file()]).await;
+    assert_eq!(rig.ended(&pull_id).await, ("verified".into(), None));
+    let cdn = rig.cdn();
+    assert_eq!(cdn.len(), 2, "{cdn:?}");
+    assert_eq!(cdn[1].range, Some(format!("bytes={}-", MODEL_LEN / 2)));
+    assert_eq!(
+        std::fs::read(rig.blobs().join(model_file().sha256.unwrap())).unwrap(),
+        model_bytes()
+    );
+    puller.stop();
+}
+
+/// Waits until the CDN has been asked `n` times, within five seconds.
+async fn cdn_asked(rig: &Rig, n: usize) {
+    for _ in 0..100 {
+        if rig.fakes.fetched.load(Ordering::SeqCst) >= n {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!(
+        "the CDN was asked {} times",
+        rig.fakes.fetched.load(Ordering::SeqCst)
+    );
+}
+
+/// **A disconnected account stops the pull before its next retry**: the
+/// fetch stalls, the account is disconnected, and the retry is never
+/// asked. The pull fails saying so.
+#[tokio::test]
+async fn a_disconnected_account_stops_the_pull_before_its_next_retry() {
+    let Some(rig) = rig().await else { return };
+    rig.fakes.modes.lock().unwrap().push_back(Mode::Stall);
+    let puller = rig.puller(Settings {
+        stall: Duration::from_secs(2),
+        ..quick()
+    });
+    let (pull_id, _) = rig.ask(&puller, &[model_file()]).await;
+    cdn_asked(&rig, 1).await;
+    sqlx::query("DELETE FROM hugging_face_account")
+        .execute(&rig.store().pool)
+        .await
+        .unwrap();
+    let (state, reason) = rig.ended(&pull_id).await;
+    assert_eq!(state, "failed");
+    assert!(reason.unwrap().contains("disconnected"));
+    assert_eq!(rig.fakes.fetched.load(Ordering::SeqCst), 1);
+    puller.stop();
+}
+
+/// **A replaced account stops the pull before its next file**: the model's
+/// fetch is held, the account is replaced by another, the model finishes,
+/// and the config is never asked for.
+#[tokio::test]
+async fn a_replaced_account_stops_the_pull_before_its_next_file() {
+    let Some(rig) = rig().await else { return };
+    rig.fakes.modes.lock().unwrap().push_back(Mode::Held);
+    let puller = rig.puller(quick());
+    let (pull_id, _) = rig.ask(&puller, &[model_file(), config_file()]).await;
+    cdn_asked(&rig, 1).await;
+    sqlx::query("UPDATE hugging_face_account SET account = 'bea-hf'")
+        .execute(&rig.store().pool)
+        .await
+        .unwrap();
+    rig.fakes.release.notify_one();
+    let (state, reason) = rig.ended(&pull_id).await;
+    assert_eq!(state, "failed");
+    assert!(reason.unwrap().contains("bea-hf is connected"));
+    assert!(
+        rig.hub()
+            .iter()
+            .all(|seen| !seen.path.contains("config.json")),
+        "{:?}",
+        rig.hub()
+    );
+    let files = rig.store().pull_files(&pull_id).await.unwrap();
+    assert_eq!(files[0].source.as_deref(), Some("downloaded"));
+    assert_eq!(files[1].source, None);
+    puller.stop();
+}
+
+/// The audit's records of `action` on the pull: (first records, `ok`
+/// outcomes, refusals).
+async fn pull_records(rig: &Rig, pull_id: &str, action: &str) -> (i64, i64, i64) {
+    sqlx::query_as(
+        "WITH firsts AS (SELECT audit_id FROM audit \
+             WHERE action = $1 AND target_id = $2 AND answers IS NULL AND refusal IS NULL) \
+         SELECT (SELECT count(*) FROM firsts), \
+                (SELECT count(*) FROM audit WHERE outcome = 'ok' \
+                   AND answers IN (SELECT audit_id FROM firsts)), \
+                (SELECT count(*) FROM audit \
+                   WHERE action = $1 AND target_id = $2 AND refusal IS NOT NULL)",
+    )
+    .bind(action)
+    .bind(pull_id)
+    .fetch_one(&rig.store().pool)
+    .await
+    .unwrap()
+}
+
+/// **An admin's cancel stops the running pull at once and keeps its
+/// partial**: the fetch stalls past any wait the test takes, the cancel is
+/// a first record and its `ok` outcome, the pull ends `cancelled` naming
+/// the admin, the partial stands, and the next ask of the file resumes by
+/// range from it and verifies.
+#[tokio::test]
+async fn an_admins_cancel_stops_the_running_pull_and_keeps_its_partial() {
+    let Some(rig) = rig().await else { return };
+    rig.fakes.modes.lock().unwrap().push_back(Mode::Stall);
+    let puller = rig.puller(Settings {
+        stall: Duration::from_secs(60),
+        ..quick()
+    });
+    let (pull_id, _) = rig.ask(&puller, &[model_file()]).await;
+    cdn_asked(&rig, 1).await;
+    let partial = rig
+        .blobs()
+        .join(format!("{}.incomplete", model_file().sha256.unwrap()));
+    let mut held = 0;
+    for _ in 0..100 {
+        held = std::fs::metadata(&partial).map_or(0, |m| m.len());
+        if held > 0 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(held > 0, "the partial holds nothing");
+    let web = rig.surface(&puller);
+    let uri = format!("/admin/hugging-face/pulls/{pull_id}/cancel");
+    let (status, _, body) = send_as(&web, "POST", &uri, Some(String::new()), &rig.cookie).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let pull = rig.store().pull(&pull_id).await.unwrap().unwrap();
+    assert_eq!(pull.state, "cancelled");
+    assert_eq!(pull.cancelled_by.as_deref(), Some("ada"));
+    assert_eq!(pull.reason, None);
+    assert_eq!(
+        pull_records(&rig, &pull_id, "model pull cancel").await,
+        (1, 1, 0)
+    );
+    let kept = std::fs::metadata(&partial).unwrap().len();
+    assert!(kept > 0);
+    assert!(!rig.blobs().join(model_file().sha256.unwrap()).exists());
+
+    let (again, asked) = rig.ask(&puller, &[model_file()]).await;
+    assert!(asked.is_ok(), "{asked:?}");
+    assert_eq!(rig.ended(&again).await, ("verified".into(), None));
+    let cdn = rig.cdn();
+    assert_eq!(cdn.len(), 2, "{cdn:?}");
+    assert_eq!(cdn[1].range, Some(format!("bytes={kept}-")));
+    let (_, _, body) = send_as(&web, "GET", "/admin/hugging-face/pulls", None, &rig.cookie).await;
+    assert!(body.contains("cancelled by ada"), "{body}");
+    puller.stop();
+}
+
+/// **A cancel takes the admin writes' order**: an identity out of its
+/// shape is the ask's fault, recorded nowhere; a person holding no admin
+/// grant is refused with one record; an unknown pull is not found and a
+/// pull that has ended is the ask's fault, each recorded nowhere.
+#[tokio::test]
+async fn a_cancel_takes_the_admin_writes_order() {
+    let Some(rig) = rig().await else { return };
+    let puller = rig.puller(quick());
+    let (pull_id, _) = rig.ask(&puller, &[config_file()]).await;
+    assert_eq!(rig.ended(&pull_id).await.0, "verified");
+    let web = rig.surface(&puller);
+    let cancel = |id: &str| format!("/admin/hugging-face/pulls/{id}/cancel");
+    let (status, _, _) = send_as(
+        &web,
+        "POST",
+        &cancel("mp-nothex"),
+        Some(String::new()),
+        &rig.cookie,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (_, bea) = signed_in(&rig.web, rig.store(), &mut authenticator(), "bea").await;
+    let (status, _, _) = send_as(&web, "POST", &cancel(&pull_id), Some(String::new()), &bea).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, _, _) = send_as(
+        &web,
+        "POST",
+        &cancel("mp-0123456789abcdef"),
+        Some(String::new()),
+        &rig.cookie,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _, body) = send_as(
+        &web,
+        "POST",
+        &cancel(&pull_id),
+        Some(String::new()),
+        &rig.cookie,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(
+        pull_records(&rig, &pull_id, "model pull cancel").await,
+        (0, 0, 1)
+    );
+    assert_eq!(
+        pull_records(&rig, "mp-0123456789abcdef", "model pull cancel").await,
+        (0, 0, 0)
+    );
+    assert_eq!(
+        rig.store().pull(&pull_id).await.unwrap().unwrap().state,
+        "verified"
+    );
+    puller.stop();
+}
+
+/// **The token enters no log line, page or error of a pull**: a pull
+/// through the account that verifies and one whose body's digest differs,
+/// with every log line at every level captured, the cache's section and
+/// every pull's reason, and the audit, none of them carries the token.
+#[tokio::test]
+async fn a_pull_carries_its_token_into_no_log_line_page_or_error() {
+    let captured = crate::agents_tests::Captured::default();
+    let _logging = tracing::subscriber::set_default(
+        tracing_subscriber::fmt()
+            .with_writer(captured.clone())
+            .with_max_level(tracing::Level::TRACE)
+            .with_ansi(false)
+            .finish(),
+    );
+    // **A second dispatcher, held for the test's life**: with one scoped
+    // dispatcher alone, tracing-core 0.1.36 takes a callsite's interest from
+    // the default of whichever thread meets it first
+    // (`Dispatchers::rebuilder`), so the puller of a test running beside
+    // this one, on a thread with no subscriber, would leave the puller's
+    // lines uncaught here. With two registered, it asks each of them.
+    let _second = tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default());
+    let Some(rig) = rig().await else { return };
+    let puller = rig.puller(quick());
+    let (verified, _) = rig.ask(&puller, &[config_file(), model_file()]).await;
+    assert_eq!(rig.ended(&verified).await.0, "verified");
+    std::fs::remove_file(rig.blobs().join(model_file().sha256.unwrap())).unwrap();
+    rig.fakes.modes.lock().unwrap().push_back(Mode::Wrong);
+    let (failed, _) = rig.ask(&puller, &[model_file()]).await;
+    let (state, reason) = rig.ended(&failed).await;
+    assert_eq!(state, "failed");
+    let web = rig.surface(&puller);
+    let (_, _, section) =
+        send_as(&web, "GET", "/admin/hugging-face/pulls", None, &rig.cookie).await;
+    assert!(section.contains(&failed), "{section}");
+    let audit = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT string_agg(row_to_json(a)::text, E'\\n') FROM audit a",
+    )
+    .fetch_one(&rig.store().pool)
+    .await
+    .unwrap()
+    .unwrap_or_default();
+    let logged = String::from_utf8_lossy(&captured.0.lock().unwrap()).into_owned();
+    assert!(
+        logged.contains(&format!("the pull {failed} failed")),
+        "the capture missed the puller's line: {logged}"
+    );
+    assert!(!logged.contains(TOKEN), "a log line holds the token");
+    assert!(!section.contains(TOKEN), "the section holds the token");
+    assert!(!reason.unwrap().contains(TOKEN), "a reason holds the token");
+    assert!(!audit.contains(TOKEN), "the audit holds the token");
     puller.stop();
 }

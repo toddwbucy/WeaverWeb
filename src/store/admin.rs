@@ -93,6 +93,8 @@ pub enum Refusal {
     NoModelCache,
     /// A pull runs, named here, and one runs at a time (Spec 2.15).
     PullRunning(String),
+    /// The pull named has ended, so there is nothing to cancel (Spec 2.15).
+    PullNotRunning(String),
 }
 
 impl std::fmt::Display for Refusal {
@@ -191,6 +193,10 @@ impl std::fmt::Display for Refusal {
             Refusal::PullRunning(which) => write!(
                 f,
                 "the pull {which} runs, and one pull runs at a time, so ask again once it ends"
+            ),
+            Refusal::PullNotRunning(which) => write!(
+                f,
+                "the pull {which} has ended, so there is nothing to cancel"
             ),
         }
     }

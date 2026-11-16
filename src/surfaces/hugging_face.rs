@@ -9,8 +9,10 @@
 //! section** shows whether `model_cache` is set, its free space, and the
 //! latest pulls with their record and progress, re-fetched every 15 s by
 //! the page itself (`GET /admin/hugging-face/pulls`) through the session's
-//! background read and the admin check. The page that asks a pull is the
-//! models page's, a later act.
+//! background read and the admin check, a running pull with its cancel
+//! (`POST /admin/hugging-face/pulls/{mp}/cancel`), an admin's write that
+//! keeps the pull's partials for a later pull to resume. The page that asks
+//! a pull is the models page's, a later act.
 //!
 //! **Each write takes the admin writes' order** (Spec 2.13): the form parsed
 //! to its shape, the admin gate with its one refusal record before anything
@@ -29,7 +31,7 @@ use std::path::PathBuf;
 
 use askama::Template;
 use axum::Router;
-use axum::extract::{Form, State};
+use axum::extract::{Form, Path, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
@@ -111,6 +113,15 @@ pub fn routes(seams: Seams) -> Router<Store> {
             "/admin/hugging-face/disconnect",
             post(write!(disconnect, VersionAsk)),
         )
+        .route(
+            "/admin/hugging-face/pulls/{mp}/cancel",
+            post(
+                move |State(store): State<Store>, headers: HeaderMap, Path(mp): Path<String>| {
+                    let seams = seams.clone();
+                    async move { no_store(cancel(store, &seams, headers, &mp).await) }
+                },
+            ),
+        )
 }
 
 fn when(at: chrono::DateTime<chrono::Utc>) -> String {
@@ -146,9 +157,14 @@ struct PullView {
     repository: String,
     commit: String,
     state: String,
-    /// The state's status hue: `ok`, `warn` while it runs, `fail`.
+    /// The state's status hue: `ok`, `warn` while it runs or once it is
+    /// cancelled, `fail`.
     hue: &'static str,
     reason: Option<String>,
+    /// Whether it runs, so the section offers its cancel.
+    running: bool,
+    /// The admin whose cancel ended it.
+    cancelled_by: Option<String>,
     account: String,
     asked_by: String,
     asked_at: String,
@@ -198,9 +214,11 @@ async fn pull_view(store: &Store, pull: Pull) -> anyhow::Result<PullView> {
     Ok(PullView {
         hue: match pull.state.as_str() {
             "verified" => "ok",
-            "running" => "warn",
+            "running" | "cancelled" => "warn",
             _ => "fail",
         },
+        running: pull.state == "running",
+        cancelled_by: pull.cancelled_by,
         pull_id: pull.pull_id,
         repository: pull.repository,
         commit: pull.commit,
@@ -478,6 +496,45 @@ async fn check(store: Store, seams: &Seams, headers: HeaderMap, ask: VersionAsk)
         )
         .await;
     settled(&store, &first, &written).await;
+    landed(written, PAGE)
+}
+
+/// **An admin's cancel of a running pull**, in the admin writes' order: the
+/// identity parsed to its `mp-` shape, the admin gate, the pull resolved
+/// (unknown: not found, ended: the ask's fault, each recorded nowhere), then
+/// the audited write, and the puller told once it has landed. The pull's
+/// partials stay on disk for a later pull to resume.
+async fn cancel(store: Store, seams: &Seams, headers: HeaderMap, pull_id: &str) -> Response {
+    const ACTION: &str = "model pull cancel";
+    if !crate::store::identity::is_pull_id(pull_id) {
+        return (
+            StatusCode::BAD_REQUEST,
+            "a pull's identity is mp- and sixteen lowercase hex",
+        )
+            .into_response();
+    }
+    let target = Target::ModelPull(pull_id);
+    let session = match writer(&store, &seams.policy, &headers, target, ACTION).await {
+        Ok(session) => session,
+        Err(answer) => return answer,
+    };
+    match store.pull(pull_id).await {
+        Ok(Some(pull)) if pull.state == "running" => {}
+        Ok(Some(_)) => return refused(&Refusal::PullNotRunning(pull_id.to_owned())),
+        Ok(None) => return (StatusCode::NOT_FOUND, "no such pull").into_response(),
+        Err(e) => return fault(e),
+    }
+    let first = match first_of(&store, &session, target, ACTION).await {
+        Ok(first) => first,
+        Err(answer) => return answer,
+    };
+    let written = store
+        .cancel_pull(&session.person_id, session.session_id, &first, pull_id)
+        .await;
+    settled(&store, &first, &written).await;
+    if matches!(written, Ok(Ok(()))) {
+        seams.puller.cancel(pull_id);
+    }
     landed(written, PAGE)
 }
 

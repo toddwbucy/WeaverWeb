@@ -2,13 +2,20 @@
 //! conforms: web-every-download-names-the-commit
 //! conforms: web-no-file-takes-its-blobs-name-before-its-digest-matches
 //! conforms: web-a-pull-asked-through-an-account-never-runs-without-its-token
+//! conforms: web-the-free-space-is-checked-against-what-the-run-has-yet-to-write
+//! conforms: web-a-server-that-answers-a-range-with-the-whole-body-restarts-the-file
+//! conforms: web-an-admins-cancel-stops-the-running-pull-and-keeps-its-partial
 //!
 //! **The puller** (Spec 2.15): one task that runs the pull the store names
 //! `running`, file after file, and waits for the next ask. One pull runs at
 //! a time, so a pull of one model fills the link alone and the free-space
 //! check stays true. **A pull running when the server stops resumes at the
 //! next start**: the task's first act is to read the running pull, and a
-//! file's partial resumes by range after its bytes are hashed again.
+//! file's partial resumes by range after its bytes are hashed again. **The
+//! account is read again before each file and each retry**, so a pull
+//! whose account is disconnected or replaced stops there. **An admin's
+//! cancel stops the running pull** at its next read or wait, its partial
+//! kept for a later pull to resume.
 //!
 //! **A file's pull takes six steps.** Its names are checked. A blob that
 //! stands and hashes right is recorded as found. The free space is checked
@@ -26,14 +33,14 @@ use std::time::Duration;
 use reqwest::StatusCode;
 use reqwest::header::{CONTENT_RANGE, LOCATION, RANGE};
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
-use tokio::sync::Notify;
+use tokio::sync::{Notify, watch};
 
 use super::cache::{Cache, Hasher, hash_from_start};
 use super::seal::SealKey;
 use super::{Client, RepoFile, RepoId, Token, is_commit, is_repo_path};
 use crate::store::Store;
 use crate::store::admin::Refusal;
-use crate::store::model_pull::{Pull, Source};
+use crate::store::model_pull::{Pull, PullFile, Source};
 
 /// The bound on a fetch's answer and on each read of its body: past it the
 /// read is a stall, retried by range.
@@ -80,6 +87,8 @@ struct Inner {
     authority_dir: PathBuf,
     settings: Settings,
     wake: Notify,
+    /// The pull an admin's cancel ended, which the running pull watches.
+    cancel: watch::Sender<Option<String>>,
     task: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
@@ -96,6 +105,8 @@ enum Ended {
     /// The store could not be reached: the pull stays `running`, and the
     /// task tries again after a pause.
     Store(anyhow::Error),
+    /// An admin's cancel ended the pull, whose row says so already.
+    Cancelled,
 }
 
 impl From<anyhow::Error> for Ended {
@@ -131,6 +142,7 @@ impl Puller {
             authority_dir,
             settings,
             wake: Notify::new(),
+            cancel: watch::Sender::new(None),
             task: std::sync::Mutex::new(None),
         });
         let task = tokio::spawn(work(inner.clone()));
@@ -149,6 +161,12 @@ impl Puller {
         if let Some(task) = self.inner.task.lock().unwrap().take() {
             task.abort();
         }
+    }
+
+    /// **The running pull told of its cancel**, once the cancel's row is
+    /// written: it stops at its next read or wait, and its partial stays.
+    pub fn cancel(&self, pull_id: &str) {
+        self.inner.cancel.send_replace(Some(pull_id.to_owned()));
     }
 
     /// **An admin's ask of a pull**, after its first record: the rows
@@ -211,6 +229,9 @@ async fn work(inner: Arc<Inner>) {
                     tracing::error!("the pull {} paused on the store: {e:#}", pull.pull_id);
                     tokio::time::sleep(Duration::from_secs(5)).await;
                 }
+                Err(Ended::Cancelled) => {
+                    tracing::info!("the pull {} stopped at an admin's cancel", pull.pull_id);
+                }
             },
             Ok(None) => inner.wake.notified().await,
             Err(e) => {
@@ -269,10 +290,16 @@ async fn run(inner: &Inner, pull: &Pull) -> Result<(), Ended> {
     if !is_commit(&pull.commit) {
         return Err(failed("the pull names no commit"));
     }
-    let token = token(inner, pull).await?;
+    let mut cancel = inner.cancel.subscribe();
     let files = inner.store.pull_files(&pull.pull_id).await?;
-    for done in files.iter().filter(|f| f.source.is_none()) {
+    let pending: Vec<&PullFile> = files.iter().filter(|f| f.source.is_none()).collect();
+    for (at, done) in pending.iter().enumerate() {
         let file = &done.file;
+        if is_cancelled(&cancel, pull) {
+            return Err(Ended::Cancelled);
+        }
+        // The account read again before each file.
+        let token = token(inner, pull).await?;
         // Step 1: every name checked before any write.
         if !is_repo_path(&file.path) {
             return Err(failed(format!(
@@ -293,7 +320,7 @@ async fn run(inner: &Inner, pull: &Pull) -> Result<(), Ended> {
             continue;
         }
         // Step 3: the free space against every byte that remains.
-        let remaining = remaining(cache, &repo, &files);
+        let remaining = remaining(cache, &repo, &pending[at..]);
         let free = (inner.settings.free_space)(&blobs)
             .map_err(|e| failed(format!("the cache's free space could not be read: {e}")))?;
         if free < remaining {
@@ -302,7 +329,7 @@ async fn run(inner: &Inner, pull: &Pull) -> Result<(), Ended> {
             )));
         }
         // Steps 4 to 6.
-        let sha256 = download(inner, cache, &repo, pull, file, token.as_ref()).await?;
+        let sha256 = download(inner, cache, &repo, pull, file, token, &mut cancel).await?;
         inner
             .store
             .pull_file_done(&pull.pull_id, &file.path, &sha256, Source::Downloaded)
@@ -311,22 +338,46 @@ async fn run(inner: &Inner, pull: &Pull) -> Result<(), Ended> {
     Ok(())
 }
 
-/// **The bytes that remain**: each file still unverified, less what its
-/// partial holds.
-fn remaining(cache: &Cache, repo: &RepoId, files: &[crate::store::model_pull::PullFile]) -> u64 {
-    files
-        .iter()
-        .filter(|f| f.source.is_none())
-        .map(|f| {
-            let held = cache
-                .incomplete(repo, f.file.identity())
-                .ok()
-                .and_then(|p| std::fs::symlink_metadata(p).ok())
-                .filter(|m| m.is_file())
-                .map_or(0, |m| m.len());
+/// **The bytes that remain**, over the file at hand and the files after
+/// it, the ones this run has yet to verify: each less what its partial
+/// holds, and a later file whose blob stands at its size counting nothing,
+/// since step 2 finds it. The file at hand counts whole less its partial,
+/// since step 2 has just found its blob missing or not hashing right.
+fn remaining(cache: &Cache, repo: &RepoId, rest: &[&PullFile]) -> u64 {
+    let regular = |path: anyhow::Result<PathBuf>| {
+        path.ok()
+            .and_then(|p| std::fs::symlink_metadata(p).ok())
+            .filter(|m| m.is_file())
+            .map(|m| m.len())
+    };
+    rest.iter()
+        .enumerate()
+        .map(|(at, f)| {
+            let id = f.file.identity();
+            if at > 0 && regular(cache.blob(repo, id)) == Some(f.file.size) {
+                return 0;
+            }
+            let held = regular(cache.incomplete(repo, id)).unwrap_or(0);
             f.file.size.saturating_sub(held)
         })
         .sum()
+}
+
+/// Whether an admin's cancel has ended `pull`.
+fn is_cancelled(cancel: &watch::Receiver<Option<String>>, pull: &Pull) -> bool {
+    cancel.borrow().as_deref() == Some(pull.pull_id.as_str())
+}
+
+/// **Answers once an admin's cancel ends `pull`**, and never where the
+/// puller is gone.
+async fn cancelled(cancel: &mut watch::Receiver<Option<String>>, pull: &Pull) {
+    let ended = cancel
+        .wait_for(|c| c.as_deref() == Some(pull.pull_id.as_str()))
+        .await
+        .is_ok();
+    if !ended {
+        std::future::pending::<()>().await;
+    }
 }
 
 /// **Step 2**: the file's blob, where it stands as a regular file of the
@@ -369,13 +420,16 @@ async fn found(
 /// **Steps 4 to 6 for one file**: the partial opened without following a
 /// symbolic link and hashed again, fetched by range from what it holds,
 /// written while it is hashed, and renamed to its blob only on a match.
+/// **Before each retry the account is read again**, and **a cancel stops
+/// the file at its next read or wait**, the partial flushed and kept.
 async fn download(
     inner: &Inner,
     cache: &Cache,
     repo: &RepoId,
     pull: &Pull,
     file: &RepoFile,
-    token: Option<&Token>,
+    mut token: Option<Token>,
+    cancel: &mut watch::Receiver<Option<String>>,
 ) -> Result<String, Ended> {
     let id = file.identity().to_owned();
     let named = |e: &dyn std::fmt::Display| failed(format!("{}: {e}", file.path));
@@ -399,21 +453,38 @@ async fn download(
         .map_err(|e| named(&e))?;
     let mut setbacks = 0u32;
     let mut written_at = have;
+    let mut first = true;
     while have < size {
-        match fetch(inner, repo, &pull.commit, &file.path, have, token).await {
+        if !first {
+            // A retry: the cancel and the account read again first.
+            if is_cancelled(cancel, pull) {
+                return Err(Ended::Cancelled);
+            }
+            token = self::token(inner, pull).await?;
+        }
+        first = false;
+        match fetch(inner, repo, &pull.commit, &file.path, have, token.as_ref()).await {
             Ok((mut response, start)) => {
                 if start == 0 && have > 0 {
                     out.set_len(0).await.map_err(|e| named(&e))?;
                     out.seek(io::SeekFrom::Start(0))
                         .await
                         .map_err(|e| named(&e))?;
-                    (hasher, have) = (Hasher::new(size, in_git), 0);
+                    (hasher, have, written_at) = (Hasher::new(size, in_git), 0, 0);
                 }
                 // The body's end, a cut or a stall ends the reads, and what
-                // is short of the size is fetched again by range.
-                while let Ok(Ok(Some(chunk))) =
-                    tokio::time::timeout(inner.settings.stall, response.chunk()).await
-                {
+                // is short of the size is fetched again by range. A cancel
+                // ends them too, the partial flushed and kept.
+                loop {
+                    let read = tokio::select! {
+                        read = tokio::time::timeout(inner.settings.stall, response.chunk()) => read,
+                        () = cancelled(cancel, pull) => {
+                            out.flush().await.map_err(|e| named(&e))?;
+                            inner.store.pull_progress(&pull.pull_id, &file.path, have).await?;
+                            return Err(Ended::Cancelled);
+                        }
+                    };
+                    let Ok(Ok(Some(chunk))) = read else { break };
                     if have + chunk.len() as u64 > size {
                         drop(out);
                         let _ = std::fs::remove_file(&partial);
@@ -455,7 +526,10 @@ async fn download(
             )));
         }
         if have < size && setbacks > 0 {
-            tokio::time::sleep(inner.settings.backoff * setbacks).await;
+            tokio::select! {
+                () = tokio::time::sleep(inner.settings.backoff * setbacks) => {}
+                () = cancelled(cancel, pull) => return Err(Ended::Cancelled),
+            }
         }
     }
     out.sync_all().await.map_err(|e| named(&e))?;

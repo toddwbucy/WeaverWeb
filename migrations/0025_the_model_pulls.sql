@@ -4,8 +4,9 @@
 -- what the console fetched, the repository, the commit, every file's
 -- SHA-256 and size, the account that pulled and the time. An admin's ask
 -- writes them (`src/store/model_pull.rs`), audited with the target kind
--- `model_pull`. The puller writes a file's progress, its end and the
--- pull's end, about a pull that audited ask began.
+-- `model_pull`, and an admin's cancel ends a running pull, audited alike.
+-- The puller writes a file's progress, its end and the pull's end, about a
+-- pull that audited ask began.
 --
 -- **Each CHECK is false, never unknown, on a missing value**, 0014's rule.
 
@@ -26,13 +27,21 @@ CREATE TABLE model_pull (
   asked_by TEXT NOT NULL REFERENCES person (person_id),
   asked_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   finished_at TIMESTAMPTZ,
-  state TEXT NOT NULL CHECK (state IS NOT NULL AND state IN ('running', 'verified', 'failed')),
+  state TEXT NOT NULL CHECK (
+    state IS NOT NULL AND state IN ('running', 'verified', 'failed', 'cancelled')
+  ),
   reason TEXT,
+  -- The admin whose cancel ended the pull, its partial kept for a later
+  -- pull to resume.
+  cancelled_by TEXT REFERENCES person (person_id),
   CONSTRAINT model_pull_ends_once CHECK (
     state IS NOT NULL AND ((state = 'running') = (finished_at IS NULL))
   ),
   CONSTRAINT model_pull_a_failure_says_why CHECK (
     state IS NOT NULL AND ((state = 'failed') = (reason IS NOT NULL))
+  ),
+  CONSTRAINT model_pull_a_cancel_names_its_admin CHECK (
+    state IS NOT NULL AND ((state = 'cancelled') = (cancelled_by IS NOT NULL))
   )
 );
 
@@ -68,7 +77,7 @@ CREATE TABLE model_pull_file (
 );
 
 -- **The audit's targets gain the pull**, by its `mp-` identity, for its
--- ask (Spec 2.13, 2.15).
+-- ask and its cancel (Spec 2.13, 2.15).
 ALTER TABLE audit DROP CONSTRAINT audit_a_target_is_a_known_kind;
 ALTER TABLE audit
   ADD CONSTRAINT audit_a_target_is_a_known_kind CHECK (

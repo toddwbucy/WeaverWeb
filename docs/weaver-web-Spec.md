@@ -3877,11 +3877,12 @@ page takes the models from Hugging Face (section 8.3). The drives page shows the
 that starts the appliance's drive setup, then the drives as the box mounted them, and on
 a host, drawn and marked unbuilt, the state directory and the models directory the
 operator named, with free space against the need, the models directory prefilled with
-that user's default Hugging Face cache (section 8.3). The placement page places each
-model on a device with its context length, and the confirm page shows the deployment
-tuple in full, which Confirm closes. The build page holds the board and the prompt tuple
-panel, both held, and is a one-pane stub marked unbuilt. **None of these pages is
-built**, and section 10 carries the act that builds them.
+that user's default Hugging Face cache and a command granting read-write on that cache,
+the account it names open (section 8.3). The placement page places each model on a
+device with its context length, and the confirm page shows the deployment tuple in full,
+which Confirm closes. The build page holds the board and the prompt tuple panel, both
+held, and is a one-pane stub marked unbuilt. **None of these pages is built**, and
+section 10 carries the act that builds them.
 
 **This section is the declaration screen as built on 2026-11-16**, the first of the two
 screens of the rulings of 2026-11-11. It stands until the setup pages' act recuts

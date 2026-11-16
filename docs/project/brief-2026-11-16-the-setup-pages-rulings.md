@@ -62,10 +62,11 @@ the prompt rules, in the order it gives:
    order: the pairing (the code, the fingerprint and the survey's report), the models,
    the drives as the box mounted them, the placement, and the confirmed tuple. A
    checkbox says whether the box is a virtual machine or a host, the console's shutdown
-   command enabled on a virtual machine and disabled entirely on a host, and the page
-   warns where the address is localhost and the checkbox says virtual machine. The state
-   mount is required for every agent, at a minimum of 10 GiB, and the models mount takes
-   a plural name. One unit, GiB, across the whole flow.
+   command, which on the addendum stops the agent service and never powers off the
+   machine, enabled on a virtual machine and disabled on a host, and the page warns
+   where the address is localhost and the checkbox says virtual machine. The state mount
+   is required for every agent, at a minimum of 10 GiB, and the models mount takes a
+   plural name. One unit, GiB, across the whole flow.
 5. **Labels.** Every pane carries its stage, built or unbuilt, and its status, healthy
    states included.
 6. **Save points.** The first agent keeps the save point the unload writes, on the

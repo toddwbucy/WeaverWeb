@@ -84,6 +84,14 @@ pub struct ServerConfig {
     /// it.
     #[serde(default)]
     pub operations_log: Option<PathBuf>,
+    /// **The model cache** (Spec 2.15): the directory the console keeps the
+    /// models it pulls from Hugging Face in, in Hugging Face's own layout.
+    /// Optional, with no default: unset, a pull is refused and the page
+    /// says why. Set, `serve` refuses to start where it is not an absolute
+    /// path to a directory the server can create a file in. The install
+    /// names it, and no path enters the repository.
+    #[serde(default)]
+    pub model_cache: Option<PathBuf>,
     /// **The ways a person may sign in** (Spec 2.13, the operator's ruling
     /// of 2026-11-10): `passkey`, `token`, or both. `["passkey"]` where the
     /// config names none, so a server configured as before behaves as

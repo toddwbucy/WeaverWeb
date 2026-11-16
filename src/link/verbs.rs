@@ -156,6 +156,43 @@ pub async fn authority_init(
     with_outcome(store, first, answer).await
 }
 
+/// **`authority seal-key`**: the Hugging Face token's seal key written
+/// beside an authority made before `authority init` wrote one (Spec 2.15),
+/// audited as the host's like `authority init`. It refuses where no
+/// authority stands and where a key stands already, since a token sealed
+/// under it would no longer open. A running server reads the key where it
+/// uses it, so no restart is needed. **It writes under the authority
+/// lock**, taken before its first record as `authority rotate` takes it and
+/// held until the key is synced: a rotation reads the key that stands into
+/// the set it stages and switches that set in under the lock, so a key
+/// written beside the live set in between would be retired with it, and a
+/// token sealed under it would no longer open.
+pub async fn authority_seal_key(store: &Store, cfg: &ServerConfig, author: Option<&str>) -> Answer {
+    const VERB: &str = "authority seal-key";
+    let lock = match store.authority_lock().await {
+        Ok(lock) => lock,
+        Err(e) => {
+            return refused(
+                VERB,
+                format!("the authority lock could not be taken: {e:#}"),
+            );
+        }
+    };
+    let first = match first_record(store, VERB, author, Target::Authority).await {
+        Ok(first) => first,
+        Err(refusal) => return refusal,
+    };
+    let answer = match crate::hugging_face::seal::write_beside(&cfg.authority_dir) {
+        Ok(()) => Answer {
+            value: json!({ "verb": VERB, "ok": true }),
+            ok: true,
+        },
+        Err(e) => refused(VERB, format!("{e:#}")),
+    };
+    drop(lock);
+    with_outcome(store, first, answer).await
+}
+
 /// `authority rotate`: every credential revoked, then a new authority,
 /// since every client config pinned the old certificate. **The store first
 /// and the files second, under the authority lock**: a failure at either

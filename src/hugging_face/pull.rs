@@ -25,6 +25,7 @@
 //! partial is written while it is hashed. The digest is compared, and only
 //! a match renames the partial to its blob and links the snapshot.
 
+use std::collections::HashSet;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -87,8 +88,13 @@ struct Inner {
     authority_dir: PathBuf,
     settings: Settings,
     wake: Notify,
-    /// The pull an admin's cancel ended, which the running pull watches.
-    cancel: watch::Sender<Option<String>>,
+    /// **Every pull an admin's cancel ended** that the puller may still be
+    /// in, which the running pull watches. A set, so a later cancel never
+    /// undoes an earlier one. An id is removed when the puller leaves its
+    /// pull, and every id when the store shows nothing running: the surface
+    /// writes a pull's `cancelled` before it signals, so an id held here is
+    /// a pull the store never hands the puller again.
+    cancel: watch::Sender<HashSet<String>>,
     task: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
@@ -142,7 +148,7 @@ impl Puller {
             authority_dir,
             settings,
             wake: Notify::new(),
-            cancel: watch::Sender::new(None),
+            cancel: watch::Sender::new(HashSet::new()),
             task: std::sync::Mutex::new(None),
         });
         let task = tokio::spawn(work(inner.clone()));
@@ -166,7 +172,16 @@ impl Puller {
     /// **The running pull told of its cancel**, once the cancel's row is
     /// written: it stops at its next read or wait, and its partial stays.
     pub fn cancel(&self, pull_id: &str) {
-        self.inner.cancel.send_replace(Some(pull_id.to_owned()));
+        self.inner.cancel.send_modify(|ids| {
+            ids.insert(pull_id.to_owned());
+        });
+    }
+
+    /// How many cancelled pulls the puller holds, for the pull's tests,
+    /// which build with the `passkeys` feature alone.
+    #[cfg(all(test, feature = "passkeys"))]
+    pub(crate) fn cancels_held(&self) -> usize {
+        self.inner.cancel.borrow().len()
     }
 
     /// **An admin's ask of a pull**, after its first record: the rows
@@ -219,21 +234,36 @@ impl Puller {
 async fn work(inner: Arc<Inner>) {
     loop {
         match inner.store.running_pull().await {
-            Ok(Some(pull)) => match run(&inner, &pull).await {
-                Ok(()) => finish(&inner, &pull, None).await,
-                Err(Ended::Failed(reason)) => {
-                    tracing::warn!("the pull {} failed: {reason}", pull.pull_id);
-                    finish(&inner, &pull, Some(&reason)).await;
+            Ok(Some(pull)) => {
+                match run(&inner, &pull).await {
+                    Ok(()) => finish(&inner, &pull, None).await,
+                    Err(Ended::Failed(reason)) => {
+                        tracing::warn!("the pull {} failed: {reason}", pull.pull_id);
+                        finish(&inner, &pull, Some(&reason)).await;
+                    }
+                    Err(Ended::Store(e)) => {
+                        tracing::error!("the pull {} paused on the store: {e:#}", pull.pull_id);
+                        tokio::time::sleep(Duration::from_secs(5)).await;
+                    }
+                    Err(Ended::Cancelled) => {
+                        tracing::info!("the pull {} stopped at an admin's cancel", pull.pull_id);
+                    }
                 }
-                Err(Ended::Store(e)) => {
-                    tracing::error!("the pull {} paused on the store: {e:#}", pull.pull_id);
-                    tokio::time::sleep(Duration::from_secs(5)).await;
-                }
-                Err(Ended::Cancelled) => {
-                    tracing::info!("the pull {} stopped at an admin's cancel", pull.pull_id);
-                }
-            },
-            Ok(None) => inner.wake.notified().await,
+                inner
+                    .cancel
+                    .send_if_modified(|ids| ids.remove(&pull.pull_id));
+            }
+            Ok(None) => {
+                // Nothing runs, so every cancelled id is of a pull the store
+                // never hands the puller again: a cancel is signalled only
+                // once its row is written, and the next read follows this.
+                inner.cancel.send_if_modified(|ids| {
+                    let held = !ids.is_empty();
+                    ids.clear();
+                    held
+                });
+                inner.wake.notified().await
+            }
             Err(e) => {
                 tracing::error!("the puller could not read the running pull: {e:#}");
                 tokio::time::sleep(Duration::from_secs(5)).await;
@@ -352,7 +382,7 @@ fn remaining(cache: &Cache, repo: &RepoId, rest: &[&PullFile]) -> u64 {
             .filter(|m| m.is_file())
             .map(|m| m.len())
     };
-    let mut counted = std::collections::HashSet::new();
+    let mut counted = HashSet::new();
     rest.iter()
         .enumerate()
         .map(|(at, f)| {
@@ -370,15 +400,15 @@ fn remaining(cache: &Cache, repo: &RepoId, rest: &[&PullFile]) -> u64 {
 }
 
 /// Whether an admin's cancel has ended `pull`.
-fn is_cancelled(cancel: &watch::Receiver<Option<String>>, pull: &Pull) -> bool {
-    cancel.borrow().as_deref() == Some(pull.pull_id.as_str())
+fn is_cancelled(cancel: &watch::Receiver<HashSet<String>>, pull: &Pull) -> bool {
+    cancel.borrow().contains(&pull.pull_id)
 }
 
 /// **Answers once an admin's cancel ends `pull`**, and never where the
 /// puller is gone.
-async fn cancelled(cancel: &mut watch::Receiver<Option<String>>, pull: &Pull) {
+async fn cancelled(cancel: &mut watch::Receiver<HashSet<String>>, pull: &Pull) {
     let ended = cancel
-        .wait_for(|c| c.as_deref() == Some(pull.pull_id.as_str()))
+        .wait_for(|ids| ids.contains(&pull.pull_id))
         .await
         .is_ok();
     if !ended {
@@ -444,7 +474,7 @@ async fn download(
     pull: &Pull,
     file: &RepoFile,
     mut token: Option<Token>,
-    cancel: &mut watch::Receiver<Option<String>>,
+    cancel: &mut watch::Receiver<HashSet<String>>,
 ) -> Result<String, Ended> {
     // A cancel that landed during step 2's blob check, or since the loop's
     // own check, starts no partial's hash: only a hash already under way

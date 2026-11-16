@@ -6188,16 +6188,24 @@ and a models directory and attaches and formats nothing, on the addendum to the 
 rulings, and the drives page shows the directories the operator named with free space
 against the need. A host's models directory defaults to that user's default Hugging Face
 cache, so models already pulled there are found, and the host form shows the command
-granting the console's account read-write there and a models group read. Whether a named
-directory meets the separate-filesystem test is not ruled (`weaver-web-PRD` section 9).
-The refusal is admin's, since load is admin's verb, so the representation this document
-holds is admin's answer to `load`, which renders as it came, as every refusal does
-(section 7.2). The report of the sizes reaches the console through admin-con, the
-console's one reach into an appliance, so its carrier at the box's seam is
-`weaver-admin-operator-contract`'s, and this document builds against the contract once
-it is merged. The form of the report, which carrier it takes at that seam, and where the
-console says that storage is not sufficient, are section 10's. So are the sizes that
-count as sufficient, which no ruling assigns to a document.
+granting the console's account read-write there and a models group read. A host's load
+check, on the operator's word of 2026-11-16, asks that both directories exist, the state
+directory be writable with at least 10 GiB free and the models directory be readable,
+and asks no separate disk. On the addendum to the operator's rulings of 2026-11-16
+(setup pages) the agent is a real account on the box, and its home lives on the state
+drive, so the state mount's 10 GiB is that home. The agent's own folder, its
+declaration, logs, trace and save points, stands inside that home. The appliance ships
+the agent's account, and the connectors' two accounts on the same principle. The
+account's name, which the image fixes before the agent is named, and the home's exact
+place are the image's and WeaverAgent's, and neither enters this repository.
+(`weaver-web-PRD` section 10.4). The refusal is admin's, since load is admin's verb, so
+the representation this document holds is admin's answer to `load`, which renders as it
+came, as every refusal does (section 7.2). The report of the sizes reaches the console
+through admin-con, the console's one reach into an appliance, so its carrier at the
+box's seam is `weaver-admin-operator-contract`'s, and this document builds against the
+contract once it is merged. The form of the report, which carrier it takes at that seam,
+and where the console says that storage is not sufficient, are section 10's. So are the
+sizes that count as sufficient, which no ruling assigns to a document.
 
 **Load and unload.** **Nothing in this framework or in the image autostarts the agent**,
 on the operator's ruling of 2026-11-15, and load and unload need no management of a
@@ -6237,12 +6245,15 @@ wait on WeaverAgent's amendment, an ask upstream (`weaver-web-PRD` section 8). A
 on this side, admin-con reads the trace only through that door (section 7.2), the
 register row records the door's state (section 2.12), and the door never gates a verb.
 
-**The shutdown command.** On the operator's rulings of 2026-11-16 (setup pages) the
-console's shutdown command is enabled on a virtual machine and disabled entirely on a
-host, the setup flow's checkbox saying which (`weaver-web-PRD` section 2). It is not
-built. As built, admin-con runs the fixed lines of section 7.2 alone, and none of them
-shuts a machine down, so its path is an ask upstream (`weaver-web-PRD` section 8) and
-its representation is section 10's.
+**The shutdown command.** On the addendum to the operator's rulings of 2026-11-16 (setup
+pages) the console's shutdown command stops the agent service and never powers off the
+machine, which the operator does from the hypervisor (`weaver-web-PRD` section 2). The
+rulings enable it on a virtual machine and disable it on a host, the setup flow's
+checkbox saying which. Whether it stays disabled on a host, and whether the console can
+start the service again, are the operator's. It is not built. As built, admin-con runs
+the fixed lines of section 7.2 alone, among them `stop`, and whether `stop` is the stop
+of the agent service the addendum names is WeaverAgent's to say, so its path is an ask
+upstream (`weaver-web-PRD` section 8) and its representation is section 10's.
 
 **No hypervisor reach of any kind.** No code path, configuration member or dependency of
 this crate reaches a hypervisor, the shutdown command included. What it knows of an
@@ -6983,12 +6994,14 @@ a `web-` assertion beside `weaver-admin`'s.
   connection, frame and bounds of each, and the image's or WeaverAgent's side of each,
   none of which exists, an ask upstream (`weaver-web-PRD` section 8). Settled by those
   asks, then by the model cache's act and the setup pages' act.
-- **The shutdown command, opened 2026-11-16** (section 8.3). On the operator's rulings
-  of 2026-11-16 (setup pages) it is enabled on a virtual machine and disabled entirely
-  on a host. Open: its path into the machine through admin-con, since no fixed line of
-  section 7.2 shuts a machine down, and how the console records the box that says which
-  the machine is. Settled by WeaverAgent's answer to the ask (`weaver-web-PRD` section
-  8), then by the act that builds the command.
+- **The shutdown command, opened 2026-11-16** (section 8.3). On the addendum to the
+  operator's rulings of 2026-11-16 (setup pages) it stops the agent service and never
+  powers off the machine, and the rulings enable it on a virtual machine and disable it
+  on a host. Open: its path into the box through admin-con, and whether section 7.2's
+  `stop` is that stop, how the console records the checkbox that says which the machine
+  is, and, the operator's, whether it stays disabled on a host and whether the console
+  can start the service again. Settled by WeaverAgent's answer to the ask
+  (`weaver-web-PRD` section 8), then by the act that builds the command.
 - **Where the console holds the operator's SSH public key, opened 2026-11-16** (section
   8.2). On the addendum to the operator's rulings of 2026-11-16 (setup pages) the
   console sends the operator's SSH public key down the paired link after pairing. Open:

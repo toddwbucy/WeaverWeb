@@ -310,6 +310,19 @@ fn room_for_both(dir: &Path) -> std::io::Result<u64> {
     Ok(capacity.saturating_sub(held))
 }
 
+/// **A disk that holds the model and nothing more**, shrinking as the pull
+/// writes, as `room_for_both` does.
+fn room_for_the_model(dir: &Path) -> std::io::Result<u64> {
+    let mut held = 0;
+    for entry in std::fs::read_dir(dir)? {
+        let meta = entry?.metadata()?;
+        if meta.is_file() {
+            held += meta.len();
+        }
+    }
+    Ok((MODEL_LEN as u64).saturating_sub(held))
+}
+
 impl Rig {
     fn store(&self) -> &Store {
         &self.fresh.store
@@ -981,6 +994,32 @@ async fn a_blob_already_standing_needs_no_free_space() {
     puller.stop();
 }
 
+/// **A blob two paths share counts once**: a pull of two paths holding the
+/// same bytes, on a disk with room for one copy, fetches the blob once and
+/// links both paths to it, the second found.
+#[tokio::test]
+async fn a_blob_two_paths_share_counts_once_in_the_free_space() {
+    let Some(rig) = rig().await else { return };
+    let puller = rig.puller(Settings {
+        free_space: room_for_the_model,
+        ..quick()
+    });
+    let copy = RepoFile {
+        path: "copy/model.gguf".into(),
+        ..model_file()
+    };
+    let (pull_id, _) = rig.ask(&puller, &[model_file(), copy]).await;
+    assert_eq!(rig.ended(&pull_id).await, ("verified".into(), None));
+    assert_eq!(rig.fakes.fetched.load(Ordering::SeqCst), 1);
+    let files = rig.store().pull_files(&pull_id).await.unwrap();
+    assert_eq!(files[0].source.as_deref(), Some("downloaded"));
+    assert_eq!(files[1].source.as_deref(), Some("found"));
+    for path in ["model.gguf", "copy/model.gguf"] {
+        assert_eq!(std::fs::read(rig.snapshot(path)).unwrap(), model_bytes());
+    }
+    puller.stop();
+}
+
 /// **A server that answers a range with the whole body restarts the
 /// file**: after a cut, the resume asks from the bytes held, the server
 /// answers `200` from byte zero, and the file is written again from its
@@ -1145,6 +1184,33 @@ async fn an_admins_cancel_stops_the_running_pull_and_keeps_its_partial() {
     assert_eq!(cdn[1].range, Some(format!("bytes={kept}-")));
     let (_, _, body) = send_as(&web, "GET", "/admin/hugging-face/pulls", None, &rig.cookie).await;
     assert!(body.contains("cancelled by ada"), "{body}");
+    puller.stop();
+}
+
+/// **A cancel stops a pull waiting for its response's headers**: the CDN
+/// holds its answer past any wait the test takes, the cancel ends the pull,
+/// and the next ask runs and verifies at once, never waiting out the stall.
+#[tokio::test]
+async fn a_cancel_stops_a_pull_waiting_for_its_headers() {
+    let Some(rig) = rig().await else { return };
+    rig.fakes.modes.lock().unwrap().push_back(Mode::Held);
+    let puller = rig.puller(Settings {
+        stall: Duration::from_secs(60),
+        ..quick()
+    });
+    let (pull_id, _) = rig.ask(&puller, &[model_file()]).await;
+    cdn_asked(&rig, 1).await;
+    let web = rig.surface(&puller);
+    let uri = format!("/admin/hugging-face/pulls/{pull_id}/cancel");
+    let (status, _, body) = send_as(&web, "POST", &uri, Some(String::new()), &rig.cookie).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    assert_eq!(rig.ended(&pull_id).await, ("cancelled".into(), None));
+
+    let (again, asked) = rig.ask(&puller, &[model_file()]).await;
+    assert!(asked.is_ok(), "{asked:?}");
+    assert_eq!(rig.ended(&again).await, ("verified".into(), None));
+    assert_eq!(rig.cdn().len(), 2, "{:?}", rig.cdn());
+    rig.fakes.release.notify_one();
     puller.stop();
 }
 

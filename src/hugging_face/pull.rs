@@ -342,7 +342,9 @@ async fn run(inner: &Inner, pull: &Pull) -> Result<(), Ended> {
 /// it, the ones this run has yet to verify: each less what its partial
 /// holds, and a later file whose blob stands at its size counting nothing,
 /// since step 2 finds it. The file at hand counts whole less its partial,
-/// since step 2 has just found its blob missing or not hashing right.
+/// since step 2 has just found its blob missing or not hashing right. **A
+/// blob two paths share counts once**, since the blob and its partial are
+/// named by its identity and step 2 finds it for the second path.
 fn remaining(cache: &Cache, repo: &RepoId, rest: &[&PullFile]) -> u64 {
     let regular = |path: anyhow::Result<PathBuf>| {
         path.ok()
@@ -350,10 +352,14 @@ fn remaining(cache: &Cache, repo: &RepoId, rest: &[&PullFile]) -> u64 {
             .filter(|m| m.is_file())
             .map(|m| m.len())
     };
+    let mut counted = std::collections::HashSet::new();
     rest.iter()
         .enumerate()
         .map(|(at, f)| {
             let id = f.file.identity();
+            if !counted.insert(id) {
+                return 0;
+            }
             if at > 0 && regular(cache.blob(repo, id)) == Some(f.file.size) {
                 return 0;
             }
@@ -463,7 +469,17 @@ async fn download(
             token = self::token(inner, pull).await?;
         }
         first = false;
-        match fetch(inner, repo, &pull.commit, &file.path, have, token.as_ref()).await {
+        // The wait for the response's headers, every redirect's included,
+        // ends at a cancel as the reads do.
+        let fetched = tokio::select! {
+            fetched = fetch(inner, repo, &pull.commit, &file.path, have, token.as_ref()) => fetched,
+            () = cancelled(cancel, pull) => {
+                out.flush().await.map_err(|e| named(&e))?;
+                inner.store.pull_progress(&pull.pull_id, &file.path, have).await?;
+                return Err(Ended::Cancelled);
+            }
+        };
+        match fetched {
             Ok((mut response, start)) => {
                 if start == 0 && have > 0 {
                     out.set_len(0).await.map_err(|e| named(&e))?;

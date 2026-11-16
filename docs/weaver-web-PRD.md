@@ -250,9 +250,10 @@ stands as built (Spec 6.1) until that act recuts it.
   them. On a host, which attaches and formats nothing, the page shows the state
   directory and the models directory the operator named, with free space against the
   need, the models directory prefilled with that user's default Hugging Face cache so
-  that models already pulled there are found, on the addendum, and the host form is
-  drawn and marked unbuilt, since the host's own script is later. One unit, GiB, serves
-  the whole flow.
+  that models already pulled there are found, and a command for the operator granting
+  read-write on that cache, since downloads land there, the account it grants to being
+  open (section 9), on the addendum, and the host form is drawn and marked unbuilt,
+  since the host's own script is later. One unit, GiB, serves the whole flow.
 - **The placement.** Each model on a device, and the context length chosen against the
   model's maximum, read from the file's header. The fit is called planned, from the room
   plan without a load, since only a load measures. The first agent's Granite is a dense
@@ -1163,6 +1164,10 @@ this crate designs around the gap until it closes.
   (section 10.4), and the addendum to the operator's rulings of 2026-11-16 (setup pages)
   has a host install point at a state directory and a models directory. Whether a named
   directory must be a separate filesystem is the operator's.
+- **The account the host's cache grant names**, opened 2026-11-16. The addendum to the
+  operator's rulings of 2026-11-16 (setup pages) has the host setup show the operator a
+  command granting read-write on the operator's Hugging Face cache, since downloads land
+  there. Whether it grants to the console's account or the agent's is the operator's.
 - **The console as the model store.** The model count or fleet size at which its cache
   stops being tolerable. No measurement exists, because the fleet is one. Settled by a
   measurement on a fleet larger than one.

@@ -3877,12 +3877,12 @@ page takes the models from Hugging Face (section 8.3). The drives page shows the
 that starts the appliance's drive setup, then the drives as the box mounted them, and on
 a host, drawn and marked unbuilt, the state directory and the models directory the
 operator named, with free space against the need, the models directory prefilled with
-that user's default Hugging Face cache and a command granting read-write on that cache,
-the account it names open (section 8.3). The placement page places each model on a
-device with its context length, and the confirm page shows the deployment tuple in full,
-which Confirm closes. The build page holds the board and the prompt tuple panel, both
-held, and is a one-pane stub marked unbuilt. **None of these pages is built**, and
-section 10 carries the act that builds them.
+that user's default Hugging Face cache and a command granting the console's account
+read-write on that cache and a models group read (section 8.3). The placement page
+places each model on a device with its context length, and the confirm page shows the
+deployment tuple in full, which Confirm closes. The build page holds the board and the
+prompt tuple panel, both held, and is a one-pane stub marked unbuilt. **None of these
+pages is built**, and section 10 carries the act that builds them.
 
 **This section is the declaration screen as built on 2026-11-16**, the first of the two
 screens of the rulings of 2026-11-11. It stands until the setup pages' act recuts
@@ -6052,12 +6052,14 @@ it is single-use, it is short-lived on the order of ten minutes, and it is bound
 pending enrollment. It is the only secret the operator carries by hand, the operator's
 single exception of 2026-11-14, which the rulings of 2026-11-16 (setup pages) and their
 addendum move from a command line to a short one-time code the box shows and the
-operator enters on the pairing page. **Which side draws it is open.** A code the server
-issues is a bearer, and section 2.13's rule makes a bearer 32 bytes from the operating
-system's cryptographic random source, which a short code is not. Which side draws it,
-its exact lifetime and length, and where and in what form the console holds it, are
-section 10's. Every token the store holds as built is kept as its digest (sections 2.8
-and 2.13).
+operator enters on the pairing page. **The box draws it, since the box shows it, and
+section 2.13's rule does not reach it**, on this document's election of 2026-11-16. It
+is a confirmation code bound to a TLS connection the box already opened, single-use,
+short-lived and limited in attempts, and not a bearer the server issues, which section
+2.13 makes 32 bytes from the operating system's cryptographic random source. Its exact
+length and lifetime, the limit on attempts, and where and in what form the console holds
+it, are the enrollment act's elections (section 10). Every token the store holds as
+built is kept as its digest (sections 2.8 and 2.13).
 
 **The exchange.** The box dials the link port and opens TLS under the console's
 certificate, and shows the code and that certificate's fingerprint at its console. Once
@@ -6147,9 +6149,15 @@ the commit, every file's SHA-256 and size, one per part for a split model, the a
 that pulled and the time. Each download goes through the commit and never through a
 branch name, and the console hashes each file after download and compares. The pulled
 model is kept in the console's cache inside the Weaver Web install and reused from
-there. The console starts the download in the background once the model is picked, and
-the machine asks the console over TLS for the model's size and pulls it from the cache
-over TLS when the download finishes, checking its digests (section 8.2). **None of it is
+there. On a host the console's models directory is the user's Hugging Face cache, and on
+the addendum to the operator's rulings of 2026-11-16 (setup pages) the console is the
+only account that talks to Hugging Face and the only writer of that directory. Agents on
+that machine read the model in place, read-only, through a group, since several agents
+may share one model, and never copy it. Where the console stands on another machine, the
+model crosses over TLS from the console, never from Hugging Face, as on an appliance.
+The console starts the download in the background once the model is picked, and the
+machine asks the console over TLS for the model's size and pulls it from the cache over
+TLS when the download finishes, checking its digests (section 8.2). **None of it is
 built.** As built, the link carries frames of one line bounded at 4 MiB
 (`link::frames::LINE_BOUND`), so a model's transfer from the console's cache is not a
 frame on it. Which component in the appliance pulls, over which connection, the layout
@@ -6169,7 +6177,7 @@ their published hashes come from, are section 10's.
 
 **The storage report.** **A load whose models mount is not a separate filesystem is
 refused**, on the operator's ruling of 2026-11-15, **and so is a load whose state mount
-is not one**, the state mount being required for every agent at a minimum of 10 GB on
+is not one**, the state mount being required for every agent at a minimum of 10 GiB on
 the operator's rulings of 2026-11-16 (setup pages), which supersede the ruling of
 2026-11-15 that required it only where the declaration elects state (`weaver-web-PRD`
 section 10.4). The appliance's setup script, started by a command the drives page shows,
@@ -6179,12 +6187,13 @@ them, from the box's report (section 8.2). A host install points at a state dire
 and a models directory and attaches and formats nothing, on the addendum to the same
 rulings, and the drives page shows the directories the operator named with free space
 against the need. A host's models directory defaults to that user's default Hugging Face
-cache, so models already pulled there are found. Whether a named directory meets the
-separate-filesystem test is not ruled (`weaver-web-PRD` section 9). The refusal is
-admin's, since load is admin's verb, so the representation this document holds is
-admin's answer to `load`, which renders as it came, as every refusal does (section 7.2).
-The report of the sizes reaches the console through admin-con, the console's one reach
-into an appliance, so its carrier at the box's seam is
+cache, so models already pulled there are found, and the host form shows the command
+granting the console's account read-write there and a models group read. Whether a named
+directory meets the separate-filesystem test is not ruled (`weaver-web-PRD` section 9).
+The refusal is admin's, since load is admin's verb, so the representation this document
+holds is admin's answer to `load`, which renders as it came, as every refusal does
+(section 7.2). The report of the sizes reaches the console through admin-con, the
+console's one reach into an appliance, so its carrier at the box's seam is
 `weaver-admin-operator-contract`'s, and this document builds against the contract once
 it is merged. The form of the report, which carrier it takes at that seam, and where the
 console says that storage is not sufficient, are section 10's. So are the sizes that
@@ -6776,16 +6785,17 @@ a `web-` assertion beside `weaver-admin`'s.
   2026-11-12, section 2.13's first records, outcomes and refusals and section
   2.14's raises, restorations, claims and back-offs, each one statement's
   flight, and the ruling that closes it here closes it there.
-- **The one-time secret's lifetime, encoding and holding, opened 2026-11-15** (section
+- **The one-time secret's length, lifetime and holding, opened 2026-11-15** (section
   8.2). The rulings fix it as single-use, short-lived on the order of ten minutes, and
-  bound to one pending enrollment, and section 2.13's rule makes a bearer the server
-  issues 32 bytes from the operating system's cryptographic random source. The
-  operator's rulings of 2026-11-16 (setup pages) and their addendum have the box show it
-  as a short one-time code for the operator to enter on the pairing page. Open: which
-  side draws it, and so whether section 2.13's rule binds a code the settled flow calls
-  short, its exact lifetime and length, and where and in what form the console holds it,
-  where every token the store holds as built is kept as its digest. Settled by the
-  enrollment's code act, with the operator's confirmation in review.
+  bound to one pending enrollment, and the operator's rulings of 2026-11-16 (setup
+  pages) and their addendum have the box show it as a short one-time code for the
+  operator to enter on the pairing page. The box draws it, on this document's election
+  of 2026-11-16: a confirmation code bound to a TLS connection the box already opened,
+  with its attempts limited, and not a bearer the server issues, so section 2.13's rule
+  for those does not reach it. Open: its exact length and lifetime, the limit on
+  attempts, and where and in what form the console holds it, where every token the store
+  holds as built is kept as its digest. Settled by the enrollment's code act as its
+  election, with the operator's confirmation in review.
 - **The link port's default, opened 2026-11-15** (section 8.2). As built, `link_listen`
   defaults to `127.0.0.1:8081`, a loopback address that no appliance on another machine
   can dial, so an operator who enrolls appliances sets it, and the address a connector
@@ -6985,8 +6995,7 @@ a `web-` assertion beside `weaver-admin`'s.
   whether it is a console setting or a field of the pairing page. Settled by the setup
   pages' act.
 - **The state drive's size, opened 2026-11-16** (section 8.3). The operator's rulings of
-  2026-11-16 (setup pages) require the state mount at a minimum of 10 GB, have the
-  appliance's setup script warn "about 10 GB recommended" where no drive is attached,
-  and state every size in the flow in one unit, GiB, and the settled flow of their
-  addendum writes at least 10 GiB. Open: whether the minimum is 10 GB or 10 GiB, and
-  whether a smaller state drive is refused or warned of. Settled by the operator.
+  2026-11-16 (setup pages) state every size in the flow in one unit, GiB, require the
+  state mount at a minimum of 10 GiB, and have the appliance's setup script warn "about
+  10 GiB recommended" where no drive is attached. Open: whether a smaller state drive is
+  refused or warned of. Settled by the operator.

@@ -72,6 +72,7 @@ fn cfg(sign_in: &[SignInMethod]) -> ServerConfig {
         session_idle_secs: 3600,
         session_absolute_secs: 43200,
         operations_log: None,
+        model_cache: None,
         sign_in: sign_in.to_vec(),
     }
 }

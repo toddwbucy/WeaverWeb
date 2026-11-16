@@ -3051,14 +3051,19 @@ pull no one knows is not found and one that has ended is the ask's fault, each r
 nowhere, and the write ends the pull `cancelled`, naming the admin. The running file
 stops at its next read or wait, and **its partial stays**, so a later pull of the same
 file resumes from it by range. A blob's check or a partial's hash already under way
-finishes first. **One pull runs at a time**, file after file, since a pull of one model
+finishes first, and the file then stops before its blob takes its name, its link is
+written or it is recorded. A cancel whose answer was lost still stops the running file,
+since it may have landed, and where it had not, the puller takes the pull again from its
+partial. **One pull runs at a time**, file after file, since a pull of one model
 fills the link alone and one at a time keeps the free-space check true. An ask while a
 pull runs is refused and names the pull that runs, of the same repository and commit or
 of another, so the page can show it. A pull running when the server stops resumes at the
-next start. The Hugging Face page's section on the cache shows whether `model_cache` is
-set, its free space, and the latest twenty pulls with their record and progress, a
-running pull with its cancel, re-fetched every 15 s through the session's background
-read. The models page that asks a pull is a later act's.
+next start. An idle puller reads the store again at least every 15 s, so a pull whose
+ask's answer was lost, and which landed after the ask had returned, still runs. The
+Hugging Face page's section on the cache shows whether `model_cache` is set, its free
+space, and the latest twenty pulls with their record and progress, a running pull with
+its cancel, re-fetched every 15 s through the session's background read. The models page
+that asks a pull is a later act's.
 
 **The cache is the directory `model_cache` names**, optional and with no default. Unset,
 a pull is refused and the page says why. Set, the server refuses to start where it is
@@ -3093,7 +3098,9 @@ no Hugging Face tool is needed on the machine:
 2. Where the file's blob stands and hashes to the expected identity, the file is
    recorded as found and not fetched, and its snapshot's link is written again, so a
    blob another snapshot of the repository holds serves. A blob that does not hash to it
-   is not trusted and is fetched again.
+   is not trusted and is fetched again. The blob is opened without following a symbolic
+   link and without waiting, so a FIFO at its name opens at once and is refused as not a
+   regular file, and the one puller never waits on it.
 3. The free space is checked against the bytes this run has yet to write: the file at
    hand and the files after it, each less what its partial holds, a later file whose
    blob stands at its size counting nothing, since step 2 finds it, and a blob two
@@ -6455,7 +6462,9 @@ two connectors report.
 | a pull asked through an account never runs without its token | perturbation in `src/model_pull_tests.rs`: let a seal that does not open run the pull without a token, and the fake Hugging Face is asked for the file. Read the account once at the run's start, and a pull whose account is disconnected during a stall asks its retry, and one whose account is replaced while its first file downloads asks Hugging Face for the next file |
 | the free space is checked against what the run has yet to write | perturbation in `src/model_pull_tests.rs` against a disk with room for the model and the config exactly: count every file unverified when the run began, and the config's check counts the model again and fails the pull. Count a later file whose blob stands, and a commit whose model the cache holds fails on the config. Count a blob two paths share once for each path, and `a_blob_two_paths_share_counts_once_in_the_free_space`, two paths of the same bytes on a disk with room for one copy, fails its space check |
 | a server that answers a range with the whole body restarts the file | perturbation in `src/model_pull_tests.rs`: keep the progress mark where the bytes reset, and after a cut the puller panics on the first chunk of the whole body (a debug build), the pull left running |
-| an admin's cancel stops the running pull and keeps its partial | perturbation in `src/model_pull_tests.rs`: drop the puller's signal, and a pull stalled past any wait holds the puller, so the next ask of the file never runs. Await the response's headers outside the cancel, and in `a_cancel_stops_a_pull_waiting_for_its_headers`, the CDN holding its answer, the next ask's pull still runs ten seconds after the cancel. `a_cancel_takes_the_admin_writes_order` holds the parse, the gate's one record, and the unknown and ended pulls recorded nowhere |
+| an admin's cancel stops the running pull and keeps its partial | perturbation in `src/model_pull_tests.rs`: drop the puller's signal, and a pull stalled past any wait holds the puller, so the next ask of the file never runs. Await the response's headers outside the cancel, and in `a_cancel_stops_a_pull_waiting_for_its_headers`, the CDN holding its answer, the next ask's pull still runs ten seconds after the cancel. Drop the cancel check at the download's start, and in `a_cancel_during_a_blobs_check_starts_no_partials_hash` a cancel at step 3 still hashes the partial. Keep one cancelled pull at a time, and in `a_later_cancel_never_undoes_an_earlier_one` a later cancel undoes an earlier one; drop the clear when nothing runs, and a cancelled pull's identity outlives the pulls. Drop the check before step 6, and in `a_cancel_during_a_complete_partials_hash_names_no_blob` a partial holding every byte takes its blob's name after the cancel; drop the check after a blob's check, and in `a_cancel_during_a_blobs_check_links_nothing` the snapshot's link is written after the cancel. Signal the puller only on a definite answer, and in `a_cancel_whose_answer_was_lost_still_reaches_the_puller` a cancel whose answer was lost leaves the read stalled. `a_cancel_takes_the_admin_writes_order` holds the parse, the gate's one record, and the unknown and ended pulls recorded nowhere |
+| a pull whose ask's answer was lost still runs | perturbation in `src/model_pull_tests.rs`, `a_pull_whose_asks_answer_was_lost_still_runs`, the ask's commit slowed past the read-back's bound: let the idle puller wait for its wake alone, a wake on every answer included, and the pull that lands after the ask has returned still runs ten seconds later |
+| a FIFO at a blob's name or at the seal key's is refused and never waited on | perturbation in `src/model_pull_tests.rs`, `a_fifo_at_a_blobs_name_is_refused_and_never_waited_on`, and in `src/hugging_face/seal.rs`'s tests: open the blob or the key waiting, and the puller, or the key's read, waits on the FIFO until a writer opens it |
 | the Hugging Face client reads no proxy from the environment | perturbation in `tests/hugging_face_proxy.rs`, a test binary of its own: drop `.no_proxy()`, and with the proxy variables naming a port where nothing listens, a request to the fake fails to connect |
 | a snapshot's link never replaces a file the repository holds | perturbation in `src/hugging_face/cache.rs`'s tests: stage the link under a fixed name beside its place, and a repository file of that name loses its link |
 

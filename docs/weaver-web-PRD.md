@@ -245,15 +245,16 @@ stands as built (Spec 6.1) until that act recuts it.
   never accepts what a load refuses.
 - **The drives**, as the box mounted them. Once the model is picked, the page shows the
   command to run at the appliance's console, which starts the appliance's drive setup
-  (section 10.4), then the state drive, required for every agent at a minimum of 10 GB,
+  (section 10.4), then the state drive, required for every agent at a minimum of 10 GiB,
   and the models drive, its size computed from the chosen files, as the box mounted
   them. On a host, which attaches and formats nothing, the page shows the state
   directory and the models directory the operator named, with free space against the
   need, the models directory prefilled with that user's default Hugging Face cache so
   that models already pulled there are found, and a command for the operator granting
-  read-write on that cache, since downloads land there, the account it grants to being
-  open (section 9), on the addendum, and the host form is drawn and marked unbuilt,
-  since the host's own script is later. One unit, GiB, serves the whole flow.
+  the console's account read-write on that cache and a models group read, since the
+  console alone downloads there and agents read the model in place, on the addendum, and
+  the host form is drawn and marked unbuilt, since the host's own script is later. One
+  unit, GiB, serves the whole flow.
 - **The placement.** Each model on a device, and the context length chosen against the
   model's maximum, read from the file's header. The fit is called planned, from the room
   plan without a load, since only a load measures. The first agent's Granite is a dense
@@ -1013,9 +1014,9 @@ this crate designs around the gap until it closes.
 - **The models mount's name**, unfiled on 2026-11-16, on `toddwbucy/WeaverAgent` and
   `toddwbucy/WeaverTools`, on the same rulings: the plural name they give the models
   mount, which this repository does not record (section 10.7).
-- **The state mount for every agent**, unfiled on 2026-11-16, on
-  `toddwbucy/WeaverAgent` and `toddwbucy/WeaverTools`, on the same rulings: the state
-  mount required for every agent, at a minimum of 10 GB (section 10.4).
+- **The state mount for every agent**, unfiled on 2026-11-16, on `toddwbucy/WeaverAgent`
+  and `toddwbucy/WeaverTools`, on the same rulings: the state mount required for every
+  agent, at a minimum of 10 GiB (section 10.4).
 - **The save point on the state disk**, unfiled on 2026-11-16, on
   `toddwbucy/WeaverAgent`, on the same rulings: the save point the unload writes, placed
   on the state mount, by the existing save point path and with no new persistent store
@@ -1093,11 +1094,12 @@ this crate designs around the gap until it closes.
   hash. A lineage would let the tool answer instead. It would be that
   charter's fact to state and its Spec's record to change, so this cell is
   named here and owned there.
-- **The one-time secret's lifetime and form.** Section 10.1 carries its three bounds and
-  the order of ten minutes, and the operator's rulings of 2026-11-16 (setup pages) and
-  their addendum have the box show it as a short code at its console, for the operator
-  to enter on the console's pairing page. The rest is `weaver-web-Spec` section 10's,
-  settled by the enrollment's code act.
+- **The one-time secret's length and exact lifetime.** Section 10.1 carries its three
+  bounds and the order of ten minutes, and the operator's rulings of 2026-11-16 (setup
+  pages) and their addendum have the box show it as a short code at its console, for the
+  operator to enter on the console's pairing page. The box draws it (section 10.1). Its
+  exact length and lifetime and the limit on attempts are the enrollment act's election
+  (`weaver-web-Spec` section 10).
 - **What the run card is.** The term is the operator's, for a JSON file, defined in the
   operator's run card paper (v1.4), which is in no repository as of 2026-11-15. The
   operator's rulings of 2026-11-15 name it three times: it records the ports a
@@ -1164,10 +1166,6 @@ this crate designs around the gap until it closes.
   (section 10.4), and the addendum to the operator's rulings of 2026-11-16 (setup pages)
   has a host install point at a state directory and a models directory. Whether a named
   directory must be a separate filesystem is the operator's.
-- **The account the host's cache grant names**, opened 2026-11-16. The addendum to the
-  operator's rulings of 2026-11-16 (setup pages) has the host setup show the operator a
-  command granting read-write on the operator's Hugging Face cache, since downloads land
-  there. Whether it grants to the console's account or the agent's is the operator's.
 - **The console as the model store.** The model count or fleet size at which its cache
   stops being tolerable. No measurement exists, because the fleet is one. Settled by a
   measurement on a fleet larger than one.
@@ -1260,7 +1258,12 @@ begin exists. **Three bounds hold it.** It is single-use. It is short-lived, on 
 order of ten minutes. It is bound to one pending enrollment, the box waiting and the
 agent the operator named at the start page, so it cannot enroll a box the operator did
 not expect. Each bound narrows what a leaked secret is worth: it is spent once, it
-expires in minutes, and it serves only the enrollment the operator is waiting on.
+expires in minutes, and it serves only the enrollment the operator is waiting on. **The
+box draws it, since the box shows it**, and the console limits the attempts at entering
+it. It is a confirmation code bound to the TLS connection the box already opened, not a
+bearer the server issues, so the rule for the bearers the server mints does not reach it
+(`weaver-web-Spec` sections 2.13 and 8.2). Its exact length and lifetime are the
+enrollment act's election.
 
 **Every root act of the setup runs on the box, at a screen the operator is sitting at**,
 on the operator's rulings of 2026-11-16 (setup pages), so admin's grant does not grow.
@@ -1373,11 +1376,17 @@ reuses it from there.** An appliance pulls a model from the console's cache over
 same mutual TLS trust, and it checks the digests. That keeps the direction of section
 10.1, the appliance dialing the console, and one pull serves every agent that declares
 the model. On the operator's rulings of 2026-11-16 (setup pages) the console starts the
-download in the background once the model is picked, the appliance asks the console
-over TLS for the chosen model's size, and the appliance pulls the model when the
-download finishes. **The cost is stated.** The console
-becomes the model store, and on a network larger than one site that is a question of
-disk and of bandwidth that the console has to answer. Section 9 carries it.
+download in the background once the model is picked, the appliance asks the console over
+TLS for the chosen model's size, and the appliance pulls the model when the download
+finishes. On a host the console's models directory is the user's Hugging Face cache, and
+on the addendum to the operator's rulings of 2026-11-16 (setup pages) the console is the
+only account that talks to Hugging Face and the only writer of that directory. Agents on
+that machine read the model in place, read-only, through a group, since several agents
+may share one model, and never copy it. Where the console stands on another machine, the
+model crosses over TLS from the console, never from Hugging Face, as on an appliance.
+**The cost is stated.** The console becomes the model store, and on a network larger
+than one site that is a question of disk and of bandwidth that the console has to
+answer. Section 9 carries it.
 
 **The console offers the image for download, and it checks the hash of the image against
 the published hash before it hands the file over.** An image is the held object of a
@@ -1391,32 +1400,34 @@ later and are named as later.
 console. Where storage is not sufficient, the console says so and asks the operator to
 add storage.** On the operator's ruling of 2026-11-15, the models mount is required, and
 a load is refused where it is not a separate filesystem. **The state mount is required
-for every agent, at a minimum of 10 GB**, on the operator's rulings of 2026-11-16 (setup
-pages), because the system prompt lives in state and the save point the unload writes
-lands there. That supersedes the ruling of 2026-11-15 that the state mount is required
-only where the declaration elects state, and a required mount is held to the same test.
-The models drive's size is computed from the chosen files, and the setup flow states
-every size in one unit, GiB. **The refusal is admin's, since load is admin's verb, and
-the console renders admin's answer as it came** (`weaver-web-Spec` section 7.2). The
-check runs at every load and not once at enrollment, because the refusal is a load's: a
-required mount that is not a separate filesystem refuses that load. **The console
-attaches and mounts nothing.** On a virtual machine the operator attaches the disks in
-the hypervisor, and the appliance's setup script, started by a command the console shows
-once the model is picked, lists the drives it sees, asks which one is for state, and
-formats and mounts each after the operator confirms the disk, on the operator's rulings
-of 2026-11-16 (setup pages), which supersede the ruling of 2026-11-15 that the operator
-mounts them over SSH. A host install points at a state directory and a models directory,
-and attaches and formats nothing, on the addendum to the same rulings, and the drives
-page shows the directories the operator named with free space against the need. A host's
-models directory defaults to that user's default Hugging Face cache, so models already
-pulled there are found, and the appliance keeps its models mount. Whether a named
-directory meets the separate-filesystem test a load holds a required mount to is not
-ruled (section 9). With no drive attached the script warns that at least one drive is
-for state, about 10 GB recommended, and checks again once the operator attaches one. The
-models drive it asks for is sized from the chosen model, whose size it asks the console
-over TLS (section 10.1). The form of the size report is WeaverAgent's (section 10.7),
-the report's way to the console is an ask upstream (section 8), and the sizes that count
-as sufficient are open (`weaver-web-Spec` section 10).
+for every agent, at a minimum of 10 GiB**, on the operator's rulings of 2026-11-16
+(setup pages), because the system prompt lives in state and the save point the unload
+writes lands there. That supersedes the ruling of 2026-11-15 that the state mount is
+required only where the declaration elects state, and a required mount is held to the
+same test. The models drive's size is computed from the chosen files, and the setup flow
+states every size in one unit, GiB. **The refusal is admin's, since load is admin's
+verb, and the console renders admin's answer as it came** (`weaver-web-Spec` section
+7.2). The check runs at every load and not once at enrollment, because the refusal is a
+load's: a required mount that is not a separate filesystem refuses that load. **The
+console attaches and mounts nothing.** On a virtual machine the operator attaches the
+disks in the hypervisor, and the appliance's setup script, started by a command the
+console shows once the model is picked, lists the drives it sees, asks which one is for
+state, and formats and mounts each after the operator confirms the disk, on the
+operator's rulings of 2026-11-16 (setup pages), which supersede the ruling of 2026-11-15
+that the operator mounts them over SSH. A host install points at a state directory and a
+models directory, and attaches and formats nothing, on the addendum to the same rulings,
+and the drives page shows the directories the operator named with free space against the
+need. A host's models directory defaults to that user's default Hugging Face cache, so
+models already pulled there are found, and the appliance keeps its models mount. The
+host form shows the command granting the console's account read-write on that directory
+and a models group read (section 10.1). Whether a named directory meets the
+separate-filesystem test a load holds a required mount to is not ruled (section 9). With
+no drive attached the script warns that at least one drive is for state, about 10 GiB
+recommended, and checks again once the operator attaches one. The models drive it asks
+for is sized from the chosen model, whose size it asks the console over TLS (section
+10.1). The form of the size report is WeaverAgent's (section 10.7), the report's way to
+the console is an ask upstream (section 8), and the sizes that count as sufficient are
+open (`weaver-web-Spec` section 10).
 
 ### 10.5 Load and unload, and no hypervisor
 

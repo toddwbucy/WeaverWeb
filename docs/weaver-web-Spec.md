@@ -4498,17 +4498,16 @@ written, and nothing is installed, validated or seeded.
 **Declare's path is the start page, the setup pages and the build page**, on the
 operator's rulings of 2026-11-16 (setup pages), items 1 to 20 of their addendum and the
 Planner's notes after item 17. The decisions this section takes are this document's
-election of 2026-11-16, revised the same day by the Planner's decisions after the walk
-of the appliance flow by hand. The pages light what exists and draw the rest held: the
-start page, the models page, the drives page's need for the models drive, the placement
-page's context length and turn context, and the pairing page's checkbox, link address
-and port are live, and the pairing page's code and fingerprint, the survey's report, the
-drives as the box mounted them, the placement's devices and its planned fit, and the
-box's members of the deployment tuple are held, each waiting on the enrollment (section
-8.2), the image's setup script or WeaverAgent's terms. **So the pages alone reach no
-confirmed tuple**, and the rulings' first test (download fresh, set up a virtual machine
-through the pages, confirm the tuple) waits on the enrollment's act and the image's
-setup-script act.
+election of 2026-11-16, revised the same day after the appliance flow was walked by
+hand. The pages light what exists and draw the rest held: the start page, the models
+page, the drives page's need for the models drive, the placement page's context length
+and turn context, and the pairing page's checkbox, link address and port are live, and
+the pairing page's code and fingerprint, the survey's report, the drives as the box
+mounted them, the placement's devices and its planned fit, and the box's members of the
+deployment tuple are held, each waiting on the enrollment (section 8.2), the image's
+setup script or WeaverAgent's terms. **So the pages alone reach no confirmed tuple**,
+and the rulings' first test (download fresh, set up a virtual machine through the pages,
+confirm the tuple) waits on the enrollment's act and the image's setup-script act.
 
 **The pages are an admin's**, the server-wide admin grant, as the declaration screen's
 (section 6.1): a setup comes before Provision's register, so no agent row exists for a
@@ -4656,7 +4655,7 @@ and the page shows the identity "not read" while its hash runs. A drift between 
 hash and the agent's fails closed, since admission computes the hash again and refuses a
 mismatch. **What the identity does not show** is that the adapter was converted against
 this base: it pins the box's files to the console's pull, and the pairing of adapter and
-base stays the admin's pick (section 10).
+base stays the operator's pick (section 10).
 
 **The context length** is an integer from 1 to the header's maximum. One above it is
 refused, saving nothing, and one at it is kept. It is the declaration's

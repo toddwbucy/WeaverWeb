@@ -134,9 +134,11 @@ register verb of section 8 writes and the link reads, about an agent rather than
 the work, sitting outside both halves as the session does. **Section 2.13 is identity and
 access**, appended 2026-10-02 on the same reasoning: the person, the role and the grant,
 and the audit record of every verb asked, about who may act on an agent rather than about
-the work. **The grouping is stated
-here rather than carried by the numbering**, which is the cost of a document whose
-sections are cited by number.
+the work. **Section 2.15 is the Hugging Face account and the model pulls**, appended
+2026-11-16 on the same reasoning: a console setting and the record of what the console
+fetched, about the models an agent will declare rather than about the work. **The
+grouping is stated here rather than carried by the numbering**, which is the cost of a
+document whose sections are cited by number.
 
 **An authored row's identity says what it addresses.** A key this store generates is
 spelled as two letters naming the kind and sixteen hex: `pl-` a plan, `ar-` an arm,
@@ -926,7 +928,9 @@ Each row carries:
 - the session's own identifier
 - **the bearer's digest and never the bearer.** The value the browser holds
   is hashed before it is stored and the lookup is on the digest, so a read of
-  this table is not a set of live sessions
+  this table is not a set of live sessions. The rule binds every token the console
+  issues and checks, and the one credential it presents outward, the Hugging Face
+  token, is its stated exception, sealed rather than digested (section 2.15)
 - **the person**, whose identity section 3.2's author member takes
 - **the method that opened it**, `passkey assertion` or `sign-in token`, the
   audit's own names for the two (section 2.13), so the session and the
@@ -1032,7 +1036,8 @@ three tabs, in this order:
   experiments, the conversation with an agent, multi-agent workflow
   coordination and foundation-model support under this tab later, and puts
   the work outside it first: none of them is built here.
-- **IAM**, identity and access: Persons and Grants for an admin, then
+- **IAM**, identity and access: Persons, Grants and Hugging Face for an
+  admin, the last the console's account at Hugging Face (section 2.15), then
   Passkeys, the person's own.
 
 A tab opens the first of its sub-tabs the person may open. At the right of
@@ -1755,14 +1760,16 @@ it decides are stated here and in section 2.8, and the reasons are there.
   credential, which would let an admin take a person over. **Every bearer the
   server issues, the session bearer, the enrollment token, the sign-in token
   and the ceremony identity alike, is 32 bytes from the operating system's cryptographic
-  random source**, never derived from a counter, a time or a row identity. **A lost passkey
-  is recovered by another passkey the person holds, or by the host reset**:
-  a host command that, in one write under the exclusion below, clears the
-  person's passkeys and issues an enrollment token, so the token still goes
-  to a row with no credential. **It writes no session**, the session being
-  the surface's alone under section 3: each session opened with a cleared
-  passkey ends at its next use, as one whose passkey is removed does, and an
-  open live view at its next 15-second re-check. **There is no admin
+  random source**, never derived from a counter, a time or a row identity. **Every token
+  the console issues is kept as its digest, and the Hugging Face token is the stated
+  exception**, the one credential the console presents outward rather than checks,
+  which a digest cannot serve, so it is sealed (section 2.15). **A lost passkey is
+  recovered by another passkey the person holds, or by the host reset**: a host command
+  that, in one write under the exclusion below, clears the person's passkeys and issues
+  an enrollment token, so the token still goes to a row with no credential. **It writes
+  no session**, the session being the surface's alone under section 3: each session
+  opened with a cleared passkey ends at its next use, as one whose passkey is removed
+  does, and an open live view at its next 15-second re-check. **There is no admin
   reset**, which would be the takeover this rule exists to prevent, so no
   token is ever issued for a row that holds a passkey. It is held on that
   person row, only as a digest beside its expiry, under section 2.8's rule, and it is consumed by that person's first
@@ -2962,6 +2969,126 @@ edge: asserts
 from: weaver-web
 to: web-a-connector-never-acts-on-the-agent
 ```
+
+### 2.15 The Hugging Face account and the model pulls
+
+**Hugging Face is the one model source**, on the operator's rulings of 2026-11-16 (setup
+pages), and its layout is the declared standard for an agent's models. This section
+holds the console's side: the account, the client, the pull, its record and the cache.
+The box's side, the size a box asks for and its pull from the cache over TLS, is section
+8.3's and waits on the interface the image or WeaverAgent meets (`weaver-web-PRD`
+section 8). The decisions this section takes are this document's election of 2026-11-16.
+
+**The account is one row, a console setting, written by an admin alone** (migration
+`0024`). It holds the account's name and the token's role as Hugging Face's `whoami-v2`
+answered them, the token sealed, when it was set and by whom, when it was last checked,
+when Hugging Face last refused it, and a version every write checks against the page's
+read. An admin connects it, checks it again and disconnects it at
+`GET /admin/hugging-face`, three writes in the admin writes' order of section 2.13, each
+audited with the admin as principal and the target kind `hugging_face`, which names no
+row. **A connect checks the token against `whoami-v2` after the admin gate and before
+its audited write**, so a token Hugging Face refuses saves nothing and is one refusal
+record, as the admin gate's refusal is, and a person without an admin grant causes no
+request to Hugging Face. A check asks `whoami-v2` again with the stored token: an answer
+records the account and role and clears a refusal, and a refusal records when, and the
+setting stands until a disconnect. The page sits among IAM's sub-tabs for an admin,
+named Hugging Face (section 6.1). A read-only or a read-write token is taken and shown
+as what it is, and a fine-grained one as fine-grained. The console writes nothing to
+Hugging Face, which the rulings keep for an explicit push in Train, and no write path
+exists.
+
+**The token is sealed, the stated exception to the digest rule** of sections 2.8 and
+2.13. Every token the console issues is kept as its digest, because the console only
+checks it. The Hugging Face token is the one credential the console presents outward,
+which a digest cannot serve. It is sealed with ChaCha20-Poly1305 (`ring`) under a
+32-byte key in `authority_dir`, with a fresh nonce for every seal, and the store holds
+the ciphertext and the nonce alone. `authority init` writes the key, `authority rotate`
+carries it into the new set, and for an authority made before it, the host command
+`authority seal-key` writes it, audited as the host's, and refuses to overwrite. The
+server reads the key where it uses it, so a key written while it runs serves without a
+restart. **A lost key means the operator enters the token again**: the row's seal no
+longer opens, and the page says so and offers the connect. A dump of the store holds no
+usable token. The token enters no page, log line, audit record or error, and the form
+that carries it is answered under `no-store`.
+
+**The client** (`src/hugging_face/`) speaks to `https://huggingface.co` alone, fixed,
+with no mirror key. It reads a repository at a revision through `GET
+/api/models/<repo>/revision/<revision>?blobs=true`, which answers the commit, `gated`,
+and every file with its size, its git blob id and, for a file kept in LFS, its SHA-256.
+**Every download names the 40-hex commit and never a branch**
+(`/<repo>/resolve/<commit>/<path>`). It follows the redirect Hugging Face answers, to a
+CDN host for an LFS file and to a relative path for a file kept in git (both measured
+2026-11-16), and **`Authorization` goes to `huggingface.co` alone**, never to a host a
+redirect names. Whether the account may fetch a gated repository is read from a `HEAD`
+of one of its files through the commit, its redirect not followed: Hugging Face refuses
+a gated file the account lacks with `x-error-code: GatedRepo`, and the console shows
+the repository's page, where the terms are accepted, and a check again.
+
+**A pull is one row, and each of its files another** (migration `0025`). The pull's row
+names its identity, `mp-` and sixteen lowercase hex, the repository, the commit, the
+account's name as `whoami-v2` gave it, the person who asked, when it was asked and when
+it finished, and its state, `running`, `verified` or `failed` with its reason. Each
+file's row names its path, its size, its SHA-256, its git blob id, the bytes done and
+its source, `downloaded` or `found`. That is the rulings' record: the repository, the
+commit, every file's SHA-256 and size, the account that pulled and the time. Hugging
+Face publishes a git blob id and no SHA-256 for a file kept in git, so for such a file
+the console computes the SHA-256 as it writes and compares the git blob id. An admin
+asks a pull, audited with the target kind `model_pull`, through the connected account
+or, with none connected, with no token, as a public repository allows. **A pull asked
+through an account never runs without its token**: where the account is disconnected or
+replaced, or its seal no longer opens, the pull fails saying so before any request.
+**One pull runs at a time**, file after file, since a pull of one model fills the link
+alone and one at a time keeps the free-space check true. An ask while a pull runs is
+refused and names the pull that runs, of the same repository and commit or of another,
+so the page can show it. A pull running when the server stops resumes at the next start.
+The Hugging Face page's section on the cache shows whether `model_cache` is set, its
+free space, and the latest twenty pulls with their record and progress, re-fetched every
+15 s through the session's background read. The models page that asks a pull is a later
+act's.
+
+**The cache is the directory `model_cache` names**, optional and with no default. Unset,
+a pull is refused and the page says why. Set, the server refuses to start where it is
+not an absolute path to a directory the server can create a file in. The install sets
+it, inside the Weaver Web install on an appliance's console and to the user's Hugging
+Face cache on a host, so a host's models already pulled there are found, and no path
+enters this repository. On a host the console is the only account that talks to Hugging
+Face and the only writer of that directory, and agents read the model in place,
+read-only, through a group (the operator's rulings of 2026-11-16 (setup pages), items 11
+and 13 of their addendum). **The console writes Hugging Face's cache layout itself**, so
+no Hugging Face tool is needed on the machine:
+
+- `models--<owner>--<name>/blobs/<id>`, where `<id>` is the SHA-256 for an LFS file and
+  the git blob id for a file kept in git, and `<id>.incomplete` beside it while the file
+  downloads
+- `snapshots/<commit>/<path>`, a relative symbolic link to its blob
+- no `refs/`, since the console reads by commit and a branch's ref would move what
+  another tool on a host reads as that branch
+- no lock file, since the pulls are serialized and on a host the console is the only
+  writer
+- no file mode: every file is created under the process's umask, and a host's group read
+  comes from the directory's group and the service's umask, which the host's setup sets
+  outside this repository
+
+**A file's pull takes six steps.**
+
+1. The repository's identity and every component of the file's path are checked first:
+   no `..`, no absolute path, no empty component, no NUL. A refusal comes before any
+   write.
+2. Where the file's blob stands and hashes to the expected identity, the file is
+   recorded as found and not fetched, and its snapshot's link is written where it is
+   missing, so a blob another snapshot of the repository holds serves. A blob that does
+   not hash to it is not trusted and is fetched again.
+3. The free space is checked against the bytes that remain. Too little refuses before
+   any byte, and the page says how much is needed.
+4. The file is fetched through the commit, following the redirect, with `Authorization`
+   sent to `huggingface.co` alone.
+5. `<id>.incomplete` is opened without following a symbolic link and written while it is
+   hashed. An interrupted file resumes by range, after the bytes already on disk are
+   hashed again. A read that brings no byte within 60 s is a stall. A stall or a cut is
+   retried by range after a pause of 5 s times the setbacks so far, and the sixth
+   setback fails the pull.
+6. The digest is compared. Only a match renames the file to `<id>` and links the
+   snapshot. A mismatch removes the partial and fails the pull with its reason.
 
 ## 3. The write path
 
@@ -6297,6 +6424,13 @@ two connectors report.
 | the reported members are the agent's as read: each member the Declare pane reads from `show`'s facts or a load event is a field of that shape's struct at the pin, of the type it reads, under the rename it reads, and each it takes as absent is not one | `the_reported_members_are_the_agents_as_read` and `the_reported_members_were_read_at_the_builds_pin` in `src/declaration/reported.rs`, against the dated copy `src/declaration/reported-5ec7ecf8.md`: misname `show`'s state election, read a turn context from `show` or an artifact from a load event, read the load event's election by `show`'s name, or spell either flag as the other shape does, and it fails on the reader's tables; rename `LoadFacts`'s members, name the tee otherwise, give the serving record a turn context, add an engine or a turn context the reader does not read, or make the artifact optional, and it fails on the copy; move the pin without a reread, and the second fails (13 cases, each caught) |
 | each reported member reads equal, differs or not in this report, by the shape its source names, a state election by the first entry for each kind, and an absence is set beside the report as the agent reads it | `each_member_reads_equal_differs_or_not_in_this_report`, `an_absence_is_set_beside_the_report_as_the_agent_reads_it`, `a_kind_named_again_whose_first_entry_is_declared_reads_equal` and `a_kind_named_again_whose_first_entry_is_not_declared_differs` in `src/declaration/reported.rs`: read a state election's kinds in their order or a path named twice twice, compare a state election by its words, or show a difference between two elections that read alike by those words, read a null member as reported, read the tee's election in `show`'s spelling, read any engine or turn context word, or swap a difference's two sides, and the first fails; read an absent turn context as independent, an absent surprisal as true, an absent residual readout as false or an absent state election as the other default, and the second fails; keep every entry of a kind named again, and `a_kind_named_again_whose_first_entry_is_declared_reads_equal` fails; keep its last entry rather than its first, and that test and `a_kind_named_again_whose_first_entry_is_not_declared_differs` fail; drop the words that say the kind was named again, and both fail (16 cases, each caught) |
 | the agent page sets what the agent reports beside the declaration saved under its name, to every grant holder, never says which version the agent was loaded from, and fails by itself where its head does not read or a read inside it fails | perturbation in `src/declare_pane_tests.rs`: change the empty state's sentence, or offer a new declaration to every reader or to none, and `with_no_declaration_saved_the_pane_says_so` fails; give the screen's link to every reader or to none, mark a reported part with no load as never reported or the reverse, read the pane for an admin alone, name the lineage's root for its head, or show the declared value as the verdict, and `a_saved_declaration_with_no_load_shows_its_parts` fails; never compare the decoder, drop the sentence that a difference may only mean an older version, plant "loaded from", or read a load event as `show`'s answer, and `a_load_the_agent_reports_is_set_beside_the_head` fails; read a tuple of no named source as `show`'s, or say it is no load, and `a_load_whose_source_the_row_does_not_name_is_set_beside_nothing` fails; show the prompt's text or its length in bytes, render its digest for a person who is not an admin, or for no one, and `the_prompt_is_shown_by_its_length_and_its_digest_to_an_admin_alone` fails; drop the name, the row's own identity or the live credential from the others' filter, show a person every row of the register, or never render the others, and `the_other_rows_of_the_name_are_listed_as_far_as_the_reader_may_see` fails; say the same declaration stands behind the other rows whatever the head, or say none is saved under the name where the head could not be read, and `the_other_rows_claim_only_what_was_read_of_the_head` fails (27 cases); panic where a head does not read, say it reads, or give its screen's link to every reader, and `a_head_that_does_not_read_fails_in_the_pane_alone` fails; offer a new declaration on an unread head or say none is saved, read unread others as none or never render their sentence, or show an unread author as nothing, and `a_read_that_fails_inside_the_pane_is_stated_there` fails; read a failed lookup as none saved, fault the page on it, or lead the way back to a new declaration, and `a_head_lookup_that_fails_leaves_the_agent_page_standing`; read the head by the parse alone, and `a_head_saved_with_the_withdrawn_placement_reads_in_the_pane` fails (12 cases); each caught |
+| a person without an admin grant causes no request to Hugging Face | perturbation in `src/hugging_face_tests.rs` against a fake Hugging Face: check the token before the admin gate, and the fake counts a request from a person holding no admin grant |
+| the Hugging Face token is held sealed and enters no page, log line, audit record or error | perturbation in `src/hugging_face_tests.rs`: store the token as given, and the row's columns carry its bytes |
+| `Authorization` goes to `huggingface.co` alone | perturbation in `src/model_pull_tests.rs` against a fake Hugging Face and a fake CDN on a second listener: send the header on every hop, and the CDN listener sees it |
+| every download names the commit and never a branch | perturbation in `src/model_pull_tests.rs`: let an ask name a branch, and the store's check on the pull's commit refuses its row where the test expects the ask's refusal before any row. The fake answers a 40-hex commit alone, and every request it sees names the commit |
+| no file takes its blob's name before its digest matches | perturbation in `src/model_pull_tests.rs`: rename before the compare, and a body whose digest differs stands under the blob's name |
+| a repository's file names write nothing outside `model_cache` | perturbation in `src/model_pull_tests.rs`: let the path check pass a `..` component, and the ask is taken where the test expects its refusal before any row. The cache's own walk refuses a `..` directory component as a second guard (`src/hugging_face/cache.rs`) |
+| a pull asked through an account never runs without its token | perturbation in `src/model_pull_tests.rs`: let a seal that does not open run the pull without a token, and the fake Hugging Face is asked for the file |
 
 **A watch that cannot fail is not a test.** For each perturbation above, the
 act that lands it states what removal makes it fail and confirms it does.
@@ -6438,6 +6572,15 @@ a `web-` assertion beside `weaver-admin`'s.
 
 ## 10. Open elections
 
+- **A fine-grained token's scopes, opened 2026-11-16** (section 2.15). The console reads
+  a token's role from `whoami-v2` and shows a fine-grained token as such, without
+  reading which repositories its scopes reach. Open: whether the console reads the
+  scopes and says which a pull would need. Settled by the models page's act or by a
+  refusal met in use.
+- **Removing a pulled model, opened 2026-11-16** (section 2.15). The rulings keep a
+  pulled model in the cache and reuse it, and name no removal. Open: whether and how an
+  admin removes one, and what a removal does to an agent that reads the model in place.
+  Settled by the operator.
 - **The store engine and its migrations.** Postgres is the charter's
   election, and the schema's expression is this document's and lands with
   the first code act.

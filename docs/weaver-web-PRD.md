@@ -112,16 +112,13 @@ shown, from the tool's own labels, to be wrong.
   virtual machine, and it stops none through a hypervisor. Those acts belong to the
   operator and the operator's hypervisor, and the suite holds no opinion about them. To
   start and stop an agent is to load and unload it through admin, inside a running
-  appliance (section 10.5). **The console's shutdown command stops the agent service and
-  never powers off the machine**, on the addendum to the operator's rulings of
-  2026-11-16 (setup pages), which replaces the shutdown of the machine the rulings first
-  named. The operator powers a virtual machine from the hypervisor, and a machine
-  powered off with the service still running loses what the service held. The rulings
-  enable the command on a virtual machine and disable it on a host, the setup flow's
-  checkbox saying which the machine is (section 3.0). Whether it stays disabled on a
-  host, and whether the console can start the service again, are the operator's (section
-  9). The command reaches no hypervisor, which the ruling of 2026-11-14 keeps, and its
-  path into the machine is an ask upstream (section 8).
+  appliance (section 10.5). **The console's stop is that `unload`, which writes the save
+  point, and its start that `load`, on a virtual machine and on a host alike**, on the
+  addendum to the operator's rulings of 2026-11-16 (setup pages), which turn the
+  shutdown command the rulings first named into those two lines. Both are already
+  granted through admin-con's rule, so admin's grant does not grow. Nothing the console
+  offers powers off a machine, and the operator powers a virtual machine from the
+  hypervisor. The console reaches no hypervisor, which the ruling of 2026-11-14 keeps.
 - **Not a knowledge-graph governance layer.** No axioms, smells, gates, or
   conformance as product features.
 
@@ -237,11 +234,8 @@ stands as built (Spec 6.1) until that act recuts it.
   setup, and the operator compares the fingerprint the box shows with this server's own
   and enters the short one-time code the box shows (section 10.1). Then the running
   report of what the box's survey sent over TLS. A checkbox says whether the box is a
-  virtual machine or a host, with a note on what the checkbox does: on a virtual machine
-  the console's shutdown command, which stops the agent service, is enabled, and on a
-  host the rulings disable it, which their addendum leaves open (section 2). Where the
-  address is localhost and the checkbox says virtual machine, the page warns that the
-  console could lose access to itself.
+  virtual machine or a host. Where the address is localhost and the checkbox says
+  virtual machine, the page warns that the console could lose access to itself.
 - **The models.** A Hugging Face repository, then a pick from its files, a split model
   shown as one choice with all its parts, and the precision read from the file (section
   10.4). What is built is what the first agent needs: one decoder and the one adapter on
@@ -1026,11 +1020,6 @@ this crate designs around the gap until it closes.
   `toddwbucy/WeaverAgent`, on the same rulings: the save point the unload writes, placed
   on the state mount, by the existing save point path and with no new persistent store
   (sections 9 and 10.5).
-- **The shutdown command's path**, unfiled on 2026-11-16, on `toddwbucy/WeaverAgent`:
-  how the console's shutdown command, which stops the agent service and never powers off
-  the machine on the addendum to the same rulings, reaches the box through admin-con,
-  and whether admin's `stop` is that stop or a line admin does not have (section 2). The
-  rulings' list of asks does not name it.
 
 ## 9. Open cells, each named rather than implied
 
@@ -1167,14 +1156,6 @@ this crate designs around the gap until it closes.
   own before entering the code, and setup uses no SSH. Whether that closes the cell is
   the operator's to say, then one first boot of the sealed image paired through the
   pages shows it.
-- **Whether the console can start the agent service again**, opened 2026-11-16. On the
-  addendum to the operator's rulings of 2026-11-16 (setup pages) the console's shutdown
-  command stops the agent service and the operator starts or stops the machine from the
-  hypervisor (section 2). Whether the console offers a start of the service is the
-  operator's.
-- **Whether the shutdown command stays disabled on a host**, opened 2026-11-16. The
-  rulings disable it on a host, and their addendum, which turns it into a stop of the
-  agent service, leaves that open. The operator's.
 - **The console as the model store.** The model count or fleet size at which its cache
   stops being tolerable. No measurement exists, because the fleet is one. Settled by a
   measurement on a fleet larger than one.
@@ -1435,16 +1416,17 @@ granting the console's account read-write on that directory and a models group r
 (section 10.1). On the addendum to the operator's rulings of 2026-11-16 (setup pages)
 the agent is a real account on the box, and its home lives on the state drive, so the
 state mount's 10 GiB is that home. The agent's own folder, its declaration, logs, trace
-and save points, stands inside that home. The appliance ships the agent's account, and
-the connectors' two accounts on the same principle. The account's name, which the image
-fixes before the agent is named, and the home's exact place are the image's and
-WeaverAgent's, and neither enters this repository. With no drive attached the script
-warns that at least one drive is for state, about 10 GiB recommended, and checks again
-once the operator attaches one. The models drive it asks for is sized from the chosen
-model, whose size it asks the console over TLS (section 10.1). The form of the size
-report is WeaverAgent's (section 10.7), the report's way to the console is an ask
-upstream (section 8), and the sizes that count as sufficient are open (`weaver-web-Spec`
-section 10).
+and save points, stands inside that home. The image ships a fixed agent account, and the
+connectors' two accounts on the same principle, and setup points the agent account's
+home at a folder named after the agent on the state drive, the agent's own folder inside
+it. A host uses a home named after the agent, with the same layout inside. The account's
+name and every path are the image's and WeaverAgent's, and none enters this repository.
+With no drive attached the script warns that at least one drive is for state, about 10
+GiB recommended, and checks again once the operator attaches one. The models drive it
+asks for is sized from the chosen model, whose size it asks the console over TLS
+(section 10.1). The form of the size report is WeaverAgent's (section 10.7), the
+report's way to the console is an ask upstream (section 8), and the sizes that count as
+sufficient are open (`weaver-web-Spec` section 10).
 
 ### 10.5 Load and unload, and no hypervisor
 
@@ -1484,10 +1466,9 @@ it is the console's to show.** What the appliance exposes for it is an ask upstr
 
 **Weaver Web never touches a hypervisor**, per section 2, and nothing in this section
 reaches one. The console makes, starts and destroys no machine, attaches no disk and
-maps no card, and the one stop it asks of a machine is section 2's shutdown command,
-which stops the agent service and never powers the machine off. The console knows the
-agent and the hypervisor knows the machine, and neither reaches into the side of the
-other.
+maps no card, and it asks no stop of a machine, its stop of an agent being admin's
+`unload` (section 2). The console knows the agent and the hypervisor knows the machine,
+and neither reaches into the side of the other.
 
 ### 10.6 The trace's destination
 

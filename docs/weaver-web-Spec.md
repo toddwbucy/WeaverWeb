@@ -727,12 +727,13 @@ operator has placed one.
 
 **The setup and the deployment tuple stand beside the lineage, not in it** (section
 6.2). The setup pages keep a mutable setup row until Confirm, then one immutable
-deployment tuple naming each model's repository, commit and per-part digests, the
-context length and the box's members, each with its source. Neither is a declaration
-row: a setup writes none, the document's grammar is not extended, and the lineage's rows
-are untouched. Which source wins when Provision renders a loadable declaration, the
-screen's artifact text or the tuple's repository, commit and digests, is open (section
-10).
+deployment tuple naming each model's repository, commit and each file's path, digest and
+size, the base's identity, the context length, the turn context, the devices and the
+box's members, each with its source, which is every member the box is laid from. Neither
+is a declaration row: a setup writes none, the document's grammar is not extended, and
+the lineage's rows are untouched. Which source wins when Provision renders a loadable
+declaration, the screen's artifact text or the tuple's repository, commit and digests,
+is open (section 10).
 
 ### 2.5 The staged experiment
 
@@ -4497,9 +4498,11 @@ written, and nothing is installed, validated or seeded.
 **Declare's path is the start page, the setup pages and the build page**, on the
 operator's rulings of 2026-11-16 (setup pages), items 1 to 20 of their addendum and the
 Planner's notes after item 17. The decisions this section takes are this document's
-election of 2026-11-16. The pages light what exists and draw the rest held: the start
-page, the models page, the placement page's context length and the pairing page's
-checkbox are live, and the pairing page's code and fingerprint, the survey's report, the
+election of 2026-11-16, revised the same day by the Planner's decisions after the walk
+of the appliance flow by hand. The pages light what exists and draw the rest held: the
+start page, the models page, the drives page's need for the models drive, the placement
+page's context length and turn context, and the pairing page's checkbox, link address
+and port are live, and the pairing page's code and fingerprint, the survey's report, the
 drives as the box mounted them, the placement's devices and its planned fit, and the
 box's members of the deployment tuple are held, each waiting on the enrollment (section
 8.2), the image's setup script or WeaverAgent's terms. **So the pages alone reach no
@@ -4523,11 +4526,12 @@ by `session`. Reads are not audited.
 - `GET /setup/{su}/{page}`, where `{page}` is `pairing`, `models`, `drives`,
   `placement`, `confirm` or `build`, and `GET /setup/{su}` answers its pairing page
 - `POST /setup/{su}/pairing`: the checkbox
-- `POST /setup/{su}/models`: a pick
+- `POST /setup/{su}/models`: a pick, an adapter's carrying its scale
 - `GET /setup/{su}/models/header`: one choice's header, a fragment
-- `GET /setup/{su}/models/pull`: the setup's pulls with their progress, a fragment the
-  page re-fetches every 15 s through the session's background read
-- `POST /setup/{su}/placement`: the context length
+- `GET /setup/{su}/models/pull`: the setup's pulls with their progress and the base's
+  identity, a fragment the page re-fetches every 15 s through the session's background
+  read
+- `POST /setup/{su}/placement`: the context length, the turn context and the devices
 - `POST /setup/{su}/confirm`: Confirm
 - `GET /admin/ssh-key`, `POST /admin/ssh-key` and `POST /admin/ssh-key/{sk}/remove`: the
   operator's SSH public keys
@@ -4548,8 +4552,11 @@ lowercase letter, then lowercase letters and digits, 2 to 16 characters in all. 
 rule is the stricter, and the only one of the two that bounds the length, since the
 name becomes an account, a group and a directory. A name either rule refuses could not
 stand on a box, so the start page takes neither. The register's own grammar (section
-2.12) is wider and does not change here. Whether the appliance's account takes the name
-or stays fixed is with the operator, and the rule binds either way.
+2.12) is wider and does not change here. **The agent's accounts take the name** (the
+operator's word of 2026-11-16): the box's agent-creation tool lays them at setup, named
+from `weaver-<name>`, and the image carries no fixed account for the agent. On the state
+drive each agent has a directory of its own under the state mount, named for it, which
+holds the agent's folder and its home side by side.
 
 **Every pane carries its stage, its backing and its status**, healthy states included:
 the header's stage mark `1 Declare`, its backing (`built`, `partly` or `unbuilt`) and a
@@ -4574,18 +4581,21 @@ the row.
 | page | live | held, and on what |
 | --- | --- | --- |
 | Start | the name, refused by the start page's rule or where an open setup holds it; the open setups; New agent once an agent stands | nothing |
-| Pairing | the checkbox, virtual machine or host; the warning where the console's own link address (`link_address`, else `link_listen`) is a loopback address and the checkbox says virtual machine, and the address the box dialed too once the enrollment brings it | the waiting box, its code and its fingerprint: the enrollment (section 8.2) and the image's setup script; the survey's report: its form, the image's or WeaverAgent's, and its frame |
-| Models | the repository and its revision, resolved to a commit; each choice with its size and its header's facts; a gated repository with its accept link and a check again; the pick, which asks a pull (section 2.15); the pulls' progress and record; the roster beyond the first agent drawn and marked unbuilt | nothing on the console's side; the box's pull from the cache is the enrollment's frame |
-| Drives | the appliance's form drawn with what it will show; the host's form drawn and marked unbuilt, its models directory prefilled from `model_cache` where set; the SSH key that goes down, by its fingerprint, with a link to change it | the command that starts the drive setup: the image's setup script names it; the drives as mounted: the box's report and its frame |
-| Placement | the context length, bounded by the header's maximum; the block count and the parts in shard order, from the header | the devices: the survey's report; the fit, drawn "planned, from the box's room plan": the room plan's answer over TLS, an ask on WeaverAgent |
-| Confirm | every member of the tuple with its source, read or held | the box's members; Confirm stands only once every member is read |
-| Build | one pane, marked unbuilt, linking the declaration screen as built for the fields no setup page asks | the board and the prompt tuple panel, held by the rulings |
+| Pairing | the checkbox, virtual machine or host; the console's link address and port (`link_address`, else `link_listen`), which the box's setup asks for, and that the box must reach them; the warning where that address is a loopback address and the checkbox says virtual machine, and the address the box dialed too once the enrollment brings it | the waiting box, its code and its fingerprint: the enrollment (section 8.2) and the image's setup script; the survey's report: its form, the image's or WeaverAgent's, and its frame |
+| Models | the repository and its revision, resolved to a commit; each choice with its size and its header's facts; a gated repository with its accept link and a check again; the pick, which asks a pull (section 2.15), an adapter's carrying its scale; the pulls' progress and record; the base's identity, computed from the cache; the roster beyond the first agent drawn and marked unbuilt | nothing on the console's side; the box's pull from the cache is the enrollment's frame |
+| Drives | the appliance's form drawn with what it will show; the models drive's need, the bytes of the picks' distinct blobs; the host's form drawn and marked unbuilt, its models directory prefilled from `model_cache` where set; the SSH key that goes down, by its fingerprint, with a link to change it | the command that starts the drive setup: the image's setup script names it; the drives as mounted: the box's report and its frame |
+| Placement | the context length, bounded by the header's maximum; the turn context; the block count and the parts in shard order, from the header | the devices, a set of the survey's cards by ordinal: the survey's report; the fit, drawn "planned, from the box's room plan": the room plan's answer over TLS, an ask on WeaverAgent |
+| Confirm | every member of the tuple with its source, read or held | the box's members and the devices; Confirm stands only once every member is read |
+| Build | one pane, marked unbuilt, saying the box lays the agent from the tuple once Confirm stands, and linking the declaration screen as built for the fields no setup page asks | the board and the prompt tuple panel, held by the rulings |
 
 **The models page's roster is the first agent's**: one decoder and one adapter on it.
 Extra models, adapter roles beyond the one decoder adapter, a classifier-only agent and
 placement on the CPU are drawn and marked unbuilt, never live, and a post that names
 any of them is refused, saving nothing. A pick for a role the setup holds replaces that
-role's row, and the files the earlier pick pulled stay in the cache.
+role's row, and the files the earlier pick pulled stay in the cache. **An adapter's pick
+carries its scale**, a finite number with no default, as the adapter binding's ADP-1 at
+WeaverAgent's `6b91747e` admits it: a pick without one, or with one that is not finite,
+is refused, saving nothing.
 
 **A choice is a model, not a file.** Files named `<stem>-NNNNN-of-MMMMM.gguf` with one
 stem and one count group into one choice listing every part and their total size,
@@ -4625,11 +4635,47 @@ refusals and never a panic or an unbounded allocation. It answers:
 A fact the header does not carry is shown "not read", and a choice whose header's split
 count differs from its file names is shown with that reason and offered no pick.
 
-**The context length** is an integer from 1 to the header's maximum. One above it is
-refused, saving nothing, and one at it is kept. Where the maximum was not read, the
-placement page holds the field with that reason.
+**Each file is named by its path under the models mount, in Hugging Face's layout**, the
+layout of the console's cache (section 2.15) and the one a box keeps its models in:
+`models--<owner>--<name>/snapshots/<commit>/<file>`, a relative link to the repository's
+`blobs/<blob>`, which the agent follows to the blob and beside which it finds a split
+model's later parts. The decoder's artifact is its choice's first part, and the
+adapter's is its one file. The mount is the box's and enters no text of the console's:
+the box's setup joins its own mount to each path. **The drives page shows the models
+drive's need**, the bytes of every pick's distinct blobs, a blob two paths share counted
+once.
 
-**Confirm writes the deployment tuple**, one row, immutable (migration `0028`): a
+**The base's identity is computed from the cache.** An adapter binds to its base by
+`base-blake3`, which weaver-spu takes as one BLAKE3 hasher over every byte of the first
+part, then of each later part in split order (its `weights_hash` at WeaverAgent's
+`6b91747e`). Once the decoder's pull is verified, the console hashes its cached parts
+the same way, one hash at a time on a thread of its own, and keeps the digest in one
+immutable row per repository, commit and choice (migration `0028`), since a file at a
+commit never changes. A start that finds a verified pull with no row hashes it again,
+and the page shows the identity "not read" while its hash runs. A drift between this
+hash and the agent's fails closed, since admission computes the hash again and refuses a
+mismatch. **What the identity does not show** is that the adapter was converted against
+this base: it pins the box's files to the console's pull, and the pairing of adapter and
+base stays the admin's pick (section 10).
+
+**The context length** is an integer from 1 to the header's maximum. One above it is
+refused, saving nothing, and one at it is kept. It is the declaration's
+`context-capacity`. Where the maximum was not read, the placement page holds the field
+with that reason.
+
+**The turn context** is `continuous` or `independent`, and neither is drawn checked. A
+post without one, or with another word, is refused, saving nothing. The agent reads its
+absence as `continuous`, so the page never leaves the election to that default.
+
+**The devices** are a set of the survey's cards, each named by the ordinal the survey's
+report gives it in PCI bus order, the order the agent numbers its devices in. No card is
+drawn checked. An empty set, an ordinal the report lacks and a repeated ordinal are each
+refused, saving nothing, since the agent's declaration refuses an empty set rather than
+default to a device. The checked ordinals in ascending order are the shard order, the
+first card holding the first layers, and another order is drawn unbuilt. Until the
+survey's report brings the cards, the field is held with that reason.
+
+**Confirm writes the deployment tuple**, one row, immutable (migration `0029`): a
 trigger of the kind migration `0023` uses refuses any update and any delete, and a
 second Confirm of a setup is refused. It names its identity, `dt-` and sixteen lowercase
 hex, the setup, the pulls, the person who confirmed and when, and every member with its
@@ -4637,19 +4683,31 @@ source:
 
 | member | source |
 | --- | --- |
-| the model's repository, commit, per-part digests and sizes | the pull's record, verified (section 2.15) |
+| the model's repository, commit, and each part's path under the models mount, blob, SHA-256 and bytes | the pull's record, verified (section 2.15) |
 | the adapter's, likewise | the pull's record, verified |
+| the adapter's scale | the setup, the adapter's pick |
+| the base's identity | the console's hash of the cached parts, above |
 | the context length | the setup, bounded by the header |
+| the turn context | the setup |
 | the virtual machine or host | the setup's checkbox |
 | the image version, the driver, the cards by identity, the guest CPU, the machine | the box's report |
 | the drives | the box's report |
-| the placement | the placement page, from the survey's report |
+| the devices | the placement page, from the survey's report |
 
 **Confirm's way forward stands only where every member is read**: both pulls verified,
-the context length kept, and the box's members answered. The box's members come from a
-source the enrollment's act builds, and until it the source answers none, so Confirm
-holds and says which members it waits on. A post to Confirm with a member unread is
-refused, writing nothing. Confirm then goes to the build page.
+the base's identity computed, the context length and the turn context kept, the devices
+chosen, and the box's members answered. The box's members come from a source the
+enrollment's act builds, and until it the source answers none, so Confirm holds and says
+which members it waits on. A post to Confirm with a member unread is refused, writing
+nothing. Confirm then goes to the build page.
+
+**The box is laid from the tuple.** The tuple holds every member the agent is laid from:
+the decoder's artifact, the adapter's artifact, SHA-256 and scale, the base's identity,
+the devices, the context length and the turn context. The enrollment's act answers them
+to the box's setup only once the setup is confirmed (section 8.2), so nothing the box
+lays is chosen after Confirm or left to a default of the box's own tooling. That
+tooling's taking the devices, the context length and the turn context is WeaverAgent's
+(section 10).
 
 **The operator's SSH public keys are a console setting** (migration `0027`), one or
 more, an admin's write at `GET /admin/ssh-key`, audited with the target kind `ssh_key`
@@ -6660,6 +6718,11 @@ two connectors report.
 | a context length above the header's maximum is refused | perturbation in `src/setup_tests.rs`: drop the bound, and a context length past the maximum is kept |
 | the deployment tuple refuses any update or delete, and a setup is confirmed once | perturbation, at the schema: drop the trigger, and an update of a tuple lands. Drop the one tuple per setup, and a second Confirm writes a second tuple |
 | an SSH key's line is checked for its form, and its text enters no audit record | perturbation in `src/ssh_key_tests.rs`: drop the inner type's check, and a line whose blob names another type is kept |
+| the turn context is required and never defaulted | perturbation in `src/setup_tests.rs`: draw either word checked, or keep a post without one, and the test names it |
+| the devices are a non-empty set of the survey's cards, by ordinal | perturbation in `src/setup_tests.rs` with a survey supplied through a seam: drop the empty set's refusal, or the check against the survey's ordinals, and the refused post lands |
+| the base's identity is BLAKE3 over the parts in split order | perturbation in `src/hugging_face/base_identity.rs`'s tests: hash in the listing's order, or part 1 alone, and the digest differs from BLAKE3 over part 1's bytes, then part 2's |
+| an adapter's pick carries a finite scale | perturbation in `src/setup_tests.rs`: drop the check, and a pick without a scale, or with one that is not finite, lands |
+| the members the box is laid from are the confirmed tuple's, and none stand before Confirm | perturbation in `src/setup_tests.rs`: read them from the open setup rather than the tuple, and they stand before Confirm |
 
 **A watch that cannot fail is not a test.** For each perturbation above, the
 act that lands it states what removal makes it fail and confirms it does.
@@ -7202,8 +7265,9 @@ a `web-` assertion beside `weaver-admin`'s.
 - **The box's members of the tuple, opened 2026-11-16** (section 6.2). The image
   version, the driver, the cards by identity, the guest CPU, the machine and the drives
   come from the box's report over the paired link, and the devices the placement page
-  offers from the survey's report. Open: the report's form and its frame. Settled by the
-  enrollment's act and the image's or WeaverAgent's side of it.
+  offers from the survey's report, each card with its ordinal in PCI bus order. Open:
+  the report's form and its frame. Settled by the enrollment's act and the image's or
+  WeaverAgent's side of it.
 - **Two sources for a model, opened 2026-11-16** (sections 2.4, 6.1 and 6.2). The
   declaration screen's artifact text and GPU requirement stand beside the setup's
   repository, commit, digests and placement, and no load reads either as built.
@@ -7214,3 +7278,14 @@ a `web-` assertion beside `weaver-admin`'s.
   name, and the image is built before the agent is named. Open: how the name crosses to
   the box, at the pairing or over the paired link after it. Settled by the enrollment's
   act.
+- **An adapter's declared base identity, opened 2026-11-16** (section 6.2). The base's
+  identity the console computes pins a box's files to the console's pull and does not
+  show that the adapter was converted against that base. An adapter's repository that
+  declared the identity it was converted against could be compared with it at the pick,
+  and no repository the first agent uses declares one. Open: whether and where an
+  adapter declares it. Settled by the operator.
+- **The laying's three members, opened 2026-11-16** (section 6.2). The box's
+  agent-creation tool at WeaverAgent's `6b91747e` takes the artifact, the adapter's four
+  members and the store, writes the devices and the context length fixed and writes no
+  turn context. Open: its taking those three, `toddwbucy/WeaverAgent#580`. Settled by
+  WeaverAgent's act and the image's, which lays the agent after Confirm.

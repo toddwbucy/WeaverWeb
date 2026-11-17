@@ -25,6 +25,7 @@ use serde::Deserialize;
 use std::future::Future;
 use std::os::fd::{AsRawFd, RawFd};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::io::{AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
@@ -239,10 +240,13 @@ pub enum Asked {
     /// The server's one frame.
     Answer(ToClient),
     /// No TCP connection or no TLS handshake, the server's certificate
-    /// failing under the pinned authority among them.
+    /// failing under the pinned authority among them, or either stalling
+    /// past the bound: the ask was never sent.
     Unreachable(String),
-    /// The connection ended, or went silent, after the ask was sent and
-    /// before an answer: the server may have acted.
+    /// The command's own failure before the ask was sent.
+    Fault(String),
+    /// The connection ended, or went silent, once the ask's frame had begun
+    /// to be written and before an answer: the server may have acted.
     Ended(String),
 }
 
@@ -286,8 +290,9 @@ impl Link {
     /// a protocol fault.**
     pub async fn connect(&self, hello: FromClient) -> Connect {
         let bound = Duration::from_secs(HELLO_SECS);
+        let sent = AtomicBool::new(false);
         let (fd, reader, write, answer) =
-            match tokio::time::timeout(bound, self.first_frame(&hello)).await {
+            match tokio::time::timeout(bound, self.first_frame(&hello, &sent)).await {
                 Ok(Ok(parts)) => parts,
                 Ok(Err(Failure::Plain(why) | Failure::Unreachable(why))) => {
                     return Connect::Failed(why);
@@ -305,18 +310,40 @@ impl Link {
     /// **A setup ask** (Spec 8.3): dial, handshake, the ask as the first
     /// frame, and the server's one frame, all within `ASK_SECS`.
     pub async fn ask(&self, ask: FromClient) -> Asked {
-        match tokio::time::timeout(Duration::from_secs(ASK_SECS), self.first_frame(&ask)).await {
+        self.ask_within(ask, Duration::from_secs(ASK_SECS)).await
+    }
+
+    /// `ask` within `bound`. **What ended it is told by whether the ask's
+    /// frame had begun to be written**: before it, nothing reached the
+    /// server, and a stall of the dial or the handshake is unreachable
+    /// like their refusal. After it, the server may have acted.
+    pub async fn ask_within(&self, ask: FromClient, bound: Duration) -> Asked {
+        let sent = AtomicBool::new(false);
+        let ended = tokio::time::timeout(bound, self.first_frame(&ask, &sent)).await;
+        let sent = sent.load(Ordering::SeqCst);
+        match ended {
             Ok(Ok((_, _, _, answer))) => Asked::Answer(answer),
             Ok(Err(Failure::Unreachable(why) | Failure::Untrusted(why))) => Asked::Unreachable(why),
-            Ok(Err(Failure::Plain(why))) => Asked::Ended(why),
-            Err(_) => Asked::Ended(format!("no answer within {ASK_SECS} s")),
+            Ok(Err(Failure::Plain(why))) if sent => Asked::Ended(why),
+            Ok(Err(Failure::Plain(why))) => Asked::Fault(why),
+            Err(_) if sent => Asked::Ended(format!(
+                "no answer within {} s of the dial",
+                bound.as_secs_f64()
+            )),
+            Err(_) => Asked::Unreachable(format!(
+                "no connection and handshake with {} within {} s",
+                self.config.server,
+                bound.as_secs_f64()
+            )),
         }
     }
 
     /// Dial, handshake, send the first frame, and read the server's first.
+    /// `sent` is set as the frame's first byte may leave.
     async fn first_frame(
         &self,
         first: &FromClient,
+        sent: &AtomicBool,
     ) -> Result<
         (
             std::os::fd::RawFd,
@@ -349,6 +376,7 @@ impl Link {
             let mut reader = LineReader::new(read);
             let mut line = serde_json::to_vec(&hello).map_err(|e| Failure::Plain(e.to_string()))?;
             line.push(b'\n');
+            sent.store(true, Ordering::SeqCst);
             write
                 .write_all(&line)
                 .await

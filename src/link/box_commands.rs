@@ -12,11 +12,12 @@
 use std::io::{Read, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::Serialize;
 
 use crate::link::box_line::{Nothing, Printer, Status};
-use crate::link::client::{Asked, Link, LinkConfig, parse_config, read_private};
+use crate::link::client::{ASK_SECS, Asked, Link, LinkConfig, parse_config, read_private};
 use crate::link::frames::{
     FromClient, PAIR_FIRST_FRAME_BOUND, Plane, REPORT_BOUND, SetupAsk, Stage, ToClient,
 };
@@ -475,12 +476,22 @@ fn answered<O: Write, E: Write>(
             p.reason("the console may have kept the report: ask again");
             p.outcome(Status::Unknown, "unknown", &Nothing {})
         }
+        Asked::Fault(why) => p.ended(Status::Fault, &why),
         Asked::Ended(why) => p.ended(Status::Fault, &why),
     }
 }
 
 /// **`setup describe`** (Spec 8.3).
 pub async fn setup_describe<O: Write, E: Write>(p: &mut Printer<O, E>, config: &Path) -> Status {
+    setup_describe_within(p, config, Duration::from_secs(ASK_SECS)).await
+}
+
+/// `setup describe` with its ask bounded at `bound`.
+pub(crate) async fn setup_describe_within<O: Write, E: Write>(
+    p: &mut Printer<O, E>,
+    config: &Path,
+    bound: Duration,
+) -> Status {
     let link = match setup_link(config) {
         Ok(link) => link,
         Err(why) => return p.ended(Status::Usage, &why),
@@ -490,7 +501,7 @@ pub async fn setup_describe<O: Write, E: Write>(p: &mut Printer<O, E>, config: &
         plane: Plane::Admin,
         ask: SetupAsk::Describe,
     };
-    let asked = link.ask(ask).await;
+    let asked = link.ask_within(ask, bound).await;
     answered(p, &link.config().server, asked, false)
 }
 
@@ -502,6 +513,17 @@ pub async fn setup_report<O: Write, E: Write, R: Read>(
     config: &Path,
     stage: Stage,
     input: R,
+) -> Status {
+    setup_report_within(p, config, stage, input, Duration::from_secs(ASK_SECS)).await
+}
+
+/// `setup report` with its ask bounded at `bound`.
+pub(crate) async fn setup_report_within<O: Write, E: Write, R: Read>(
+    p: &mut Printer<O, E>,
+    config: &Path,
+    stage: Stage,
+    input: R,
+    bound: Duration,
 ) -> Status {
     let link = match setup_link(config) {
         Ok(link) => link,
@@ -534,14 +556,153 @@ pub async fn setup_report<O: Write, E: Write, R: Read>(
         plane: Plane::Admin,
         ask: SetupAsk::Report { stage, report },
     };
-    let asked = link.ask(ask).await;
+    let asked = link.ask_within(ask, bound).await;
     answered(p, &link.config().server, asked, true)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::link::authority::Authority;
     use crate::link::pair_client::Answer;
+    use std::os::unix::fs::PermissionsExt;
+
+    /// The setup asks' bound in these tests, the commands' own being 30 s.
+    const BOUND: Duration = Duration::from_millis(1500);
+
+    /// admin-con's config naming `server`, its credential minted by
+    /// `authority`.
+    fn admin_config(dir: &Path, authority: &Authority, server: &str) -> PathBuf {
+        let credential = authority.mint_client("karl", Plane::Admin).unwrap();
+        let mut table = toml::Table::new();
+        for (member, value) in [
+            ("server", server.to_owned()),
+            ("server_name", "weaver-web".to_owned()),
+            ("agent", "karl".to_owned()),
+            ("agent_id", "ag-0000000000000001".to_owned()),
+            ("plane", "admin".to_owned()),
+            ("server_certificate", authority.certificate_pem().to_owned()),
+            ("certificate", credential.certificate_pem),
+            ("key", credential.key_pem),
+        ] {
+            table.insert(member.into(), value.into());
+        }
+        let path = dir.join("admin-con.toml");
+        std::fs::write(&path, toml::to_string(&table).unwrap()).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        path
+    }
+
+    fn line_of(p: Printer<Vec<u8>, Vec<u8>>) -> serde_json::Value {
+        let (out, _) = p.into_inner();
+        serde_json::from_slice(out.strip_suffix(b"\n").unwrap()).unwrap()
+    }
+
+    /// `setup describe` and `setup report` against `config`, each bounded
+    /// at `BOUND`: their statuses and lines.
+    async fn both_asks(config: &Path) -> [(Status, serde_json::Value); 2] {
+        let mut p = Printer::new("admin-con setup describe", Vec::new(), Vec::new());
+        let described = setup_describe_within(&mut p, config, BOUND).await;
+        let described = (described, line_of(p));
+        let mut p = Printer::new("admin-con setup report", Vec::new(), Vec::new());
+        let reported = setup_report_within(&mut p, config, Stage::Pairing, &b"{}"[..], BOUND).await;
+        [described, (reported, line_of(p))]
+    }
+
+    /// **A setup ask whose dial or handshake stalls was never sent**, so
+    /// both commands answer `unreachable` with the address dialed: against
+    /// a listener that accepts and never handshakes, and one that never
+    /// accepts, its queue full, so the connection itself stalls.
+    ///
+    /// Perturbation: take every stall as after the send, and `describe`
+    /// answers `fault` and `report` `unknown`.
+    #[tokio::test]
+    async fn a_setup_ask_whose_dial_or_handshake_stalls_is_unreachable() {
+        let dir = tempfile::tempdir().unwrap();
+        let authority = Authority::init(&dir.path().join("authority"), "weaver-web", &[]).unwrap();
+
+        let silent = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = silent.local_addr().unwrap().to_string();
+        let held = tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((tcp, _)) = silent.accept().await {
+                held.push(tcp);
+            }
+        });
+        let config = admin_config(dir.path(), &authority, &address);
+        for (status, line) in both_asks(&config).await {
+            assert_eq!(status, Status::Unreachable, "{line}");
+            assert_eq!(line["address"], address.as_str(), "{line}");
+        }
+        held.abort();
+
+        let socket = tokio::net::TcpSocket::new_v4().unwrap();
+        socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let full = socket.listen(1).unwrap();
+        let at = full.local_addr().unwrap();
+        let mut fillers = Vec::new();
+        let stalled = loop {
+            match std::net::TcpStream::connect_timeout(&at, Duration::from_millis(300)) {
+                Ok(tcp) => fillers.push(tcp),
+                Err(_) => break true,
+            }
+            if fillers.len() > 64 {
+                break false;
+            }
+        };
+        assert!(stalled, "the queue never filled, so no connection stalls");
+        let address = at.to_string();
+        std::fs::remove_file(&config).unwrap();
+        let config = admin_config(dir.path(), &authority, &address);
+        for (status, line) in both_asks(&config).await {
+            assert_eq!(status, Status::Unreachable, "{line}");
+            assert_eq!(line["address"], address.as_str(), "{line}");
+        }
+        drop(full);
+    }
+
+    /// **A setup ask sent and never answered may have reached the console**:
+    /// against a server that completes the handshake, reads the ask and
+    /// answers nothing, `setup report` answers `unknown` (6), since the
+    /// report may be kept, and `setup describe` `fault` (1), since a
+    /// describe changes nothing.
+    ///
+    /// Perturbation: take every stall as before the send, and both answer
+    /// `unreachable`.
+    #[tokio::test]
+    async fn a_setup_ask_sent_and_unanswered_is_unknown_for_a_report_and_a_fault_for_a_describe() {
+        let dir = tempfile::tempdir().unwrap();
+        let authority = Authority::init(&dir.path().join("authority"), "weaver-web", &[]).unwrap();
+        let acceptor = tokio_rustls::TlsAcceptor::from(authority.server_tls().unwrap());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap().to_string();
+        let mute = tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((tcp, _)) = listener.accept().await {
+                let Ok(stream) = acceptor.accept(tcp).await else {
+                    continue;
+                };
+                let mut reader = crate::link::frames::LineReader::new(stream);
+                let asked = reader.next().await;
+                assert!(
+                    matches!(asked, crate::link::frames::Line::Frame(_)),
+                    "the ask was sent"
+                );
+                held.push(reader);
+            }
+        });
+        let config = admin_config(dir.path(), &authority, &address);
+        let [(described, line), (reported, report_line)] = both_asks(&config).await;
+        assert_eq!(
+            (described, line["event"].as_str()),
+            (Status::Fault, Some("fault"))
+        );
+        assert_eq!(
+            (reported, report_line["event"].as_str()),
+            (Status::Unknown, Some("unknown"))
+        );
+        mute.abort();
+    }
 
     const ESC: &str = "\u{1b}[2J\u{1b}]0;title\u{7}";
 

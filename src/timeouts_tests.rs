@@ -86,7 +86,7 @@ const CALLS: &[(&str, &str, Why)] = &[
     ("src/link/admin_con.rs", "relay", Join), // the stop's grace
     ("src/link/admin_con.rs", "drain", Socket),
     ("src/link/client.rs", "connect", Socket),
-    ("src/link/client.rs", "ask", Socket), // a setup ask, dial to answer
+    ("src/link/client.rs", "ask_within", Socket), // a setup ask, dial to answer
     ("src/link/client.rs", "start", Socket),
     ("src/link/client.rs", "start", Socket),
     ("src/link/client.rs", "start", Channel), // the heartbeat

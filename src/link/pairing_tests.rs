@@ -429,6 +429,31 @@ async fn a_match_spends_the_connection() {
     assert!(matches!(heard, Ok(Heard::Closed)), "{heard:?}");
 }
 
+/// **A probe its entry gave up on spends nothing** (Spec 8.2): a probe
+/// whose entry stopped waiting, its receiver gone before the connection
+/// reads it, leaves the box waiting, and the box's own code entered after
+/// takes it.
+///
+/// Perturbation: drop both the closed probe's check and the hand-over's
+/// return, and the abandoned probe spends the connection, the right code
+/// then matching nothing.
+#[tokio::test]
+async fn a_probe_its_entry_gave_up_on_spends_nothing() {
+    let Some(rig) = rig().await else { return };
+    let dialed = pair_from(&rig, local(1), "box-a").await.unwrap();
+    until_waiting(&rig, 1).await;
+    let code = dialed.code().clone();
+    rig.listener.probe_abandoned(&code).await;
+    until_waiting(&rig, 1).await;
+    let taken = rig
+        .listener
+        .take_pairing(&code)
+        .await
+        .expect("its own code, after a probe its entry gave up on");
+    assert_eq!(taken.r#box, "box-a");
+    assert!(rig.listener.waiting().is_empty());
+}
+
 fn refused_busy(dialed: Result<Dialed, DialError>) {
     match dialed {
         Err(DialError::Refused(reason)) => assert_eq!(reason, "busy"),

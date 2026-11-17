@@ -1146,6 +1146,13 @@ impl Listener {
         self.inner.waiting.take(code).await
     }
 
+    /// A test's lever: a probe for `code` its entry gave up on, read by
+    /// every waiting connection (`Waiting::probe_abandoned`).
+    #[cfg(test)]
+    pub(crate) async fn probe_abandoned(&self, code: &crate::link::pair_code::Code) {
+        self.inner.waiting.probe_abandoned(code).await
+    }
+
     /// A test's lever: the waiting boxes' bounds, shortened.
     #[cfg(test)]
     pub fn set_pairing_bounds(&self, bounds: crate::link::pairing::Bounds) {

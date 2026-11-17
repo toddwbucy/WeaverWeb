@@ -139,6 +139,19 @@ impl Drop for Reservation<'_> {
     }
 }
 
+impl Reservation<'_> {
+    /// The place out of the table for a hand-over, so the box is listed
+    /// nowhere once its entry holds it.
+    fn lift(&self) -> Option<Slot> {
+        self.waiting.slots.lock().unwrap().remove(&self.id)
+    }
+
+    /// The place back, its hand-over not taken.
+    fn restore(&self, slot: Slot) {
+        self.waiting.slots.lock().unwrap().insert(self.id, slot);
+    }
+}
+
 impl Default for Waiting {
     fn default() -> Self {
         Waiting {
@@ -236,6 +249,31 @@ impl Waiting {
             }
         }
         None
+    }
+
+    /// A test's lever: an entry's probe for `code` that its entry gave up
+    /// on, its answer's receiver gone before it is read, sent to every
+    /// listed connection and answered once each has read it.
+    #[cfg(test)]
+    pub(crate) async fn probe_abandoned(&self, code: &Code) {
+        let probes: Vec<mpsc::Sender<Probe>> = self
+            .slots
+            .lock()
+            .unwrap()
+            .values()
+            .filter_map(|slot| slot.listed.as_ref().map(|(_, probe)| probe.clone()))
+            .collect();
+        for probe in probes {
+            let (answer, answered) = oneshot::channel();
+            drop(answered);
+            let _ = probe
+                .send(Probe {
+                    code: code.clone(),
+                    answer,
+                })
+                .await;
+            let _ = probe.reserve().await;
+        }
     }
 }
 
@@ -391,9 +429,9 @@ pub(crate) async fn serve(start: StartHandshake<TcpStream>, mut cx: Context<'_>)
         _ => None,
     };
     let Some(PairFromBox::Hello {
-        r#box,
-        gate_request,
-        admin_request,
+        mut r#box,
+        mut gate_request,
+        mut admin_request,
     }) = claim
     else {
         return;
@@ -433,22 +471,45 @@ pub(crate) async fn serve(start: StartHandshake<TcpStream>, mut cx: Context<'_>)
                 return;
             }
             Event::Probe(Some(Probe { code, answer })) => {
-                let mine = Code::of(&**reader.get_ref().get_ref().1);
-                if mine.is_ok_and(|mine| mine.matches(&code)) {
-                    drop(reservation);
-                    let _ = answer.send(Some(Taken {
-                        r#box,
-                        gate_request,
-                        admin_request,
-                        peer: cx.peer,
-                        #[cfg(feature = "enrollment")]
-                        connection: Kept::new(reader, cx.cadence, cx.write_bound),
-                        #[cfg(feature = "enrollment")]
-                        ends,
-                    }));
-                    return;
+                // **A probe its entry gave up on spends nothing**: the entry
+                // has gone on without an answer, so the box keeps waiting
+                // for the next.
+                if answer.is_closed() {
+                    continue;
                 }
-                let _ = answer.send(None);
+                let mine = Code::of(&**reader.get_ref().get_ref().1);
+                if !mine.is_ok_and(|mine| mine.matches(&code)) {
+                    let _ = answer.send(None);
+                    continue;
+                }
+                let lifted = reservation.lift();
+                let handed = answer.send(Some(Taken {
+                    r#box,
+                    gate_request,
+                    admin_request,
+                    peer: cx.peer,
+                    #[cfg(feature = "enrollment")]
+                    connection: Kept::new(reader, cx.cadence, cx.write_bound),
+                    #[cfg(feature = "enrollment")]
+                    ends,
+                }));
+                // **A hand-over its entry gave up on as it was made is taken
+                // back**: the place, the claim and the connection, its
+                // heartbeats stopped, and the box waits on.
+                let Err(Some(back)) = handed else {
+                    return;
+                };
+                if let Some(slot) = lifted {
+                    reservation.restore(slot);
+                }
+                r#box = back.r#box;
+                gate_request = back.gate_request;
+                admin_request = back.admin_request;
+                #[cfg(feature = "enrollment")]
+                match back.connection.resume().await {
+                    Some(connection) => reader = connection,
+                    None => return,
+                }
             }
             // The box speaks only its first frame before the exchange, so
             // anything else, or its close, ends the wait.

@@ -1608,3 +1608,84 @@ async fn the_authority_lock_is_not_taken_past_the_boxs_end() {
     drop(held);
     one.close().await;
 }
+
+/// `setup report` bounded at `bound`, its status and line.
+async fn report_within(
+    config: &std::path::Path,
+    text: &[u8],
+    bound: Duration,
+) -> (Status, serde_json::Value) {
+    let mut p = captured();
+    let status =
+        box_commands::setup_report_within(&mut p, config, Stage::Pairing, text, bound).await;
+    let (line, err) = outcome_of(p);
+    if status != Status::Done {
+        eprintln!("setup report: {line} {err}");
+    }
+    (status, line)
+}
+
+/// **A setup ask the store does not answer within the silence bound is
+/// refused `store_unavailable` and lets its claim go** (Spec 8.3), as every
+/// store wait on a connection's path is bounded: a report held behind the
+/// setup's row, locked by another transaction, and a describe whose store
+/// call stalls are each answered at the bound, well within the box's own,
+/// and the next ask, the hold gone, is answered, not refused
+/// `already_connected`. The report held past the bound lands nothing.
+///
+/// Perturbation: await the store with no bound, and the box gives up
+/// first, the console still holding the claim.
+#[tokio::test]
+async fn a_setup_ask_the_store_holds_past_the_bound_is_refused_and_lets_its_claim_go() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
+    let setup = setup.unwrap();
+    let on_box = tempfile::tempdir().unwrap();
+    enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a", None).await;
+    let config = on_box.path().join("admin-con.toml");
+    let the_box = SILENCE * 3;
+
+    let mut holder = s.pool.begin().await.unwrap();
+    sqlx::query("SELECT 1 FROM agent_setup WHERE setup_id = $1 FOR UPDATE")
+        .bind(&setup)
+        .execute(&mut *holder)
+        .await
+        .unwrap();
+    let (status, line) = report_within(&config, br#"{"held": true}"#, the_box).await;
+    assert_eq!(
+        (status, line["reason"].as_str()),
+        (Status::Refused, Some("store_unavailable")),
+        "{line}"
+    );
+    holder.rollback().await.unwrap();
+    let (status, line) = report_within(&config, br#"{"after": true}"#, the_box).await;
+    assert_eq!(status, Status::Done, "{line}");
+    let kept: Vec<String> =
+        sqlx::query_scalar("SELECT report FROM agent_setup_report WHERE setup_id = $1")
+            .bind(&setup)
+            .fetch_all(&s.pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        kept,
+        [r#"{"after": true}"#],
+        "the held report landed nothing"
+    );
+
+    rig.listener.stall_next_setup_ask();
+    let mut p = captured();
+    let status = box_commands::setup_describe_within(&mut p, &config, the_box).await;
+    let (line, _) = outcome_of(p);
+    assert_eq!(
+        (status, line["reason"].as_str()),
+        (Status::Refused, Some("store_unavailable")),
+        "{line}"
+    );
+    let (status, line) = describe(&config).await;
+    assert_eq!(
+        (status, line["event"].as_str()),
+        (Status::Done, Some("described"))
+    );
+}

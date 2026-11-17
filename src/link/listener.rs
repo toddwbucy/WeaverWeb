@@ -778,6 +778,10 @@ struct Inner {
     /// completes, so its bound can be watched.
     #[cfg(test)]
     stall_next_first: std::sync::atomic::AtomicBool,
+    /// The same lever on a setup ask's store call: the next one never
+    /// completes, so its bound can be watched.
+    #[cfg(test)]
+    stall_next_setup: std::sync::atomic::AtomicBool,
     /// And on a verb's outcome: the next one waits this long first.
     #[cfg(test)]
     delay_next_outcome: Mutex<Option<Duration>>,
@@ -940,6 +944,8 @@ impl Listener {
                 stall_next_land: std::sync::atomic::AtomicBool::new(false),
                 #[cfg(test)]
                 stall_next_first: std::sync::atomic::AtomicBool::new(false),
+                #[cfg(test)]
+                stall_next_setup: std::sync::atomic::AtomicBool::new(false),
                 #[cfg(test)]
                 delay_next_outcome: Mutex::new(None),
                 #[cfg(test)]
@@ -1265,6 +1271,12 @@ impl Listener {
     #[cfg(test)]
     pub fn stall_next_first(&self) {
         self.inner.stall_next_first.store(true, Ordering::Relaxed);
+    }
+
+    /// Make the next setup ask's store call never complete, once.
+    #[cfg(test)]
+    pub fn stall_next_setup_ask(&self) {
+        self.inner.stall_next_setup.store(true, Ordering::Relaxed);
     }
 
     /// How many asks the agent's admin connection holds: its pending
@@ -3420,23 +3432,61 @@ async fn serve_setup(
         setups: &inner.setups,
         key,
     };
+    // **The store's answer within the silence bound** (Spec 8.3), as every
+    // store wait on a connection's path is: past it the ask is refused
+    // `store_unavailable` and the claim goes with this function. The report
+    // commits, so `deadline::before` bounds it and never polls it past the
+    // bound. The describe reads.
+    let until = tokio::time::Instant::now() + inner.silence;
+    let stalled = async {
+        #[cfg(test)]
+        if inner.stall_next_setup.swap(false, Ordering::Relaxed) {
+            std::future::pending::<()>().await;
+        }
+    };
     let (what, answered) = match &asked.ask {
         SetupAsk::Describe => (
             "describe",
-            inner.store.described(&agent.agent_id, fp).await.map(|d| {
-                d.map(|described| ToClient::Described {
-                    described: Box::new(described),
+            tokio::time::timeout_at(until, async {
+                stalled.await;
+                inner.store.described(&agent.agent_id, fp).await
+            })
+            .await
+            .map_err(|_| Passed)
+            .map(|answered| {
+                answered.map(|d| {
+                    d.map(|described| ToClient::Described {
+                        described: Box::new(described),
+                    })
                 })
             }),
         ),
         SetupAsk::Report { stage, report } => (
             stage.as_str(),
-            inner
-                .store
-                .land_report(&agent.agent_id, fp, *stage, report)
-                .await
-                .map(|landed| landed.map(|()| ToClient::Accepted)),
+            deadline::before(
+                async {
+                    stalled.await;
+                    inner
+                        .store
+                        .land_report(&agent.agent_id, fp, *stage, report)
+                        .await
+                },
+                until,
+            )
+            .await
+            .map(|answered| answered.map(|landed| landed.map(|()| ToClient::Accepted))),
         ),
+    };
+    let answered = match answered {
+        Ok(answered) => answered,
+        Err(Passed) => {
+            tracing::error!(
+                "link from {peer}: {} setup {what} not answered by the store within {:?}",
+                agent.agent_id,
+                inner.silence
+            );
+            Ok(Err(Refusal::StoreUnavailable))
+        }
     };
     match answered {
         Ok(Ok(frame)) => {

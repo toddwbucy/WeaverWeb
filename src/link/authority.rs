@@ -160,7 +160,7 @@ fn private_key(pem: &str) -> anyhow::Result<PrivateKeyDer<'static>> {
         .ok_or_else(|| anyhow::anyhow!("no private key in the PEM"))
 }
 
-fn provider() -> Arc<rustls::crypto::CryptoProvider> {
+pub(crate) fn provider() -> Arc<rustls::crypto::CryptoProvider> {
     Arc::new(rustls::crypto::ring::default_provider())
 }
 
@@ -601,6 +601,46 @@ impl Authority {
                 private_key(&self.server_key_pem)?,
             )?;
         Ok(Arc::new(config))
+    }
+
+    /// **The pairing's TLS configuration** (Spec 8.2): TLS 1.3 alone, since
+    /// the code is the session's exporter; no client certificate asked,
+    /// since a box pairing holds none; ALPN `weaver-pair/1`; and the chain
+    /// of the server's certificate and the authority's, since the box knows
+    /// no name the server's certificate carries and holds no trust anchor
+    /// before the exchange, and reads the authority from the handshake. The
+    /// listener meets only a ClientHello offering the pairing protocol with
+    /// it, and every other with `server_tls`.
+    pub fn pairing_tls(&self) -> anyhow::Result<Arc<rustls::ServerConfig>> {
+        self.pairing_tls_presenting(&self.certificate)
+    }
+
+    /// The pairing's configuration presenting `authority` after the
+    /// server's certificate: this authority's own, or, for a test, another
+    /// that does not hold the chain together.
+    fn pairing_tls_presenting(
+        &self,
+        authority: &CertificateDer<'static>,
+    ) -> anyhow::Result<Arc<rustls::ServerConfig>> {
+        let mut config = rustls::ServerConfig::builder_with_provider(provider())
+            .with_protocol_versions(&[&rustls::version::TLS13])?
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![self.server_certificate.clone(), authority.clone()],
+                private_key(&self.server_key_pem)?,
+            )?;
+        config.alpn_protocols = vec![crate::link::frames::PAIR_PROTOCOL.to_vec()];
+        Ok(Arc::new(config))
+    }
+
+    /// A test's lever: this server's certificate presented with `other`'s
+    /// authority, a chain that does not hold together.
+    #[cfg(test)]
+    pub(crate) fn pairing_tls_with_authority_of(
+        &self,
+        other: &Authority,
+    ) -> anyhow::Result<Arc<rustls::ServerConfig>> {
+        self.pairing_tls_presenting(&other.certificate)
     }
 }
 

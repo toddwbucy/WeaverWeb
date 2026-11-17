@@ -3,10 +3,16 @@
 //! conforms: web-a-lost-word-writes-no-row
 //! conforms: web-on-unknown-the-pairing-page-shows-what-the-write-made
 //! conforms: web-a-rows-box-changes-only-through-the-replace-box-write
+//! conforms: web-a-replacements-drive-setup-mounts-the-state-drive-it-carries-and-never-formats-it
+//! conforms: web-a-setup-ask-is-refused-while-its-credentials-connection-stands-and-counts-for-nothing-in-presence
+//! conforms: web-the-setup-keeps-the-latest-report-of-each-stage-verbatim
+//! conforms: web-an-adopted-pair-connects
 //!
 //! **An appliance's enrollment, the exchange** (Spec 8.2): a code's entry on
 //! the pairing page, against the real listener, with the box's half
-//! (`link::pair_client`) as the box and an admin's session as the operator.
+//! (`link::pair_client`) as the box and an admin's session as the operator,
+//! and the commands on the box (`link::box_commands`) end to end, with the
+//! setup connection's two asks (Spec 8.3) under the config `adopt` completed.
 //! Each test runs on a store of its own with an authority in a temporary
 //! directory. No name, address or key is a real one.
 
@@ -992,4 +998,421 @@ async fn a_replacement_keeps_the_box_the_row_held() {
         .execute(&s.pool)
         .await;
     assert!(moved.is_err(), "a box moved outside the replace-box write");
+}
+
+// ---------------------------------------------------------------------------
+// The commands on the box (Spec 8.2, 8.3): `request`, `pair` and `adopt`
+// against the real listener with the code entered through the page, and the
+// setup connection's two asks under the config `adopt` completed.
+// ---------------------------------------------------------------------------
+
+use crate::link::box_commands::{self, PairArgs};
+use crate::link::box_line::{Printer, Status};
+use crate::link::client::{Asked, Connect, Link, LinkConfig};
+use crate::link::frames::{REPORT_BOUND, Refusal, SetupAsk, Stage};
+use crate::link::key_config::AnswerFile;
+
+/// A printer's standard output, sent line by line to the test while the
+/// command runs.
+struct Piped {
+    lines: tokio::sync::mpsc::UnboundedSender<String>,
+    partial: Vec<u8>,
+}
+
+impl std::io::Write for Piped {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        for b in buf {
+            if *b == b'\n' {
+                let line = String::from_utf8(std::mem::take(&mut self.partial)).unwrap();
+                let _ = self.lines.send(line);
+            } else {
+                self.partial.push(*b);
+            }
+        }
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn captured() -> Printer<Vec<u8>, Vec<u8>> {
+    Printer::new("test", Vec::new(), Vec::new())
+}
+
+/// The command's one line on standard output, parsed, and its standard
+/// error.
+fn outcome_of(p: Printer<Vec<u8>, Vec<u8>>) -> (serde_json::Value, String) {
+    let (out, err) = p.into_inner();
+    let out = String::from_utf8(out).unwrap();
+    let mut lines = out.lines();
+    let line = serde_json::from_str(lines.next().expect("a line")).unwrap();
+    assert_eq!(lines.next(), None, "one line: {out}");
+    (line, String::from_utf8(err).unwrap())
+}
+
+/// **The box's three steps**, in `dir`: `request` for each connector, `pair`
+/// against the rig's listener with its code entered through the page, and
+/// `adopt` for each. Answers the answer `pair` wrote.
+async fn enrolled_on_box(
+    rig: &Rig,
+    session: &str,
+    setup: &str,
+    dir: &std::path::Path,
+    r#box: &str,
+    replace: Option<&AgentId>,
+) -> AnswerFile {
+    for plane in [Plane::Gate, Plane::Admin] {
+        let mut p = captured();
+        let config = dir.join(format!("{}-con.toml", plane.as_str()));
+        assert_eq!(box_commands::request(&mut p, plane, &config), Status::Done);
+        let (out, _) = p.into_inner();
+        std::fs::write(dir.join(format!("{}.request", plane.as_str())), out).unwrap();
+    }
+    let args = PairArgs {
+        console: rig.listener.address().to_string(),
+        gate_request: dir.join("gate.request"),
+        admin_request: dir.join("admin.request"),
+        answer: dir.join("answer.json"),
+        r#box: Some(r#box.into()),
+    };
+    let (lines, mut heard) = tokio::sync::mpsc::unbounded_channel();
+    let pair = tokio::spawn(async move {
+        let mut p = Printer::new(
+            "admin-con pair",
+            Piped {
+                lines,
+                partial: Vec::new(),
+            },
+            Vec::new(),
+        );
+        box_commands::pair(&mut p, &args).await
+    });
+    let waiting: serde_json::Value = serde_json::from_str(
+        &tokio::time::timeout(SOON, heard.recv())
+            .await
+            .expect("the box waits")
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(waiting["event"], "waiting", "{waiting}");
+    assert_eq!(
+        waiting["fingerprint"],
+        grouped(&rig.authority.fingerprint()),
+        "the box shows the console's authority"
+    );
+    assert!(waiting["expires_in_secs"].as_u64().unwrap() > 0);
+    let code = waiting["code"].as_str().unwrap().to_owned();
+    let (status, _, body) = enter(rig, session, setup, &code, replace).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let ended = tokio::time::timeout(SOON, pair).await.unwrap().unwrap();
+    assert_eq!(ended, Status::Done);
+    let paired: serde_json::Value = serde_json::from_str(&heard.recv().await.unwrap()).unwrap();
+    assert_eq!(paired["event"], "paired", "{paired}");
+    assert_eq!(
+        (paired["agent"].as_str(), paired["box"].as_str()),
+        (Some("karl"), Some(r#box))
+    );
+    use std::os::unix::fs::PermissionsExt;
+    let mode = std::fs::metadata(dir.join("answer.json"))
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o7777, 0o644, "the answer holds certificates alone");
+    let answer = AnswerFile::read(&dir.join("answer.json")).unwrap();
+    assert_eq!(paired["agent_id"].as_str(), Some(answer.agent_id.as_str()));
+    for plane in [Plane::Gate, Plane::Admin] {
+        let mut p = captured();
+        let config = dir.join(format!("{}-con.toml", plane.as_str()));
+        let status = box_commands::adopt(&mut p, plane, &config, &dir.join("answer.json"));
+        let (line, err) = outcome_of(p);
+        assert_eq!(status, Status::Done, "{line} {err}");
+        assert_eq!(line["event"], "adopted");
+        assert_eq!(line["plane"], plane.as_str());
+    }
+    answer
+}
+
+fn link_of(config: &std::path::Path) -> Link {
+    let cfg: LinkConfig = toml::from_str(&std::fs::read_to_string(config).unwrap()).unwrap();
+    Link::new(cfg).unwrap()
+}
+
+/// A connector's hello: admin-con's with its trace door closed and a
+/// ceiling naming no verb, so the listener asks it nothing.
+fn hello(plane: Plane) -> FromClient {
+    let admin = plane == Plane::Admin;
+    FromClient::Hello {
+        agent: "karl".into(),
+        plane,
+        tail: None,
+        door: admin.then_some(false),
+        ceiling: admin.then(Vec::new),
+        capabilities: None,
+    }
+}
+
+async fn describe(config: &std::path::Path) -> (Status, serde_json::Value) {
+    let mut p = captured();
+    let status = box_commands::setup_describe(&mut p, config).await;
+    let (line, err) = outcome_of(p);
+    if status != Status::Done {
+        eprintln!("setup describe: {line} {err}");
+    }
+    (status, line)
+}
+
+async fn report(
+    config: &std::path::Path,
+    stage: Stage,
+    text: &[u8],
+) -> (Status, serde_json::Value) {
+    let mut p = captured();
+    let status = box_commands::setup_report(&mut p, config, stage, text).await;
+    let (line, err) = outcome_of(p);
+    if status != Status::Done {
+        eprintln!("setup report: {line} {err}");
+    }
+    (status, line)
+}
+
+/// A setup set confirmed at the schema, as Confirm leaves it. Confirm's
+/// own path is `setup_place_tests`'.
+async fn confirmed_at_the_schema(s: &Store, setup: &str) {
+    sqlx::query("UPDATE agent_setup SET state = 'confirmed' WHERE setup_id = $1")
+        .bind(setup)
+        .execute(&s.pool)
+        .await
+        .unwrap();
+}
+
+/// **An adopted pair connects** (Spec 8.2): `request` for each connector,
+/// `pair` against the real listener with the code the box's `waiting` line
+/// shows entered through the page, `adopt` for each, and both connectors
+/// are admitted on the one row the pairing wrote, which reads present.
+#[tokio::test]
+async fn an_adopted_pair_connects() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
+    let setup = setup.unwrap();
+    let on_box = tempfile::tempdir().unwrap();
+    let answer = enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a", None).await;
+    let id: AgentId = answer.agent_id.parse().unwrap();
+    let mut connections = Vec::new();
+    for plane in [Plane::Gate, Plane::Admin] {
+        let link = link_of(&on_box.path().join(format!("{}-con.toml", plane.as_str())));
+        match link.connect(hello(plane)).await {
+            Connect::Admitted(connection) => connections.push(connection),
+            Connect::Refused(r) => panic!("{plane:?} refused: {}", r.as_str()),
+            Connect::Untrusted(why) | Connect::Failed(why) => panic!("{plane:?}: {why}"),
+        }
+    }
+    let row = s.agent(&id).await.unwrap().unwrap();
+    assert!(row.present(), "both connectors on the one row");
+    assert_eq!(rows_named(s, "karl").await, 1);
+    for connection in connections {
+        connection.close().await;
+    }
+}
+
+/// **A replacement's drive setup mounts the state drive it carries** (Spec
+/// 8.3): `setup describe` answers `replacement` false after a `pair` and
+/// true after a `replace box`, under the replacement's own credential,
+/// and the replaced box's credential is refused.
+///
+/// Perturbation: answer false after a replacement, and the carried drive
+/// would go to the format.
+#[tokio::test]
+async fn setup_describe_answers_replacement_after_replace_box_alone() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (_, _, first) = begin(&rig.app, &ada, "karl").await;
+    let first = first.unwrap();
+    let old_box = tempfile::tempdir().unwrap();
+    let answer = enrolled_on_box(&rig, &ada, &first, old_box.path(), "box-a", None).await;
+    let old_admin = old_box.path().join("admin-con.toml");
+    let (status, described) = describe(&old_admin).await;
+    assert_eq!(status, Status::Done, "{described}");
+    assert_eq!(described["event"], "described");
+    assert_eq!(described["replacement"], false);
+    assert_eq!(described["agent"], "karl");
+    assert_eq!(described["agent_id"], answer.agent_id.as_str());
+    assert_eq!(described["bytes"], 0);
+    assert!(described.get("models").is_none(), "{described}");
+    assert!(described.get("laying").is_none(), "{described}");
+
+    confirmed_at_the_schema(s, &first).await;
+    let (_, _, second) = begin(&rig.app, &ada, "karl").await;
+    let second = second.unwrap();
+    let karl: AgentId = answer.agent_id.parse().unwrap();
+    let new_box = tempfile::tempdir().unwrap();
+    let replaced = enrolled_on_box(&rig, &ada, &second, new_box.path(), "box-b", Some(&karl)).await;
+    assert_eq!(
+        replaced.agent_id, answer.agent_id,
+        "the row keeps its identity"
+    );
+    let (status, described) = describe(&new_box.path().join("admin-con.toml")).await;
+    assert_eq!(status, Status::Done, "{described}");
+    assert_eq!(described["replacement"], true);
+    let (status, refused) = describe(&old_admin).await;
+    assert_eq!(status, Status::Refused, "{refused}");
+}
+
+/// **A setup ask is refused while its credential's connection stands, and
+/// counts for nothing in presence** (Spec 8.3): two asks in turn are each
+/// answered, the row never reading the admin plane connected, and an ask
+/// beside the standing admin connection is refused `already_connected`.
+///
+/// Perturbation: drop the live connection from the setup's admission, and
+/// the ask beside it is answered.
+#[tokio::test]
+async fn a_setup_ask_beside_a_standing_connection_is_refused_and_counts_for_nothing() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
+    let setup = setup.unwrap();
+    let on_box = tempfile::tempdir().unwrap();
+    let answer = enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a", None).await;
+    let id: AgentId = answer.agent_id.parse().unwrap();
+    let admin_config = on_box.path().join("admin-con.toml");
+    for _ in 0..2 {
+        let (status, line) = describe(&admin_config).await;
+        assert_eq!(status, Status::Done, "{line}");
+        let row = s.agent(&id).await.unwrap().unwrap();
+        assert!(
+            !row.admin.connected,
+            "a setup connection is no admin connection"
+        );
+        assert_eq!(row.admin.link_at, None);
+        assert!(!row.present());
+        assert!(row.setup_running, "a setup ask is no first admission");
+    }
+    let Connect::Admitted(standing) = link_of(&admin_config).connect(hello(Plane::Admin)).await
+    else {
+        panic!("the admin connection is admitted");
+    };
+    let (status, line) = describe(&admin_config).await;
+    assert_eq!(status, Status::Refused, "{line}");
+    assert_eq!(line["reason"], "already_connected");
+    let (status, line) = report(&admin_config, Stage::Pairing, b"{}").await;
+    assert_eq!(status, Status::Refused, "{line}");
+    assert_eq!(line["reason"], "already_connected");
+    assert!(s.setup_reports(&setup).await.unwrap().is_empty());
+    standing.close().await;
+}
+
+/// **The setup keeps the latest report of each stage, verbatim** (Spec
+/// 8.3): a pairing report, a drives report, and the pairing report run
+/// again, which replaces the pairing's and leaves the drives'. A report past
+/// the bound is refused `too_large` on the box before any dial and at the
+/// listener too, a confirmed setup's `setup_closed`, and a row no pairing
+/// linked `no_setup`.
+///
+/// Perturbation: keep one report per setup, and the pairing report run
+/// again replaces the drives page's.
+#[tokio::test]
+async fn the_setup_keeps_the_latest_report_of_each_stage_verbatim() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
+    let setup = setup.unwrap();
+    let on_box = tempfile::tempdir().unwrap();
+    let answer = enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a", None).await;
+    let admin_config = on_box.path().join("admin-con.toml");
+    let first = "{ \"cards\" : [1,  2] }\n";
+    let drives = "{\"disks\":[{\"model\":\"\\u00e9\"}]}";
+    let again = "{\"cards\":[]}";
+    for (stage, text) in [
+        (Stage::Pairing, first),
+        (Stage::Drives, drives),
+        (Stage::Pairing, again),
+    ] {
+        let (status, line) = report(&admin_config, stage, text.as_bytes()).await;
+        assert_eq!(status, Status::Done, "{line}");
+        assert_eq!(line["event"], "accepted");
+    }
+    let kept: Vec<(String, String)> = s
+        .setup_reports(&setup)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|(stage, text, _)| (stage, text))
+        .collect();
+    assert_eq!(
+        kept,
+        [
+            ("pairing".into(), again.into()),
+            ("drives".into(), drives.into())
+        ]
+    );
+
+    // Past the bound: refused on the box, and at the listener for a client
+    // that skips the box's check, the kept reports unchanged.
+    let large = format!("{{\"x\":\"{}\"}}", "a".repeat(REPORT_BOUND));
+    let (status, line) = report(&admin_config, Stage::Drives, large.as_bytes()).await;
+    assert_eq!(
+        (status, line["reason"].as_str()),
+        (Status::Refused, Some("too_large"))
+    );
+    let asked = link_of(&admin_config)
+        .ask(FromClient::Setup {
+            agent: "karl".into(),
+            plane: Plane::Admin,
+            ask: SetupAsk::Report {
+                stage: Stage::Drives,
+                report: large,
+            },
+        })
+        .await;
+    assert!(
+        matches!(
+            asked,
+            Asked::Answer(ToClient::Refusal {
+                reason: Refusal::TooLarge
+            })
+        ),
+        "the listener refuses a report past the bound"
+    );
+    let (status, line) = report(&admin_config, Stage::Drives, b"[1]").await;
+    assert_eq!(
+        (status, line["event"].as_str()),
+        (Status::Usage, Some("usage"))
+    );
+    assert_eq!(s.setup_reports(&setup).await.unwrap().len(), 2);
+
+    // A confirmed setup never changes, and its describe still answers.
+    confirmed_at_the_schema(s, &setup).await;
+    let (status, line) = report(&admin_config, Stage::Drives, b"{}").await;
+    assert_eq!(
+        (status, line["reason"].as_str()),
+        (Status::Refused, Some("setup_closed"))
+    );
+    let (status, line) = describe(&admin_config).await;
+    assert_eq!(status, Status::Done, "{line}");
+    assert_eq!(line["agent_id"], answer.agent_id.as_str());
+
+    // A row the host's `register` wrote has no setup.
+    let out = tempfile::tempdir().unwrap();
+    let cfg = crate::agents_tests::server_config(rig._dir.path(), rig.listener.address());
+    let registered =
+        crate::link::verbs::register(s, &cfg, &rig.authority, "box-z", "zed", out.path(), None)
+            .await;
+    assert!(registered.ok, "{}", registered.value);
+    let zed = out.path().join("box-z").join("zed").join("admin-con.toml");
+    let (status, line) = describe(&zed).await;
+    assert_eq!(
+        (status, line["reason"].as_str()),
+        (Status::Refused, Some("no_setup"))
+    );
+    let (status, line) = report(&zed, Stage::Pairing, b"{}").await;
+    assert_eq!(
+        (status, line["reason"].as_str()),
+        (Status::Refused, Some("no_setup"))
+    );
 }

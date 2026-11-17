@@ -35,7 +35,7 @@ use tokio_rustls::client::TlsStream;
 
 /// The bound on a connector's config file: it holds a key and two
 /// certificates, a few KiB, so anything near this is not a config.
-const CONFIG_BOUND: u64 = 1024 * 1024;
+pub(crate) const CONFIG_BOUND: u64 = 1024 * 1024;
 
 /// The bound on dialing, the handshake, the hello and its answer: the
 /// server's own handshake bound.
@@ -53,9 +53,30 @@ const WRITE_QUEUE: usize = 16;
 /// for the register verb.
 pub fn read_private(path: &Path) -> anyhow::Result<String> {
     use std::io::Read;
+    let file = open_private(path, false)?;
+    let mut content = String::new();
+    file.take(CONFIG_BOUND + 1)
+        .read_to_string(&mut content)
+        .map_err(|e| anyhow::anyhow!("reading {}: {e}", path.display()))?;
+    if content.len() as u64 > CONFIG_BOUND {
+        anyhow::bail!(
+            "{} passes {CONFIG_BOUND} bytes and is not a connector's config",
+            path.display()
+        );
+    }
+    Ok(content)
+}
+
+/// **Open a config that carries a private key by `read_private`'s rule**,
+/// for reading, and for writing too where `write` asks it (`adopt`
+/// completes the config in place, Spec 8.2): no symlink followed, no
+/// blocking open, and by its descriptor a regular file of the invoking
+/// uid with no permission bit outside 0600.
+pub fn open_private(path: &Path, write: bool) -> anyhow::Result<std::fs::File> {
     use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
     let file = std::fs::OpenOptions::new()
         .read(true)
+        .write(write)
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
         .open(path)
         .map_err(|e| match e.raw_os_error() {
@@ -90,17 +111,7 @@ pub fn read_private(path: &Path) -> anyhow::Result<String> {
             path.display()
         );
     }
-    let mut content = String::new();
-    file.take(CONFIG_BOUND + 1)
-        .read_to_string(&mut content)
-        .map_err(|e| anyhow::anyhow!("reading {}: {e}", path.display()))?;
-    if content.len() as u64 > CONFIG_BOUND {
-        anyhow::bail!(
-            "{} passes {CONFIG_BOUND} bytes and is not a connector's config",
-            path.display()
-        );
-    }
-    Ok(content)
+    Ok(file)
 }
 
 /// Parse a connector's config, **naming only its own members in an error**
@@ -218,8 +229,25 @@ pub enum Connect {
 /// Why an attempt failed before the hello's answer.
 enum Failure {
     Untrusted(String),
+    /// No TCP connection or no TLS handshake.
+    Unreachable(String),
     Plain(String),
 }
+
+/// **How a setup ask ended** (Spec 8.3).
+pub enum Asked {
+    /// The server's one frame.
+    Answer(ToClient),
+    /// No TCP connection or no TLS handshake, the server's certificate
+    /// failing under the pinned authority among them.
+    Unreachable(String),
+    /// The connection ended, or went silent, after the ask was sent and
+    /// before an answer: the server may have acted.
+    Ended(String),
+}
+
+/// The bound on a setup ask from the dial to its answer.
+pub const ASK_SECS: u64 = 30;
 
 /// Whether a handshake error is the server's certificate failing under the
 /// pinned authority: unknown issuer or a bad signature.
@@ -258,10 +286,51 @@ impl Link {
     /// a protocol fault.**
     pub async fn connect(&self, hello: FromClient) -> Connect {
         let bound = Duration::from_secs(HELLO_SECS);
+        let (fd, reader, write, answer) =
+            match tokio::time::timeout(bound, self.first_frame(&hello)).await {
+                Ok(Ok(parts)) => parts,
+                Ok(Err(Failure::Plain(why) | Failure::Unreachable(why))) => {
+                    return Connect::Failed(why);
+                }
+                Ok(Err(Failure::Untrusted(why))) => return Connect::Untrusted(why),
+                Err(_) => {
+                    return Connect::Failed(format!(
+                        "no answer to the hello within {HELLO_SECS} s"
+                    ));
+                }
+            };
+        self.answered(fd, reader, write, answer)
+    }
+
+    /// **A setup ask** (Spec 8.3): dial, handshake, the ask as the first
+    /// frame, and the server's one frame, all within `ASK_SECS`.
+    pub async fn ask(&self, ask: FromClient) -> Asked {
+        match tokio::time::timeout(Duration::from_secs(ASK_SECS), self.first_frame(&ask)).await {
+            Ok(Ok((_, _, _, answer))) => Asked::Answer(answer),
+            Ok(Err(Failure::Unreachable(why) | Failure::Untrusted(why))) => Asked::Unreachable(why),
+            Ok(Err(Failure::Plain(why))) => Asked::Ended(why),
+            Err(_) => Asked::Ended(format!("no answer within {ASK_SECS} s")),
+        }
+    }
+
+    /// Dial, handshake, send the first frame, and read the server's first.
+    async fn first_frame(
+        &self,
+        first: &FromClient,
+    ) -> Result<
+        (
+            std::os::fd::RawFd,
+            LineReader<tokio::io::ReadHalf<tokio_rustls::client::TlsStream<TcpStream>>>,
+            tokio::io::WriteHalf<tokio_rustls::client::TlsStream<TcpStream>>,
+            ToClient,
+        ),
+        Failure,
+    > {
+        let hello = first;
         let attempt = async {
-            let tcp = TcpStream::connect(&self.config.server)
-                .await
-                .map_err(|e| Failure::Plain(format!("dialing {}: {e}", self.config.server)))?;
+            let tcp = TcpStream::connect(&self.config.server).await.map_err(|e| {
+                Failure::Unreachable(format!("dialing {}: {e}", self.config.server))
+            })?;
             let _ = tcp.set_nodelay(true);
             let fd = tcp.as_raw_fd();
             let stream = self
@@ -273,7 +342,7 @@ impl Link {
                     if untrusted(&e) {
                         Failure::Untrusted(why)
                     } else {
-                        Failure::Plain(why)
+                        Failure::Unreachable(why)
                     }
                 })?;
             let (read, mut write) = tokio::io::split(stream);
@@ -303,14 +372,17 @@ impl Link {
             };
             Ok::<_, Failure>((fd, reader, write, answer))
         };
-        let (fd, reader, write, answer) = match tokio::time::timeout(bound, attempt).await {
-            Ok(Ok(parts)) => parts,
-            Ok(Err(Failure::Plain(why))) => return Connect::Failed(why),
-            Ok(Err(Failure::Untrusted(why))) => return Connect::Untrusted(why),
-            Err(_) => {
-                return Connect::Failed(format!("no answer to the hello within {HELLO_SECS} s"));
-            }
-        };
+        attempt.await
+    }
+
+    /// The hello's answer read: admitted, refused, or a protocol fault.
+    fn answered(
+        &self,
+        fd: std::os::fd::RawFd,
+        reader: LineReader<tokio::io::ReadHalf<tokio_rustls::client::TlsStream<TcpStream>>>,
+        write: tokio::io::WriteHalf<tokio_rustls::client::TlsStream<TcpStream>>,
+        answer: ToClient,
+    ) -> Connect {
         match answer {
             ToClient::HelloAnswer {
                 cadence_secs,
@@ -357,6 +429,8 @@ pub fn to_client_name(frame: &ToClient) -> &'static str {
         ToClient::Landed { .. } => "landed",
         ToClient::EntryAck { .. } => "entry_ack",
         ToClient::Refusal { .. } => "refusal",
+        ToClient::Described { .. } => "described",
+        ToClient::Accepted => "accepted",
     }
 }
 

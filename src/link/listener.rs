@@ -3,6 +3,7 @@
 //! conforms: web-one-live-connection-per-credential
 //! conforms: web-link-state-is-reset-when-the-listener-starts
 //! conforms: web-agent-present-only-when-both-planes-match-one-row
+//! conforms: web-a-setup-ask-is-refused-while-its-credentials-connection-stands-and-counts-for-nothing-in-presence
 //! conforms: web-tuple-is-admins-word-and-never-gate-cons
 //! conforms: web-nothing-crosses-the-link-in-the-clear
 //! conforms: web-the-servers-asks-are-audited
@@ -39,8 +40,8 @@ use crate::deadline::hold::{self, Point};
 use crate::deadline::{self, Passed};
 use crate::link::authority::{Authority, fingerprint};
 use crate::link::frames::{
-    FromClient, Line, LineReader, PAIR_PROTOCOL, Plane, Position, Principal, Refusal, ToClient,
-    TurnFault, VerbFault, VerbOutcome, capability,
+    FromClient, Line, LineReader, PAIR_PROTOCOL, Plane, Position, Principal, Refusal, SetupAsk,
+    ToClient, TurnFault, VerbFault, VerbOutcome, capability,
 };
 use crate::link::register::{
     ConstituentsWrite, CredentialState, Observation, REVOCATION_CHANNEL, TransitionWrite,
@@ -700,6 +701,11 @@ struct Inner {
     arrival: AtomicI64,
     silence: Duration,
     live: Mutex<HashMap<(AgentId, Plane), LiveConnection>>,
+    /// **The credentials a setup connection holds** (Spec 8.3), claimed under
+    /// the row's lock beside the live map, so one live connection per
+    /// credential holds across a plane connection and a setup ask both ways.
+    /// Never in the live map, so no verb, turn or `show` reaches one.
+    setups: Mutex<std::collections::HashSet<(AgentId, Plane)>>,
     windows: TraceViews,
     acknowledged: Mutex<HashMap<AgentId, Position>>,
     next_ask: AtomicU64,
@@ -900,6 +906,7 @@ impl Listener {
                 arrival: AtomicI64::new(0),
                 silence,
                 live: Mutex::new(HashMap::new()),
+                setups: Mutex::new(std::collections::HashSet::new()),
                 windows: TraceViews::new(),
                 acknowledged: Mutex::new(HashMap::new()),
                 next_ask: AtomicU64::new(1),
@@ -3316,6 +3323,138 @@ async fn refuse(tx: mpsc::Sender<ToClient>, writer: tokio::task::JoinHandle<()>,
     drain_writer(writer).await;
 }
 
+/// A setup connection's first frame, as it came.
+struct SetupAsked {
+    name: String,
+    plane: Plane,
+    ask: SetupAsk,
+}
+
+/// A setup connection's claim on its credential, given back however the
+/// connection ends.
+struct SetupClaim<'a> {
+    setups: &'a Mutex<std::collections::HashSet<(AgentId, Plane)>>,
+    key: (AgentId, Plane),
+}
+
+impl Drop for SetupClaim<'_> {
+    fn drop(&mut self) {
+        self.setups.lock().unwrap().remove(&self.key);
+    }
+}
+
+/// **Serve a setup connection** (Spec 8.3): admitted by the hello's rules,
+/// its roster a check against the certificate's binding and its plane the
+/// admin's, and by one live connection per credential, decided under the
+/// row's lock against the live map and every other setup connection. It
+/// opens no trace door, asks no `show`, writes no link state, so it counts
+/// for nothing in presence, and is answered once and closed.
+#[allow(clippy::too_many_arguments)]
+async fn serve_setup(
+    inner: &Inner,
+    agent: &crate::link::register::Agent,
+    plane: Plane,
+    fp: &str,
+    peer: SocketAddr,
+    asked: SetupAsked,
+    tx: mpsc::Sender<ToClient>,
+    writer: tokio::task::JoinHandle<()>,
+) {
+    if asked.name != agent.name || asked.plane != plane {
+        tracing::warn!(
+            "link from {peer}: a setup ask named {} ({}) on a credential bound to {} ({plane}) of {}, refused as a mismatch",
+            asked.name,
+            asked.plane,
+            agent.name,
+            agent.agent_id
+        );
+        refuse(tx, writer, Refusal::RosterMismatch).await;
+        return;
+    }
+    if plane != Plane::Admin {
+        tracing::warn!(
+            "link from {peer}: a setup ask on {}'s gate credential, refused: the setup connection is the admin plane's",
+            agent.agent_id
+        );
+        refuse(tx, writer, Refusal::WrongPlane).await;
+        return;
+    }
+    let key = (agent.agent_id.clone(), plane);
+    let mut claimed = false;
+    let locked = inner
+        .store
+        .with_row_lock(&agent.agent_id, || {
+            let live = inner.live.lock().unwrap();
+            if !live.contains_key(&key) {
+                claimed = inner.setups.lock().unwrap().insert(key.clone());
+            }
+        })
+        .await;
+    if let Err(e) = locked {
+        tracing::error!(
+            "link from {peer}: the row of {} could not be locked for a setup ask: {e:#}",
+            agent.agent_id
+        );
+        if claimed {
+            inner.setups.lock().unwrap().remove(&key);
+        }
+        refuse(tx, writer, Refusal::StoreUnavailable).await;
+        return;
+    }
+    if !claimed {
+        tracing::warn!(
+            "link from {peer}: a setup ask for {} while its admin credential is connected, refused",
+            agent.agent_id
+        );
+        refuse(tx, writer, Refusal::AlreadyConnected).await;
+        return;
+    }
+    let _claim = SetupClaim {
+        setups: &inner.setups,
+        key,
+    };
+    let (what, answered) = match &asked.ask {
+        SetupAsk::Describe => (
+            "describe",
+            inner.store.described(&agent.agent_id, fp).await.map(|d| {
+                d.map(|described| ToClient::Described {
+                    described: Box::new(described),
+                })
+            }),
+        ),
+        SetupAsk::Report { stage, report } => (
+            stage.as_str(),
+            inner
+                .store
+                .land_report(&agent.agent_id, fp, *stage, report)
+                .await
+                .map(|landed| landed.map(|()| ToClient::Accepted)),
+        ),
+    };
+    match answered {
+        Ok(Ok(frame)) => {
+            tracing::info!("link from {peer}: {} setup {what} answered", agent.agent_id);
+            send(&tx, frame).await;
+            drop(tx);
+            drain_writer(writer).await;
+        }
+        Ok(Err(refusal)) => {
+            tracing::warn!(
+                "link from {peer}: {} setup {what} refused: {refusal}",
+                agent.agent_id
+            );
+            refuse(tx, writer, refusal).await;
+        }
+        Err(e) => {
+            tracing::error!(
+                "link from {peer}: {} setup {what} could not be served: {e:#}",
+                agent.agent_id
+            );
+            refuse(tx, writer, Refusal::StoreUnavailable).await;
+        }
+    }
+}
+
 async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr) {
     let dialed = std::time::Instant::now();
     let handshake_by = tokio::time::Instant::now() + Duration::from_secs(HANDSHAKE_SECS);
@@ -3487,6 +3626,19 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                 door,
                 capabilities,
             }) => (agent, plane, tail, ceiling, door, capabilities),
+            Ok(FromClient::Setup {
+                agent: name,
+                plane: said_plane,
+                ask,
+            }) => {
+                let asked = SetupAsked {
+                    name,
+                    plane: said_plane,
+                    ask,
+                };
+                serve_setup(&inner, &agent, plane, &fp, peer, asked, tx, writer).await;
+                return;
+            }
             _ => {
                 tracing::warn!("link from {peer}: the first frame was not a hello, refused");
                 refuse(tx, writer, Refusal::Malformed).await;
@@ -3607,7 +3759,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                 // under the row's lock: a second connection is refused rather
                 // than replacing the first.
                 let mut live = inner.live.lock().unwrap();
-                if live.contains_key(&key) {
+                if live.contains_key(&key) || inner.setups.lock().unwrap().contains(&key) {
                     return Err(Refusal::AlreadyConnected);
                 }
                 live.insert(
@@ -4522,6 +4674,23 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                         }
                     }
                 }
+                (_, FromClient::Setup { .. }) => {
+                    // **A setup ask is a connection's first frame alone**
+                    // (Spec 8.3), never one inside an admitted plane's.
+                    tracing::warn!(
+                        "link from {peer}: {} ({plane}) sent a setup ask mid-stream, refused",
+                        agent.agent_id
+                    );
+                    send(
+                        &tx,
+                        ToClient::Refusal {
+                            reason: Refusal::Malformed,
+                        },
+                    )
+                    .await;
+                    reason = "refused as malformed";
+                    break;
+                }
                 (_, other) => {
                     // **A frame on the wrong plane is refused and logged
                     // against the row** (Spec 8): a tuple or load state can
@@ -4696,6 +4865,7 @@ fn frame_name(frame: &FromClient) -> &'static str {
         FromClient::Door { .. } => "door",
         FromClient::Event { .. } => "event",
         FromClient::Entry { .. } => "entry",
+        FromClient::Setup { .. } => "setup",
     }
 }
 

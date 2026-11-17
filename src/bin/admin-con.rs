@@ -9,40 +9,102 @@
 //! nothing from the link in the command. A conduit, it never acts on the
 //! agent on its own: its stop waits for the verb in flight and invokes
 //! nothing. The config's path has no default: a default would be a box path
-//! in the repository.
+//! in the repository. Beside the service, `request`, `pair` and `adopt` enroll
+//! an appliance (Spec 8.2), and `setup describe` and `setup report` are the
+//! setup connection's two asks (Spec 8.3), each writing JSON lines and exiting
+//! with the status its outcome names.
 
 use clap::Parser;
 use std::path::PathBuf;
+use std::process::ExitCode;
 use std::sync::Arc;
 use tokio::sync::watch;
 use weaver_web::link::admin_con::{self, AdminConConfig};
+use weaver_web::link::box_commands::{
+    self, AdoptArgs, PairArgs, RequestArgs, SetupCommand, parse_args, printer,
+};
 use weaver_web::link::client::{Backoff, LinkStatus};
+use weaver_web::link::frames::Plane;
 use weaver_web::link::sudo_invoker::SudoInvoker;
 
 #[derive(Parser)]
 #[command(
     name = "admin-con",
-    about = "The management plane's connector: relays the agent's trace and answers the server's verbs."
+    about = "The management plane's connector: relays the agent's trace and answers the server's verbs.",
+    subcommand_negates_reqs = true,
+    args_conflicts_with_subcommands = true
 )]
 struct Args {
+    #[command(subcommand)]
+    command: Option<Command>,
     /// Path to admin-con's TOML config: the file `weaver-web register`
-    /// wrote, with `trace_socket` and `weaver_admin` added at install.
-    #[arg(long)]
-    config: PathBuf,
+    /// wrote, or `adopt` completed, with `trace_socket` and `weaver_admin`
+    /// added at install.
+    #[arg(long, required = true)]
+    config: Option<PathBuf>,
+}
+
+/// The enrollment's commands and the setup connection's asks (Spec 8.2,
+/// 8.3).
+#[derive(clap::Subcommand)]
+enum Command {
+    /// Create the config holding this connector's new key alone, and print
+    /// its certificate request. No dial.
+    Request(RequestArgs),
+    /// Dial the console under the pairing protocol, show the code, and
+    /// write the console's answer once the operator enters it.
+    Pair(PairArgs),
+    /// Complete the config from the pairing's answer, once its certificate
+    /// is over this connector's key and verifies under its authority.
+    Adopt(AdoptArgs),
+    /// The setup connection's asks, under the admin plane's credential.
+    #[command(subcommand)]
+    Setup(SetupCommand),
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> anyhow::Result<ExitCode> {
+    let args: Args = parse_args("admin-con", &["request", "pair", "adopt", "setup"]);
+    if let Some(command) = args.command {
+        let status = match command {
+            Command::Request(a) => {
+                box_commands::request(&mut printer("admin-con request"), Plane::Admin, &a.config)
+            }
+            Command::Pair(a) => box_commands::pair(&mut printer("admin-con pair"), &a).await,
+            Command::Adopt(a) => box_commands::adopt(
+                &mut printer("admin-con adopt"),
+                Plane::Admin,
+                &a.config,
+                &a.answer,
+            ),
+            Command::Setup(SetupCommand::Describe { config }) => {
+                box_commands::setup_describe(&mut printer("admin-con setup describe"), &config)
+                    .await
+            }
+            Command::Setup(SetupCommand::Report { config, stage }) => {
+                box_commands::setup_report(
+                    &mut printer("admin-con setup report"),
+                    &config,
+                    stage.into(),
+                    std::io::stdin().lock(),
+                )
+                .await
+            }
+        };
+        return Ok(ExitCode::from(status.code() as u8));
+    }
+    let config = args
+        .config
+        .expect("clap requires --config without a command");
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "admin_con=info,weaver_web=info".into()),
         )
         .init();
-    let args = Args::parse();
     // Refuses to start on a config another party could read or swap, one
     // minted for the gate plane, or one missing a member.
-    let cfg = AdminConConfig::load(&args.config)?;
+    let cfg = AdminConConfig::load(&config)?;
     let invoker = SudoInvoker::new(&cfg.weaver_admin, &cfg.link.agent)?;
     tracing::info!(
         "admin-con for {} reading its trace through the relay, server {}, verbs through its invoker of {}",
@@ -78,10 +140,11 @@ async fn main() -> anyhow::Result<()> {
     admin_con::run(
         cfg,
         Arc::new(invoker),
-        Some(args.config),
+        Some(config),
         Backoff::default(),
         shutdown,
         &status,
     )
-    .await
+    .await?;
+    Ok(ExitCode::SUCCESS)
 }

@@ -329,6 +329,123 @@ pub enum FromClient {
         source: String,
         entry: serde_json::Value,
     },
+    /// **A setup ask, the setup connection's first frame and its only one**
+    /// (Spec 8.3): `admin-con setup` under the admin plane's credential, its
+    /// roster a check against the certificate's binding as a hello's is. It
+    /// opens no trace door, asks no `show` and counts for nothing in
+    /// presence, and the server answers it once and closes.
+    Setup {
+        agent: String,
+        plane: Plane,
+        ask: SetupAsk,
+    },
+}
+
+/// **What a setup connection asks** (Spec 8.3).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "ask", rename_all = "snake_case")]
+pub enum SetupAsk {
+    /// The setup's agent, its models, the models drive's need, the laying
+    /// once Confirm stands, and the SSH keys.
+    Describe,
+    /// The survey's report for one stage, carried as the text admin-con
+    /// read, which the console keeps verbatim.
+    Report { stage: Stage, report: String },
+}
+
+/// **A setup report's stage** (Spec 8.3), the command's argument, so the
+/// console reads nothing of the image's format to tell them apart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Stage {
+    Pairing,
+    Drives,
+}
+
+impl Stage {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Stage::Pairing => "pairing",
+            Stage::Drives => "drives",
+        }
+    }
+}
+
+/// **The bound on a setup report** (Spec 8.3), inclusive: admin-con
+/// refuses a larger one before it dials, and the console refuses it
+/// `too_large`.
+pub const REPORT_BOUND: usize = 64 * 1024;
+
+/// **`setup describe`'s answer** (Spec 8.3). Every path is under the models
+/// mount, in Hugging Face's layout, and the box joins its own mount to it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Described {
+    pub agent: String,
+    pub agent_id: String,
+    /// Whether the setup's pairing was the replace-box write, so the drive
+    /// setup knows the state drive it mounts is carried.
+    pub replacement: bool,
+    /// One entry per role picked, `decoder` and `adapter`, absent until the
+    /// models page's first pick.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub models: Option<std::collections::BTreeMap<String, DescribedModel>>,
+    /// The models drive's need: the bytes of the picks' distinct blobs.
+    pub bytes: u64,
+    /// The members the agent is laid from, absent until Confirm.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub laying: Option<DescribedLaying>,
+    pub ssh_keys: Vec<DescribedKey>,
+}
+
+/// A role's pick as `setup describe` names it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DescribedModel {
+    pub repository: String,
+    pub commit: String,
+    /// The path of the choice's first part, or of the adapter's one file.
+    pub artifact: String,
+    pub files: Vec<DescribedFile>,
+    /// The console's own download: `running`, `verified`, `failed` or
+    /// `cancelled`.
+    pub pull: String,
+}
+
+/// One file of a pick, by its place in the snapshot and its blob.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DescribedFile {
+    pub path: String,
+    pub blob: String,
+    pub bytes: u64,
+    /// The file's SHA-256, absent while a file kept in git is still
+    /// downloading, since the console computes it once the file lands.
+    pub sha256: Option<String>,
+}
+
+/// The confirmed tuple's members the agent is laid from.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DescribedLaying {
+    pub tuple: String,
+    pub artifact: String,
+    pub adapter: DescribedAdapter,
+    pub devices: Vec<i32>,
+    pub context_capacity: i64,
+    pub turn_context: String,
+}
+
+/// The adapter's members of the laying.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DescribedAdapter {
+    pub artifact: String,
+    pub sha256: String,
+    pub base_blake3: String,
+    pub scale: f64,
+}
+
+/// One of the operator's SSH keys, as stored, with its OpenSSH fingerprint.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DescribedKey {
+    pub key: String,
+    pub fingerprint: String,
 }
 
 /// Frames the server sends a connector.
@@ -381,6 +498,13 @@ pub enum ToClient {
     Refusal {
         reason: Refusal,
     },
+    /// **`setup describe`'s answer** (Spec 8.3), before the close.
+    Described {
+        /// Boxed, so every other frame stays small.
+        described: Box<Described>,
+    },
+    /// **A setup report kept** (Spec 8.3), before the close.
+    Accepted,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -407,6 +531,12 @@ pub enum Refusal {
     /// state from before the reconnect; the connection closes so the
     /// reconnect asks it again.
     AdmissionIncomplete,
+    /// A setup ask on a row no setup's pairing links (Spec 8.3).
+    NoSetup,
+    /// A setup report for a confirmed setup, which never changes (Spec 8.3).
+    SetupClosed,
+    /// A setup report past `REPORT_BOUND` (Spec 8.3).
+    TooLarge,
 }
 
 impl Refusal {
@@ -420,6 +550,9 @@ impl Refusal {
             Refusal::Malformed => "malformed",
             Refusal::StoreUnavailable => "store_unavailable",
             Refusal::AdmissionIncomplete => "admission_incomplete",
+            Refusal::NoSetup => "no_setup",
+            Refusal::SetupClosed => "setup_closed",
+            Refusal::TooLarge => "too_large",
         }
     }
 }

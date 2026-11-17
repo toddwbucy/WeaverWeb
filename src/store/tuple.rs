@@ -453,12 +453,22 @@ impl Store {
     /// **The setup's confirmed tuple**, read from its row, or none before
     /// Confirm.
     pub async fn deployment_tuple(&self, setup_id: &str) -> anyhow::Result<Option<Confirmed>> {
+        let mut conn = self.pool.acquire().await?;
+        Self::deployment_tuple_on(&mut conn, setup_id).await
+    }
+
+    /// The same read on a connection the caller holds, so it can share a
+    /// transaction's snapshot.
+    pub(crate) async fn deployment_tuple_on(
+        conn: &mut sqlx::PgConnection,
+        setup_id: &str,
+    ) -> anyhow::Result<Option<Confirmed>> {
         let Some(r) = sqlx::query(
             "SELECT t.*, p.name AS confirmed_by_name FROM deployment_tuple t \
              JOIN person p ON p.person_id = t.confirmed_by WHERE t.setup_id = $1",
         )
         .bind(setup_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *conn)
         .await?
         else {
             return Ok(None);
@@ -497,20 +507,31 @@ impl Store {
         let Some(confirmed) = self.deployment_tuple(setup_id).await? else {
             return Ok(None);
         };
-        let t = confirmed.tuple;
+        Laying::of(&confirmed).map(Some)
+    }
+}
+
+impl Laying {
+    /// **The members a confirmed tuple lays the box from** (Spec 6.2), one
+    /// rule for the pages and for `setup describe`.
+    pub fn of(confirmed: &Confirmed) -> anyhow::Result<Laying> {
+        let t = &confirmed.tuple;
         let (Some(decoder), Some(adapter)) = (t.decoder.parts.first(), t.adapter.parts.first())
         else {
-            anyhow::bail!("the tuple of {setup_id} names a model without a part");
+            anyhow::bail!(
+                "the tuple {} names a model without a part",
+                confirmed.tuple_id
+            );
         };
-        Ok(Some(Laying {
+        Ok(Laying {
             decoder_artifact: decoder.path.clone(),
             adapter_artifact: adapter.path.clone(),
             adapter_sha256: adapter.sha256.clone(),
             adapter_scale: t.adapter_scale,
-            base_blake3: t.base_blake3,
-            devices: t.devices,
+            base_blake3: t.base_blake3.clone(),
+            devices: t.devices.clone(),
             context_length: t.context_length,
-            turn_context: t.turn_context,
-        }))
+            turn_context: t.turn_context.clone(),
+        })
     }
 }

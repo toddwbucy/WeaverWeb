@@ -30,12 +30,19 @@ pub struct HeldKey {
 impl Store {
     /// **Every key held**, the oldest first.
     pub async fn ssh_keys(&self) -> anyhow::Result<Vec<HeldKey>> {
+        let mut conn = self.pool.acquire().await?;
+        Self::ssh_keys_on(&mut conn).await
+    }
+
+    /// The same read on a connection the caller holds, so it can share a
+    /// transaction's snapshot.
+    pub(crate) async fn ssh_keys_on(conn: &mut sqlx::PgConnection) -> anyhow::Result<Vec<HeldKey>> {
         let rows = sqlx::query(
             "SELECT k.key_id, k.line, k.fingerprint, p.name AS added_by, k.added_at \
              FROM operator_ssh_key k JOIN person p ON p.person_id = k.added_by \
              ORDER BY k.added_at, k.key_id",
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *conn)
         .await?;
         Ok(rows
             .iter()

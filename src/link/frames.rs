@@ -55,14 +55,34 @@ pub enum Line {
 pub struct LineReader<R> {
     reader: tokio::io::BufReader<R>,
     buf: Vec<u8>,
+    bound: usize,
 }
 
 impl<R: tokio::io::AsyncRead + Unpin> LineReader<R> {
     pub fn new(read: R) -> Self {
+        Self::with_bound(read, LINE_BOUND)
+    }
+
+    /// A reader whose lines are bounded tighter than the link's, as the
+    /// pairing's first frame is (`PAIR_FIRST_FRAME_BOUND`).
+    pub fn with_bound(read: R, bound: usize) -> Self {
         Self {
             reader: tokio::io::BufReader::new(read),
             buf: Vec::new(),
+            bound,
         }
+    }
+
+    /// The stream read from, for what its connection answers outside the
+    /// framing, as a pairing's exporter does.
+    pub fn get_ref(&self) -> &R {
+        self.reader.get_ref()
+    }
+
+    /// The stream, for a write between two reads: bytes the reader buffered
+    /// stay buffered.
+    pub fn get_mut(&mut self) -> &mut R {
+        self.reader.get_mut()
     }
 
     /// The next line, under the bound.
@@ -84,13 +104,13 @@ impl<R: tokio::io::AsyncRead + Unpin> LineReader<R> {
             let n = chunk.len();
             self.buf.extend_from_slice(chunk);
             self.reader.consume(n);
-            if self.buf.len() > LINE_BOUND {
+            if self.buf.len() > self.bound {
                 self.buf.clear();
                 return Line::Malformed("a line passed the bound with no delimiter");
             }
         }
         let line = std::mem::take(&mut self.buf);
-        if line.len() > LINE_BOUND {
+        if line.len() > self.bound {
             return Line::Malformed("a line passed the bound");
         }
         match String::from_utf8(line) {
@@ -408,6 +428,59 @@ impl std::fmt::Display for Refusal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())
     }
+}
+
+/// **The pairing protocol's ALPN name** (Spec 8.2). A ClientHello that
+/// offers it meets the pairing configuration, and every other the mutual-TLS
+/// configuration as built.
+pub const PAIR_PROTOCOL: &[u8] = b"weaver-pair/1";
+
+/// The pairing's first frame's bound, inclusive, excluding the delimiter
+/// (Spec 8.2): the box's name and two certificate requests fit well inside.
+pub const PAIR_FIRST_FRAME_BOUND: usize = 16 * 1024;
+
+/// **A frame the box sends on a pairing connection** (Spec 8.2), apart from
+/// the plane frames: a pairing connection carries no credential and speaks
+/// none of them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "svc", rename_all = "snake_case", deny_unknown_fields)]
+pub enum PairFromBox {
+    /// The first frame: the box's name, as the box claims it, and the two
+    /// certificate requests, PKCS #10 in PEM, the gate's and admin's. It
+    /// carries nothing of the code.
+    Hello {
+        r#box: String,
+        gate_request: String,
+        admin_request: String,
+    },
+}
+
+/// **A frame the console sends on a pairing connection** (Spec 8.2).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "svc", rename_all = "snake_case", deny_unknown_fields)]
+pub enum PairToBox {
+    /// The box waits: what is left of its ten minutes, and the cadence of
+    /// the heartbeats that follow, from which the box knows the console
+    /// silent at four of them.
+    Waiting {
+        expires_in_secs: u64,
+        cadence_secs: u64,
+    },
+    Heartbeat,
+    /// Ten minutes from the dial with no code entered. The console closes.
+    Expired,
+    /// The console refused, with its reason (`pair_reason`). The console
+    /// closes.
+    Refused {
+        reason: String,
+    },
+}
+
+/// The reasons a console refuses a pairing with (Spec 8.2, `pair`'s
+/// `refused` line).
+pub mod pair_reason {
+    /// Past the waiting connections' bound, in all or from one peer.
+    pub const BUSY: &str = "busy";
 }
 
 #[cfg(test)]

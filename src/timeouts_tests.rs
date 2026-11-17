@@ -109,11 +109,22 @@ const CALLS: &[(&str, &str, Why)] = &[
     ("src/link/listener.rs", "send", Channel),
     ("src/link/listener.rs", "enqueue", Channel),
     ("src/link/listener.rs", "drain_writer", Join),
+    ("src/link/listener.rs", "serve_connection", Socket), // the ClientHello
     ("src/link/listener.rs", "serve_connection", Socket),
     ("src/link/listener.rs", "serve_connection", Socket),
     ("src/link/listener.rs", "serve_connection", Socket),
     ("src/link/listener.rs", "serve_connection", Socket),
     ("src/link/listener.rs", "serve_connection", Resendable), // `take_entry`
+    ("src/link/pair_client.rs", "next", Socket),
+    ("src/link/pair_client.rs", "dial", Socket),
+    ("src/link/pair_client.rs", "over", Socket),
+    ("src/link/pair_client.rs", "over", Socket),
+    ("src/link/pair_client.rs", "over", Socket),
+    ("src/link/pairing.rs", "take", Channel), // a waiting connection's answer to a probe
+    ("src/link/pairing.rs", "send", Socket),
+    ("src/link/pairing.rs", "close_with", Socket),
+    ("src/link/pairing.rs", "serve", Socket),
+    ("src/link/pairing.rs", "serve", Socket),
     ("src/link/relay.rs", "dial", Socket),
     ("src/listen.rs", "bounded", Socket),
     ("src/passkeys.rs", "from_config", NotTokio), // the ceremony's lifetime

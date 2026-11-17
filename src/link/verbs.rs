@@ -1098,6 +1098,18 @@ pub fn name_agrees(cfg: &ServerConfig, authority: &Authority) -> anyhow::Result<
     Ok(())
 }
 
+/// **A box is well formed by migration 0010's rule**: `^[A-Za-z0-9_.-]+$`
+/// and not `.` or `..`. The register's verbs and the pairing's first frame
+/// (Spec 8.2) both read a box by it.
+pub fn is_box(r#box: &str) -> bool {
+    !r#box.is_empty()
+        && r#box != "."
+        && r#box != ".."
+        && r#box
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'.' || b == b'-')
+}
+
 /// **A box and a name are well formed by the schema's rule, checked here
 /// before any filesystem access.** The patterns are migration 0010's,
 /// stated once beside them as the same rule: a name is `^[A-Za-z0-9_-]+$`,
@@ -1112,13 +1124,7 @@ pub fn well_formed(r#box: &str, name: &str) -> anyhow::Result<()> {
     if !name_ok {
         anyhow::bail!("{name:?} is not a box or a name: a name is letters, digits, _ and -");
     }
-    let box_ok = !r#box.is_empty()
-        && r#box != "."
-        && r#box != ".."
-        && r#box
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'.' || b == b'-');
-    if !box_ok {
+    if !is_box(r#box) {
         anyhow::bail!(
             "{box:?} is not a box or a name: a box is letters, digits, _, . and -, and not . or ..",
             box = r#box

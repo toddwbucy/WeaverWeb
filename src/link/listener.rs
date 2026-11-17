@@ -39,8 +39,8 @@ use crate::deadline::hold::{self, Point};
 use crate::deadline::{self, Passed};
 use crate::link::authority::{Authority, fingerprint};
 use crate::link::frames::{
-    FromClient, Line, LineReader, Plane, Position, Principal, Refusal, ToClient, TurnFault,
-    VerbFault, VerbOutcome, capability,
+    FromClient, Line, LineReader, PAIR_PROTOCOL, Plane, Position, Principal, Refusal, ToClient,
+    TurnFault, VerbFault, VerbOutcome, capability,
 };
 use crate::link::register::{
     ConstituentsWrite, CredentialState, Observation, REVOCATION_CHANNEL, TransitionWrite,
@@ -63,7 +63,7 @@ use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, oneshot, watch};
-use tokio_rustls::TlsAcceptor;
+use tokio_rustls::LazyConfigAcceptor;
 
 /// How long a peer has to complete the handshake, and then to say hello. A
 /// peer that speaks plaintext never completes the handshake and is dropped
@@ -689,7 +689,13 @@ enum Landing {
 
 struct Inner {
     store: Store,
-    acceptor: TlsAcceptor,
+    /// The mutual-TLS configuration as built, which every ClientHello
+    /// without the pairing protocol meets (Spec 8.2).
+    tls: Arc<rustls::ServerConfig>,
+    /// The pairing's configuration, which a ClientHello offering
+    /// `weaver-pair/1` meets, and the boxes waiting (Spec 8.2).
+    pairing_tls: Arc<rustls::ServerConfig>,
+    waiting: crate::link::pairing::Waiting,
     epoch: i64,
     arrival: AtomicI64,
     silence: Duration,
@@ -849,7 +855,8 @@ impl Listener {
                 "the silence bound is {silence:?}, under the {LEAST_SILENCE_SECS} s the cadence rule admits"
             );
         }
-        let acceptor = TlsAcceptor::from(authority.server_tls()?);
+        let tls = authority.server_tls()?;
+        let pairing_tls = authority.pairing_tls()?;
         let tcp = TcpListener::bind(listen).await?;
         let address = tcp.local_addr()?;
         // **The store's lock first** (Spec 8): a session-level advisory
@@ -886,7 +893,9 @@ impl Listener {
         let listener = Self {
             inner: Arc::new(Inner {
                 store,
-                acceptor,
+                tls,
+                pairing_tls,
+                waiting: crate::link::pairing::Waiting::default(),
                 epoch,
                 arrival: AtomicI64::new(0),
                 silence,
@@ -1112,6 +1121,28 @@ impl Listener {
 
     pub fn address(&self) -> SocketAddr {
         self.inner.address
+    }
+
+    /// **The boxes waiting to pair** (Spec 8.2), each by the name it
+    /// claims, its peer address and how long it has waited. Never a code.
+    pub fn waiting(&self) -> Vec<crate::link::pairing::WaitingBox> {
+        self.inner.waiting.list()
+    }
+
+    /// **The waiting connection whose code is `code`**, taken out of the
+    /// table for the exchange, or none (Spec 8.2). A match spends the
+    /// connection, so its code matches nothing after.
+    pub async fn take_pairing(
+        &self,
+        code: &crate::link::pair_code::Code,
+    ) -> Option<crate::link::pairing::Taken> {
+        self.inner.waiting.take(code).await
+    }
+
+    /// A test's lever: the waiting boxes' bounds, shortened.
+    #[cfg(test)]
+    pub fn set_pairing_bounds(&self, bounds: crate::link::pairing::Bounds) {
+        self.inner.waiting.set_bounds(bounds);
     }
 
     pub fn epoch(&self) -> i64 {
@@ -3286,15 +3317,61 @@ async fn refuse(tx: mpsc::Sender<ToClient>, writer: tokio::task::JoinHandle<()>,
 }
 
 async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr) {
+    let dialed = std::time::Instant::now();
+    let handshake_by = tokio::time::Instant::now() + Duration::from_secs(HANDSHAKE_SECS);
     let mut halting = inner.halting.subscribe();
     if *halting.borrow() {
+        return;
+    }
+    // **The ClientHello chooses the configuration** (Spec 8.2): one that
+    // offers the pairing protocol meets the pairing's, and every other the
+    // mutual-TLS configuration as built, so section 8's refusal of a
+    // credential that is not live binds every plane connection exactly as
+    // it stands.
+    let hello = tokio::select! {
+        h = tokio::time::timeout_at(handshake_by, LazyConfigAcceptor::new(rustls::server::Acceptor::default(), stream)) => h,
+        _ = halting.changed() => {
+            tracing::info!("link from {peer}: the listener is halting, the handshake is dropped");
+            return;
+        }
+    };
+    let start = match hello {
+        Ok(Ok(start)) => start,
+        Ok(Err(e)) => {
+            tracing::warn!("link handshake from {peer} failed, refused in the clear: {e}");
+            return;
+        }
+        Err(_) => {
+            tracing::warn!("link handshake from {peer} did not complete, refused");
+            return;
+        }
+    };
+    let pairs = start
+        .client_hello()
+        .alpn()
+        .is_some_and(|mut offered| offered.any(|p| p == PAIR_PROTOCOL));
+    if pairs {
+        crate::link::pairing::serve(
+            start,
+            crate::link::pairing::Context {
+                waiting: &inner.waiting,
+                config: inner.pairing_tls.clone(),
+                peer: peer.ip().to_canonical(),
+                dialed,
+                handshake_by,
+                cadence: inner.cadence,
+                write_bound: inner.silence,
+                halting,
+            },
+        )
+        .await;
         return;
     }
     // **The handshake is the only door**: a peer that does not complete
     // mutual TLS with a certificate this authority signed is dropped here,
     // and nothing it wrote was read as a frame.
     let handshake = tokio::select! {
-        h = tokio::time::timeout(Duration::from_secs(HANDSHAKE_SECS), inner.acceptor.accept(stream)) => h,
+        h = tokio::time::timeout_at(handshake_by, start.into_stream(inner.tls.clone())) => h,
         _ = halting.changed() => {
             tracing::info!("link from {peer}: the listener is halting, the handshake is dropped");
             return;

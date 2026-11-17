@@ -26,6 +26,9 @@ pub mod entries;
 pub mod frames;
 pub mod gate_con;
 pub mod listener;
+pub mod pair_client;
+pub mod pair_code;
+pub mod pairing;
 pub mod register;
 pub mod relay;
 pub mod sudo_invoker;
@@ -39,6 +42,8 @@ mod client_tests;
 mod deadline_tests;
 #[cfg(test)]
 pub(crate) mod fake_relay;
+#[cfg(test)]
+mod pairing_tests;
 #[cfg(test)]
 mod run_end_tests;
 #[cfg(test)]

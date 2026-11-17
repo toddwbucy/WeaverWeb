@@ -27,6 +27,7 @@ mod declare_pane_tests;
 #[cfg(all(test, feature = "passkeys"))]
 mod entries_tests;
 pub mod fault;
+pub mod gguf;
 #[cfg(all(test, feature = "passkeys"))]
 mod grants_tests;
 pub mod host;
@@ -51,6 +52,8 @@ pub mod passkeys;
 mod passkeys_tests;
 #[cfg(all(test, feature = "passkeys"))]
 mod reading_tests;
+#[cfg(all(test, feature = "passkeys"))]
+mod setup_models_tests;
 #[cfg(all(test, feature = "passkeys"))]
 mod setup_tests;
 #[cfg(all(test, feature = "passkeys"))]

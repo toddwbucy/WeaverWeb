@@ -1,0 +1,112 @@
+{% extends "setup_frame.html" %}
+{% block panes %}
+{#- The models page (Spec 6.2): the first agent's two roles, the rest of
+    the roster drawn unbuilt, a repository asked at a revision with its
+    choices, each complete one's header its own fragment with the pick's
+    form, and the setup's pulls with the base's identity, a fragment the
+    page re-fetches every 15 s. No inline script. -#}
+{%- for role in roles %}
+<section class="pane">
+  <header><span class="stage"><b>1</b> Declare</span><h2>{{ role.title }}</h2><span class="backing built">built</span>{% if role.picked.is_some() %}<span class="status ok">ok</span>{% else %}<span class="status hold">hold</span>{% endif %}<span class="source">the pick, and its header</span></header>
+  <div class="body">
+  {%- if let Some(picked) = role.picked %}
+  <table>
+    <tbody>
+    <tr><th>Repository</th><td class="mono">{{ picked.repository }}</td></tr>
+    <tr><th>Commit</th><td class="mono">{{ picked.commit }}</td></tr>
+    <tr><th>Choice</th><td class="mono">{{ picked.choice }}</td></tr>
+    {%- if let Some(scale) = picked.scale %}
+    <tr><th>Scale</th><td class="mono">{{ scale }}</td></tr>
+    {%- endif %}
+    {%- if let Some(facts) = picked.facts %}
+    <tr><th>Precision</th><td>{{ facts.precision }}</td></tr>
+    <tr><th>Maximum context</th><td>{{ facts.context }}</td></tr>
+    <tr><th>Block count</th><td>{{ facts.blocks }}</td></tr>
+    {%- endif %}
+    <tr><th>Picked</th><td>{{ picked.picked_by }}, {{ picked.picked_at }}</td></tr>
+    </tbody>
+  </table>
+  {%- else %}
+  <p>No {{ role.name }} is picked.</p>
+  {%- endif %}
+  </div>
+  {%- if role.picked.is_none() %}
+  <footer>Waits on a pick from a repository below.</footer>
+  {%- else %}
+  <footer>A pick of this role again replaces this row, and the files the earlier pick pulled stay in the cache.</footer>
+  {%- endif %}
+</section>
+{%- endfor %}
+<section class="pane">
+  <header><span class="stage"><b>1</b> Declare</span><h2>Beyond the first agent</h2><span class="backing unbuilt">unbuilt</span><span class="status hold">hold</span></header>
+  <div class="body">
+  <ul>
+    <li>Extra models</li>
+    <li>Adapter roles beyond the one decoder adapter</li>
+    <li>A classifier-only agent</li>
+    <li>Placement on the CPU</li>
+  </ul>
+  <p>A pick that names any of these is refused, saving nothing.</p>
+  </div>
+  <footer>Waits on a ruling that widens the roster beyond the first agent's one decoder and one adapter.</footer>
+</section>
+<section class="pane">
+  <header><span class="stage"><b>1</b> Declare</span><h2>A repository</h2><span class="backing built">built</span><span class="status ok">ok</span><span class="source">Hugging Face's listing</span></header>
+  <div class="body">
+  <form method="get" action="/setup/{{ frame.setup_id }}/models" class="field">
+    <label>Repository <input name="repository" placeholder="owner/name" required{% if let Some(l) = listing %} value="{{ l.repository }}"{% endif %}></label>
+    <label>Revision <input name="revision" placeholder="a branch, a tag or a commit" required{% if let Some(l) = listing %} value="{{ l.revision }}"{% endif %}></label>
+    <button type="submit">List its choices</button>
+  </form>
+  {%- if let Some(why) = no_pick %}
+  <p><span class="status fail">no pick</span> {{ why }}</p>
+  {%- endif %}
+  </div>
+  <footer>The revision is resolved to its commit, and the pick and its pull name the commit.</footer>
+</section>
+{%- if let Some(l) = listing %}
+<section class="pane">
+  <header><span class="stage"><b>1</b> Declare</span><h2>{{ l.repository }} at {{ l.revision }}</h2><span class="backing built">built</span>{% if l.trouble.is_some() %}<span class="status fail">fail</span>{% else if l.gated.is_some() %}<span class="status hold">hold</span>{% else %}<span class="status ok">ok</span>{% endif %}<span class="source">Hugging Face's listing</span></header>
+  <div class="body">
+  {%- if let Some(why) = l.trouble %}
+  <p>{{ why }}</p>
+  {%- else %}
+  {%- if let Some(commit) = l.commit %}
+  <p>The commit: <span class="mono">{{ commit }}</span></p>
+  {%- endif %}
+  {%- if let Some(gated) = l.gated %}
+  <p>The repository is gated, and the account has not been granted it. Accept its terms on <a href="{{ gated.accept }}" rel="noopener noreferrer">its page on Hugging Face</a>, then <a href="{{ gated.again }}">check again</a>.</p>
+  {%- endif %}
+  {%- if l.choices.is_empty() %}
+  <p>The repository holds no .gguf file at this commit.</p>
+  {%- endif %}
+  {%- for c in l.choices %}
+  <div class="choice">
+    <h3 class="mono">{{ c.name }}</h3>
+    <p>{{ c.parts }} part{% if c.parts != 1 %}s{% endif %}, {{ c.size }}</p>
+    {%- if let Some(missing) = c.missing %}
+    <p><span class="status fail">no pick</span> {{ missing }}</p>
+    {%- else if let Some(href) = c.header_href %}
+    <div hx-get="{{ href }}" hx-trigger="load" hx-swap="outerHTML"><p>Reading its header.</p></div>
+    {%- endif %}
+  </div>
+  {%- endfor %}
+  {%- endif %}
+  </div>
+  {%- if l.gated.is_some() %}
+  <footer>Waits on the repository's terms, accepted on Hugging Face by the connected account.</footer>
+  {%- else %}
+  <footer>Each header is read by range through the commit, 16 MiB at most, before any download.</footer>
+  {%- endif %}
+</section>
+{%- endif %}
+<section class="pane">
+  <header><span class="stage"><b>1</b> Declare</span><h2>The pulls and the base's identity</h2><span class="backing built">built</span>{% if pulls.pulls.is_empty() %}<span class="status hold">hold</span>{% else %}<span class="status ok">ok</span>{% endif %}<span class="source">the puller, and the console's hash of the cached parts</span></header>
+  <div class="body" id="pulls" hx-get="/setup/{{ frame.setup_id }}/models/pull" hx-trigger="every 15s" hx-swap="innerHTML">{% include "setup_models_pull.html" %}</div>
+  {%- if pulls.pulls.is_empty() %}
+  <footer>Waits on a pick, which asks a pull.</footer>
+  {%- else %}
+  <footer>The box's pull from the cache is the enrollment's frame.</footer>
+  {%- endif %}
+</section>
+{% endblock %}

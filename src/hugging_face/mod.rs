@@ -17,7 +17,10 @@
 //! a file's path (`is_repo_path`), each pushed as path segments, so none adds
 //! a segment, a query or a fragment of its own.
 
+pub mod base_identity;
 pub mod cache;
+pub mod choice;
+pub mod headers;
 pub mod pull;
 pub mod seal;
 
@@ -38,6 +41,28 @@ const CONNECT_BOUND: Duration = Duration::from_secs(10);
 /// The most an API answer is read: a repository's listing of every file runs
 /// to a few hundred kilobytes for the largest model repositories.
 const API_BODY_LIMIT: usize = 16 << 20;
+
+/// **The bound on a header's read** (Spec 6.2), from its send to the end of
+/// the metadata or the read's bound in bytes, every redirect's included.
+pub const HEADER_BOUND: Duration = Duration::from_secs(60);
+
+/// How many redirects a header's read follows, as a pull's fetch does.
+const HEADER_REDIRECTS: usize = 5;
+
+/// The first bytes a header's read tries to parse, doubling until the
+/// metadata ends, so a parse is tried at most twice the bound's bytes in
+/// all.
+const HEADER_FIRST_TRY: usize = 64 << 10;
+
+/// **What a header's range read answered** (Spec 6.2).
+#[derive(Debug, Clone, PartialEq)]
+pub enum HeaderRead {
+    Read(crate::gguf::Header),
+    /// The file's own bytes answered no header, for the reason given,
+    /// which holds for the file at its commit: a header past the bound,
+    /// one cut short, one the reader refuses, or no file at the commit.
+    NotRead(String),
+}
 
 /// **A Hugging Face token**, as an admin pasted it. It renders as `Token(..)`
 /// and never as its bytes, and nothing but this module and the seal reads
@@ -501,6 +526,85 @@ impl Client {
         }))
     }
 
+    /// **A file's GGUF header, read by range through the commit** (Spec 6.2):
+    /// `Range: bytes=0-<bound - 1>`, each redirect followed by this method
+    /// with the token on the base's origin alone (`authorized`) and a
+    /// redirect to another scheme refused, as a pull's fetch does. The body
+    /// is read until the metadata ends or the bound's bytes are held,
+    /// whichever comes first, and the connection is dropped there. A header
+    /// whose need runs past the bound, one cut short and one the reader
+    /// refuses are `NotRead`. A gated file the account lacks, a refused
+    /// token and a fault of Hugging Face's are errors, since they hold for
+    /// the read and not for the file.
+    pub async fn header(
+        &self,
+        token: Option<&Token>,
+        repo: &RepoId,
+        commit: &str,
+        path: &str,
+        bound: usize,
+    ) -> anyhow::Result<HeaderRead> {
+        anyhow::ensure!(bound > 0, "a header's read has a bound");
+        let mut url = self.resolve(repo, commit, path)?;
+        let read = async {
+            for _ in 0..=HEADER_REDIRECTS {
+                let request = self
+                    .authorized(self.http.get(url.clone()), &url, token)
+                    .header(reqwest::header::RANGE, format!("bytes=0-{}", bound - 1));
+                let mut response = request.send().await.map_err(scrubbed)?;
+                let status = response.status();
+                if status.is_redirection() {
+                    let next = response
+                        .headers()
+                        .get(reqwest::header::LOCATION)
+                        .and_then(|v| v.to_str().ok())
+                        .and_then(|location| url.join(location).ok())
+                        .ok_or_else(|| anyhow::anyhow!("a redirect named no place"))?;
+                    anyhow::ensure!(
+                        next.scheme() == self.base.scheme(),
+                        "a redirect to {} is refused",
+                        next.scheme()
+                    );
+                    url = next;
+                    continue;
+                }
+                let gated = error_code(response.headers()) == Some("GatedRepo");
+                match status {
+                    StatusCode::OK => {}
+                    StatusCode::PARTIAL_CONTENT => anyhow::ensure!(
+                        response
+                            .headers()
+                            .get(reqwest::header::CONTENT_RANGE)
+                            .and_then(|v| v.to_str().ok())
+                            .is_some_and(|range| range.starts_with("bytes 0-")),
+                        "a header's range answered from another byte than the first"
+                    ),
+                    StatusCode::NOT_FOUND => {
+                        return Ok(HeaderRead::NotRead(format!(
+                            "the file does not stand at {commit}"
+                        )));
+                    }
+                    StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN if gated => {
+                        anyhow::bail!("{repo} is gated, and the account has not been granted it")
+                    }
+                    StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
+                        anyhow::bail!("Hugging Face refused the header's read")
+                    }
+                    status => anyhow::bail!("Hugging Face answered {status} to a header's read"),
+                }
+                return header_of(&mut response, bound).await;
+            }
+            anyhow::bail!("more than {HEADER_REDIRECTS} redirects")
+        };
+        tokio::time::timeout(HEADER_BOUND, read)
+            .await
+            .map_err(|_| {
+                anyhow::anyhow!(
+                    "Hugging Face did not answer a header's read within {HEADER_BOUND:?}"
+                )
+            })?
+    }
+
     /// **Whether the account may fetch a repository's files**, read from a
     /// `HEAD` of one file through the commit, its redirect not followed:
     /// any 2xx or 3xx is granted, a 401 or 403 carrying
@@ -537,6 +641,57 @@ impl Client {
             StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => Access::Refused,
             status => anyhow::bail!("Hugging Face answered {status} to a file's fetch"),
         })
+    }
+}
+
+/// **A header read from a body as it arrives**: a parse tried at 64 KiB,
+/// then each time the bytes held double or reach the need the last parse
+/// named, and at the body's end, never holding more than `bound` bytes.
+async fn header_of(response: &mut reqwest::Response, bound: usize) -> anyhow::Result<HeaderRead> {
+    use crate::gguf::{self, Refused};
+    let mut held: Vec<u8> = Vec::new();
+    let mut next_try = HEADER_FIRST_TRY.min(bound);
+    loop {
+        let ended = match response.chunk().await.map_err(scrubbed)? {
+            Some(chunk) => {
+                let room = bound - held.len();
+                held.extend_from_slice(&chunk[..chunk.len().min(room)]);
+                false
+            }
+            None => true,
+        };
+        let full = held.len() >= bound;
+        if !(ended || full || held.len() >= next_try) {
+            continue;
+        }
+        match gguf::read(&held) {
+            Ok(header) => return Ok(HeaderRead::Read(header)),
+            Err(Refused::Malformed(why)) => return Ok(HeaderRead::NotRead(why)),
+            Err(Refused::Short { needed }) if needed > bound as u64 => {
+                return Ok(HeaderRead::NotRead(format!(
+                    "the header runs past the read's bound of {}",
+                    bound_text(bound)
+                )));
+            }
+            Err(Refused::Short { .. }) if ended || full => {
+                return Ok(HeaderRead::NotRead(format!(
+                    "the header is cut short: the file ends at {} bytes",
+                    held.len()
+                )));
+            }
+            Err(Refused::Short { needed }) => {
+                next_try = (held.len() * 2).max(needed as usize).min(bound);
+            }
+        }
+    }
+}
+
+/// A bound as a person reads it: whole MiB, else bytes.
+fn bound_text(bound: usize) -> String {
+    if bound.is_multiple_of(1 << 20) {
+        format!("{} MiB", bound >> 20)
+    } else {
+        format!("{bound} bytes")
     }
 }
 

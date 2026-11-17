@@ -30,6 +30,8 @@ pub(crate) struct Rig {
     fresh: Fresh,
     _dir: tempfile::TempDir,
     pub(crate) app: axum::Router,
+    /// The puller the models page asks, whose cache is `model_cache`.
+    pub(crate) puller: crate::hugging_face::pull::Puller,
 }
 
 impl Rig {
@@ -38,18 +40,46 @@ impl Rig {
     }
 }
 
-/// A rig whose config names the link and the model cache given.
+/// A rig whose config names the link and the model cache given, its
+/// Hugging Face a port nothing answers on.
 pub(crate) async fn rig_with(
     link_listen: &str,
     link_address: Option<&str>,
     model_cache: Option<PathBuf>,
+) -> Option<Rig> {
+    rig_hf(
+        link_listen,
+        link_address,
+        model_cache,
+        "http://127.0.0.1:9/",
+    )
+    .await
+}
+
+/// A rig whose config names the link and the model cache given, its
+/// Hugging Face client at `hugging_face`, its puller over the cache, and
+/// no account connected.
+pub(crate) async fn rig_hf(
+    link_listen: &str,
+    link_address: Option<&str>,
+    model_cache: Option<PathBuf>,
+    hugging_face: &str,
 ) -> Option<Rig> {
     let fresh = fresh_store().await?;
     let dir = tempfile::tempdir().unwrap();
     let mut cfg = crate::agents_tests::server_config(dir.path(), "127.0.0.1:1".parse().unwrap());
     cfg.link_listen = link_listen.to_owned();
     cfg.link_address = link_address.map(str::to_owned);
-    cfg.model_cache = model_cache;
+    cfg.model_cache = model_cache.clone();
+    let client = crate::hugging_face::Client::with_base(hugging_face).unwrap();
+    let cache = model_cache.map(|root| crate::hugging_face::cache::Cache::at(&root).unwrap());
+    let puller = crate::hugging_face::pull::Puller::start(
+        fresh.store.clone(),
+        client.clone(),
+        cache,
+        dir.path().join("authority"),
+        crate::hugging_face::pull::Settings::default(),
+    );
     let policy = gate::Policy {
         origin: Some(ORIGIN.to_owned()),
         idle: Duration::from_secs(3600),
@@ -59,6 +89,10 @@ pub(crate) async fn rig_with(
         crate::surfaces::script_policy(routes(Seams {
             policy: policy.clone(),
             cfg: Arc::new(cfg),
+            client,
+            puller: puller.clone(),
+            authority_dir: dir.path().join("authority"),
+            headers: crate::hugging_face::headers::Headers::new(),
         }))
         .with_state(fresh.store.clone()),
         policy,
@@ -68,6 +102,7 @@ pub(crate) async fn rig_with(
         fresh,
         _dir: dir,
         app,
+        puller,
     })
 }
 
@@ -100,7 +135,7 @@ fn setup_of(headers: &HeaderMap) -> Option<String> {
     Some(rest[..rest.find('/')?].to_owned())
 }
 
-async fn setups(s: &Store) -> i64 {
+pub(crate) async fn setups(s: &Store) -> i64 {
     sqlx::query_scalar("SELECT count(*) FROM agent_setup")
         .fetch_one(&s.pool)
         .await
@@ -109,7 +144,7 @@ async fn setups(s: &Store) -> i64 {
 
 /// The audit's records about setups for `action`: first records, `ok`
 /// outcomes, `failed` outcomes and refusals.
-async fn audited(s: &Store, action: &str) -> (i64, i64, i64, i64) {
+pub(crate) async fn audited(s: &Store, action: &str) -> (i64, i64, i64, i64) {
     let count = |clause: &'static str| {
         let query = format!(
             "SELECT count(*) FROM audit WHERE target_kind = 'setup' \
@@ -140,7 +175,7 @@ pub(crate) async fn page(app: &axum::Router, uri: &str, session: &str) -> String
 }
 
 /// Each `<section class="pane">` of a page, whole.
-fn panes(page: &str) -> Vec<&str> {
+pub(crate) fn panes(page: &str) -> Vec<&str> {
     page.match_indices(r#"<section class="pane">"#)
         .map(|(at, _)| {
             let rest = &page[at..];
@@ -168,7 +203,7 @@ fn tags<'a>(html: &'a str, kind: &str) -> Vec<&'a str> {
 /// footer what it waits on and holds no input with a value, no checked box
 /// and no selected option. Each pane that fails, named by its heading and
 /// its fault.
-fn walk(page: &str) -> Vec<String> {
+pub(crate) fn walk(page: &str) -> Vec<String> {
     let mut faults = Vec::new();
     let all = panes(page);
     if all.is_empty() {
@@ -310,9 +345,11 @@ async fn a_person_without_an_admin_grant_is_refused_before_any_setup_is_looked_u
         "/setup".to_owned(),
         format!("/setup/{setup}"),
         format!("/setup/{setup}/pairing"),
+        format!("/setup/{setup}/models"),
         format!("/setup/{setup}/drives"),
         format!("/setup/{setup}/build"),
         format!("/setup/{unknown}/pairing"),
+        format!("/setup/{unknown}/models"),
         format!("/setup/{unknown}/drives"),
     ] {
         let (status, _, body) = send_as(&rig.app, "GET", &uri, None, &bea).await;
@@ -393,7 +430,7 @@ async fn every_pane_carries_its_stage_backing_and_status() {
     let mut walked = vec![("/setup".to_owned(), page(&rig.app, "/setup", &ada).await)];
     let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
     let setup = setup.unwrap();
-    for p in ["", "/pairing", "/drives", "/build"] {
+    for p in ["", "/pairing", "/models", "/drives", "/build"] {
         let uri = format!("/setup/{setup}{p}");
         walked.push((uri.clone(), page(&rig.app, &uri, &ada).await));
     }
@@ -468,10 +505,13 @@ async fn every_pane_carries_its_stage_backing_and_status() {
     );
     assert_eq!(
         rail.matches(r#"<span class="backing unbuilt">"#).count(),
-        3,
+        2,
         "{rail}"
     );
     assert!(pairing.contains(&format!(
+        r#"Next: <a href="/setup/{setup}/models">Models</a>"#
+    )));
+    assert!(walked[3].1.contains(&format!(
         r#"Next: <a href="/setup/{setup}/drives">Drives</a>"#
     )));
     // The drives page names the model cache where it is set, and the key
@@ -484,7 +524,7 @@ async fn every_pane_carries_its_stage_backing_and_status() {
     assert!(drives.contains(r#"<a href="/admin/ssh-key">Change the keys</a>"#));
     // The build page links the declaration screen as built.
     assert!(
-        walked[4]
+        walked[5]
             .1
             .contains(r#"<a href="/declarations">the declaration screen</a>"#)
     );
@@ -729,9 +769,17 @@ async fn an_unknown_setup_is_not_found_and_a_malformed_one_refused() {
         ("POST", "/setup/st-0123/pairing", StatusCode::BAD_REQUEST),
         (
             "GET",
-            &format!("/setup/{setup}/models"),
+            "/setup/st-0123456789abcdef/models",
             StatusCode::NOT_FOUND,
         ),
+        ("GET", "/setup/st-0123/models", StatusCode::BAD_REQUEST),
+        (
+            "GET",
+            "/setup/st-0123456789abcdef/models/pull",
+            StatusCode::NOT_FOUND,
+        ),
+        ("GET", "/setup/st-0123/models/pull", StatusCode::BAD_REQUEST),
+        ("POST", "/setup/st-0123/models", StatusCode::BAD_REQUEST),
         (
             "GET",
             &format!("/setup/{setup}/placement"),

@@ -9,9 +9,10 @@
 //! an agent stands in the register. `POST /setup` begins a setup of the
 //! name. `GET /setup/{setup}/{page}` draws one page of the setup, `GET
 //! /setup/{setup}` its pairing page, and `POST /setup/{setup}/pairing` keeps the
-//! pairing page's checkbox. The models, placement and confirm pages are the
-//! act's later sub-acts: the setup's rail draws them unbuilt until they are
-//! served.
+//! pairing page's checkbox. The models page and its fragments are the child
+//! module `models` (`setup/models.rs`). The placement and confirm pages are
+//! the act's later sub-acts: the setup's rail draws them unbuilt until they
+//! are served.
 //!
 //! **Every pane carries its stage, its backing and its status**, and a
 //! held pane says in its footer what it waits on and holds no input with a
@@ -23,6 +24,7 @@
 //! box**: a write lands in the store, and nothing leaves on the link.
 
 use std::net::IpAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use askama::Template;
@@ -34,6 +36,9 @@ use axum::routing::get;
 use serde::Deserialize;
 
 use crate::config::ServerConfig;
+use crate::hugging_face::Client;
+use crate::hugging_face::headers::Headers;
+use crate::hugging_face::pull::Puller;
 use crate::store::Store;
 use crate::store::admin::Refusal;
 use crate::store::audit::Target;
@@ -44,12 +49,21 @@ use crate::surfaces::admin::{
 };
 use crate::surfaces::gate::{Policy, Session};
 
-/// What the surface takes beside the store: the session policy, and the
-/// server's config, for the console's link address and `model_cache`.
+mod models;
+
+/// What the surface takes beside the store: the session policy; the
+/// server's config, for the console's link address and `model_cache`; and,
+/// for the models page, the Hugging Face client (whose base is the test
+/// seam), the puller a pick asks, the directory the seal key stands in, and
+/// the headers kept in memory.
 #[derive(Clone)]
 pub struct Seams {
     pub policy: Policy,
     pub cfg: Arc<ServerConfig>,
+    pub client: Client,
+    pub puller: Puller,
+    pub authority_dir: PathBuf,
+    pub headers: Headers,
 }
 
 /// The answer to a setup's identity of the wrong shape.
@@ -101,7 +115,10 @@ impl Page {
     /// Whether this tree serves the page. The rest are drawn unbuilt on the
     /// rail and answer as no route does.
     fn served(self) -> bool {
-        matches!(self, Page::Pairing | Page::Drives | Page::Build)
+        matches!(
+            self,
+            Page::Pairing | Page::Models | Page::Drives | Page::Build
+        )
     }
 }
 
@@ -148,11 +165,13 @@ pub fn routes(seams: Seams) -> Router<Store> {
             ),
         );
     for p in Page::ALL {
-        if p.served() && p != Page::Pairing {
+        if p.served() && !matches!(p, Page::Pairing | Page::Models) {
             router = router.route(&format!("/setup/{{setup}}/{}", p.slug()), read!(p));
         }
     }
-    router.merge(crate::surfaces::ssh_key::routes(seams.policy.clone()))
+    router
+        .merge(models::routes(&seams))
+        .merge(crate::surfaces::ssh_key::routes(seams.policy.clone()))
 }
 
 fn when(at: chrono::DateTime<chrono::Utc>) -> String {
@@ -497,6 +516,51 @@ struct DrivesPage {
     keys: Vec<crate::surfaces::ssh_key::KeyView>,
     /// The console's `model_cache`, where set.
     model_cache: Option<String>,
+    /// The models drive's need, where a model is picked.
+    need: Option<Need>,
+}
+
+/// **The models drive's need** (Spec 6.2): the bytes of every pick's
+/// distinct blobs, a blob two paths share counted once.
+struct Need {
+    bytes: String,
+    blobs: usize,
+    picks: usize,
+}
+
+/// The bytes and the count of the distinct blobs among `files`, each
+/// named by its repository and its identity, since a box keeps each
+/// repository's blobs apart, as the cache does.
+fn distinct_blobs<'a>(
+    files: impl IntoIterator<Item = (&'a str, &'a crate::hugging_face::RepoFile)>,
+) -> (u64, usize) {
+    let mut seen = std::collections::HashSet::new();
+    let mut bytes = 0u64;
+    for (repository, file) in files {
+        if seen.insert((repository, file.identity())) {
+            bytes += file.size;
+        }
+    }
+    (bytes, seen.len())
+}
+
+async fn need(store: &Store, setup_id: &str) -> anyhow::Result<Option<Need>> {
+    let rows = store.setup_models(setup_id).await?;
+    if rows.is_empty() {
+        return Ok(None);
+    }
+    let mut files = Vec::new();
+    for row in &rows {
+        for file in store.pull_files(&row.pull_id).await? {
+            files.push((row.repository.clone(), file.file));
+        }
+    }
+    let (bytes, blobs) = distinct_blobs(files.iter().map(|(r, f)| (r.as_str(), f)));
+    Ok(Some(Need {
+        bytes: crate::surfaces::hugging_face::bytes(bytes),
+        blobs,
+        picks: rows.len(),
+    }))
 }
 
 #[derive(Template)]
@@ -545,8 +609,15 @@ async fn page(
             .render()
         }
         Page::Drives => {
-            let keys = match crate::surfaces::ssh_key::held(&store).await {
-                Ok(keys) => keys,
+            let (keys, need) = match async {
+                Ok::<_, anyhow::Error>((
+                    crate::surfaces::ssh_key::held(&store).await?,
+                    need(&store, setup_id).await?,
+                ))
+            }
+            .await
+            {
+                Ok(read) => read,
                 Err(e) => return fault(e),
             };
             DrivesPage {
@@ -561,6 +632,7 @@ async fn page(
                     .model_cache
                     .as_ref()
                     .map(|p| p.display().to_string()),
+                need,
             }
             .render()
         }
@@ -572,6 +644,7 @@ async fn page(
             frame,
         }
         .render(),
+        // The models page is its child module's, which reads its form.
         Page::Models | Page::Placement | Page::Confirm => {
             return StatusCode::NOT_FOUND.into_response();
         }

@@ -129,7 +129,7 @@ fn when(at: chrono::DateTime<chrono::Utc>) -> String {
 }
 
 /// A count of bytes as a person reads it, in powers of 1024.
-fn bytes(n: u64) -> String {
+pub(crate) fn bytes(n: u64) -> String {
     const UNITS: [&str; 4] = ["KiB", "MiB", "GiB", "TiB"];
     if n < 1024 {
         return format!("{n} B");

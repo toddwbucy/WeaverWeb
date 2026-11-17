@@ -18,6 +18,7 @@ pub mod alerts;
 pub mod audit;
 #[cfg(test)]
 mod audit_tests;
+pub mod base_identity;
 pub(crate) mod commit;
 pub mod declarations;
 pub mod experiment;

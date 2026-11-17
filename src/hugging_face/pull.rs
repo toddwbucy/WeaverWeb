@@ -96,6 +96,10 @@ struct Inner {
     authority_dir: PathBuf,
     settings: Settings,
     wake: Notify,
+    /// **The word that a pull was verified**, which the base's identity
+    /// waits on (Spec 6.2): a word left with no waiter is kept for the
+    /// next wait.
+    verified: Arc<Notify>,
     /// **Every pull an admin's cancel ended, or may have ended where its
     /// answer was lost**, that the puller may still be in, which the running
     /// pull watches. A set, so a later cancel never undoes an earlier one.
@@ -157,6 +161,7 @@ impl Puller {
             authority_dir,
             settings,
             wake: Notify::new(),
+            verified: Arc::new(Notify::new()),
             cancel: watch::Sender::new(HashSet::new()),
             task: std::sync::Mutex::new(None),
         });
@@ -168,6 +173,12 @@ impl Puller {
     /// The cache, where `model_cache` is set.
     pub fn cache(&self) -> Option<&Cache> {
         self.inner.cache.as_ref()
+    }
+
+    /// **The word each verified pull leaves**, for the base's identity to
+    /// wait on (Spec 6.2).
+    pub fn verified(&self) -> Arc<Notify> {
+        self.inner.verified.clone()
     }
 
     /// The task stopped where it stands, as the server's stop stops it. A
@@ -211,6 +222,30 @@ impl Puller {
         account: Option<&str>,
         files: &[RepoFile],
     ) -> anyhow::Result<Result<(), Refusal>> {
+        self.ask_with(commit, files, || {
+            self.inner.store.ask_pull(
+                admin, session_id, first, pull_id, repo, commit, account, files,
+            )
+        })
+        .await
+    }
+
+    /// **An ask of a pull whose rows `write` lands**, after its first
+    /// record: the setup's pick writes its pull with its role's row in one
+    /// transaction (Spec 6.2), and the cache's page writes it alone.
+    /// Refused before `write` where no cache is set, where a file's path is
+    /// out of its shape or no file is asked, and by `write` where another
+    /// pull runs. Every answer of `write` wakes the puller.
+    pub async fn ask_with<F, Fut>(
+        &self,
+        commit: &str,
+        files: &[RepoFile],
+        write: F,
+    ) -> anyhow::Result<Result<(), Refusal>>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = anyhow::Result<Result<(), Refusal>>>,
+    {
         if self.inner.cache.is_none() {
             return Ok(Err(Refusal::NoModelCache));
         }
@@ -228,13 +263,7 @@ impl Puller {
                 file.path
             ))));
         }
-        let written = self
-            .inner
-            .store
-            .ask_pull(
-                admin, session_id, first, pull_id, repo, commit, account, files,
-            )
-            .await;
+        let written = write().await;
         // Every answer wakes the puller, which acts on the store's rows
         // alone: a commit whose answer was lost may have landed.
         self.inner.wake.notify_one();
@@ -295,6 +324,9 @@ async fn finish(inner: &Inner, pull: &Pull, reason: Option<&str>) {
             pull.pull_id
         );
         tokio::time::sleep(Duration::from_secs(5)).await;
+    }
+    if reason.is_none() {
+        inner.verified.notify_one();
     }
 }
 

@@ -10,9 +10,11 @@
 use chrono::{DateTime, Utc};
 use sqlx::Row;
 
+use crate::hugging_face::{RepoFile, RepoId};
 use crate::store::Store;
 use crate::store::admin::{Refusal, authorized};
 use crate::store::commit::commit_with_outcome;
+use crate::store::model_pull::insert_pull;
 
 /// The most characters an agent's name runs to, `create-agent.sh`'s bound
 /// at WeaverAgent's `6b91747e`.
@@ -174,6 +176,142 @@ impl Store {
             return Ok(Err(Refusal::Stale));
         }
         commit_with_outcome(tx, "setup pairing", self, first).await?;
+        Ok(Ok(()))
+    }
+}
+
+/// **A model role's row** (Spec 6.2), as the pages read it.
+#[derive(Debug, Clone)]
+pub struct SetupModel {
+    /// `decoder` or `adapter`.
+    pub role: String,
+    pub repository: String,
+    pub commit: String,
+    /// The choice, named by its first part's path.
+    pub choice: String,
+    pub pull_id: String,
+    /// The pull's state: `running`, `verified`, `failed` or `cancelled`.
+    pub pull_state: String,
+    /// The adapter's scale, and the decoder's none.
+    pub scale: Option<f64>,
+    /// The facts read from the choice's header.
+    pub header: serde_json::Value,
+    /// The name of the person who picked.
+    pub picked_by: String,
+    pub picked_at: DateTime<Utc>,
+}
+
+/// **A pick**, every member resolved: the role, the choice and its parts as
+/// Hugging Face's listing gave them at the commit, the header's facts, the
+/// adapter's scale, and the pull it asks.
+pub struct Pick<'a> {
+    pub role: &'a str,
+    pub repository: &'a RepoId,
+    pub commit: &'a str,
+    pub choice: &'a str,
+    pub scale: Option<f64>,
+    pub header: &'a serde_json::Value,
+    pub pull_id: &'a str,
+    /// The account the pull runs through, where one is connected.
+    pub account: Option<&'a str>,
+    /// The choice's parts, in split order.
+    pub parts: &'a [RepoFile],
+}
+
+impl Store {
+    /// **A setup's model roles**, the decoder first.
+    pub async fn setup_models(&self, setup_id: &str) -> anyhow::Result<Vec<SetupModel>> {
+        let rows = sqlx::query(
+            "SELECT m.role, m.repository, m.commit_id, m.choice, m.pull_id, \
+             mp.state AS pull_state, m.scale, m.header, p.name AS picked_by, m.picked_at \
+             FROM agent_setup_model m JOIN person p ON p.person_id = m.picked_by \
+             JOIN model_pull mp ON mp.pull_id = m.pull_id \
+             WHERE m.setup_id = $1 ORDER BY m.role = 'adapter', m.role",
+        )
+        .bind(setup_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .iter()
+            .map(|r| SetupModel {
+                role: r.get("role"),
+                repository: r.get("repository"),
+                commit: r.get("commit_id"),
+                choice: r.get("choice"),
+                pull_id: r.get("pull_id"),
+                pull_state: r.get("pull_state"),
+                scale: r.get("scale"),
+                header: r.get("header"),
+                picked_by: r.get("picked_by"),
+                picked_at: r.get("picked_at"),
+            })
+            .collect())
+    }
+
+    /// **An admin's pick** (Spec 6.2), in one transaction under the
+    /// identity exclusion: the setup's version checked and moved, the pull's
+    /// rows written (refused, naming it, where a pull runs), and the role's
+    /// row written or, for a role the setup holds, replaced, the earlier
+    /// pick's files staying in the cache. Refused where the setup was
+    /// written since the page read it, or is confirmed.
+    pub async fn setup_pick(
+        &self,
+        admin: &str,
+        session_id: i64,
+        first: &str,
+        setup_id: &str,
+        version: i64,
+        pick: &Pick<'_>,
+    ) -> anyhow::Result<Result<(), Refusal>> {
+        let mut tx = self.identity_transaction().await?;
+        if let Err(refusal) = authorized(&mut tx, session_id, admin).await? {
+            return Ok(Err(refusal));
+        }
+        let written = sqlx::query(
+            "UPDATE agent_setup SET version = version + 1 \
+             WHERE setup_id = $1 AND version = $2 AND state = 'open'",
+        )
+        .bind(setup_id)
+        .bind(version)
+        .execute(&mut *tx)
+        .await?;
+        if written.rows_affected() != 1 {
+            return Ok(Err(Refusal::Stale));
+        }
+        if let Err(refusal) = insert_pull(
+            &mut tx,
+            admin,
+            pick.pull_id,
+            pick.repository,
+            pick.commit,
+            pick.account,
+            pick.parts,
+        )
+        .await?
+        {
+            return Ok(Err(refusal));
+        }
+        sqlx::query(
+            "INSERT INTO agent_setup_model \
+             (setup_id, role, repository, commit_id, choice, pull_id, scale, header, picked_by) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
+             ON CONFLICT (setup_id, role) DO UPDATE SET repository = EXCLUDED.repository, \
+             commit_id = EXCLUDED.commit_id, choice = EXCLUDED.choice, \
+             pull_id = EXCLUDED.pull_id, scale = EXCLUDED.scale, header = EXCLUDED.header, \
+             picked_by = EXCLUDED.picked_by, picked_at = now()",
+        )
+        .bind(setup_id)
+        .bind(pick.role)
+        .bind(pick.repository.to_string())
+        .bind(pick.commit)
+        .bind(pick.choice)
+        .bind(pick.pull_id)
+        .bind(pick.scale)
+        .bind(pick.header)
+        .bind(admin)
+        .execute(&mut *tx)
+        .await?;
+        commit_with_outcome(tx, "setup pick", self, first).await?;
         Ok(Ok(()))
     }
 }

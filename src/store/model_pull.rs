@@ -12,7 +12,7 @@
 //! began, and carry no audit record of their own.
 
 use chrono::{DateTime, Utc};
-use sqlx::Row;
+use sqlx::{Postgres, Row, Transaction};
 
 use crate::hugging_face::{RepoFile, RepoId};
 use crate::store::Store;
@@ -81,6 +81,58 @@ fn pull_of(r: &sqlx::postgres::PgRow) -> Pull {
     }
 }
 
+/// **A pull's rows in an admin's transaction**: the pull's row, `running`,
+/// and a row for each file, in the order given. Refused, naming the pull
+/// that runs, where one runs. The setup's pick writes its pull through
+/// this too, in its own transaction (Spec 6.2).
+pub(crate) async fn insert_pull(
+    tx: &mut Transaction<'_, Postgres>,
+    admin: &str,
+    pull_id: &str,
+    repo: &RepoId,
+    commit: &str,
+    account: Option<&str>,
+    files: &[RepoFile],
+) -> anyhow::Result<Result<(), Refusal>> {
+    let running: Option<(String, String, String)> = sqlx::query_as(
+        "SELECT pull_id, repository, commit_id FROM model_pull WHERE state = 'running'",
+    )
+    .fetch_optional(&mut **tx)
+    .await?;
+    if let Some((running, repository, commit)) = running {
+        return Ok(Err(Refusal::PullRunning(format!(
+            "{running}, of {repository} at {commit}"
+        ))));
+    }
+    sqlx::query(
+        "INSERT INTO model_pull (pull_id, repository, commit_id, account, asked_by, state) \
+         VALUES ($1, $2, $3, $4, $5, 'running')",
+    )
+    .bind(pull_id)
+    .bind(repo.to_string())
+    .bind(commit)
+    .bind(account)
+    .bind(admin)
+    .execute(&mut **tx)
+    .await?;
+    for (ordinal, file) in files.iter().enumerate() {
+        sqlx::query(
+            "INSERT INTO model_pull_file (pull_id, ordinal, path, size, blob_id, sha256, lfs) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        )
+        .bind(pull_id)
+        .bind(ordinal as i32)
+        .bind(&file.path)
+        .bind(i64::try_from(file.size)?)
+        .bind(&file.blob_id)
+        .bind(&file.sha256)
+        .bind(file.sha256.is_some())
+        .execute(&mut **tx)
+        .await?;
+    }
+    Ok(Ok(()))
+}
+
 impl Store {
     /// **An admin's ask of a pull**: the pull's row, `running`, and a row
     /// for each file, in the order given. Refused where another pull runs.
@@ -100,41 +152,10 @@ impl Store {
         if let Err(refusal) = authorized(&mut tx, session_id, admin).await? {
             return Ok(Err(refusal));
         }
-        let running: Option<(String, String, String)> = sqlx::query_as(
-            "SELECT pull_id, repository, commit_id FROM model_pull WHERE state = 'running'",
-        )
-        .fetch_optional(&mut *tx)
-        .await?;
-        if let Some((running, repository, commit)) = running {
-            return Ok(Err(Refusal::PullRunning(format!(
-                "{running}, of {repository} at {commit}"
-            ))));
-        }
-        sqlx::query(
-            "INSERT INTO model_pull (pull_id, repository, commit_id, account, asked_by, state) \
-             VALUES ($1, $2, $3, $4, $5, 'running')",
-        )
-        .bind(pull_id)
-        .bind(repo.to_string())
-        .bind(commit)
-        .bind(account)
-        .bind(admin)
-        .execute(&mut *tx)
-        .await?;
-        for (ordinal, file) in files.iter().enumerate() {
-            sqlx::query(
-                "INSERT INTO model_pull_file (pull_id, ordinal, path, size, blob_id, sha256, lfs) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7)",
-            )
-            .bind(pull_id)
-            .bind(ordinal as i32)
-            .bind(&file.path)
-            .bind(i64::try_from(file.size)?)
-            .bind(&file.blob_id)
-            .bind(&file.sha256)
-            .bind(file.sha256.is_some())
-            .execute(&mut *tx)
-            .await?;
+        if let Err(refusal) =
+            insert_pull(&mut tx, admin, pull_id, repo, commit, account, files).await?
+        {
+            return Ok(Err(refusal));
         }
         commit_with_outcome(tx, "model pull", self, first).await?;
         Ok(Ok(()))

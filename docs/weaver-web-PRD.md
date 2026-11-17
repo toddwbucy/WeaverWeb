@@ -197,7 +197,10 @@ console holds no trace for that agent**, on the operator's ruling of 2026-11-15 
 10.6). The trace door then has nothing to serve, so Record, the live view and Train have
 nothing to read for that agent, and the console says that it holds no trace for that
 agent. Whatever keeps the trace past its destination is the operator's, and the console
-states nothing about it. That is the operator's choice.
+states nothing about it. That is the operator's choice. The operator's word of
+2026-11-17, that the trace goes to Weaver Web, which stores it outside the agent's reach
+(section 10.4), bears on this, and how it meets the destination is open, settled by the
+operator, then by the trace field's act (section 9).
 
 The ten surfaces by stage. On the path: Compose is stage 1, Live is stages 3 and 4, and
 Measure, Open a trace and Stage are stage 6. The five on the list side feed a stage
@@ -1115,7 +1118,8 @@ this crate designs around the gap until it closes.
   for that agent, so Record, the live view and Train have nothing to read for it, and
   the console says so. Whatever keeps the trace past its destination is the operator's,
   and the console states nothing about it. That is the operator's choice (sections 3.0
-  and 10.6).
+  and 10.6). The operator's word of 2026-11-17 bears on it, and how is open (the cell
+  on the trace kept outside the agent's reach, below).
 - **Declared ports against the connectors' network.** Section 10.3 carries the
   operator's ruling of 2026-11-15 that ports opened by a declaration belong to the
   operator's arrangement. Section 3.0 says the network belongs to the two connectors
@@ -1166,6 +1170,15 @@ this crate designs around the gap until it closes.
 - **Where images are published for the console to find**, with their published hashes.
   Later, and named as later. Settled by the operator's ruling of the place, which the
   act that builds the image download needs.
+- **The trace kept outside the agent's reach, opened 2026-11-17.** The operator's words
+  of 2026-11-17: "remember that the trace doesnt get written to state or anywhere the
+  agent has access to it. the trace goes to weaverweb and it stores it outside of the
+  agent's reach". Section 10.4 says the trace is never written to the agent's state.
+  Sections 3.0 and 10.6, and the closed cell on the trace's destination against the
+  record, say that where the destination is not a file on the agent's machine the
+  console holds no trace, and that what keeps the trace past its destination is the
+  operator's. Open: how the operator's words meet that destination. Settled by the
+  operator, then by the trace field's act (`weaver-web-Spec` section 10).
 
 ## 10. The appliance, the console's side
 
@@ -1426,9 +1439,9 @@ which holds the agent's folder and its home side by side, and a host lays the sa
 under its state directory (`weaver-web-Spec` section 6.2). **The trace is never written
 to the agent's state or anywhere the agent can reach**, on the operator's word of
 2026-11-17: it goes to Weaver Web, which stores it outside the agent's reach, so nothing
-on the state drive holds it beside the agent's state or save points (`weaver-web-Spec`
-section 10). Every account's name and every path are the image's and WeaverAgent's, and
-none enters this repository.
+on the state drive holds it beside the agent's state or save points (section 9, and
+`weaver-web-Spec` section 10). Every account's name and every path are the image's and
+WeaverAgent's, and none enters this repository.
 With no drive attached the script warns that at least one drive is for state, about 10
 GiB recommended, and checks again once the operator attaches one. The models drive it
 asks for is sized from the chosen model, whose size it asks the console over TLS
@@ -1492,8 +1505,11 @@ the run card records the choice.
 for that agent** (section 3.0). The trace door has nothing to serve, so Record, the live
 view and Train have nothing to read for that agent, and the console says that it holds
 no trace for that agent. Whatever keeps the trace past its destination is the
-operator's, and the console states nothing about it. That is the operator's choice. **A
-destination that cannot be opened refuses the load**, admin's standing rule
+operator's, and the console states nothing about it. That is the operator's choice. The
+operator's word of 2026-11-17, that the trace goes to Weaver Web, which stores it
+outside the agent's reach (section 10.4), bears on this, and how it meets the
+destination is open, settled by the operator, then by the trace field's act (section
+9). **A destination that cannot be opened refuses the load**, admin's standing rule
 (`weaver-admin-operator-contract` section 5), and an agent that elects no state is held
 to it like any other: an operator who wants an agent that keeps no state declares none,
 on the operator's ruling of 2026-11-15.

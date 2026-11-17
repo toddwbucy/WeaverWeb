@@ -60,8 +60,21 @@ pub enum HeaderRead {
     Read(crate::gguf::Header),
     /// The file's own bytes answered no header, for the reason given,
     /// which holds for the file at its commit: a header past the bound,
-    /// one cut short, one the reader refuses, or no file at the commit.
+    /// one cut short or one the reader refuses.
     NotRead(String),
+    /// Hugging Face answered 404: no file at the commit, or none the
+    /// account can see, since a private repository answers 404 to an
+    /// account that cannot see it. It holds for the read and not for the
+    /// file, so the header memory never keeps it.
+    NotFound(String),
+}
+
+impl HeaderRead {
+    /// Whether the answer holds for the file at its commit, whatever the
+    /// account, so the header memory may keep it.
+    pub fn is_the_files(&self) -> bool {
+        !matches!(self, HeaderRead::NotFound(_))
+    }
 }
 
 /// **A Hugging Face token**, as an admin pasted it. It renders as `Token(..)`
@@ -533,7 +546,8 @@ impl Client {
     /// is read until the metadata ends or the bound's bytes are held,
     /// whichever comes first, and the connection is dropped there. A header
     /// whose need runs past the bound, one cut short and one the reader
-    /// refuses are `NotRead`. A gated file the account lacks, a refused
+    /// refuses are `NotRead`, and a 404 is `NotFound`. A gated file the
+    /// account lacks, a refused
     /// token and a fault of Hugging Face's are errors, since they hold for
     /// the read and not for the file.
     pub async fn header(
@@ -580,7 +594,7 @@ impl Client {
                         "a header's range answered from another byte than the first"
                     ),
                     StatusCode::NOT_FOUND => {
-                        return Ok(HeaderRead::NotRead(format!(
+                        return Ok(HeaderRead::NotFound(format!(
                             "the file does not stand at {commit}"
                         )));
                     }

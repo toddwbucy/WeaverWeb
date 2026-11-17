@@ -609,7 +609,9 @@ async fn header(
                 Err(why) => fragment.reason = Some(why),
             }
         }
-        Ok(HeaderRead::NotRead(why)) => fragment.reason = Some(format!("{NOT_READ}: {why}")),
+        Ok(HeaderRead::NotRead(why) | HeaderRead::NotFound(why)) => {
+            fragment.reason = Some(format!("{NOT_READ}: {why}"));
+        }
         Err(e) => {
             tracing::warn!("a header could not be read: {e:#}");
             fragment.reason = Some(format!("{NOT_READ}: Hugging Face did not answer: {e:#}"));
@@ -940,7 +942,7 @@ async fn resolve(
         .await
     {
         Ok(HeaderRead::Read(header)) => header,
-        Ok(HeaderRead::NotRead(why)) => {
+        Ok(HeaderRead::NotRead(why) | HeaderRead::NotFound(why)) => {
             return Err(refused(&Refusal::Unpickable(format!(
                 "its header was not read: {why}"
             ))));

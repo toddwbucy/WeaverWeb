@@ -94,10 +94,14 @@ impl Headers {
             return Ok(read);
         }
         let read = client.header(token, repo, commit, path, BOUND).await?;
-        self.kept
-            .lock()
-            .unwrap()
-            .keep(Headers::key(repo, commit, path), read.clone());
+        // A 404 is not kept: one account's can stand where another account
+        // sees the file.
+        if read.is_the_files() {
+            self.kept
+                .lock()
+                .unwrap()
+                .keep(Headers::key(repo, commit, path), read.clone());
+        }
         Ok(read)
     }
 }

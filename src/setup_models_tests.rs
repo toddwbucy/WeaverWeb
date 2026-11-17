@@ -184,6 +184,12 @@ fn repos() -> Vec<Repo> {
             gated: false,
             files: many,
         },
+        // A private model, which only the token `seen-token` sees.
+        Repo {
+            name: "org/private",
+            gated: false,
+            files: vec![("p.gguf", in_git_part())],
+        },
         // A model whose one part is kept in git, not LFS.
         Repo {
             name: "org/in-git",
@@ -305,6 +311,19 @@ async fn resolve(
     };
     if repo.gated && !fake.granted.load(Ordering::SeqCst) {
         return (StatusCode::FORBIDDEN, [("x-error-code", "GatedRepo")], "").into_response();
+    }
+    // A private repository answers 404 to a token that cannot see it, as
+    // Hugging Face answers one.
+    let bearer = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok());
+    if repo.name == "org/private" && bearer != Some("Bearer seen-token") {
+        return (
+            StatusCode::NOT_FOUND,
+            [("x-error-code", "RepoNotFound")],
+            "",
+        )
+            .into_response();
     }
     if revision != COMMIT {
         return (
@@ -1151,6 +1170,58 @@ async fn a_verified_pull_wakes_the_hasher() {
     .await;
     assert!(shown.contains(&expected), "{shown}");
     drop(hashing);
+}
+
+/// **A 404 is never kept, so another account reads through** (Spec 6.2,
+/// CodeRabbit on #129): Hugging Face answers 404 to an account that cannot
+/// see a private repository, so that answer holds for the read and not for
+/// the file. The header memory keeps no such answer, and the same file read
+/// under a token that sees it is read. An answer the file's own bytes give,
+/// a fact of the wrong kind here, is kept, and its second read asks Hugging
+/// Face nothing.
+#[tokio::test]
+async fn a_404_is_never_kept_so_another_account_reads_through() {
+    let (fake, base) = fake().await;
+    let client = crate::hugging_face::Client::with_base(&base).unwrap();
+    let headers = crate::hugging_face::headers::Headers::new();
+    let unseen = crate::hugging_face::Token::parse("unseen-token").unwrap();
+    let seen = crate::hugging_face::Token::parse("seen-token").unwrap();
+    let private = RepoId::parse("org/private").unwrap();
+
+    let first = headers
+        .read(&client, Some(&unseen), &private, COMMIT, "p.gguf")
+        .await
+        .unwrap();
+    assert!(
+        !matches!(first, crate::hugging_face::HeaderRead::Read(_)),
+        "{first:?}"
+    );
+    assert_eq!(headers.kept(&private, COMMIT, "p.gguf"), None);
+    let second = headers
+        .read(&client, Some(&seen), &private, COMMIT, "p.gguf")
+        .await
+        .unwrap();
+    assert!(
+        matches!(second, crate::hugging_face::HeaderRead::Read(_)),
+        "{second:?}"
+    );
+
+    let float = RepoId::parse("org/float-type").unwrap();
+    let malformed = headers
+        .read(&client, Some(&seen), &float, COMMIT, "f.gguf")
+        .await
+        .unwrap();
+    assert!(
+        matches!(malformed, crate::hugging_face::HeaderRead::NotRead(_)),
+        "{malformed:?}"
+    );
+    let asked = fake.requests.load(Ordering::SeqCst);
+    let again = headers
+        .read(&client, Some(&seen), &float, COMMIT, "f.gguf")
+        .await
+        .unwrap();
+    assert_eq!(again, malformed);
+    assert_eq!(fake.requests.load(Ordering::SeqCst), asked, "kept");
 }
 
 /// **A decoder part kept in git is hashed from its blob** (Spec 6.2, Codex

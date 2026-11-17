@@ -168,7 +168,8 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
   `sign_in_tests`, `keys_tests`, `admin_tests`, `grants_tests`, `agents_tests`, `reading_tests`,
   `verbs_tests`, `alerts_tests`, `entries_tests`, `transition_tests`,
   `link::tests`, `link::server_asks_tests`,
-  `link::client_tests`, `link::admin_con_tests`, `link::verbs_audit_tests`)
+  `link::client_tests`, `link::admin_con_tests`, `link::verbs_audit_tests`,
+  `link::pairing_tests`, `enrollment_tests`)
   connect to the database in `DATABASE_URL` and run the migrations. The link's tests run one at
   a time, since a listener's start resets every row's link state, which is the claim. Without that variable they print
   `skipped:` and **pass without testing anything**. To really exercise them, set

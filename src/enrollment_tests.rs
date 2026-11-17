@@ -1464,3 +1464,88 @@ async fn a_pair_whose_waiting_line_is_not_delivered_ends_at_once() {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }
+
+/// **The fifth miss closes the field for ten minutes from the miss** (Spec
+/// 8.2), not from the moment its entry began waiting: an entry that holds
+/// the field two seconds before its miss still leaves the field closed ten
+/// minutes past the store's clock at the miss.
+///
+/// Perturbation: take the transaction's start, `now()`, as the miss's
+/// time, and the closure ends two seconds short.
+#[tokio::test]
+async fn the_fifth_miss_closes_the_field_for_ten_minutes_from_the_miss() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
+    let setup = setup.unwrap();
+    sqlx::query("UPDATE agent_setup SET code_misses = 4 WHERE setup_id = $1")
+        .bind(&setup)
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    let (field, state) = s.code_field(&setup).await.unwrap();
+    assert!(matches!(state, crate::store::setup::Field::Open));
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let at_the_miss: chrono::DateTime<chrono::Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    assert!(
+        field.missed().await.unwrap(),
+        "the fifth miss closes the field"
+    );
+    let until: chrono::DateTime<chrono::Utc> =
+        sqlx::query_scalar("SELECT code_closed_until FROM agent_setup WHERE setup_id = $1")
+            .bind(&setup)
+            .fetch_one(&s.pool)
+            .await
+            .unwrap();
+    assert!(
+        until >= at_the_miss + chrono::Duration::minutes(10),
+        "closed until {until}, the miss at {at_the_miss}"
+    );
+}
+
+/// **The field is read as it stands once its lock is held**: a closure
+/// that ends while another transaction holds the setup's row reads as open
+/// to the entry that waited for it.
+///
+/// Perturbation: read the closure against the transaction's start, `now()`,
+/// and the waiting entry reads the field closed.
+#[tokio::test]
+async fn a_closure_that_ends_while_the_entry_waits_reads_open() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
+    let setup = setup.unwrap();
+    let mut holder = s.pool.begin().await.unwrap();
+    sqlx::query(
+        "UPDATE agent_setup SET code_closed_until = clock_timestamp() + interval '1 second' \
+         WHERE setup_id = $1",
+    )
+    .bind(&setup)
+    .execute(&mut *holder)
+    .await
+    .unwrap();
+    holder.commit().await.unwrap();
+    let mut holder = s.pool.begin().await.unwrap();
+    sqlx::query("SELECT 1 FROM agent_setup WHERE setup_id = $1 FOR UPDATE")
+        .bind(&setup)
+        .execute(&mut *holder)
+        .await
+        .unwrap();
+    let waiting = {
+        let (s, setup) = (s.clone(), setup.clone());
+        tokio::spawn(async move { s.code_field(&setup).await.unwrap() })
+    };
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    holder.rollback().await.unwrap();
+    let (field, state) = tokio::time::timeout(SOON, waiting).await.unwrap().unwrap();
+    assert!(
+        matches!(state, crate::store::setup::Field::Open),
+        "the closure ended while the entry waited"
+    );
+    field.release().await.unwrap();
+}

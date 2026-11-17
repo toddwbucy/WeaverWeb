@@ -442,14 +442,22 @@ pub struct FieldLock {
 
 impl Store {
     /// **The setup's code field, locked** (Spec 8.2): the row taken `FOR
-    /// UPDATE` and its field read under the lock. An unknown setup reads as
-    /// out of its pairing step.
+    /// UPDATE`, then its field read under the lock against the store's clock
+    /// at that read. **A read in the locking statement would be taken before
+    /// its wait**, since the store computes a locking select's columns before
+    /// it waits for the row, and `now()` is the transaction's start, so a
+    /// closure that ended while the entry waited would read as standing. An
+    /// unknown setup reads as out of its pairing step.
     pub async fn code_field(&self, setup_id: &str) -> anyhow::Result<(FieldLock, Field)> {
         let mut tx = self.pool.begin().await?;
+        sqlx::query("SELECT 1 FROM agent_setup WHERE setup_id = $1 FOR UPDATE")
+            .bind(setup_id)
+            .execute(&mut *tx)
+            .await?;
         let row = sqlx::query(
             "SELECT state = 'open' AND agent_id IS NULL AS in_step, \
-             COALESCE(code_closed_until > now(), false) AS closed \
-             FROM agent_setup WHERE setup_id = $1 FOR UPDATE",
+             COALESCE(code_closed_until > clock_timestamp(), false) AS closed \
+             FROM agent_setup WHERE setup_id = $1",
         )
         .bind(setup_id)
         .fetch_optional(&mut *tx)
@@ -473,7 +481,9 @@ impl Store {
 impl FieldLock {
     /// **One miss of the code field** (Spec 8.2), counted under the lock and
     /// committed, kept on the setup row so a restart does not reset it: the
-    /// fifth closes the field for ten minutes and starts the count again.
+    /// fifth closes the field for ten minutes from the store's clock at the
+    /// miss, never from the transaction's start, which is before the lock's
+    /// wait and the comparison, and starts the count again.
     /// Answers whether this miss closed it. Not the operator's content, so
     /// the setup's version stands.
     pub async fn missed(mut self) -> anyhow::Result<bool> {
@@ -481,7 +491,7 @@ impl FieldLock {
             "UPDATE agent_setup SET \
                code_misses = CASE WHEN code_misses + 1 >= $2 THEN 0 ELSE code_misses + 1 END, \
                code_closed_until = CASE WHEN code_misses + 1 >= $2 \
-                 THEN now() + make_interval(secs => $3) ELSE code_closed_until END \
+                 THEN clock_timestamp() + make_interval(secs => $3) ELSE code_closed_until END \
              WHERE setup_id = $1 AND state = 'open' \
              RETURNING code_misses = 0",
         )

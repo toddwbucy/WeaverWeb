@@ -6610,21 +6610,27 @@ not reach it**, on this document's election of 2026-11-16: a confirmation code b
 a TLS connection the box already opened, and not a bearer the server issues, which
 section 2.13 makes 32 bytes from the operating system's cryptographic random source.
 **Both ends derive it from that connection**, on this document's election of 2026-11-17.
-Each computes the TLS exporter (RFC 8446 section 7.5) of the one pairing connection
-under this repository's label, `EXPORTER-weaver-pair-code`, with no context, and takes
-its first 50 bits, shown as ten characters of Crockford's base32 in two groups of five.
-Nothing of the code crosses the link, so the console holds no code: at an entry it
-computes each waiting connection's code and compares. A party between the box and the
-console holds two TLS sessions with two secrets, so the code the box shows differs from
-the one the console computes for that party's connection, and the entry matches nothing.
-**The code alone does not stop such a party**, which acts as the server toward the box
-and can choose its own handshake values offline until the code the box derives matches
-one from its own session with the console. Fifty bits make that grinding costly within
-ten minutes and not impossible, which is why the fingerprint's comparison is never
-skipped. The code is single-use, since a match spends its connection, its life is its
-connection's ten minutes, and its attempts are five misses on one setup (the pending
-enrollment, above). Every token the store holds as built is kept as its digest (sections
-2.8 and 2.13), and the code is never held.
+Each computes the TLS exporter (RFC 8446 section 7.5) of the one pairing connection,
+which is TLS 1.3 alone (below), under the label `EXPERIMENTAL-weaver-pair-code` with no
+context, and takes its first 50 bits, shown as ten characters of Crockford's base32 in
+two groups of five. **The label is private to this link**, so it takes the prefix RFC
+5705 section 4 reserves for private use without registration, `EXPERIMENTAL`, since
+every other label must be registered with IANA under Specification Required. That
+section's advice that a label begin with `EXPORTER` guards against a collision with the
+TLS 1.2 PRF's own labels, which the TLS 1.3 exporter, derived from a secret of its own,
+does not meet. Under TLS 1.3 no context computes the same value as an empty one (RFC
+8446 section 7.5). Nothing of the code crosses the link, so the console holds no code:
+at an entry it computes each waiting connection's code and compares. A party between the
+box and the console holds two TLS sessions with two secrets, so the code the box shows
+differs from the one the console computes for that party's connection, and the entry
+matches nothing. **The code alone does not stop such a party**, which acts as the server
+toward the box and can choose its own handshake values offline until the code the box
+derives matches one from its own session with the console. Fifty bits make that grinding
+costly within ten minutes and not impossible, which is why the fingerprint's comparison
+is never skipped. The code is single-use, since a match spends its connection, its life
+is its connection's ten minutes, and its attempts are five misses on one setup (the
+pending enrollment, above). Every token the store holds as built is kept as its digest
+(sections 2.8 and 2.13), and the code is never held.
 
 **The link port tells a pairing apart by ALPN, before the handshake**, on this
 document's election of 2026-11-17. The listener reads each ClientHello before it chooses

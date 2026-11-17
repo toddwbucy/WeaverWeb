@@ -511,6 +511,109 @@ async fn the_authority_lock_is_held_across_the_boxs_word() {
     );
 }
 
+/// **Entries at once for one setup compare one at a time, and none past
+/// the fifth miss** (Spec 8.2): twelve wrong entries sent together count
+/// exactly five misses, each one record, and close the field; the seven
+/// after the fifth find it closed and compare nothing; and the box's own
+/// code is then refused while the field is closed.
+///
+/// Perturbation: read the field without the setup row's lock, and every
+/// entry compares, so the count runs past five.
+#[tokio::test]
+async fn entries_at_once_count_five_misses_and_compare_none_past_them() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
+    let setup = setup.unwrap();
+    let keys = box_keys("box-a");
+    let dialed = dial(&rig, &keys.claim).await;
+    let right = dialed.code().to_string();
+    let wrong = if right.starts_with('0') {
+        "1111111111"
+    } else {
+        "0000000000"
+    };
+    let mut entries = tokio::task::JoinSet::new();
+    for _ in 0..12 {
+        let (app, ada, setup) = (rig.app.clone(), ada.clone(), setup.clone());
+        entries.spawn(async move {
+            send_as(
+                &app,
+                "POST",
+                &format!("/setup/{setup}/pair"),
+                Some(form(&[("compared", "on"), ("code", wrong)])),
+                &ada,
+            )
+            .await
+        });
+    }
+    while let Some(answer) = entries.join_next().await {
+        let (status, _, body) = answer.unwrap();
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    }
+    let refusals = |why: &'static str| async move {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM audit WHERE action = 'pair' AND refusal = $1",
+        )
+        .bind(why)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap()
+    };
+    assert_eq!(
+        refusals("the code matches no waiting box").await,
+        5,
+        "exactly five misses compare"
+    );
+    assert_eq!(refusals("the code field is closed").await, 7);
+    let closed = s.setup(&setup).await.unwrap().unwrap();
+    assert!(closed.code_closed(chrono::Utc::now()));
+    assert_eq!(closed.code_misses, 0, "the count runs past five");
+    let (status, _, body) = enter(&rig, &ada, &setup, &right, None).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(body.contains("five misses"), "{body}");
+    assert_eq!(rows_named(s, "karl").await, 0);
+    drop(dialed);
+}
+
+/// **The exchange's first step refuses a field five misses closed**
+/// (Spec 8.2), a second guard beside the entry's lock: the box would read
+/// `setup_closed`.
+///
+/// Perturbation: drop the field from step 1's check, and the pairing
+/// stands.
+#[tokio::test]
+async fn the_first_step_refuses_a_closed_field() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
+    let setup = setup.unwrap();
+    let id: AgentId = s.mint_key("ag").await.unwrap().parse().unwrap();
+    let act = crate::link::register::PairingAct::Pair(id);
+    let pairing = crate::link::register::Pairing {
+        setup_id: &setup,
+        act: &act,
+        r#box: "box-a",
+        name: "karl",
+    };
+    let mut conn = s.pool.acquire().await.unwrap();
+    let open = Store::pairing_check_on(&mut conn, &pairing).await.unwrap();
+    assert_eq!(open, Ok(()));
+    sqlx::query("UPDATE agent_setup SET code_closed_until = now() + interval '10 minutes' WHERE setup_id = $1")
+        .bind(&setup)
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    let closed = Store::pairing_check_on(&mut conn, &pairing).await.unwrap();
+    assert_eq!(
+        closed,
+        Err(crate::link::register::PairingRefusal::FieldClosed)
+    );
+    assert_eq!(closed.unwrap_err().reason(), "setup_closed");
+}
+
 /// **A pairing naming a live box and name is refused and retires
 /// nothing** (Spec 8.2, step 1): the box hears `box_and_name_live`, the
 /// live row keeps its credentials and its version, and no row is added.

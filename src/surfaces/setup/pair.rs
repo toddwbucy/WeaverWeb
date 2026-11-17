@@ -205,6 +205,7 @@ mod entry {
     use crate::store::audit::{PersonMethod, Principal, Target};
     use crate::store::identity::is_setup_id;
     use crate::store::key::AgentId;
+    use crate::store::setup::Field;
     use crate::surfaces::admin::{fault, first_of, refused, settled, writer};
     use crate::surfaces::gate::Session;
 
@@ -224,6 +225,14 @@ mod entry {
     }
 
     const ACTION: &str = "pair";
+
+    /// **What the comparison found**, under the setup row's lock.
+    enum Compared {
+        NotInStep,
+        Closed,
+        Missed { closed: bool },
+        Matched(Box<crate::link::pairing::Taken>),
+    }
 
     /// The answer to an entry that is not a code.
     const MALFORMED_CODE: &str = "the code is ten characters of 0-9 and A-Z without I, L, O and U, as the box shows it: check it and type it again";
@@ -330,51 +339,92 @@ mod entry {
                 Err(e) => return fault(e),
             }
         }
-        if !setup.in_pairing_step() {
-            if let Err(answer) = record_refusal(&store, &session, setup_id, "setup_closed").await {
-                return answer;
+        // **One exclusion per setup spans the field's check, the comparison
+        // and the miss** (Spec 8.2): the setup row's lock, taken in a task a
+        // dropped request cannot cut, so entries for one setup compare one
+        // at a time against the field as the last left it, none compares
+        // once five misses have closed it, and a miss is counted and
+        // recorded whatever the request does.
+        let compared = {
+            let store = store.clone();
+            let listener = enrollment.listener.clone();
+            let setup_id = setup_id.to_owned();
+            let person = session.person_id.clone();
+            tokio::spawn(async move {
+                let (field, state) = store.code_field(&setup_id).await?;
+                Ok::<Compared, anyhow::Error>(match state {
+                    Field::NotInStep => {
+                        field.release().await?;
+                        Compared::NotInStep
+                    }
+                    Field::Closed => {
+                        field.release().await?;
+                        Compared::Closed
+                    }
+                    Field::Open => match listener.take_pairing(&code).await {
+                        Some(taken) => {
+                            field.release().await?;
+                            Compared::Matched(Box::new(taken))
+                        }
+                        // **A miss**: counted on the setup row under the
+                        // lock, then one refusal record naming the setup
+                        // and never the code.
+                        None => {
+                            let closed = field.missed().await?;
+                            let principal = Principal::Person {
+                                person_id: &person,
+                                method: PersonMethod::Session,
+                            };
+                            store
+                                .audit_refusal(
+                                    principal,
+                                    Target::Setup(&setup_id),
+                                    ACTION,
+                                    "the code matches no waiting box",
+                                )
+                                .await?;
+                            Compared::Missed { closed }
+                        }
+                    },
+                })
+            })
+        };
+        let taken = match compared.await {
+            Ok(Ok(Compared::Matched(taken))) => *taken,
+            Ok(Ok(Compared::NotInStep)) => {
+                if let Err(answer) =
+                    record_refusal(&store, &session, setup_id, "setup_closed").await
+                {
+                    return answer;
+                }
+                return (
+                    StatusCode::CONFLICT,
+                    PairingRefusal::SetupClosed.to_string(),
+                )
+                    .into_response();
             }
-            return (
-                StatusCode::CONFLICT,
-                PairingRefusal::SetupClosed.to_string(),
-            )
-                .into_response();
-        }
-        if setup.code_closed(chrono::Utc::now()) {
-            if let Err(answer) =
-                record_refusal(&store, &session, setup_id, "the code field is closed").await
-            {
-                return answer;
+            Ok(Ok(Compared::Closed)) => {
+                if let Err(answer) =
+                    record_refusal(&store, &session, setup_id, "the code field is closed").await
+                {
+                    return answer;
+                }
+                return (
+                    StatusCode::CONFLICT,
+                    "five misses closed the code field for ten minutes from the fifth",
+                )
+                    .into_response();
             }
-            return (
-                StatusCode::CONFLICT,
-                "five misses closed the code field for ten minutes from the fifth",
-            )
-                .into_response();
-        }
-        let Some(taken) = enrollment.listener.take_pairing(&code).await else {
-            // **A miss**: counted on the setup row, then one refusal
-            // record naming the setup and never the code.
-            let closed = match store.code_missed(setup_id).await {
-                Ok(closed) => closed,
-                Err(e) => return fault(e),
-            };
-            if let Err(answer) = record_refusal(
-                &store,
-                &session,
-                setup_id,
-                "the code matches no waiting box",
-            )
-            .await
-            {
-                return answer;
+            Ok(Ok(Compared::Missed { closed })) => {
+                let words = if closed {
+                    "the code matches no waiting box, and five misses close the code field for ten minutes"
+                } else {
+                    "the code matches no waiting box: check it against the box and enter it again"
+                };
+                return (StatusCode::CONFLICT, words).into_response();
             }
-            let words = if closed {
-                "the code matches no waiting box, and five misses close the code field for ten minutes"
-            } else {
-                "the code matches no waiting box: check it against the box and enter it again"
-            };
-            return (StatusCode::CONFLICT, words).into_response();
+            Ok(Err(e)) => return fault(e),
+            Err(e) => return fault(anyhow::Error::new(e)),
         };
         let act = match replace {
             Some(id) => PairingAct::Replace(id),

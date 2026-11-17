@@ -1435,16 +1435,21 @@ pub enum PairingRefusal {
     BoxAndNameLive,
     /// The row a replacement names holds no live credential.
     Retired,
+    /// Five misses closed the setup's code field since the match: the
+    /// entry's lock is the guard, and this its second (Spec 8.2).
+    FieldClosed,
 }
 
 impl PairingRefusal {
     /// The reason the box reads (Spec 8.2, `pair`'s `refused` line). A
-    /// retired replacement is the setup's own refusal to the box, since
-    /// the setup can go no further as entered.
+    /// retired replacement and a closed field are the setup's own refusal
+    /// to the box, since the setup can go no further as entered.
     pub fn reason(&self) -> &'static str {
         use crate::link::frames::pair_reason;
         match self {
-            PairingRefusal::SetupClosed | PairingRefusal::Retired => pair_reason::SETUP_CLOSED,
+            PairingRefusal::SetupClosed | PairingRefusal::Retired | PairingRefusal::FieldClosed => {
+                pair_reason::SETUP_CLOSED
+            }
             PairingRefusal::BoxAndNameLive => pair_reason::BOX_AND_NAME_LIVE,
         }
     }
@@ -1458,6 +1463,9 @@ impl std::fmt::Display for PairingRefusal {
                 "a live row holds the box the connection claims and the setup's name"
             }
             PairingRefusal::Retired => "the row the replacement names was retired",
+            PairingRefusal::FieldClosed => {
+                "five misses closed the setup's code field for ten minutes from the fifth"
+            }
         })
     }
 }
@@ -1486,18 +1494,24 @@ async fn pairing_stands(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     pairing: &Pairing<'_>,
 ) -> anyhow::Result<Result<Option<Replaced>, PairingRefusal>> {
-    let setup =
-        sqlx::query("SELECT name, state, agent_id FROM agent_setup WHERE setup_id = $1 FOR UPDATE")
-            .bind(pairing.setup_id)
-            .fetch_optional(&mut **tx)
-            .await?;
-    let in_step = setup.is_some_and(|row| {
+    let setup = sqlx::query(
+        "SELECT name, state, agent_id, COALESCE(code_closed_until > now(), false) AS closed \
+         FROM agent_setup WHERE setup_id = $1 FOR UPDATE",
+    )
+    .bind(pairing.setup_id)
+    .fetch_optional(&mut **tx)
+    .await?;
+    let Some(setup) = setup.filter(|row| {
         row.get::<String, _>("state") == "open"
             && row.get::<Option<String>, _>("agent_id").is_none()
             && row.get::<String, _>("name") == pairing.name
-    });
-    if !in_step {
+    }) else {
         return Ok(Err(PairingRefusal::SetupClosed));
+    };
+    // **A field five misses closed refuses the pairing** (Spec 8.2), a
+    // second guard beside the entry's lock.
+    if setup.get::<bool, _>("closed") {
+        return Ok(Err(PairingRefusal::FieldClosed));
     }
     let replaced = match pairing.act {
         PairingAct::Pair(_) => None,

@@ -1359,10 +1359,13 @@ never a bare socket's. Each row carries:
   name is not the key, for the reason section 2.9's arm gives
 - **the agent's name**, the name admin knows it by on its box, which is what
   every verb of section 7.2 takes
-- **the box it reports from**, as registered, **and the address the server
-  observed** its connectors connecting from, with its date. The two are kept
-  apart because one is a claim the operator made at registration and the
-  other is a fact the listener saw
+- **the box it reports from**, as registered or as an appliance's pairing claimed it,
+  **and the address the server observed** its connectors connecting from, with its date.
+  The two are kept apart because one is a claim the operator made at registration or the
+  box made at its pairing and the other is a fact the listener saw. **A row keeps every
+  box it has held as history**, on this document's election of 2026-11-17: the box's
+  claim, when it began and ended, and which credentials it held, so the record shows
+  each machine the agent ran on (section 8.2)
 - **the declared tuple as the agent's side reported it, and when**, kept
   exactly as its source gave it: the `load` member of a `show` answer,
   which is admin's word, or the payload of the load event the trace
@@ -1394,7 +1397,15 @@ never a bare socket's. Each row carries:
   connected with no socket behind either, and the heartbeat cannot clear
   what no connection holds. Section 8 states the reset, and it binds every
   link-state write to the connection it describes, so a stale teardown
-  cannot mark a plane missing after its replacement was admitted
+  cannot mark a plane missing after its replacement was admitted. **A row
+  an appliance's pairing wrote reads "paired, setup running" until either
+  connector's service is first admitted**, on this document's election of
+  2026-11-17, so a box in setup never shows as not present: the setup
+  connection counts for nothing in presence and the connectors' services
+  start at the setup's end (section 8.3). It carries its status as every
+  label does, healthy states included (section 6.2): `ok` while the setup
+  runs, and once a service is admitted the row's presence of section 8,
+  with its own healthy and fault forms
 - **the trace door's state**, open or closed, with the date it last
   changed: admin-con's word at admission, in its hello, and at every change
   after, in a frame on the live connection, each write bound to the
@@ -1465,21 +1476,25 @@ never a bare socket's. Each row carries:
 write the operator makes, so the row carries the author member and the
 store's version like sections 2.3, 2.4, 2.5, 2.9 and 2.10, and an edit to
 what registration authored is ordered on the version like any edit. **The
-edits registration permits are the box and a credential's state, and never
-the name**: admin knows the agent by that name on its box and both
-connectors' configs carry it, so a renamed row would refuse its own
-connectors at the hello of section 8, and a different name is a different
-registration. **At most one row per box and name holds live credentials**,
-held at the schema by a partial unique index over the rows whose
-credentials are live, so one physical agent cannot be registered twice into
-two rows with independent credentials; re-registering a live pair retires
-the previous row by revoking its credentials in the same act. **A row
-holding no live credential is retired, and never live again**: an admin
-retires one through the server by revoking every live plane in one write,
-**a rotation refuses one, the host's `rotate` as the web's**, read under the
-row's lock inside the rotation's transaction, and the agent comes back only
-as a new registration, a new row with a new identity. The host's recovery
-of a replacement row's staged pair, asked by the retired row's identity,
+edits the register permits are a credential's state and, through one write
+alone, the box, and never the name**: admin knows the agent by that name on
+its box and both connectors' configs carry it, so a renamed row would refuse
+its own connectors at the hello of section 8, and a different name is a
+different registration. **At most one row per box and name holds live
+credentials**, held at the schema by a partial unique index over the rows
+whose credentials are live, so one physical agent cannot be registered twice
+into two rows with independent credentials; re-registering a live pair
+retires the previous row by revoking its credentials in the same act, and an
+appliance's pairing that names a live pair is refused instead (section 8.2).
+**A row's box changes only through the replace-box write of section 8.2**,
+one audited write after the fingerprint and the code, on this document's
+election of 2026-11-17, and as built no write edits it. **A row holding no
+live credential is retired, and never live again**: an admin retires one
+through the server by revoking every live plane in one write, **a rotation
+refuses one, the host's `rotate` as the web's**, read under the row's lock
+inside the rotation's transaction, and the agent comes back only as a new
+registration, a new row with a new identity. The host's recovery of a
+replacement row's staged pair, asked by the retired row's identity,
 publishes a pair already committed to the replacement and revives nothing.
 
 ```graph
@@ -2471,13 +2486,13 @@ it decides are stated here and in section 2.8, and the reasons are there.
   server-side authorization item states, its commit point the store commit
   or the authority's file switch, and is audited the same way. **A register verb's
   audit target is the server's authority for `authority init` and `authority
-  rotate`, and the agent's row for `register`, `revoke` and `rotate`, and its
-  action is the verb**, in the host's records as in a person's. **As built on
-  2026-10-09** (`/admin/agents`, on the operator's ruling of that date that
-  everything done with agents belongs in the web page): the page, for an
-  admin, lists the register's rows, each agent's box and name, its identity,
-  each plane's credential state and presence, and not its door, load state
-  or trace. `register` (a box and a name, parsed to section 2.12's rule) and
+  rotate`, and the agent's row for `register`, `revoke`, `rotate`, `pair` and
+  `replace box`, and its action is the verb**, in the host's records as in a
+  person's. **As built on 2026-10-09** (`/admin/agents`, on the operator's ruling
+  of that date that everything done with agents belongs in the web page): the
+  page, for an admin, lists the register's rows, each agent's box and name, its
+  identity, each plane's credential state and presence, and not its door, load
+  state or trace. `register` (a box and a name, parsed to section 2.12's rule) and
   `rotate` (an `ag-`, resolved by the store, a row holding no live credential
   refused as retired) take the persons item's four steps; the audited write
   takes the authority lock as the host's verbs do, refuses where the
@@ -2529,7 +2544,20 @@ it decides are stated here and in section 2.8, and the reasons are there.
   grant on a retired agent stands**: the row is never live again, so the
   grant names an agent that will not answer, and the grants page marks it
   for an admin to revoke. `authority init` and `authority rotate` stay host
-  commands, being the server's own authority.
+  commands, being the server's own authority. **`pair` and `replace box`,
+  an appliance's enrollment** (section 8.2, this document's election of
+  2026-11-17), are admin writes through the server alone, with no host
+  command, and take the same four steps: the setup's identity parsed, and
+  for `pair` the code read in section 8.2's form (malformed: answered as
+  malformed, no record and no miss), the first gate, the setup resolved for
+  the admin (unknown: not found, no record) and the code compared with each
+  waiting connection's, then the audited write under the authority lock,
+  which holds the identity exclusion shared and re-reads the row under its
+  lock inside its transaction. **A code that matches no waiting connection
+  is one refusal record**, naming the setup and never the code, unlike an
+  unknown reference, since the misses are what the fifth counts. `replace
+  box` re-reads the row it replaces and refuses one retired since step
+  three, as a rotation does.
 
 **An agent holds one conversation.** Every gate connection lands in the
 agent's one session working structure, per `toddwbucy/WeaverAgent#59`, so
@@ -4543,10 +4571,11 @@ models drive, the placement page's context length and turn context, and the pair
 page's checkbox, link address and port are live, and the pairing page's code and
 fingerprint, the survey's report, the drives as the box mounted them, the placement's
 devices and its planned fit, and the box's members of the deployment tuple are held,
-each waiting on the enrollment (section 8.2), the image's setup script or WeaverAgent's
-terms. **So the pages alone reach no confirmed tuple**, and the rulings' first test
-(download fresh, set up a virtual machine through the pages, confirm the tuple) waits on
-the enrollment's act and the image's setup-script act.
+each waiting on the enrollment's code act (section 8.2), the survey's format, the
+image's setup script or WeaverAgent's terms. **So the pages alone reach no confirmed
+tuple**, and the rulings' first test (download fresh, set up a virtual machine through
+the pages, confirm the tuple) waits on the enrollment's code act, the survey's reading
+act and the image's setup-script act.
 
 **The pages are an admin's**, the server-wide admin grant, as the declaration screen's
 (section 6.1): a setup comes before Provision's register, so no agent row exists for a
@@ -4613,7 +4642,11 @@ that fetched it and the facts read from its header, and the setup holds the cont
 length, the turn context and the devices the placement page keeps (the devices since
 migration `0029`). **The pages write no declaration row**, and the document's grammar of
 section 6.1 is not extended. Every write is audited with the target kind `setup`, naming
-the row.
+the row. **An appliance's pairing links the setup to the register row** its exchange
+writes (section 8.2), and **the setup keeps the latest survey report of each stage**,
+`pairing` and `drives`, verbatim with the time it arrived, so a pairing run again never
+replaces the drives page's report, nor the reverse (section 8.3, this document's
+election of 2026-11-17).
 
 **The identity's prefix is `st-` and not `su-`**, since the repository's privilege scan
 (section 7.2) reads `su` standing as a word as the name of a privilege-escalating
@@ -4626,9 +4659,9 @@ there.
 | page | live | held, and on what |
 | --- | --- | --- |
 | Start | the name, refused by the start page's rule or where an open setup holds it; the open setups; New agent once an agent stands | nothing |
-| Pairing | the checkbox, virtual machine or host; the console's link address and port (`link_address`, else `link_listen`), which the box's setup asks for, and that the box must reach them; the warning where that address is a loopback address and the checkbox says virtual machine, and where it is an unspecified address, `0.0.0.0` or `::`, for a host and a virtual machine alike, since a listener binds it for every interface and it names no machine to dial (RFC 1122 admits `0.0.0.0` as a source alone, and RFC 4291 refuses `::` as a destination); and the address the box dialed too once the enrollment brings it | the waiting box, its code and its fingerprint: the enrollment (section 8.2) and the image's setup script; the survey's report: its form, the image's or WeaverAgent's, and its frame |
-| Models | the repository and its revision, resolved to a commit; each choice with its size and its header's facts; a gated repository with its accept link and a check again; the pick, which asks a pull (section 2.15), an adapter's carrying its scale; the pulls' progress and record; the base's identity, computed from the cache; the roster beyond the first agent drawn and marked unbuilt | nothing on the console's side; the box's pull from the cache is the enrollment's frame |
-| Drives | the appliance's form drawn with what it will show; the models drive's need, the bytes of the picks' distinct blobs; the host's form drawn and marked unbuilt, its models directory prefilled from `model_cache` where set; the SSH key that goes down, by its fingerprint, with a link to change it | the command that starts the drive setup: the image's setup script names it; the drives as mounted: the box's report and its frame |
+| Pairing | the checkbox, virtual machine or host; the console's link address and port (`link_address`, else `link_listen`), which the box's setup asks for, and that the box must reach them; the warning where that address is a loopback address and the checkbox says virtual machine, and where it is an unspecified address, `0.0.0.0` or `::`, for a host and a virtual machine alike, since a listener binds it for every interface and it names no machine to dial (RFC 1122 admits `0.0.0.0` as a source alone, and RFC 4291 refuses `::` as a destination); and the waiting box's peer address too once the enrollment's code act brings it (section 8.2) | the waiting boxes, each by the name it claims, its peer address and its wait, the console's fingerprint, the fingerprint's confirmation and the code's field: the enrollment's code act (section 8.2) and the image's setup script; the survey's report: carried by `setup report` at the `pairing` stage (section 8.3), its members read once its format merges (`toddwbucy/WeaverTools#37`) |
+| Models | the repository and its revision, resolved to a commit; each choice with its size and its header's facts; a gated repository with its accept link and a check again; the pick, which asks a pull (section 2.15), an adapter's carrying its scale; the pulls' progress and record; the base's identity, computed from the cache; the roster beyond the first agent drawn and marked unbuilt | nothing on the console's side; the box's pull from the cache: the act of the box's pull (section 10) |
+| Drives | the appliance's form drawn with what it will show; the models drive's need, the bytes of the picks' distinct blobs; the host's form drawn and marked unbuilt, its models directory prefilled from `model_cache` where set; the SSH key that goes down, by its fingerprint, with a link to change it | the command that starts the drive setup: the image's setup script names it; the drives as mounted: the box's report, carried by `setup report` at the `drives` stage (section 8.3), its members read once its format merges |
 | Placement | the context length, bounded below by the box's max-tokens-per-turn and above by the header's maximum; the turn context; the block count and the parts in shard order, from the header | the devices, a set of the survey's cards by ordinal: the survey's report; the fit, drawn "planned, from the box's room plan": the room plan's answer over TLS, an ask on WeaverAgent |
 | Confirm | every member of the tuple with its source, read or held | the box's members and the devices; Confirm stands only once every member is read |
 | Build | one pane, marked unbuilt, saying the box lays the agent from the tuple once Confirm stands, and linking the declaration screen as built for the fields no setup page asks | the board and the prompt tuple panel, held by the rulings |
@@ -4770,9 +4803,11 @@ survey's report, an empty set once it has reported, and an ordinal it lacks. A s
 version answers 409 after the first record, as every admin write's does.
 
 **What the box reports reaches the pages through one source** (`src/box_report.rs`):
-the survey's cards and the box's members. The enrollment's act (section 8.2) builds it.
-Until then the server's source answers none, so the devices and the box's members are
-held, and the setup pages' tests supply a report through the same seam.
+the survey's cards and the box's members. Its source over the reports the setup keeps
+(section 8.3) is the survey's reading act's, once the survey's format merges
+(`toddwbucy/WeaverTools#37`). Until then the server's source answers none, so the
+devices and the box's members are held, and the setup pages' tests supply a report
+through the same seam.
 
 **Confirm writes the deployment tuple**, one row, immutable (migration `0029`): a
 trigger of the kind migration `0023` uses refuses any update and any delete, and a
@@ -4790,16 +4825,16 @@ source:
 | the box's max-tokens-per-turn | the console's constant, `MAX_TOKENS_PER_TURN`, 4096 |
 | the turn context | the setup |
 | the virtual machine or host | the setup's checkbox |
-| the image version, the driver, the cards by identity, the guest CPU, the machine | the box's report |
+| the image version, the driver, the cards by model, each with its ordinal in PCI bus order, the guest CPU, the machine | the box's report |
 | the drives | the box's report |
 | the devices | the placement page, from the survey's report |
 
 **Confirm's way forward stands only where every member is read**: both pulls verified,
 the base's identity computed, the context length and the turn context kept, the devices
-chosen, and the box's members answered. The box's members come from a source the
-enrollment's act builds, and until it the source answers none, so Confirm holds and says
-which members it waits on. A post to Confirm with a member unread is refused, writing
-nothing. Confirm then goes to the build page.
+chosen, and the box's members answered. The box's members come from the source the
+survey's reading act builds (above), and until it the source answers none, so Confirm
+holds and says which members it waits on. A post to Confirm with a member unread is
+refused, writing nothing. Confirm then goes to the build page.
 
 **Confirm posts the setup's version alone**, every member read from its source and never
 from the form. Its order is section 2.13's: the version parsed (400 for any other
@@ -4824,11 +4859,11 @@ setup is confirmed, and a confirmed setup's page draws the tuple from its row al
 the decoder's artifact, the adapter's artifact, SHA-256 and scale, the base's identity,
 the devices, the context length and the turn context. They are read from the tuple's row
 alone (`Store::laying`), so none stands before Confirm. The max-tokens-per-turn the
-tuple carries is not among them, since the box's agent-creation tool writes its own. The
-enrollment's act answers them to the box's setup only once the setup is confirmed
-(section 8.2), so nothing the box lays is chosen after Confirm or left to a default of
-the box's own tooling. That tooling's taking the devices, the context length and the
-turn context is WeaverAgent's (section 10).
+tuple carries is not among them, since the box's agent-creation tool writes its own.
+`admin-con setup describe` answers them to the box's setup, as `laying`, only once the
+setup is confirmed (section 8.3), so nothing the box lays is chosen after Confirm or
+left to a default of the box's own tooling. That tooling's taking the devices, the
+context length and the turn context is WeaverAgent's (section 10).
 
 **The operator's SSH public keys are a console setting** (migration `0027`), one or
 more, an admin's write at `GET /admin/ssh-key`, audited with the target kind `ssh_key`
@@ -4838,13 +4873,15 @@ key type of OpenSSH's public-key format, base64 that decodes, and the type name 
 the decoded blob equal to the line's, a line of at most 16 KiB, and at most 16 keys
 held, each once. A key is shown by its SHA-256 fingerprint, OpenSSH's form, and the
 line's text enters no audit record. Which types a box's SSH door admits is the image's
-and enters no text here. The setup script's drive-setup run fetches the keys over the
-paired link and writes them, so a changed key reaches a box when the setup command runs
-there again, and the drives page says so (this document's election of 2026-11-16).
+and enters no text here. The setup script's drive-setup run fetches the keys with
+`admin-con setup describe` (section 8.3) and writes them, so a changed key reaches a
+box when the setup command runs there again, and the drives page says so (this
+document's election of 2026-11-16).
 
 **The pages reach no agent and no box.** A write lands in the store and, for a pick, in
 the puller's queue: no frame leaves on the link, no verb is asked, and nothing is
-installed. The box's side of each held part is section 8.2's and section 10's.
+installed. The box's side of each held part is stated in sections 8.2 and 8.3, and what
+they leave open is section 10's.
 
 ## 7. The seams
 
@@ -5657,10 +5694,10 @@ by the same handshake, so **nothing crosses the link in the clear** and no plain
 accept path exists. The ruled exception is an appliance's enrollment exchange (section
 8.2), the one connection the link admits before its party is known, TLS from its first
 byte. That it presents no client certificate is this document's election, not the
-ruling's words. How the listener tells it from a plane connection is section 10's, since
-as built the listener requires a client certificate at every handshake. Where a
-certificate and key are configured, the browser's listener serves TLS only, per section
-2.13. The link's encryption is its own and holds without configuration.
+ruling's words. The listener tells it from a plane connection by the protocol its
+ClientHello offers, before the handshake (section 8.2). Where a certificate and key are
+configured, the browser's listener serves TLS only, per section 2.13. The link's
+encryption is its own and holds without configuration.
 
 **The server's authority is durable state and is never minted at start.**
 Its key and certificate are created once by an explicit register verb, the
@@ -5718,7 +5755,7 @@ whose authority signed it and no other, so moving an agent to another
 instance is a re-registration there rather than a copy. **For an appliance,
 an appliance's enrollment replaces this** (section 8.2): its connectors make their
 keys inside it and the server signs the public halves, so no key leaves the server for
-it, and how a config's other members reach it is section 10's.
+it, and the exchange answers a config's other members (section 8.2).
 
 **The hello is refused before its roster is read when the credential is not
 live in the register.** A plane connection presents its certificate at the
@@ -6324,6 +6361,14 @@ stays the single-host install's. The image's accounts and locations are
 parameters with no default, as every location here is, and this repository
 fixes none of them.
 
+**An appliance's pairing changes nothing in the units** (section 8.2), on this
+document's election of 2026-11-17: `adopt` writes the config each unit reads, so the
+templates and the stage's checks of every directive stand as staged. **The connectors'
+build for a box holds neither `openssl-sys` nor `x509-parser`**: its dependency graph
+under `--no-default-features` holds no `openssl-sys` (section 2.13) and no
+`x509-parser`, which parses a certificate request on the server's side of the exchange
+alone.
+
 **What each must be**, refused otherwise: every path absolute, not the root
 directory, with no empty, `.` or `..` component and no trailing separator,
 and of printable ASCII outside the characters a unit or a `PATH` list would
@@ -6438,10 +6483,14 @@ shows and the operator enters on the console's pairing page, and on their addend
 pairing belongs with the connectors and serves a host too, the drive setup being the
 appliance's script alone. An appliance is the case this section works through, and what
 it says of pairing holds for a host. This section states it to the level those rulings
-fix and says what the built link holds beside it. Where neither a ruling nor the built
-code fixes a point, section 10 carries it with what settles it. It is never a person's
-enrollment of section 2.13, and this document writes "an appliance's enrollment"
-wherever the two could be confused. None of it is built.
+fix and says what the built link holds beside it. **The enrollment's mechanisms are
+this document's election of 2026-11-17**, each stated below: how the link port tells a
+pairing apart, the fingerprint, the code, the waiting box, the exchange, and the
+commands the box runs. Where neither a ruling nor that election fixes a point, section
+10 carries it with what settles it. It is never a person's enrollment of section 2.13,
+and this document writes "an appliance's enrollment" wherever the two could be
+confused. **None of it is built**: the enrollment's code act builds it, against this
+text.
 
 **How it stands against registration as built on 2026-11-15:**
 
@@ -6450,9 +6499,9 @@ wherever the two could be confused. None of it is built.
     box and name.
   - The authority, durable and never minted at start. As built it makes each client's
     key pair and signs its certificate in one step (`link::authority`, `mint_client`).
-    For an appliance it signs a public half the appliance presents, which is new. The
-    half's form, and any proof that the party presenting it holds its key, are section
-    10's.
+    For an appliance it signs a public half the appliance presents, which is new: a
+    certificate request whose own signature proves that the box holds the key (the
+    exchange, below).
   - Fingerprints stored and never keys.
   - Every rule of section 8 for a plane connection whose credential is live: the hello
     refused before its roster where the credential is not live, identity by the
@@ -6474,8 +6523,8 @@ wherever the two could be confused. None of it is built.
   the authority's certificate (`link::client::LinkConfig`). The operator's rulings of
   2026-11-16 (setup pages) have the operator enter the console's address and port,
   localhost allowed, in the appliance's setup script, and the code on the console's
-  pairing page. Which of the rest the exchange answers, and which the appliance holds
-  already, is section 10's.
+  pairing page. The exchange answers the rest (below), and the box facts each config
+  needs are added on the box by the image's install, as for a registered agent.
 - **What coexists.** Registration and its handover stand as built (section 8.1). Both
   paths write the same row and the same two credentials. The setup flow serves a host as
   it serves a virtual machine, on the operator's rulings of 2026-11-16 (setup pages),
@@ -6490,25 +6539,46 @@ wherever the two could be confused. None of it is built.
   - rotation of an enrolled appliance
   - rotation of the authority, which section 8 makes a re-registration of every agent.
     For an enrolled appliance, whose certificates nothing but an enrollment issues, that
-    is a new pairing on every machine unless the enrollment's act gives it another path.
-  - an enrollment whose box and name match a live row, where a re-registration revokes
-    the old row (section 2.12). A new image is a new enrollment, on the operator's
-    ruling of 2026-11-15, so an upgrade that brings a new image meets this case.
-  - the row's author member (sections 2.12 and 3.2), with the exchange's audit principal
-    - whether registration stays beside the pairing for a host
+    is a new pairing on every machine until an act gives it another path.
+  - whether registration stays beside the pairing for a host
 
-**The pending enrollment.** The one-time secret is bound to one pending enrollment the
-operator opened, so it cannot enroll an appliance the operator did not expect. On the
-operator's rulings of 2026-11-16 (setup pages) and their addendum a box that dialed the
-console waits, and the operator binds it on the pairing page, after the start page has
-asked the agent's name, by entering the code the box shows. What else a pending
-enrollment names is section 10's. A row the exchange writes needs at least the box and
-the name of section 2.12, as built. **As built, a pending enrollment cannot be a
-register row**, because a row holding no live credential is retired and never live again
-(section 2.12), so it stands apart from the register until its exchange writes the row
-with both credentials live. Which role opens one, where it is held, and what ends it
-besides its exchange and its expiry, are section 10's. Registration, the act it stands
-beside, is an admin's write (section 2.13).
+An enrollment whose box and name match a live row, and the row's author with the
+exchange's audit principal, are settled below.
+
+**The pending enrollment is the setup row of section 6.2 in its pairing step**, on this
+document's election of 2026-11-17, so the one-time code is bound to one pending
+enrollment the operator opened and cannot enroll an appliance the operator did not
+expect. On the operator's rulings of 2026-11-16 (setup pages) and their addendum a box
+that dialed the console waits, and the operator binds it on the pairing page, after the
+start page has asked the agent's name, by entering the code the box shows. **As built, a
+pending enrollment cannot be a register row**, because a row holding no live credential
+is retired and never live again (section 2.12), so it stands apart from the register
+until its exchange writes the row with both credentials live. It is an admin's, as the
+setup pages are (section 6.2) and as registration is (section 2.13). **Entering a code
+is an admin write** in section 2.13's order, and a code that matches no waiting
+connection is one refusal record. **The page reads an entry in Crockford's form** before
+it compares: it uppercases the entry, drops spaces and hyphens, and reads I and L as 1
+and O as 0. An entry that is not then ten characters of the code's alphabet (the
+one-time secret, below) is refused at section 2.13's first step and answered as
+malformed, so the operator knows to retype it, and it writes no record and is no miss.
+Five misses on one setup close its code field for ten minutes from the fifth, the life
+of a waiting connection. A pending enrollment ends with its exchange, which links the
+setup row to the row it writes. A waiting connection that expires leaves the setup in
+its pairing step, and the box dials again.
+
+**The waiting box is held in the server's memory alone**, on this document's election of
+2026-11-17. The pairing connection's first frame carries the box's name, as the box
+claims it, and the two certificate requests. Nothing reaches the store before a code
+matches: no row, no audit record and no log line per connection. At most 16 connections
+wait in all and 4 from one peer address, and a connection past either is refused `busy`.
+The first frame arrives within 10 seconds and holds at most 16 KiB. The server sends a
+heartbeat while the box waits, and ten minutes from the dial it closes the connection
+`expired`, the life the rulings name. **The pairing page lists the boxes waiting**, each
+by the name it claims, its peer address and how long it has waited, marked as the box's
+claim, beside the console's fingerprint and the code's field. **The localhost warning of
+section 6.2 reads the pairing connection's peer address** once a box has dialed: a box
+on a loopback address is the console's own machine, and with the checkbox saying virtual
+machine the page warns and never refuses.
 
 **The pairing.** An appliance's console goes straight into the appliance's setup script
 at first boot, and the script asks for the console's address and port, localhost
@@ -6521,82 +6591,250 @@ and setup uses no SSH. The members are ruled: the console's address and port, th
 and the console's certificate fingerprint, which the operator compares. **As built, the
 link address `register` writes into a client config is `link_address`, else
 `link_listen`** (`ServerConfig` in `src/config.rs`), and that is the address a connector
-dials. **Which certificate the fingerprint names is open.** As built, every connector
-pins the authority's certificate (`link::authority`, `certificate_pem`), and the
-listener's handshake presents the server's own certificate alone, without the
-authority's (`server_tls`). So, as built, the fingerprint of the certificate a box meets
-at the handshake is the server's own and not the authority's. Whether the fingerprint
-the box and the pairing page show is the server's certificate's or the authority's, and
-how the authority's certificate reaches the appliance to be pinned, are section 10's.
-The appliance's setup script is an ask upstream (`weaver-web-PRD` section 8), and the
-pairing is the connectors', this crate's.
+dials. **The fingerprint is the authority's**, on this document's election of
+2026-11-17: the certificate every connector pins (`link::authority`, `certificate_pem`)
+and `authority init` answers. As built the listener's handshake presents the server's
+own certificate alone (`server_tls`), so the pairing's configuration presents a chain of
+the server's certificate and the authority's. The box reads the authority's certificate
+from the handshake, checks that the server's certificate chains to that authority
+certificate presented with it, and checks no name: before the exchange's step 4 the box
+knows no name the certificate carries and holds no trust anchor, so a name check at
+pairing is neither possible nor needed. It prints the authority's fingerprint,
+sixty-four hex digits in sixteen groups of four. **Trust at the pairing comes from two
+things**: the operator's comparison of that fingerprint with the console's, and the
+code, which differs at the two ends if anything sits between them (the one-time secret,
+below). The box learns `server_name` from the answer at step 4 and checks it on every
+plane connection after, as section 8 does. The pairing page shows the console's own,
+read from the authority it loaded, in the same grouping. The authority's certificate
+reaches the box this way and is pinned at `adopt`. **The operator's comparison of the
+two is a step the pairing page asks the operator to confirm before its code field takes
+a code, and never skipped**, since the code alone does not stop a party between the box
+and the console (the one-time secret, below). The appliance's setup script is an ask
+upstream (`weaver-web-PRD` section 8), and the pairing is the connectors', this crate's.
 
 **The one-time secret.** The rulings fix three bounds (`weaver-web-PRD` section 10.1):
 it is single-use, it is short-lived on the order of ten minutes, and it is bound to one
 pending enrollment. It is the only secret the operator carries by hand, the operator's
 single exception of 2026-11-14, which the rulings of 2026-11-16 (setup pages) and their
 addendum move from a command line to a short one-time code the box shows and the
-operator enters on the pairing page. **The box draws it, since the box shows it, and
-section 2.13's rule does not reach it**, on this document's election of 2026-11-16. It
-is a confirmation code bound to a TLS connection the box already opened, single-use,
-short-lived and limited in attempts, and not a bearer the server issues, which section
-2.13 makes 32 bytes from the operating system's cryptographic random source. Its exact
-length and lifetime, the limit on attempts, and where and in what form the console holds
-it, are the enrollment act's elections (section 10). Every token the store holds as
-built is kept as its digest (sections 2.8 and 2.13).
+operator enters on the pairing page. **The box shows it, and section 2.13's rule does
+not reach it**, on this document's election of 2026-11-16: a confirmation code bound to
+a TLS connection the box already opened, and not a bearer the server issues, which
+section 2.13 makes 32 bytes from the operating system's cryptographic random source.
+**Both ends derive it from that connection**, on this document's election of 2026-11-17.
+Each computes the TLS exporter (RFC 8446 section 7.5) of the one pairing connection,
+which is TLS 1.3 alone (below), under the label `EXPERIMENTAL-weaver-pair-code` with an
+empty context and a `key_length` of 32 bytes. It takes the first 50 bits of that output,
+most significant bit first, cuts them in order into ten groups of 5 bits, and writes
+each group as one character of Crockford's base32 (`0123456789ABCDEFGHJKMNPQRSTVWXYZ`),
+shown in two groups of five. The length is fixed because `key_length` enters the HKDF
+label (RFC 8446 sections 7.1 and 7.5), so an export of another length begins with other
+bits and every entry would miss. The example after this paragraph shows the encoding
+from made-up bytes. **The label is private to this link**, so it takes the prefix RFC
+5705 section 4 reserves for private use without registration, `EXPERIMENTAL`, since
+every other label must be registered with IANA under Specification Required. That
+section's advice that a label begin with `EXPORTER` guards against a collision with the
+TLS 1.2 PRF's own labels, which the TLS 1.3 exporter, derived from a secret of its own,
+does not meet. Under TLS 1.3 no context computes the same value as an empty one (RFC
+8446 section 7.5). Nothing of the code crosses the link, so the console holds no code:
+at an entry it computes each waiting connection's code and compares. **The code defeats
+a relay** because the exporter's output is bound to one TLS session's secrets: a party
+that terminates TLS between the box and the console holds two sessions whose codes
+differ, so the entry matches nothing, and a relay that does not terminate TLS forwards a
+session it can neither read nor alter. **The code alone does not stop such a party if it
+grinds**: acting as the server toward the box, it can choose its own handshake values
+offline until the code the box derives matches one from its own session with the
+console. Fifty bits make that grinding costly within ten minutes and not impossible,
+which is why the fingerprint's comparison is never skipped: such a party holds no key of
+the console's, so it presents a chain of its own, and the fingerprint the box prints is
+not the console's. The code is single-use, since a match spends its connection, its life
+is its connection's ten minutes, and its attempts are five misses on one setup (the
+pending enrollment, above). Every token the store holds as built is kept as its digest
+(sections 2.8 and 2.13), and the code is never held.
 
-**The exchange.** The box dials the link port and opens TLS under the console's
-certificate, and shows the code and that certificate's fingerprint at its console. Once
-the operator enters the code on the pairing page and the console matches it to the
-waiting connection, the box presents two public halves over that TLS, gate-con's and
-admin-con's, and receives its certificates, and the code is spent. **This document
-elects that one single-use secret enrolls the pair**, since both connectors must match
-on one row (the operator's ruling of 2026-10-01, section 8). The console matches the
-code to its pending enrollment, signs each half under the authority, bound to the row
-and its plane as registration binds a certificate, and writes the row of section 2.12
-with both fingerprints live. **Nothing crosses in the clear**, since the exchange is TLS
-from its first byte, so section 8's claim holds as written. **How the link port tells an
-enrollment from a plane connection is open.** The ruling makes the enrollment connection
-the link's one unauthenticated surface, and this document elects that it presents no
-client certificate. As built, the listener requires one at every handshake
-(`server_tls`), and section 8's refusal of a credential that is not live, before its
-roster is read, binds every connection that presents one. How the two are told apart,
-and what the exchange answers beyond the two certificates, are section 10's. The
-exchange writes the register, and every register write is audited (section 2.13), so it
-is audited. Its principal is section 10's.
+**The code's encoding, illustrated** from made-up bytes, the encoding step alone:
+
+```text
+first 7 of 32 bytes:  8f 3a 5c 01 e7 22 b4
+first 50 bits:        10001 11100 11101 00101 11000 00000 01111 00111 00100 01010
+as numbers:           17 28 29 5 24 0 15 7 4 10
+as shown:             HWX5R 0F74A
+```
+
+**The link port tells a pairing apart by ALPN, before the handshake**, on this
+document's election of 2026-11-17. The listener reads each ClientHello before it chooses
+a configuration. One that offers the protocol `weaver-pair/1` meets the pairing
+configuration: TLS 1.3 alone, no client certificate asked, and the chain of the server's
+certificate and the authority's. Every other ClientHello, the connectors' among them,
+meets the mutual-TLS configuration as built (`server_tls`), so section 8's refusal of a
+credential that is not live, before its roster is read, binds every plane connection
+exactly as it stands. With one port, the address and port the operator types at the box
+are the console's link address, which the pairing page shows.
+
+**The exchange**, on this document's election of 2026-11-17. The box dials the link port
+under the pairing protocol, sends its first frame, and shows the code and the
+authority's fingerprint at its console. Once the operator has compared the fingerprint
+and entered the code on the pairing page, and the console has matched it to one waiting
+connection, the console takes six steps under the authority lock:
+1. It refuses `setup_closed` where the setup has left its pairing step since the entry,
+   and `box_and_name_live`, with the register's retire offered, where a live row holds
+   the box the connection claims and the setup's name. **The check is a register write
+   of the exchange's own**, sharing the register's insert and taken under the row's
+   lock, so registration's re-registration, which retires a live row of the same box and
+   name (section 2.12), stays registration's alone.
+2. It verifies each certificate request's own signature, the proof that the box holds
+   the key, and takes ECDSA P-256 with SHA-256 alone, the kind `mint_client` makes, else
+   it refuses `request_refused`.
+3. It signs each request's public half as `mint_client` signs a certificate: the subject
+   the agent's name and the plane, client authentication alone, and every member but the
+   key the console's own.
+4. It sends the answer: the agent's name, the row's identity, minted here, the box,
+   `server_name`, the authority's certificate and the two certificates.
+5. It waits, bounded, for the box's word that it wrote the answer.
+6. It writes the register row of section 2.12 with both fingerprints live and the setup
+   row's link to it, in one identity transaction that first re-checks the session and
+   the admin grant, with the audit's outcome naming the first record, and then sends its
+   last word.
+
+**This document elects that one single-use code enrolls the pair**, since both
+connectors must match on one row (the operator's ruling of 2026-10-01, section 8).
+**Nothing crosses in the clear**, since the exchange is TLS from its first byte, so
+section 8's claim holds as written. **The exchange's audit principal is the admin who
+entered the code**, by session, its action `pair` and its target the agent row the
+exchange writes, and the row's author is that admin's `pe-` identity (section 3.2),
+since a pending enrollment is an admin's act and the server acts on the admin's entry.
+**A lost word at step 5 writes nothing.** The box then holds an answer for a row that
+does not exist, which its connectors' hello meets as not live (section 8), so a failed
+pairing fails loud. **The recovery is a second pairing**: a box that adopted an answer
+whose word was lost pairs again, and the second pairing's configs replace the first's.
+On `unknown` the pairing page says whether the row stands: where it stands, the answer
+the box wrote is good and the setup script adopts it, and where it does not, the box
+pairs again.
 
 **Each connector's key is made inside the appliance and never leaves it.** The console
-receives the public half alone, so the row's fingerprints are of certificates whose keys
-the console never held, and section 2.12's rule that the server holds fingerprints and
-never keys holds with nothing to forget. **Each appliance is meant to hold its own
-certificates**, the operator's ruling of 2026-11-14. **The keys and certificates live on
-the appliance's root disk**, and a new image is a new enrollment, made by a new pairing,
-on the operator's ruling of 2026-11-15 (`weaver-web-PRD` section 10.2). No
-representation is elected for them here, since where on that disk they stand is a fact
-of the box this repository does not record. After the exchange every connection a
-connector makes is section 8's mutual TLS.
+receives the public half alone, **as a certificate request**, PKCS #10 in PEM, whose own
+signature proves that the box holds the key (this document's election of 2026-11-17), so
+the row's fingerprints are of certificates whose keys the console never held, and
+section 2.12's rule that the server holds fingerprints and never keys holds with nothing
+to forget. **Each appliance is meant to hold its own certificates**, the operator's
+ruling of 2026-11-14. **The keys and certificates live on the appliance's root disk**,
+and a new image is a new enrollment, made by a new pairing, on the operator's ruling of
+2026-11-15 (`weaver-web-PRD` section 10.2). No representation is elected for them here,
+since where on that disk they stand is a fact of the box this repository does not
+record. After the exchange every connection a connector makes is section 8's mutual TLS.
+
+**The commands on the box**, on this document's election of 2026-11-17, are what the
+image's setup script calls. Each runs under an account the image names, and no account,
+path, mode or address of a box enters this text. **Every command writes JSON lines on
+standard output**, one object per line, each with an `event` member, the last line its
+outcome, and its exit status agrees with that line, the shape the register verbs and
+`weaver-admin` use. Diagnostics go to standard error. A reason the console sends is
+checked as printable ASCII within a bound before it is printed. **One set of exit
+statuses serves every command:**
+
+| status | name | meaning |
+| --- | --- | --- |
+| 0 | `done` | paired, adopted, described or accepted |
+| 1 | `fault` | the command's own failure, its reason on standard error |
+| 2 | `usage` | the command's own input refused before any dial: an argument, a file, a config |
+| 3 | `unreachable` | no TCP connection or no TLS handshake at the address and port |
+| 4 | `refused` | the console refused, with its reason |
+| 5 | `expired` | the pairing alone: no code entered within the window |
+| 6 | `unknown` | the connection ended after the console may have acted, and the pairing page says which |
+
+The pairing takes three steps on the box, so that each connector makes its own key under
+its own account and no command of this repository runs as root to parse what the network
+sent:
+1. **`gate-con request` and `admin-con request`**, each under its own connector's
+   account. In: the path of the connector's config, which must not exist. Out: that file
+   created holding the connector's new key alone, under the trust rule a connector's
+   config already takes, and a `request` line carrying the certificate request. No dial.
+2. **`admin-con pair`**, under an unprivileged account the image names. In: the
+   console's address and port, the two requests, the file the answer is written to,
+   which must not exist, and the box's name in section 2.12's grammar. **An appliance
+   always passes the box's name**, since every appliance boots with the same host name,
+   and the setup script asks it of the operator. The default, the machine's own name,
+   serves a host. While it waits: one `waiting` line with `code`, `fingerprint` and
+   `expires_in_secs`, and no server name, which the box learns only from the answer at
+   the exchange's step 4. Out, one line of these:
+   - `paired` (0), with `agent`, `agent_id` and `box`, the answer written
+   - `refused` (4), with `reason`: `busy`, `box_and_name_live`, `setup_closed` or
+     `request_refused`
+   - `expired` (5), the window past with no code entered
+   - `unreachable` (3), with the address it dialed
+   - `unknown` (6), the connection ended after the answer was written and before the
+     console's last word, so the pairing page says whether the row stands
+3. **`gate-con adopt` and `admin-con adopt`**, each under its own connector's account.
+   In: its config from step 1 and the answer. It checks that the answer's certificate
+   for its plane carries its own key's public half and verifies under the authority the
+   answer carries, whose fingerprint is the one `pair` printed, and then writes the
+   complete config in place, the members `register` writes, so the connector's unit
+   reads it unchanged (section 8.1). Out: `adopted` (0), or `refused` (4) with its
+   reason and nothing written.
+
+**Each config reaches the agent's directory by a rename**, since a unit reads its config
+under the agent's name and the name arrives only with `paired`. `request` writes each
+config into the setup script's directory for the run, and after `paired` and before
+`adopt` the script moves the two configs into the agent's directory. Four conditions
+bind the move:
+- **A rename, never a copy.** The two directories are on one filesystem and the move is
+  `rename(2)`, which keeps the file's inode, owner and mode. A move that would cross
+  filesystems is refused and never done by copying, since a copy made by root is root's
+  file.
+- **Every command names its config.** `request`, `adopt` and the running service each
+  take `--config` with no default, as the connectors do as built.
+- **The key never leaves its config.** `request` writes the key once, into the config it
+  creates, under the connector's own account, and `adopt` adds the certificate and the
+  server's facts to that same file in place.
+- **`adopt` refuses a config whose owner or mode is wrong**, by the rule the connectors
+  apply at their start: a regular file of the connector's own uid, owner-only, opened
+  without following a symbolic link. A config the move left in any other state is
+  refused before `adopt` writes a byte, and the service refuses it again at its start.
+
+The box facts each connector's config needs are added by the image's install, as for a
+registered agent. **The pairing changes nothing in the units** (section 8.1), since
+`adopt` writes the config each unit reads.
+
+**A new image for an agent that stands replaces the row's box**, on the operator's
+ruling of 2026-11-15 that a new image is a new enrollment and on this document's
+election of 2026-11-17 that a row's box changes through this write alone (section 2.12).
+The keys and certificates stand on the root disk and the agent's state drive, its folder
+and its save points, carries over, so the new image runs `request` and `pair` as a new
+box does. Start names the agent that stands, and the pairing page asks whether to
+replace its box, saying that the old box's credentials end. After the fingerprint and
+the code, one audited write in section 2.13's order, its action `replace box`, does what
+`rotate` does as built, with the box changed: the old box's two credentials revoked and
+their connections closed, the new box's two certificates signed for the same `ag-`, and
+the row's box set to the new box's claim. The row is not retired, since a retired row
+never lives again and the agent stays one agent. The old box's certificates are refused
+from then on at admission, as a revoked credential is. The agent's record and its
+deployment tuples stay one agent's, and the new image's version is recorded as a new
+deployment tuple at Confirm (section 6.2).
 
 **What crosses after the pairing**, on the operator's rulings of 2026-11-16 (setup
-pages) and their addendum. The survey the image ships runs locally and sends its report
-over TLS. The operator's SSH public keys cross the paired link to the box, since the
-operator's SSH door takes them, and the setup script's first question sets root's
-password. The console holds the keys as a console setting, public halves and no secret,
-and the setup script's drive-setup run fetches them over the paired link (section 6.2).
-Once the model is picked, the console shows a command to run
-at the appliance's console, which starts the setup script's drive setup: the script
-lists the drives the machine sees, and formats and mounts the state drive and then the
-models drive, each after the operator confirms the disk. The box asks the console over
-TLS for the chosen model's size, and it pulls the model from the console's cache over
-TLS when the background download finishes (section 8.3). The connectors dial the console
-on every boot and redial a dropped link, and load and unload do not drop them. Every
-root act runs on the machine at a screen the operator is sitting at, so admin's grant
-does not grow, and from pairing onward the console's whole reach is its two connectors.
-**None of the console's answers is built, and none has its other side as of
-2026-11-16.** As built, the link carries frames of one line bounded at 4 MiB
-(`link::frames::LINE_BOUND`), and no frame names a survey's report, a public key, a
-model's size or a pull. Which connection carries each, its frame and its bounds are
-section 10's, each an interface the image or WeaverAgent has to meet (`weaver-web-PRD`
-section 8).
+pages) and their addendum. The survey the image ships runs locally, and `admin-con setup
+report` hands its report across the paired link (section 8.3). The operator's SSH public
+keys cross the paired link to the box, since the operator's SSH door takes them, and the
+setup script's first question sets root's password. The console holds the keys as a
+console setting, public halves and no secret, and the setup script's drive-setup run
+fetches them with `admin-con setup describe` (sections 6.2 and 8.3). Once the model is
+picked, the console shows a command to run at the appliance's console, which starts the
+setup script's drive setup: the script lists the drives the machine sees, and formats
+and mounts the state drive and then the models drive, each after the operator confirms
+the disk. The box reads the models drive's need from `setup describe`, and it pulls the
+model from the console's cache over TLS when the background download finishes (section
+8.3). The connectors dial the console on every boot and redial a dropped link, and load
+and unload do not drop them. Every root act runs on the machine at a screen the operator
+is sitting at, so admin's grant does not grow, and from pairing onward the console's
+whole reach is its two connectors.
+
+**The setup connection's two asks are this document's election of 2026-11-17** (section
+8.3): `setup describe` answers the agent, its models, the models drive's need, the SSH
+public keys and, once Confirm stands, the members the agent is laid from, and `setup
+report` carries the survey's report. Neither is built. As built, the link carries frames
+of one line bounded at 4 MiB (`link::frames::LINE_BOUND`), and no frame names a pull of
+the model. Which connection carries the pull, its frame and its bounds are section 10's,
+an interface the image or WeaverAgent has to meet (`weaver-web-PRD` section 8).
 
 **A second live holder.** The operator ruled on 2026-11-14 that the console refuses a
 second live holder of a certificate it issued, and the charter carries it
@@ -6616,9 +6854,9 @@ connection the link's one unauthenticated surface, in the operator's wording of
 connection the link port admits before its party is known. **Two pages of the browser's
 listener answer before a session exists**, the sign-in page and a person's enrollment
 page, each to its own proof (section 2.13). The representation is this document's
-election above, an exchange that presents no client certificate, and how the link port
-tells it apart is section 10's. The posture is the charter's (`weaver-web-PRD` section
-10.3).
+election above, an exchange that presents no client certificate, told apart at the link
+port by the protocol its ClientHello offers. The posture is the charter's
+(`weaver-web-PRD` section 10.3).
 
 ### 8.3 What the console serves an appliance
 
@@ -6643,17 +6881,69 @@ model crosses over TLS from the console, never from Hugging Face, as on an appli
 **The console's side is built** (section 2.15): the account, its token sealed as the
 stated exception to the digest rule, the pull a pick starts in the background, its
 record, the hash after download with the rename only on a match, and the cache in
-Hugging Face's layout. **The box's side is not built**: the machine asks the console
-over TLS for the model's size and pulls it from the cache over TLS when the download
-finishes, checking its digests (section 8.2). As built, the link carries frames of one
-line bounded at 4 MiB (`link::frames::LINE_BOUND`), so a model's transfer from the
-console's cache is not a frame on it. Which component in the appliance pulls, over which
-connection, and how an interrupted transfer continues, are section 10's. The charter
-gives the network outside the agent's edge to the two connectors and to nothing else
-(`weaver-web-PRD` section 3.0), so a puller other than a connector would move that
-sentence. Whether a pulled model is an artifact of section 2.3 is section 10's too. The
-console never writes to Hugging Face except on an explicit push in Train, on the same
-rulings.
+Hugging Face's layout. **The box's side is not built**: the machine reads the models
+drive's need and each file's path, size and digest from `setup describe` (below), and
+pulls the model from the cache over TLS when the download finishes, checking its
+digests. As built, the link carries frames of one line bounded at 4 MiB
+(`link::frames::LINE_BOUND`), so a model's transfer from the console's cache is not a
+frame on it. Which component in the appliance pulls, over which connection, and how an
+interrupted transfer continues, are section 10's. The charter gives the network outside
+the agent's edge to the two connectors and to nothing else (`weaver-web-PRD` section
+3.0), so a puller other than a connector would move that sentence. Whether a pulled
+model is an artifact of section 2.3 is section 10's too. The console never writes to
+Hugging Face except on an explicit push in Train, on the same rulings.
+
+**The setup connection**, on this document's election of 2026-11-17, is `admin-con
+setup`, a one-shot mode of admin-con under its own account, reading its own config. It
+dials with the admin plane's credential and a hello naming the setup purpose, and the
+listener admits it under every rule of a plane connection whose credential is live
+(section 8), with one difference: it serves the setup asks alone, opens no trace door,
+asks no `show` and counts for nothing in presence. **One live connection per credential
+holds**, so while admin-con's service holds its connection a setup ask is refused
+`already_connected` (4). The image's setup script enables the connectors' services at
+the setup's end, and stops admin-con's service before a rerun and starts it after. A
+loaded agent keeps running while admin-con is stopped, since admin-con is a conduit
+(section 2.14). The setup an ask serves is the one the row's pairing linked (section
+6.2), and an ask on a row no setup links is refused `no_setup`. Its lines and exit
+statuses are section 8.2's. It makes two asks:
+- **`admin-con setup describe`.** In: its config alone. Out: one `described` line (0)
+  with these members:
+  - `agent` and `agent_id`, the register row's name and identity
+  - `models`, absent until the models page's first pick, then one entry per role,
+    `decoder` and `adapter`, each with `repository`, `commit`, `artifact` (the path of
+    the choice's first part, or of the adapter's one file), `files` (each with `path`,
+    `blob`, `bytes` and `sha256`) and `pull` (`running`, `verified` or `failed`, the
+    console's own download)
+  - `bytes`, the models drive's need: the bytes of the picks' distinct blobs, a blob two
+    paths share counted once
+  - `laying`, absent until Confirm, then the members the agent is laid from, read from
+    the confirmed tuple (section 6.2): `tuple`, its `dt-` identity, `artifact`,
+    `adapter` (`artifact`, `sha256`, `base_blake3` and `scale`), `devices`,
+    `context_capacity` and `turn_context`
+  - `ssh_keys`, each key of the console setting as stored, with its fingerprint in
+    OpenSSH's SHA256 form, empty where none is set
+- **`admin-con setup report --stage pairing|drives`.** In: the survey's report on
+  standard input, the setup script having run the survey locally. Out: `accepted` (0),
+  or `refused` (4) with a reason such as `too_large`. **The stage is the command's
+  argument**, so the console reads nothing of the image's format: admin-con checks that
+  its input is one JSON object within 64 KiB and parses nothing more, and the console
+  keeps it verbatim on the setup, the latest of its stage, with the time it arrived. A
+  report for a confirmed setup is refused `setup_closed`, since a confirmed setup never
+  changes (section 6.2).
+
+**Every path `describe` answers is under the models mount, in Hugging Face's layout**
+(`models--<owner>--<name>/snapshots/<commit>/<file>`, a relative link to the blob), the
+layout of the console's cache (section 2.15). The mount is the box's, so no mount enters
+the answer, and the setup script joins its own mount to each path. Where `models` is
+absent the script says the model is picked in Weaver Web first, and where `laying` is
+absent it says the setup waits on Confirm and asks again. A rerun asks again, so a
+changed SSH key is the key written. **The survey's format is the image's**, since its
+survey script produces it, stated in the image's profile by the pull request
+`toddwbucy/WeaverTools#37`, open as of 2026-11-17, and the pages read its members in an
+act of their own once it merges. **What follows the laying**, whether the agent starts
+at once, at boot or at the console's Start, is section 10's, in a cell that cites the
+operator's answers of 2026-11-16 on `toddwbucy/WeaverAgent#579` and names the four
+passages that bear on it.
 
 **The image download.** Where images are published for the console to find, and where
 their published hashes come from, are section 10's.
@@ -6666,35 +6956,35 @@ the operator's rulings of 2026-11-16 (setup pages), which supersede the ruling o
 section 10.4). The appliance's setup script, started by a command the drives page shows,
 lists, formats and mounts the drives, each after the operator confirms the disk, and the
 console attaches and mounts nothing. The drives page shows the drives as the box mounted
-them, from the box's report (section 8.2). A host install points at a state directory
-and a models directory and attaches and formats nothing, on the addendum to the same
-rulings, and the drives page shows the directories the operator named with free space
-against the need. A host's models directory defaults to that user's default Hugging Face
-cache, so models already pulled there are found, and the host form shows the command
-granting the console's account read-write there and a models group read. A host's load
-check, on the operator's word of 2026-11-16, asks that both directories exist, the state
-directory be writable with at least 10 GiB free and the models directory be readable,
-and asks no separate disk. On the addendum to the operator's rulings of 2026-11-16
-(setup pages) the agent is a real account on the box, its home on the state drive.
-**The agent's accounts take its name**, on the operator's word of 2026-11-16: the box's
-agent-creation tool lays them at setup, named from `weaver-<name>`, and the image
-carries no fixed account for the agent (section 6.2). On the state drive each agent has
-a directory of its own under the state mount, named for it, which holds the agent's
-folder and its home side by side, and a host lays the same under its state directory.
-**The trace is never written to the agent's state or anywhere the agent can reach**, on
-the operator's word of 2026-11-17: it goes to Weaver Web, which stores it outside the
-agent's reach, so nothing on the state drive holds it beside the agent's state or save
-points (section 10). Every account's name and every path are the image's and
-WeaverAgent's, this section repeating section 6.2's naming without owning it, and none
-enters this repository (`weaver-web-PRD` section 10.4). The refusal is admin's, since
-load is admin's verb, so the representation this document holds is admin's answer to
-`load`, which renders as it came, as every refusal does (section 7.2). The report of the
-sizes reaches the console through admin-con, the console's one reach into an appliance,
-so its carrier at the box's seam is `weaver-admin-operator-contract`'s, and this
-document builds against the contract once it is merged. The form of the report, which
-carrier it takes at that seam, and where the console says that storage is not
-sufficient, are section 10's. So are the sizes that count as sufficient, which no ruling
-assigns to a document.
+them, from the box's report at the `drives` stage (`setup report`, above). A host
+install points at a state directory and a models directory and attaches and formats
+nothing, on the addendum to the same rulings, and the drives page shows the directories
+the operator named with free space against the need. A host's models directory defaults
+to that user's default Hugging Face cache, so models already pulled there are found, and
+the host form shows the command granting the console's account read-write there and a
+models group read. A host's load check, on the operator's word of 2026-11-16, asks that
+both directories exist, the state directory be writable with at least 10 GiB free and
+the models directory be readable, and asks no separate disk. On the addendum to the
+operator's rulings of 2026-11-16 (setup pages) the agent is a real account on the box,
+its home on the state drive. **The agent's accounts take its name**, on the operator's
+word of 2026-11-16: the box's agent-creation tool lays them at setup, named from
+`weaver-<name>`, and the image carries no fixed account for the agent (section 6.2). On
+the state drive each agent has a directory of its own under the state mount, named for
+it, which holds the agent's folder and its home side by side, and a host lays the same
+under its state directory. **The trace is never written to the agent's state or anywhere
+the agent can reach**, on the operator's word of 2026-11-17: it goes to Weaver Web,
+which stores it outside the agent's reach, so nothing on the state drive holds it beside
+the agent's state or save points (section 10). Every account's name and every path are
+the image's and WeaverAgent's, this section repeating section 6.2's naming without
+owning it, and none enters this repository (`weaver-web-PRD` section 10.4). The refusal
+is admin's, since load is admin's verb, so the representation this document holds is
+admin's answer to `load`, which renders as it came, as every refusal does (section 7.2).
+The report of the sizes reaches the console through admin-con, the console's one reach
+into an appliance, so its carrier at the box's seam is
+`weaver-admin-operator-contract`'s, and this document builds against the contract once
+it is merged. The form of the report, which carrier it takes at that seam, and where the
+console says that storage is not sufficient, are section 10's. So are the sizes that
+count as sufficient, which no ruling assigns to a document.
 
 **Load and unload.** **Nothing in this framework or in the image autostarts the agent**,
 on the operator's ruling of 2026-11-15, and load and unload need no management of a
@@ -6798,6 +7088,20 @@ two connectors report.
 | an act's `ok` outcome commits with it, and a lost commit answer is classified by that record | perturbation in `src/admin_tests.rs`, `src/grants_tests.rs`, `src/agents_tests.rs`, `src/keys_tests.rs` and `src/host_tests.rs`, the commit's answer lost by a test fault after PostgreSQL applied it: write the `ok` outcome after the commit's answer instead of in the transaction, and each of the five person writes, the three grant and role writes, a revocation and a retirement, a registration and a rotation through the server, a token's redemption, a session's opening, a passkey's addition and removal (`src/keys_tests.rs`), and the host's bootstrap and token answers as failed (the web's writes with the server's failure, the host's commands with a refusal), its outcome `failed`, for an act that landed; and where a later act commits between the lost answer and the read-back, a rotation over a revocation or another admin's enable over a disable, the act is still classified as landed, which a read-back of its effect would not do; drop the read-back's wait on the act's own lock, give up on a disable's answer while its COMMIT is still completing, and the read-back finds no outcome and answers failed for an act that then lands |
 | the tuple and the load state come by admin-con and never by gate-con | perturbation: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it; let a replayed load event write the tuple, restart the server after an unload, backfill, and the row reads loaded; ask `show` before fixing the replay boundary, unload between the two, and the row reads loaded until the next `show`. **Four clauses are admin-con's ordering**, against the real listener with a fake invoker in `src/link/admin_con_tests.rs`: let a `show` answer cross the link out of order with the file events around it, unload during the `show`, and the row reads loaded until the next `show`; place the answer in the stream at receipt and unload between the snapshot and the receipt, and the row reads loaded; skip the drain, leave an unread load event behind the tail, invoke `show` after an unload, and the row reads loaded; run two verbs at once on one connection, and an older answer lands after a newer one. **The slot's clause**, against the real listener with the sudo invoker over a fake `sudo` in `src/link/sudo_invoker_tests.rs`: free the slot at a reconnection while a timed-out verb's process still runs, and the new connection's admission `show` runs beside it. **A turn's start and close refresh the load state**, against the real listener in `src/link/tests.rs`: drop the `turn.started` mapping, and the row never reads `active` between a turn's start and close; let a replayed `turn.started` land, and the row reads `active` from history; let a turn's event write the tuple, and the row loses the tuple it held; let a turn's event write the tuple's source, and a `show`-shaped tuple reads as an event's |
 | nothing crosses the link in the clear | perturbation: offer a plaintext hello to the listener, it is refused below any roster; and review, over the listener, that no plaintext accept path exists |
+| a ClientHello without the pairing protocol meets the mutual-TLS configuration as built | perturbation, **owed**: choose the pairing configuration for every ClientHello, and a client with no certificate completes a handshake, while every standing link test passes unchanged |
+| a pairing connection writes nothing before its code matches | perturbation, **owed**: record the waiting box at its first frame, and a store row or an audit record appears |
+| the pairing's code crosses the link in no frame | perturbation, **owed**: send the code in the first frame, and a recorded stream of the connection holds it |
+| the pairing's code is the first 50 bits of a 32-byte export under its label, in Crockford's base32 | **owed**: section 8.2's illustrative example as a test of both ends' encoders, and an export of another length gives another code |
+| the pairing page reads an entry in Crockford's form, and a malformed entry is no miss | **owed**: the encoder's inverse accepts `hwx5r-0f74a` and `HWX5R 0F74A` as section 8.2's example code and refuses `HWX5U0F74A` as malformed, and a malformed entry is answered as malformed, writes no record and counts toward no five misses |
+| a party between the box and the console meets a code that matches nothing | **owed**: an in-process relay between `pair` and the listener, and the code `pair` prints matches no waiting connection |
+| a certificate is signed only over a request whose own signature verifies, ECDSA P-256 with SHA-256 alone | perturbation, **owed**: skip the verification, and a request signed by another key is signed |
+| a pairing naming a live box and name is refused and retires nothing | perturbation, **owed**: write the pairing's row through registration's insert, and the live row is retired |
+| a lost word writes no row | perturbation, **owed**: write the row before the box's word, drop the word, and a row stands for an answer no box adopted |
+| a row's box changes only through the replace-box write, and the row keeps the box it held | perturbation, **owed**: write the new box without the history's row, and the old box leaves the record |
+| a setup ask is refused while its credential's connection stands, and counts for nothing in presence | **owed**: the real listener and a fake admin-con, a setup ask beside a standing admin connection refused `already_connected`, and a setup connection alone leaving the row not present |
+| the setup keeps the latest report of each stage, verbatim | perturbation, **owed**: keep one report per setup, and a pairing report run again replaces the drives page's |
+| an adopted pair connects | **owed**: end to end, `request`, then `pair` against the real listener with the code entered through the page, then `adopt`, and both connectors are admitted on one row |
+| the connectors' build holds no `x509-parser` | measurement, **owed**, in `tests/connectors_link.rs`: the package's normal graph without the default features holds no `x509-parser`. Make the parser a dependency the default features do not gate, and the graph holds it |
 | the server never asks a verb outside the agent's ceiling | perturbation: drop the ceiling check, ask a verb admin-con's hello did not declare, and it leaves the server; and admin-con's half, drop its typed error answer, and it reaches the invoker. **One clause is owed**: check against the row's copy, narrow the ceiling by reconnecting between the check and the enqueue, and an ask outside the new ceiling leaves. The race has no deterministic staging, and the guard is held by review: the check reads the live connection's ceiling under the live map's lock that finds the connection |
 | a verb its principal may not ask is refused before an ask | perturbation, in `src/verbs_tests.rs` against the real listener and a fake admin-con: drop the grant check, and an observer's `stop` leaves the server; drop the session's re-check under the hold, disable the person between the gate and the check, and the ask leaves; release the hold before the enqueue, and a revocation commits while the frame of the ask it revoked is still to be sent; reserve the slot under the hold, and a grant's removal waits on a stalled connector; run the ask in the request's own future, and a dropped request loses an authorized ask after its first, and a refusal its record; admit every ask, and a client posting past its share detaches tasks without bound; drop the per-connection cap on persons' slots, and asks parked on the server's own waits take the channel and an opening's `show` waits behind them; read the grants without the deadline, and an ask stalled on the store never answers and keeps its place; answer no grant with 403, and the page tells a stranger the agent exists. The server's `show`-only rule stands in the row of its asks, and the register verbs through the server in their own row |
 | a turn its principal may not ask is refused before an ask | perturbation, in `src/verbs_tests.rs`, the verb's held ask on the gate plane: drop the grant check, and an observer places a turn; release the hold before the enqueue, and a revocation commits while the turn is still to be sent. The session's re-check, the admission, the slots and the deadline are the verb row's own instruments, the one mechanism serving both planes, and `src/verbs_tests.rs` shows the hold, the admission, the slots and the deadline on the gate plane once each |
@@ -7328,102 +7632,75 @@ a `web-` assertion beside `weaver-admin`'s.
   2026-11-12, section 2.13's first records, outcomes and refusals and section
   2.14's raises, restorations, claims and back-offs, each one statement's
   flight, and the ruling that closes it here closes it there.
-- **The one-time secret's length, lifetime and holding, opened 2026-11-15** (section
-  8.2). The rulings fix it as single-use, short-lived on the order of ten minutes, and
-  bound to one pending enrollment, and the operator's rulings of 2026-11-16 (setup
-  pages) and their addendum have the box show it as a short one-time code for the
-  operator to enter on the pairing page. The box draws it, on this document's election
-  of 2026-11-16: a confirmation code bound to a TLS connection the box already opened,
-  with its attempts limited, and not a bearer the server issues, so section 2.13's rule
-  for those does not reach it. Open: its exact length and lifetime, the limit on
-  attempts, and where and in what form the console holds it, where every token the store
-  holds as built is kept as its digest. Settled by the enrollment's code act as its
-  election, with the operator's confirmation in review.
+- **The one-time secret's length, lifetime and holding, closed 2026-11-17 by section
+  8.2**, opened 2026-11-15 (section 8.2). Both ends derive it from the pairing
+  connection's TLS exporter: fifty bits, shown as ten characters of Crockford's base32
+  in two groups of five, single-use, living with its connection's ten minutes and never
+  held by the console. Five misses on one setup close its code field for ten minutes.
 - **The link port's default, opened 2026-11-15** (section 8.2). As built, `link_listen`
   defaults to `127.0.0.1:8081`, a loopback address that no appliance on another machine
   can dial, so an operator who enrolls appliances sets it, and the address a connector
   dials is `link_address`, else `link_listen`. The operator suggested a default in the
   range 6000 to 7000, which the operator can change. Settled by the operator's ruling of
   the number.
-- **The certificate the shown fingerprint names, opened 2026-11-15** (section 8.2). The
-  ruling names "the console's certificate fingerprint", which the box shows beside the
-  code for the operator to compare with the console's own, on the operator's rulings of
-  2026-11-16 (setup pages) and their addendum. As built, every connector pins the
-  authority's certificate, and the listener's handshake presents the server's own
-  certificate alone, so a check of the authority's fingerprint before anything is sent
-  cannot be made against the handshake. Open: the server's certificate or the
-  authority's, and how the authority's certificate reaches the appliance to be pinned.
-  Settled by the enrollment's code act, with the operator's review.
-- **How the link port tells an enrollment from a plane connection, opened 2026-11-15**
-  (section 8.2). The ruling makes the enrollment connection the link's one
-  unauthenticated surface, and this document elects that it presents no client
-  certificate. As built, the listener requires a client certificate at every handshake
-  (`server_tls`), and section 8 says a plane connection presents one and names the
-  enrollment exchange as the one connection with none. Settled by the enrollment's code
-  act, which amends section 8 with the code.
-- **What the exchange answers, opened 2026-11-15** (section 8.2). Beyond the two
-  certificates, a built connector config carries the server's link address, the name the
-  server's certificate is verified under, the agent's name, the row's identity, the
-  plane and the authority's certificate (`link::client::LinkConfig`). The operator's
-  rulings of 2026-11-16 (setup pages) have the operator enter the address and the port
-  in the appliance's setup script and the code on the pairing page. Open: which of the
-  rest the exchange answers, and which the appliance holds already. Settled by the
-  enrollment's code act.
-- **The public half's form, opened 2026-11-15** (section 8.2). As built, the authority
-  makes every client key pair itself (`mint_client`). Open: the form in which an
-  appliance presents a public half, and whether it proves that it holds the matching
-  key. Settled by the enrollment's code act.
-- **The pending enrollment, opened 2026-11-15** (section 8.2). The operator opens one,
-  on the ruling, and on the operator's rulings of 2026-11-16 (setup pages) and their
-  addendum a box that dialed waits until the operator enters its code on the pairing
-  page, after the start page and the agent's name. Open: which role in section 2.13
-  carries the act, what a pending enrollment names, where it is held, and what ends it
-  besides its exchange and its expiry. Registration is an admin's write, and the
-  register page holds one-time values in the server's memory alone, five minutes and
-  taken once (section 2.13), which is one precedent, and the store is the other. Settled
-  by the enrollment's code act.
-- **The connectors' pairing and their accounts, opened 2026-11-15** (sections 8.1 and
-  8.2) as the program the pairing line runs. On the operator's rulings of 2026-11-16
-  (setup pages) and their addendum the pairing belongs with the connectors and serves a
-  host too, an appliance's setup script, which its console goes straight into at first
-  boot, asks the address and port, and every root act of the setup runs on the machine
-  at a screen the operator is sitting at. Open: how each connector's key and config come
-  to stand under that connector's own account. Each connector makes its own key, and its
-  config is its own account's at `0600` (section 8.1). This repository holds one
-  privileged invocation, admin-con's sudo invoker, and no other (section 7.2). So which
-  process makes each key and writes each config, and how an appliance's connector
-  instances come to be enabled, is answered without a second privileged program in this
-  repository. Settled by the enrollment's code act, with WeaverAgent's documents naming
-  the accounts, an ask upstream (`weaver-web-PRD` section 8).
-- **The exchange's audit principal and the row's author, opened 2026-11-15** (section
-  8.2). The exchange writes the register, every register write is audited (section
-  2.13), and the register row carries the author member of section 3.2 (section 2.12).
-  Open: whether the principal and the author are the server acting on the pending
-  enrollment or the person who opened it. Settled by the enrollment's code act.
+- **The certificate the shown fingerprint names, closed 2026-11-17 by section 8.2**,
+  opened 2026-11-15 (section 8.2). The authority's, presented in the pairing
+  configuration's chain, read from the handshake by the box and pinned at `adopt`. The
+  operator's comparison of the two fingerprints is a step the pairing page never skips.
+- **How the link port tells an enrollment from a plane connection, closed 2026-11-17 by
+  section 8.2**, opened 2026-11-15 (section 8.2). By ALPN, before the handshake: a
+  ClientHello offering `weaver-pair/1` meets the pairing configuration, which asks no
+  client certificate, and every other meets the mutual-TLS configuration as built.
+  Section 8 says so.
+- **What the exchange answers, closed 2026-11-17 by section 8.2**, opened 2026-11-15
+  (section 8.2). The agent's name, the row's identity, the box, `server_name`, the
+  authority's certificate and the two certificates. The operator enters the address and
+  the port at the box, and the image's install adds the box facts.
+- **The public half's form, closed 2026-11-17 by section 8.2**, opened 2026-11-15
+  (section 8.2). A certificate request, PKCS #10 in PEM, whose own signature proves that
+  the box holds the key, ECDSA P-256 with SHA-256 alone.
+- **The pending enrollment, closed 2026-11-17 by section 8.2**, opened 2026-11-15
+  (section 8.2). The setup row of section 6.2 in its pairing step, an admin's, with the
+  waiting box held in the server's memory alone until a code matches. Entering a code is
+  an admin write in section 2.13's order, and the pending enrollment ends with its
+  exchange.
+- **The connectors' pairing and their accounts, closed on this repository's side
+  2026-11-17 by section 8.2**, opened 2026-11-15 (sections 8.1 and 8.2). Each
+  connector's `request` and `adopt` run under its own account and `pair` under an
+  unprivileged one, and each config reaches the agent's directory by a rename, so no
+  command of this repository runs as root and the one privileged invocation stays
+  admin-con's sudo invoker (section 7.2). The accounts' names and the services' enabling
+  are the image's, with WeaverAgent's documents naming the accounts, an ask upstream
+  (`weaver-web-PRD` section 8).
+- **The exchange's audit principal and the row's author, closed 2026-11-17 by section
+  8.2**, opened 2026-11-15 (section 8.2). The admin who entered the code, by session,
+  the action `pair` and the target the agent row, and the row's author that admin's
+  `pe-` identity.
 - **Rotation of an enrolled appliance, opened 2026-11-15** (section 8.2). As built,
   rotation mints a pair on the server and writes two configs, which an enrolled
   appliance's keys cannot take, and the reconnect policy's guidance on `not_live` names
-  a registration or a rotation. Open: whether rotation is a new pending enrollment for
-  the same row, and what an enrolled appliance's connectors tell the operator on
-  `not_live`. Settled by the enrollment's code act and the operator.
+  a registration or a rotation. Open: whether rotation is section 8.2's replace-box
+  write run on the same box or a path of its own, and what an enrolled appliance's
+  connectors tell the operator on `not_live`. Settled by the act of an enrolled box's
+  rotation, with the operator.
 - **Rotation of the authority with enrolled appliances, opened 2026-11-15** (section
   8.2). Section 8 makes it a re-registration of every agent. For an enrolled appliance,
   whose certificates nothing but an enrollment issues, that is a new pairing on every
-  machine. Open: whether the enrollment's act gives it another path. Settled by the
-  enrollment's code act and the operator.
-- **An enrollment over a live row, opened 2026-11-15** (section 8.2). Re-registering a
-  live box and name revokes the old row (section 2.12). A new image is a new enrollment,
-  on the operator's ruling of 2026-11-15, so an upgrade that brings a new image meets
-  this case. Open: whether an enrollment naming the box and name of a live row revokes
-  it, is refused, or takes the row's identity. Settled by the enrollment's code act and
-  the operator.
+  machine. Open: whether an act gives it another path. Settled by the act of the
+  authority's rotation with enrolled boxes, with the operator.
+- **An enrollment over a live row, closed 2026-11-17 by section 8.2**, opened 2026-11-15
+  (section 8.2). Refused `box_and_name_live`, with the register's retire offered, by a
+  register write of the exchange's own, so registration's re-registration stays
+  registration's alone. A new image for an agent that stands takes the replace-box
+  write, which keeps the row's identity and its box history (section 2.12).
 - **Registration beside the pairing for a host, opened 2026-11-15** (section 8.2) as
   whether a single-host install may enroll. The operator's rulings of 2026-11-16 (setup
   pages) put a host in the setup flow beside a virtual machine, and their addendum has
   the pairing, the connectors', serve a host too, a host's own setup script being later,
   which supersedes the rulings of 2026-11-14 that kept the single-host install for the
   Spark class alone. Open: whether registration and its handover (section 8.1) stay
-  beside the pairing for a host. Settled by the operator, then by the enrollment's act.
+  beside the pairing for a host. Settled by the operator, then by the act that writes
+  the ruling.
 - **Access tokens at rest, closed 2026-11-16 by section 2.15**, opened 2026-11-15
   (section 8.3). The Hugging Face token is sealed, the stated exception to the digest
   rule, and enters no page, log line, audit record or error.
@@ -7433,14 +7710,14 @@ a `web-` assertion beside `weaver-admin`'s.
   (setup pages). Open: whether a pulled model is an artifact of section 2.3, which the
   charter's section 9 holds as whether a fetch is an import. Settled by the operator.
 - **The model store's transfer, opened 2026-11-15** (section 8.3). On the operator's
-  rulings of 2026-11-16 (setup pages) the appliance asks the console over TLS for the
-  chosen model's size, and pulls the model from the console's cache over TLS when the
-  background download finishes. The cache's layout is Hugging Face's (section 2.15).
-  Open: which component in the appliance pulls, over which connection and frame, and how
-  an interrupted transfer continues. The charter gives the network outside the agent's
-  edge to the two connectors and to nothing else, so a puller other than a connector
-  moves that sentence of the charter. Settled by the act of the box's pull, after the
-  enrollment's.
+  rulings of 2026-11-16 (setup pages) the appliance reads the models drive's need from
+  `setup describe` (section 8.3), and pulls the model from the console's cache over TLS
+  when the background download finishes. The cache's layout is Hugging Face's (section
+  2.15). Open: which component in the appliance pulls, over which connection and frame,
+  and how an interrupted transfer continues. The charter gives the network outside the
+  agent's edge to the two connectors and to nothing else, so a puller other than a
+  connector moves that sentence of the charter. Settled by the act of the box's pull,
+  after the enrollment's.
 - **The console as the model store, opened 2026-11-15** (section 8.3): the model count
   or fleet size at which its cache stops being tolerable. No measurement exists, because
   the fleet is one. Settled by a measurement on a fleet larger than one.
@@ -7516,16 +7793,17 @@ a `web-` assertion beside `weaver-admin`'s.
   gate's tool. Also open: whether the class form of a GPU requirement stands beside the
   placement page's placement on a device. Settled by the operator, then by the act that
   builds each page.
-- **What crosses the link for the setup, opened 2026-11-16** (section 8.2). On the
-  operator's rulings of 2026-11-16 (setup pages) and their addendum the box waits with
-  its code, sends its survey's report, takes the operator's SSH public key, asks for the
-  chosen model's size and pulls the model, each over TLS with the console. Open: the
-  connection, frame and bounds of each, and the image's or WeaverAgent's side of each,
-  none of which exists, an ask upstream (`weaver-web-PRD` section 8). Settled by those
-  asks, then by the enrollment's act and the act of the box's pull.
+- **What crosses the link for the setup, opened 2026-11-16** (section 8.2), narrowed
+  2026-11-17 by sections 8.2 and 8.3. The code crosses in no frame, the pairing's first
+  frame and its answer are section 8.2's, and the survey's report, the SSH public keys
+  and the model's size cross as the setup connection's two asks of section 8.3. Open:
+  the pull of the model, its connection, frame and bounds, and the image's or
+  WeaverAgent's side of it, none of which exists, an ask upstream (`weaver-web-PRD`
+  section 8). Settled by those asks, then by the act of the box's pull.
 - **Where the console holds the operator's SSH public key, closed 2026-11-16 by section
   6.2**, opened the same day (section 8.2): a console setting, one or more keys, an
-  admin's write, which the setup script's drive-setup run fetches over the paired link.
+  admin's write, which the setup script's drive-setup run fetches with `admin-con setup
+  describe` (section 8.3).
 - **The state drive's size, opened 2026-11-16** (section 8.3). The operator's rulings of
   2026-11-16 (setup pages) state every size in the flow in one unit, GiB, require the
   state mount at a minimum of 10 GiB, and have the appliance's setup script warn "about
@@ -7541,22 +7819,21 @@ a `web-` assertion beside `weaver-admin`'s.
   per device in shard order, the KV term, the headroom) and its frame, an ask on
   WeaverAgent (`weaver-web-PRD` section 8). Settled by WeaverAgent's answer, then by the
   act that lights the placement page.
-- **The box's members of the tuple, opened 2026-11-16** (section 6.2). The image
-  version, the driver, the cards by identity, the guest CPU, the machine and the drives
-  come from the box's report over the paired link, and the devices the placement page
-  offers from the survey's report, each card with its ordinal in PCI bus order. Open:
-  the report's form and its frame. Settled by the enrollment's act and the image's or
-  WeaverAgent's side of it.
+- **The box's members of the tuple, opened 2026-11-16** (section 6.2), narrowed
+  2026-11-17 by section 8.3. The image version, the driver, the cards by model, each
+  with its ordinal in PCI bus order, the guest CPU, the machine and the drives come from
+  the box's report, which `setup report` carries and the setup keeps, the latest of each
+  stage, and the devices the placement page offers come from the same report. Open: the
+  report's form, the survey's format (`toddwbucy/WeaverTools#37`). Settled by the
+  image's act that states it, then by the survey's reading act.
 - **Two sources for a model, opened 2026-11-16** (sections 2.4, 6.1 and 6.2). The
   declaration screen's artifact text and GPU requirement stand beside the setup's
   repository, commit, digests and placement, and no load reads either as built.
   Open: which wins when Provision renders a loadable declaration. Settled by the
   operator.
-- **How the agent's name reaches the box, opened 2026-11-16** (section 6.2). The rulings
-  have the appliance name its directories and its admin entry after the start page's
-  name, and the image is built before the agent is named. Open: how the name crosses to
-  the box, at the pairing or over the paired link after it. Settled by the enrollment's
-  act.
+- **How the agent's name reaches the box, closed 2026-11-17 by section 8.2**, opened
+  2026-11-16 (section 6.2). At the pairing: the exchange's answer carries it, and `pair`
+  prints it in its `paired` line.
 - **An adapter's declared base identity, opened 2026-11-16** (section 6.2). The base's
   identity the console computes pins a box's files to the console's pull and does not
   show that the adapter was converted against that base. An adapter's repository that
@@ -7568,13 +7845,23 @@ a `web-` assertion beside `weaver-admin`'s.
   members and the store, writes the devices and the context length fixed and writes no
   turn context. Open: its taking those three, `toddwbucy/WeaverAgent#580`. Settled by
   WeaverAgent's act and the image's, which lays the agent after Confirm.
-- **The trace kept outside the agent's reach, opened 2026-11-17** (sections 6.1 and
-  8.3). The operator's words of 2026-11-17: "remember that the trace doesnt get written
-  to state or anywhere the agent has access to it. the trace goes to weaverweb and it
-  stores it outside of the agent's reach". They bear on the trace's destination as the
-  charter and this document state it, wherever the operator sends it, with the console
-  stating nothing about what keeps the trace past it: `weaver-web-PRD` section 10.6 and
-  its two cells of 2026-11-15 in section 9, section 6.1's destination field, section
-  8.3's paragraph on the trace's destination, and the cell on the trace's destination
-  field above. Open: whether the operator's words retire those passages. Settled by the
-  operator, then by the trace field's act.
+- **The trace kept outside the agent's reach, opened 2026-11-17 and closed the same day
+  by the operator** (sections 6.1 and 8.3). The operator's words of 2026-11-17 that
+  opened it: "remember that the trace doesnt get written to state or anywhere the agent
+  has access to it. the trace goes to weaverweb and it stores it outside of the agent's
+  reach". Their words of the same day that close it: "weaverweb always gets the trace
+  for now, it should store it locally somewhere at the operators descression or be sent
+  to dev/null. eventually this is what weaveranalysis will use for the bulk of its
+  work." The trace field's act rewrites the passages they bear on to them:
+  `weaver-web-PRD` sections 3.0 and 10.6 and its cell of 2026-11-15 in section 9 on the
+  trace's destination against the record, section 6.1's destination field, section 8.3's
+  paragraph on the trace's destination, and the cell on the trace's destination field
+  above.
+- **What follows the laying, opened 2026-11-17** (section 8.3): whether the agent starts
+  at once, at boot or at the console's Start. The operator's answers of 2026-11-16 on
+  `toddwbucy/WeaverAgent#579` bear on it. Four passages state the console's Start and
+  Stop and that nothing autostarts the agent, and they stand unchanged: `weaver-web-PRD`
+  section 2 on the console's stop, `weaver-web-PRD` section 10.5, and section 8.3's
+  paragraphs on load and unload and on the console's stop and start. Settled by
+  WeaverAgent's act on the operator contract, then by this repository's act on
+  admin-con's verb map.

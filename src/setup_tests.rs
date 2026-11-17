@@ -20,6 +20,7 @@ use std::time::Duration;
 use axum::http::{HeaderMap, StatusCode, header};
 
 use crate::admin_tests::{admin, form, send_as, signed_in};
+use crate::box_report::{BoxReports, NoBox};
 use crate::passkeys_tests::{ORIGIN, app, authenticator, passkeys};
 use crate::store::Store;
 use crate::store::read::tests::{Fresh, fresh_store};
@@ -47,23 +48,25 @@ pub(crate) async fn rig_with(
     link_address: Option<&str>,
     model_cache: Option<PathBuf>,
 ) -> Option<Rig> {
-    rig_hf(
+    rig_full(
         link_listen,
         link_address,
         model_cache,
         "http://127.0.0.1:9/",
+        Arc::new(NoBox),
     )
     .await
 }
 
 /// A rig whose config names the link and the model cache given, its
-/// Hugging Face client at `hugging_face`, its puller over the cache, and
-/// no account connected.
-pub(crate) async fn rig_hf(
+/// Hugging Face client at `hugging_face`, its puller over the cache, no
+/// account connected, and what the box reports answered by `boxes`.
+pub(crate) async fn rig_full(
     link_listen: &str,
     link_address: Option<&str>,
     model_cache: Option<PathBuf>,
     hugging_face: &str,
+    boxes: Arc<dyn BoxReports>,
 ) -> Option<Rig> {
     let fresh = fresh_store().await?;
     let dir = tempfile::tempdir().unwrap();
@@ -93,6 +96,7 @@ pub(crate) async fn rig_hf(
             puller: puller.clone(),
             authority_dir: dir.path().join("authority"),
             headers: crate::hugging_face::headers::Headers::new(),
+            boxes,
         }))
         .with_state(fresh.store.clone()),
         policy,
@@ -347,31 +351,46 @@ async fn a_person_without_an_admin_grant_is_refused_before_any_setup_is_looked_u
         format!("/setup/{setup}/pairing"),
         format!("/setup/{setup}/models"),
         format!("/setup/{setup}/drives"),
+        format!("/setup/{setup}/placement"),
+        format!("/setup/{setup}/confirm"),
         format!("/setup/{setup}/build"),
         format!("/setup/{unknown}/pairing"),
         format!("/setup/{unknown}/models"),
         format!("/setup/{unknown}/drives"),
+        format!("/setup/{unknown}/placement"),
+        format!("/setup/{unknown}/confirm"),
     ] {
         let (status, _, body) = send_as(&rig.app, "GET", &uri, None, &bea).await;
         assert_eq!(status, StatusCode::FORBIDDEN, "{uri}: {body}");
         assert_eq!(body, crate::surfaces::admin::NOT_AN_ADMIN, "{uri}");
     }
     for target in [setup.as_str(), unknown] {
-        let (status, _, body) = send_as(
-            &rig.app,
-            "POST",
-            &format!("/setup/{target}/pairing"),
-            Some(form(&[("version", "1"), ("virtual_machine", "on")])),
-            &bea,
-        )
-        .await;
-        assert_eq!(status, StatusCode::FORBIDDEN, "{target}: {body}");
-        assert_eq!(body, crate::surfaces::admin::NOT_AN_ADMIN, "{target}");
+        for (page, fields) in [
+            ("pairing", vec![("version", "1"), ("virtual_machine", "on")]),
+            (
+                "placement",
+                vec![("version", "1"), ("turn_context", "continuous")],
+            ),
+            ("confirm", vec![("version", "1")]),
+        ] {
+            let (status, _, body) = send_as(
+                &rig.app,
+                "POST",
+                &format!("/setup/{target}/{page}"),
+                Some(form(&fields)),
+                &bea,
+            )
+            .await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{target} {page}: {body}");
+            assert_eq!(body, crate::surfaces::admin::NOT_AN_ADMIN, "{target}");
+        }
     }
     let (status, body, made) = begin(&rig.app, &bea, "otto").await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
     assert_eq!(made, None);
     assert_eq!(audited(s, "setup pairing").await, (0, 0, 0, 2));
+    assert_eq!(audited(s, "setup placement").await, (0, 0, 0, 2));
+    assert_eq!(audited(s, "setup confirm").await, (0, 0, 0, 2));
     assert_eq!(audited(s, "setup begin").await, (1, 1, 0, 1));
     assert_eq!(setups(s).await, 1, "bea's begin opens no setup");
     let kept = s.setup(&setup).await.unwrap().unwrap();
@@ -417,8 +436,8 @@ async fn a_second_open_setup_of_one_name_is_refused() {
 /// a value, over every page this tree serves in each state it draws: the
 /// start page, the pairing page with the box a host and a virtual machine
 /// at a loopback address and with the console at an unspecified one, the
-/// drives page with no key and no model cache and then with both, and the
-/// build page.
+/// drives page with no key and then with one, the placement and confirm
+/// pages with nothing read, and the build page.
 #[tokio::test]
 async fn every_pane_carries_its_stage_backing_and_status() {
     let cache = tempfile::tempdir().unwrap();
@@ -430,7 +449,15 @@ async fn every_pane_carries_its_stage_backing_and_status() {
     let mut walked = vec![("/setup".to_owned(), page(&rig.app, "/setup", &ada).await)];
     let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
     let setup = setup.unwrap();
-    for p in ["", "/pairing", "/models", "/drives", "/build"] {
+    for p in [
+        "",
+        "/pairing",
+        "/models",
+        "/drives",
+        "/placement",
+        "/confirm",
+        "/build",
+    ] {
         let uri = format!("/setup/{setup}{p}");
         walked.push((uri.clone(), page(&rig.app, &uri, &ada).await));
     }
@@ -479,7 +506,7 @@ async fn every_pane_carries_its_stage_backing_and_status() {
         assert!(faults.is_empty(), "{uri}: {faults:?}\n{page}");
     }
     // Every page of a setup carries the rail of its six pages in order,
-    // the current one marked, and the unbuilt ones drawn so.
+    // the current one marked, each served.
     let pairing = &walked[2].1;
     let rail = between(pairing, r#"<nav class="rail""#, "</nav>").unwrap();
     let order: Vec<usize> = [
@@ -505,15 +532,26 @@ async fn every_pane_carries_its_stage_backing_and_status() {
     );
     assert_eq!(
         rail.matches(r#"<span class="backing unbuilt">"#).count(),
-        2,
+        0,
         "{rail}"
     );
-    assert!(pairing.contains(&format!(
-        r#"Next: <a href="/setup/{setup}/models">Models</a>"#
-    )));
-    assert!(walked[3].1.contains(&format!(
-        r#"Next: <a href="/setup/{setup}/drives">Drives</a>"#
-    )));
+    for (at, next) in [
+        (2, "models\">Models"),
+        (3, "drives\">Drives"),
+        (4, "placement\">Placement"),
+        (5, "confirm\">Confirm"),
+    ] {
+        assert!(
+            walked[at]
+                .1
+                .contains(&format!(r#"Next: <a href="/setup/{setup}/{next}</a>"#)),
+            "{}: {}",
+            walked[at].0,
+            walked[at].1
+        );
+    }
+    // Confirm's way forward stands only once Confirm does.
+    assert!(!walked[6].1.contains("Next:"), "{}", walked[6].1);
     // The drives page names the model cache where it is set, and the key
     // by its fingerprint, with the way to change it.
     let drives = &walked[walked.len() - 1].1;
@@ -524,7 +562,7 @@ async fn every_pane_carries_its_stage_backing_and_status() {
     assert!(drives.contains(r#"<a href="/admin/ssh-key">Change the keys</a>"#));
     // The build page links the declaration screen as built.
     assert!(
-        walked[5]
+        walked[7]
             .1
             .contains(r#"<a href="/declarations">the declaration screen</a>"#)
     );
@@ -782,21 +820,42 @@ async fn an_unknown_setup_is_not_found_and_a_malformed_one_refused() {
         ("POST", "/setup/st-0123/models", StatusCode::BAD_REQUEST),
         (
             "GET",
-            &format!("/setup/{setup}/placement"),
+            "/setup/st-0123456789abcdef/placement",
             StatusCode::NOT_FOUND,
         ),
+        ("GET", "/setup/st-0123/placement", StatusCode::BAD_REQUEST),
+        (
+            "POST",
+            "/setup/st-0123456789abcdef/placement",
+            StatusCode::NOT_FOUND,
+        ),
+        ("POST", "/setup/st-0123/placement", StatusCode::BAD_REQUEST),
         (
             "GET",
-            &format!("/setup/{setup}/confirm"),
+            "/setup/st-0123456789abcdef/confirm",
             StatusCode::NOT_FOUND,
         ),
+        ("GET", "/setup/st-0123/confirm", StatusCode::BAD_REQUEST),
+        (
+            "POST",
+            "/setup/st-0123456789abcdef/confirm",
+            StatusCode::NOT_FOUND,
+        ),
+        ("POST", "/setup/st-0123/confirm", StatusCode::BAD_REQUEST),
         (
             "GET",
             &format!("/setup/{setup}/elsewhere"),
             StatusCode::NOT_FOUND,
         ),
     ] {
-        let body = (method == "POST").then(|| form(&[("version", "1")]));
+        // Each post well shaped, so the setup's answer is what is judged.
+        let body = (method == "POST").then(|| {
+            if uri.ends_with("/placement") {
+                form(&[("version", "1"), ("turn_context", "continuous")])
+            } else {
+                form(&[("version", "1")])
+            }
+        });
         let (status, _, answer) = send_as(&rig.app, method, uri, body, &ada).await;
         assert_eq!(status, want, "{method} {uri}: {answer}");
     }

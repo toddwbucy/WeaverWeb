@@ -17,6 +17,7 @@ pub mod alerting;
 mod alerting_deadline_tests;
 #[cfg(all(test, feature = "passkeys"))]
 mod alerts_tests;
+pub mod box_report;
 pub mod config;
 pub(crate) mod deadline;
 pub mod declaration;
@@ -54,6 +55,8 @@ mod passkeys_tests;
 mod reading_tests;
 #[cfg(all(test, feature = "passkeys"))]
 mod setup_models_tests;
+#[cfg(all(test, feature = "passkeys"))]
+mod setup_place_tests;
 #[cfg(all(test, feature = "passkeys"))]
 mod setup_tests;
 #[cfg(all(test, feature = "passkeys"))]

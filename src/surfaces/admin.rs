@@ -135,7 +135,10 @@ pub(crate) fn refused(refusal: &Refusal) -> Response {
         | Refusal::SetupNameHeld(_)
         | Refusal::KeyHeld
         | Refusal::KeysFull
-        | Refusal::Unpickable(_) => StatusCode::CONFLICT,
+        | Refusal::Unpickable(_)
+        | Refusal::SetupConfirmed
+        | Refusal::Unplaceable(_)
+        | Refusal::Unconfirmable(_) => StatusCode::CONFLICT,
         Refusal::TokenRefused => StatusCode::UNPROCESSABLE_ENTITY,
         Refusal::HandoverFull | Refusal::NoSealKey | Refusal::NoModelCache => {
             StatusCode::SERVICE_UNAVAILABLE

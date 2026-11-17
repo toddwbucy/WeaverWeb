@@ -113,6 +113,13 @@ pub enum Refusal {
     NoSuchChoice,
     /// The choice is offered no pick, for the reason given (Spec 6.2).
     Unpickable(String),
+    /// The setup is confirmed, and a confirmed setup never changes (Spec
+    /// 6.2).
+    SetupConfirmed,
+    /// The placement is not kept, for the reason given (Spec 6.2).
+    Unplaceable(String),
+    /// Confirm waits on the members named, each not read (Spec 6.2).
+    Unconfirmable(String),
 }
 
 impl std::fmt::Display for Refusal {
@@ -235,6 +242,15 @@ impl std::fmt::Display for Refusal {
                 write!(f, "the repository holds no such choice at that commit")
             }
             Refusal::Unpickable(why) => write!(f, "the choice is offered no pick: {why}"),
+            Refusal::SetupConfirmed => write!(
+                f,
+                "the setup is confirmed, and a confirmed setup never changes"
+            ),
+            Refusal::Unplaceable(why) => write!(f, "the placement is not kept: {why}"),
+            Refusal::Unconfirmable(why) => write!(
+                f,
+                "Confirm stands only where every member is read, and it waits on these: {why}. Nothing was written"
+            ),
         }
     }
 }

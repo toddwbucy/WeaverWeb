@@ -5,7 +5,8 @@
 //! identity exclusion, re-checks the admin's session and grant inside its
 //! transaction (`admin::authorized`), checks the version the page read, and
 //! commits with its `ok` outcome, as every admin write does (Spec 2.13).
-//! The setup pages write no declaration row.
+//! The setup pages write no declaration row. Confirm and the tuple it
+//! writes are `tuple.rs`'s.
 
 use chrono::{DateTime, Utc};
 use sqlx::Row;
@@ -19,6 +20,16 @@ use crate::store::model_pull::insert_pull;
 /// The most characters an agent's name runs to, `create-agent.sh`'s bound
 /// at WeaverAgent's `6b91747e`.
 pub const NAME_MOST: usize = 16;
+
+/// **The box's max-tokens-per-turn** (Spec 6.2, `toddwbucy/WeaverAgent#580`):
+/// the agent-creation tool writes 4096 into every declaration it lays and
+/// refuses a context capacity below it, since a capacity under the per-turn
+/// ceiling makes an agent whose turn can exceed its whole context, which an
+/// appliance fixes only by taking the agent down and creating it again. So
+/// the placement page's context length is bounded below by it, and the
+/// deployment tuple carries it beside the context length. This constant is
+/// the one place it is written, so a later per-agent value replaces it here.
+pub const MAX_TOKENS_PER_TURN: i64 = 4096;
 
 /// **The names `weaver-admin-Spec` section 4 reserves whole**, at
 /// WeaverAgent's `6b91747e`: the character rule below admits them, so they
@@ -68,6 +79,13 @@ pub struct Setup {
     pub begun_at: DateTime<Utc>,
     /// `open` or `confirmed`.
     pub state: String,
+    /// The context length the placement page kept, and none until it does.
+    pub context_length: Option<i64>,
+    /// The turn context the placement page kept, and none until it does.
+    pub turn_context: Option<String>,
+    /// The devices the placement page kept, ascending, and none until it
+    /// does.
+    pub devices: Option<Vec<i32>>,
     pub version: i64,
 }
 
@@ -79,12 +97,15 @@ fn setup_of(r: &sqlx::postgres::PgRow) -> Setup {
         begun_by: r.get("begun_by"),
         begun_at: r.get("begun_at"),
         state: r.get("state"),
+        context_length: r.get("context_length"),
+        turn_context: r.get("turn_context"),
+        devices: r.get("devices"),
         version: r.get("version"),
     }
 }
 
 const SELECT: &str = "SELECT s.setup_id, s.name, s.virtual_machine, p.name AS begun_by, \
-     s.begun_at, s.state, s.version \
+     s.begun_at, s.state, s.context_length, s.turn_context, s.devices, s.version \
      FROM agent_setup s JOIN person p ON p.person_id = s.begun_by";
 
 impl Store {
@@ -176,6 +197,51 @@ impl Store {
             return Ok(Err(Refusal::Stale));
         }
         commit_with_outcome(tx, "setup pairing", self, first).await?;
+        Ok(Ok(()))
+    }
+}
+
+/// **The placement page's three fields** (Spec 6.2), each already held to
+/// its source: the context length to the decoder's maximum, the devices to
+/// the survey's cards, ascending. A field the page holds is none.
+pub struct Placement<'a> {
+    pub context_length: Option<i64>,
+    pub turn_context: &'a str,
+    pub devices: Option<&'a [i32]>,
+}
+
+impl Store {
+    /// **The placement page's save** (Spec 6.2), over the open setup read
+    /// at `version`: the three fields written as the page holds them, a
+    /// held one none. Stale where the row is not what the page read.
+    pub async fn setup_placement(
+        &self,
+        admin: &str,
+        session_id: i64,
+        first: &str,
+        setup_id: &str,
+        version: i64,
+        placement: &Placement<'_>,
+    ) -> anyhow::Result<Result<(), Refusal>> {
+        let mut tx = self.identity_transaction().await?;
+        if let Err(refusal) = authorized(&mut tx, session_id, admin).await? {
+            return Ok(Err(refusal));
+        }
+        let written = sqlx::query(
+            "UPDATE agent_setup SET context_length = $1, turn_context = $2, devices = $3, \
+             version = version + 1 WHERE setup_id = $4 AND version = $5 AND state = 'open'",
+        )
+        .bind(placement.context_length)
+        .bind(placement.turn_context)
+        .bind(placement.devices)
+        .bind(setup_id)
+        .bind(version)
+        .execute(&mut *tx)
+        .await?;
+        if written.rows_affected() != 1 {
+            return Ok(Err(Refusal::Stale));
+        }
+        commit_with_outcome(tx, "setup placement", self, first).await?;
         Ok(Ok(()))
     }
 }

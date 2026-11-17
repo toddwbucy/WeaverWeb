@@ -1,0 +1,103 @@
+{% extends "setup_frame.html" %}
+{% block panes %}
+{#- The placement page (Spec 6.2): the context length, the turn context and
+    the devices in one form, each held to its source; the model's layers from
+    the decoder's header and pick; another shard order and the fit, unbuilt.
+    A held pane says what it waits on and holds no input. -#}
+<form method="post" action="/setup/{{ frame.setup_id }}/placement" class="stack">
+<input type="hidden" name="version" value="{{ version }}">
+<section class="pane">
+  <header><span class="stage"><b>1</b> Declare</span><h2>The context length</h2><span class="backing built">built</span><span class="status {{ context.status }}">{{ context.status }}</span><span class="source">the setup, bounded by the box's max-tokens-per-turn and the decoder's header</span></header>
+  <div class="body">
+  {%- if let Some(max) = context.max %}
+  <label>Context length <input name="context_length" type="number" min="{{ context.min }}" max="{{ max }}"{% if let Some(kept) = context.kept %} value="{{ kept }}"{% endif %} required></label>
+  <p>A whole number from {{ context.min }}, the box's max-tokens-per-turn, to the decoder's maximum of {{ max }}, read from its header. It is the declaration's <code>context-capacity</code>, and one under the per-turn ceiling would let a turn exceed the whole context.</p>
+  {%- if context.above %}
+  <p><span class="status fail">above</span> The context length kept is above this decoder's maximum, since the decoder was picked again. Keep another.</p>
+  {%- endif %}
+  {%- else %}
+  {%- if let Some(why) = context.none_fits %}
+  <p><span class="status fail">no fit</span> {{ why }}.</p>
+  {%- else %}
+  <p>Not read: the field is bounded by the decoder's maximum context, and none is read.</p>
+  {%- endif %}
+  {%- endif %}
+  </div>
+  {%- if context.none_fits.is_some() %}
+  <footer>A decoder whose maximum context is at least the box's max-tokens-per-turn, picked on the models page, opens the field.</footer>
+  {%- else if context.max.is_none() %}
+  <footer>Waits on {{ context.waits }}.</footer>
+  {%- else %}
+  <footer>One below the box's max-tokens-per-turn or above the maximum is refused, saving nothing.</footer>
+  {%- endif %}
+</section>
+<section class="pane">
+  <header><span class="stage"><b>1</b> Declare</span><h2>The turn context</h2><span class="backing built">built</span><span class="status ok">ok</span><span class="source">the setup</span></header>
+  <div class="body">
+  {%- for word in turn_contexts %}
+  <label><input type="radio" name="turn_context" value="{{ word }}" required{% if turn == *word %} checked{% endif %}> {{ word }}</label>
+  {%- endfor %}
+  </div>
+  <footer>{% if turn.is_empty() %}None is kept. {% endif %}The agent reads its absence as continuous, so the page never leaves the election to that default.</footer>
+</section>
+<section class="pane">
+  <header><span class="stage"><b>1</b> Declare</span><h2>The devices</h2><span class="backing built">built</span>{% if cards.is_some() %}<span class="status ok">ok</span>{% else %}<span class="status hold">hold</span>{% endif %}<span class="source">the survey's report</span></header>
+  <div class="body">
+  {%- if let Some(cards) = cards %}
+  {%- for card in cards %}
+  <label><input type="checkbox" name="device" value="{{ card.ordinal }}"{% if card.checked %} checked{% endif %}> Card {{ card.ordinal }}: {{ card.identity }}</label>
+  {%- endfor %}
+  <p>Each card by the ordinal the survey gives it in PCI bus order, the order the agent numbers its devices in. The checked cards hold the layers in ascending ordinal, the first card the first layers.</p>
+  {%- else %}
+  <p>Not read: the survey has reported no cards.</p>
+  {%- endif %}
+  </div>
+  {%- if cards.is_none() %}
+  <footer>Waits on the survey's report, which brings the cards.</footer>
+  {%- else %}
+  <footer>A set of one card at least, and no card is checked until one is kept.</footer>
+  {%- endif %}
+</section>
+{%- if open %}
+<p><button type="submit">Save the placement</button></p>
+{%- else %}
+<p>The setup is {{ frame.state }}, so its placement is kept.</p>
+{%- endif %}
+</form>
+<section class="pane">
+  <header><span class="stage"><b>1</b> Declare</span><h2>The model's layers</h2><span class="backing built">built</span>{% if layers.is_some() %}<span class="status ok">ok</span>{% else %}<span class="status hold">hold</span>{% endif %}<span class="source">the decoder's header and its pick</span></header>
+  <div class="body">
+  {%- if let Some(layers) = layers %}
+  <table>
+    <tbody>
+    <tr><th>Block count</th><td>{{ layers.blocks }}</td></tr>
+    {%- for part in layers.parts %}
+    <tr><th>Part {{ loop.index }}</th><td class="mono">{{ part }}</td></tr>
+    {%- endfor %}
+    </tbody>
+  </table>
+  {%- else %}
+  <p>Not read: no decoder is picked.</p>
+  {%- endif %}
+  </div>
+  {%- if layers.is_none() %}
+  <footer>Waits on a decoder picked on the models page.</footer>
+  {%- else %}
+  <footer>The parts in shard order, the first holding the first layers.</footer>
+  {%- endif %}
+</section>
+<section class="pane">
+  <header><span class="stage"><b>1</b> Declare</span><h2>Another shard order</h2><span class="backing unbuilt">unbuilt</span><span class="status hold">hold</span></header>
+  <div class="body">
+  <p>The checked cards hold the layers in ascending ordinal. An order other than the ordinals' is not offered.</p>
+  </div>
+  <footer>Waits on a ruling that offers another order.</footer>
+</section>
+<section class="pane">
+  <header><span class="stage"><b>1</b> Declare</span><h2>The fit</h2><span class="backing unbuilt">unbuilt</span><span class="status hold">hold</span><span class="source">planned, from the box's room plan</span></header>
+  <div class="body">
+  <p>Whether the checked cards hold the model's layers and the context length's KV, as the box's room plan answers it without a load.</p>
+  </div>
+  <footer>Waits on the room plan's answer over TLS, an ask on WeaverAgent.</footer>
+</section>
+{% endblock %}

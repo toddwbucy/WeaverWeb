@@ -20,12 +20,15 @@ pub mod gate;
 #[cfg(test)]
 pub(crate) mod gate_tests;
 pub mod grants;
+pub mod hugging_face;
 #[cfg(feature = "passkeys")]
 pub mod keys;
 pub mod reading;
 pub mod record;
+pub mod setup;
 #[cfg(feature = "passkeys")]
 pub mod sign_in;
+pub mod ssh_key;
 
 use axum::Router;
 use axum::extract::State;
@@ -50,14 +53,14 @@ pub(crate) struct Chrome {
 /// **The tab a page belongs to** (Spec 2.8; the operator's words of
 /// 2026-11-13), by the sub-tab the page declares as its `here`: `agents`
 /// for Declarations, Register and Your agents, `operations` for The Record,
-/// `iam` for Persons, Grants and Passkeys. A sub-tab belongs to one tab, so
+/// `iam` for Persons, Grants, Hugging Face, SSH keys and Passkeys. A sub-tab belongs to one tab, so
 /// this one table names it and no page names both. A page of no tab, the
 /// sign-in and enrollment pages, has none.
 pub(crate) fn tab_of(here: &str) -> &'static str {
     match here {
         "declarations" | "register" | "agents" => "agents",
         "record" => "operations",
-        "admin" | "grants" | "passkeys" => "iam",
+        "admin" | "grants" | "hugging-face" | "ssh-key" | "passkeys" => "iam",
         _ => "",
     }
 }

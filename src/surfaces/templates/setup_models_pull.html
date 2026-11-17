@@ -1,0 +1,15 @@
+{#- The setup's pulls and the base's identity (Spec 6.2), the page's own
+    and the fragment it re-fetches every 15 s. -#}
+{%- if pulls.pulls.is_empty() %}
+<p>No pull has been asked for this setup.</p>
+{%- else %}
+<table>
+  <thead><tr><th>Role</th><th>Pull</th><th>State</th><th>Progress</th></tr></thead>
+  <tbody>
+  {%- for p in pulls.pulls %}
+  <tr><td>{{ p.role }}</td><td class="mono">{{ p.pull_id }}</td><td><span class="status {{ p.hue }}">{{ p.state }}</span>{% if let Some(reason) = p.reason %} <span class="note read">{{ reason }}</span>{% endif %}</td><td>{{ p.done }} of {{ p.size }}</td></tr>
+  {%- endfor %}
+  </tbody>
+</table>
+{%- endif %}
+<p>The base's identity: {% if let Some(digest) = pulls.identity.blake3 %}<span class="mono">{{ digest }}</span>, computed {{ pulls.identity.computed_at }}{% else if let Some(why) = pulls.identity.not_read %}<span class="absent">{{ why }}</span>{% endif %}</p>

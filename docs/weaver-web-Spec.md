@@ -6681,12 +6681,15 @@ agent-creation tool lays them at setup, named from `weaver-<name>`, and the imag
 carries no fixed account for the agent (section 6.2). On the state drive each agent has
 a directory of its own under the state mount, named for it, which holds the agent's
 folder and its home side by side, and a host lays the same under its state directory.
-Every account's name and every path are the image's and WeaverAgent's, and none enters
-this repository (`weaver-web-PRD` section 10.4). The refusal is
-admin's, since load is admin's verb, so the representation this document holds is
-admin's answer to `load`, which renders as it came, as every refusal does (section 7.2).
-The report of the sizes reaches the console through admin-con, the console's one reach
-into an appliance, so its carrier at the box's seam is
+**The trace is never written to the agent's state or anywhere the agent can reach**, on
+the operator's word of 2026-11-17: it goes to Weaver Web, which stores it outside the
+agent's reach, so nothing on the state drive holds it beside the agent's state or save
+points (section 10). Every account's name and every path are the image's and
+WeaverAgent's, and none enters this repository (`weaver-web-PRD` section 10.4). The
+refusal is admin's, since load is admin's verb, so the representation this document
+holds is admin's answer to `load`, which renders as it came, as every refusal does
+(section 7.2). The report of the sizes reaches the console through admin-con, the
+console's one reach into an appliance, so its carrier at the box's seam is
 `weaver-admin-operator-contract`'s, and this document builds against the contract once
 it is merged. The form of the report, which carrier it takes at that seam, and where the
 console says that storage is not sufficient, are section 10's. So are the sizes that
@@ -7564,3 +7567,13 @@ a `web-` assertion beside `weaver-admin`'s.
   members and the store, writes the devices and the context length fixed and writes no
   turn context. Open: its taking those three, `toddwbucy/WeaverAgent#580`. Settled by
   WeaverAgent's act and the image's, which lays the agent after Confirm.
+- **The trace kept outside the agent's reach, opened 2026-11-17** (sections 6.1 and
+  8.3). The operator's words of 2026-11-17: "remember that the trace doesnt get written
+  to state or anywhere the agent has access to it. the trace goes to weaverweb and it
+  stores it outside of the agent's reach". They bear on the trace's destination as the
+  charter and this document state it, wherever the operator sends it, with the console
+  stating nothing about what keeps the trace past it: `weaver-web-PRD` section 10.6 and
+  its two cells of 2026-11-15 in section 9, section 6.1's destination field, section
+  8.3's paragraph on the trace's destination, and the cell on the trace's destination
+  field above. Open: whether the operator's words retire those passages. Settled by the
+  operator, then by the trace field's act.

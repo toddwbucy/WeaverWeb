@@ -615,3 +615,59 @@ async fn the_pairing_is_tls_1_3_alone() {
     );
     assert!(rig.listener.waiting().is_empty());
 }
+
+/// A console of the test's making: it completes the pairing's handshake
+/// under its own authority, reads the first frame, and answers `lines`.
+async fn console_saying(lines: &'static [&'static str]) -> SocketAddr {
+    let dir = tempfile::tempdir().unwrap();
+    let authority = Authority::init(&dir.path().join("authority"), "weaver-web", &[]).unwrap();
+    let acceptor = TlsAcceptor::from(authority.pairing_tls().unwrap());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let at = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let _dir = dir;
+        let (tcp, _) = listener.accept().await.unwrap();
+        let tls = acceptor.accept(tcp).await.unwrap();
+        let mut reader = LineReader::with_bound(tls, PAIR_FIRST_FRAME_BOUND);
+        let _ = reader.next().await;
+        for line in lines {
+            let _ = reader
+                .get_mut()
+                .write_all(format!("{line}\n").as_bytes())
+                .await;
+        }
+        let _ = reader.get_mut().flush().await;
+        tokio::time::sleep(SOON).await;
+    });
+    at
+}
+
+/// **Nothing the console wrote reaches a printed fault but a reason checked
+/// printable** (Spec 8.2): a line whose tag is an escape sequence, as the
+/// first answer and as a later frame, is named by a fixed text.
+///
+/// Perturbation: print serde's error for a line that is no frame, which
+/// quotes the console's tag, and the fault carries the escape.
+#[tokio::test]
+async fn a_consoles_line_reaches_no_fault_unchecked() {
+    const HOSTILE: &str = r#"{"svc":"\u001b[2J\u001b]0;x\u0007"}"#;
+    let printable = |text: &str| text.bytes().all(|b| (0x20..0x7f).contains(&b));
+    let at = console_saying(&[HOSTILE]).await;
+    match pair_client::dial(&at.to_string(), &claim("box-a")).await {
+        Err(DialError::Fault(why)) => assert!(printable(&why), "{why:?}"),
+        Err(other) => panic!("{other}"),
+        Ok(_) => panic!("a hostile answer was taken as waiting"),
+    }
+    let at = console_saying(&[
+        r#"{"svc":"waiting","expires_in_secs":600,"cadence_secs":1}"#,
+        HOSTILE,
+    ])
+    .await;
+    let mut dialed = pair_client::dial(&at.to_string(), &claim("box-a"))
+        .await
+        .unwrap();
+    match tokio::time::timeout(SOON, dialed.next()).await {
+        Ok(Heard::Fault(why)) => assert!(printable(&why), "{why:?}"),
+        other => panic!("{other:?}"),
+    }
+}

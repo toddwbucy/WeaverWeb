@@ -136,21 +136,43 @@ impl Dialed {
             };
             #[cfg(test)]
             self.transcript.push(line.clone());
-            match serde_json::from_str::<PairToBox>(&line) {
-                Ok(PairToBox::Heartbeat) => continue,
-                Ok(PairToBox::Expired) => return Heard::Expired,
-                Ok(PairToBox::Refused { reason }) => {
+            match decode(&line) {
+                Some(PairToBox::Heartbeat) => continue,
+                Some(PairToBox::Expired) => return Heard::Expired,
+                Some(PairToBox::Refused { reason }) => {
                     return match printable(&reason) {
                         Some(reason) => Heard::Refused(reason),
                         None => Heard::Fault("the console's reason is not printable".into()),
                     };
                 }
-                Ok(other) => {
-                    return Heard::Fault(format!("the console sent {other:?} out of turn"));
+                Some(other) => {
+                    let named = named(&other);
+                    return Heard::Fault(format!("the console sent {named} out of turn"));
                 }
-                Err(e) => return Heard::Fault(format!("the console sent no pairing frame: {e}")),
+                None => return Heard::Fault(NO_FRAME.into()),
             }
         }
+    }
+}
+
+/// What a line that is no pairing frame is called. **Never serde's error**,
+/// which quotes the line, and the line is the console's: a tag it made up
+/// would reach a printed fault with whatever escapes it holds.
+const NO_FRAME: &str = "the console sent no pairing frame";
+
+/// The console's frame, or none.
+fn decode(line: &str) -> Option<PairToBox> {
+    serde_json::from_str(line).ok()
+}
+
+/// A frame as the box names it in a fault: its tag alone, never a member
+/// the console wrote.
+fn named(frame: &PairToBox) -> &'static str {
+    match frame {
+        PairToBox::Waiting { .. } => "waiting",
+        PairToBox::Heartbeat => "heartbeat",
+        PairToBox::Expired => "expired",
+        PairToBox::Refused { .. } => "refused",
     }
 }
 
@@ -261,8 +283,8 @@ pub(crate) async fn over(tcp: TcpStream, host: &str, claim: &Claim) -> Result<Di
     };
     #[cfg(test)]
     transcript.push(answer.clone());
-    match serde_json::from_str::<PairToBox>(&answer) {
-        Ok(PairToBox::Waiting {
+    match decode(&answer) {
+        Some(PairToBox::Waiting {
             expires_in_secs,
             cadence_secs,
         }) if cadence_secs > 0 && cadence_secs <= crate::link::frames::CADENCE_MAX_SECS => {
@@ -276,17 +298,16 @@ pub(crate) async fn over(tcp: TcpStream, host: &str, claim: &Claim) -> Result<Di
                 transcript,
             })
         }
-        Ok(PairToBox::Refused { reason }) => Err(match printable(&reason) {
+        Some(PairToBox::Refused { reason }) => Err(match printable(&reason) {
             Some(reason) => DialError::Refused(reason),
             None => DialError::Fault("the console's reason is not printable".into()),
         }),
-        Ok(PairToBox::Expired) => Err(DialError::Expired),
-        Ok(other) => Err(DialError::Fault(format!(
-            "the console answered {other:?} to the first frame"
+        Some(PairToBox::Expired) => Err(DialError::Expired),
+        Some(other) => Err(DialError::Fault(format!(
+            "the console answered {named} to the first frame",
+            named = named(&other)
         ))),
-        Err(e) => Err(DialError::Fault(format!(
-            "the console answered no pairing frame: {e}"
-        ))),
+        None => Err(DialError::Fault(NO_FRAME.into())),
     }
 }
 

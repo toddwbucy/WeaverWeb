@@ -1689,3 +1689,48 @@ async fn a_setup_ask_the_store_holds_past_the_bound_is_refused_and_lets_its_clai
         (Status::Done, Some("described"))
     );
 }
+
+/// **An entry whose request is dropped once its code matched still pairs
+/// the box** (Spec 8.2): the match, its first record, the exchange and the
+/// outcome run in one task a dropped request cannot cut. The request is
+/// dropped while its first record is held, and the box still hears its
+/// answer and `paired`, one row standing for the name.
+///
+/// Perturbation: run the continuation from the match in the request's own
+/// future, and the dropped request takes the box's connection with it.
+#[tokio::test]
+async fn an_entry_dropped_once_its_code_matched_still_pairs_the_box() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (person, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
+    let setup = setup.unwrap();
+    let keys = box_keys("box-a");
+    let dialed = dial(&rig, &keys.claim).await;
+    let code = dialed.code().to_string();
+    let the_box = tokio::spawn(the_box(dialed, Box::Whole));
+    let (read, release) = crate::admin_tests::hold(&crate::surfaces::admin::READ_HOLD, &person);
+    let entry = {
+        let (app, session, setup) = (rig.app.clone(), ada.clone(), setup.clone());
+        tokio::spawn(async move {
+            send_as(
+                &app,
+                "POST",
+                &format!("/setup/{setup}/pair"),
+                Some(form(&[("compared", "on"), ("code", &code)])),
+                &session,
+            )
+            .await
+        })
+    };
+    tokio::time::timeout(SOON, read.notified())
+        .await
+        .expect("the entry matched and reached its first record");
+    entry.abort();
+    assert!(entry.await.unwrap_err().is_cancelled());
+    release.notify_one();
+    let (heard, last) = tokio::time::timeout(SOON, the_box).await.unwrap().unwrap();
+    assert!(matches!(heard, Heard::Answer(_)), "{heard:?}");
+    assert!(matches!(last, Some(LastWord::Paired)), "{last:?}");
+    assert_eq!(rows_named(s, "karl").await, 1);
+}

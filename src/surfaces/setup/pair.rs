@@ -191,12 +191,15 @@ pub(super) use entry::route;
 
 #[cfg(feature = "enrollment")]
 mod entry {
+    use std::sync::Arc;
+
     use axum::extract::{Form, Path, State};
     use axum::http::{HeaderMap, StatusCode, header};
     use axum::response::{Html, IntoResponse, Response};
     use serde::Deserialize;
 
     use super::{Entered, pane};
+    use crate::config::ServerConfig;
     use crate::link::exchange::{self, Ended, Exchange, Outcome};
     use crate::link::frames::{PairToBox, pair_reason};
     use crate::link::pair_code::Code;
@@ -344,126 +347,109 @@ mod entry {
                 Err(e) => return fault(e),
             }
         }
-        // **One exclusion per setup spans the field's check, the comparison
-        // and the miss** (Spec 8.2): the setup row's lock, taken in a task a
-        // dropped request cannot cut, so entries for one setup compare one
-        // at a time against the field as the last left it, none compares
-        // once five misses have closed it, and a miss is counted and
-        // recorded whatever the request does.
-        let compared = {
-            let store = store.clone();
-            let listener = enrollment.listener.clone();
-            let setup_id = setup_id.to_owned();
-            let person = session.person_id.clone();
-            tokio::spawn(async move {
-                let (field, state) = store.code_field(&setup_id).await?;
-                Ok::<Compared, anyhow::Error>(match state {
-                    Field::NotInStep => {
-                        field.release().await?;
-                        Compared::NotInStep
-                    }
-                    Field::Closed => {
-                        field.release().await?;
-                        Compared::Closed
-                    }
-                    Field::Open => match listener.take_pairing(&code).await {
-                        Some(taken) => {
-                            field.release().await?;
-                            Compared::Matched(Box::new(taken))
-                        }
-                        // **A miss**: counted on the setup row under the
-                        // lock, then one refusal record naming the setup
-                        // and never the code.
-                        None => {
-                            let closed = field.missed().await?;
-                            let principal = Principal::Person {
-                                person_id: &person,
-                                method: PersonMethod::Session,
-                            };
-                            store
-                                .audit_refusal(
-                                    principal,
-                                    Target::Setup(&setup_id),
-                                    ACTION,
-                                    "the code matches no waiting box",
-                                )
-                                .await?;
-                            Compared::Missed { closed }
-                        }
-                    },
-                })
-            })
-        };
-        let taken = match compared.await {
-            Ok(Ok(Compared::Matched(taken))) => *taken,
-            Ok(Ok(Compared::NotInStep)) => {
-                if let Err(answer) =
-                    record_refusal(&store, &session, setup_id, "setup_closed").await
-                {
-                    return answer;
-                }
-                return (
+        // **One task from the field's lock through the outcome's record**
+        // (Spec 8.2), which a dropped request cannot cut: the request awaits
+        // what the task ended with and renders it.
+        let continued = tokio::spawn(continue_entry(Entry {
+            store: store.clone(),
+            cfg: seams.cfg.clone(),
+            enrollment,
+            session: session.clone(),
+            setup_id: setup_id.to_owned(),
+            name: setup.name.clone(),
+            code,
+            replace,
+        }));
+        match continued.await {
+            Ok(Ok(ended)) => answer(&store, seams, &session, setup_id, &setup.name, ended).await,
+            Ok(Err(early)) => early,
+            Err(e) => fault(anyhow::Error::new(e)),
+        }
+    }
+
+    /// **What an entry's task owns**, so it runs apart from the request.
+    struct Entry {
+        store: Store,
+        cfg: Arc<ServerConfig>,
+        enrollment: super::Enrollment,
+        session: Session,
+        setup_id: String,
+        name: String,
+        code: Code,
+        replace: Option<AgentId>,
+    }
+
+    /// **An entry from the field's lock through the outcome's record**
+    /// (Spec 8.2), run in a task a dropped request cannot cut: what the
+    /// exchange ended with, or the answer that ended the entry sooner. A
+    /// match goes on in the same task to its first record, the exchange and
+    /// its outcome, so a box whose code matched is answered and the act
+    /// recorded with the request gone.
+    async fn continue_entry(entry: Entry) -> Result<Ended, Response> {
+        let Entry {
+            store,
+            cfg,
+            enrollment,
+            session,
+            setup_id,
+            name,
+            code,
+            replace,
+        } = entry;
+        let compared = compare(&store, &enrollment, &session, &setup_id, &code)
+            .await
+            .map_err(fault)?;
+        let taken = match compared {
+            Compared::Matched(taken) => *taken,
+            Compared::NotInStep => {
+                record_refusal(&store, &session, &setup_id, "setup_closed").await?;
+                return Err((
                     StatusCode::CONFLICT,
                     PairingRefusal::SetupClosed.to_string(),
                 )
-                    .into_response();
+                    .into_response());
             }
-            Ok(Ok(Compared::Closed)) => {
-                if let Err(answer) =
-                    record_refusal(&store, &session, setup_id, "the code field is closed").await
-                {
-                    return answer;
-                }
-                return (
+            Compared::Closed => {
+                record_refusal(&store, &session, &setup_id, "the code field is closed").await?;
+                return Err((
                     StatusCode::CONFLICT,
                     "five misses closed the code field for ten minutes from the fifth",
                 )
-                    .into_response();
+                    .into_response());
             }
-            Ok(Ok(Compared::Missed { closed })) => {
+            Compared::Missed { closed } => {
                 let words = if closed {
                     "the code matches no waiting box, and five misses close the code field for ten minutes"
                 } else {
                     "the code matches no waiting box: check it against the box and enter it again"
                 };
-                return (StatusCode::CONFLICT, words).into_response();
+                return Err((StatusCode::CONFLICT, words).into_response());
             }
-            Ok(Err(e)) => return fault(e),
-            Err(e) => return fault(anyhow::Error::new(e)),
         };
         let act = match replace {
             Some(id) => PairingAct::Replace(id),
-            None => match store
-                .mint_key("ag")
-                .await
-                .and_then(|id| id.parse().map_err(anyhow::Error::msg))
-            {
-                Ok(id) => PairingAct::Pair(id),
-                Err(e) => return fault(e),
-            },
+            None => PairingAct::Pair(
+                store
+                    .mint_key("ag")
+                    .await
+                    .and_then(|id| id.parse().map_err(anyhow::Error::msg))
+                    .map_err(fault)?,
+            ),
         };
-        let first = match first_of(
+        let first = first_of(
             &store,
             &session,
             Target::Agent(act.agent_id().as_str()),
             act.action(),
         )
-        .await
-        {
-            Ok(first) => first,
-            Err(answer) => return answer,
-        };
-        // **The exchange in a task of its own**, so a dropped request
-        // cannot cut it while a box waits on its answer.
+        .await?;
+        // **The exchange in a task of its own**, so a panic in it still
+        // reaches the outcome's record below, as an unknown.
         let task = {
             let store = store.clone();
-            let cfg = seams.cfg.clone();
-            let setup_id = setup_id.to_owned();
-            let name = setup.name.clone();
             let person = session.person_id.clone();
             let session_id = session.session_id;
             let first = first.clone();
-            let act = act.clone();
             let mut taken = taken;
             tokio::spawn(async move {
                 // **The authority lock, waited for within the box's life**
@@ -526,7 +512,56 @@ mod entry {
             _ => Ok(Err(Refusal::Stale)),
         };
         settled(&store, &first, &written).await;
-        answer(&store, seams, &session, setup_id, &setup.name, ended).await
+        Ok(ended)
+    }
+
+    /// **The comparison** (Spec 8.2). One exclusion per setup spans the
+    /// field's check, the comparison and the miss: the setup row's lock, so
+    /// entries for one setup compare one at a time against the field as the
+    /// last left it, none compares once five misses have closed it, and a
+    /// miss is counted and recorded whatever the request does.
+    async fn compare(
+        store: &Store,
+        enrollment: &super::Enrollment,
+        session: &Session,
+        setup_id: &str,
+        code: &Code,
+    ) -> anyhow::Result<Compared> {
+        let (field, state) = store.code_field(setup_id).await?;
+        Ok(match state {
+            Field::NotInStep => {
+                field.release().await?;
+                Compared::NotInStep
+            }
+            Field::Closed => {
+                field.release().await?;
+                Compared::Closed
+            }
+            Field::Open => match enrollment.listener.take_pairing(code).await {
+                Some(taken) => {
+                    field.release().await?;
+                    Compared::Matched(Box::new(taken))
+                }
+                // **A miss**: counted on the setup row under the lock, then
+                // one refusal record naming the setup and never the code.
+                None => {
+                    let closed = field.missed().await?;
+                    let principal = Principal::Person {
+                        person_id: &session.person_id,
+                        method: PersonMethod::Session,
+                    };
+                    store
+                        .audit_refusal(
+                            principal,
+                            Target::Setup(setup_id),
+                            ACTION,
+                            "the code matches no waiting box",
+                        )
+                        .await?;
+                    Compared::Missed { closed }
+                }
+            },
+        })
     }
 
     /// **The entry's answer**: back to the page where the row stands, else

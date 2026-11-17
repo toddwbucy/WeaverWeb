@@ -447,6 +447,7 @@ mod entry {
         // reaches the outcome's record below, as an unknown.
         let task = {
             let store = store.clone();
+            let setup_id = setup_id.clone();
             let person = session.person_id.clone();
             let session_id = session.session_id;
             let first = first.clone();
@@ -512,6 +513,21 @@ mod entry {
             _ => Ok(Err(Refusal::Stale)),
         };
         settled(&store, &first, &written).await;
+        // **The exchange's diagnostics are written here**, in the task, so a
+        // request gone since the match loses none of them: an unknown's
+        // error, and beside any end but `paired` the two fingerprints the
+        // box was answered with.
+        if let Outcome::Unknown(e) = &ended.outcome {
+            tracing::error!("the pairing of {setup_id} ended unknown: {e:#}");
+        }
+        if let (false, Some([gate, admin])) = (
+            matches!(ended.outcome, Outcome::Paired { .. }),
+            &ended.answered,
+        ) {
+            tracing::warn!(
+                "the pairing of {setup_id} ended with no row confirmed: the box was answered gate {gate} and admin {admin}"
+            );
+        }
         Ok(ended)
     }
 
@@ -613,22 +629,14 @@ mod entry {
                 "fail",
                 "the session or the admin grant that entered the code ended before the write, so nothing was written: pair the box again".to_owned(),
             ),
-            Outcome::Unknown(e) => {
-                tracing::error!("the pairing of {setup_id} ended unknown: {e:#}");
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "fail",
-                    format!(
-                        "unknown: whether the pairing's write landed cannot be said. The rows below are what the register holds for {name}: compare their fingerprints with the two the box's unknown line shows, and adopt only where both match"
-                    ),
-                )
-            }
+            Outcome::Unknown(_) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "fail",
+                format!(
+                    "unknown: whether the pairing's write landed cannot be said. The rows below are what the register holds for {name}: compare their fingerprints with the two the box's unknown line shows, and adopt only where both match"
+                ),
+            ),
         };
-        if let Some([gate, admin]) = &ended.answered {
-            tracing::warn!(
-                "the pairing of {setup_id} ended with no row confirmed: the box was answered gate {gate} and admin {admin}"
-            );
-        }
         let setup = match store.setup(setup_id).await {
             Ok(Some(setup)) => setup,
             Ok(None) => return refused(&Refusal::NoSuchSetup),

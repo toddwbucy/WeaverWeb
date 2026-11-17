@@ -1781,3 +1781,70 @@ async fn a_setup_ask_whose_admission_waits_is_refused_within_the_boxs_bound() {
         "{line}"
     );
 }
+
+/// **An entry whose request is dropped still logs what the box was
+/// answered** (Spec 8.2): the exchange's diagnostics are written in the
+/// task that runs it, not in the request's answer. The request is dropped
+/// while the matched entry's first record is held, the box closes before
+/// its word, and the console's log names the two fingerprints the box was
+/// answered with and no row confirmed.
+///
+/// Perturbation: write the diagnostics in the request's answer, and a
+/// dropped request logs nothing of them.
+#[tokio::test]
+async fn an_entry_dropped_once_matched_still_logs_what_the_box_was_answered() {
+    let logs = crate::agents_tests::Captured::default();
+    let _logging = tracing::subscriber::set_default(
+        tracing_subscriber::fmt()
+            .with_writer(logs.clone())
+            .with_max_level(tracing::Level::TRACE)
+            .with_ansi(false)
+            .finish(),
+    );
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (person, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
+    let setup = setup.unwrap();
+    let keys = box_keys("box-a");
+    let dialed = dial(&rig, &keys.claim).await;
+    let code = dialed.code().to_string();
+    let mark = logs.mark();
+    let the_box = tokio::spawn(the_box(dialed, Box::NoWord));
+    let (read, release) = crate::admin_tests::hold(&crate::surfaces::admin::READ_HOLD, &person);
+    let entry = {
+        let (app, session, setup) = (rig.app.clone(), ada.clone(), setup.clone());
+        tokio::spawn(async move {
+            send_as(
+                &app,
+                "POST",
+                &format!("/setup/{setup}/pair"),
+                Some(form(&[("compared", "on"), ("code", &code)])),
+                &session,
+            )
+            .await
+        })
+    };
+    tokio::time::timeout(SOON, read.notified())
+        .await
+        .expect("the entry matched and reached its first record");
+    entry.abort();
+    assert!(entry.await.unwrap_err().is_cancelled());
+    release.notify_one();
+    let (heard, _) = tokio::time::timeout(SOON, the_box).await.unwrap().unwrap();
+    assert!(matches!(heard, Heard::Answer(_)), "{heard:?}");
+    assert!(
+        logs.logged(
+            mark,
+            &[
+                setup.as_str(),
+                "ended with no row confirmed",
+                "the box was answered gate"
+            ],
+            SOON
+        )
+        .await,
+        "the answered fingerprints were not logged"
+    );
+    assert_eq!(rows_named(s, "karl").await, 0);
+}

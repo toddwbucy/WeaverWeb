@@ -47,6 +47,20 @@ impl RepoFile {
     }
 }
 
+/// A repository's directory's name under the root, Hugging Face's own.
+fn repo_dir_name(repo: &RepoId) -> String {
+    format!("models--{}--{}", repo.owner(), repo.name())
+}
+
+/// **A file's place in its snapshot, relative to the root**, as the
+/// deployment tuple names a part under the models mount (Spec 6.2): the
+/// layout is Hugging Face's on the console and on the box alike.
+pub fn snapshot_path(repo: &RepoId, commit: &str, path: &str) -> anyhow::Result<String> {
+    anyhow::ensure!(is_commit(commit), "a snapshot names a commit");
+    anyhow::ensure!(is_repo_path(path), "a file's path is not of its shape");
+    Ok(format!("{}/snapshots/{commit}/{path}", repo_dir_name(repo)))
+}
+
 /// The cache at its root.
 #[derive(Clone, Debug)]
 pub struct Cache {
@@ -115,8 +129,7 @@ impl Cache {
     }
 
     fn repo_dir(&self, repo: &RepoId) -> PathBuf {
-        self.root
-            .join(format!("models--{}--{}", repo.owner(), repo.name()))
+        self.root.join(repo_dir_name(repo))
     }
 
     /// The repository's `blobs` directory.

@@ -18,6 +18,7 @@ pub mod alerts;
 pub mod audit;
 #[cfg(test)]
 mod audit_tests;
+pub mod base_identity;
 pub(crate) mod commit;
 pub mod declarations;
 pub mod experiment;
@@ -30,6 +31,9 @@ pub mod key;
 pub mod model_pull;
 pub mod plan;
 pub mod read;
+pub mod setup;
+pub mod ssh_key;
+pub mod tuple;
 
 pub use experiment::{Arm, Experiment, ExperimentState, Registered, StagedExperiment, Sweep};
 pub use key::{AgentId, ArmId, PlanId, PositionKey, RunId, TurnId};

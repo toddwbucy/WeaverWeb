@@ -133,7 +133,7 @@ async fn the_top_row_holds_three_tabs_and_the_status_at_the_right() {
     assert_eq!(
         links(&top),
         pairs(&[
-            ("/declarations", "Agents"),
+            ("/setup", "Agents"),
             ("/record", "Agent Operations"),
             ("/admin/persons", "IAM"),
             ("who", ""),
@@ -174,7 +174,7 @@ async fn the_top_row_holds_three_tabs_and_the_status_at_the_right() {
     assert_eq!(
         links(&top),
         pairs(&[
-            ("/declarations", "Agents"),
+            ("/setup", "Agents"),
             ("/record", "Agent Operations"),
             ("/admin/persons", "IAM"),
             ("who", ""),
@@ -201,7 +201,7 @@ async fn the_top_row_holds_three_tabs_and_the_status_at_the_right() {
 /// one marked and the row named by its tab: under Agents, Declarations,
 /// Register and Your agents in the path's order with their stage marks;
 /// under Agent Operations, The Record alone, nothing being built there yet;
-/// under IAM, Persons, Grants and Passkeys. A person who is not an admin
+/// under IAM, Persons, Grants, Hugging Face, SSH keys and Passkeys. A person who is not an admin
 /// sees the sub-tabs they may open: Your agents, The Record and Passkeys.
 #[tokio::test]
 async fn the_second_row_holds_the_sub_tabs_of_the_pages_tab() {
@@ -212,7 +212,7 @@ async fn the_second_row_holds_the_sub_tabs_of_the_pages_tab() {
     let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
     let (_, bea) = signed_in(&rig.app, s, &mut authenticator(), "bea").await;
     let agents = pairs(&[
-        ("/declarations", "1 Declare Declarations"),
+        ("/setup", "1 Declare Declarations"),
         ("/admin/agents", "2 Provision Register"),
         ("/agents", "3 Run 4 Observe Your agents"),
     ]);
@@ -221,6 +221,7 @@ async fn the_second_row_holds_the_sub_tabs_of_the_pages_tab() {
         ("/admin/persons", "Persons"),
         ("/admin/grants", "Grants"),
         ("/admin/hugging-face", "Hugging Face"),
+        ("/admin/ssh-key", "SSH keys"),
         ("/passkeys", "Passkeys"),
     ]);
     for (uri, session, tab, want, here) in [
@@ -260,7 +261,15 @@ async fn the_second_row_holds_the_sub_tabs_of_the_pages_tab() {
             iam.clone(),
             "Hugging Face",
         ),
-        ("/passkeys", &bea, "IAM", vec![iam[3].clone()], "Passkeys"),
+        ("/admin/ssh-key", &ada, "IAM", iam.clone(), "SSH keys"),
+        (
+            "/setup",
+            &ada,
+            "Agents",
+            agents.clone(),
+            "1 Declare Declarations",
+        ),
+        ("/passkeys", &bea, "IAM", vec![iam[4].clone()], "Passkeys"),
     ] {
         let page = page(&rig.app, uri, session).await;
         let (top, second) = bar(&page);
@@ -316,6 +325,8 @@ async fn every_page_declares_its_tab_and_sub_tab() {
         .unwrap();
     let granted = host::grant_add(s, &ada_id, "observer", Some(&karl), None).await;
     assert!(granted.ok, "{}", granted.value);
+    let (_, _, setup) = crate::setup_tests::begin(&rig.app, &ada, "otto").await;
+    let setup = setup.expect("a setup opens");
 
     let mut pages = Vec::new();
     for uri in [
@@ -329,7 +340,15 @@ async fn every_page_declares_its_tab_and_sub_tab() {
         "/admin/persons",
         "/admin/grants",
         "/admin/hugging-face",
+        "/admin/ssh-key",
         "/passkeys",
+        "/setup",
+        &format!("/setup/{setup}/pairing"),
+        &format!("/setup/{setup}/models"),
+        &format!("/setup/{setup}/drives"),
+        &format!("/setup/{setup}/placement"),
+        &format!("/setup/{setup}/confirm"),
+        &format!("/setup/{setup}/build"),
     ] {
         pages.push((uri.to_owned(), page(&rig.app, uri, &ada).await));
     }
@@ -346,7 +365,15 @@ async fn every_page_declares_its_tab_and_sub_tab() {
         ("IAM", Some("Persons")),
         ("IAM", Some("Grants")),
         ("IAM", Some("Hugging Face")),
+        ("IAM", Some("SSH keys")),
         ("IAM", Some("Passkeys")),
+        ("Agents", Some("1 Declare Declarations")),
+        ("Agents", Some("1 Declare Declarations")),
+        ("Agents", Some("1 Declare Declarations")),
+        ("Agents", Some("1 Declare Declarations")),
+        ("Agents", Some("1 Declare Declarations")),
+        ("Agents", Some("1 Declare Declarations")),
+        ("Agents", Some("1 Declare Declarations")),
     ];
     for ((uri, page), (tab, sub)) in pages.iter().zip(want) {
         let (top, second) = bar(page);

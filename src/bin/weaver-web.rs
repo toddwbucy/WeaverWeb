@@ -489,6 +489,14 @@ async fn serve(cfg: Arc<ServerConfig>) -> anyhow::Result<()> {
         cfg.authority_dir.clone(),
         weaver_web::hugging_face::pull::Settings::default(),
     );
+    // **The base's identity** (Spec 6.2): one task, which hashes each
+    // verified decoder's pull with no identity row, at start and at each
+    // pull the puller verifies, and stops when `main` returns.
+    let _identities = weaver_web::hugging_face::base_identity::BaseIdentities::start(
+        store.clone(),
+        puller.cache().cloned(),
+        puller.verified(),
+    );
     let instrument = weaver_web::surfaces::routes(policy.clone())
         .merge(weaver_web::surfaces::script_policy(
             weaver_web::surfaces::enroll::routes(passkeys.clone()),
@@ -519,9 +527,25 @@ async fn serve(cfg: Arc<ServerConfig>) -> anyhow::Result<()> {
         .merge(weaver_web::surfaces::script_policy(
             weaver_web::surfaces::hugging_face::routes(weaver_web::surfaces::hugging_face::Seams {
                 policy: policy.clone(),
-                client: hugging_face,
+                client: hugging_face.clone(),
                 authority_dir: cfg.authority_dir.clone(),
+                puller: puller.clone(),
+            }),
+        ))
+        // **Declare's path, the start page and the setup pages, and the
+        // operator's SSH keys** (Spec 6.2): an admin's, drawn from the store
+        // and the config alone, reaching no agent and no box.
+        .merge(weaver_web::surfaces::script_policy(
+            weaver_web::surfaces::setup::routes(weaver_web::surfaces::setup::Seams {
+                policy: policy.clone(),
+                cfg: cfg.clone(),
+                client: hugging_face.clone(),
                 puller,
+                authority_dir: cfg.authority_dir.clone(),
+                headers: weaver_web::hugging_face::headers::Headers::new(),
+                // No box reports until the enrollment's act builds the
+                // source, so the devices and the box's members are held.
+                boxes: std::sync::Arc::new(weaver_web::box_report::NoBox),
             }),
         ))
         // **The register of agents through the server** (Spec 2.13): the

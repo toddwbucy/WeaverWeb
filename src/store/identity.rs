@@ -94,6 +94,24 @@ pub fn is_pull_id(spec: &str) -> bool {
     shaped("mp-", spec)
 }
 
+/// Whether `spec` is an agent setup's identity: exactly `st-` and sixteen
+/// lowercase hex (Spec 6.2).
+pub fn is_setup_id(spec: &str) -> bool {
+    shaped("st-", spec)
+}
+
+/// Whether `spec` is a deployment tuple's identity: exactly `dt-` and
+/// sixteen lowercase hex (Spec 6.2).
+pub fn is_tuple_id(spec: &str) -> bool {
+    shaped("dt-", spec)
+}
+
+/// Whether `spec` is an operator's SSH public key's identity: exactly `sk-`
+/// and sixteen lowercase hex (Spec 6.2).
+pub fn is_ssh_key_id(spec: &str) -> bool {
+    shaped("sk-", spec)
+}
+
 /// **A name as given, trimmed of surrounding white space**, or why it is
 /// refused: empty, past the bound, holding a NUL, which the store refuses
 /// in text, or **of an identity's own shape**, which would shadow the

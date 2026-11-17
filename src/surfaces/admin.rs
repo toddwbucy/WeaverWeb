@@ -109,7 +109,11 @@ pub(crate) fn refused(refusal: &Refusal) -> Response {
         | Refusal::NoSuchRole
         | Refusal::NoSuchAgent
         | Refusal::NoSuchDeclaration
-        | Refusal::NotConnected => StatusCode::NOT_FOUND,
+        | Refusal::NotConnected
+        | Refusal::NoSuchSetup
+        | Refusal::NoSuchKey
+        | Refusal::NoSuchModel
+        | Refusal::NoSuchChoice => StatusCode::NOT_FOUND,
         Refusal::Name(_) | Refusal::Scope(_) | Refusal::Vocabulary(_) => StatusCode::BAD_REQUEST,
         Refusal::Stale
         | Refusal::Taken(_)
@@ -127,7 +131,14 @@ pub(crate) fn refused(refusal: &Refusal) -> Response {
         | Refusal::NameChanged(_)
         | Refusal::SealDoesNotOpen
         | Refusal::PullRunning(_)
-        | Refusal::PullNotRunning(_) => StatusCode::CONFLICT,
+        | Refusal::PullNotRunning(_)
+        | Refusal::SetupNameHeld(_)
+        | Refusal::KeyHeld
+        | Refusal::KeysFull
+        | Refusal::Unpickable(_)
+        | Refusal::SetupConfirmed
+        | Refusal::Unplaceable(_)
+        | Refusal::Unconfirmable(_) => StatusCode::CONFLICT,
         Refusal::TokenRefused => StatusCode::UNPROCESSABLE_ENTITY,
         Refusal::HandoverFull | Refusal::NoSealKey | Refusal::NoModelCache => {
             StatusCode::SERVICE_UNAVAILABLE

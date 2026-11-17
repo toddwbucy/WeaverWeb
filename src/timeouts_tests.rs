@@ -129,6 +129,7 @@ const CALLS: &[(&str, &str, Why)] = &[
     ("src/link/pairing.rs", "close_with", Socket),
     ("src/link/pairing.rs", "serve", Socket),
     ("src/link/pairing.rs", "serve", Socket),
+    ("src/link/register.rs", "authority_lock_by", Reads), // the pool's checkout for the authority lock
     ("src/link/relay.rs", "dial", Socket),
     ("src/listen.rs", "bounded", Socket),
     ("src/passkeys.rs", "from_config", NotTokio), // the ceremony's lifetime

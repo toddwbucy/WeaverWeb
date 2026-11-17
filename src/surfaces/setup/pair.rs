@@ -470,11 +470,8 @@ mod entry {
                 // (Spec 8.2), the box hearing heartbeats meanwhile: a box
                 // gone ends the wait with nothing written, and a lock held
                 // past the box's life by another write refuses it `busy`.
-                let within = taken
-                    .ends
-                    .saturating_duration_since(tokio::time::Instant::now());
                 let lock = tokio::select! {
-                    lock = store.authority_lock_within(within) => lock?,
+                    lock = store.authority_lock_by(taken.ends) => lock?,
                     _ = taken.connection.lost() => return Ok(Ended::from(Outcome::BoxGone)),
                 };
                 let Some(mut lock) = lock else {

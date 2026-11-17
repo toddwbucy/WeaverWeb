@@ -1549,3 +1549,62 @@ async fn a_closure_that_ends_while_the_entry_waits_reads_open() {
     );
     field.release().await.unwrap();
 }
+
+/// **The authority lock is waited for by the box's end alone** (Spec 8.2):
+/// one deadline spans the pool's checkout and the store's wait, so an end
+/// already past answers no lock though the lock is free, and the box is
+/// refused `busy` rather than taken past its life. An end ahead takes the
+/// free lock.
+///
+/// Perturbation: drop the end's check after the checkout, and a free lock
+/// is taken past the end.
+#[tokio::test]
+async fn the_authority_lock_is_not_taken_past_the_boxs_end() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let past = tokio::time::Instant::now() - Duration::from_millis(1);
+    assert!(
+        s.authority_lock_by(past).await.unwrap().is_none(),
+        "a free lock was taken past the box's end"
+    );
+    // A checkout ready at its first poll, an idle connection taken with no
+    // ping, is handed over by tokio's bound although the end has passed:
+    // the end read once the connection is held answers it.
+    let ready = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .test_before_acquire(false)
+        .connect_with((*s.pool.connect_options()).clone())
+        .await
+        .unwrap();
+    drop(ready.acquire().await.unwrap());
+    let prompt = Store {
+        pool: ready.clone(),
+    };
+    let past = tokio::time::Instant::now() - Duration::from_millis(1);
+    assert!(
+        prompt.authority_lock_by(past).await.unwrap().is_none(),
+        "a connection ready at once took a free lock past the box's end"
+    );
+    ready.close().await;
+    let ahead = tokio::time::Instant::now() + SOON;
+    let lock = s.authority_lock_by(ahead).await.unwrap();
+    assert!(lock.is_some(), "a free lock within the end");
+    drop(lock);
+
+    // A pool with no connection to give answers by the end, not at the
+    // pool's own 30 s.
+    let one = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect_with((*s.pool.connect_options()).clone())
+        .await
+        .unwrap();
+    let held = one.acquire().await.unwrap();
+    let narrow = Store { pool: one.clone() };
+    let end = tokio::time::Instant::now() + Duration::from_millis(300);
+    let answered = tokio::time::timeout(SOON, narrow.authority_lock_by(end))
+        .await
+        .expect("the checkout is bounded by the box's end");
+    assert!(answered.unwrap().is_none(), "no connection, no lock");
+    drop(held);
+    one.close().await;
+}

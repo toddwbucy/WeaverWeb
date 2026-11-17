@@ -1271,17 +1271,28 @@ impl Store {
         Ok(AuthorityLock { connection })
     }
 
-    /// **The authority lock, waited for within `bound`** (Spec 8.2): none
-    /// where another write held it past the bound. The bound is the store's
-    /// own, `lock_timeout` on the lock's session for the wait alone, so a
-    /// wait given up leaves no request for the lock past it.
-    pub async fn authority_lock_within(
+    /// **The authority lock, waited for by `end`** (Spec 8.2): none where
+    /// another write held it past the end. **One deadline spans the pool's
+    /// checkout and the store's wait**: a checkout not made by the end
+    /// answers none, an end passed once the connection is held answers none
+    /// though the lock is free, and the store waits for what is left alone,
+    /// `lock_timeout` on the lock's session, so a wait given up leaves no
+    /// request for the lock past it.
+    pub async fn authority_lock_by(
         &self,
-        bound: std::time::Duration,
+        end: tokio::time::Instant,
     ) -> anyhow::Result<Option<AuthorityLock>> {
-        let mut connection = self.pool.acquire().await?.detach();
+        let Ok(connection) = tokio::time::timeout_at(end, self.pool.acquire()).await else {
+            return Ok(None);
+        };
+        let connection = connection?;
+        let left = end.saturating_duration_since(tokio::time::Instant::now());
+        if left.is_zero() {
+            return Ok(None);
+        }
+        let mut connection = connection.detach();
         // Zero turns the bound off, so the shortest is a millisecond.
-        let millis = bound.as_millis().clamp(1, i32::MAX as u128);
+        let millis = left.as_millis().clamp(1, i32::MAX as u128);
         sqlx::query("SELECT set_config('lock_timeout', $1, false)")
             .bind(format!("{millis}ms"))
             .execute(&mut connection)

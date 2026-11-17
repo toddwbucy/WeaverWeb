@@ -247,7 +247,14 @@ pub(crate) fn walk(page: &str) -> Vec<String> {
                 if tags(pane, "option").iter().any(|o| o.contains(" selected")) {
                     fault("held, and an option is selected");
                 }
-                if pane.contains("<textarea") && !pane.contains("></textarea>") {
+                // Each text area on its own: its closing tag right after
+                // its opening tag, so an empty one masks no other.
+                let filled = pane.match_indices("<textarea").any(|(at, _)| {
+                    let rest = &pane[at..];
+                    let open = rest.find('>').map_or(rest.len(), |end| end + 1);
+                    !rest[open..].starts_with("</textarea>")
+                });
+                if filled {
                     fault("held, and a text area holds a value");
                 }
             }
@@ -258,8 +265,9 @@ pub(crate) fn walk(page: &str) -> Vec<String> {
 }
 
 /// **The walk names what it is shown**: a pane whose status mark is
-/// dropped, a held pane whose input holds a value, and a held pane whose
-/// footer names nothing it waits on, each named by its heading. The
+/// dropped, a held pane whose input or any one text area holds a value, and
+/// a held pane whose footer names nothing it waits on, each named by its
+/// heading. The
 /// perturbations of the claim, run on every build.
 #[test]
 fn the_walk_names_a_pane_without_a_status_or_with_a_filled_input() {
@@ -272,6 +280,15 @@ fn the_walk_names_a_pane_without_a_status_or_with_a_filled_input() {
     assert_eq!(walk(&filled), ["Held: held, and an input holds a value"]);
     let checked = held.replace("<p>x</p>", r#"<input type="checkbox" name="n" checked>"#);
     assert_eq!(walk(&checked), ["Held: held, and a box is checked"]);
+    // Each text area on its own: an empty one masks no other that holds a
+    // value (CodeRabbit on #129).
+    let empty = held.replace("<p>x</p>", r#"<textarea name="a"></textarea>"#);
+    assert!(walk(&empty).is_empty(), "{:?}", walk(&empty));
+    let mixed = held.replace(
+        "<p>x</p>",
+        r#"<textarea name="a"></textarea><textarea name="b">ada</textarea>"#,
+    );
+    assert_eq!(walk(&mixed), ["Held: held, and a text area holds a value"]);
     let silent = held.replace("Waits on the box.", "Drawn.");
     assert_eq!(
         walk(&silent),

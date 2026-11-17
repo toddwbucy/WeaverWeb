@@ -529,7 +529,7 @@ struct Need {
 }
 
 /// The bytes and the count of the distinct blobs among `files`, each
-/// named by its repository and its identity, since a box keeps each
+/// named by its repository and its blob's name, since a box keeps each
 /// repository's blobs apart, as the cache does.
 fn distinct_blobs<'a>(
     files: impl IntoIterator<Item = (&'a str, &'a crate::hugging_face::RepoFile)>,
@@ -537,7 +537,7 @@ fn distinct_blobs<'a>(
     let mut seen = std::collections::HashSet::new();
     let mut bytes = 0u64;
     for (repository, file) in files {
-        if seen.insert((repository, file.identity())) {
+        if seen.insert((repository, file.blob())) {
             bytes += file.size;
         }
     }

@@ -36,14 +36,19 @@ fn is_identity(id: &str) -> bool {
 
 impl RepoFile {
     /// **The blob's name**: the SHA-256 for a file kept in LFS, the git blob
-    /// id for a file kept in git, Hugging Face's own rule.
-    pub fn identity(&self) -> &str {
-        self.sha256.as_deref().unwrap_or(&self.blob_id)
+    /// id for a file kept in git, Hugging Face's own rule, read from the
+    /// file's `lfs` flag. A verified git-kept file holds the console's
+    /// computed SHA-256 too, which is never its blob's name (#138).
+    pub fn blob(&self) -> &str {
+        match (&self.sha256, self.lfs) {
+            (Some(sha256), true) => sha256,
+            _ => &self.blob_id,
+        }
     }
 
     /// Whether the file is kept in git, so verified by its git blob id.
     pub fn in_git(&self) -> bool {
-        self.sha256.is_none()
+        !self.lfs
     }
 }
 
@@ -304,10 +309,10 @@ impl Hasher {
     /// in git, whose SHA-256 the console computed. Answers the SHA-256.
     pub fn verify(self, file: &RepoFile) -> Result<String, String> {
         let (sha256, git) = self.finish();
-        let matches = match (&file.sha256, git) {
-            (Some(expected), _) => *expected == sha256,
-            (None, Some(blob_id)) => blob_id == file.blob_id,
-            (None, None) => false,
+        let matches = if file.lfs {
+            file.sha256.as_deref() == Some(sha256.as_str())
+        } else {
+            git.as_deref() == Some(file.blob_id.as_str())
         };
         if matches {
             Ok(sha256)
@@ -459,5 +464,46 @@ mod tests {
         assert!(cache.ensure_dir(&root.join("a/../../outside")).is_err());
         assert!(!dir.path().join("outside").exists());
         assert!(!dir.path().join("escaped").exists());
+    }
+
+    /// **A git-kept file is named and verified by its git blob id, whatever
+    /// SHA-256 it holds** (#138): a verified git-kept file's row holds the
+    /// console's computed SHA-256, so the blob's name, the hasher's git
+    /// digest and the verification are read from the `lfs` flag, never from
+    /// whether a SHA-256 is set. An LFS file is named and verified by its
+    /// SHA-256.
+    #[test]
+    fn a_git_kept_file_is_named_and_verified_by_its_git_id() {
+        let bytes = b"{\"model_type\": \"test\"}\n";
+        let hex = |d: ring::digest::Digest| crate::store::identity::hex(d.as_ref());
+        let sha256 = hex(ring::digest::digest(&ring::digest::SHA256, bytes));
+        let mut git = ring::digest::Context::new(&ring::digest::SHA1_FOR_LEGACY_USE_ONLY);
+        git.update(format!("blob {}\0", bytes.len()).as_bytes());
+        git.update(bytes);
+        let file = |sha256: &str, lfs: bool| RepoFile {
+            path: "config.json".into(),
+            size: bytes.len() as u64,
+            blob_id: hex(git.clone().finish()),
+            sha256: Some(sha256.to_owned()),
+            lfs,
+        };
+        let verified = |file: &RepoFile| {
+            let mut hasher = Hasher::new(file.size, file.in_git());
+            hasher.update(bytes);
+            hasher.verify(file)
+        };
+        let other = "0".repeat(64);
+
+        let in_git = file(&sha256, false);
+        assert!(in_git.in_git());
+        assert_eq!(in_git.blob(), in_git.blob_id);
+        assert_eq!(verified(&in_git), Ok(sha256.clone()));
+        assert_eq!(verified(&file(&other, false)), Ok(sha256.clone()));
+
+        let in_lfs = file(&sha256, true);
+        assert!(!in_lfs.in_git());
+        assert_eq!(in_lfs.blob(), sha256);
+        assert_eq!(verified(&in_lfs), Ok(sha256.clone()));
+        assert!(verified(&file(&other, true)).is_err());
     }
 }

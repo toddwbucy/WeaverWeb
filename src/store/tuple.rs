@@ -192,22 +192,23 @@ async fn model_of(
     let mut parts = Vec::with_capacity(rows.len());
     for r in &rows {
         let path: String = r.get("path");
-        let sha256: Option<String> = r.get("sha256");
-        let blob_id: String = r.get("blob_id");
-        let Some(sha256) = sha256 else {
+        let file = crate::hugging_face::RepoFile {
+            path: path.clone(),
+            size: u64::try_from(r.get::<i64, _>("size"))?,
+            blob_id: r.get("blob_id"),
+            sha256: r.get("sha256"),
+            lfs: r.get("lfs"),
+        };
+        let Some(sha256) = file.sha256.clone() else {
             return Ok(Err(format!(
                 "the {role}'s pull holds no SHA-256 for {path}"
             )));
         };
         parts.push(Part {
             path: snapshot_path(&repo, &row.commit, &path)?,
-            // The blob's name, Hugging Face's rule: the SHA-256 for a file
-            // kept in LFS, which the ask named, else the git blob id.
-            blob: if r.get::<bool, _>("lfs") {
-                sha256.clone()
-            } else {
-                blob_id
-            },
+            // The blob's name, Hugging Face's rule, read from the file's
+            // `lfs` flag (#138).
+            blob: file.blob().to_owned(),
             sha256,
             bytes: r.get("size"),
         });

@@ -163,3 +163,19 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER agent_setup_model_refuses_a_change_once_confirmed
   BEFORE INSERT OR UPDATE OR DELETE ON agent_setup_model
   FOR EACH ROW EXECUTE FUNCTION agent_setup_model_of_a_confirmed_setup_is_fixed();
+
+-- A truncation fires no row trigger, so a statement trigger refuses one
+-- while any setup is confirmed. The setup's own truncation is refused by
+-- the references to it, and, cascaded, by the tuple's guard.
+CREATE FUNCTION agent_setup_model_truncated_once_confirmed() RETURNS trigger AS $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM agent_setup WHERE state = 'confirmed') THEN
+    RAISE EXCEPTION 'a confirmed setup never changes: TRUNCATE on agent_setup_model is refused';
+  END IF;
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER agent_setup_model_refuses_truncate_once_confirmed
+  BEFORE TRUNCATE ON agent_setup_model
+  FOR EACH STATEMENT EXECUTE FUNCTION agent_setup_model_truncated_once_confirmed();

@@ -591,7 +591,8 @@ async fn identity_kept(s: &crate::store::Store) -> String {
 /// report, and the laying members are the tuple's own. The tuple is drawn
 /// from its row after, whatever the box reports. A second Confirm and any
 /// write to the confirmed setup are refused, and the schema refuses an
-/// update, a delete, a truncation and a second tuple.
+/// update, a delete, a truncation and a second tuple. The model rows may be
+/// truncated while no setup is confirmed, and never once one is.
 #[tokio::test]
 async fn confirm_stands_only_where_every_member_is_read_and_writes_one_tuple() {
     let reported = Arc::new(Reported::default());
@@ -644,6 +645,18 @@ async fn confirm_stands_only_where_every_member_is_read_and_writes_one_tuple() {
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
     let blake3 = identity_kept(s).await;
+
+    // While no setup is confirmed, the model rows may be truncated: here in
+    // a transaction rolled back, so the setup keeps them.
+    let models = count(s, "agent_setup_model").await;
+    assert_eq!(models, 2);
+    let mut tx = s.pool.begin().await.unwrap();
+    sqlx::query("TRUNCATE agent_setup_model")
+        .execute(&mut *tx)
+        .await
+        .expect("a truncation while no setup is confirmed");
+    tx.rollback().await.unwrap();
+    assert_eq!(count(s, "agent_setup_model").await, models);
 
     let waiting = read(&rig.app, &confirm, &ada).await;
     assert!(walk(&waiting).is_empty(), "{:?}", walk(&waiting));
@@ -824,6 +837,19 @@ async fn confirm_stands_only_where_every_member_is_read_and_writes_one_tuple() {
             "UPDATE agent_setup_model SET scale = 2 WHERE role = 'adapter'",
             "a confirmed setup never changes",
         ),
+        // A truncation of the model rows fires no row trigger, so a
+        // statement trigger refuses it while a setup is confirmed. The
+        // setup's own is refused by the references to it, and, cascaded, by
+        // the tuple's guard (CodeRabbit on #129).
+        (
+            "TRUNCATE agent_setup_model",
+            "a confirmed setup never changes",
+        ),
+        (
+            "TRUNCATE agent_setup",
+            "cannot truncate a table referenced in a foreign key constraint",
+        ),
+        ("TRUNCATE agent_setup CASCADE", "never changes"),
         (
             "INSERT INTO deployment_tuple SELECT (jsonb_populate_record(NULL::deployment_tuple, \
              to_jsonb(t) || '{\"tuple_id\": \"dt-0000000000000000\"}')).* FROM deployment_tuple t",
@@ -843,4 +869,5 @@ async fn confirm_stands_only_where_every_member_is_read_and_writes_one_tuple() {
         assert!(refused.to_string().contains(refusal), "{sql}: {refused}");
     }
     assert_eq!(count(s, "deployment_tuple").await, 1);
+    assert_eq!(count(s, "agent_setup_model").await, models);
 }

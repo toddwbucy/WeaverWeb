@@ -55,14 +55,34 @@ pub enum Line {
 pub struct LineReader<R> {
     reader: tokio::io::BufReader<R>,
     buf: Vec<u8>,
+    bound: usize,
 }
 
 impl<R: tokio::io::AsyncRead + Unpin> LineReader<R> {
     pub fn new(read: R) -> Self {
+        Self::with_bound(read, LINE_BOUND)
+    }
+
+    /// A reader whose lines are bounded tighter than the link's, as the
+    /// pairing's first frame is (`PAIR_FIRST_FRAME_BOUND`).
+    pub fn with_bound(read: R, bound: usize) -> Self {
         Self {
             reader: tokio::io::BufReader::new(read),
             buf: Vec::new(),
+            bound,
         }
+    }
+
+    /// The stream read from, for what its connection answers outside the
+    /// framing, as a pairing's exporter does.
+    pub fn get_ref(&self) -> &R {
+        self.reader.get_ref()
+    }
+
+    /// The stream, for a write between two reads: bytes the reader buffered
+    /// stay buffered.
+    pub fn get_mut(&mut self) -> &mut R {
+        self.reader.get_mut()
     }
 
     /// The next line, under the bound.
@@ -84,13 +104,13 @@ impl<R: tokio::io::AsyncRead + Unpin> LineReader<R> {
             let n = chunk.len();
             self.buf.extend_from_slice(chunk);
             self.reader.consume(n);
-            if self.buf.len() > LINE_BOUND {
+            if self.buf.len() > self.bound {
                 self.buf.clear();
                 return Line::Malformed("a line passed the bound with no delimiter");
             }
         }
         let line = std::mem::take(&mut self.buf);
-        if line.len() > LINE_BOUND {
+        if line.len() > self.bound {
             return Line::Malformed("a line passed the bound");
         }
         match String::from_utf8(line) {
@@ -309,6 +329,123 @@ pub enum FromClient {
         source: String,
         entry: serde_json::Value,
     },
+    /// **A setup ask, the setup connection's first frame and its only one**
+    /// (Spec 8.3): `admin-con setup` under the admin plane's credential, its
+    /// roster a check against the certificate's binding as a hello's is. It
+    /// opens no trace door, asks no `show` and counts for nothing in
+    /// presence, and the server answers it once and closes.
+    Setup {
+        agent: String,
+        plane: Plane,
+        ask: SetupAsk,
+    },
+}
+
+/// **What a setup connection asks** (Spec 8.3).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "ask", rename_all = "snake_case")]
+pub enum SetupAsk {
+    /// The setup's agent, its models, the models drive's need, the laying
+    /// once Confirm stands, and the SSH keys.
+    Describe,
+    /// The survey's report for one stage, carried as the text admin-con
+    /// read, which the console keeps verbatim.
+    Report { stage: Stage, report: String },
+}
+
+/// **A setup report's stage** (Spec 8.3), the command's argument, so the
+/// console reads nothing of the image's format to tell them apart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Stage {
+    Pairing,
+    Drives,
+}
+
+impl Stage {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Stage::Pairing => "pairing",
+            Stage::Drives => "drives",
+        }
+    }
+}
+
+/// **The bound on a setup report** (Spec 8.3), inclusive: admin-con
+/// refuses a larger one before it dials, and the console refuses it
+/// `too_large`.
+pub const REPORT_BOUND: usize = 64 * 1024;
+
+/// **`setup describe`'s answer** (Spec 8.3). Every path is under the models
+/// mount, in Hugging Face's layout, and the box joins its own mount to it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Described {
+    pub agent: String,
+    pub agent_id: String,
+    /// Whether the setup's pairing was the replace-box write, so the drive
+    /// setup knows the state drive it mounts is carried.
+    pub replacement: bool,
+    /// One entry per role picked, `decoder` and `adapter`, absent until the
+    /// models page's first pick.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub models: Option<std::collections::BTreeMap<String, DescribedModel>>,
+    /// The models drive's need: the bytes of the picks' distinct blobs.
+    pub bytes: u64,
+    /// The members the agent is laid from, absent until Confirm.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub laying: Option<DescribedLaying>,
+    pub ssh_keys: Vec<DescribedKey>,
+}
+
+/// A role's pick as `setup describe` names it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DescribedModel {
+    pub repository: String,
+    pub commit: String,
+    /// The path of the choice's first part, or of the adapter's one file.
+    pub artifact: String,
+    pub files: Vec<DescribedFile>,
+    /// The console's own download: `running`, `verified`, `failed` or
+    /// `cancelled`.
+    pub pull: String,
+}
+
+/// One file of a pick, by its place in the snapshot and its blob.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DescribedFile {
+    pub path: String,
+    pub blob: String,
+    pub bytes: u64,
+    /// The file's SHA-256, absent while a file kept in git is still
+    /// downloading, since the console computes it once the file lands.
+    pub sha256: Option<String>,
+}
+
+/// The confirmed tuple's members the agent is laid from.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DescribedLaying {
+    pub tuple: String,
+    pub artifact: String,
+    pub adapter: DescribedAdapter,
+    pub devices: Vec<i32>,
+    pub context_capacity: i64,
+    pub turn_context: String,
+}
+
+/// The adapter's members of the laying.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DescribedAdapter {
+    pub artifact: String,
+    pub sha256: String,
+    pub base_blake3: String,
+    pub scale: f64,
+}
+
+/// One of the operator's SSH keys, as stored, with its OpenSSH fingerprint.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DescribedKey {
+    pub key: String,
+    pub fingerprint: String,
 }
 
 /// Frames the server sends a connector.
@@ -361,6 +498,13 @@ pub enum ToClient {
     Refusal {
         reason: Refusal,
     },
+    /// **`setup describe`'s answer** (Spec 8.3), before the close.
+    Described {
+        /// Boxed, so every other frame stays small.
+        described: Box<Described>,
+    },
+    /// **A setup report kept** (Spec 8.3), before the close.
+    Accepted,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -387,6 +531,12 @@ pub enum Refusal {
     /// state from before the reconnect; the connection closes so the
     /// reconnect asks it again.
     AdmissionIncomplete,
+    /// A setup ask on a row no setup's pairing links (Spec 8.3).
+    NoSetup,
+    /// A setup report for a confirmed setup, which never changes (Spec 8.3).
+    SetupClosed,
+    /// A setup report past `REPORT_BOUND` (Spec 8.3).
+    TooLarge,
 }
 
 impl Refusal {
@@ -400,6 +550,9 @@ impl Refusal {
             Refusal::Malformed => "malformed",
             Refusal::StoreUnavailable => "store_unavailable",
             Refusal::AdmissionIncomplete => "admission_incomplete",
+            Refusal::NoSetup => "no_setup",
+            Refusal::SetupClosed => "setup_closed",
+            Refusal::TooLarge => "too_large",
         }
     }
 }
@@ -408,6 +561,86 @@ impl std::fmt::Display for Refusal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())
     }
+}
+
+/// **The pairing protocol's ALPN name** (Spec 8.2). A ClientHello that
+/// offers it meets the pairing configuration, and every other the mutual-TLS
+/// configuration as built.
+pub const PAIR_PROTOCOL: &[u8] = b"weaver-pair/1";
+
+/// The pairing's first frame's bound, inclusive, excluding the delimiter
+/// (Spec 8.2): the box's name and two certificate requests fit well inside.
+pub const PAIR_FIRST_FRAME_BOUND: usize = 16 * 1024;
+
+/// **A frame the box sends on a pairing connection** (Spec 8.2), apart from
+/// the plane frames: a pairing connection carries no credential and speaks
+/// none of them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "svc", rename_all = "snake_case", deny_unknown_fields)]
+pub enum PairFromBox {
+    /// The first frame: the box's name, as the box claims it, and the two
+    /// certificate requests, PKCS #10 in PEM, the gate's and admin's. It
+    /// carries nothing of the code.
+    Hello {
+        r#box: String,
+        gate_request: String,
+        admin_request: String,
+    },
+    /// **The box's word** (Spec 8.2, the exchange's step 5): it wrote the
+    /// answer, and the console may write the row.
+    Written,
+}
+
+/// **A frame the console sends on a pairing connection** (Spec 8.2).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "svc", rename_all = "snake_case", deny_unknown_fields)]
+pub enum PairToBox {
+    /// The box waits: what is left of its ten minutes, and the cadence of
+    /// the heartbeats that follow, from which the box knows the console
+    /// silent at four of them.
+    Waiting {
+        expires_in_secs: u64,
+        cadence_secs: u64,
+    },
+    Heartbeat,
+    /// Ten minutes from the dial with no code entered. The console closes.
+    Expired,
+    /// The console refused, with its reason (`pair_reason`). The console
+    /// closes.
+    Refused {
+        reason: String,
+    },
+    /// **The exchange's answer** (Spec 8.2, step 4): the agent's name, the
+    /// row's identity, the box as the row will hold it, the name the
+    /// server's certificate is verified under, the authority's certificate,
+    /// and the two certificates signed over the box's requests, each in
+    /// PEM. No key: the box made both.
+    Answer {
+        agent: String,
+        agent_id: String,
+        r#box: String,
+        server_name: String,
+        authority: String,
+        gate: String,
+        admin: String,
+    },
+    /// **The console's last word** (Spec 8.2, step 6): the row stands with
+    /// the answer's two certificates live. The console closes.
+    Paired,
+}
+
+/// The reasons a console refuses a pairing with (Spec 8.2, `pair`'s
+/// `refused` line).
+pub mod pair_reason {
+    /// Past the waiting connections' bound, in all or from one peer.
+    pub const BUSY: &str = "busy";
+    /// A live row holds the box the connection claims and the setup's name.
+    pub const BOX_AND_NAME_LIVE: &str = "box_and_name_live";
+    /// The setup left its pairing step since the entry.
+    pub const SETUP_CLOSED: &str = "setup_closed";
+    /// A certificate request is not ECDSA P-256 with SHA-256 whose own
+    /// signature verifies.
+    pub const REQUEST_REFUSED: &str = "request_refused";
 }
 
 #[cfg(test)]

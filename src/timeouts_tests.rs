@@ -86,12 +86,14 @@ const CALLS: &[(&str, &str, Why)] = &[
     ("src/link/admin_con.rs", "relay", Join), // the stop's grace
     ("src/link/admin_con.rs", "drain", Socket),
     ("src/link/client.rs", "connect", Socket),
+    ("src/link/client.rs", "ask_within", Socket), // a setup ask, dial to answer
     ("src/link/client.rs", "start", Socket),
     ("src/link/client.rs", "start", Socket),
     ("src/link/client.rs", "start", Channel), // the heartbeat
     ("src/link/client.rs", "carry", Channel),
     ("src/link/client.rs", "send", Channel),
     ("src/link/client.rs", "close_within", Join), // the writer
+    ("src/link/exchange.rs", "run", Socket),      // the box's word, under the authority lock
     ("src/link/gate_con.rs", "serve", Channel),   // the turns declined at the grace
     ("src/link/gate_con.rs", "serve", Join),      // the turns in flight at the grace
     ("src/link/listener.rs", "start_with", Reads), // the lock's ping
@@ -109,11 +111,28 @@ const CALLS: &[(&str, &str, Why)] = &[
     ("src/link/listener.rs", "send", Channel),
     ("src/link/listener.rs", "enqueue", Channel),
     ("src/link/listener.rs", "drain_writer", Join),
+    ("src/link/listener.rs", "serve_setup", CommitsNothing), // `with_row_lock`, the admission
+    ("src/link/listener.rs", "serve_setup", Reads),          // `described`, a read
+    ("src/link/listener.rs", "serve_connection", Socket),    // the ClientHello
     ("src/link/listener.rs", "serve_connection", Socket),
     ("src/link/listener.rs", "serve_connection", Socket),
+    ("src/link/listener.rs", "serve_connection", Reads), // the register's lookup
     ("src/link/listener.rs", "serve_connection", Socket),
     ("src/link/listener.rs", "serve_connection", Socket),
     ("src/link/listener.rs", "serve_connection", Resendable), // `take_entry`
+    ("src/link/pair_client.rs", "written", Socket),
+    ("src/link/pair_client.rs", "last_word", Socket),
+    ("src/link/pair_client.rs", "next", Socket),
+    ("src/link/pair_client.rs", "dial", Socket),
+    ("src/link/pair_client.rs", "over", Socket),
+    ("src/link/pair_client.rs", "over", Socket),
+    ("src/link/pair_client.rs", "over", Socket),
+    ("src/link/pairing.rs", "take", Channel), // a waiting connection's answer to a probe
+    ("src/link/pairing.rs", "send", Socket),
+    ("src/link/pairing.rs", "close_with", Socket),
+    ("src/link/pairing.rs", "serve", Socket),
+    ("src/link/pairing.rs", "serve", Socket),
+    ("src/link/register.rs", "authority_lock_by", Reads), // the pool's checkout for the authority lock
     ("src/link/relay.rs", "dial", Socket),
     ("src/listen.rs", "bounded", Socket),
     ("src/passkeys.rs", "from_config", NotTokio), // the ceremony's lifetime

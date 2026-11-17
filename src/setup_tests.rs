@@ -97,6 +97,7 @@ pub(crate) async fn rig_full(
             authority_dir: dir.path().join("authority"),
             headers: crate::hugging_face::headers::Headers::new(),
             boxes,
+            enrollment: None,
         }))
         .with_state(fresh.store.clone()),
         policy,
@@ -345,6 +346,33 @@ async fn a_name_outside_the_rule_is_refused_opening_no_setup() {
         ("abcdefghijklmnop", "open", 1)
     );
     assert!(!landed.virtual_machine, "an unchecked box says host");
+}
+
+/// **A console that serves no pairing says so past the admin gate** (Spec
+/// 8.2): at the code's entry a person without the admin grant meets the
+/// gate's refusal, and an admin the 503.
+///
+/// Perturbation: answer the 503 before the gate, and a person without the
+/// grant learns what the console serves.
+#[cfg(feature = "enrollment")]
+#[tokio::test]
+async fn a_console_serving_no_pairing_says_so_past_the_admin_gate() {
+    let Some(rig) = rig().await else {
+        return;
+    };
+    let s = rig.store();
+    let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (_, bea) = signed_in(&rig.app, s, &mut authenticator(), "bea").await;
+    let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
+    let setup = setup.unwrap();
+    let entry = form(&[("compared", "on"), ("code", "HWX5R 0F74A")]);
+    let uri = format!("/setup/{setup}/pair");
+    let (status, _, body) = send_as(&rig.app, "POST", &uri, Some(entry.clone()), &bea).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(body, crate::surfaces::admin::NOT_AN_ADMIN);
+    let (status, _, body) = send_as(&rig.app, "POST", &uri, Some(entry), &ada).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body, "this console serves no pairing");
 }
 
 /// **A person without an admin grant is refused before any setup is looked

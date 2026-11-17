@@ -21,13 +21,23 @@
 pub mod admin_con;
 pub mod admin_log;
 pub mod authority;
+pub mod box_commands;
+pub mod box_line;
 pub mod client;
 pub mod entries;
+#[cfg(feature = "enrollment")]
+pub mod exchange;
 pub mod frames;
 pub mod gate_con;
+pub mod key_config;
 pub mod listener;
+pub mod pair_client;
+pub mod pair_code;
+pub mod pairing;
 pub mod register;
 pub mod relay;
+#[cfg(feature = "enrollment")]
+pub mod request;
 pub mod sudo_invoker;
 pub mod verbs;
 
@@ -39,6 +49,10 @@ mod client_tests;
 mod deadline_tests;
 #[cfg(test)]
 pub(crate) mod fake_relay;
+#[cfg(test)]
+mod key_config_tests;
+#[cfg(test)]
+mod pairing_tests;
 #[cfg(test)]
 mod run_end_tests;
 #[cfg(test)]

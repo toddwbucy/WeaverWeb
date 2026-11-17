@@ -86,6 +86,15 @@ pub struct ClientCredential {
     pub key_pem: String,
 }
 
+/// A client certificate signed over a public half the box made (Spec
+/// 8.2): the certificate and the fingerprint the register stores, and no
+/// key, since the console never held one.
+#[derive(Debug, Clone)]
+pub struct SignedClient {
+    pub fingerprint: String,
+    pub certificate_pem: String,
+}
+
 /// SHA-256 over a certificate's DER, as sixty-four hex digits.
 pub fn fingerprint(der: &[u8]) -> String {
     format!("{:x}", Sha256::digest(der))
@@ -160,7 +169,7 @@ fn private_key(pem: &str) -> anyhow::Result<PrivateKeyDer<'static>> {
         .ok_or_else(|| anyhow::anyhow!("no private key in the PEM"))
 }
 
-fn provider() -> Arc<rustls::crypto::CryptoProvider> {
+pub(crate) fn provider() -> Arc<rustls::crypto::CryptoProvider> {
     Arc::new(rustls::crypto::ring::default_provider())
 }
 
@@ -562,9 +571,28 @@ impl Authority {
     /// in the register, not the subject; the subject is for a human reading
     /// the file.
     pub fn mint_client(&self, agent: &str, plane: Plane) -> anyhow::Result<ClientCredential> {
+        let key = KeyPair::generate()?;
+        let signed = self.sign_client(agent, plane, &key)?;
+        Ok(ClientCredential {
+            fingerprint: signed.fingerprint,
+            certificate_pem: signed.certificate_pem,
+            key_pem: key.serialize_pem(),
+        })
+    }
+
+    /// **One client certificate over a public half the authority never
+    /// held** (Spec 8.2, the exchange's step 3), signed as `mint_client`
+    /// signs: the subject the agent's name and the plane, client
+    /// authentication alone, and every member but the key the console's
+    /// own. The caller verified the request the half came from.
+    pub fn sign_client(
+        &self,
+        agent: &str,
+        plane: Plane,
+        public_half: &impl rcgen::PublicKeyData,
+    ) -> anyhow::Result<SignedClient> {
         let params = authority_params();
         let issuer = Issuer::from_params(&params, &self.key);
-        let key = KeyPair::generate()?;
         let mut client = CertificateParams::new(Vec::<String>::new())?;
         let mut dn = DistinguishedName::new();
         dn.push(DnType::CommonName, agent);
@@ -573,11 +601,10 @@ impl Authority {
         client.is_ca = IsCa::ExplicitNoCa;
         client.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
         client.key_usages = vec![KeyUsagePurpose::DigitalSignature];
-        let certificate = client.signed_by(&key, &issuer)?;
-        Ok(ClientCredential {
+        let certificate = client.signed_by(public_half, &issuer)?;
+        Ok(SignedClient {
             fingerprint: fingerprint(certificate.der().as_ref()),
             certificate_pem: certificate.pem(),
-            key_pem: key.serialize_pem(),
         })
     }
 
@@ -601,6 +628,46 @@ impl Authority {
                 private_key(&self.server_key_pem)?,
             )?;
         Ok(Arc::new(config))
+    }
+
+    /// **The pairing's TLS configuration** (Spec 8.2): TLS 1.3 alone, since
+    /// the code is the session's exporter; no client certificate asked,
+    /// since a box pairing holds none; ALPN `weaver-pair/1`; and the chain
+    /// of the server's certificate and the authority's, since the box knows
+    /// no name the server's certificate carries and holds no trust anchor
+    /// before the exchange, and reads the authority from the handshake. The
+    /// listener meets only a ClientHello offering the pairing protocol with
+    /// it, and every other with `server_tls`.
+    pub fn pairing_tls(&self) -> anyhow::Result<Arc<rustls::ServerConfig>> {
+        self.pairing_tls_presenting(&self.certificate)
+    }
+
+    /// The pairing's configuration presenting `authority` after the
+    /// server's certificate: this authority's own, or, for a test, another
+    /// that does not hold the chain together.
+    fn pairing_tls_presenting(
+        &self,
+        authority: &CertificateDer<'static>,
+    ) -> anyhow::Result<Arc<rustls::ServerConfig>> {
+        let mut config = rustls::ServerConfig::builder_with_provider(provider())
+            .with_protocol_versions(&[&rustls::version::TLS13])?
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![self.server_certificate.clone(), authority.clone()],
+                private_key(&self.server_key_pem)?,
+            )?;
+        config.alpn_protocols = vec![crate::link::frames::PAIR_PROTOCOL.to_vec()];
+        Ok(Arc::new(config))
+    }
+
+    /// A test's lever: this server's certificate presented with `other`'s
+    /// authority, a chain that does not hold together.
+    #[cfg(test)]
+    pub(crate) fn pairing_tls_with_authority_of(
+        &self,
+        other: &Authority,
+    ) -> anyhow::Result<Arc<rustls::ServerConfig>> {
+        self.pairing_tls_presenting(&other.certificate)
     }
 }
 

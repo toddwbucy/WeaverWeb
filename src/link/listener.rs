@@ -3,6 +3,7 @@
 //! conforms: web-one-live-connection-per-credential
 //! conforms: web-link-state-is-reset-when-the-listener-starts
 //! conforms: web-agent-present-only-when-both-planes-match-one-row
+//! conforms: web-a-setup-ask-is-refused-while-its-credentials-connection-stands-and-counts-for-nothing-in-presence
 //! conforms: web-tuple-is-admins-word-and-never-gate-cons
 //! conforms: web-nothing-crosses-the-link-in-the-clear
 //! conforms: web-the-servers-asks-are-audited
@@ -39,8 +40,8 @@ use crate::deadline::hold::{self, Point};
 use crate::deadline::{self, Passed};
 use crate::link::authority::{Authority, fingerprint};
 use crate::link::frames::{
-    FromClient, Line, LineReader, Plane, Position, Principal, Refusal, ToClient, TurnFault,
-    VerbFault, VerbOutcome, capability,
+    FromClient, Line, LineReader, PAIR_PROTOCOL, Plane, Position, Principal, Refusal, SetupAsk,
+    ToClient, TurnFault, VerbFault, VerbOutcome, capability,
 };
 use crate::link::register::{
     ConstituentsWrite, CredentialState, Observation, REVOCATION_CHANNEL, TransitionWrite,
@@ -63,17 +64,35 @@ use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, oneshot, watch};
-use tokio_rustls::TlsAcceptor;
+use tokio_rustls::LazyConfigAcceptor;
 
 /// How long a peer has to complete the handshake, and then to say hello. A
 /// peer that speaks plaintext never completes the handshake and is dropped
 /// here; nothing it sent was read as a frame.
-const HANDSHAKE_SECS: u64 = 10;
+pub(crate) const HANDSHAKE_SECS: u64 = 10;
 
 /// The least silence bound the cadence rule admits: the cadence is the
 /// bound divided by four, so a bound under four seconds would have a
 /// cadence of zero.
 pub const LEAST_SILENCE_SECS: u64 = 4;
+
+/// **The bound on a setup ask's answer from the connection's accept**
+/// (Spec 8.3), where the silence bound is longer. The box gives an ask up
+/// at `client::ASK_SECS` from its dial, so the listener answers within this
+/// of the accept, the handshake, the register's lookup, the admission and
+/// the store's answer all inside it, and the box keeps
+/// `SETUP_ANSWER_MARGIN_SECS` of its own bound for its dial and its read of
+/// the answer.
+pub const SETUP_ANSWER_SECS: u64 = 20;
+
+/// What the box keeps of its own bound outside the listener's: its dial
+/// before the accept and its read of the answer.
+pub const SETUP_ANSWER_MARGIN_SECS: u64 = 10;
+
+const _: () = assert!(
+    SETUP_ANSWER_SECS + SETUP_ANSWER_MARGIN_SECS <= crate::link::client::ASK_SECS,
+    "a setup ask's answer leaves the box its margin within its own bound"
+);
 
 /// **One listener per store, held at the store** (Spec 8): the key of the
 /// session-level advisory lock a listener takes before its epoch and
@@ -689,11 +708,22 @@ enum Landing {
 
 struct Inner {
     store: Store,
-    acceptor: TlsAcceptor,
+    /// The mutual-TLS configuration as built, which every ClientHello
+    /// without the pairing protocol meets (Spec 8.2).
+    tls: Arc<rustls::ServerConfig>,
+    /// The pairing's configuration, which a ClientHello offering
+    /// `weaver-pair/1` meets, and the boxes waiting (Spec 8.2).
+    pairing_tls: Arc<rustls::ServerConfig>,
+    waiting: crate::link::pairing::Waiting,
     epoch: i64,
     arrival: AtomicI64,
     silence: Duration,
     live: Mutex<HashMap<(AgentId, Plane), LiveConnection>>,
+    /// **The credentials a setup connection holds** (Spec 8.3), claimed under
+    /// the row's lock beside the live map, so one live connection per
+    /// credential holds across a plane connection and a setup ask both ways.
+    /// Never in the live map, so no verb, turn or `show` reaches one.
+    setups: Mutex<std::collections::HashSet<(AgentId, Plane)>>,
     windows: TraceViews,
     acknowledged: Mutex<HashMap<AgentId, Position>>,
     next_ask: AtomicU64,
@@ -766,6 +796,18 @@ struct Inner {
     /// completes, so its bound can be watched.
     #[cfg(test)]
     stall_next_first: std::sync::atomic::AtomicBool,
+    /// The same lever on a setup ask's store call: the next one never
+    /// completes, so its bound can be watched.
+    #[cfg(test)]
+    stall_next_setup: std::sync::atomic::AtomicBool,
+    /// A lever on the register's lookup at a connection: the next one
+    /// fails, so its refusal can be watched.
+    #[cfg(test)]
+    fail_next_lookup: std::sync::atomic::AtomicBool,
+    /// A test's setup answer bound in milliseconds in place of
+    /// `SETUP_ANSWER_SECS`, none where 0.
+    #[cfg(test)]
+    setup_answer_ms: AtomicU64,
     /// And on a verb's outcome: the next one waits this long first.
     #[cfg(test)]
     delay_next_outcome: Mutex<Option<Duration>>,
@@ -849,7 +891,8 @@ impl Listener {
                 "the silence bound is {silence:?}, under the {LEAST_SILENCE_SECS} s the cadence rule admits"
             );
         }
-        let acceptor = TlsAcceptor::from(authority.server_tls()?);
+        let tls = authority.server_tls()?;
+        let pairing_tls = authority.pairing_tls()?;
         let tcp = TcpListener::bind(listen).await?;
         let address = tcp.local_addr()?;
         // **The store's lock first** (Spec 8): a session-level advisory
@@ -886,11 +929,14 @@ impl Listener {
         let listener = Self {
             inner: Arc::new(Inner {
                 store,
-                acceptor,
+                tls,
+                pairing_tls,
+                waiting: crate::link::pairing::Waiting::default(),
                 epoch,
                 arrival: AtomicI64::new(0),
                 silence,
                 live: Mutex::new(HashMap::new()),
+                setups: Mutex::new(std::collections::HashSet::new()),
                 windows: TraceViews::new(),
                 acknowledged: Mutex::new(HashMap::new()),
                 next_ask: AtomicU64::new(1),
@@ -924,6 +970,12 @@ impl Listener {
                 stall_next_land: std::sync::atomic::AtomicBool::new(false),
                 #[cfg(test)]
                 stall_next_first: std::sync::atomic::AtomicBool::new(false),
+                #[cfg(test)]
+                stall_next_setup: std::sync::atomic::AtomicBool::new(false),
+                #[cfg(test)]
+                fail_next_lookup: std::sync::atomic::AtomicBool::new(false),
+                #[cfg(test)]
+                setup_answer_ms: AtomicU64::new(0),
                 #[cfg(test)]
                 delay_next_outcome: Mutex::new(None),
                 #[cfg(test)]
@@ -1114,6 +1166,35 @@ impl Listener {
         self.inner.address
     }
 
+    /// **The boxes waiting to pair** (Spec 8.2), each by the name it
+    /// claims, its peer address and how long it has waited. Never a code.
+    pub fn waiting(&self) -> Vec<crate::link::pairing::WaitingBox> {
+        self.inner.waiting.list()
+    }
+
+    /// **The waiting connection whose code is `code`**, taken out of the
+    /// table for the exchange, or none (Spec 8.2). A match spends the
+    /// connection, so its code matches nothing after.
+    pub async fn take_pairing(
+        &self,
+        code: &crate::link::pair_code::Code,
+    ) -> Option<crate::link::pairing::Taken> {
+        self.inner.waiting.take(code).await
+    }
+
+    /// A test's lever: a probe for `code` its entry gave up on, read by
+    /// every waiting connection (`Waiting::probe_abandoned`).
+    #[cfg(test)]
+    pub(crate) async fn probe_abandoned(&self, code: &crate::link::pair_code::Code) {
+        self.inner.waiting.probe_abandoned(code).await
+    }
+
+    /// A test's lever: the waiting boxes' bounds, shortened.
+    #[cfg(test)]
+    pub fn set_pairing_bounds(&self, bounds: crate::link::pairing::Bounds) {
+        self.inner.waiting.set_bounds(bounds);
+    }
+
     pub fn epoch(&self) -> i64 {
         self.inner.epoch
     }
@@ -1220,6 +1301,27 @@ impl Listener {
     #[cfg(test)]
     pub fn stall_next_first(&self) {
         self.inner.stall_next_first.store(true, Ordering::Relaxed);
+    }
+
+    /// Make the next setup ask's store call never complete, once.
+    #[cfg(test)]
+    pub fn stall_next_setup_ask(&self) {
+        self.inner.stall_next_setup.store(true, Ordering::Relaxed);
+    }
+
+    /// Make the next connection's lookup of its credential fail, once.
+    #[cfg(test)]
+    pub fn fail_next_lookup(&self) {
+        self.inner.fail_next_lookup.store(true, Ordering::Relaxed);
+    }
+
+    /// A test's lever: the setup answer bound, shortened from
+    /// `SETUP_ANSWER_SECS`.
+    #[cfg(test)]
+    pub fn set_setup_answer_bound(&self, bound: Duration) {
+        self.inner
+            .setup_answer_ms
+            .store(bound.as_millis() as u64, Ordering::Relaxed);
     }
 
     /// How many asks the agent's admin connection holds: its pending
@@ -3285,16 +3387,263 @@ async fn refuse(tx: mpsc::Sender<ToClient>, writer: tokio::task::JoinHandle<()>,
     drain_writer(writer).await;
 }
 
+/// **A setup ask's bound** from the connection's accept: the silence
+/// bound, or `SETUP_ANSWER_SECS` where that is shorter.
+fn setup_bound(inner: &Inner) -> Duration {
+    let answer = Duration::from_secs(SETUP_ANSWER_SECS);
+    #[cfg(test)]
+    let answer = match inner.setup_answer_ms.load(Ordering::Relaxed) {
+        0 => answer,
+        ms => Duration::from_millis(ms),
+    };
+    inner.silence.min(answer)
+}
+
+/// A setup connection's first frame, as it came.
+struct SetupAsked {
+    name: String,
+    plane: Plane,
+    ask: SetupAsk,
+}
+
+/// A setup connection's claim on its credential, given back however the
+/// connection ends.
+struct SetupClaim<'a> {
+    setups: &'a Mutex<std::collections::HashSet<(AgentId, Plane)>>,
+    key: (AgentId, Plane),
+}
+
+impl Drop for SetupClaim<'_> {
+    fn drop(&mut self) {
+        self.setups.lock().unwrap().remove(&self.key);
+    }
+}
+
+/// **Serve a setup connection** (Spec 8.3): admitted by the hello's rules,
+/// its roster a check against the certificate's binding and its plane the
+/// admin's, and by one live connection per credential, decided under the
+/// row's lock against the live map and every other setup connection. It
+/// opens no trace door, asks no `show`, writes no link state, so it counts
+/// for nothing in presence, and is answered once and closed.
+#[allow(clippy::too_many_arguments)]
+async fn serve_setup(
+    inner: &Inner,
+    agent: &crate::link::register::Agent,
+    plane: Plane,
+    fp: &str,
+    peer: SocketAddr,
+    asked: SetupAsked,
+    until: tokio::time::Instant,
+    tx: mpsc::Sender<ToClient>,
+    writer: tokio::task::JoinHandle<()>,
+) {
+    if asked.name != agent.name || asked.plane != plane {
+        tracing::warn!(
+            "link from {peer}: a setup ask named {} ({}) on a credential bound to {} ({plane}) of {}, refused as a mismatch",
+            asked.name,
+            asked.plane,
+            agent.name,
+            agent.agent_id
+        );
+        refuse(tx, writer, Refusal::RosterMismatch).await;
+        return;
+    }
+    if plane != Plane::Admin {
+        tracing::warn!(
+            "link from {peer}: a setup ask on {}'s gate credential, refused: the setup connection is the admin plane's",
+            agent.agent_id
+        );
+        refuse(tx, writer, Refusal::WrongPlane).await;
+        return;
+    }
+    // **One deadline from the accept spans the lookup, the admission and
+    // the store's answer** (Spec 8.3), at the silence bound or
+    // `SETUP_ANSWER_SECS`, whichever is shorter, so the box hears the refusal
+    // before it gives the ask up. The admission puts the claim in inside its
+    // transaction, before the commit, so past the deadline it comes out
+    // here, and the ask is refused `store_unavailable`. The admission commits
+    // nothing.
+    let bound = setup_bound(inner);
+    let key = (agent.agent_id.clone(), plane);
+    let mut claimed = false;
+    let locked = tokio::time::timeout_at(
+        until,
+        inner.store.with_row_lock(&agent.agent_id, || {
+            let live = inner.live.lock().unwrap();
+            if !live.contains_key(&key) {
+                claimed = inner.setups.lock().unwrap().insert(key.clone());
+            }
+        }),
+    )
+    .await;
+    let unlocked = match locked {
+        Ok(Ok(())) => None,
+        Ok(Err(e)) => Some(format!("could not be locked: {e:#}")),
+        Err(_) => Some(format!("was not locked within {bound:?} of the accept")),
+    };
+    if let Some(why) = unlocked {
+        tracing::error!(
+            "link from {peer}: the row of {} {why}, for a setup ask",
+            agent.agent_id
+        );
+        if claimed {
+            inner.setups.lock().unwrap().remove(&key);
+        }
+        refuse(tx, writer, Refusal::StoreUnavailable).await;
+        return;
+    }
+    if !claimed {
+        tracing::warn!(
+            "link from {peer}: a setup ask for {} while its admin credential is connected, refused",
+            agent.agent_id
+        );
+        refuse(tx, writer, Refusal::AlreadyConnected).await;
+        return;
+    }
+    let _claim = SetupClaim {
+        setups: &inner.setups,
+        key,
+    };
+    // **The store's answer by the same deadline**: past it the ask is
+    // refused `store_unavailable` and the claim goes with this function. The
+    // report commits, so `deadline::before` bounds it and never polls it past
+    // the deadline. The describe reads.
+    let stalled = async {
+        #[cfg(test)]
+        if inner.stall_next_setup.swap(false, Ordering::Relaxed) {
+            std::future::pending::<()>().await;
+        }
+    };
+    let (what, answered) = match &asked.ask {
+        SetupAsk::Describe => (
+            "describe",
+            tokio::time::timeout_at(until, async {
+                stalled.await;
+                inner.store.described(&agent.agent_id, fp).await
+            })
+            .await
+            .map_err(|_| Passed)
+            .map(|answered| {
+                answered.map(|d| {
+                    d.map(|described| ToClient::Described {
+                        described: Box::new(described),
+                    })
+                })
+            }),
+        ),
+        SetupAsk::Report { stage, report } => (
+            stage.as_str(),
+            deadline::before(
+                async {
+                    stalled.await;
+                    inner
+                        .store
+                        .land_report(&agent.agent_id, fp, *stage, report)
+                        .await
+                },
+                until,
+            )
+            .await
+            .map(|answered| answered.map(|landed| landed.map(|()| ToClient::Accepted))),
+        ),
+    };
+    let answered = match answered {
+        Ok(answered) => answered,
+        Err(Passed) => {
+            tracing::error!(
+                "link from {peer}: {} setup {what} not answered by the store within {bound:?} of the accept",
+                agent.agent_id
+            );
+            Ok(Err(Refusal::StoreUnavailable))
+        }
+    };
+    match answered {
+        Ok(Ok(frame)) => {
+            tracing::info!("link from {peer}: {} setup {what} answered", agent.agent_id);
+            send(&tx, frame).await;
+            drop(tx);
+            drain_writer(writer).await;
+        }
+        Ok(Err(refusal)) => {
+            tracing::warn!(
+                "link from {peer}: {} setup {what} refused: {refusal}",
+                agent.agent_id
+            );
+            refuse(tx, writer, refusal).await;
+        }
+        Err(e) => {
+            tracing::error!(
+                "link from {peer}: {} setup {what} could not be served: {e:#}",
+                agent.agent_id
+            );
+            refuse(tx, writer, Refusal::StoreUnavailable).await;
+        }
+    }
+}
+
 async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr) {
+    let dialed = std::time::Instant::now();
+    let accepted = tokio::time::Instant::now();
+    let handshake_by = accepted + Duration::from_secs(HANDSHAKE_SECS);
+    // **A setup ask's one deadline is made at the accept** (Spec 8.3): the
+    // box writes its frame once its handshake completes, so the handshake
+    // and the register's lookup spend the box's own bound and sit inside
+    // the deadline.
+    let bound = setup_bound(&inner);
+    let answer_by = accepted + bound;
     let mut halting = inner.halting.subscribe();
     if *halting.borrow() {
+        return;
+    }
+    // **The ClientHello chooses the configuration** (Spec 8.2): one that
+    // offers the pairing protocol meets the pairing's, and every other the
+    // mutual-TLS configuration as built, so section 8's refusal of a
+    // credential that is not live binds every plane connection exactly as
+    // it stands.
+    let hello = tokio::select! {
+        h = tokio::time::timeout_at(handshake_by, LazyConfigAcceptor::new(rustls::server::Acceptor::default(), stream)) => h,
+        _ = halting.changed() => {
+            tracing::info!("link from {peer}: the listener is halting, the handshake is dropped");
+            return;
+        }
+    };
+    let start = match hello {
+        Ok(Ok(start)) => start,
+        Ok(Err(e)) => {
+            tracing::warn!("link handshake from {peer} failed, refused in the clear: {e}");
+            return;
+        }
+        Err(_) => {
+            tracing::warn!("link handshake from {peer} did not complete, refused");
+            return;
+        }
+    };
+    let pairs = start
+        .client_hello()
+        .alpn()
+        .is_some_and(|mut offered| offered.any(|p| p == PAIR_PROTOCOL));
+    if pairs {
+        crate::link::pairing::serve(
+            start,
+            crate::link::pairing::Context {
+                waiting: &inner.waiting,
+                config: inner.pairing_tls.clone(),
+                peer: peer.ip().to_canonical(),
+                dialed,
+                handshake_by,
+                cadence: inner.cadence,
+                write_bound: inner.silence,
+                halting,
+            },
+        )
+        .await;
         return;
     }
     // **The handshake is the only door**: a peer that does not complete
     // mutual TLS with a certificate this authority signed is dropped here,
     // and nothing it wrote was read as a frame.
     let handshake = tokio::select! {
-        h = tokio::time::timeout(Duration::from_secs(HANDSHAKE_SECS), inner.acceptor.accept(stream)) => h,
+        h = tokio::time::timeout_at(handshake_by, start.into_stream(inner.tls.clone())) => h,
         _ = halting.changed() => {
             tracing::info!("link from {peer}: the listener is halting, the handshake is dropped");
             return;
@@ -3359,12 +3708,25 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
 
     // **The lookup comes before the roster** (Spec 8): the fingerprint is
     // looked up in the register and a credential that is absent or
-    // revoked is refused here, before any byte of the hello is read.
-    let (agent, plane) = match inner.store.agent_by_fingerprint(&fp).await {
-        Ok(Some((agent, plane))) if agent.credential(plane).state == CredentialState::Live => {
+    // revoked is refused here, before any byte of the hello is read. The
+    // connection's purpose is known only at its first frame, so the lookup
+    // has the setup ask's deadline whatever the purpose, and a register that
+    // fails or is not read by then is refused `store_unavailable`, which
+    // names nothing of the register and which a connector retries on its
+    // normal backoff.
+    let looked_up = tokio::time::timeout_at(answer_by, async {
+        #[cfg(test)]
+        if inner.fail_next_lookup.swap(false, Ordering::Relaxed) {
+            anyhow::bail!("the test's lever failed the lookup");
+        }
+        inner.store.agent_by_fingerprint(&fp).await
+    })
+    .await;
+    let (agent, plane) = match looked_up {
+        Ok(Ok(Some((agent, plane)))) if agent.credential(plane).state == CredentialState::Live => {
             (agent, plane)
         }
-        Ok(Some((agent, plane))) => {
+        Ok(Ok(Some((agent, plane)))) => {
             tracing::warn!(
                 "link from {peer}: credential {} of {} ({plane}) is revoked, refused before its roster",
                 &fp[..12],
@@ -3373,7 +3735,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
             refuse(tx, writer, Refusal::NotLive).await;
             return;
         }
-        Ok(None) => {
+        Ok(Ok(None)) => {
             tracing::warn!(
                 "link from {peer}: credential {} is not in the register, refused before its roster",
                 &fp[..12]
@@ -3381,10 +3743,16 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
             refuse(tx, writer, Refusal::NotLive).await;
             return;
         }
-        Err(e) => {
+        Ok(Err(e)) => {
             tracing::error!("link from {peer}: the register could not be read: {e:#}");
-            drop(tx);
-            drain_writer(writer).await;
+            refuse(tx, writer, Refusal::StoreUnavailable).await;
+            return;
+        }
+        Err(_) => {
+            tracing::error!(
+                "link from {peer}: the register was not read within {bound:?} of the accept"
+            );
+            refuse(tx, writer, Refusal::StoreUnavailable).await;
             return;
         }
     };
@@ -3410,6 +3778,22 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                 door,
                 capabilities,
             }) => (agent, plane, tail, ceiling, door, capabilities),
+            Ok(FromClient::Setup {
+                agent: name,
+                plane: said_plane,
+                ask,
+            }) => {
+                let asked = SetupAsked {
+                    name,
+                    plane: said_plane,
+                    ask,
+                };
+                serve_setup(
+                    &inner, &agent, plane, &fp, peer, asked, answer_by, tx, writer,
+                )
+                .await;
+                return;
+            }
             _ => {
                 tracing::warn!("link from {peer}: the first frame was not a hello, refused");
                 refuse(tx, writer, Refusal::Malformed).await;
@@ -3530,7 +3914,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                 // under the row's lock: a second connection is refused rather
                 // than replacing the first.
                 let mut live = inner.live.lock().unwrap();
-                if live.contains_key(&key) {
+                if live.contains_key(&key) || inner.setups.lock().unwrap().contains(&key) {
                     return Err(Refusal::AlreadyConnected);
                 }
                 live.insert(
@@ -4445,6 +4829,23 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                         }
                     }
                 }
+                (_, FromClient::Setup { .. }) => {
+                    // **A setup ask is a connection's first frame alone**
+                    // (Spec 8.3), never one inside an admitted plane's.
+                    tracing::warn!(
+                        "link from {peer}: {} ({plane}) sent a setup ask mid-stream, refused",
+                        agent.agent_id
+                    );
+                    send(
+                        &tx,
+                        ToClient::Refusal {
+                            reason: Refusal::Malformed,
+                        },
+                    )
+                    .await;
+                    reason = "refused as malformed";
+                    break;
+                }
                 (_, other) => {
                     // **A frame on the wrong plane is refused and logged
                     // against the row** (Spec 8): a tuple or load state can
@@ -4619,6 +5020,7 @@ fn frame_name(frame: &FromClient) -> &'static str {
         FromClient::Door { .. } => "door",
         FromClient::Event { .. } => "event",
         FromClient::Entry { .. } => "entry",
+        FromClient::Setup { .. } => "setup",
     }
 }
 

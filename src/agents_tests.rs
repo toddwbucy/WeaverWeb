@@ -165,6 +165,7 @@ async fn rig_of(handover: Handover, silence: Duration) -> Option<Rig> {
                 authority_dir: dir.path().join("authority"),
                 headers: crate::hugging_face::headers::Headers::new(),
                 boxes: std::sync::Arc::new(crate::box_report::NoBox),
+                enrollment: None,
             },
         ))
         .with_state(fresh.store.clone()),

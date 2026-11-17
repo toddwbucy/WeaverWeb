@@ -712,7 +712,8 @@ async fn a_door_frame_the_row_no_longer_takes_closes_the_connection() {
 
 /// **At most one row per box and name holds live credentials**, at the
 /// schema, and re-registering a live pair retires the previous row. The
-/// name is immutable at the schema too.
+/// name is immutable at the schema too, and the box moves only through the
+/// replace-box write (Spec 2.12, `enrollment_tests`).
 ///
 /// Perturbation: drop the partial unique index from migration 0010. The
 /// direct insert of a second live row for one box and name lands, and two
@@ -754,12 +755,18 @@ async fn at_most_one_live_row_per_box_and_name() {
         renamed.unwrap_err().to_string().contains("immutable"),
         "the name does not move"
     );
-    sqlx::query("UPDATE agent SET box = $2 WHERE agent_id = $1")
+    let moved = sqlx::query("UPDATE agent SET box = $2 WHERE agent_id = $1")
         .bind(second.id.as_str())
         .bind(format!("{}-moved", first.r#box))
         .execute(&lab.store.pool)
-        .await
-        .expect("the box is the operator's to edit");
+        .await;
+    assert!(
+        moved
+            .unwrap_err()
+            .to_string()
+            .contains("moves only beside its history"),
+        "the box moves outside the replace-box write"
+    );
 }
 
 /// **The link state is reset when the listener starts**, and only for

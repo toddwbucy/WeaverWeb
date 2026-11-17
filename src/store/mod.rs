@@ -32,6 +32,7 @@ pub mod model_pull;
 pub mod plan;
 pub mod read;
 pub mod setup;
+pub mod setup_ask;
 pub mod ssh_key;
 pub mod tuple;
 

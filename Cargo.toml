@@ -40,14 +40,21 @@ description = "The WeaverTools suite's frontend: channel, lifecycle, and trace s
 # 2), on by default so the server builds, tests and runs as before; the
 # server binary requires it, and the connectors, built for agent boxes, are
 # built without it (CLAUDE.md gives the command and the measurement).
+# **`enrollment` carries rcgen's certificate request parser** (Spec 8.1, 8.2),
+# its `x509-parser`, which the console needs to verify and sign a box's
+# requests and a box never does: on by default, required by the server
+# binary, and left out of the connectors' build without the default
+# features, which `tests/connectors_link.rs` measures. rcgen's `ring` feature
+# turns on the parser's signature verification.
 [features]
-default = ["passkeys"]
+default = ["passkeys", "enrollment"]
 passkeys = ["dep:webauthn-rs"]
+enrollment = ["rcgen/x509-parser"]
 
 [[bin]]
 name = "weaver-web"
 path = "src/bin/weaver-web.rs"
-required-features = ["passkeys"]
+required-features = ["passkeys", "enrollment"]
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }

@@ -1488,7 +1488,8 @@ retires the previous row by revoking its credentials in the same act, and an
 appliance's pairing that names a live pair is refused instead (section 8.2).
 **A row's box changes only through the replace-box write of section 8.2**,
 one audited write after the fingerprint and the code, on this document's
-election of 2026-11-17, and as built no write edits it. **A row holding no
+election of 2026-11-17, which keeps the box the row held, and the schema
+refuses any other write that moves it. **A row holding no
 live credential is retired, and never live again**: an admin retires one
 through the server by revoking every live plane in one write, **a rotation
 refuses one, the host's `rotate` as the web's**, read under the row's lock
@@ -5765,7 +5766,14 @@ one that is absent or revoked at that layer, before any byte of the
 connector's roster, its agent name and plane, is read. The order is the
 point: a roster read first is a claim the server has to hold while deciding
 whether to believe it, and the gate's own contract refuses a failed peer
-before any content is read for the same reason.
+before any content is read for the same reason. **The lookup has a setup ask's
+deadline, whatever the connection's purpose** (section 8.3): the silence bound or 20
+seconds from the connection's accept, whichever is shorter, and a register that fails
+or is not read by then is refused `store_unavailable`. The purpose is known only at
+the first frame, which the order above reads after the lookup, so the bound cannot
+wait for it. The handshake has already checked the certificate's chain, the refusal
+names nothing of the register, and a connector retries it on its normal backoff, as it
+does a connection that ends.
 
 **Identity is the certificate's binding, and the hello carries no identity
 claim the server acts on.** Registration bound the certificate to one row
@@ -6490,8 +6498,10 @@ pairing apart, the fingerprint, the code, the waiting box, the exchange, and the
 commands the box runs. Where neither a ruling nor that election fixes a point, section
 10 carries it with what settles it. It is never a person's enrollment of section 2.13,
 and this document writes "an appliance's enrollment" wherever the two could be
-confused. **None of it is built**: the enrollment's code act builds it, against this
-text.
+confused. **It is built** by the enrollment's code act: the link port's split and the
+waiting box in `link::pairing`, the box's half in `link::pair_client`, the exchange in
+`link::exchange`, the pairing page in `surfaces::setup::pair`, and the commands on the
+box in `link::key_config` and `link::box_commands`.
 
 **How it stands against registration as built on 2026-11-15:**
 
@@ -6557,7 +6567,10 @@ is retired and never live again (section 2.12), so it stands apart from the regi
 until its exchange writes the row with both credentials live. It is an admin's, as the
 setup pages are (section 6.2) and as registration is (section 2.13). **Entering a code
 is an admin write** in section 2.13's order, and a code that matches no waiting
-connection is one refusal record. **The page reads an entry in Crockford's form** before
+connection is one refusal record. **An entry runs from the field's lock to its outcome's
+record in a task the request cannot cancel**, as a person's ask does (section 2.13), so
+a box whose code matched is answered and its act recorded though the request that
+entered it is gone. **The page reads an entry in Crockford's form** before
 it compares: it uppercases the entry, drops spaces and hyphens, and reads I and L as 1
 and O as 0. An entry that is not then ten characters of the code's alphabet (the
 one-time secret, below) is refused at section 2.13's first step and answered as
@@ -6651,7 +6664,9 @@ the console's, so it presents a chain of its own, and the fingerprint the box pr
 not the console's. The code is single-use, since a match spends its connection, its life
 is its connection's ten minutes, and its attempts are five misses on one setup (the
 pending enrollment, above). Every token the store holds as built is kept as its digest
-(sections 2.8 and 2.13), and the code is never held.
+(sections 2.8 and 2.13), and the code is never held. **A match spends its connection
+only once its entry holds it**: a comparison the entry stopped waiting for, past the 5 s
+it gives each waiting connection, spends nothing, and the box waits on.
 
 **The code's encoding, illustrated** from made-up bytes, the encoding step alone:
 
@@ -6697,6 +6712,15 @@ connection, the console takes six steps under the authority lock:
    the admin grant, with the audit's outcome naming the first record, and then sends its
    last word.
 
+**The box hears a heartbeat at the link's cadence from the match until the answer, and
+again while step 6 runs**, so a box whose exchange waits on the authority lock or the
+store never reads four cadences of silence. A heartbeat that cannot be sent within the
+write bound ends the exchange with nothing written. **The exchange waits for the
+authority lock within the box's life**, ten minutes from its dial, and where another
+write holds the lock past it the console refuses the box `busy` and writes nothing, so
+`busy` names a console that cannot take the box, whether at its dial or at its exchange
+(this document's election of 2026-11-17).
+
 **This document elects that one single-use code enrolls the pair**, since both
 connectors must match on one row (the operator's ruling of 2026-10-01, section 8).
 **Nothing crosses in the clear**, since the exchange is TLS from its first byte, so
@@ -6740,7 +6764,11 @@ path, mode or address of a box enters this text. **Every command writes JSON lin
 standard output**, one object per line, each with an `event` member, the last line its
 outcome, and its exit status agrees with that line, the shape the register verbs and
 `weaver-admin` use. Diagnostics go to standard error. A reason the console sends is
-checked as printable ASCII within a bound before it is printed. **One set of exit
+checked as printable ASCII within a bound before it is printed, and **every fault and
+reason a command prints passes one printer** (`link::box_line`), which escapes each
+control and non-ASCII byte, as JSON does on standard output and as `\xNN` on standard
+error, so a peer's error text or a path the operator typed reaches the terminal with no
+escape sequence in it. **One set of exit
 statuses serves every command:**
 
 | status | name | meaning |
@@ -6782,7 +6810,13 @@ sent:
    answer carries, whose fingerprint is the one `pair` printed, and then writes the
    complete config in place, the members `register` writes, so the connector's unit
    reads it unchanged (section 8.1). Out: `adopted` (0), or `refused` (4) with its
-   reason and nothing written.
+   reason, `key_mismatch` or `not_signed`, and nothing written. **`adopt` appends and
+   never rewrites the key**: it finds the key's prefix by parsing the exact bytes
+   `request` wrote, never a stored length, refuses as `usage` a file whose prefix is not
+   a well-formed key-only config for its plane, and replaces only what follows the
+   prefix. A crash at any write leaves the key byte for byte and a re-run completes the
+   file, and a config left with no certificate is refused by the service at its start,
+   its `certificate` member missing.
 
 **Each config reaches the agent's directory by a rename**, since a unit reads its config
 under the agent's name and the name arrives only with `paired`. `request` writes each
@@ -6860,7 +6894,8 @@ whole reach is its two connectors.
 8.3): `setup describe` answers the agent, whether its pairing was a replacement, its
 models, the models drive's need, the SSH
 public keys and, once Confirm stands, the members the agent is laid from, and `setup
-report` carries the survey's report. Neither is built. As built, the link carries frames
+report` carries the survey's report. Both are built, `link::box_commands` on the box
+and the listener's setup admission over `store::setup_ask`. As built, the link carries frames
 of one line bounded at 4 MiB (`link::frames::LINE_BOUND`), and no frame names a pull of
 the model. Which connection carries the pull, its frame and its bounds are section 10's,
 an interface the image or WeaverAgent has to meet (`weaver-web-PRD` section 8).
@@ -6933,8 +6968,21 @@ holds**, so while admin-con's service holds its connection a setup ask is refuse
 the setup's end, and stops admin-con's service before a rerun and starts it after. A
 loaded agent keeps running while admin-con is stopped, since admin-con is a conduit
 (section 2.14). The setup an ask serves is the one the row's pairing linked (section
-6.2), and an ask on a row no setup links is refused `no_setup`. Its lines and exit
-statuses are section 8.2's. It makes two asks:
+6.2), and an ask on a row no setup links is refused `no_setup`. **One deadline, made
+when the connection is accepted, spans the register's lookup, the ask's admission and
+the store's answer**, at the silence bound or 20 seconds, whichever is shorter. The box
+writes its frame once its handshake completes, so the handshake and the lookup spend
+its own bound, and the deadline is made no later than the frame arrives. The box gives
+an ask up 30 seconds from its dial and keeps 10 of them for its dial and its read of
+the answer (`SETUP_ANSWER_SECS`, `SETUP_ANSWER_MARGIN_SECS`, `ASK_SECS`). An ask not
+answered by then, or whose lookup fails, is refused `store_unavailable` and lets the
+credential's claim go, so the box hears the refusal within its own bound and its next
+ask meets no `already_connected`.
+Its lines and exit statuses are section 8.2's.
+**The hello naming the setup purpose is the `setup` frame**,
+the connection's first, carrying the agent's name, the plane and the ask itself. The
+listener answers it with one `described`, `accepted` or `refusal` frame and closes, and
+a `setup` frame after a hello is refused as malformed. It makes two asks:
 - **`admin-con setup describe`.** In: its config alone. Out: one `described` line (0)
   with these members:
   - `agent` and `agent_id`, the register row's name and identity
@@ -6957,8 +7005,10 @@ statuses are section 8.2's. It makes two asks:
     OpenSSH's SHA256 form, empty where none is set
 - **`admin-con setup report --stage pairing|drives`.** In: the survey's report on
   standard input, the setup script having run the survey locally. Out: `accepted` (0),
-  or `refused` (4) with a reason such as `too_large`. **The stage is the command's
-  argument**, so the console reads nothing of the image's format: admin-con checks that
+  or `refused` (4) with a reason such as `too_large`. A report past 64 KiB is refused
+  `too_large` by admin-con before any dial, and by the listener again for a client that
+  skips that check, and an input that is not one JSON object is `usage` (2). **The stage
+  is the command's argument**, so the console reads nothing of the image's format: admin-con checks that
   its input is one JSON object within 64 KiB and parses nothing more, and the console
   keeps it verbatim on the setup, the latest of its stage, with the time it arrived. A
   report for a confirmed setup is refused `setup_closed`, since a confirmed setup never
@@ -7124,22 +7174,27 @@ two connectors report.
 | an act's `ok` outcome commits with it, and a lost commit answer is classified by that record | perturbation in `src/admin_tests.rs`, `src/grants_tests.rs`, `src/agents_tests.rs`, `src/keys_tests.rs` and `src/host_tests.rs`, the commit's answer lost by a test fault after PostgreSQL applied it: write the `ok` outcome after the commit's answer instead of in the transaction, and each of the five person writes, the three grant and role writes, a revocation and a retirement, a registration and a rotation through the server, a token's redemption, a session's opening, a passkey's addition and removal (`src/keys_tests.rs`), and the host's bootstrap and token answers as failed (the web's writes with the server's failure, the host's commands with a refusal), its outcome `failed`, for an act that landed; and where a later act commits between the lost answer and the read-back, a rotation over a revocation or another admin's enable over a disable, the act is still classified as landed, which a read-back of its effect would not do; drop the read-back's wait on the act's own lock, give up on a disable's answer while its COMMIT is still completing, and the read-back finds no outcome and answers failed for an act that then lands |
 | the tuple and the load state come by admin-con and never by gate-con | perturbation: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it; let a replayed load event write the tuple, restart the server after an unload, backfill, and the row reads loaded; ask `show` before fixing the replay boundary, unload between the two, and the row reads loaded until the next `show`. **Four clauses are admin-con's ordering**, against the real listener with a fake invoker in `src/link/admin_con_tests.rs`: let a `show` answer cross the link out of order with the file events around it, unload during the `show`, and the row reads loaded until the next `show`; place the answer in the stream at receipt and unload between the snapshot and the receipt, and the row reads loaded; skip the drain, leave an unread load event behind the tail, invoke `show` after an unload, and the row reads loaded; run two verbs at once on one connection, and an older answer lands after a newer one. **The slot's clause**, against the real listener with the sudo invoker over a fake `sudo` in `src/link/sudo_invoker_tests.rs`: free the slot at a reconnection while a timed-out verb's process still runs, and the new connection's admission `show` runs beside it. **A turn's start and close refresh the load state**, against the real listener in `src/link/tests.rs`: drop the `turn.started` mapping, and the row never reads `active` between a turn's start and close; let a replayed `turn.started` land, and the row reads `active` from history; let a turn's event write the tuple, and the row loses the tuple it held; let a turn's event write the tuple's source, and a `show`-shaped tuple reads as an event's |
 | nothing crosses the link in the clear | perturbation: offer a plaintext hello to the listener, it is refused below any roster; and review, over the listener, that no plaintext accept path exists |
-| a ClientHello without the pairing protocol meets the mutual-TLS configuration as built | perturbation, **owed**: choose the pairing configuration for every ClientHello, and a client with no certificate completes a handshake, while every standing link test passes unchanged |
-| a pairing connection writes nothing before its code matches | perturbation, **owed**: record the waiting box at its first frame, and a store row or an audit record appears |
-| the pairing's code crosses the link in no frame | perturbation, **owed**: send the code in the first frame, and a recorded stream of the connection holds it |
-| the pairing's code is the first 50 bits of a 32-byte export under its label, in Crockford's base32 | **owed**: section 8.2's illustrative example as a test of both ends' encoders, and an export of another length gives another code |
-| the pairing page reads an entry in Crockford's form, and a malformed entry is no miss | **owed**: the encoder's inverse accepts `hwx5r-0f74a` and `HWX5R 0F74A` as section 8.2's example code and refuses `HWX5U0F74A` as malformed, and a malformed entry is answered as malformed, writes no record and counts toward no five misses |
-| a party between the box and the console meets a code that matches nothing | **owed**: an in-process relay between `pair` and the listener, and the code `pair` prints matches no waiting connection |
-| a certificate is signed only over a request whose own signature verifies, ECDSA P-256 with SHA-256 alone | perturbation, **owed**: skip the verification, and a request signed by another key is signed |
-| a pairing naming a live box and name is refused and retires nothing | perturbation, **owed**: write the pairing's row through registration's insert, and the live row is retired |
-| a lost word writes no row | perturbation, **owed**: write the row before the box's word, drop the word, and a row stands for an answer no box adopted |
-| on `unknown` the pairing page shows what the write made, the row's box and its live credentials' fingerprints | **owed**: after a committed `replace box` the page shows the new certificates' fingerprints, and after a write that did not commit the old box's, or no row for `pair`, perturbed by a page that shows the answer's fingerprints rather than the row's, which would match the box's line whether the write committed or not |
-| a row's box changes only through the replace-box write, and the row keeps the box it held | perturbation, **owed**: write the new box without the history's row, and the old box leaves the record |
-| a replacement's drive setup mounts the state drive it carries and never formats it | **owed**: `setup describe` answers `replacement` `true` after a `replace box` and `false` after a `pair`, perturbed by answering false after a replacement, which would send the carried drive to the format. The mount, its check, its refusal and the refusal of the carried disk as the models drive are the image's script's and tested there (`weaver-web-PRD` section 8) |
-| a setup ask is refused while its credential's connection stands, and counts for nothing in presence | **owed**: the real listener and a fake admin-con, a setup ask beside a standing admin connection refused `already_connected`, and a setup connection alone leaving the row not present |
-| the setup keeps the latest report of each stage, verbatim | perturbation, **owed**: keep one report per setup, and a pairing report run again replaces the drives page's |
-| an adopted pair connects | **owed**: end to end, `request`, then `pair` against the real listener with the code entered through the page, then `adopt`, and both connectors are admitted on one row |
-| the connectors' build holds no `x509-parser` | measurement, **owed**, in `tests/connectors_link.rs`: the package's normal graph without the default features holds no `x509-parser`. Make the parser a dependency the default features do not gate, and the graph holds it |
+| a ClientHello without the pairing protocol meets the mutual-TLS configuration as built | perturbation in `src/link/pairing_tests.rs`: a client that trusts the authority, offers no ALPN and holds no certificate is refused by the handshake with the alert `certificate_required`, and no box waits. Choose the pairing configuration for every ClientHello, and that client is answered `waiting`. Let the mutual-TLS configuration admit a client with no certificate, as every standing link test still passes, and the handshake completes with no alert |
+| a pairing connection writes nothing before its code matches | perturbation in `src/link/pairing_tests.rs`, on a store of its own: a box dials, says its first frame, waits through heartbeats and meets a code not its own, and every table's rows and the operations log stay as they were. Write to the store as a pairing connection is served, and a table's rows change |
+| the pairing's code crosses the link in no frame | perturbation in `src/link/pairing_tests.rs`: every line the box's half sent and heard, from its first frame through the heartbeats to `expired`, holds the code in no form. Send the code in the first frame, and the recorded stream holds it |
+| the pairing's code is the first 50 bits of a 32-byte export under its label, in Crockford's base32 | perturbation in `src/link/pair_code.rs`, the one encoder both ends use: section 8.2's illustrative example, its bytes after the seventh set, gives `HWX5R 0F74A`, and the bits taken least significant first give another code. In `src/link/pairing_tests.rs`, both ends of one session of the pairing configuration derive one code, and a 16-byte export under the label gives another |
+| the pairing page reads an entry in Crockford's form, and a malformed entry is no miss | perturbation in `src/link/pair_code.rs` and `src/enrollment_tests.rs`: the encoder's inverse accepts `hwx5r-0f74a` and `HWX5R 0F74A` as section 8.2's example code and refuses `HWX5U0F74A` as malformed (read the entry without folding its case, and the first is refused), and on the pairing page `HWX5U0F74A` is answered as malformed, writes no record and leaves the setup's misses at nought. Count a malformed entry as a miss, and the count moves. Five codes matching no waiting box are five refusal records, none quoting the code, and close the field, so the box's own code is refused while it is closed: quote the code in the record, or leave the field open, and the test fails. Twelve wrong entries sent together count exactly five misses, the seven after the fifth comparing nothing, since one lock on the setup's row spans the field's check, the comparison and the miss: read the field without that lock, and the count runs past five. The exchange's first step refuses a field five misses closed, a second guard: drop the field from that check, and the pairing stands |
+| an entry runs from the field's lock to its outcome's record in a task the request cannot cancel | perturbation in `src/enrollment_tests.rs`, `an_entry_dropped_once_its_code_matched_still_pairs_the_box`: the request is dropped while the matched entry's first record is held, and the box still hears its answer and `paired`, one row standing for the name. Run the continuation from the match in the request's own future, and the box hears its connection closed (measured) |
+| a match spends its connection only once its entry holds it | perturbation in `src/link/pairing_tests.rs`, `a_probe_its_entry_gave_up_on_spends_nothing`: a comparison whose entry stopped waiting reaches the waiting connection, and the box's own code entered after takes it. Drop both the closed comparison's check and the hand-over's taking back, and the box is gone, its code matching nothing. Either alone leaves the test passing, since the other catches it (each measured) |
+| a party between the box and the console meets a code that matches nothing | `src/link/pairing_tests.rs`: an in-process relay terminates the box's TLS under an authority of its own and dials the listener as a box, and the box's half (`src/link/pair_client.rs`, which `pair` runs) dials the relay. The code the box shows matches no waiting connection, the relay's own session code does, and the fingerprint the box shows is the relay's authority. Match any code, and the box's code takes the relay's connection |
+| a certificate is signed only over a request whose own signature verifies, ECDSA P-256 with SHA-256 alone | perturbation in `src/link/request.rs` and `src/enrollment_tests.rs`: a request naming one key's public half and carrying another key's signature is refused, and at the exchange the box hears `request_refused` and nothing is written; a P-384 and an Ed25519 request are refused by kind, and a P-384 one at the exchange too. Take the request's key without its signature's verification, and the request is signed and the box answered. rcgen's parser verifies inside its parse, so the perturbation reads the key from the request's bytes, as a parser that skipped the check would |
+| a pairing naming a live box and name is refused and retires nothing | perturbation in `src/enrollment_tests.rs`: against a live row of the claimed box and the setup's name, the box hears `box_and_name_live`, the live row keeps its live credentials and its version, and no row is added. Write the pairing's row through registration's insert, which retires the live row, and the live row is retired |
+| a lost word writes no row | perturbation in `src/enrollment_tests.rs`: a box that closes after the answer and before its word leaves no row and no link on the setup, the act's outcome `failed`, and the page answering the entry draws no row for the name. Write the row whether the word came or not, and a row stands for an answer no box adopted |
+| on `unknown` the pairing page shows what the write made, the row's box and its live credentials' fingerprints | perturbation in `src/enrollment_tests.rs`: a `replace box` whose admin's session closes between the answer and the box's word does not commit, the box reads no last word, and the page answering the entry shows the old box and its credentials' fingerprints and not the answer's; a `replace box` that commits, its box gone before the last word, shows the new box and the new certificates' fingerprints on the pairing page; and after a lost word for `pair` the page draws no row. Draw the answer's fingerprints in the rows' place, and the page after the write that did not commit shows them, which would match the box's line whether the write committed or not |
+| a row's box changes only through the replace-box write, and the row keeps the box it held | perturbation in `src/enrollment_tests.rs` and in the schema (migration `0030`): a `replace box` keeps the row's identity, sets its box and its new credentials, and keeps the old box in `agent_box`, and an update moving a row's box outside that write is refused. Write the new box without the history's row, and the schema refuses the write; drop the schema's trigger too, and the old box leaves the record |
+| a replacement's drive setup mounts the state drive it carries and never formats it | perturbation in `src/enrollment_tests.rs`, against the real listener with the box's own commands: `setup describe` answers `replacement` `false` after a `pair` and `true` after a `replace box`, under the replacement's credential, and the replaced box's credential is refused. Answer false after a replacement, and the test fails, which would send the carried drive to the format. `describe`'s other members, the picks, the need and the laying once Confirm stands, are shown in `src/setup_place_tests.rs`. The mount, its check, its refusal and the refusal of the carried disk as the models drive are the image's script's and tested there (`weaver-web-PRD` section 8) |
+| a setup ask is refused while its credential's connection stands, and counts for nothing in presence | perturbation in `src/enrollment_tests.rs`, against the real listener with the box's own commands: two setup asks in turn are each answered and leave the row's admin plane unconnected, with no link time, not present and still labelled setup running; beside a standing admin connection, `setup describe` and `setup report` are refused `already_connected` and no report lands. Admit the ask without the live connection's check, and the ask beside it is answered; write the plane's link state at a setup ask, and the row reads the admin plane connected |
+| a setup ask not answered within the silence bound or 20 seconds of its connection's accept, whichever is shorter, its lookup and admission included, is refused `store_unavailable` within the box's own bound and lets its claim go, and a lookup that fails is refused `store_unavailable` | perturbation in `src/enrollment_tests.rs`, against the real listener with the box's own commands. `a_setup_ask_the_store_holds_past_the_bound_is_refused_and_lets_its_claim_go`: a report held behind the setup's row, locked by another transaction, and a describe whose store call stalls are each refused `store_unavailable` within the box's own bound, the held report has landed nothing once the hold goes, and the next ask is answered. Await the report with no bound, and the box reads `unknown`. Await the describe with no bound, and it reads `fault`. Land the report outside its transaction before its checks, and the held report lands once the hold goes. `a_setup_ask_whose_admission_waits_is_refused_within_the_boxs_bound`: a describe whose admission waits on the agent's row, held by another transaction, is refused `store_unavailable` within a box's bound under the silence bound, and the next ask is answered. Run the admission outside the deadline, or bound the ask by the silence bound alone, and the box gives up first, reading `fault`. `a_setup_ask_whose_lookup_waits_is_refused_within_the_boxs_bound`: a describe whose lookup waits for a connection, the store's pool held past the box's bound, is refused `store_unavailable` within it, and the next ask is answered. Make the deadline after the lookup, the lookup unbounded, or run the lookup outside the deadline, and the box gives up first. `a_setup_ask_whose_lookup_and_admission_wait_is_refused_within_the_boxs_bound`: a lookup that waits 0.8 s, then an admission that waits on the agent's row, are refused at the deadline from the accept, within a box's bound of 1.4 s. Make the admission's deadline after the lookup, and the box gives up first. `a_setup_ask_whose_lookup_fails_is_refused_store_unavailable`: a lookup failed by the test's lever is refused `store_unavailable`, and the next ask is answered. End the connection with no refusal, and the box reads `fault` (each measured) |
+| the setup keeps the latest report of each stage, verbatim | perturbation in `src/enrollment_tests.rs`: a pairing report, a drives report and the pairing report run again leave the second pairing report and the drives report, each byte for byte. Keep one report per setup, and the pairing report run again replaces the drives page's |
+| an adopted pair connects | end to end in `src/enrollment_tests.rs`: `request` for each connector, then `pair` against the real listener with the code its `waiting` line shows entered through the page, then `adopt` for each, and both connectors are admitted on the one row, which reads present. `adopt`'s append is shown in `src/link/key_config_tests.rs`: a crash after the open, mid-certificate and before the sync leaves the key byte for byte, the service refuses the config each leaves, and a re-run completes it. Truncate one byte into the key's prefix, and the key's bytes move; accept another plane's header, and the gate's `adopt` takes the admin config |
+| the connectors' build holds no `x509-parser` | measurement in `tests/connectors_link.rs`: the package's normal graph without the default features holds no `x509-parser`, and the default graph holds it, which the `enrollment` feature brings in. Make the parser a dependency the default features do not gate, and the graph holds it |
+| at the pairing the box takes the console's chain only where the server's certificate chains to the authority presented with it, and the pairing is TLS 1.3 alone | perturbation in `src/link/pairing_tests.rs`: a console that presents its certificate with another authority's completes no handshake with the box, and a client offering the pairing protocol under TLS 1.2 alone completes none with the listener. Let the box's check pass any chain, or build the pairing's configuration on the default versions, and each completes |
+| at most 16 boxes wait in all and 4 from one peer address, the first frame within 10 s and 16 KiB, and ten minutes from the dial the console closes the connection `expired` | perturbation in `src/link/pairing_tests.rs`, each bound alone, the time bounds shortened: the fifth box from one address and the seventeenth in all are refused `busy`, a silent box and a first line past 16 KiB are closed unanswered and give their places back, and a box past its life hears `expired`. Drop any one bound, and its box is held |
 | the server never asks a verb outside the agent's ceiling | perturbation: drop the ceiling check, ask a verb admin-con's hello did not declare, and it leaves the server; and admin-con's half, drop its typed error answer, and it reaches the invoker. **One clause is owed**: check against the row's copy, narrow the ceiling by reconnecting between the check and the enqueue, and an ask outside the new ceiling leaves. The race has no deterministic staging, and the guard is held by review: the check reads the live connection's ceiling under the live map's lock that finds the connection |
 | a verb its principal may not ask is refused before an ask | perturbation, in `src/verbs_tests.rs` against the real listener and a fake admin-con: drop the grant check, and an observer's `stop` leaves the server; drop the session's re-check under the hold, disable the person between the gate and the check, and the ask leaves; release the hold before the enqueue, and a revocation commits while the frame of the ask it revoked is still to be sent; reserve the slot under the hold, and a grant's removal waits on a stalled connector; run the ask in the request's own future, and a dropped request loses an authorized ask after its first, and a refusal its record; admit every ask, and a client posting past its share detaches tasks without bound; drop the per-connection cap on persons' slots, and asks parked on the server's own waits take the channel and an opening's `show` waits behind them; read the grants without the deadline, and an ask stalled on the store never answers and keeps its place; answer no grant with 403, and the page tells a stranger the agent exists. The server's `show`-only rule stands in the row of its asks, and the register verbs through the server in their own row |
 | a turn its principal may not ask is refused before an ask | perturbation, in `src/verbs_tests.rs`, the verb's held ask on the gate plane: drop the grant check, and an observer places a turn; release the hold before the enqueue, and a revocation commits while the turn is still to be sent. The session's re-check, the admission, the slots and the deadline are the verb row's own instruments, the one mechanism serving both planes, and `src/verbs_tests.rs` shows the hold, the admission, the slots and the deadline on the gate plane once each |

@@ -19,7 +19,7 @@
       <td>{{ row.agent_id }}</td>
       <td>{{ row.gate }}</td>
       <td>{{ row.admin }}</td>
-      <td>{% if row.present %}present{% else %}absent{% endif %}</td>
+      <td>{% if row.setup_running %}paired, setup running{% else if row.present %}present{% else %}absent{% endif %}</td>
       <td>{{ row.registered }}</td>
       <td>
         {% if row.live %}

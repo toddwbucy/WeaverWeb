@@ -108,10 +108,17 @@ shown, from the tool's own labels, to be wrong.
   someone who was not there. Claiming the picture as the novelty would be
   the overclaim section 1 forbids, pointed at ourselves.
 - **Not a hypervisor driver.** Weaver Web never touches a hypervisor, on the operator's
-  ruling of 2026-11-14. It does not create, clone, start, stop, snapshot, network or
-  destroy a virtual machine. Those acts belong to the operator and the operator's
-  hypervisor, and the suite holds no opinion about them. To start and stop an agent is
-  to load and unload it through admin, inside a running appliance (section 10.5).
+  ruling of 2026-11-14. It does not create, clone, start, snapshot, network or destroy a
+  virtual machine, and it stops none through a hypervisor. Those acts belong to the
+  operator and the operator's hypervisor, and the suite holds no opinion about them. To
+  start and stop an agent is to load and unload it through admin, inside a running
+  appliance (section 10.5). **The console's stop is that `unload`, which writes the save
+  point, and its start that `load`, on a virtual machine and on a host alike**, on the
+  addendum to the operator's rulings of 2026-11-16 (setup pages), which turn the
+  shutdown command the rulings first named into those two lines. Both are already
+  granted through admin-con's rule, so admin's grant does not grow. Nothing the console
+  offers powers off a machine, and the operator powers a virtual machine from the
+  hypervisor. The console reaches no hypervisor, which the ruling of 2026-11-14 keeps.
 - **Not a knowledge-graph governance layer.** No axioms, smells, gates, or
   conformance as product features.
 
@@ -170,8 +177,8 @@ agent in a way that blocks many.
 
 | stage | what it holds | backing |
 | --- | --- | --- |
-| 1 Declare | two screens (the operator's rulings of 2026-11-11): declare the components (the models on their SPU boxes with each box's GPU requirement, the store, the gate, the system prompt, the tunable values a serving load requires), then wire them on a board that shows only what was declared | partly: the declaration screen saves versioned declarations and shows the file each will become (Spec 6.1); the board is unbuilt and waits on contracts WeaverAgent has yet to write |
-| 2 Provision | first the operator's work on the box, which this server never reaches: stage the binaries, create the kernel account, install the declaration Declare saved. Then this server's: register the agent, mint its two connector credentials. Then `validate`, which reads the installed declaration. On an appliance the binaries ride the sealed image, and an appliance's enrollment replaces registration's minting: the connectors make their keys and this server signs the public halves (section 10) | partly: the register page and the one-time config handover are built, and an appliance's enrollment, the box steps and the validate step are not |
+| 1 Declare | a start page, the setup pages and the build page (the operator's rulings of 2026-11-16, setup pages, and their addendum): the start page asks the agent's name; the setup pages run, in order, the pairing, the models, the drives as the box mounted them, the placement and the confirmed deployment tuple; the build page holds the board, which wires what was declared, and the prompt tuple panel | partly: the start page and the setup pages stand to the confirm page, each part live or held (Spec 6.2); the declaration screen of 2026-11-11 saves versioned declarations and shows the file each will become (Spec 6.1), and stays as built beside them; the build page is held, the board waiting on contracts WeaverAgent has yet to write |
+| 2 Provision | the box's side of the setup (the operator's rulings of 2026-11-16, setup pages, and their addendum): an appliance's console goes straight into the appliance's setup script at first boot, which asks this server's address and port; the box dials this server over TLS and shows a short one-time code and this server's fingerprint; on the pairing page the operator compares the fingerprint and enters the code; the connectors send the public halves of keys made in the box, this server signs them, and mutual TLS comes up; the survey's report crosses over TLS. The pairing is the connectors' and serves a host too. Once the model is picked, this server shows a command to run at the appliance's console, which starts the script's drive setup, formatting and mounting the state drive and the models drive, each after the operator confirms the disk; the box then pulls the model from this server's cache over TLS. The drive setup is the appliance's script alone, and a host's own script is later. A host install points at a state directory and a models directory and attaches and formats nothing. Every root act runs on the box at a screen the operator is sitting at, and this server's reach is the two connectors from pairing onward (section 10). Installing the declaration Declare saved is the operator's work on the box as built, and no console verb does it. Then `validate`, which reads the installed declaration. Registration and its one-time config handover stand as built | partly: the register page and the one-time config handover are built, and an appliance's enrollment, the console's side of the pairing and the drive setup, the installing of the declaration and the validate step are not |
 | 3 Run | load, serve turns through the gate, unload | built; `load` is offered as every verb is, where the person's grants and the connection's ceiling carry it |
 | 4 Observe | availability, alerts, the live trace | built |
 | 5 Preserve | `save-point`, `restore`, the decision on a missed save point | partly: both verbs are offered where a role carries them and the ceiling grants them; no list of save points is served, and `restore` carries no argument (the invoker's fixed line `sudo -n <weaver_admin> <verb> <agent>`, Spec 7.2), so the page names no save point |
@@ -190,7 +197,10 @@ console holds no trace for that agent**, on the operator's ruling of 2026-11-15 
 10.6). The trace door then has nothing to serve, so Record, the live view and Train have
 nothing to read for that agent, and the console says that it holds no trace for that
 agent. Whatever keeps the trace past its destination is the operator's, and the console
-states nothing about it. That is the operator's choice.
+states nothing about it. That is the operator's choice. The operator's word of
+2026-11-17, that the trace goes to Weaver Web, which stores it outside the agent's reach
+(section 10.4), bears on this, and how it meets the destination is open, settled by the
+operator, then by the trace field's act (section 9).
 
 The ten surfaces by stage. On the path: Compose is stage 1, Live is stages 3 and 4, and
 Measure, Open a trace and Stage are stage 6. The five on the list side feed a stage
@@ -207,46 +217,93 @@ what it waits on. A mark is a word in a pill and never a bare color: absence (`a
 beside its dot and word), backing, and the hatched discontinuity row in a stream. A
 verb that does not apply is disabled with its reason, never hidden. Every pane is marked
 with its stage and whether it has backing today, so a drawing is never mistaken for a
-surface. The served pages are composed in this grammar, and the stylesheet they load is
+surface. **Every pane carries its labels**, on the operator's rulings of 2026-11-16
+(setup pages): its stage, built or unbuilt, and its status, healthy states included,
+since a sign that things are good is as wanted as a sign that something broke. The
+served pages are composed in this grammar, and the stylesheet they load is
 the design system's own (Spec section 6).
 
-**Declare is two screens**, on the operator's rulings of 2026-11-11, which replace the
-single diagram the design session of 2026-11-06 drew, with its system prompt on the
-decoder and its free placement of pieces. Spec section 6.1 states the first screen.
+**Declare is a start page, the setup pages and the build page**, on the operator's
+rulings of 2026-11-16 (setup pages) and their addendum, which replace the two screens of
+the rulings of 2026-11-11 as the stage's path, those having replaced the single diagram
+the design session of 2026-11-06 drew. The pages stand to the confirmed deployment tuple
+of the confirm page (Spec 6.2), and the declaration screen of 2026-11-11 stays as built
+beside them, reached from the build page's stub for the fields no setup page asks (Spec
+6.1).
 
-- **The declaration screen** comes first: the operator declares the components, which
-  models on which GPUs, which store, which gate, and saves the declaration as a
-  versioned document, read back as the file it will become. One SPU box stands for the
-  models it holds, four models declared apart being four boxes and one decoder with its
-  adapter one box, spread out or collapsed as the operator chooses. The engine follows
-  from the model's format, GGUF offered first and the other formats named as later. A
-  GPU is declared as a requirement, not as a device: a specific card, a class, given as
-  a family (any card of one architecture) or as a list of models, or a pair of two
-  requirements in shard order. The screen warns, and does not refuse, where a class
-  spans more than one compute capability; start satisfies the requirement or refuses,
-  and never substitutes; and the card drawn is stamped on every load event. The system
-  prompt is a field: the declaration act writes it into whatever state was declared,
-  from then on it is read from state and never from a file, and it is locked for the
-  session. The sampler's mechanism is fixed at load, and its knobs are per-turn, the
-  declaration supplying the defaults, the turn call the values and the record each
+- **The start page** asks the agent's name, one field after Start, because the appliance
+  names its directories and admin entry after the agent. Once an agent exists, the start
+  page becomes a New agent button.
+- **The pairing.** The page shows the box waiting, which dialed this server from its
+  setup, and the operator compares the fingerprint the box shows with this server's own
+  and enters the short one-time code the box shows (section 10.1). Then the running
+  report of what the box's survey sent over TLS. A checkbox says whether the box is a
+  virtual machine or a host. Where the address is localhost and the checkbox says
+  virtual machine, the page warns that the console could lose access to itself.
+- **The models.** A Hugging Face repository, then a pick from its files, a split model
+  shown as one choice with all its parts, and the precision read from the file (section
+  10.4). What is built is what the first agent needs: one decoder and the one adapter on
+  it. Extra models, adapter roles beyond the one decoder adapter, a classifier-only
+  agent and placement on the CPU are drawn and marked unbuilt, never live, so a page
+  never accepts what a load refuses.
+- **The drives**, as the box mounted them. Once the model is picked, the page shows the
+  command to run at the appliance's console, which starts the appliance's drive setup
+  (section 10.4), then the state drive, required for every agent at a minimum of 10 GiB,
+  and the models drive, its size computed from the chosen files, as the box mounted
+  them. On a host, which attaches and formats nothing, the page shows the state
+  directory and the models directory the operator named, with free space against the
+  need, the models directory prefilled with that user's default Hugging Face cache so
+  that models already pulled there are found, and a command for the operator granting
+  the console's account read-write on that cache and a models group read, since the
+  console alone downloads there and agents read the model in place, on the addendum, and
+  the host form is drawn and marked unbuilt, since the host's own script is later. One
+  unit, GiB, serves the whole flow.
+- **The placement.** Each model on a device, and the context length chosen against the
+  model's maximum, read from the file's header. The fit is called planned, from the room
+  plan without a load, since only a load measures. The first agent's Granite is a dense
+  transformer, so the room plan's KV cache term applies. "In shard order" names the
+  layer split across cards and says so.
+- **Confirm.** The deployment tuple in full: the model's repository, commit and per-part
+  digests, the adapter's likewise, the image's version, the driver, the cards by
+  identity, the guest processor, the machine, the drives, the placement and the context
+  length. Confirm goes to the build page.
+- **The build page** holds the board and the prompt tuple panel. Both are held, and the
+  page is a one-pane stub marked unbuilt. The six sampling values live in the prompt
+  tuple, so a first agent declared and set up through Confirm cannot load until the
+  panel comes, since a load refuses without them.
+- **The declaration screen of 2026-11-11**, as built: the operator declares the
+  components, which models on which GPUs, which store, which gate, and saves the
+  declaration as a versioned document, read back as the file it will become. One SPU box
+  stands for the models it holds, four models declared apart being four boxes and one
+  decoder with its adapter one box, spread out or collapsed as the operator chooses. The
+  engine follows from the model's format, GGUF offered first and the other formats named
+  as later. A GPU is declared as a requirement, not as a device: a specific card, a
+  class, given as a family (any card of one architecture) or as a list of models, or a
+  pair of two requirements in shard order. The screen warns, and does not refuse, where
+  a class spans more than one compute capability. Start satisfies the requirement or
+  refuses, and never substitutes, and the card drawn is stamped on every load event. The
+  system prompt is a field: the declaration act writes it into whatever state was
+  declared, from then on it is read from state and never from a file, and it is locked
+  for the session. The sampler's mechanism is fixed at load, and its knobs are per-turn,
+  the declaration supplying the defaults, the turn call the values and the record each
   event's: the test for any engine setting is whether changing it invalidates the cache,
   fixed at load if it does and a per-turn knob if not. Since 2026-11-12 the screen
   requires every tunable value a serving load requires at its pin, eight: the six
-  sampler defaults and the session's two parameters, the maximum tokens per turn and
-  the context capacity (Spec 6.1).
-- **The board** comes second and is unbuilt: the operator wires what was declared, and
-  the board shows only that. A component is a compiled primitive the harness is
+  sampler defaults and the session's two parameters, the maximum tokens per turn and the
+  context capacity (Spec 6.1).
+- **The board** is held on the build page: the operator wires what was declared, and the
+  board shows only that. A component is a compiled primitive the harness is
   pre-wired to, a wire is one ask and one return written in Python by the operator, and
   a function that makes several asks is a node the wires converge on. It waits on
   contracts WeaverAgent has yet to write.
-- **An agent is binaries by hash plus wires by hash**, and the two screens are a
-  rendering of that card: a wire edit is a new link in the lineage, not a reload of the
-  same agent. **The trace is the record, not a component**, so neither screen declares a
-  component for it. **Its destination is a field of the declaration page, set when the
-  agent is created**, on the operator's ruling of 2026-11-15, which amends the rulings
-  of 2026-11-11 for the destination alone (section 10.6).
+- **An agent is binaries by hash plus wires by hash**, and the setup pages and the board
+  are a rendering of that card: a wire edit is a new link in the lineage, not a reload
+  of the same agent. **The trace is the record, not a component**, so no page of Declare
+  declares a component for it. **Its destination is a field of the declaration page, set
+  when the agent is created**, on the operator's ruling of 2026-11-15, which amends the
+  rulings of 2026-11-11 for the destination alone (section 10.6).
 - The agent's edge, its two sockets and the two connectors outside it are not on the
-  declaration screen. The connectors are minted at register in Provision, or for an
+  pages of Declare. The connectors are minted at register in Provision, or for an
   appliance signed at its enrollment (section 10), and the network belongs to them
   alone, as every other surface keeps saying.
 - Only pieces that exist today are offered, section 3.1's roster rule applied: a kind is
@@ -291,11 +348,13 @@ beside it**, derived from the saved document at a pinned commit of the
 agent's grammar, so the text is always reachable without being a second
 place to edit.
 
-The declaration is a roster plus a wiring, **declared on two screens**, per
-section 3.0 and the operator's rulings of 2026-11-11: the roster on the
-declaration screen, each component resolving its artifact and setting its
-elections, and the wiring on the board, where the loop is real topology the
-operator draws. The board is unbuilt.
+The declaration is a roster plus a wiring, **declared on the setup pages and the
+board**, per section 3.0 and the operator's rulings of 2026-11-16 (setup pages): the
+roster on the setup pages, each model picked from its Hugging Face repository and
+placed on a device, and the wiring on the board, where the loop is real topology the
+operator draws. The board is held. As built, the roster is declared on the declaration
+screen of the rulings of 2026-11-11, each component resolving its artifact and setting
+its elections.
 
 **The roster offers the organ kinds the framework charters, and carries no
 enumeration of its own.** As of 2026-09-05 that is the decoder, mandatory,
@@ -919,8 +978,10 @@ this crate designs around the gap until it closes.
   appliance's storage is not sufficient (section 10.4).
 - **The record of an upgrade**, unfiled and held on 2026-11-15, on
   `toddwbucy/WeaverAgent`: whether WeaverAgent's record of a load names the version that
-  a restored state was made under (section 10.5). It waits on state on an appliance,
-  which the operator's ruling of 2026-11-15 makes later (section 9).
+  a restored state was made under (section 10.5). It was held while state on an
+  appliance was later, on the operator's ruling of 2026-11-15. The operator's rulings of
+  2026-11-16 (setup pages) bring the save point the unload writes into scope, and
+  whether this ask is taken up with it is not ruled (section 9).
 - **The trace's destination**, unfiled on 2026-11-15, on `toddwbucy/WeaverAgent`:
   whether a declaration may send the trace to `/dev/null` or to a destination outside
   the agent's territory, as the operator ruled (section 10.6), and what the trace door
@@ -940,6 +1001,29 @@ this crate designs around the gap until it closes.
 - **What tells a stopped service from a machine that is down**, unfiled on 2026-11-15,
   on `toddwbucy/WeaverAgent`: what an appliance exposes, past its two connectors, that
   lets the console tell the two apart (section 10.5).
+- **The appliance's setup script**, unfiled on 2026-11-16, on `toddwbucy/WeaverTools`
+  and `toddwbucy/WeaverAgent`, on the operator's rulings of 2026-11-16 (setup pages) and
+  their addendum: the script an appliance's console goes straight into at first boot,
+  run with root's authority, which asks the console's address and port, starts the
+  connectors' pairing and shows the short one-time code and the console's fingerprint,
+  and later, at the command the console shows, lists the drives and formats and mounts
+  the state drive and the models drive after the operator confirms each disk. Beside it,
+  the survey the image ships, run locally, with its report sent over TLS, the connectors
+  started on every boot, and the box's two asks of the console over TLS, the chosen
+  model's size and the model pulled from the cache, and the box taking the operator's
+  SSH public key the console sends down the paired link (sections 10.1 and 10.4). The
+  pairing itself is the connectors', this crate's (section 10.1). The console answers
+  each over the link, and none has its other side as of 2026-11-16.
+- **The models mount's name**, unfiled on 2026-11-16, on `toddwbucy/WeaverAgent` and
+  `toddwbucy/WeaverTools`, on the same rulings: the plural name they give the models
+  mount, which this repository does not record (section 10.7).
+- **The state mount for every agent**, unfiled on 2026-11-16, on `toddwbucy/WeaverAgent`
+  and `toddwbucy/WeaverTools`, on the same rulings: the state mount required for every
+  agent, at a minimum of 10 GiB (section 10.4).
+- **The save point on the state disk**, unfiled on 2026-11-16, on
+  `toddwbucy/WeaverAgent`, on the same rulings: the save point the unload writes, placed
+  on the state mount, by the existing save point path and with no new persistent store
+  (sections 9 and 10.5).
 
 ## 9. Open cells, each named rather than implied
 
@@ -997,20 +1081,25 @@ this crate designs around the gap until it closes.
   crate's measure-rather-than-testify rule and is the seat's
   recommendation, and the choice is the operator's.
 - **Whether a fetch is an import.** The operator ruled on 2026-11-14 that the console
-  fetches models (section 10.4), so this crate reaches the network for them. Section 3.6
-  records provenance by repository and revision. Whether the console's fetch is this
-  surface's import, so a fetched model ends as an artifact other surfaces can name, and
-  how a model from a local store or an S3 bucket records its provenance, are not ruled.
-  Settled by the model store's act, which brings both to the operator.
+  fetches models, and on 2026-11-16 (setup pages) that it pulls from Hugging Face alone
+  and records each pull (section 10.4), so this crate reaches the network for them.
+  Section 3.6 records provenance by repository and revision. Whether the console's pull
+  is this surface's import, so a pulled model ends as an artifact other surfaces can
+  name, is not ruled. A local source and the other sources are later, and named as
+  later. The Hugging Face connection's act (Spec 2.15) records each pull and leaves this
+  open. Settled by the operator.
 - **Whether a trained-weights lineage should exist at all.** Section 5
   makes reuse across a conversion an operator election because
   `weaver-analysis-PRD` section 3 versions a lens by the weights content
   hash. A lineage would let the tool answer instead. It would be that
   charter's fact to state and its Spec's record to change, so this cell is
   named here and owned there.
-- **The one-time secret's lifetime and form.** Section 10.1 carries its three bounds and
-  the order of ten minutes. The rest is `weaver-web-Spec` section 10's, settled by the
-  enrollment's code act.
+- **The one-time secret's length and exact lifetime.** Section 10.1 carries its three
+  bounds and the order of ten minutes, and the operator's rulings of 2026-11-16 (setup
+  pages) and their addendum have the box show it as a short code at its console, for the
+  operator to enter on the console's pairing page. The box draws it (section 10.1). Its
+  exact length and lifetime and the limit on attempts are the enrollment act's election
+  (`weaver-web-Spec` section 10).
 - **What the run card is.** The term is the operator's, for a JSON file, defined in the
   operator's run card paper (v1.4), which is in no repository as of 2026-11-15. The
   operator's rulings of 2026-11-15 name it three times: it records the ports a
@@ -1018,7 +1107,8 @@ this crate designs around the gap until it closes.
   destination (section 10.6). This charter coins no definition. What the console holds
   about a run as built is stated as fact in `weaver-web-Spec` section 10. The nearest
   standing use of "card" is section 3.0's, as a fact: an agent is binaries by hash plus
-  wires by hash, and "the two screens are a rendering of that card". Closes when the
+  wires by hash, and "the setup pages and the board are a rendering of that card".
+  Closes when the
   operator's definition is placed in a repository.
 - **The trace's destination against the declaration screens, closed 2026-11-15** by the
   operator: the destination is a field of the declaration page, set when the agent is
@@ -1028,7 +1118,8 @@ this crate designs around the gap until it closes.
   for that agent, so Record, the live view and Train have nothing to read for it, and
   the console says so. Whatever keeps the trace past its destination is the operator's,
   and the console states nothing about it. That is the operator's choice (sections 3.0
-  and 10.6).
+  and 10.6). The operator's word of 2026-11-17 bears on it, and how is open (the cell
+  on the trace kept outside the agent's reach, below).
 - **Declared ports against the connectors' network.** Section 10.3 carries the
   operator's ruling of 2026-11-15 that ports opened by a declaration belong to the
   operator's arrangement. Section 3.0 says the network belongs to the two connectors
@@ -1042,26 +1133,52 @@ this crate designs around the gap until it closes.
 - **A trace path on the state mount for an agent that elects no state, closed
   2026-11-15** by the operator: an operator who wants an agent that keeps no state
   declares none, and a destination that cannot be opened refuses the load, admin's
-  standing rule (section 10.6).
+  standing rule (section 10.6). The operator's rulings of 2026-11-16 (setup pages)
+  require the state mount for every agent, so no agent stands without one (section
+  10.4). On the operator's word of 2026-11-17 the trace is never written to the agent's
+  state or anywhere the agent can reach, so no trace path stands on the state mount
+  (section 10.4).
 - **The Spark-class machine, later, and named as later**, on the operator's ruling of
-  2026-11-15, which puts it out of scope until one is had. With it go how the host
-  install, which section 10 names beside it, stands to the single-host install that the
-  ruling of 2026-11-14 keeps for the Spark class of machine with registration and its
-  handover (`weaver-web-Spec` sections 8.1 and 8.2), and whether registration serves the
-  host install.
-- **State and save points on an appliance, later, and named as later**, on the
-  operator's ruling of 2026-11-15: the first production agent keeps no state, and state
-  and save points come once that agent works from the console. What of sections 8 and
-  10.5 waits on state waits on this, the record of an upgrade's ask among it.
-- **Trust on first use**, the hazard of section 10.1. Settled by one first boot of the
-  sealed image, with the host key's fingerprints read at the appliance's console before
-  the first SSH.
+  2026-11-15, which puts it out of scope until one is had. The setup flow serves a host
+  as it serves a virtual machine, on the operator's rulings of 2026-11-16 (setup pages).
+  On their addendum the pairing belongs with the connectors and serves a host, a
+  Spark-class machine or the console's own machine, as it serves an appliance, and the
+  drive setup is the appliance's script alone, a host's own script being later, and
+  named as later. That supersedes the ruling of 2026-11-14 that kept the single-host
+  install for the Spark class alone (section 3.0). Whether registration and its handover
+  (`weaver-web-Spec` sections 8.1 and 8.2) stay beside the pairing for a host is not
+  ruled.
+- **State and save points on an appliance**, on the operator's rulings of 2026-11-16
+  (setup pages), which supersede the ruling of 2026-11-15 that made both later. The
+  first production agent declares a store and keeps the system prompt, and it keeps the
+  save point the unload writes, on the state disk, which every agent mounts (section
+  10.4). The first test exercises it: the prompt into state, load, unload, shut the
+  virtual machine down, restart, reload, and the prompt is restored. Operator-managed
+  save points stay out of scope, later and named as later. Whether the record of an
+  upgrade, held while state on an appliance was later (section 8), is taken up with
+  this is not ruled.
+- **Trust on first use**, the hazard of section 10.1 while pairing ran over the
+  operator's first SSH. The operator's rulings of 2026-11-16 (setup pages) and their
+  addendum move the pairing to a short one-time code the box shows beside the
+  fingerprint of the certificate it met, which the operator compares with the console's
+  own before entering the code, and setup uses no SSH. Whether that closes the cell is
+  the operator's to say, then one first boot of the sealed image paired through the
+  pages shows it.
 - **The console as the model store.** The model count or fleet size at which its cache
   stops being tolerable. No measurement exists, because the fleet is one. Settled by a
   measurement on a fleet larger than one.
 - **Where images are published for the console to find**, with their published hashes.
   Later, and named as later. Settled by the operator's ruling of the place, which the
   act that builds the image download needs.
+- **The trace kept outside the agent's reach, opened 2026-11-17.** The operator's words
+  of 2026-11-17: "remember that the trace doesnt get written to state or anywhere the
+  agent has access to it. the trace goes to weaverweb and it stores it outside of the
+  agent's reach". Section 10.4 says the trace is never written to the agent's state.
+  Sections 3.0 and 10.6, and the closed cell on the trace's destination against the
+  record, say that where the destination is not a file on the agent's machine the
+  console holds no trace, and that what keeps the trace past its destination is the
+  operator's. Open: how the operator's words meet that destination. Settled by the
+  operator, then by the trace field's act (`weaver-web-Spec` section 10).
 
 ## 10. The appliance, the console's side
 
@@ -1072,12 +1189,15 @@ it asks of a component lands in that component's charter. This section is where 
 console's side lands. **Every requirement here is an operator's ruling, cited by its
 date**: the rulings of 2026-11-14 on the appliance, the operator's later rulings of that
 day on how a document names the agent's bound and the deployment shape and on the
-one-time secret on the pairing line, and the rulings of 2026-11-15. The Spark-class
-machine is later, on the operator's ruling of 2026-11-15, and with it how the host
-install stands beside the single-host install that the ruling of 2026-11-14 keeps for
-that class (section 9). The section adds no ruling of its own. A question the rulings
-leave open is named in section 9, or in `weaver-web-Spec` section 10 where it is the
-Spec's.
+one-time secret on the pairing line, the rulings of 2026-11-15, and the operator's
+rulings of 2026-11-16 (setup pages) and their addendum, which move the pairing to a
+short one-time code the box shows. The setup flow serves a virtual machine and a host
+alike, on the rulings of 2026-11-16. On their addendum the pairing belongs with the
+connectors and serves a host too, and the drive setup is the appliance's script alone.
+An appliance is the case this section works through, and what it says of pairing holds
+for a host. The Spark-class machine is later, on the operator's ruling of 2026-11-15
+(section 9). The section adds no ruling of its own. A question the rulings leave open is
+named in section 9, or in `weaver-web-Spec` section 10 where it is the Spec's.
 
 **The stance**, on the operator's ruling of 2026-11-15. The suite ships a tuple, and
 each operator produces tuples of the operator's own. The image is disposable and carries
@@ -1110,43 +1230,79 @@ operator. we just bring the board and the wires".
 
 ### 10.1 Pairing
 
-**The console begins pairing, and the appliance makes the connection.** The appliance
-never listens for the console. It dials the console's link port, and the console
-listens, since to listen is a network service's work. Both connectors have kept that
-direction since 2026-10-01 (section 5), and pairing carries it to the first connection
-an appliance makes, so an appliance opens no port for the console at any point.
+**The box makes the connection, for pairing and always after**, on the operator's
+rulings of 2026-11-16 (setup pages) and their addendum. The appliance never listens for
+the console. It dials the console's link port, and the console listens, since to listen
+is a network service's work. Both connectors have kept that direction since 2026-10-01
+(section 5), and pairing carries it to the first connection an appliance makes, so an
+appliance opens no port for the console at any point. The connectors dial the console on
+every boot and redial a dropped link, and load and unload do not drop them.
 
-**The console shows one line for the operator to run in the appliance over SSH.** The
-line carries the console's address, a one-time secret and the console's certificate
-fingerprint. The appliance dials, checks the fingerprint, presents the secret, hands
-over the public halves of keys it made itself, and receives its certificates. From then
-on every connection between the two is mutual TLS, and the secret is spent. **The reason
-is that trust has to be carried by hand once, in each direction.** The fingerprint lets
-the appliance know it reached this console before it says anything, and the secret lets
-the console know the party is the one the operator expected. No shared key or secret
-ships in the image to do this, so the line does it and nothing that every copy of the
-image carries does.
+**The box shows a short one-time code with the console's fingerprint, and the operator
+enters the code in the console**, on the operator's rulings of 2026-11-16 (setup pages)
+and their addendum, which supersede the line the operator ran in the appliance over SSH.
+An appliance's console goes straight into the appliance's setup script at first boot, at
+the hypervisor's console, and the script asks for the console's address and port. The
+box dials the console over TLS and shows the code and the fingerprint of the certificate
+it met. In the console, after the start page and the agent's name, the pairing page
+shows the box waiting, and the operator compares the fingerprint with the console's own
+and enters the code. The connectors hand over the public halves of keys made in the box
+and receive their certificates. From then on every connection between the two is mutual
+TLS, and the code is spent. **The pairing belongs with the connectors, so it serves a
+host as it serves an appliance**, and the address may be localhost. **The reason is that
+trust has to be carried by hand once, in each direction.** The fingerprint the operator
+compares shows that the box reached this console, and the code lets the console know the
+party is the one at the operator's screen. No shared key or secret ships in the image to
+do this, so the code carried by hand does it and nothing that every copy of the image
+carries does.
 
-**The one-time secret is the only secret that travels on a command line**, the single
-exception the operator accepts, in the operator's words of 2026-11-14: "a one-time use
-password on the line after that none". It is the exception because no other way to begin
-exists. **Three bounds hold it.** It is single-use. It is short-lived, on the order of
-ten minutes. It is bound to one pending enrollment the operator opened, so it cannot
-enroll an appliance the operator did not expect. Each bound narrows what a leaked line
-is worth: it is spent once, it expires in minutes, and it serves only the enrollment the
-operator is waiting on.
+**The one-time secret is the only secret the operator carries by hand**, shown by the
+box as the short one-time code, the single exception the operator accepts, in the
+operator's words of 2026-11-14: "a one-time use password on the line after that none".
+The rulings of 2026-11-16 and their addendum move it from a command line to the box's
+console and the console's pairing page. It is the exception because no other way to
+begin exists. **Three bounds hold it.** It is single-use. It is short-lived, on the
+order of ten minutes. It is bound to one pending enrollment, the box waiting and the
+agent the operator named at the start page, so it cannot enroll a box the operator did
+not expect. Each bound narrows what a leaked secret is worth: it is spent once, it
+expires in minutes, and it serves only the enrollment the operator is waiting on. **The
+box draws it, since the box shows it**, and the console limits the attempts at entering
+it. It is a confirmation code bound to the TLS connection the box already opened, not a
+bearer the server issues, so the rule for the bearers the server mints does not reach it
+(`weaver-web-Spec` sections 2.13 and 8.2). Its exact length and lifetime are the
+enrollment act's election.
 
-**Trust on first use is a hazard to enrollment.** The operator's first SSH into an
-appliance trusts the host key it meets, so a wrong machine at the given address could be
-enrolled. The image prints nothing by itself, on the operator's ruling of 2026-11-15.
-The operator is at the appliance's console before the first SSH, reads the host key's
-fingerprints there, and compares them with the key the first SSH meets. Section 9 names
-the cell.
+**Every root act of the setup runs on the box, at a screen the operator is sitting at**,
+on the operator's rulings of 2026-11-16 (setup pages), so admin's grant does not grow.
+Once the model is picked, the console shows a command to run at the appliance's console,
+which starts the setup script's drive setup: the script lists the drives it sees, and
+formats and mounts the state drive and then the models drive, each after the operator
+confirms the disk (section 10.4). The drive setup is the appliance's script alone, and a
+host's own script is later, and named as later. A host install points at a state
+directory and a models directory and attaches and formats nothing (section 10.4). On a
+virtual machine the first setup cannot forgo the hypervisor, in the operator's words of
+2026-11-16, where the operator attaches the drives. The survey the image ships runs
+locally, and its report crosses to the console over TLS. **Setup uses no SSH, and the
+console never uses SSH.** The operator's SSH door is the operator's administrative way
+into the machine, separate from Weaver Web. **The setup script's first question sets
+root's password, and the operator's SSH public key reaches the box through the console
+over TLS after pairing**, on the addendum to the operator's rulings of 2026-11-16 (setup
+pages). So the console holds the operator's SSH public keys, public halves and no
+secret, as a console setting, the setup script's drive-setup run fetches them over the
+paired link, and the operator's SSH door takes them (`weaver-web-Spec` section 6.2).
+
+**Trust on first use was a hazard to enrollment** while pairing ran over the operator's
+first SSH, which trusts the host key it meets, so a wrong machine at the given address
+could have been enrolled. The rulings of 2026-11-16 and their addendum move the pairing
+to a code the box shows beside the fingerprint of the certificate it met, which the
+operator compares with the console's own before entering the code. Section 9 names the
+cell.
 
 **This is an appliance's enrollment, and it is not a person's.** A person's enrollment,
 the one-time token that registers a first passkey (`weaver-web-Spec` section 2.13),
 keeps its name, and this charter and its Spec write "an appliance's enrollment" wherever
-the two could be confused.
+the two could be confused. A host pairs through the same connectors and the same
+exchange, and the name covers it.
 
 ### 10.2 Keys
 
@@ -1159,8 +1315,8 @@ registration, the operator's ruling of 2026-10-01, and `weaver-web-Spec` section
 says what stays, what is replaced and what coexists.
 
 **The connectors' keys and certificates live on the appliance's root disk**, on the
-operator's ruling of 2026-11-15. **A new image is a new enrollment**, made from the
-console with one pairing line, on the same ruling.
+operator's ruling of 2026-11-15. **A new image is a new enrollment**, on the same
+ruling, made by a new pairing at the image's first boot (section 10.1).
 
 **Each appliance is meant to hold its own certificates, and the console refuses a second
 live holder of a certificate it issued**, the operator's rulings of 2026-11-14.
@@ -1198,21 +1354,46 @@ reaches an agent. This charter names no address of a machine and no rule of a fi
 
 ### 10.4 Models, the image and storage
 
-**The console fetches models.** It offers four sources: a Hugging Face search limited to
-what the engine supports, a local store, an S3 bucket, and a list of recommended models
-that are known to work. **Every fetched model is pinned by exact revision and digest,
-and it is verified after download.** The model's bytes are a member of the deployment
-tuple that a replay names, which is why the pin is exact. Whether a fetch is the Models
-surface's import (section 3.6) is section 9's. **Access tokens live in the console's
-store and never in an appliance**, so a credential for a source stays where the operator
-administers the console and reaches no machine an agent runs on.
+**The console fetches models from Hugging Face alone**, on the operator's rulings of
+2026-11-16 (setup pages), which supersede the four sources of the ruling of 2026-11-14.
+Hugging Face's layout is the declared standard for an agent's models: anyone with a
+model of their own can put it on Hugging Face, and a local source and the other sources
+are later, and named as later. **The console connects the operator's Hugging Face
+account once, as a console setting, before the start page.** It then reaches public
+models, the operator's private repositories and the gated models the account has been
+granted. A gated model the account lacks is shown with the link to accept it on Hugging
+Face and a button to check again. The setting accepts a read-only or a read-write token.
+**The console never writes to Hugging Face except on an explicit push in Train**, where
+training inside WeaverTools will push adapters up, so write stays open for that stage.
+**The token lives in the console's store and never in an appliance**, so a credential
+for the source stays where the operator administers the console and reaches no machine
+an agent runs on.
 
-**The console keeps what it fetched, for other agents to use.** An appliance pulls a
-model from the console's cache over the same mutual TLS trust, and it checks the digest.
-That keeps the direction of section 10.1, the appliance dialing the console, and one
-fetch serves every agent that declares the model. **The cost is stated.** The console
-becomes the model store, and on a network larger than one site that is a question of
-disk and of bandwidth that the console has to answer. Section 9 carries it.
+**A pull records the repository, the commit, every file's SHA-256 and size, one per part
+for a split model, the account that pulled, and the time.** A download uses a link
+through the commit and never through a branch name, and the console hashes each file
+after download and compares. The model's bytes are a member of the deployment tuple
+that a replay names, which is why the pin is exact. Whether a pull is the Models
+surface's import (section 3.6) is section 9's. **The first agent's decoder is the BF16
+GGUF of `ibm-granite/granite-4.2-30b-GGUF`, a two-part file**, and the first test
+downloads it fresh through the page.
+
+**The console keeps what it pulled, in its cache inside the Weaver Web install, and
+reuses it from there.** An appliance pulls a model from the console's cache over the
+same mutual TLS trust, and it checks the digests. That keeps the direction of section
+10.1, the appliance dialing the console, and one pull serves every agent that declares
+the model. On the operator's rulings of 2026-11-16 (setup pages) the console starts the
+download in the background once the model is picked, the appliance asks the console over
+TLS for the chosen model's size, and the appliance pulls the model when the download
+finishes. On a host the console's models directory is the user's Hugging Face cache, and
+on the addendum to the operator's rulings of 2026-11-16 (setup pages) the console is the
+only account that talks to Hugging Face and the only writer of that directory. Agents on
+that machine read the model in place, read-only, through a group, since several agents
+may share one model, and never copy it. Where the console stands on another machine, the
+model crosses over TLS from the console, never from Hugging Face, as on an appliance.
+**The cost is stated.** The console becomes the model store, and on a network larger
+than one site that is a question of disk and of bandwidth that the console has to
+answer. Section 9 carries it.
 
 **The console offers the image for download, and it checks the hash of the image against
 the published hash before it hands the file over.** An image is the held object of a
@@ -1224,18 +1405,49 @@ later and are named as later.
 
 **The WeaverAgent system checks storage at every load and reports the sizes to the
 console. Where storage is not sufficient, the console says so and asks the operator to
-add storage.** On the operator's ruling of 2026-11-15, the model mount is required, and
-a load is refused where it is not a separate filesystem. The state mount is required
-only where the declaration elects state, and then a load is refused on the same test. An
-agent whose declaration elects no state runs on the model mount alone, and it is a
-legitimate agent. **The refusal is admin's, since load is admin's verb, and the console
-renders admin's answer as it came** (`weaver-web-Spec` section 7.2). The check runs at
-every load and not once at enrollment, because the refusal is a load's: a required mount
-that is not a separate filesystem refuses that load. The console attaches and mounts
-nothing: the operator attaches the disks in the hypervisor and mounts them over SSH. The
-form of the size report is WeaverAgent's (section 10.7), the report's way to the console
-is an ask upstream (section 8), and the sizes that count as sufficient are open
-(`weaver-web-Spec` section 10).
+add storage.** On the operator's ruling of 2026-11-15, the models mount is required, and
+a load is refused where it is not a separate filesystem. **The state mount is required
+for every agent, at a minimum of 10 GiB**, on the operator's rulings of 2026-11-16
+(setup pages), because the system prompt lives in state and the save point the unload
+writes lands there. That supersedes the ruling of 2026-11-15 that the state mount is
+required only where the declaration elects state, and a required mount is held to the
+same test. The models drive's size is computed from the chosen files, and the setup flow
+states every size in one unit, GiB. **The refusal is admin's, since load is admin's
+verb, and the console renders admin's answer as it came** (`weaver-web-Spec` section
+7.2). The check runs at every load and not once at enrollment, because the refusal is a
+load's: a required mount that is not a separate filesystem refuses that load. **The
+console attaches and mounts nothing.** On a virtual machine the operator attaches the
+disks in the hypervisor, and the appliance's setup script, started by a command the
+console shows once the model is picked, lists the drives it sees, asks which one is for
+state, and formats and mounts each after the operator confirms the disk, on the
+operator's rulings of 2026-11-16 (setup pages), which supersede the ruling of 2026-11-15
+that the operator mounts them over SSH. A host install points at a state directory and a
+models directory, and attaches and formats nothing, on the addendum to the same rulings,
+and the drives page shows the directories the operator named with free space against the
+need. A host's models directory defaults to that user's default Hugging Face cache, so
+models already pulled there are found, and the appliance keeps its models mount. A
+host's load check, on the operator's word of 2026-11-16, asks that both directories
+exist, the state directory be writable with at least 10 GiB free and the models
+directory be readable, and asks no separate disk. The host form shows the command
+granting the console's account read-write on that directory and a models group read
+(section 10.1). On the addendum to the operator's rulings of 2026-11-16 (setup pages)
+the agent is a real account on the box, its home on the state drive. The agent's
+accounts take its name, on the operator's word of 2026-11-16: the box's agent-creation
+tool lays them at setup, and the image carries no fixed account for the agent. On the
+state drive each agent has a directory of its own under the state mount, named for it,
+which holds the agent's folder and its home side by side, and a host lays the same
+under its state directory (`weaver-web-Spec` section 6.2). **The trace is never written
+to the agent's state or anywhere the agent can reach**, on the operator's word of
+2026-11-17: it goes to Weaver Web, which stores it outside the agent's reach, so nothing
+on the state drive holds it beside the agent's state or save points (section 9, and
+`weaver-web-Spec` section 10). Every account's name and every path are the image's and
+WeaverAgent's, and none enters this repository.
+With no drive attached the script warns that at least one drive is for state, about 10
+GiB recommended, and checks again once the operator attaches one. The models drive it
+asks for is sized from the chosen model, whose size it asks the console over TLS
+(section 10.1). The form of the size report is WeaverAgent's (section 10.7), the
+report's way to the console is an ask upstream (section 8), and the sizes that count as
+sufficient are open (`weaver-web-Spec` section 10).
 
 ### 10.5 Load and unload, and no hypervisor
 
@@ -1247,6 +1459,9 @@ connectors come up and the console sees the appliance, and the agent stays unloa
 until the console loads it. What an operator adds to a machine is the operator's to
 account for, as the stance says. To start and stop the agent is to load and unload it
 through admin, and the console's whole reach into an appliance is its two connectors.
+**That holds from the first minute**, from pairing onward, on the operator's rulings of
+2026-11-16 (setup pages), since every root act of the setup runs on the box at a screen
+the operator is sitting at (section 10.1).
 
 **An upgrade moves state and model to a new harness version**, on the operator's ruling
 of 2026-11-15. State is transferable, and an upgrade moves it. Reproducibility is
@@ -1257,10 +1472,13 @@ the ruling of 2026-11-14: state made under an older version is recorded as made 
 and, from the load onward, as used under the newer version. **The run card records the
 tuple as shipped**, on the ruling of 2026-11-15, and no guarantee is offered about the
 tuple as it runs. The record of an upgrade is WeaverAgent's, an ask upstream that is
-held (section 8), and how the console shows it is `weaver-web-Spec` section 10's. **What
-of this waits on state is later**, on the operator's ruling of 2026-11-15 that state and
-save points on an appliance are out of scope until the first production agent, which
-keeps no state, works from the console (section 9).
+held (section 8), and how the console shows it is `weaver-web-Spec` section 10's.
+**State is in scope for the first agent**, on the operator's rulings of 2026-11-16
+(setup pages), which supersede the ruling of 2026-11-15 that put state and save points
+on an appliance out of scope. The first production agent declares a store and keeps the
+system prompt, and it keeps the save point the unload writes, on the state disk, by the
+existing save point path and with no new persistent store. Operator-managed save points
+stay out of scope (section 9).
 
 **What lets the operator tell a stopped service from a machine that is down is open, and
 it is the console's to show.** What the appliance exposes for it is an ask upstream
@@ -1268,9 +1486,10 @@ it is the console's to show.** What the appliance exposes for it is an ask upstr
 (`weaver-web-Spec` section 10).
 
 **Weaver Web never touches a hypervisor**, per section 2, and nothing in this section
-reaches one. The console makes, starts, stops and destroys no machine, attaches no disk
-and maps no card. The console knows the agent and the hypervisor knows the machine, and
-neither reaches into the side of the other.
+reaches one. The console makes, starts and destroys no machine, attaches no disk and
+maps no card, and it asks no stop of a machine, its stop of an agent being admin's
+`unload` (section 2). The console knows the agent and the hypervisor knows the machine,
+and neither reaches into the side of the other.
 
 ### 10.6 The trace's destination
 
@@ -1286,8 +1505,11 @@ the run card records the choice.
 for that agent** (section 3.0). The trace door has nothing to serve, so Record, the live
 view and Train have nothing to read for that agent, and the console says that it holds
 no trace for that agent. Whatever keeps the trace past its destination is the
-operator's, and the console states nothing about it. That is the operator's choice. **A
-destination that cannot be opened refuses the load**, admin's standing rule
+operator's, and the console states nothing about it. That is the operator's choice. The
+operator's word of 2026-11-17, that the trace goes to Weaver Web, which stores it
+outside the agent's reach (section 10.4), bears on this, and how it meets the
+destination is open, settled by the operator, then by the trace field's act (section
+9). **A destination that cannot be opened refuses the load**, admin's standing rule
 (`weaver-admin-operator-contract` section 5), and an agent that elects no state is held
 to it like any other: an operator who wants an agent that keeps no state declares none,
 on the operator's ruling of 2026-11-15.

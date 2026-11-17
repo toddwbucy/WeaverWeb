@@ -354,6 +354,7 @@ async fn a_name_outside_the_rule_is_refused_opening_no_setup() {
 ///
 /// Perturbation: answer the 503 before the gate, and a person without the
 /// grant learns what the console serves.
+#[cfg(feature = "enrollment")]
 #[tokio::test]
 async fn a_console_serving_no_pairing_says_so_past_the_admin_gate() {
     let Some(rig) = rig().await else {

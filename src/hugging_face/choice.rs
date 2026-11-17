@@ -144,6 +144,7 @@ mod tests {
             size,
             blob_id: "0123456789abcdef0123456789abcdef01234567".to_owned(),
             sha256: None,
+            lfs: false,
         }
     }
 

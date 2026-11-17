@@ -239,8 +239,14 @@ pub struct RepoFile {
     pub size: u64,
     /// The git blob id, forty lowercase hex digits.
     pub blob_id: String,
-    /// The SHA-256 Hugging Face publishes, for a file kept in LFS alone.
+    /// The file's SHA-256 where it is known: the one Hugging Face publishes
+    /// for a file kept in LFS, and for a file kept in git the console's own,
+    /// once a pull verifies it. Whether it is set says nothing of how the
+    /// file is kept, which [`RepoFile::lfs`] says (#138).
     pub sha256: Option<String>,
+    /// Whether Hugging Face keeps the file in LFS, its listing's own flag. The
+    /// blob's name and the way a file is verified are read from it.
+    pub lfs: bool,
 }
 
 /// A repository at a commit.
@@ -518,6 +524,7 @@ impl Client {
                 is_commit(&blob_id),
                 "Hugging Face's listing holds a git blob id not of its shape"
             );
+            let lfs = sibling.lfs.is_some();
             let sha256 = match sibling.lfs {
                 Some(lfs) => Some(lfs.sha256.filter(|s| is_sha256(s)).ok_or_else(|| {
                     anyhow::anyhow!("Hugging Face's listing holds an LFS file without its SHA-256")
@@ -529,6 +536,7 @@ impl Client {
                 size,
                 blob_id,
                 sha256,
+                lfs,
             });
         }
         Ok(ModelAt::Model(Model {

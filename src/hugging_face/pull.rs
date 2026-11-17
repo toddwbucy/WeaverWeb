@@ -434,7 +434,7 @@ fn remaining(cache: &Cache, repo: &RepoId, rest: &[&PullFile]) -> u64 {
     rest.iter()
         .enumerate()
         .map(|(at, f)| {
-            let id = f.file.identity();
+            let id = f.file.blob();
             if !counted.insert(id) {
                 return 0;
             }
@@ -476,7 +476,7 @@ async fn found(
     file: &RepoFile,
     cancel: &watch::Receiver<HashSet<String>>,
 ) -> Result<Option<String>, Ended> {
-    let id = file.identity().to_owned();
+    let id = file.blob().to_owned();
     let mut blob = match cache.open(repo, &id) {
         Ok(blob) => blob,
         Err(_) => return Ok(None),
@@ -581,7 +581,7 @@ async fn download(
     if is_cancelled(cancel, pull) {
         return Err(Ended::Cancelled);
     }
-    let id = file.identity().to_owned();
+    let id = file.blob().to_owned();
     let named = |e: &dyn std::fmt::Display| failed(format!("{}: {e}", file.path));
     let partial = cache.incomplete(repo, &id).map_err(|e| named(&e))?;
     let blob = cache.blob(repo, &id).map_err(|e| named(&e))?;

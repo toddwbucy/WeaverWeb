@@ -475,6 +475,7 @@ fn model_file() -> RepoFile {
         size: bytes.len() as u64,
         blob_id: git_blob_id(&bytes),
         sha256: Some(sha256(&bytes)),
+        lfs: true,
     }
 }
 
@@ -484,6 +485,7 @@ fn config_file() -> RepoFile {
         size: CONFIG.len() as u64,
         blob_id: git_blob_id(CONFIG),
         sha256: None,
+        lfs: false,
     }
 }
 
@@ -742,6 +744,26 @@ async fn too_little_space_refuses_before_any_byte() {
     puller.stop();
 }
 
+/// **A verified git-kept file names its blob by its git id** (#138): its
+/// row holds the SHA-256 the console computed, and the file read back still
+/// names its blob by its git blob id, as the cache holds it, and reads as
+/// kept in git. Whether a file is kept in LFS is Hugging Face's flag,
+/// carried on the file, and never read from whether a SHA-256 is set.
+#[tokio::test]
+async fn a_verified_git_kept_file_names_its_blob_by_its_git_id() {
+    let Some(rig) = rig().await else { return };
+    let puller = rig.puller(quick());
+    let (pull_id, _) = rig.ask(&puller, &[config_file()]).await;
+    assert_eq!(rig.ended(&pull_id).await, ("verified".into(), None));
+    let files = rig.store().pull_files(&pull_id).await.unwrap();
+    let file = &files[0].file;
+    assert_eq!(file.sha256.as_deref(), Some(sha256(CONFIG).as_str()));
+    assert_eq!(file.blob(), git_blob_id(CONFIG));
+    assert!(file.in_git());
+    assert!(rig.blobs().join(file.blob()).is_file());
+    puller.stop();
+}
+
 /// **A repository's file names write nothing outside the cache**: an ask
 /// naming `..` is refused before any row, and a row that names one all the
 /// same (written past the ask) fails at the first step, nothing written
@@ -758,13 +780,17 @@ async fn a_path_out_of_its_shape_writes_nothing_outside_the_cache() {
     assert!(matches!(asked, Err(Refusal::Name(_))), "{asked:?}");
     assert!(rig.store().pull(&pull_id).await.unwrap().is_none());
 
+    // The pull and its file in one transaction, as the store's ask writes
+    // them: the first puller, still running, sees both rows or neither, and
+    // never a running pull with no file, which it would verify (#136).
+    let mut tx = rig.store().pool.begin().await.unwrap();
     sqlx::query(
         "INSERT INTO model_pull (pull_id, repository, commit_id, asked_by, state) \
          VALUES ('mp-00000000000000aa', 'org/open', $1, $2, 'running')",
     )
     .bind(COMMIT)
     .bind(&rig.admin)
-    .execute(&rig.store().pool)
+    .execute(&mut *tx)
     .await
     .unwrap();
     sqlx::query(
@@ -774,9 +800,10 @@ async fn a_path_out_of_its_shape_writes_nothing_outside_the_cache() {
     .bind(&escaping.path)
     .bind(escaping.size as i64)
     .bind(&escaping.blob_id)
-    .execute(&rig.store().pool)
+    .execute(&mut *tx)
     .await
     .unwrap();
+    tx.commit().await.unwrap();
     puller.stop();
     let puller = rig.puller(quick());
     let (state, reason) = rig.ended("mp-00000000000000aa").await;

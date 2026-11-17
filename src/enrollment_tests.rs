@@ -1509,7 +1509,10 @@ async fn the_fifth_miss_closes_the_field_for_ten_minutes_from_the_miss() {
 
 /// **The field is read as it stands once its lock is held**: a closure
 /// that ends while another transaction holds the setup's row reads as open
-/// to the entry that waited for it.
+/// to the entry that waited for it. The test waits until the entry's
+/// transaction is seen waiting on the row's lock, reads that it began
+/// before the closure ended, and lets the row go once the closure has
+/// passed, so the transaction's start falls inside the closure.
 ///
 /// Perturbation: read the closure against the transaction's start, `now()`,
 /// and the waiting entry reads the field closed.
@@ -1522,7 +1525,7 @@ async fn a_closure_that_ends_while_the_entry_waits_reads_open() {
     let setup = setup.unwrap();
     let mut holder = s.pool.begin().await.unwrap();
     sqlx::query(
-        "UPDATE agent_setup SET code_closed_until = clock_timestamp() + interval '1 second' \
+        "UPDATE agent_setup SET code_closed_until = clock_timestamp() + interval '2 seconds' \
          WHERE setup_id = $1",
     )
     .bind(&setup)
@@ -1540,7 +1543,43 @@ async fn a_closure_that_ends_while_the_entry_waits_reads_open() {
         let (s, setup) = (s.clone(), setup.clone());
         tokio::spawn(async move { s.code_field(&setup).await.unwrap() })
     };
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    let began_inside = tokio::time::timeout(SOON, async {
+        loop {
+            let began: Option<bool> = sqlx::query_scalar(
+                "SELECT a.xact_start < s.code_closed_until \
+                 FROM pg_stat_activity a, agent_setup s \
+                 WHERE a.datname = current_database() AND a.wait_event_type = 'Lock' \
+                 AND s.setup_id = $1",
+            )
+            .bind(&setup)
+            .fetch_optional(&s.pool)
+            .await
+            .unwrap();
+            if let Some(began) = began {
+                return began;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the entry waits on the setup's row");
+    assert!(
+        began_inside,
+        "the entry's transaction began after the closure ended"
+    );
+    loop {
+        let passed: bool = sqlx::query_scalar(
+            "SELECT clock_timestamp() > code_closed_until FROM agent_setup WHERE setup_id = $1",
+        )
+        .bind(&setup)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+        if passed {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
     holder.rollback().await.unwrap();
     let (field, state) = tokio::time::timeout(SOON, waiting).await.unwrap().unwrap();
     assert!(

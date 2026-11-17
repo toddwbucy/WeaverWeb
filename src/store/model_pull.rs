@@ -39,11 +39,9 @@ pub struct Pull {
 /// A file's row.
 #[derive(Debug, Clone)]
 pub struct PullFile {
+    /// The file as asked, its `lfs` flag the listing's at the ask, and its
+    /// SHA-256 the console's computed one once verified (#138).
     pub file: RepoFile,
-    /// Whether the file is kept in LFS, as the listing said at the ask. A
-    /// verified file's row holds the console's computed SHA-256 whether or
-    /// not it is, so the blob's name is read from this flag (#138).
-    pub lfs: bool,
     pub bytes_done: i64,
     /// `downloaded` or `found`, once the file is verified.
     pub source: Option<String>,
@@ -130,7 +128,7 @@ pub(crate) async fn insert_pull(
         .bind(i64::try_from(file.size)?)
         .bind(&file.blob_id)
         .bind(&file.sha256)
-        .bind(file.sha256.is_some())
+        .bind(file.lfs)
         .execute(&mut **tx)
         .await?;
     }
@@ -245,8 +243,8 @@ impl Store {
                         size: u64::try_from(r.get::<i64, _>("size"))?,
                         blob_id: r.get("blob_id"),
                         sha256: r.get("sha256"),
+                        lfs: r.get("lfs"),
                     },
-                    lfs: r.get("lfs"),
                     bytes_done: r.get("bytes_done"),
                     source: r.get("source"),
                 })

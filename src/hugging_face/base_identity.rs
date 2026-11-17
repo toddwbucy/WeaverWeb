@@ -48,7 +48,7 @@ pub fn identity_of(
     let mut hashed = 0u64;
     let mut buffer = vec![0u8; 1 << 20];
     for part in &parts {
-        let mut blob = cache.open(repo, part.identity())?;
+        let mut blob = cache.open(repo, part.blob())?;
         anyhow::ensure!(
             blob.metadata()?.len() == part.size,
             "{}'s blob is not of its size",
@@ -138,18 +138,13 @@ async fn hash(
         .ok_or_else(|| anyhow::anyhow!("no model_cache is set, so no part can be read"))?;
     let repo = RepoId::parse(&owed.repository)
         .ok_or_else(|| anyhow::anyhow!("the repository is not of its shape"))?;
-    // Each part named as the cache names its blob, from the row's `lfs`
-    // flag, as the tuple's parts are: a verified git-kept part's row holds
-    // the console's computed SHA-256 too, which `RepoFile::identity()`
-    // would answer, and the cache holds the part under its git blob id.
+    // Each part opened by its blob's name, which `RepoFile::blob()` reads
+    // from the row's `lfs` flag (#138).
     let files: Vec<RepoFile> = store
         .pull_files(&owed.pull_id)
         .await?
         .into_iter()
-        .map(|f| RepoFile {
-            sha256: if f.lfs { f.file.sha256 } else { None },
-            ..f.file
-        })
+        .map(|f| f.file)
         .collect();
     let stop = stop.clone();
     let (digest, bytes) =
@@ -180,6 +175,7 @@ mod tests {
                     size: bytes.len() as u64,
                     blob_id: "0123456789abcdef0123456789abcdef01234567".to_owned(),
                     sha256: Some(id),
+                    lfs: true,
                 }
             })
             .collect()

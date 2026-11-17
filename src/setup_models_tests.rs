@@ -1047,7 +1047,7 @@ async fn a_role_picked_again_replaces_its_row() {
     let lone = crate::hugging_face::cache::Cache::at(cache.path()).unwrap();
     let kept = s.pull_files(&first).await.unwrap();
     let blob = lone
-        .blob(&RepoId::parse("org/lone").unwrap(), kept[0].file.identity())
+        .blob(&RepoId::parse("org/lone").unwrap(), kept[0].file.blob())
         .unwrap();
     assert!(
         blob.is_file(),

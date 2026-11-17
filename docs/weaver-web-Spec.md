@@ -6590,15 +6590,21 @@ dials. **The fingerprint is the authority's**, on this document's election of
 and `authority init` answers. As built the listener's handshake presents the server's
 own certificate alone (`server_tls`), so the pairing's configuration presents a chain of
 the server's certificate and the authority's. The box reads the authority's certificate
-from the handshake, checks that the server's certificate verifies under it for the name
-the pairing's first frame names, and prints the authority's fingerprint, sixty-four hex
-digits in sixteen groups of four. The pairing page shows the console's own, read from
-the authority it loaded, in the same grouping. The authority's certificate reaches the
-box this way and is pinned at `adopt`. **The operator's comparison of the two is a step
-the pairing page asks the operator to confirm before its code field takes a code, and
-never skipped**, since the code alone does not stop a party between the box and the
-console (the one-time secret, below). The appliance's setup script is an ask upstream
-(`weaver-web-PRD` section 8), and the pairing is the connectors', this crate's.
+from the handshake, checks that the server's certificate chains to that authority
+certificate presented with it, and checks no name: before the exchange's step 4 the box
+knows no name the certificate carries and holds no trust anchor, so a name check at
+pairing is neither possible nor needed. It prints the authority's fingerprint,
+sixty-four hex digits in sixteen groups of four. **Trust at the pairing comes from two
+things**: the operator's comparison of that fingerprint with the console's, and the
+code, which differs at the two ends if anything sits between them (the one-time secret,
+below). The box learns `server_name` from the answer at step 4 and checks it on every
+plane connection after, as section 8 does. The pairing page shows the console's own,
+read from the authority it loaded, in the same grouping. The authority's certificate
+reaches the box this way and is pinned at `adopt`. **The operator's comparison of the
+two is a step the pairing page asks the operator to confirm before its code field takes
+a code, and never skipped**, since the code alone does not stop a party between the box
+and the console (the one-time secret, below). The appliance's setup script is an ask
+upstream (`weaver-web-PRD` section 8), and the pairing is the connectors', this crate's.
 
 **The one-time secret.** The rulings fix three bounds (`weaver-web-PRD` section 10.1):
 it is single-use, it is short-lived on the order of ten minutes, and it is bound to one
@@ -6612,25 +6618,42 @@ section 2.13 makes 32 bytes from the operating system's cryptographic random sou
 **Both ends derive it from that connection**, on this document's election of 2026-11-17.
 Each computes the TLS exporter (RFC 8446 section 7.5) of the one pairing connection,
 which is TLS 1.3 alone (below), under the label `EXPERIMENTAL-weaver-pair-code` with an
-empty context, and takes its first 50 bits, shown as ten characters of Crockford's
-base32 in two groups of five. **The label is private to this link**, so it takes the
-prefix RFC 5705 section 4 reserves for private use without registration, `EXPERIMENTAL`,
-since every other label must be registered with IANA under Specification Required. That
+empty context and a `key_length` of 32 bytes. It takes the first 50 bits of that output,
+most significant bit first, cuts them in order into ten groups of 5 bits, and writes
+each group as one character of Crockford's base32 (`0123456789ABCDEFGHJKMNPQRSTVWXYZ`),
+shown in two groups of five. The length is fixed because `key_length` enters the HKDF
+label (RFC 8446 sections 7.1 and 7.5), so an export of another length begins with other
+bits and every entry would miss. The example after this paragraph shows the encoding
+from made-up bytes. **The label is private to this link**, so it takes the prefix RFC
+5705 section 4 reserves for private use without registration, `EXPERIMENTAL`, since
+every other label must be registered with IANA under Specification Required. That
 section's advice that a label begin with `EXPORTER` guards against a collision with the
 TLS 1.2 PRF's own labels, which the TLS 1.3 exporter, derived from a secret of its own,
 does not meet. Under TLS 1.3 no context computes the same value as an empty one (RFC
 8446 section 7.5). Nothing of the code crosses the link, so the console holds no code:
-at an entry it computes each waiting connection's code and compares. A party between the
-box and the console holds two TLS sessions with two secrets, so the code the box shows
-differs from the one the console computes for that party's connection, and the entry
-matches nothing. **The code alone does not stop such a party**, which acts as the server
-toward the box and can choose its own handshake values offline until the code the box
-derives matches one from its own session with the console. Fifty bits make that grinding
-costly within ten minutes and not impossible, which is why the fingerprint's comparison
-is never skipped. The code is single-use, since a match spends its connection, its life
+at an entry it computes each waiting connection's code and compares. **The code defeats
+a relay** because the exporter's output is bound to one TLS session's secrets: a party
+that terminates TLS between the box and the console holds two sessions whose codes
+differ, so the entry matches nothing, and a relay that does not terminate TLS forwards a
+session it can neither read nor alter. **The code alone does not stop such a party if it
+grinds**: acting as the server toward the box, it can choose its own handshake values
+offline until the code the box derives matches one from its own session with the
+console. Fifty bits make that grinding costly within ten minutes and not impossible,
+which is why the fingerprint's comparison is never skipped: such a party holds no key of
+the console's, so it presents a chain of its own, and the fingerprint the box prints is
+not the console's. The code is single-use, since a match spends its connection, its life
 is its connection's ten minutes, and its attempts are five misses on one setup (the
 pending enrollment, above). Every token the store holds as built is kept as its digest
 (sections 2.8 and 2.13), and the code is never held.
+
+**The code's encoding, illustrated** from made-up bytes, the encoding step alone:
+
+```text
+first 7 of 32 bytes:  8f 3a 5c 01 e7 22 b4
+first 50 bits:        10001 11100 11101 00101 11000 00000 01111 00111 00100 01010
+as numbers:           17 28 29 5 24 0 15 7 4 10
+as shown:             HWX5R 0F74A
+```
 
 **The link port tells a pairing apart by ALPN, before the handshake**, on this
 document's election of 2026-11-17. The listener reads each ClientHello before it chooses
@@ -6725,8 +6748,9 @@ sent:
    which must not exist, and the box's name in section 2.12's grammar. **An appliance
    always passes the box's name**, since every appliance boots with the same host name,
    and the setup script asks it of the operator. The default, the machine's own name,
-   serves a host. While it waits: one `waiting` line with `code`, `fingerprint`,
-   `server_name` and `expires_in_secs`. Out, one line of these:
+   serves a host. While it waits: one `waiting` line with `code`, `fingerprint` and
+   `expires_in_secs`, and no server name, which the box learns only from the answer at
+   the exchange's step 4. Out, one line of these:
    - `paired` (0), with `agent`, `agent_id` and `box`, the answer written
    - `refused` (4), with `reason`: `busy`, `box_and_name_live`, `setup_closed` or
      `request_refused`
@@ -7061,6 +7085,7 @@ two connectors report.
 | a ClientHello without the pairing protocol meets the mutual-TLS configuration as built | perturbation, **owed**: choose the pairing configuration for every ClientHello, and a client with no certificate completes a handshake, while every standing link test passes unchanged |
 | a pairing connection writes nothing before its code matches | perturbation, **owed**: record the waiting box at its first frame, and a store row or an audit record appears |
 | the pairing's code crosses the link in no frame | perturbation, **owed**: send the code in the first frame, and a recorded stream of the connection holds it |
+| the pairing's code is the first 50 bits of a 32-byte export under its label, in Crockford's base32 | **owed**: section 8.2's illustrative example as a test of both ends' encoders, and an export of another length gives another code |
 | a party between the box and the console meets a code that matches nothing | **owed**: an in-process relay between `pair` and the listener, and the code `pair` prints matches no waiting connection |
 | a certificate is signed only over a request whose own signature verifies, ECDSA P-256 with SHA-256 alone | perturbation, **owed**: skip the verification, and a request signed by another key is signed |
 | a pairing naming a live box and name is refused and retires nothing | perturbation, **owed**: write the pairing's row through registration's insert, and the live row is retired |

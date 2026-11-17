@@ -65,13 +65,17 @@ draft against the stack.
 2. **The box's half is a library in sub-act 2.**
 3. **The misses are kept on the setup row**, so a restart does not reset them.
 4. **The box's word is bounded by `HANDSHAKE_SECS`**, 10 s.
-5. **Every file a command rewrites goes by a temporary file and a rename**: created new
-   in the same directory without following a link, synced, renamed over the old, and the
-   directory synced, so a crash leaves the old file or the new one whole. The merged
-   Spec keeps the key inside the config `request` creates (section 8.2, "the key never
-   leaves its config"), so the one file stands, and `adopt` completes it at its own path
-   by this rename. The rename needs the connector's account to create a file in the
-   directory that holds its config, which sub-act 4 names as an ask of the image.
+5. **`adopt` appends and never rewrites the key**, as ruled on 2026-11-17 at sub-act 4.
+   The merged Spec keeps the key inside the config `request` creates (section 8.2, "the
+   key never leaves its config"), so the one file stands, and `adopt` completes it at
+   its own path by appending the members `register` writes after the key. It finds the
+   key's prefix by parsing the exact bytes `request` writes, never a stored length, and
+   refuses a file whose prefix is not a well-formed key-only config. A re-run truncates
+   only a tail after the prefix, so a crash at any write leaves the key byte for byte
+   and the next run completes the file. The service refuses a config with no
+   certificate at its start. The tests end a write at each boundary, after the open,
+   mid-certificate and before the sync, and find the key unchanged and a re-run
+   completing it, and truncating into the prefix turns them red.
 6. **The setup ask is its own first frame**, `FromClient::Setup`, never through
    admission's presence.
 7. **The answer file is readable by others**, since it holds certificates alone.

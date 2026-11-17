@@ -14,10 +14,25 @@
 //! `Refused::Short` naming the bytes the read would need, never a panic or
 //! an allocation of a claimed size. The caller holds the bound: a header
 //! whose need runs past it is "not read".
+//!
+//! **What the reader keeps is bounded too**, since the headers read are
+//! held in memory: it keeps the general keys and the three under the
+//! architecture's own prefix, each key's last value alone, a string of at
+//! most `MOST_TEXT` bytes and a list of at most `MOST_LIST` entries, a
+//! kept fact past either refused. Every other value is read past.
+
+use std::collections::HashMap;
 
 /// **The bound on a header's read**, 16 MiB (Spec 6.2): the read stops at
 /// the end of the metadata or here, whichever comes first.
 pub const BOUND: usize = 16 << 20;
+
+/// The most bytes a string the reader keeps runs to (Spec 6.2).
+pub const MOST_TEXT: u64 = 256;
+
+/// The most entries a list the reader keeps holds (Spec 6.2), the KV heads
+/// per block, well past any model's block count.
+pub const MOST_LIST: u64 = 4096;
 
 /// The facts the models page shows, each `None` where the header does not
 /// carry it.
@@ -234,6 +249,11 @@ fn value(cursor: &mut Cursor<'_>, kind: u32, keep: bool, depth: u8) -> Result<Ke
             if !keep {
                 return Ok(Kept::Other);
             }
+            if raw.len() as u64 > MOST_TEXT {
+                return Err(Refused::Malformed(format!(
+                    "a string the reader keeps runs past {MOST_TEXT} bytes"
+                )));
+            }
             String::from_utf8(raw.to_vec())
                 .map(Kept::Text)
                 .map_err(|_| Refused::Malformed("a string the reader keeps is not UTF-8".into()))
@@ -255,6 +275,11 @@ fn value(cursor: &mut Cursor<'_>, kind: u32, keep: bool, depth: u8) -> Result<Ke
             if let Some(width) = width(element) {
                 let raw = cursor.take(count * width)?;
                 if keep {
+                    if count > MOST_LIST {
+                        return Err(Refused::Malformed(format!(
+                            "a list the reader keeps runs past {MOST_LIST} entries"
+                        )));
+                    }
                     let ints: Option<Vec<u64>> = raw
                         .chunks(width as usize)
                         .map(|c| integer(element, c))
@@ -276,15 +301,18 @@ fn value(cursor: &mut Cursor<'_>, kind: u32, keep: bool, depth: u8) -> Result<Ke
     }
 }
 
-/// The keys whose values the reader keeps, by what they are.
-fn kept(key: &str) -> bool {
-    matches!(
-        key,
-        "general.architecture" | "general.type" | "general.file_type" | "split.count" | "split.no"
-    ) || key.ends_with(".context_length")
-        || key.ends_with(".block_count")
-        || key.ends_with(".attention.head_count_kv")
-}
+/// The keys whose values the reader keeps whatever the architecture.
+const GENERAL: [&str; 5] = [
+    "general.architecture",
+    "general.type",
+    "general.file_type",
+    "split.count",
+    "split.no",
+];
+
+/// The keys whose values the reader keeps under the architecture's own
+/// prefix, `<general.architecture>.<suffix>`.
+const UNDER: [&str; 3] = ["context_length", "block_count", "attention.head_count_kv"];
 
 /// An integer fact, or the refusal naming it where it is of another type.
 fn int_fact(key: &str, value: Option<&Kept>) -> Result<Option<u64>, Refused> {
@@ -306,11 +334,14 @@ fn text_fact(key: &str, value: Option<&Kept>) -> Result<Option<String>, Refused>
     }
 }
 
-/// **The header of the GGUF file `bytes` begins**, read to the end of its
-/// metadata: the magic, the version, the tensors' count, the pairs' count,
-/// then each key and its value. The facts are taken once every pair is
-/// read, so their order in the file does not matter.
-pub fn read(bytes: &[u8]) -> Result<Header, Refused> {
+/// The version, the kept facts by key and the bytes the metadata took.
+type Pairs = (u32, HashMap<String, Kept>, u64);
+
+/// **The header's pairs**, read to the end of its metadata: the magic, the
+/// version, the tensors' count, the pairs' count, then each key and its
+/// value. The values of the keys `keep` names are kept, the last of a key
+/// standing, so the kept facts are at most as many as the keys named.
+fn pairs(bytes: &[u8], keep: &dyn Fn(&str) -> bool) -> Result<Pairs, Refused> {
     let mut cursor = Cursor { bytes, at: 0 };
     if cursor.take(4)? != b"GGUF" {
         return Err(Refused::Malformed(
@@ -325,19 +356,37 @@ pub fn read(bytes: &[u8]) -> Result<Header, Refused> {
     }
     let _tensors = cursor.u64()?;
     let pairs = cursor.u64()?;
-    let mut facts: Vec<(String, Kept)> = Vec::new();
+    let mut facts = HashMap::new();
     for _ in 0..pairs {
         let key = cursor.string()?;
         let kind = cursor.u32()?;
-        let keep = std::str::from_utf8(key).is_ok_and(kept);
-        let value = value(&mut cursor, kind, keep, 0)?;
-        if keep && !matches!(value, Kept::Other) {
-            facts.push((String::from_utf8_lossy(key).into_owned(), value));
+        let key = std::str::from_utf8(key).ok().filter(|key| keep(key));
+        let value = value(&mut cursor, kind, key.is_some(), 0)?;
+        if let Some(key) = key
+            && !matches!(value, Kept::Other)
+        {
+            facts.insert(key.to_owned(), value);
         }
     }
-    let fact = |key: &str| facts.iter().rev().find(|(k, _)| k == key).map(|(_, v)| v);
-    let architecture = text_fact("general.architecture", fact("general.architecture"))?;
+    Ok((version, facts, cursor.at as u64))
+}
+
+/// **The header of the GGUF file `bytes` begins**, read to the end of its
+/// metadata twice: once for the architecture, and once for the facts,
+/// keeping only the general keys and the three under the architecture's
+/// own prefix. The facts are taken once every pair is read, so their order
+/// in the file does not matter.
+pub fn read(bytes: &[u8]) -> Result<Header, Refused> {
+    let (_, first, _) = pairs(bytes, &|key| key == "general.architecture")?;
+    let architecture = text_fact("general.architecture", first.get("general.architecture"))?;
     let under = |suffix: &str| architecture.as_ref().map(|arch| format!("{arch}.{suffix}"));
+    let wanted: Vec<String> = GENERAL
+        .iter()
+        .map(|key| key.to_string())
+        .chain(UNDER.iter().filter_map(|suffix| under(suffix)))
+        .collect();
+    let (version, facts, metadata_bytes) = pairs(bytes, &|key| wanted.iter().any(|w| w == key))?;
+    let fact = |key: &str| facts.get(key);
     let arch_int = |suffix: &str| match under(suffix) {
         Some(key) => int_fact(&key, fact(&key)),
         None => Ok(None),
@@ -362,7 +411,7 @@ pub fn read(bytes: &[u8]) -> Result<Header, Refused> {
         split_no: int_fact("split.no", fact("split.no"))?,
         general_type: text_fact("general.type", fact("general.type"))?,
         architecture,
-        metadata_bytes: cursor.at as u64,
+        metadata_bytes,
     })
 }
 
@@ -610,6 +659,60 @@ mod tests {
                 other => panic!("cut at {cut}: {other:?}"),
             }
         }
+    }
+
+    /// **A fact the reader keeps is bounded**, so a header held in memory
+    /// costs no more than its bounds: a kept string past 256 bytes and a
+    /// kept list past 4096 entries are refused, naming the bound. A string
+    /// or a list the reader does not keep, a fact under another prefix than
+    /// the architecture's among them, is read past at any size the bytes
+    /// hold. Each at its bound is kept.
+    #[test]
+    fn a_kept_fact_past_its_bound_is_refused() {
+        let long = "a".repeat(257);
+        let refused = read(&Gguf::new().string("general.architecture", &long).bytes());
+        assert!(
+            matches!(&refused, Err(Refused::Malformed(why)) if why.contains("256")),
+            "{refused:?}"
+        );
+        let heads = vec![8u32; 4097];
+        let refused = read(
+            &Gguf::model("granite")
+                .u32s("granite.attention.head_count_kv", &heads)
+                .bytes(),
+        );
+        assert!(
+            matches!(&refused, Err(Refused::Malformed(why)) if why.contains("4096")),
+            "{refused:?}"
+        );
+        // Under another prefix than the architecture's, or with no
+        // architecture named, the fact is not kept and is read past.
+        for (gguf, kv_heads, block_count) in [
+            (Gguf::new(), None, None),
+            (Gguf::model("granite"), Some(KvHeads::One(8)), Some(40)),
+        ] {
+            let header = read(
+                &gguf
+                    .u32s("other.attention.head_count_kv", &heads)
+                    .u32s("other.block_count", &heads)
+                    .bytes(),
+            )
+            .unwrap();
+            assert_eq!(header.kv_heads, kv_heads);
+            assert_eq!(header.block_count, block_count);
+        }
+        let at = "a".repeat(256);
+        let header = read(
+            &Gguf::new()
+                .string("general.architecture", &at)
+                .u32s(&format!("{at}.attention.head_count_kv"), &[8u32; 4096])
+                .string("general.name", &"n".repeat(100_000))
+                .u32s("tokenizer.ggml.token_type", &vec![1u32; 100_000])
+                .bytes(),
+        )
+        .unwrap();
+        assert_eq!(header.architecture.as_deref(), Some(at.as_str()));
+        assert!(matches!(header.kv_heads, Some(KvHeads::PerBlock(ref l)) if l.len() == 4096));
     }
 
     /// **What is not a GGUF header this reader reads is refused**: another

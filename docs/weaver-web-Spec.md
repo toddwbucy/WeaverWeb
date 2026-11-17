@@ -4639,7 +4639,12 @@ no crate of the agent (section 1). It reads versions 2 and 3, and every value ty
 arrays included, an array of arrays one level deep and no deeper. **Every length and
 count is checked against the bytes held before anything is read or allocated for it**,
 so a string's length or an array's count past the buffer, and a header cut short, are
-refusals and never a panic or an unbounded allocation. It answers:
+refusals and never a panic or an unbounded allocation. **What it keeps is bounded too**,
+by this document's election of 2026-11-16, since the headers read are held in memory:
+it keeps the general keys and the three under `general.architecture`'s own prefix, each
+key's last value alone, a string of at most 256 bytes and a list of at most 4096
+entries, a kept fact past either being a refusal. Every other value is read past. It
+answers:
 
 - the precision, the word for `general.file_type` in llama.cpp's file types, or "file
   type N" for a number it does not name, never a word guessed
@@ -6738,7 +6743,7 @@ two connectors report.
 | the pairing page warns where the console's link address is a loopback address and the checkbox says virtual machine, and where it is an unspecified address, for a host and a virtual machine alike | perturbation in `src/setup_tests.rs`, `the_loopback_warning_shows_for_a_virtual_machine_alone` and `the_unspecified_warning_shows_for_a_host_and_a_virtual_machine`, and in `src/surfaces/setup.rs`'s tests, `the_link_address_is_read_for_its_port_its_loopback_and_unspecified`: draw the loopback warning for a host too, and the host's page warns; drop the unspecified check, or drop its paragraph from the template, and `link_listen` at `0.0.0.0` with no `link_address` draws no warning; draw it for a virtual machine alone, and the host's page draws none; read `link_listen` over `link_address`, and a `link_address` the box reaches beside it warns; take IPv4's unspecified address alone, and `::` draws none (each measured) |
 | a crafted post naming a second model, a second adapter role or the CPU is refused, saving nothing | perturbation in `src/setup_models_tests.rs`, `a_crafted_pick_is_refused_saving_nothing`, against a fake Hugging Face that counts every request, and in `src/surfaces/setup/models.rs`'s tests: take a field the pick does not take, or a field given twice, and a crafted pick is no longer refused by its shape (each measured) |
 | a pick asks Hugging Face only after the admin gate | perturbation in `src/setup_models_tests.rs`, `a_pick_asks_hugging_face_only_after_the_admin_gate`, against the fake: read the listing before the gate, and the fake counts a request from a person holding no admin grant (measured) |
-| the GGUF reader refuses a length or a count past its buffer, a header cut short and a header past its bound, without a panic or an unbounded allocation | perturbation in `src/gguf.rs`'s tests: allocate a string's claimed length before checking it against the bytes held, and the test process aborts on an allocation of 2^63 - 1 bytes; drop an array's room check, and the hostile header's test fails; let an array of arrays nest deeper, and the nesting test fails (each measured) |
+| the GGUF reader refuses a length or a count past its buffer, a header cut short and a header past its bound, without a panic or an unbounded allocation, and keeps no fact past its bounds | perturbation in `src/gguf.rs`'s tests: allocate a string's claimed length before checking it against the bytes held, and the test process aborts on an allocation of 2^63 - 1 bytes; drop an array's room check, and the hostile header's test fails; let an array of arrays nest deeper, and the nesting test fails; drop the kept string's bound or the kept list's, or keep a fact under any prefix, and `a_kept_fact_past_its_bound_is_refused` fails (each measured) |
 | a context length above the header's maximum is refused | perturbation in `src/setup_tests.rs`: drop the bound, and a context length past the maximum is kept |
 | the deployment tuple refuses any update or delete, and a setup is confirmed once | perturbation, at the schema: drop the trigger, and an update of a tuple lands. Drop the one tuple per setup, and a second Confirm writes a second tuple |
 | an SSH key's line is checked for its form, and its text enters no audit record | perturbation in `src/ssh_key_tests.rs`: drop the inner type's check, and a line whose blob names another type is kept |

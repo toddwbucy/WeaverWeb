@@ -1,6 +1,6 @@
-The pane is the unit of every surface. The consumer provides a stage, a title, a backing state, a status, a source line and a body, and the pane provides the frame.
+The pane is the unit of every surface. The consumer provides a stage, a title, a backing state, a source line and a body, with a status on the setup pages, and the pane provides the frame.
 
-- Header (`inset`): the stage mark, the title in `pane-title`, the backing badge, the pane's status mark, healthy states included, on the operator's rulings of 2026-11-16 (setup pages), and at the right the source line in `label` and `dim` saying which plane, which connector, which verb and when. A pane with no source line is showing nothing from the agent.
+- Header (`inset`): the stage mark, the title in `pane-title`, the backing badge, on the setup pages the pane's status mark, healthy states included, on the operator's rulings of 2026-11-16 (setup pages), and at the right the source line in `label` and `dim` saying which plane, which connector, which verb and when. A pane with no source line is showing nothing from the agent.
 - Body: a table (`.flush`), a form, a stream (`.flush`), a diagram or prose. A verb's answer is shown in `pre.raw` verbatim.
 - Footer: how the body stays current, or what the pane waits on.
 - A decision pane (`.pane.decision`, `hold` border) offers each option as its own form and never acknowledges the alert. It is pinned first in the main column. On a served page its prompt is a `<dialog open>` in the body, drawn in place as the body by a served-surfaces rule of `bundle.css`, not as the browser's floating box.

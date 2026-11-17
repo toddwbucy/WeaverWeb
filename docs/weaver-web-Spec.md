@@ -4041,14 +4041,15 @@ checkbox saying whether the box is a virtual machine or a host and a warning whe
 address is localhost and the checkbox says virtual machine (section 8.2). The models
 page takes the models from Hugging Face (section 8.3). The drives page shows the command
 that starts the appliance's drive setup, then the drives as the box mounted them, and on
-a host, drawn and marked unbuilt, the state directory and the models directory the
-operator named, with free space against the need, the models directory prefilled with
-that user's default Hugging Face cache and a command granting the console's account
-read-write on that cache and a models group read (section 8.3). The placement page
-places each model on a device with its context length, and the confirm page shows the
-deployment tuple in full, which Confirm closes. The build page holds the board and the
-prompt tuple panel, both held, and is a one-pane stub marked unbuilt. **Section 6.2
-states the pages as built**, each part live or held, and what a held part waits on.
+a host the models directory alone, marked unbuilt (section 6.2), with the host form
+planned beside it: the state directory and the models directory the operator named, with
+free space against the need, the models directory prefilled with that user's default
+Hugging Face cache and a command granting the console's account read-write on that cache
+and a models group read (section 8.3). The placement page places each model on a device
+with its context length, and the confirm page shows the deployment tuple in full, which
+Confirm closes. The build page holds the board and the prompt tuple panel, both held,
+and is a one-pane stub marked unbuilt. **Section 6.2 states the pages as built**, each
+part live or held, and what a held part waits on.
 
 **This section is the declaration screen as built on 2026-11-16**, the first of the two
 screens of the rulings of 2026-11-11. **It stays as built beside the setup pages**, its
@@ -6684,15 +6685,16 @@ folder and its home side by side, and a host lays the same under its state direc
 the operator's word of 2026-11-17: it goes to Weaver Web, which stores it outside the
 agent's reach, so nothing on the state drive holds it beside the agent's state or save
 points (section 10). Every account's name and every path are the image's and
-WeaverAgent's, and none enters this repository (`weaver-web-PRD` section 10.4). The
-refusal is admin's, since load is admin's verb, so the representation this document
-holds is admin's answer to `load`, which renders as it came, as every refusal does
-(section 7.2). The report of the sizes reaches the console through admin-con, the
-console's one reach into an appliance, so its carrier at the box's seam is
-`weaver-admin-operator-contract`'s, and this document builds against the contract once
-it is merged. The form of the report, which carrier it takes at that seam, and where the
-console says that storage is not sufficient, are section 10's. So are the sizes that
-count as sufficient, which no ruling assigns to a document.
+WeaverAgent's, this section repeating section 6.2's naming without owning it, and none
+enters this repository (`weaver-web-PRD` section 10.4). The refusal is admin's, since
+load is admin's verb, so the representation this document holds is admin's answer to
+`load`, which renders as it came, as every refusal does (section 7.2). The report of the
+sizes reaches the console through admin-con, the console's one reach into an appliance,
+so its carrier at the box's seam is `weaver-admin-operator-contract`'s, and this
+document builds against the contract once it is merged. The form of the report, which
+carrier it takes at that seam, and where the console says that storage is not
+sufficient, are section 10's. So are the sizes that count as sufficient, which no ruling
+assigns to a document.
 
 **Load and unload.** **Nothing in this framework or in the image autostarts the agent**,
 on the operator's ruling of 2026-11-15, and load and unload need no management of a

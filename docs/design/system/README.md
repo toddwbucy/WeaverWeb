@@ -42,7 +42,7 @@ Everything sits on the 4px scale. A pane header pads `space-2` `space-3`; a pane
 
 Every surface is composed from panes in a grid, never from detached windows. A pane is `.pane`: a header on `inset`, a body, an optional footer.
 
-- The header carries, left to right: the stage mark (`.stage`: numeral and stage name), the title (`pane-title`), the backing badge (`.backing`: `built`, `partly` or `unbuilt`), the pane's status (`.status`), and at the right the source line (`.source`): which plane, which connector, which verb, when. The status is shown when things are good as when something broke, healthy states included, on the operator's rulings of 2026-11-16 (setup pages).
+- The header carries, left to right: the stage mark (`.stage`: numeral and stage name), the title (`pane-title`), the backing badge (`.backing`: `built`, `partly` or `unbuilt`), on the setup pages the pane's status (`.status`), and at the right the source line (`.source`): which plane, which connector, which verb, when. There the status is shown when things are good as when something broke, healthy states included, on the operator's rulings of 2026-11-16 (setup pages).
 - The body is a table, a form, a stream, a diagram or prose. A table or stream body is `.flush`.
 - The footer says how the body stays current ("re-fetched every 15 s") or what the pane waits on ("waits on `weaver-analysis-web-contract`").
 - A decision pane (`.pane.decision`) is a pane whose border is `hold`. It is pinned at the top of the main column and offers each option as its own form; it never acknowledges the alert it answers. Today it is a `<dialog open>`; the grammar keeps it in the flow.
@@ -66,7 +66,7 @@ The stages, in order, with what backs each today:
 | 7 Train | the selection from the trace, the dataset, the training run, the adapter handed back to Declare | unbuilt; training runs in WeaverTrain, reached through a contract that does not exist yet |
 | 8 Retire | revoke a plane, retire the row, archive | partly: revoke and retire are built; archive is not |
 
-Every pane is marked with its stage, its backing and its status, in its header, so a person reading an unbuilt pane knows it is a drawing and a person reading a built one knows how it stands. A sign that things are good is as wanted as a sign that something broke, on the operator's rulings of 2026-11-16 (setup pages), which supersede marking a pane only where something differs.
+Every pane is marked with its stage and its backing, in its header, so a person reading an unbuilt pane knows it is a drawing. On the setup pages every pane also carries its status, so a person reading a built one knows how it stands, and a sign that things are good is as wanted as a sign that something broke, on the operator's rulings of 2026-11-16 (setup pages), which supersede marking a setup page's pane only where something differs.
 
 The trace is the record of the whole lifecycle and no stage's own (ruling of 2026-11-07): Observe reads it live, Diagnose and Train read it landed. Train selects from it, builds a dataset from the selection, trains an adapter and hands it back to Declare; gathering is part of Train; no frontier-model or reviewer text enters a dataset; the adapter enters through Declare and Provision at the load boundary.
 

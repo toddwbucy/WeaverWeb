@@ -217,11 +217,11 @@ what it waits on. A mark is a word in a pill and never a bare color: absence (`a
 beside its dot and word), backing, and the hatched discontinuity row in a stream. A
 verb that does not apply is disabled with its reason, never hidden. Every pane is marked
 with its stage and whether it has backing today, so a drawing is never mistaken for a
-surface. **Every pane carries its labels**, on the operator's rulings of 2026-11-16
-(setup pages): its stage, built or unbuilt, and its status, healthy states included,
-since a sign that things are good is as wanted as a sign that something broke. The
-served pages are composed in this grammar, and the stylesheet they load is
-the design system's own (Spec section 6).
+surface. **On the setup pages every pane also carries its status**, healthy states
+included, on the operator's rulings of 2026-11-16 (setup pages), since a sign that
+things are good is as wanted as a sign that something broke. The served pages are
+composed in this grammar, and the stylesheet they load is the design system's own (Spec
+section 6).
 
 **Declare is a start page, the setup pages and the build page**, on the operator's
 rulings of 2026-11-16 (setup pages) and their addendum, which replace the two screens of
@@ -250,13 +250,14 @@ beside them, reached from the build page's stub for the fields no setup page ask
   command to run at the appliance's console, which starts the appliance's drive setup
   (section 10.4), then the state drive, required for every agent at a minimum of 10 GiB,
   and the models drive, its size computed from the chosen files, as the box mounted
-  them. On a host, which attaches and formats nothing, the page shows the state
+  them. On a host, which attaches and formats nothing, the page draws the models
+  directory alone, marked unbuilt since the host's own script is later
+  (`weaver-web-Spec` section 6.2). The host form planned beside it shows the state
   directory and the models directory the operator named, with free space against the
   need, the models directory prefilled with that user's default Hugging Face cache so
   that models already pulled there are found, and a command for the operator granting
   the console's account read-write on that cache and a models group read, since the
-  console alone downloads there and agents read the model in place, on the addendum, and
-  the host form is drawn and marked unbuilt, since the host's own script is later. One
+  console alone downloads there and agents read the model in place, on the addendum. One
   unit, GiB, serves the whole flow.
 - **The placement.** Each model on a device, and the context length chosen against the
   model's maximum, read from the file's header. The fit is called planned, from the room

@@ -77,6 +77,15 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # The bearer is hashed before it is stored or looked up, per Spec 2.8.
 sha2 = "0.10"
+# **An SSH public key's line is read for its form** (Spec 6.2): its base64
+# decoded and its fingerprint encoded as OpenSSH writes it. base64 0.22 is
+# in the tree already, through sqlx and reqwest, so it adds no crate.
+base64 = "0.22"
+# **The base's identity** (Spec 6.2): an adapter binds to its base by
+# BLAKE3 over the base's parts, weaver-spu's `weights_hash`, which the
+# console computes from its cache. Its default features, the SIMD
+# implementations built by `cc`, which ring needs already.
+blake3 = "1.8"
 # Act 11: a person's canonical name, Unicode's compatibility caseless form
 # (design section 6), measured on 2026-10-07: caseless 0.2.2 implements D146
 # with the full case folding of Unicode 16.0's CaseFolding.txt, and adds one
@@ -135,6 +144,18 @@ webauthn-rs = { version = "0.5", optional = true, features = ["danger-credential
 # entry that is a symlink must refuse rather than be followed to a file
 # another owner can read. Already in the graph through tokio.
 libc = "0.2"
+# **The Hugging Face client** (Spec 2.15, the decisions of 2026-11-16): the
+# console reads a repository and fetches its files from huggingface.co, the
+# one outward request the server makes. `reqwest` 0.12 without its default
+# features, on rustls with `ring`, the provider the link already takes, and
+# the operating system's roots, which update with the system. No HTTP/2 and
+# no charset decoding. The proxy variables are read whatever the features, so
+# the client refuses them itself (`.no_proxy()`, `tests/hugging_face_proxy.rs`). The connectors never use it, and
+# `tests/connectors_link.rs` keeps their graph free of `openssl-sys`.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "stream"] }
+# **The Hugging Face token's seal** (Spec 2.15): ChaCha20-Poly1305 from
+# `ring`, already in the graph through rustls and rcgen, so it adds no crate.
+ring = "0.17"
 
 [dev-dependencies]
 # A software authenticator for the passkey ceremonies' tests (act 11, PR 4b):

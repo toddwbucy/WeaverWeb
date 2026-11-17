@@ -17,6 +17,7 @@ pub mod alerting;
 mod alerting_deadline_tests;
 #[cfg(all(test, feature = "passkeys"))]
 mod alerts_tests;
+pub mod box_report;
 pub mod config;
 pub(crate) mod deadline;
 pub mod declaration;
@@ -27,17 +28,23 @@ mod declare_pane_tests;
 #[cfg(all(test, feature = "passkeys"))]
 mod entries_tests;
 pub mod fault;
+pub mod gguf;
 #[cfg(all(test, feature = "passkeys"))]
 mod grants_tests;
 pub mod host;
 #[cfg(test)]
 mod host_tests;
+pub mod hugging_face;
+#[cfg(all(test, feature = "passkeys"))]
+mod hugging_face_tests;
 #[cfg(all(test, feature = "passkeys"))]
 mod keys_tests;
 pub mod link;
 pub mod listen;
 #[cfg(test)]
 mod listen_tests;
+#[cfg(all(test, feature = "passkeys"))]
+mod model_pull_tests;
 #[cfg(all(test, feature = "passkeys"))]
 mod navigation_tests;
 #[cfg(feature = "passkeys")]
@@ -47,9 +54,17 @@ mod passkeys_tests;
 #[cfg(all(test, feature = "passkeys"))]
 mod reading_tests;
 #[cfg(all(test, feature = "passkeys"))]
+mod setup_models_tests;
+#[cfg(all(test, feature = "passkeys"))]
+mod setup_place_tests;
+#[cfg(all(test, feature = "passkeys"))]
+mod setup_tests;
+#[cfg(all(test, feature = "passkeys"))]
 mod sign_in_tests;
 #[cfg(all(test, feature = "passkeys"))]
 mod sign_in_token_tests;
+#[cfg(all(test, feature = "passkeys"))]
+mod ssh_key_tests;
 pub mod stage;
 #[cfg(test)]
 mod stage_tests;

@@ -138,11 +138,18 @@ async fn hash(
         .ok_or_else(|| anyhow::anyhow!("no model_cache is set, so no part can be read"))?;
     let repo = RepoId::parse(&owed.repository)
         .ok_or_else(|| anyhow::anyhow!("the repository is not of its shape"))?;
+    // Each part named as the cache names its blob, from the row's `lfs`
+    // flag, as the tuple's parts are: a verified git-kept part's row holds
+    // the console's computed SHA-256 too, which `RepoFile::identity()`
+    // would answer, and the cache holds the part under its git blob id.
     let files: Vec<RepoFile> = store
         .pull_files(&owed.pull_id)
         .await?
         .into_iter()
-        .map(|f| f.file)
+        .map(|f| RepoFile {
+            sha256: if f.lfs { f.file.sha256 } else { None },
+            ..f.file
+        })
         .collect();
     let stop = stop.clone();
     let (digest, bytes) =

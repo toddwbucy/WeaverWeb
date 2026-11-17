@@ -40,6 +40,10 @@ pub struct Pull {
 #[derive(Debug, Clone)]
 pub struct PullFile {
     pub file: RepoFile,
+    /// Whether the file is kept in LFS, as the listing said at the ask. A
+    /// verified file's row holds the console's computed SHA-256 whether or
+    /// not it is, so the blob's name is read from this flag (#138).
+    pub lfs: bool,
     pub bytes_done: i64,
     /// `downloaded` or `found`, once the file is verified.
     pub source: Option<String>,
@@ -227,7 +231,7 @@ impl Store {
     /// A pull's files, in the order asked.
     pub async fn pull_files(&self, pull_id: &str) -> anyhow::Result<Vec<PullFile>> {
         let rows = sqlx::query(
-            "SELECT path, size, blob_id, sha256, bytes_done, source FROM model_pull_file \
+            "SELECT path, size, blob_id, sha256, lfs, bytes_done, source FROM model_pull_file \
              WHERE pull_id = $1 ORDER BY ordinal",
         )
         .bind(pull_id)
@@ -242,6 +246,7 @@ impl Store {
                         blob_id: r.get("blob_id"),
                         sha256: r.get("sha256"),
                     },
+                    lfs: r.get("lfs"),
                     bytes_done: r.get("bytes_done"),
                     source: r.get("source"),
                 })

@@ -84,6 +84,12 @@ pub(crate) fn split_parts() -> (Vec<u8>, Vec<u8>) {
     (with_filler(header, 1, 200_000), filler(2, 150_000))
 }
 
+/// The one part of a model kept in git: a model's header, then its
+/// tensors' stand-in.
+fn in_git_part() -> Vec<u8> {
+    with_filler(Gguf::model("granite").bytes(), 12, 5_000)
+}
+
 fn twin_part() -> Vec<u8> {
     let header = Gguf::model("granite")
         .u16("split.no", 0)
@@ -178,6 +184,12 @@ fn repos() -> Vec<Repo> {
             gated: false,
             files: many,
         },
+        // A model whose one part is kept in git, not LFS.
+        Repo {
+            name: "org/in-git",
+            gated: false,
+            files: vec![("in-git.gguf", in_git_part())],
+        },
         // A model whose maximum context, 2048, is below the box's
         // max-tokens-per-turn, the header's last value standing.
         Repo {
@@ -258,7 +270,9 @@ async fn listing(
                 "size": bytes.len(),
                 "blobId": git_blob_id(bytes),
             });
-            if path.ends_with(".gguf") {
+            // A `.gguf` file is kept in LFS, but for `in-git.gguf`, which
+            // stands for a small file Hugging Face keeps in git.
+            if path.ends_with(".gguf") && *path != "in-git.gguf" {
                 sibling["lfs"] = serde_json::json!({ "sha256": sha256(bytes) });
             }
             sibling
@@ -1136,6 +1150,66 @@ async fn a_verified_pull_wakes_the_hasher() {
     )
     .await;
     assert!(shown.contains(&expected), "{shown}");
+    drop(hashing);
+}
+
+/// **A decoder part kept in git is hashed from its blob** (Spec 6.2, Codex
+/// on #129): the cache names a file kept in git by its git blob id, and the
+/// verified pull row holds the console's computed SHA-256 beside it. The
+/// hasher takes the blob's name from the row's `lfs` flag, as the tuple's
+/// parts do, so it opens the part's blob and keeps its identity, BLAKE3
+/// over the part's bytes.
+#[tokio::test]
+async fn a_git_kept_decoder_part_is_hashed_from_its_blob() {
+    let Some((rig, _fake, _, _cache)) = rig(true).await else {
+        return;
+    };
+    let s = rig.store();
+    let (ada, setup) = setup_of(&rig, "karl").await;
+    let (status, body) = post_pick(
+        &rig,
+        &ada,
+        &setup,
+        pick("1", "decoder", "org/in-git", "in-git.gguf", None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let pull_id = pull_of(s, &setup, "decoder").await;
+    assert_eq!(ended(s, &pull_id).await, "verified");
+
+    // The row: kept in git, its git blob id and the computed SHA-256.
+    let part = in_git_part();
+    let (lfs, blob_id, digest): (bool, String, Option<String>) =
+        sqlx::query_as("SELECT lfs, blob_id, sha256 FROM model_pull_file WHERE pull_id = $1")
+            .bind(&pull_id)
+            .fetch_one(&s.pool)
+            .await
+            .unwrap();
+    assert!(!lfs, "the part is kept in git");
+    assert_eq!(blob_id, git_blob_id(&part));
+    assert_eq!(digest, Some(sha256(&part)));
+    // The cache: the blob under its git id, and none under the SHA-256.
+    let cache = rig.puller.cache().cloned().expect("a cache");
+    let repo = RepoId::parse("org/in-git").unwrap();
+    assert!(cache.blob(&repo, &blob_id).unwrap().is_file());
+    assert!(!cache.blob(&repo, &sha256(&part)).unwrap().exists());
+
+    let expected = blake3::hash(&part).to_hex().to_string();
+    let hashing = crate::hugging_face::base_identity::BaseIdentities::start(
+        s.clone(),
+        Some(cache),
+        Arc::new(tokio::sync::Notify::new()),
+    );
+    let pulls = format!("/setup/{setup}/models/pull");
+    let shown = shows(&rig, &pulls, &ada, &expected).await;
+    assert!(shown.contains(&expected), "{shown}");
+    let kept = s
+        .base_identity("org/in-git", COMMIT, "in-git.gguf")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(kept.pull_id, pull_id);
+    assert_eq!(kept.bytes, part.len() as i64);
     drop(hashing);
 }
 

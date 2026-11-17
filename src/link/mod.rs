@@ -23,6 +23,8 @@ pub mod admin_log;
 pub mod authority;
 pub mod client;
 pub mod entries;
+#[cfg(feature = "enrollment")]
+pub mod exchange;
 pub mod frames;
 pub mod gate_con;
 pub mod listener;
@@ -31,6 +33,8 @@ pub mod pair_code;
 pub mod pairing;
 pub mod register;
 pub mod relay;
+#[cfg(feature = "enrollment")]
+pub mod request;
 pub mod sudo_invoker;
 pub mod verbs;
 

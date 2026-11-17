@@ -15,6 +15,11 @@
 //! waiting connection's own task to derive that connection's code from its
 //! exporter and compare; the task that matches answers with the box's claim
 //! and leaves the table, so a code is spent with its connection.
+//!
+//! **A matched box keeps hearing the console** (`Kept`): from the match until
+//! the exchange writes to it, and again while the exchange's write runs, a
+//! task of its own sends the box a heartbeat at the same cadence, so a box
+//! whose exchange waits on the authority lock or the store never goes silent.
 
 use crate::link::frames::{
     Line, LineReader, PAIR_FIRST_FRAME_BOUND, PairFromBox, PairToBox, pair_reason,
@@ -66,15 +71,36 @@ pub struct WaitingBox {
     pub waited: Duration,
 }
 
+/// A pairing connection, framed, as the console holds it.
+pub(crate) type PairConnection = LineReader<TlsStream<TcpStream>>;
+
 /// **A pairing connection a code matched**, taken out of the table: what
-/// the box claimed. The match spends the connection, and its code matches
+/// the box claimed, and the connection itself, which the exchange carries
+/// on (Spec 8.2). The match spends the connection, and its code matches
 /// nothing after.
-#[derive(Debug, Clone)]
 pub struct Taken {
     pub r#box: String,
     pub gate_request: String,
     pub admin_request: String,
     pub peer: IpAddr,
+    /// The connection, kept alive by its heartbeats until the exchange
+    /// writes to it, which only the exchange carries on, so a build without
+    /// the enrollment closes it at the match.
+    #[cfg(feature = "enrollment")]
+    pub(crate) connection: Kept,
+    /// The end of the box's life, `Bounds::life` from its dial: the longest
+    /// its exchange waits for the authority lock.
+    #[cfg(feature = "enrollment")]
+    pub(crate) ends: tokio::time::Instant,
+}
+
+impl std::fmt::Debug for Taken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Taken")
+            .field("box", &self.r#box)
+            .field("peer", &self.peer)
+            .finish_non_exhaustive()
+    }
 }
 
 /// An entry's question to one waiting connection.
@@ -224,11 +250,7 @@ enum Event {
 
 /// One frame to the box, bounded: a box that stopped reading ends the
 /// connection.
-async fn send(
-    reader: &mut LineReader<TlsStream<TcpStream>>,
-    frame: &PairToBox,
-    bound: Duration,
-) -> bool {
+pub(crate) async fn send(reader: &mut PairConnection, frame: &PairToBox, bound: Duration) -> bool {
     let Ok(mut line) = serde_json::to_string(frame) else {
         return false;
     };
@@ -244,12 +266,84 @@ async fn send(
     )
 }
 
+/// **A matched connection kept alive** (Spec 8.2): a task of its own sends
+/// the box a heartbeat at the link's cadence until the exchange takes the
+/// connection back, so the box, which hears nothing from its match to its
+/// answer otherwise, never reads four cadences of silence while the exchange
+/// waits on the authority lock or the store. A heartbeat that cannot be sent
+/// within the write bound ends it, the box gone. Dropped, it closes the
+/// connection.
+#[cfg(feature = "enrollment")]
+pub(crate) struct Kept {
+    stop: Option<oneshot::Sender<()>>,
+    task: Option<tokio::task::JoinHandle<Option<PairConnection>>>,
+    cadence: Duration,
+    write_bound: Duration,
+}
+
+#[cfg(feature = "enrollment")]
+impl Kept {
+    /// Keep `connection` alive, its first heartbeat one cadence from now.
+    pub(crate) fn new(
+        connection: PairConnection,
+        cadence: Duration,
+        write_bound: Duration,
+    ) -> Kept {
+        let (stop, mut stopped) = oneshot::channel::<()>();
+        let task = tokio::spawn(async move {
+            let mut connection = connection;
+            let mut beat = tokio::time::interval_at(tokio::time::Instant::now() + cadence, cadence);
+            beat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                tokio::select! {
+                    biased;
+                    // Taken back between two frames, never inside one.
+                    _ = &mut stopped => return Some(connection),
+                    _ = beat.tick() => {
+                        if !send(&mut connection, &PairToBox::Heartbeat, write_bound).await {
+                            return None;
+                        }
+                    }
+                }
+            }
+        });
+        Kept {
+            stop: Some(stop),
+            task: Some(task),
+            cadence,
+            write_bound,
+        }
+    }
+
+    /// The bound on one write to the box, the listener's own.
+    pub(crate) fn write_bound(&self) -> Duration {
+        self.write_bound
+    }
+
+    /// Resolves once the box is gone, a heartbeat not sent within the
+    /// bound, and never while it hears the console.
+    pub(crate) async fn lost(&mut self) {
+        if let Some(task) = self.task.as_mut() {
+            let _ = task.await;
+            self.task = None;
+        }
+    }
+
+    /// **The connection back**, its heartbeats stopped, or none where the
+    /// box went.
+    pub(crate) async fn resume(mut self) -> Option<PairConnection> {
+        drop(self.stop.take());
+        self.task.take()?.await.ok().flatten()
+    }
+
+    /// The cadence its heartbeats keep, the link's.
+    pub(crate) fn cadence(&self) -> Duration {
+        self.cadence
+    }
+}
+
 /// A last frame, then the close.
-async fn close_with(
-    reader: &mut LineReader<TlsStream<TcpStream>>,
-    frame: &PairToBox,
-    bound: Duration,
-) {
+pub(crate) async fn close_with(reader: &mut PairConnection, frame: &PairToBox, bound: Duration) {
     if send(reader, frame, bound).await {
         let _ = tokio::time::timeout(bound, reader.get_mut().shutdown()).await;
     }
@@ -347,6 +441,10 @@ pub(crate) async fn serve(start: StartHandshake<TcpStream>, mut cx: Context<'_>)
                         gate_request,
                         admin_request,
                         peer: cx.peer,
+                        #[cfg(feature = "enrollment")]
+                        connection: Kept::new(reader, cx.cadence, cx.write_bound),
+                        #[cfg(feature = "enrollment")]
+                        ends,
                     }));
                     return;
                 }

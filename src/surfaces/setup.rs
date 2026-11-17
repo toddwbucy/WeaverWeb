@@ -55,7 +55,10 @@ use crate::surfaces::gate::{Policy, Session};
 
 mod confirm;
 mod models;
+mod pair;
 mod placement;
+
+pub use pair::Enrollment;
 
 /// What the surface takes beside the store: the session policy; the
 /// server's config, for the console's link address and `model_cache`; and,
@@ -72,6 +75,10 @@ pub struct Seams {
     pub authority_dir: PathBuf,
     pub headers: Headers,
     pub boxes: Arc<dyn BoxReports>,
+    /// **The enrollment** (Spec 8.2): the link's listener, whose boxes
+    /// wait, and the authority the server loaded. None draws the waiting
+    /// box held.
+    pub enrollment: Option<Enrollment>,
 }
 
 /// The answer to a setup's identity of the wrong shape.
@@ -163,6 +170,11 @@ pub fn routes(seams: Seams) -> Router<Store> {
                 },
             ),
         );
+    // The code's entry, which the server's binary carries (Spec 8.2).
+    #[cfg(feature = "enrollment")]
+    {
+        router = router.route("/setup/{setup}/pair", pair::route(seams.clone()));
+    }
     // The pages drawn here alone. The rest are their child modules'.
     for p in [Page::Drives, Page::Build] {
         router = router.route(&format!("/setup/{{setup}}/{}", p.slug()), read!(p));
@@ -503,6 +515,33 @@ struct PairingPage {
     /// The address is an unspecified address, which no box dials, a host
     /// or a virtual machine.
     unspecified_warning: bool,
+    /// The waiting box's pane, the enrollment's parts (Spec 8.2).
+    pair: pair::PairPane,
+}
+
+/// The pairing page as drawn, the waiting box's pane given.
+fn pairing_page(
+    seams: &Seams,
+    who: String,
+    chrome: super::Chrome,
+    frame: Frame,
+    setup: &Setup,
+    pair: pair::PairPane,
+) -> PairingPage {
+    let link = link_of(seams.cfg.link_address());
+    PairingPage {
+        here: "declarations",
+        who,
+        admin: true,
+        chrome,
+        frame,
+        version: setup.version,
+        virtual_machine: setup.virtual_machine,
+        loopback_warning: link.loopback && setup.virtual_machine,
+        unspecified_warning: link.unspecified,
+        link,
+        pair,
+    }
 }
 
 #[derive(Template)]
@@ -593,20 +632,11 @@ async fn page(
     let who = session.name.clone();
     let rendered = match at {
         Page::Pairing => {
-            let link = link_of(seams.cfg.link_address());
-            PairingPage {
-                here: "declarations",
-                who,
-                admin: true,
-                chrome,
-                frame,
-                version: setup.version,
-                virtual_machine: setup.virtual_machine,
-                loopback_warning: link.loopback && setup.virtual_machine,
-                unspecified_warning: link.unspecified,
-                link,
-            }
-            .render()
+            let pair = match pair::pane(&store, seams, &setup, None).await {
+                Ok(pair) => pair,
+                Err(e) => return fault(e),
+            };
+            pairing_page(seams, who, chrome, frame, &setup, pair).render()
         }
         Page::Drives => {
             let (keys, need) = match async {

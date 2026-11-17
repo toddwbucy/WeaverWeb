@@ -68,7 +68,7 @@ use tokio_rustls::LazyConfigAcceptor;
 /// How long a peer has to complete the handshake, and then to say hello. A
 /// peer that speaks plaintext never completes the handshake and is dropped
 /// here; nothing it sent was read as a frame.
-const HANDSHAKE_SECS: u64 = 10;
+pub(crate) const HANDSHAKE_SECS: u64 = 10;
 
 /// The least silence bound the cadence rule admits: the cadence is the
 /// bound divided by four, so a bound under four seconds would have a

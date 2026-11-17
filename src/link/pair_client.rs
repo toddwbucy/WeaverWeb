@@ -85,6 +85,38 @@ pub enum Heard {
     Silent,
     /// The console spoke out of turn.
     Fault(String),
+    /// **The exchange's answer** (Spec 8.2, step 4), its shapes checked and
+    /// its authority the one the handshake presented. The box writes it,
+    /// then sends its word (`Dialed::written`).
+    Answer(Answer),
+}
+
+/// **The exchange's answer as the box holds it** (Spec 8.2): the members a
+/// config needs that the box did not know, each checked in its shape, and
+/// the certificates in PEM. `adopt` checks each certificate against its
+/// own key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Answer {
+    pub agent: String,
+    pub agent_id: String,
+    pub r#box: String,
+    pub server_name: String,
+    pub authority: String,
+    pub gate: String,
+    pub admin: String,
+}
+
+/// **The console's last word**, after the box's (Spec 8.2, step 6).
+#[derive(Debug, PartialEq, Eq)]
+pub enum LastWord {
+    /// The row stands with the answer's two certificates live.
+    Paired,
+    /// The console refused, with its reason, checked printable.
+    Refused(String),
+    /// The connection ended, or went silent, after the box's word and
+    /// before the console's: the console may have written the row, and the
+    /// pairing page says what the write made.
+    Unknown,
 }
 
 /// A box waiting on the console: its connection, its code and the
@@ -123,6 +155,73 @@ impl Dialed {
         self.expires_in
     }
 
+    /// **An answer the box takes, or why not**, in fixed words: every
+    /// member in its shape, each certificate one PEM block, and the
+    /// authority the one the handshake presented, whose fingerprint the
+    /// box printed (Spec 8.2), so `adopt` verifies under the authority the
+    /// operator compared.
+    fn checked(&self, answer: Answer) -> Result<Answer, &'static str> {
+        if !crate::store::identity::is_agent_id(&answer.agent_id)
+            || crate::link::verbs::well_formed(&answer.r#box, &answer.agent).is_err()
+            || ServerName::try_from(answer.server_name.as_str()).is_err()
+        {
+            return Err("the console's answer names a member out of its shape");
+        }
+        let authority = one_certificate(&answer.authority)
+            .ok_or("the answer's authority is not one certificate")?;
+        if authority != self.authority {
+            return Err("the answer's authority is not the one the handshake presented");
+        }
+        if one_certificate(&answer.gate).is_none() || one_certificate(&answer.admin).is_none() {
+            return Err("an answer's certificate is not one certificate");
+        }
+        Ok(answer)
+    }
+
+    /// **The box's word** (Spec 8.2, step 5): it wrote the answer.
+    pub async fn written(&mut self) -> Result<(), DialError> {
+        let mut line = serde_json::to_string(&PairFromBox::Written).expect("a frame serializes");
+        line.push('\n');
+        #[cfg(test)]
+        self.transcript.push(line.trim_end().to_owned());
+        let stream = self.reader.get_mut();
+        match tokio::time::timeout(Duration::from_secs(DIAL_SECS), async {
+            stream.write_all(line.as_bytes()).await?;
+            stream.flush().await
+        })
+        .await
+        {
+            Ok(Ok(())) => Ok(()),
+            _ => Err(DialError::Fault("the box's word was not sent".into())),
+        }
+    }
+
+    /// **The console's last word** after the box's (Spec 8.2, step 6),
+    /// heartbeats aside, which the console sends while its write runs:
+    /// `paired`, a refusal, or, where the connection ends or stays silent
+    /// for four heartbeats' cadence first, unknown.
+    pub async fn last_word(&mut self) -> LastWord {
+        let line = loop {
+            let line = match tokio::time::timeout(self.cadence * 4, self.reader.next()).await {
+                Ok(Line::Frame(line)) => line,
+                _ => return LastWord::Unknown,
+            };
+            #[cfg(test)]
+            self.transcript.push(line.clone());
+            if !matches!(decode(&line), Some(PairToBox::Heartbeat)) {
+                break line;
+            }
+        };
+        match decode(&line) {
+            Some(PairToBox::Paired) => LastWord::Paired,
+            Some(PairToBox::Refused { reason }) => match printable(&reason) {
+                Some(reason) => LastWord::Refused(reason),
+                None => LastWord::Unknown,
+            },
+            _ => LastWord::Unknown,
+        }
+    }
+
     /// The next thing the console says, heartbeats aside. Silent past four
     /// heartbeats' cadence.
     pub async fn next(&mut self) -> Heard {
@@ -136,22 +235,77 @@ impl Dialed {
             };
             #[cfg(test)]
             self.transcript.push(line.clone());
-            match serde_json::from_str::<PairToBox>(&line) {
-                Ok(PairToBox::Heartbeat) => continue,
-                Ok(PairToBox::Expired) => return Heard::Expired,
-                Ok(PairToBox::Refused { reason }) => {
+            match decode(&line) {
+                Some(PairToBox::Heartbeat) => continue,
+                Some(PairToBox::Answer {
+                    agent,
+                    agent_id,
+                    r#box,
+                    server_name,
+                    authority,
+                    gate,
+                    admin,
+                }) => {
+                    let answer = Answer {
+                        agent,
+                        agent_id,
+                        r#box,
+                        server_name,
+                        authority,
+                        gate,
+                        admin,
+                    };
+                    return match self.checked(answer) {
+                        Ok(answer) => Heard::Answer(answer),
+                        Err(why) => Heard::Fault(why.into()),
+                    };
+                }
+                Some(PairToBox::Expired) => return Heard::Expired,
+                Some(PairToBox::Refused { reason }) => {
                     return match printable(&reason) {
                         Some(reason) => Heard::Refused(reason),
                         None => Heard::Fault("the console's reason is not printable".into()),
                     };
                 }
-                Ok(other) => {
-                    return Heard::Fault(format!("the console sent {other:?} out of turn"));
+                Some(other) => {
+                    let named = named(&other);
+                    return Heard::Fault(format!("the console sent {named} out of turn"));
                 }
-                Err(e) => return Heard::Fault(format!("the console sent no pairing frame: {e}")),
+                None => return Heard::Fault(NO_FRAME.into()),
             }
         }
     }
+}
+
+/// What a line that is no pairing frame is called. **Never serde's error**,
+/// which quotes the line, and the line is the console's: a tag it made up
+/// would reach a printed fault with whatever escapes it holds.
+const NO_FRAME: &str = "the console sent no pairing frame";
+
+/// The console's frame, or none.
+fn decode(line: &str) -> Option<PairToBox> {
+    serde_json::from_str(line).ok()
+}
+
+/// A frame as the box names it in a fault: its tag alone, never a member
+/// the console wrote.
+fn named(frame: &PairToBox) -> &'static str {
+    match frame {
+        PairToBox::Waiting { .. } => "waiting",
+        PairToBox::Heartbeat => "heartbeat",
+        PairToBox::Expired => "expired",
+        PairToBox::Refused { .. } => "refused",
+        PairToBox::Answer { .. } => "answer",
+        PairToBox::Paired => "paired",
+    }
+}
+
+/// One certificate in PEM, alone, as DER.
+fn one_certificate(pem: &str) -> Option<CertificateDer<'static>> {
+    let mut bytes = pem.as_bytes();
+    let mut certificates = rustls_pemfile::certs(&mut bytes);
+    let first = certificates.next()?.ok()?;
+    certificates.next().is_none().then_some(first)
 }
 
 /// A reason as the box prints it: printable ASCII within `REASON_BOUND`, or
@@ -261,8 +415,8 @@ pub(crate) async fn over(tcp: TcpStream, host: &str, claim: &Claim) -> Result<Di
     };
     #[cfg(test)]
     transcript.push(answer.clone());
-    match serde_json::from_str::<PairToBox>(&answer) {
-        Ok(PairToBox::Waiting {
+    match decode(&answer) {
+        Some(PairToBox::Waiting {
             expires_in_secs,
             cadence_secs,
         }) if cadence_secs > 0 && cadence_secs <= crate::link::frames::CADENCE_MAX_SECS => {
@@ -276,17 +430,16 @@ pub(crate) async fn over(tcp: TcpStream, host: &str, claim: &Claim) -> Result<Di
                 transcript,
             })
         }
-        Ok(PairToBox::Refused { reason }) => Err(match printable(&reason) {
+        Some(PairToBox::Refused { reason }) => Err(match printable(&reason) {
             Some(reason) => DialError::Refused(reason),
             None => DialError::Fault("the console's reason is not printable".into()),
         }),
-        Ok(PairToBox::Expired) => Err(DialError::Expired),
-        Ok(other) => Err(DialError::Fault(format!(
-            "the console answered {other:?} to the first frame"
+        Some(PairToBox::Expired) => Err(DialError::Expired),
+        Some(other) => Err(DialError::Fault(format!(
+            "the console answered {named} to the first frame",
+            named = named(&other)
         ))),
-        Err(e) => Err(DialError::Fault(format!(
-            "the console answered no pairing frame: {e}"
-        ))),
+        None => Err(DialError::Fault(NO_FRAME.into())),
     }
 }
 

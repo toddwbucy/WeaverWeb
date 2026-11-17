@@ -1,8 +1,11 @@
 {% extends "setup_frame.html" %}
 {% block panes %}
-{#- The pairing page (Spec 6.2): the checkbox and the console's link are
-    live. The waiting box and the survey's report are held, each saying
-    what it waits on, holding no input. -#}
+{#- The pairing page (Spec 6.2, 8.2): the checkbox, the console's link and,
+    where the enrollment is served, the waiting box are live. The survey's
+    report is held, saying what it waits on, holding no input. -#}
+{%- match pair.entered %}{% when Some with (entered) %}
+<p class="note" role="status"><span class="status {{ entered.status }}">{{ entered.status }}</span> {{ entered.words }}{% if entered.retire %}: retire it on <a href="/admin/agents">the register</a>, or replace its box below, and pair the box again{% endif %}</p>
+{%- when None %}{% endmatch %}
 <section class="pane">
   <header><span class="stage"><b>1</b> Declare</span><h2>Virtual machine or host</h2><span class="backing built">built</span><span class="status ok">ok</span><span class="source">the setup</span></header>
   <div class="body">
@@ -32,13 +35,76 @@
   </div>
   <footer>The box's setup asks for this address and port, and the box must reach them.</footer>
 </section>
+{%- if pair.live %}
+<section class="pane">
+  <header><span class="stage"><b>1</b> Declare</span><h2>The waiting box</h2><span class="backing built">built</span><span class="status {{ pair.status }}">{{ pair.status }}</span><span class="source">the link port, and the register</span></header>
+  <div class="body">
+  <table>
+    <tbody>
+    <tr><th>The console's fingerprint</th><td class="mono">{{ pair.fingerprint }}</td></tr>
+    </tbody>
+  </table>
+  {%- if pair.waiting.is_empty() %}
+  <p>No box is waiting. The box dials the console's link, above, and shows a short code and a fingerprint.</p>
+  {%- else %}
+  <table>
+    <thead><tr><th>Box, as it claims</th><th>Peer address</th><th>Waited</th></tr></thead>
+    <tbody>
+    {%- for w in pair.waiting %}
+    <tr><td class="mono">{{ w.claim }}</td><td class="mono">{{ w.peer }}</td><td>{{ w.waited }}</td></tr>
+    {%- endfor %}
+    </tbody>
+  </table>
+  {%- for w in pair.waiting %}{% if w.loopback %}
+  <p><span class="status fail">loopback</span> The box claiming {{ w.claim }} dialed from a loopback address, the console's own machine, and the checkbox says virtual machine.</p>
+  {%- endif %}{% endfor %}
+  {%- endif %}
+  {%- match pair.paired %}{% when Some with (paired) %}
+  <p>Paired: <span class="mono">{{ paired.0 }}</span>, by {{ paired.1 }}.</p>
+  {%- when None %}{% endmatch %}
+  {%- if pair.in_step %}
+  {%- match pair.closed_until %}{% when Some with (until) %}
+  <p><span class="status hold">closed</span> Five misses closed the code field until {{ until }}.</p>
+  {%- when None %}
+  <form method="post" action="/setup/{{ frame.setup_id }}/pair">
+    <label><input type="checkbox" name="compared" value="on"> The fingerprint the box shows is the console's, above, group for group</label>
+    <label>Code <input type="text" name="code" autocomplete="off" spellcheck="false" maxlength="16"></label>
+    {%- if !pair.rows.is_empty() %}
+    <fieldset>
+      <legend>A live row holds this agent's name</legend>
+      <label><input type="radio" name="replace" value="" checked> Pair as a new row</label>
+      {%- for r in pair.rows %}
+      <label><input type="radio" name="replace" value="{{ r.agent_id }}"> Replace the box of <span class="mono">{{ r.agent_id }}</span>, which holds <span class="mono">{{ r.box }}</span>: that box's credentials end</label>
+      {%- endfor %}
+    </fieldset>
+    {%- endif %}
+    <button type="submit">Pair</button>
+  </form>
+  {%- endmatch %}
+  {%- endif %}
+  {%- if !pair.rows.is_empty() %}
+  <table>
+    <caption>The register's live rows holding this name</caption>
+    <thead><tr><th>Agent</th><th>Box</th><th>Gate</th><th>Admin</th><th>State</th></tr></thead>
+    <tbody>
+    {%- for r in pair.rows %}
+    <tr><td class="mono">{{ r.agent_id }}</td><td class="mono">{{ r.box }}</td><td class="mono">{{ r.gate }}</td><td class="mono">{{ r.admin }}</td><td>{{ r.label }}</td></tr>
+    {%- endfor %}
+    </tbody>
+  </table>
+  {%- endif %}
+  </div>
+  <footer>Each box is listed as it claims. The fingerprint is compared before the code is entered, and the rows are the register's, each credential by its fingerprint.</footer>
+</section>
+{%- else %}
 <section class="pane">
   <header><span class="stage"><b>1</b> Declare</span><h2>The waiting box</h2><span class="backing unbuilt">unbuilt</span><span class="status hold">hold</span></header>
   <div class="body">
   <p>The box that dialed the console shows a short code and a fingerprint. The fingerprint is compared with the console's own, and the code is entered here.</p>
   </div>
-  <footer>Waits on the box's enrollment and the image's setup script.</footer>
+  <footer>Waits on the enrollment, which this build of the console does not serve.</footer>
 </section>
+{%- endif %}
 <section class="pane">
   <header><span class="stage"><b>1</b> Declare</span><h2>The survey's report</h2><span class="backing unbuilt">unbuilt</span><span class="status hold">hold</span></header>
   <div class="body">

@@ -87,6 +87,26 @@ pub struct Setup {
     /// does.
     pub devices: Option<Vec<i32>>,
     pub version: i64,
+    /// **The pairing's link** (Spec 6.2, 8.2): the register row the
+    /// exchange wrote or whose box it set, and which write it was, `pair`
+    /// or `replace box`. None while the setup is in its pairing step.
+    pub paired: Option<(String, String)>,
+    /// The code field's misses since it last opened, under five.
+    pub code_misses: i16,
+    /// Until when the code field is closed, five misses having closed it.
+    pub code_closed_until: Option<DateTime<Utc>>,
+}
+
+impl Setup {
+    /// **In its pairing step** (Spec 8.2): open, and no pairing linked.
+    pub fn in_pairing_step(&self) -> bool {
+        self.state == "open" && self.paired.is_none()
+    }
+
+    /// The code field is closed at `now`, five misses having closed it.
+    pub fn code_closed(&self, now: DateTime<Utc>) -> bool {
+        self.code_closed_until.is_some_and(|until| until > now)
+    }
 }
 
 fn setup_of(r: &sqlx::postgres::PgRow) -> Setup {
@@ -101,11 +121,17 @@ fn setup_of(r: &sqlx::postgres::PgRow) -> Setup {
         turn_context: r.get("turn_context"),
         devices: r.get("devices"),
         version: r.get("version"),
+        paired: r
+            .get::<Option<String>, _>("agent_id")
+            .zip(r.get::<Option<String>, _>("paired_as")),
+        code_misses: r.get("code_misses"),
+        code_closed_until: r.get("code_closed_until"),
     }
 }
 
 const SELECT: &str = "SELECT s.setup_id, s.name, s.virtual_machine, p.name AS begun_by, \
-     s.begun_at, s.state, s.context_length, s.turn_context, s.devices, s.version \
+     s.begun_at, s.state, s.context_length, s.turn_context, s.devices, s.version, \
+     s.agent_id, s.paired_as, s.code_misses, s.code_closed_until \
      FROM agent_setup s JOIN person p ON p.person_id = s.begun_by";
 
 impl Store {
@@ -379,6 +405,100 @@ impl Store {
         .await?;
         commit_with_outcome(tx, "setup pick", self, first).await?;
         Ok(Ok(()))
+    }
+}
+
+/// **Misses that close the code field** (Spec 8.2): five on one setup.
+pub const CODE_MISSES: i16 = 5;
+
+/// **How long five misses close the field** (Spec 8.2): ten minutes from
+/// the fifth, the life of a waiting connection.
+pub const CODE_CLOSED_SECS: i64 = 600;
+
+/// **The code field as an entry finds it under the setup row's lock**
+/// (Spec 8.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Field {
+    /// The setup has left its pairing step: confirmed, or its pairing
+    /// linked.
+    NotInStep,
+    /// Five misses closed the field, and its ten minutes have not passed.
+    Closed,
+    Open,
+}
+
+/// **The code field's exclusion** (Spec 8.2): the setup row held `FOR
+/// UPDATE` in a transaction of its own from the field's check through the
+/// comparison to the miss's count, so entries for one setup are compared
+/// one at a time, each against the field as the last left it, and none
+/// compares once five misses have closed it. A row lock rather than a
+/// lock in memory, so two console processes on one store hold it alike.
+/// The comparison between the check and the count reads no store: a
+/// waiting connection writes nothing before its code matches.
+pub struct FieldLock {
+    tx: sqlx::Transaction<'static, sqlx::Postgres>,
+    setup_id: String,
+}
+
+impl Store {
+    /// **The setup's code field, locked** (Spec 8.2): the row taken `FOR
+    /// UPDATE` and its field read under the lock. An unknown setup reads as
+    /// out of its pairing step.
+    pub async fn code_field(&self, setup_id: &str) -> anyhow::Result<(FieldLock, Field)> {
+        let mut tx = self.pool.begin().await?;
+        let row = sqlx::query(
+            "SELECT state = 'open' AND agent_id IS NULL AS in_step, \
+             COALESCE(code_closed_until > now(), false) AS closed \
+             FROM agent_setup WHERE setup_id = $1 FOR UPDATE",
+        )
+        .bind(setup_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let field = match row {
+            Some(row) if !row.get::<bool, _>("in_step") => Field::NotInStep,
+            None => Field::NotInStep,
+            Some(row) if row.get::<bool, _>("closed") => Field::Closed,
+            Some(_) => Field::Open,
+        };
+        Ok((
+            FieldLock {
+                tx,
+                setup_id: setup_id.to_owned(),
+            },
+            field,
+        ))
+    }
+}
+
+impl FieldLock {
+    /// **One miss of the code field** (Spec 8.2), counted under the lock and
+    /// committed, kept on the setup row so a restart does not reset it: the
+    /// fifth closes the field for ten minutes and starts the count again.
+    /// Answers whether this miss closed it. Not the operator's content, so
+    /// the setup's version stands.
+    pub async fn missed(mut self) -> anyhow::Result<bool> {
+        let closed: Option<bool> = sqlx::query_scalar(
+            "UPDATE agent_setup SET \
+               code_misses = CASE WHEN code_misses + 1 >= $2 THEN 0 ELSE code_misses + 1 END, \
+               code_closed_until = CASE WHEN code_misses + 1 >= $2 \
+                 THEN now() + make_interval(secs => $3) ELSE code_closed_until END \
+             WHERE setup_id = $1 AND state = 'open' \
+             RETURNING code_misses = 0",
+        )
+        .bind(&self.setup_id)
+        .bind(CODE_MISSES)
+        .bind(CODE_CLOSED_SECS as f64)
+        .fetch_optional(&mut *self.tx)
+        .await?;
+        self.tx.commit().await?;
+        Ok(closed.unwrap_or(false))
+    }
+
+    /// The lock given back with nothing written: a match, or a field not
+    /// open.
+    pub async fn release(self) -> anyhow::Result<()> {
+        self.tx.rollback().await?;
+        Ok(())
     }
 }
 

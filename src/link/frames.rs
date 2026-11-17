@@ -453,6 +453,9 @@ pub enum PairFromBox {
         gate_request: String,
         admin_request: String,
     },
+    /// **The box's word** (Spec 8.2, the exchange's step 5): it wrote the
+    /// answer, and the console may write the row.
+    Written,
 }
 
 /// **A frame the console sends on a pairing connection** (Spec 8.2).
@@ -474,6 +477,23 @@ pub enum PairToBox {
     Refused {
         reason: String,
     },
+    /// **The exchange's answer** (Spec 8.2, step 4): the agent's name, the
+    /// row's identity, the box as the row will hold it, the name the
+    /// server's certificate is verified under, the authority's certificate,
+    /// and the two certificates signed over the box's requests, each in
+    /// PEM. No key: the box made both.
+    Answer {
+        agent: String,
+        agent_id: String,
+        r#box: String,
+        server_name: String,
+        authority: String,
+        gate: String,
+        admin: String,
+    },
+    /// **The console's last word** (Spec 8.2, step 6): the row stands with
+    /// the answer's two certificates live. The console closes.
+    Paired,
 }
 
 /// The reasons a console refuses a pairing with (Spec 8.2, `pair`'s
@@ -481,6 +501,13 @@ pub enum PairToBox {
 pub mod pair_reason {
     /// Past the waiting connections' bound, in all or from one peer.
     pub const BUSY: &str = "busy";
+    /// A live row holds the box the connection claims and the setup's name.
+    pub const BOX_AND_NAME_LIVE: &str = "box_and_name_live";
+    /// The setup left its pairing step since the entry.
+    pub const SETUP_CLOSED: &str = "setup_closed";
+    /// A certificate request is not ECDSA P-256 with SHA-256 whose own
+    /// signature verifies.
+    pub const REQUEST_REFUSED: &str = "request_refused";
 }
 
 #[cfg(test)]

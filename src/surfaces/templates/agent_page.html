@@ -107,7 +107,7 @@
     <div id="planes" hx-get="/agents/{{ agent_id }}/availability" hx-trigger="every 15s" hx-swap="innerHTML">{% include "agent_planes.html" %}</div>
     <table>
       <tbody>
-      <tr><th>Present</th><td>{% if present %}both planes connected{% else %}not present{% endif %}</td></tr>
+      <tr><th>Present</th><td>{% if setup_running %}paired, setup running{% else if present %}both planes connected{% else %}not present{% endif %}</td></tr>
       <tr><th>Gate plane</th><td>{{ gate }}</td></tr>
       <tr><th>Admin plane</th><td>{{ admin_plane }}</td></tr>
       </tbody>

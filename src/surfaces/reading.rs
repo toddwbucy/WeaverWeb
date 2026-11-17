@@ -451,6 +451,9 @@ struct AgentPage {
     label: String,
     roles: String,
     present: bool,
+    /// **"Paired, setup running"** (Spec 2.12), until either connector's
+    /// service is first admitted.
+    setup_running: bool,
     gate: String,
     admin_plane: String,
     /// The trace door, said, for the live trace's pane.
@@ -1057,6 +1060,7 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, agent: String) ->
         label: format!("{}/{}", row.r#box, row.name),
         roles: roles.join(", "),
         present: row.present(),
+        setup_running: row.setup_running,
         gate: plane(&row.gate),
         admin_plane: plane(&row.admin),
         door: door_said(&row),

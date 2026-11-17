@@ -92,6 +92,7 @@ const CALLS: &[(&str, &str, Why)] = &[
     ("src/link/client.rs", "carry", Channel),
     ("src/link/client.rs", "send", Channel),
     ("src/link/client.rs", "close_within", Join), // the writer
+    ("src/link/exchange.rs", "run", Socket),      // the box's word, under the authority lock
     ("src/link/gate_con.rs", "serve", Channel),   // the turns declined at the grace
     ("src/link/gate_con.rs", "serve", Join),      // the turns in flight at the grace
     ("src/link/listener.rs", "start_with", Reads), // the lock's ping
@@ -115,6 +116,8 @@ const CALLS: &[(&str, &str, Why)] = &[
     ("src/link/listener.rs", "serve_connection", Socket),
     ("src/link/listener.rs", "serve_connection", Socket),
     ("src/link/listener.rs", "serve_connection", Resendable), // `take_entry`
+    ("src/link/pair_client.rs", "written", Socket),
+    ("src/link/pair_client.rs", "last_word", Socket),
     ("src/link/pair_client.rs", "next", Socket),
     ("src/link/pair_client.rs", "dial", Socket),
     ("src/link/pair_client.rs", "over", Socket),

@@ -538,12 +538,10 @@ pub(crate) mod tests {
             .as_secs()
     }
 
-    /// The Unix seconds a test database's name carries, where the name has
-    /// the dated shape: `wwt_`, ten digits, `_` and sixteen lowercase hex
-    /// digits. The sweep's one rule, which also keeps every name it formats
-    /// into a statement to that shape.
-    fn dated(name: &str) -> Option<u64> {
-        let (secs, hex) = name.strip_prefix("wwt_")?.split_once('_')?;
+    /// The Unix seconds a name carries, where it is `prefix`, ten digits,
+    /// `_` and sixteen lowercase hex digits.
+    fn dated_as(prefix: &str, name: &str) -> Option<u64> {
+        let (secs, hex) = name.strip_prefix(prefix)?.split_once('_')?;
         let shaped = secs.len() == 10
             && secs.bytes().all(|b| b.is_ascii_digit())
             && hex.len() == 16
@@ -551,27 +549,45 @@ pub(crate) mod tests {
         if shaped { secs.parse().ok() } else { None }
     }
 
-    fn dated_name(at: u64) -> String {
+    /// The Unix seconds a test database's name carries, where the name has
+    /// the dated shape, `wwt_` then [`dated_as`]'s. The one shape
+    /// `fresh_store` passes the sweep, which also keeps every name the
+    /// sweep formats into a statement to that shape.
+    fn dated(name: &str) -> Option<u64> {
+        dated_as("wwt_", name)
+    }
+
+    fn name_as(prefix: &str, at: u64) -> String {
         format!(
-            "wwt_{at:010}_{}",
+            "{prefix}{at:010}_{}",
             &uuid::Uuid::new_v4().simple().to_string()[..16]
         )
     }
 
-    /// **The sweep**: every database of the dated shape whose name's time is
-    /// more than `older_than` seconds before `at` is dropped, by a plain
+    fn dated_name(at: u64) -> String {
+        name_as("wwt_", at)
+    }
+
+    /// **The sweep**: every database whose name `shape` reads a time from,
+    /// more than `older_than` seconds before `at`, is dropped, by a plain
     /// `DROP DATABASE`, which the server refuses while a connection holds
     /// the database, so the check for a connection and the drop are one
     /// step. A refusal is printed and passed over. Answers the names
-    /// dropped.
-    async fn sweep_aged(admin: &sqlx::PgPool, at: u64, older_than: u64) -> Vec<String> {
+    /// dropped. Every name formatted into a statement is one `shape` reads,
+    /// so the shape bounds it.
+    async fn sweep_aged(
+        admin: &sqlx::PgPool,
+        shape: impl Fn(&str) -> Option<u64>,
+        at: u64,
+        older_than: u64,
+    ) -> Vec<String> {
         let names: Vec<String> = sqlx::query_scalar("SELECT datname FROM pg_database")
             .fetch_all(admin)
             .await
             .unwrap_or_default();
         let mut dropped = Vec::new();
         for name in names {
-            let Some(made) = dated(&name) else { continue };
+            let Some(made) = shape(&name) else { continue };
             if at.saturating_sub(made) <= older_than {
                 continue;
             }
@@ -609,14 +625,14 @@ pub(crate) mod tests {
         Ok(())
     }
 
-    /// The process's one sweep, which every caller waits for, so no test
-    /// plants a database while it runs.
+    /// The process's one sweep, run by its first `fresh_store`, which the
+    /// callers in flight wait for.
     static SWEPT: tokio::sync::OnceCell<()> = tokio::sync::OnceCell::const_new();
 
     async fn swept(admin: &sqlx::PgPool) {
         SWEPT
             .get_or_init(|| async {
-                let dropped = sweep_aged(admin, unix_now(), SWEEP_AGE).await;
+                let dropped = sweep_aged(admin, dated, unix_now(), SWEEP_AGE).await;
                 if !dropped.is_empty() {
                     eprintln!("swept {} aged test databases: {dropped:?}", dropped.len());
                 }
@@ -768,6 +784,26 @@ pub(crate) mod tests {
         }
     }
 
+    /// The sweep test's own shape, `wws_` in place of `wwt_`, which
+    /// [`dated`] never reads, so no process's sweep takes the databases the
+    /// sweep test plants.
+    const PLANTED: &str = "wws_";
+
+    /// **The sweep test's planted shape is never read as a test database**
+    /// (#139, Codex on #142): [`dated`] reads no name of it, so another
+    /// process's sweep, which reads the dated shape alone, never takes a
+    /// planted database. The planted shape reads neither shape of a test
+    /// database either.
+    #[test]
+    fn the_planted_shape_is_never_read_as_a_test_database() {
+        let planted = name_as(PLANTED, 1_763_350_000);
+        assert_eq!(dated(&planted), None, "{planted}");
+        assert_eq!(dated_as(PLANTED, &planted), Some(1_763_350_000));
+        for name in [dated_name(1_763_350_000), "wwt_0123456789abcdef".to_owned()] {
+            assert_eq!(dated_as(PLANTED, &name), None, "{name}");
+        }
+    }
+
     /// **A test's database is named by its creation time and says whose it
     /// is** (#139): its name has the dated shape, its time within ten
     /// minutes of the test's, and its comment names the test and the latest
@@ -849,14 +885,17 @@ pub(crate) mod tests {
         assert_eq!(standing, 0);
     }
 
-    /// **The sweep drops an aged test database and nothing else** (#139): of
-    /// three databases of the dated shape, the one named seven hours old is
-    /// dropped, the one named an hour old stands, and the one named seven
-    /// hours old with a connection held stands, since a plain `DROP
-    /// DATABASE` is refused while a connection holds it. The process's own
-    /// sweep is finished first, so it takes none of the three. A run that
-    /// fails here leaves only databases of the dated shape, which a later
-    /// run's sweep drops.
+    /// **The sweep drops an aged database and nothing else** (#139): of
+    /// three planted databases, the one named seven hours old is dropped,
+    /// the one named an hour old stands, and the one named seven hours old
+    /// with a connection held stands, since a plain `DROP DATABASE` is
+    /// refused while a connection holds it. They are planted in the test's
+    /// own shape, [`PLANTED`], and a sweep of the dated shape, as another
+    /// process's first `fresh_store` runs it, leaves all three standing
+    /// (Codex on #142). The test's own sweep reads its three names alone,
+    /// so two runs of it at once take nothing of each other's. A run that
+    /// fails before its cleanup leaves databases named `wws_`, which no
+    /// sweep takes, to be dropped by hand.
     #[tokio::test]
     async fn the_sweep_drops_only_an_aged_database_with_no_connection() {
         let Ok(url) = std::env::var("DATABASE_URL") else {
@@ -867,11 +906,20 @@ pub(crate) mod tests {
         let admin = sqlx::PgPool::connect_with(base.clone())
             .await
             .expect("connect");
-        swept(&admin).await;
         let at = unix_now();
-        let aged = dated_name(at - 7 * 3600);
-        let young = dated_name(at - 3600);
-        let held = dated_name(at - 7 * 3600);
+        let aged = name_as(PLANTED, at - 7 * 3600);
+        let young = name_as(PLANTED, at - 3600);
+        let held = name_as(PLANTED, at - 7 * 3600);
+        let planted = [aged.clone(), young.clone(), held.clone()];
+        async fn standing_of(admin: &sqlx::PgPool, names: &[String]) -> Vec<String> {
+            sqlx::query_scalar(
+                "SELECT datname FROM pg_database WHERE datname = ANY ($1) ORDER BY datname",
+            )
+            .bind(names)
+            .fetch_all(admin)
+            .await
+            .unwrap()
+        }
         for name in [&aged, &young, &held] {
             sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {name}")))
                 .execute(&admin)
@@ -884,17 +932,21 @@ pub(crate) mod tests {
         .await
         .expect("hold a connection");
 
-        let dropped = sweep_aged(&admin, at, SWEEP_AGE).await;
-        let standing: Vec<String> = sqlx::query_scalar(
-            "SELECT datname FROM pg_database WHERE datname = ANY ($1) ORDER BY datname",
-        )
-        .bind([&aged, &young, &held])
-        .fetch_all(&admin)
-        .await
-        .unwrap();
+        // Another process's sweep, which reads the dated shape alone.
+        let by_another = sweep_aged(&admin, dated, at, SWEEP_AGE).await;
+        let after_another = standing_of(&admin, &planted).await;
+        let mine = |name: &str| {
+            planted
+                .iter()
+                .any(|p| p == name)
+                .then(|| dated_as(PLANTED, name))
+                .flatten()
+        };
+        let dropped = sweep_aged(&admin, mine, at, SWEEP_AGE).await;
+        let standing = standing_of(&admin, &planted).await;
         // A forced drop ends the held connection, so its close may fail.
         let _ = sqlx::Connection::close(holding).await;
-        for name in [&aged, &young, &held] {
+        for name in &planted {
             sqlx::query(sqlx::AssertSqlSafe(format!(
                 "DROP DATABASE IF EXISTS {name} WITH (FORCE)"
             )))
@@ -904,6 +956,12 @@ pub(crate) mod tests {
         }
         admin.close().await;
 
+        let mut all = planted.to_vec();
+        all.sort();
+        assert_eq!(
+            after_another, all,
+            "another process's sweep: {by_another:?}"
+        );
         assert!(dropped.contains(&aged), "{dropped:?}");
         let mut kept = vec![young, held];
         kept.sort();

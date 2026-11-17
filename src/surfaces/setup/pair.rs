@@ -306,13 +306,6 @@ mod entry {
                 }
             },
         };
-        let Some(enrollment) = seams.enrollment.clone() else {
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "this console serves no pairing",
-            )
-                .into_response();
-        };
         let session = match writer(
             &store,
             &seams.policy,
@@ -324,6 +317,16 @@ mod entry {
         {
             Ok(session) => session,
             Err(answer) => return answer,
+        };
+        // **A console that serves no pairing says so past the admin gate**,
+        // as every system refusal does once the person's grant stands, so
+        // the gate is the first thing a person without it meets.
+        let Some(enrollment) = seams.enrollment.clone() else {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "this console serves no pairing",
+            )
+                .into_response();
         };
         let setup = match store.setup(setup_id).await {
             Ok(Some(setup)) => setup,

@@ -76,6 +76,21 @@ pub(crate) const HANDSHAKE_SECS: u64 = 10;
 /// cadence of zero.
 pub const LEAST_SILENCE_SECS: u64 = 4;
 
+/// **The bound on a setup ask's answer from its frame's arrival** (Spec
+/// 8.3), where the silence bound is longer. The box gives an ask up at
+/// `client::ASK_SECS` from its dial, so the listener answers within this
+/// and the box keeps `SETUP_ANSWER_MARGIN_SECS` of its own bound for the
+/// dial, the handshake and the answer's read.
+pub const SETUP_ANSWER_SECS: u64 = 20;
+
+/// What the box keeps of its own bound past the listener's answer.
+pub const SETUP_ANSWER_MARGIN_SECS: u64 = 10;
+
+const _: () = assert!(
+    SETUP_ANSWER_SECS + SETUP_ANSWER_MARGIN_SECS <= crate::link::client::ASK_SECS,
+    "a setup ask's answer leaves the box its margin within its own bound"
+);
+
 /// **One listener per store, held at the store** (Spec 8): the key of the
 /// session-level advisory lock a listener takes before its epoch and
 /// reset, and holds for its life on a connection of its own. **A constant
@@ -782,6 +797,10 @@ struct Inner {
     /// completes, so its bound can be watched.
     #[cfg(test)]
     stall_next_setup: std::sync::atomic::AtomicBool,
+    /// A test's setup answer bound in milliseconds in place of
+    /// `SETUP_ANSWER_SECS`, none where 0.
+    #[cfg(test)]
+    setup_answer_ms: AtomicU64,
     /// And on a verb's outcome: the next one waits this long first.
     #[cfg(test)]
     delay_next_outcome: Mutex<Option<Duration>>,
@@ -946,6 +965,8 @@ impl Listener {
                 stall_next_first: std::sync::atomic::AtomicBool::new(false),
                 #[cfg(test)]
                 stall_next_setup: std::sync::atomic::AtomicBool::new(false),
+                #[cfg(test)]
+                setup_answer_ms: AtomicU64::new(0),
                 #[cfg(test)]
                 delay_next_outcome: Mutex::new(None),
                 #[cfg(test)]
@@ -1277,6 +1298,15 @@ impl Listener {
     #[cfg(test)]
     pub fn stall_next_setup_ask(&self) {
         self.inner.stall_next_setup.store(true, Ordering::Relaxed);
+    }
+
+    /// A test's lever: the setup answer bound, shortened from
+    /// `SETUP_ANSWER_SECS`.
+    #[cfg(test)]
+    pub fn set_setup_answer_bound(&self, bound: Duration) {
+        self.inner
+            .setup_answer_ms
+            .store(bound.as_millis() as u64, Ordering::Relaxed);
     }
 
     /// How many asks the agent's admin connection holds: its pending
@@ -3342,6 +3372,18 @@ async fn refuse(tx: mpsc::Sender<ToClient>, writer: tokio::task::JoinHandle<()>,
     drain_writer(writer).await;
 }
 
+/// **A setup ask's bound**: the silence bound, or `SETUP_ANSWER_SECS`
+/// where that is shorter.
+fn setup_bound(inner: &Inner) -> Duration {
+    let answer = Duration::from_secs(SETUP_ANSWER_SECS);
+    #[cfg(test)]
+    let answer = match inner.setup_answer_ms.load(Ordering::Relaxed) {
+        0 => answer,
+        ms => Duration::from_millis(ms),
+    };
+    inner.silence.min(answer)
+}
+
 /// A setup connection's first frame, as it came.
 struct SetupAsked {
     name: String,
@@ -3398,20 +3440,34 @@ async fn serve_setup(
         refuse(tx, writer, Refusal::WrongPlane).await;
         return;
     }
+    // **One deadline from the frame spans the admission and the store's
+    // answer** (Spec 8.3), at the silence bound or `SETUP_ANSWER_SECS`,
+    // whichever is shorter, so the box hears the refusal before it gives the
+    // ask up. The admission puts the claim in inside its transaction, before
+    // the commit, so past the deadline it comes out here, and the ask is
+    // refused `store_unavailable`. The admission commits nothing.
+    let bound = setup_bound(inner);
+    let until = tokio::time::Instant::now() + bound;
     let key = (agent.agent_id.clone(), plane);
     let mut claimed = false;
-    let locked = inner
-        .store
-        .with_row_lock(&agent.agent_id, || {
+    let locked = tokio::time::timeout_at(
+        until,
+        inner.store.with_row_lock(&agent.agent_id, || {
             let live = inner.live.lock().unwrap();
             if !live.contains_key(&key) {
                 claimed = inner.setups.lock().unwrap().insert(key.clone());
             }
-        })
-        .await;
-    if let Err(e) = locked {
+        }),
+    )
+    .await;
+    let unlocked = match locked {
+        Ok(Ok(())) => None,
+        Ok(Err(e)) => Some(format!("could not be locked: {e:#}")),
+        Err(_) => Some(format!("was not locked within {bound:?}")),
+    };
+    if let Some(why) = unlocked {
         tracing::error!(
-            "link from {peer}: the row of {} could not be locked for a setup ask: {e:#}",
+            "link from {peer}: the row of {} {why}, for a setup ask",
             agent.agent_id
         );
         if claimed {
@@ -3432,12 +3488,10 @@ async fn serve_setup(
         setups: &inner.setups,
         key,
     };
-    // **The store's answer within the silence bound** (Spec 8.3), as every
-    // store wait on a connection's path is: past it the ask is refused
-    // `store_unavailable` and the claim goes with this function. The report
-    // commits, so `deadline::before` bounds it and never polls it past the
-    // bound. The describe reads.
-    let until = tokio::time::Instant::now() + inner.silence;
+    // **The store's answer by the same deadline**: past it the ask is
+    // refused `store_unavailable` and the claim goes with this function. The
+    // report commits, so `deadline::before` bounds it and never polls it past
+    // the deadline. The describe reads.
     let stalled = async {
         #[cfg(test)]
         if inner.stall_next_setup.swap(false, Ordering::Relaxed) {
@@ -3481,9 +3535,8 @@ async fn serve_setup(
         Ok(answered) => answered,
         Err(Passed) => {
             tracing::error!(
-                "link from {peer}: {} setup {what} not answered by the store within {:?}",
-                agent.agent_id,
-                inner.silence
+                "link from {peer}: {} setup {what} not answered by the store within {bound:?}",
+                agent.agent_id
             );
             Ok(Err(Refusal::StoreUnavailable))
         }

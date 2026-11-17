@@ -1734,3 +1734,50 @@ async fn an_entry_dropped_once_its_code_matched_still_pairs_the_box() {
     assert!(matches!(last, Some(LastWord::Paired)), "{last:?}");
     assert_eq!(rows_named(s, "karl").await, 1);
 }
+
+/// **One deadline from the setup frame spans the admission and the store's
+/// answer, at the silence bound or `SETUP_ANSWER_SECS`, whichever is
+/// shorter** (Spec 8.3), so the box hears the refusal before it gives the
+/// ask up: a describe whose admission waits on the agent's row, held by
+/// another transaction, is refused `store_unavailable` within a box's
+/// bound shorter than the silence bound, the defaults' shape at a test's
+/// scale, and the next ask, the hold gone, is answered.
+///
+/// Perturbations: run the admission outside the deadline, and the box gives
+/// up first. Bound the ask by the silence bound alone, and the box gives up
+/// first.
+#[tokio::test]
+async fn a_setup_ask_whose_admission_waits_is_refused_within_the_boxs_bound() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
+    let setup = setup.unwrap();
+    let on_box = tempfile::tempdir().unwrap();
+    let answer = enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a", None).await;
+    let config = on_box.path().join("admin-con.toml");
+    rig.listener.set_setup_answer_bound(Duration::from_secs(1));
+    let the_box = SILENCE / 2;
+
+    let mut holder = s.pool.begin().await.unwrap();
+    sqlx::query("SELECT 1 FROM agent WHERE agent_id = $1 FOR UPDATE")
+        .bind(answer.agent_id.as_str())
+        .execute(&mut *holder)
+        .await
+        .unwrap();
+    let mut p = captured();
+    let status = box_commands::setup_describe_within(&mut p, &config, the_box).await;
+    let (line, _) = outcome_of(p);
+    assert_eq!(
+        (status, line["reason"].as_str()),
+        (Status::Refused, Some("store_unavailable")),
+        "{line}"
+    );
+    holder.rollback().await.unwrap();
+    let (status, line) = describe(&config).await;
+    assert_eq!(
+        (status, line["event"].as_str()),
+        (Status::Done, Some("described")),
+        "{line}"
+    );
+}

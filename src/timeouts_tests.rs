@@ -111,8 +111,9 @@ const CALLS: &[(&str, &str, Why)] = &[
     ("src/link/listener.rs", "send", Channel),
     ("src/link/listener.rs", "enqueue", Channel),
     ("src/link/listener.rs", "drain_writer", Join),
-    ("src/link/listener.rs", "serve_setup", Reads), // `described`, a read
-    ("src/link/listener.rs", "serve_connection", Socket), // the ClientHello
+    ("src/link/listener.rs", "serve_setup", CommitsNothing), // `with_row_lock`, the admission
+    ("src/link/listener.rs", "serve_setup", Reads),          // `described`, a read
+    ("src/link/listener.rs", "serve_connection", Socket),    // the ClientHello
     ("src/link/listener.rs", "serve_connection", Socket),
     ("src/link/listener.rs", "serve_connection", Socket),
     ("src/link/listener.rs", "serve_connection", Socket),

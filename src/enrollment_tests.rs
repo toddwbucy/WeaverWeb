@@ -1625,16 +1625,19 @@ async fn report_within(
     (status, line)
 }
 
-/// **A setup ask the store does not answer within the silence bound is
-/// refused `store_unavailable` and lets its claim go** (Spec 8.3), as every
-/// store wait on a connection's path is bounded: a report held behind the
+/// **A setup ask the store does not answer within its bound is refused
+/// `store_unavailable` and lets its claim go** (Spec 8.3), as every store
+/// wait on a connection's path is bounded: a report held behind the
 /// setup's row, locked by another transaction, and a describe whose store
 /// call stalls are each answered at the bound, well within the box's own,
 /// and the next ask, the hold gone, is answered, not refused
-/// `already_connected`. The report held past the bound lands nothing.
+/// `already_connected`. The report held past the bound lands nothing, read
+/// once the hold is gone and before the next report replaces it.
 ///
-/// Perturbation: await the store with no bound, and the box gives up
-/// first, the console still holding the claim.
+/// Perturbations: await the store with no bound, and the box gives up
+/// first, the console still holding the claim. Land the report outside its
+/// transaction before its checks, and the held report lands once the hold
+/// goes, though its ask was refused.
 #[tokio::test]
 async fn a_setup_ask_the_store_holds_past_the_bound_is_refused_and_lets_its_claim_go() {
     let Some(rig) = rig().await else { return };
@@ -1660,6 +1663,16 @@ async fn a_setup_ask_the_store_holds_past_the_bound_is_refused_and_lets_its_clai
         "{line}"
     );
     holder.rollback().await.unwrap();
+    // The held report never sent its commit: a settle after the hold goes,
+    // the setup holds no report, read before the next ask replaces it.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let held: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM agent_setup_report WHERE setup_id = $1")
+            .bind(&setup)
+            .fetch_one(&s.pool)
+            .await
+            .unwrap();
+    assert_eq!(held, 0, "the report held past the bound landed");
     let (status, line) = report_within(&config, br#"{"after": true}"#, the_box).await;
     assert_eq!(status, Status::Done, "{line}");
     let kept: Vec<String> =

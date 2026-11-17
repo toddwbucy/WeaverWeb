@@ -199,8 +199,8 @@ nothing to read for that agent, and the console says that it holds no trace for 
 agent. Whatever keeps the trace past its destination is the operator's, and the console
 states nothing about it. That is the operator's choice. The operator's word of
 2026-11-17, that the trace goes to Weaver Web, which stores it outside the agent's reach
-(section 10.4), bears on this, and how it meets the destination is open, settled by the
-operator, then by the trace field's act (section 9).
+(section 10.4), bears on this, and the operator's words of the same day settle how,
+which the trace field's act writes here (section 9).
 
 The ten surfaces by stage. On the path: Compose is stage 1, Live is stages 3 and 4, and
 Measure, Open a trace and Stage are stage 6. The five on the list side feed a stage
@@ -1008,7 +1008,10 @@ this crate designs around the gap until it closes.
   run with root's authority, which asks the console's address and port, starts the
   connectors' pairing and shows the short one-time code and the console's fingerprint,
   and later, at the command the console shows, lists the drives and formats and mounts
-  the state drive and the models drive after the operator confirms each disk. Beside it,
+  the state drive and the models drive after the operator confirms each disk. A new
+  image for an agent that stands mounts and checks the state drive it carries and never
+  formats it, and refuses it as the models drive, formatting nothing, which the image's
+  script tests (`weaver-web-Spec` section 8.2). Beside it,
   the survey the image ships, run locally, with its report sent over TLS, the connectors
   started on every boot, and the box's two asks of the console over TLS, the chosen
   model's size and the model pulled from the cache, and the box taking the operator's
@@ -1095,12 +1098,11 @@ this crate designs around the gap until it closes.
   hash. A lineage would let the tool answer instead. It would be that
   charter's fact to state and its Spec's record to change, so this cell is
   named here and owned there.
-- **The one-time secret's length and exact lifetime.** Section 10.1 carries its three
-  bounds and the order of ten minutes, and the operator's rulings of 2026-11-16 (setup
-  pages) and their addendum have the box show it as a short code at its console, for the
-  operator to enter on the console's pairing page. The box draws it (section 10.1). Its
-  exact length and lifetime and the limit on attempts are the enrollment act's election
-  (`weaver-web-Spec` section 10).
+- **The one-time secret's length and exact lifetime, closed 2026-11-17** by
+  `weaver-web-Spec` section 8.2: both ends derive it from the pairing connection
+  (section 10.1), fifty bits shown as ten characters in two groups of five, single-use
+  and living with its connection's ten minutes, and five misses on one setup close its
+  code field for ten minutes.
 - **What the run card is.** The term is the operator's, for a JSON file, defined in the
   operator's run card paper (v1.4), which is in no repository as of 2026-11-15. The
   operator's rulings of 2026-11-15 name it three times: it records the ports a
@@ -1119,8 +1121,9 @@ this crate designs around the gap until it closes.
   for that agent, so Record, the live view and Train have nothing to read for it, and
   the console says so. Whatever keeps the trace past its destination is the operator's,
   and the console states nothing about it. That is the operator's choice (sections 3.0
-  and 10.6). The operator's word of 2026-11-17 bears on it, and how is open (the cell
-  on the trace kept outside the agent's reach, below).
+  and 10.6). The operator's word of 2026-11-17 bears on it, and the trace field's act
+  rewrites this cell to it (the cell on the trace kept outside the agent's reach,
+  below).
 - **Declared ports against the connectors' network.** Section 10.3 carries the
   operator's ruling of 2026-11-15 that ports opened by a declaration belong to the
   operator's arrangement. Section 3.0 says the network belongs to the two connectors
@@ -1171,15 +1174,17 @@ this crate designs around the gap until it closes.
 - **Where images are published for the console to find**, with their published hashes.
   Later, and named as later. Settled by the operator's ruling of the place, which the
   act that builds the image download needs.
-- **The trace kept outside the agent's reach, opened 2026-11-17.** The operator's words
-  of 2026-11-17: "remember that the trace doesnt get written to state or anywhere the
-  agent has access to it. the trace goes to weaverweb and it stores it outside of the
-  agent's reach". Section 10.4 says the trace is never written to the agent's state.
-  Sections 3.0 and 10.6, and the closed cell on the trace's destination against the
-  record, say that where the destination is not a file on the agent's machine the
-  console holds no trace, and that what keeps the trace past its destination is the
-  operator's. Open: how the operator's words meet that destination. Settled by the
-  operator, then by the trace field's act (`weaver-web-Spec` section 10).
+- **The trace kept outside the agent's reach, opened 2026-11-17 and closed the same
+  day** by the operator. The operator's words of 2026-11-17 that opened it: "remember
+  that the trace doesnt get written to state or anywhere the agent has access to it. the
+  trace goes to weaverweb and it stores it outside of the agent's reach". Their words of
+  the same day that close it: "weaverweb always gets the trace for now, it should store
+  it locally somewhere at the operators descression or be sent to dev/null. eventually
+  this is what weaveranalysis will use for the bulk of its work." The trace field's act
+  rewrites the passages they bear on to them: sections 3.0 and 10.6 and the cell on the
+  trace's destination against the record above, and `weaver-web-Spec` section 6.1's
+  destination field, section 8.3's paragraph on the trace's destination and section 10's
+  cell on the trace's destination field.
 
 ## 10. The appliance, the console's side
 
@@ -1267,18 +1272,22 @@ order of ten minutes. It is bound to one pending enrollment, the box waiting and
 agent the operator named at the start page, so it cannot enroll a box the operator did
 not expect. Each bound narrows what a leaked secret is worth: it is spent once, it
 expires in minutes, and it serves only the enrollment the operator is waiting on. **The
-box draws it, since the box shows it**, and the console limits the attempts at entering
-it. It is a confirmation code bound to the TLS connection the box already opened, not a
-bearer the server issues, so the rule for the bearers the server mints does not reach it
-(`weaver-web-Spec` sections 2.13 and 8.2). Its exact length and lifetime are the
-enrollment act's election.
+box shows it, and both ends derive it from that connection**, and the console limits the
+attempts at entering it. It is a confirmation code bound to the TLS connection the box
+already opened, not a bearer the server issues, so the rule for the bearers the server
+mints does not reach it (`weaver-web-Spec` sections 2.13 and 8.2). Its exact length and
+lifetime, and the limit on attempts, are `weaver-web-Spec` section 8.2's election.
 
 **Every root act of the setup runs on the box, at a screen the operator is sitting at**,
 on the operator's rulings of 2026-11-16 (setup pages), so admin's grant does not grow.
 Once the model is picked, the console shows a command to run at the appliance's console,
 which starts the setup script's drive setup: the script lists the drives it sees, and
 formats and mounts the state drive and then the models drive, each after the operator
-confirms the disk (section 10.4). The drive setup is the appliance's script alone, and a
+confirms the disk (section 10.4). A new image for an agent that stands mounts the state
+drive it carries, checks it and never formats it, and stops and tells the operator where
+the check fails or the operator picks it as the models drive (`weaver-web-Spec` section
+8.2). The drive setup is the appliance's
+script alone, and a
 host's own script is later, and named as later. A host install points at a state
 directory and a models directory and attaches and formats nothing (section 10.4). On a
 virtual machine the first setup cannot forgo the hypervisor, in the operator's words of
@@ -1422,7 +1431,10 @@ disks in the hypervisor, and the appliance's setup script, started by a command 
 console shows once the model is picked, lists the drives it sees, asks which one is for
 state, and formats and mounts each after the operator confirms the disk, on the
 operator's rulings of 2026-11-16 (setup pages), which supersede the ruling of 2026-11-15
-that the operator mounts them over SSH. A host install points at a state directory and a
+that the operator mounts them over SSH. A new image for an agent that stands mounts the
+state drive it carries, never formats it and never takes it as the models drive
+(`weaver-web-Spec` section 8.2). A host
+install points at a state directory and a
 models directory, and attaches and formats nothing, on the addendum to the same rulings,
 and the drives page shows the directories the operator named with free space against the
 need. A host's models directory defaults to that user's default Hugging Face cache, so
@@ -1508,9 +1520,9 @@ view and Train have nothing to read for that agent, and the console says that it
 no trace for that agent. Whatever keeps the trace past its destination is the
 operator's, and the console states nothing about it. That is the operator's choice. The
 operator's word of 2026-11-17, that the trace goes to Weaver Web, which stores it
-outside the agent's reach (section 10.4), bears on this, and how it meets the
-destination is open, settled by the operator, then by the trace field's act (section
-9). **A destination that cannot be opened refuses the load**, admin's standing rule
+outside the agent's reach (section 10.4), bears on this, and the operator's words of the
+same day settle how, which the trace field's act writes here (section 9). **A
+destination that cannot be opened refuses the load**, admin's standing rule
 (`weaver-admin-operator-contract` section 5), and an agent that elects no state is held
 to it like any other: an operator who wants an agent that keeps no state declares none,
 on the operator's ruling of 2026-11-15.

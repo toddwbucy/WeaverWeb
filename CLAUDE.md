@@ -184,7 +184,12 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
   thread per core, a many-core machine runs enough fresh stores at once that tests fail
   with `PoolTimedOut` ("pool timed out while waiting for an open connection"), and a test
   whose drop also times out leaves its database for the sweep (measured 2026-11-17: 36 of
-  79 in five modules failed at the default, none at eight).
+  79 in five modules failed at the default, none at eight). A `fresh_store` database is
+  named `wwt_<Unix seconds>_<16 hex>` and commented with its test and the latest
+  migration it ran. A run's first `fresh_store` drops every database of that shape older
+  than six hours that no connection holds (#139), so a stopped suite's leftovers go with a
+  later run. The older shape `wwt_<16 hex>` is never swept, and a database kept on purpose
+  is renamed out of the shape.
 - **Single test:** `cargo test --lib store::read::tests::<name>`. Add `-- --nocapture` to see
   skip notices.
 - **Compile-fail pins** are doctests in `src/store/key.rs` and `src/store/experiment.rs`. Run

@@ -6491,8 +6491,10 @@ pairing apart, the fingerprint, the code, the waiting box, the exchange, and the
 commands the box runs. Where neither a ruling nor that election fixes a point, section
 10 carries it with what settles it. It is never a person's enrollment of section 2.13,
 and this document writes "an appliance's enrollment" wherever the two could be
-confused. **None of it is built**: the enrollment's code act builds it, against this
-text.
+confused. **It is built** by the enrollment's code act: the link port's split and the
+waiting box in `link::pairing`, the box's half in `link::pair_client`, the exchange in
+`link::exchange`, the pairing page in `surfaces::setup::pair`, and the commands on the
+box in `link::key_config` and `link::box_commands`.
 
 **How it stands against registration as built on 2026-11-15:**
 
@@ -6750,7 +6752,11 @@ path, mode or address of a box enters this text. **Every command writes JSON lin
 standard output**, one object per line, each with an `event` member, the last line its
 outcome, and its exit status agrees with that line, the shape the register verbs and
 `weaver-admin` use. Diagnostics go to standard error. A reason the console sends is
-checked as printable ASCII within a bound before it is printed. **One set of exit
+checked as printable ASCII within a bound before it is printed, and **every fault and
+reason a command prints passes one printer** (`link::box_line`), which escapes each
+control and non-ASCII byte, as JSON does on standard output and as `\xNN` on standard
+error, so a peer's error text or a path the operator typed reaches the terminal with no
+escape sequence in it. **One set of exit
 statuses serves every command:**
 
 | status | name | meaning |
@@ -6792,7 +6798,13 @@ sent:
    answer carries, whose fingerprint is the one `pair` printed, and then writes the
    complete config in place, the members `register` writes, so the connector's unit
    reads it unchanged (section 8.1). Out: `adopted` (0), or `refused` (4) with its
-   reason and nothing written.
+   reason, `key_mismatch` or `not_signed`, and nothing written. **`adopt` appends and
+   never rewrites the key**: it finds the key's prefix by parsing the exact bytes
+   `request` wrote, never a stored length, refuses as `usage` a file whose prefix is not
+   a well-formed key-only config for its plane, and replaces only what follows the
+   prefix. A crash at any write leaves the key byte for byte and a re-run completes the
+   file, and a config left with no certificate is refused by the service at its start,
+   its `certificate` member missing.
 
 **Each config reaches the agent's directory by a rename**, since a unit reads its config
 under the agent's name and the name arrives only with `paired`. `request` writes each
@@ -6870,7 +6882,8 @@ whole reach is its two connectors.
 8.3): `setup describe` answers the agent, whether its pairing was a replacement, its
 models, the models drive's need, the SSH
 public keys and, once Confirm stands, the members the agent is laid from, and `setup
-report` carries the survey's report. Neither is built. As built, the link carries frames
+report` carries the survey's report. Both are built, `link::box_commands` on the box
+and the listener's setup admission over `store::setup_ask`. As built, the link carries frames
 of one line bounded at 4 MiB (`link::frames::LINE_BOUND`), and no frame names a pull of
 the model. Which connection carries the pull, its frame and its bounds are section 10's,
 an interface the image or WeaverAgent has to meet (`weaver-web-PRD` section 8).
@@ -6944,7 +6957,10 @@ the setup's end, and stops admin-con's service before a rerun and starts it afte
 loaded agent keeps running while admin-con is stopped, since admin-con is a conduit
 (section 2.14). The setup an ask serves is the one the row's pairing linked (section
 6.2), and an ask on a row no setup links is refused `no_setup`. Its lines and exit
-statuses are section 8.2's. It makes two asks:
+statuses are section 8.2's. **The hello naming the setup purpose is the `setup` frame**,
+the connection's first, carrying the agent's name, the plane and the ask itself. The
+listener answers it with one `described`, `accepted` or `refusal` frame and closes, and
+a `setup` frame after a hello is refused as malformed. It makes two asks:
 - **`admin-con setup describe`.** In: its config alone. Out: one `described` line (0)
   with these members:
   - `agent` and `agent_id`, the register row's name and identity
@@ -6967,8 +6983,10 @@ statuses are section 8.2's. It makes two asks:
     OpenSSH's SHA256 form, empty where none is set
 - **`admin-con setup report --stage pairing|drives`.** In: the survey's report on
   standard input, the setup script having run the survey locally. Out: `accepted` (0),
-  or `refused` (4) with a reason such as `too_large`. **The stage is the command's
-  argument**, so the console reads nothing of the image's format: admin-con checks that
+  or `refused` (4) with a reason such as `too_large`. A report past 64 KiB is refused
+  `too_large` by admin-con before any dial, and by the listener again for a client that
+  skips that check, and an input that is not one JSON object is `usage` (2). **The stage
+  is the command's argument**, so the console reads nothing of the image's format: admin-con checks that
   its input is one JSON object within 64 KiB and parses nothing more, and the console
   keeps it verbatim on the setup, the latest of its stage, with the time it arrived. A
   report for a confirmed setup is refused `setup_closed`, since a confirmed setup never
@@ -7145,10 +7163,10 @@ two connectors report.
 | a lost word writes no row | perturbation in `src/enrollment_tests.rs`: a box that closes after the answer and before its word leaves no row and no link on the setup, the act's outcome `failed`, and the page answering the entry draws no row for the name. Write the row whether the word came or not, and a row stands for an answer no box adopted |
 | on `unknown` the pairing page shows what the write made, the row's box and its live credentials' fingerprints | perturbation in `src/enrollment_tests.rs`: a `replace box` whose admin's session closes between the answer and the box's word does not commit, the box reads no last word, and the page answering the entry shows the old box and its credentials' fingerprints and not the answer's; a `replace box` that commits, its box gone before the last word, shows the new box and the new certificates' fingerprints on the pairing page; and after a lost word for `pair` the page draws no row. Draw the answer's fingerprints in the rows' place, and the page after the write that did not commit shows them, which would match the box's line whether the write committed or not |
 | a row's box changes only through the replace-box write, and the row keeps the box it held | perturbation in `src/enrollment_tests.rs` and in the schema (migration `0030`): a `replace box` keeps the row's identity, sets its box and its new credentials, and keeps the old box in `agent_box`, and an update moving a row's box outside that write is refused. Write the new box without the history's row, and the schema refuses the write; drop the schema's trigger too, and the old box leaves the record |
-| a replacement's drive setup mounts the state drive it carries and never formats it | **owed**: `setup describe` answers `replacement` `true` after a `replace box` and `false` after a `pair`, perturbed by answering false after a replacement, which would send the carried drive to the format. The mount, its check, its refusal and the refusal of the carried disk as the models drive are the image's script's and tested there (`weaver-web-PRD` section 8) |
-| a setup ask is refused while its credential's connection stands, and counts for nothing in presence | **owed**: the real listener and a fake admin-con, a setup ask beside a standing admin connection refused `already_connected`, and a setup connection alone leaving the row not present |
-| the setup keeps the latest report of each stage, verbatim | perturbation, **owed**: keep one report per setup, and a pairing report run again replaces the drives page's |
-| an adopted pair connects | **owed**: end to end, `request`, then `pair` against the real listener with the code entered through the page, then `adopt`, and both connectors are admitted on one row |
+| a replacement's drive setup mounts the state drive it carries and never formats it | perturbation in `src/enrollment_tests.rs`, against the real listener with the box's own commands: `setup describe` answers `replacement` `false` after a `pair` and `true` after a `replace box`, under the replacement's credential, and the replaced box's credential is refused. Answer false after a replacement, and the test fails, which would send the carried drive to the format. `describe`'s other members, the picks, the need and the laying once Confirm stands, are shown in `src/setup_place_tests.rs`. The mount, its check, its refusal and the refusal of the carried disk as the models drive are the image's script's and tested there (`weaver-web-PRD` section 8) |
+| a setup ask is refused while its credential's connection stands, and counts for nothing in presence | perturbation in `src/enrollment_tests.rs`, against the real listener with the box's own commands: two setup asks in turn are each answered and leave the row's admin plane unconnected, with no link time, not present and still labelled setup running; beside a standing admin connection, `setup describe` and `setup report` are refused `already_connected` and no report lands. Admit the ask without the live connection's check, and the ask beside it is answered; write the plane's link state at a setup ask, and the row reads the admin plane connected |
+| the setup keeps the latest report of each stage, verbatim | perturbation in `src/enrollment_tests.rs`: a pairing report, a drives report and the pairing report run again leave the second pairing report and the drives report, each byte for byte. Keep one report per setup, and the pairing report run again replaces the drives page's |
+| an adopted pair connects | end to end in `src/enrollment_tests.rs`: `request` for each connector, then `pair` against the real listener with the code its `waiting` line shows entered through the page, then `adopt` for each, and both connectors are admitted on the one row, which reads present. `adopt`'s append is shown in `src/link/key_config_tests.rs`: a crash after the open, mid-certificate and before the sync leaves the key byte for byte, the service refuses the config each leaves, and a re-run completes it. Truncate one byte into the key's prefix, and the key's bytes move; accept another plane's header, and the gate's `adopt` takes the admin config |
 | the connectors' build holds no `x509-parser` | measurement in `tests/connectors_link.rs`: the package's normal graph without the default features holds no `x509-parser`, and the default graph holds it, which the `enrollment` feature brings in. Make the parser a dependency the default features do not gate, and the graph holds it |
 | at the pairing the box takes the console's chain only where the server's certificate chains to the authority presented with it, and the pairing is TLS 1.3 alone | perturbation in `src/link/pairing_tests.rs`: a console that presents its certificate with another authority's completes no handshake with the box, and a client offering the pairing protocol under TLS 1.2 alone completes none with the listener. Let the box's check pass any chain, or build the pairing's configuration on the default versions, and each completes |
 | at most 16 boxes wait in all and 4 from one peer address, the first frame within 10 s and 16 KiB, and ten minutes from the dial the console closes the connection `expired` | perturbation in `src/link/pairing_tests.rs`, each bound alone, the time bounds shortened: the fifth box from one address and the seventeenth in all are refused `busy`, a silent box and a first line past 16 KiB are closed unanswered and give their places back, and a box past its life hears `expired`. Drop any one bound, and its box is held |

@@ -2547,16 +2547,17 @@ it decides are stated here and in section 2.8, and the reasons are there.
   commands, being the server's own authority. **`pair` and `replace box`,
   an appliance's enrollment** (section 8.2, this document's election of
   2026-11-17), are admin writes through the server alone, with no host
-  command, and take the same four steps: the setup's identity parsed, the
-  first gate, the setup resolved for the admin (unknown: not found, no
-  record) and the code compared with each waiting connection's, then the
-  audited write under the authority lock, which holds the identity
-  exclusion shared and re-reads the row under its lock inside its
-  transaction. **A code that matches no waiting connection is one refusal
-  record**, naming the setup and never the code, unlike an unknown
-  reference, since the misses are what the fifth counts. `replace box`
-  re-reads the row it replaces and refuses one retired since step three, as
-  a rotation does.
+  command, and take the same four steps: the setup's identity parsed, and
+  for `pair` the code read in section 8.2's form (malformed: answered as
+  malformed, no record and no miss), the first gate, the setup resolved for
+  the admin (unknown: not found, no record) and the code compared with each
+  waiting connection's, then the audited write under the authority lock,
+  which holds the identity exclusion shared and re-reads the row under its
+  lock inside its transaction. **A code that matches no waiting connection
+  is one refusal record**, naming the setup and never the code, unlike an
+  unknown reference, since the misses are what the fifth counts. `replace
+  box` re-reads the row it replaces and refuses one retired since step
+  three, as a rotation does.
 
 **An agent holds one conversation.** Every gate connection lands in the
 agent's one session working structure, per `toddwbucy/WeaverAgent#59`, so
@@ -6555,10 +6556,15 @@ is retired and never live again (section 2.12), so it stands apart from the regi
 until its exchange writes the row with both credentials live. It is an admin's, as the
 setup pages are (section 6.2) and as registration is (section 2.13). **Entering a code
 is an admin write** in section 2.13's order, and a code that matches no waiting
-connection is one refusal record. Five misses on one setup close its code field for ten
-minutes from the fifth, the life of a waiting connection. A pending enrollment ends with
-its exchange, which links the setup row to the row it writes. A waiting connection that
-expires leaves the setup in its pairing step, and the box dials again.
+connection is one refusal record. **The page reads an entry in Crockford's form** before
+it compares: it uppercases the entry, drops spaces and hyphens, and reads I and L as 1
+and O as 0. An entry that is not then ten characters of the code's alphabet (the
+one-time secret, below) is refused at section 2.13's first step and answered as
+malformed, so the operator knows to retype it, and it writes no record and is no miss.
+Five misses on one setup close its code field for ten minutes from the fifth, the life
+of a waiting connection. A pending enrollment ends with its exchange, which links the
+setup row to the row it writes. A waiting connection that expires leaves the setup in
+its pairing step, and the box dials again.
 
 **The waiting box is held in the server's memory alone**, on this document's election of
 2026-11-17. The pairing connection's first frame carries the box's name, as the box
@@ -7086,6 +7092,7 @@ two connectors report.
 | a pairing connection writes nothing before its code matches | perturbation, **owed**: record the waiting box at its first frame, and a store row or an audit record appears |
 | the pairing's code crosses the link in no frame | perturbation, **owed**: send the code in the first frame, and a recorded stream of the connection holds it |
 | the pairing's code is the first 50 bits of a 32-byte export under its label, in Crockford's base32 | **owed**: section 8.2's illustrative example as a test of both ends' encoders, and an export of another length gives another code |
+| the pairing page reads an entry in Crockford's form, and a malformed entry is no miss | **owed**: the encoder's inverse accepts `hwx5r-0f74a` and `HWX5R 0F74A` as section 8.2's example code and refuses `HWX5U0F74A` as malformed, and a malformed entry is answered as malformed, writes no record and counts toward no five misses |
 | a party between the box and the console meets a code that matches nothing | **owed**: an in-process relay between `pair` and the listener, and the code `pair` prints matches no waiting connection |
 | a certificate is signed only over a request whose own signature verifies, ECDSA P-256 with SHA-256 alone | perturbation, **owed**: skip the verification, and a request signed by another key is signed |
 | a pairing naming a live box and name is refused and retires nothing | perturbation, **owed**: write the pairing's row through registration's insert, and the live row is retired |

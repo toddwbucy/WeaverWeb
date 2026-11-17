@@ -125,10 +125,11 @@ What is this repository's own:
   first commit. Sub-act branches are `act/<name>-<n>-<topic>`.
 - **The gates before a draft**, each run with `--locked` and reported with its exit
   status: `cargo fmt --all -- --check`, `cargo build`, `cargo clippy --all-targets -- -D
-  warnings` with and without `--no-default-features`, and `cargo test` **with
-  `DATABASE_URL` and `PGUSER` set** (see Commands). A report of the tests says how many passed and that nothing was
-  skipped, since a run without the variable passes without testing anything. Each
-  worktree builds into a target directory of its own, and the report names it.
+  warnings` with and without `--no-default-features`, and
+  `cargo test -- --test-threads=8` **with `DATABASE_URL` and `PGUSER` set** (see
+  Commands). A report of the tests says how many passed and that nothing was skipped,
+  since a run without the variable passes without testing anything. Each worktree builds
+  into a target directory of its own, and the report names it.
 - **`Implements:`** names sections of `docs/weaver-web-Spec.md`.
 - **The hard boundaries above bind every brief, report and pull request body** as they
   bind the tree: no credential, box path or security posture in any of them.
@@ -179,7 +180,11 @@ cargo run --bin admin-con -- --config <admin-con.toml>              # the manage
   the user as a query member does the same (`postgres:///<db>?host=...&user=<role>`); the
   userinfo form `postgres://<role>@/<db>` is refused with "empty host" (both measured
   2026-11-10). The server's own `database` setting needs `&user=` or `PGUSER` in its
-  environment for the same reason.
+  environment for the same reason. Run them at `--test-threads=8`. At the default, one
+  thread per core, a many-core machine runs enough fresh stores at once that tests fail
+  with `PoolTimedOut` ("pool timed out while waiting for an open connection"), and a test
+  whose drop also times out leaves its database for the sweep (measured 2026-11-17: 36 of
+  79 in five modules failed at the default, none at eight).
 - **Single test:** `cargo test --lib store::read::tests::<name>`. Add `-- --nocapture` to see
   skip notices.
 - **Compile-fail pins** are doctests in `src/store/key.rs` and `src/store/experiment.rs`. Run

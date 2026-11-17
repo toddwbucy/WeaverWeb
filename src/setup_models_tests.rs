@@ -30,14 +30,15 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 
 use crate::admin_tests::{admin, form, send_as, signed_in};
+use crate::box_report::{BoxReports, NoBox};
 use crate::gguf::build::{F32, Gguf, STRING};
 use crate::hugging_face::RepoId;
 use crate::passkeys_tests::authenticator;
-use crate::setup_tests::{Rig, audited, begin, page, rig_hf, walk};
+use crate::setup_tests::{Rig, audited, begin, page, rig_full, walk};
 use crate::store::Store;
 use crate::surfaces::hugging_face::bytes;
 
-const COMMIT: &str = "27b350a791e81d9a4d1ddca1c49282e9ec533768";
+pub(crate) const COMMIT: &str = "27b350a791e81d9a4d1ddca1c49282e9ec533768";
 
 fn hex(d: ring::digest::Digest) -> String {
     crate::store::identity::hex(d.as_ref())
@@ -75,7 +76,7 @@ struct Repo {
 
 /// The split model's two parts: part 1 a model's header with its split,
 /// then its tensors' stand-in, and part 2 other bytes.
-fn split_parts() -> (Vec<u8>, Vec<u8>) {
+pub(crate) fn split_parts() -> (Vec<u8>, Vec<u8>) {
     let header = Gguf::model("granite")
         .u16("split.no", 0)
         .u16("split.count", 2)
@@ -177,6 +178,22 @@ fn repos() -> Vec<Repo> {
             gated: false,
             files: many,
         },
+        // A model whose maximum context, 2048, is below the box's
+        // max-tokens-per-turn, the header's last value standing.
+        Repo {
+            name: "org/short",
+            gated: false,
+            files: vec![(
+                "s.gguf",
+                with_filler(
+                    Gguf::model("granite")
+                        .u32("granite.context_length", 2048)
+                        .bytes(),
+                    11,
+                    100,
+                ),
+            )],
+        },
         Repo {
             name: "org/float-type",
             gated: false,
@@ -186,7 +203,7 @@ fn repos() -> Vec<Repo> {
 }
 
 #[derive(Default)]
-struct Fake {
+pub(crate) struct Fake {
     repos: Vec<Repo>,
     /// Whether the gated repository is granted to the account.
     granted: AtomicBool,
@@ -355,22 +372,34 @@ async fn fake() -> (Arc<Fake>, String) {
     (fake, base)
 }
 
-/// A rig over the fake, with a model cache where `cached`.
+/// A rig over the fake, with a model cache where `cached`, and no box
+/// reporting.
 async fn rig(cached: bool) -> Option<(Rig, Arc<Fake>, String, tempfile::TempDir)> {
+    rig_boxed(cached, Arc::new(NoBox)).await
+}
+
+/// A rig over the fake, with a model cache where `cached`, and what the
+/// box reports answered by `boxes`: the rig, the fake, its base and the
+/// cache's directory.
+pub(crate) async fn rig_boxed(
+    cached: bool,
+    boxes: Arc<dyn BoxReports>,
+) -> Option<(Rig, Arc<Fake>, String, tempfile::TempDir)> {
     let cache = tempfile::tempdir().unwrap();
     let (fake, base) = fake().await;
-    let rig = rig_hf(
+    let rig = rig_full(
         "127.0.0.1:8081",
         Some("console.test:7443"),
         cached.then(|| cache.path().to_path_buf()),
         &base,
+        boxes,
     )
     .await?;
     Some((rig, fake, base, cache))
 }
 
 /// An admin and a setup begun by them.
-async fn setup_of(rig: &Rig, name: &str) -> (String, String) {
+pub(crate) async fn setup_of(rig: &Rig, name: &str) -> (String, String) {
     let (_, ada) = admin(&rig.app, rig.store(), &mut authenticator(), "ada").await;
     let (_, _, setup) = begin(&rig.app, &ada, name).await;
     (ada, setup.unwrap())
@@ -385,7 +414,13 @@ fn header_of(setup: &str, repository: &str, choice: &str) -> String {
 }
 
 /// A pick's form.
-fn pick(version: &str, role: &str, repository: &str, choice: &str, scale: Option<&str>) -> String {
+pub(crate) fn pick(
+    version: &str,
+    role: &str,
+    repository: &str,
+    choice: &str,
+    scale: Option<&str>,
+) -> String {
     let mut fields = vec![
         ("version", version),
         ("role", role),
@@ -399,7 +434,12 @@ fn pick(version: &str, role: &str, repository: &str, choice: &str, scale: Option
     form(&fields)
 }
 
-async fn post_pick(rig: &Rig, session: &str, setup: &str, body: String) -> (StatusCode, String) {
+pub(crate) async fn post_pick(
+    rig: &Rig,
+    session: &str,
+    setup: &str,
+    body: String,
+) -> (StatusCode, String) {
     let (status, _, answer) = send_as(
         &rig.app,
         "POST",
@@ -411,7 +451,7 @@ async fn post_pick(rig: &Rig, session: &str, setup: &str, body: String) -> (Stat
     (status, answer)
 }
 
-async fn count(s: &Store, table: &'static str) -> i64 {
+pub(crate) async fn count(s: &Store, table: &'static str) -> i64 {
     sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(format!("SELECT count(*) FROM {table}")))
         .fetch_one(&s.pool)
         .await
@@ -431,7 +471,7 @@ async fn part(rig: &Rig, uri: &str, session: &str) -> String {
 }
 
 /// The pull a setup's role names.
-async fn pull_of(s: &Store, setup: &str, role: &str) -> String {
+pub(crate) async fn pull_of(s: &Store, setup: &str, role: &str) -> String {
     sqlx::query_scalar("SELECT pull_id FROM agent_setup_model WHERE setup_id = $1 AND role = $2")
         .bind(setup)
         .bind(role)
@@ -441,7 +481,7 @@ async fn pull_of(s: &Store, setup: &str, role: &str) -> String {
 }
 
 /// The pull's state once it leaves `running`, within twenty seconds.
-async fn ended(s: &Store, pull_id: &str) -> String {
+pub(crate) async fn ended(s: &Store, pull_id: &str) -> String {
     for _ in 0..400 {
         let state = s.pull(pull_id).await.unwrap().unwrap().state;
         if state != "running" {

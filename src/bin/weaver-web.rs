@@ -543,6 +543,9 @@ async fn serve(cfg: Arc<ServerConfig>) -> anyhow::Result<()> {
                 puller,
                 authority_dir: cfg.authority_dir.clone(),
                 headers: weaver_web::hugging_face::headers::Headers::new(),
+                // No box reports until the enrollment's act builds the
+                // source, so the devices and the box's members are held.
+                boxes: std::sync::Arc::new(weaver_web::box_report::NoBox),
             }),
         ))
         // **The register of agents through the server** (Spec 2.13): the

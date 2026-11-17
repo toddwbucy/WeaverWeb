@@ -1,0 +1,63 @@
+{% extends "setup_frame.html" %}
+{% block panes %}
+{#- The confirm page (Spec 6.2): every member of the deployment tuple with
+    its source, read or held, a held one saying what it waits on, and
+    Confirm, which stands only where every member is read. A confirmed setup
+    is drawn from its tuple's row. -#}
+{%- for m in members %}
+<section class="pane">
+  <header><span class="stage"><b>1</b> Declare</span><h2>{{ m.title }}</h2><span class="backing built">built</span>{% if m.why.is_none() %}<span class="status ok">ok</span>{% else %}<span class="status hold">hold</span>{% endif %}<span class="source">{{ m.source }}</span></header>
+  <div class="body">
+  {%- if let Some(why) = m.why %}
+  <p>Not read: {{ why }}.</p>
+  {%- else %}
+  <table>
+    <tbody>
+    {%- for (label, value) in m.rows %}
+    <tr><th>{{ label }}</th><td class="mono">{{ value }}</td></tr>
+    {%- endfor %}
+    </tbody>
+  </table>
+  {%- endif %}
+  </div>
+  {%- if m.why.is_some() %}
+  <footer>Waits on {{ m.waits }}.</footer>
+  {%- else %}
+  <footer>Read from {{ m.source }}.</footer>
+  {%- endif %}
+</section>
+{%- endfor %}
+<section class="pane">
+  <header><span class="stage"><b>1</b> Declare</span><h2>Confirm</h2><span class="backing built">built</span>{% if unread.is_empty() %}<span class="status ok">ok</span>{% else %}<span class="status hold">hold</span>{% endif %}<span class="source">every member above</span></header>
+  <div class="body">
+  {%- if let Some(c) = confirmed %}
+  <table>
+    <tbody>
+    <tr><th>Tuple</th><td class="mono">{{ c.tuple_id }}</td></tr>
+    <tr><th>Confirmed</th><td>{{ c.confirmed_by }}, {{ c.confirmed_at }}</td></tr>
+    </tbody>
+  </table>
+  {%- else if unread.is_empty() %}
+  <form method="post" action="/setup/{{ frame.setup_id }}/confirm">
+    <input type="hidden" name="version" value="{{ version }}">
+    <p>Confirm writes the deployment tuple from the members above, once, and the setup never changes after.</p>
+    <button type="submit">Confirm</button>
+  </form>
+  {%- else %}
+  <p>Confirm stands only once every member is read.</p>
+  <ul>
+    {%- for why in unread %}
+    <li>{{ why }}</li>
+    {%- endfor %}
+  </ul>
+  {%- endif %}
+  </div>
+  {%- if confirmed.is_some() %}
+  <footer>The box is laid from this tuple.</footer>
+  {%- else if unread.is_empty() %}
+  <footer>Confirm then goes to the build page.</footer>
+  {%- else %}
+  <footer>Waits on every member read.</footer>
+  {%- endif %}
+</section>
+{% endblock %}

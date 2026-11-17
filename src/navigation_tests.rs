@@ -346,6 +346,8 @@ async fn every_page_declares_its_tab_and_sub_tab() {
         &format!("/setup/{setup}/pairing"),
         &format!("/setup/{setup}/models"),
         &format!("/setup/{setup}/drives"),
+        &format!("/setup/{setup}/placement"),
+        &format!("/setup/{setup}/confirm"),
         &format!("/setup/{setup}/build"),
     ] {
         pages.push((uri.to_owned(), page(&rig.app, uri, &ada).await));
@@ -365,6 +367,8 @@ async fn every_page_declares_its_tab_and_sub_tab() {
         ("IAM", Some("Hugging Face")),
         ("IAM", Some("SSH keys")),
         ("IAM", Some("Passkeys")),
+        ("Agents", Some("1 Declare Declarations")),
+        ("Agents", Some("1 Declare Declarations")),
         ("Agents", Some("1 Declare Declarations")),
         ("Agents", Some("1 Declare Declarations")),
         ("Agents", Some("1 Declare Declarations")),

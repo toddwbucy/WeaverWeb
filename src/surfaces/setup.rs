@@ -1,6 +1,7 @@
 //! conforms: web-every-setup-pane-carries-its-stage-backing-and-status
 //! conforms: web-the-start-page-refuses-every-name-the-box-refuses
 //! conforms: web-the-pairing-page-warns-where-the-box-cannot-dial-the-link
+//! conforms: web-a-pages-way-forward-stands-where-its-condition-holds
 //!
 //! **Declare's path: the start page and the setup pages** (Spec 6.2), an
 //! admin's, the server-wide admin grant, since a setup comes before
@@ -10,9 +11,11 @@
 //! name. `GET /setup/{setup}/{page}` draws one page of the setup, `GET
 //! /setup/{setup}` its pairing page, and `POST /setup/{setup}/pairing` keeps the
 //! pairing page's checkbox. The models page and its fragments are the child
-//! module `models` (`setup/models.rs`). The placement and confirm pages are
-//! the act's later sub-acts: the setup's rail draws them unbuilt until they
-//! are served.
+//! module `models` (`setup/models.rs`), the placement page and its post
+//! `placement` (`setup/placement.rs`), and the confirm page and Confirm
+//! `confirm` (`setup/confirm.rs`). What the box reports, the survey's cards
+//! and the box's members, comes through the `boxes` seam, which answers none
+//! until the enrollment's act builds its source.
 //!
 //! **Every pane carries its stage, its backing and its status**, and a
 //! held pane says in its footer what it waits on and holds no input with a
@@ -35,6 +38,7 @@ use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
 use serde::Deserialize;
 
+use crate::box_report::BoxReports;
 use crate::config::ServerConfig;
 use crate::hugging_face::Client;
 use crate::hugging_face::headers::Headers;
@@ -49,13 +53,16 @@ use crate::surfaces::admin::{
 };
 use crate::surfaces::gate::{Policy, Session};
 
+mod confirm;
 mod models;
+mod placement;
 
 /// What the surface takes beside the store: the session policy; the
 /// server's config, for the console's link address and `model_cache`; and,
 /// for the models page, the Hugging Face client (whose base is the test
 /// seam), the puller a pick asks, the directory the seal key stands in, and
-/// the headers kept in memory.
+/// the headers kept in memory. For the placement and confirm pages, it
+/// takes what the box reports.
 #[derive(Clone)]
 pub struct Seams {
     pub policy: Policy,
@@ -64,6 +71,7 @@ pub struct Seams {
     pub puller: Puller,
     pub authority_dir: PathBuf,
     pub headers: Headers,
+    pub boxes: Arc<dyn BoxReports>,
 }
 
 /// The answer to a setup's identity of the wrong shape.
@@ -111,15 +119,6 @@ impl Page {
             Page::Build => "Build",
         }
     }
-
-    /// Whether this tree serves the page. The rest are drawn unbuilt on the
-    /// rail and answer as no route does.
-    fn served(self) -> bool {
-        matches!(
-            self,
-            Page::Pairing | Page::Models | Page::Drives | Page::Build
-        )
-    }
 }
 
 pub fn routes(seams: Seams) -> Router<Store> {
@@ -164,13 +163,14 @@ pub fn routes(seams: Seams) -> Router<Store> {
                 },
             ),
         );
-    for p in Page::ALL {
-        if p.served() && !matches!(p, Page::Pairing | Page::Models) {
-            router = router.route(&format!("/setup/{{setup}}/{}", p.slug()), read!(p));
-        }
+    // The pages drawn here alone. The rest are their child modules'.
+    for p in [Page::Drives, Page::Build] {
+        router = router.route(&format!("/setup/{{setup}}/{}", p.slug()), read!(p));
     }
     router
         .merge(models::routes(&seams))
+        .merge(placement::routes(&seams))
+        .merge(confirm::routes(&seams))
         .merge(crate::surfaces::ssh_key::routes(seams.policy.clone()))
 }
 
@@ -181,13 +181,12 @@ fn when(at: chrono::DateTime<chrono::Utc>) -> String {
 /// A step of the setup's rail.
 struct Step {
     title: &'static str,
-    /// Its page's address where it is served.
-    href: Option<String>,
+    href: String,
     here: bool,
 }
 
 /// **What every setup page carries**: the setup, its rail, and the way on
-/// to the next page this tree serves.
+/// to the next page.
 struct Frame {
     setup_id: String,
     name: String,
@@ -198,17 +197,20 @@ struct Frame {
     next: Option<Next>,
 }
 
-/// The way on: the next page this tree serves.
+/// The way on: the next page.
 struct Next {
     href: String,
     title: &'static str,
 }
 
+/// The frame of `here`. **Confirm's way forward is Confirm itself**, so
+/// the confirm page offers the next page only once the setup is confirmed
+/// (Spec 6.2).
 fn frame(setup: &Setup, here: Page) -> Frame {
     let at = Page::ALL.iter().position(|p| *p == here).unwrap_or(0);
-    let next = Page::ALL[at + 1..]
-        .iter()
-        .find(|p| p.served())
+    let next = Page::ALL
+        .get(at + 1)
+        .filter(|_| here != Page::Confirm || setup.state == "confirmed")
         .map(|p| Next {
             href: format!("/setup/{}/{}", setup.setup_id, p.slug()),
             title: p.title(),
@@ -223,9 +225,7 @@ fn frame(setup: &Setup, here: Page) -> Frame {
             .iter()
             .map(|p| Step {
                 title: p.title(),
-                href: p
-                    .served()
-                    .then(|| format!("/setup/{}/{}", setup.setup_id, p.slug())),
+                href: format!("/setup/{}/{}", setup.setup_id, p.slug()),
                 here: *p == here,
             })
             .collect(),
@@ -644,7 +644,7 @@ async fn page(
             frame,
         }
         .render(),
-        // The models page is its child module's, which reads its form.
+        // Each is its child module's, never routed here.
         Page::Models | Page::Placement | Page::Confirm => {
             return StatusCode::NOT_FOUND.into_response();
         }

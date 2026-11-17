@@ -4571,8 +4571,9 @@ above, the checkbox, the person who began it and when, its state, `open` or `con
 and a version every write checks against the page's read, a stale write answering 409
 and writing nothing. One open setup holds a name at a time. Beside it, one row per model
 role holds the role, the repository, the commit, the choice, the pull of section 2.15
-that fetched it and the facts read from its header, and the setup holds the chosen
-context length. **The pages write no declaration row**, and the document's grammar of
+that fetched it and the facts read from its header, and the setup holds the context
+length, the turn context and the devices the placement page keeps (the devices since
+migration `0029`). **The pages write no declaration row**, and the document's grammar of
 section 6.1 is not extended. Every write is audited with the target kind `setup`, naming
 the row.
 
@@ -4590,7 +4591,7 @@ there.
 | Pairing | the checkbox, virtual machine or host; the console's link address and port (`link_address`, else `link_listen`), which the box's setup asks for, and that the box must reach them; the warning where that address is a loopback address and the checkbox says virtual machine, and where it is an unspecified address, `0.0.0.0` or `::`, for a host and a virtual machine alike, since a listener binds it for every interface and it names no machine to dial (RFC 1122 admits `0.0.0.0` as a source alone, and RFC 4291 refuses `::` as a destination); and the address the box dialed too once the enrollment brings it | the waiting box, its code and its fingerprint: the enrollment (section 8.2) and the image's setup script; the survey's report: its form, the image's or WeaverAgent's, and its frame |
 | Models | the repository and its revision, resolved to a commit; each choice with its size and its header's facts; a gated repository with its accept link and a check again; the pick, which asks a pull (section 2.15), an adapter's carrying its scale; the pulls' progress and record; the base's identity, computed from the cache; the roster beyond the first agent drawn and marked unbuilt | nothing on the console's side; the box's pull from the cache is the enrollment's frame |
 | Drives | the appliance's form drawn with what it will show; the models drive's need, the bytes of the picks' distinct blobs; the host's form drawn and marked unbuilt, its models directory prefilled from `model_cache` where set; the SSH key that goes down, by its fingerprint, with a link to change it | the command that starts the drive setup: the image's setup script names it; the drives as mounted: the box's report and its frame |
-| Placement | the context length, bounded by the header's maximum; the turn context; the block count and the parts in shard order, from the header | the devices, a set of the survey's cards by ordinal: the survey's report; the fit, drawn "planned, from the box's room plan": the room plan's answer over TLS, an ask on WeaverAgent |
+| Placement | the context length, bounded below by the box's max-tokens-per-turn and above by the header's maximum; the turn context; the block count and the parts in shard order, from the header | the devices, a set of the survey's cards by ordinal: the survey's report; the fit, drawn "planned, from the box's room plan": the room plan's answer over TLS, an ask on WeaverAgent |
 | Confirm | every member of the tuple with its source, read or held | the box's members and the devices; Confirm stands only once every member is read |
 | Build | one pane, marked unbuilt, saying the box lays the agent from the tuple once Confirm stands, and linking the declaration screen as built for the fields no setup page asks | the board and the prompt tuple panel, held by the rulings |
 
@@ -4688,10 +4689,18 @@ mismatch. **What the identity does not show** is that the adapter was converted 
 this base: it pins the box's files to the console's pull, and the pairing of adapter and
 base stays the operator's pick (section 10).
 
-**The context length** is an integer from 1 to the header's maximum. One above it is
-refused, saving nothing, and one at it is kept. It is the declaration's
-`context-capacity`. Where the maximum was not read, the placement page holds the field
-with that reason.
+**The context length** is an integer from the box's max-tokens-per-turn to the header's
+maximum. One below the bound or above the maximum is refused, saving nothing, and one at
+either is kept. It is the declaration's `context-capacity`. The box's agent-creation
+tool writes `max-tokens-per-turn` as 4096 into every declaration it lays and refuses a
+capacity below it (`toddwbucy/WeaverAgent#580`), since a capacity under the per-turn
+ceiling makes an agent whose turn can exceed its whole context, which an appliance fixes
+only by taking the agent down and creating it again. The bound is one named constant
+(`MAX_TOKENS_PER_TURN`, 4096), and the tuple carries it beside the context length, its
+check refusing a context length below it, so a later per-agent value replaces it in one
+place. Where the maximum was not read, the placement page holds the field with that
+reason. Where the maximum is below the bound, no length fits: the page draws no field
+and says why, and every post is refused.
 
 **The turn context** is `continuous` or `independent`, and neither is drawn checked. A
 post without one, or with another word, is refused, saving nothing. The agent reads its
@@ -4705,6 +4714,24 @@ default to a device. The checked ordinals in ascending order are the shard order
 first card holding the first layers, and another order is drawn unbuilt. Until the
 survey's report brings the cards, the field is held with that reason.
 
+**The placement's save writes the three fields together**, each held to its source, and
+a field the page holds is written none. The form is parsed to its shape before the admin
+gate, and each refusal of its shape answers 400: a field the page does not take, a field
+other than a device given twice, a context length that is not a positive whole number, a
+turn context missing or other than the two words, and a device that is not a card's
+ordinal or is given twice. After the gate the setup must stand (404) and be open (409),
+and each field is held to its source, each refusal answering 409 and recording nothing:
+a context length posted while no decoder is picked or while its maximum was not read,
+any post where the maximum is below the box's max-tokens-per-turn, none posted once the
+maximum is read, one below that bound or above the maximum, a device posted before the
+survey's report, an empty set once it has reported, and an ordinal it lacks. A stale
+version answers 409 after the first record, as every admin write's does.
+
+**What the box reports reaches the pages through one source** (`src/box_report.rs`):
+the survey's cards and the box's members. The enrollment's act (section 8.2) builds it.
+Until then the server's source answers none, so the devices and the box's members are
+held, and the setup pages' tests supply a report through the same seam.
+
 **Confirm writes the deployment tuple**, one row, immutable (migration `0029`): a
 trigger of the kind migration `0023` uses refuses any update and any delete, and a
 second Confirm of a setup is refused. It names its identity, `dt-` and sixteen lowercase
@@ -4717,7 +4744,8 @@ source:
 | the adapter's, likewise | the pull's record, verified |
 | the adapter's scale | the setup, the adapter's pick |
 | the base's identity | the console's hash of the cached parts, above |
-| the context length | the setup, bounded by the header |
+| the context length | the setup, bounded by the box's max-tokens-per-turn and the header |
+| the box's max-tokens-per-turn | the console's constant, `MAX_TOKENS_PER_TURN`, 4096 |
 | the turn context | the setup |
 | the virtual machine or host | the setup's checkbox |
 | the image version, the driver, the cards by identity, the guest CPU, the machine | the box's report |
@@ -4731,13 +4759,32 @@ enrollment's act builds, and until it the source answers none, so Confirm holds 
 which members it waits on. A post to Confirm with a member unread is refused, writing
 nothing. Confirm then goes to the build page.
 
+**Confirm posts the setup's version alone**, every member read from its source and never
+from the form. Its order is section 2.13's: the version parsed (400 for any other
+field), the tuple's identity minted, the admin gate, the setup standing (404) and open
+(409), and every member read, a member unread refused naming it (409) and recording
+nothing. The write moves the setup to `confirmed` under the version check, reads every
+member again inside its transaction and writes the tuple from what it read, so the tuple
+holds what the sources held at its commit. Each part's path is relative to the models
+mount, in Hugging Face's layout (`models--<owner>--<name>/snapshots/<commit>/<path>`),
+and its blob is the cache's name for it (section 2.15). The tuple references its setup,
+its two pulls, the person who confirmed and the base's identity row it read, by that
+row's digest too. **A confirmed setup never changes**: a trigger refuses any update or
+delete of the setup, and any write of its model rows, once it is confirmed. So a second
+Confirm meets a confirmed setup, and the tuple's one-per-setup constraint stands behind
+it. **The confirm page's way forward is Confirm itself**: the next page is offered only
+once the setup is confirmed, and a confirmed setup's page draws the tuple from its row
+alone.
+
 **The box is laid from the tuple.** The tuple holds every member the agent is laid from:
 the decoder's artifact, the adapter's artifact, SHA-256 and scale, the base's identity,
-the devices, the context length and the turn context. The enrollment's act answers them
-to the box's setup only once the setup is confirmed (section 8.2), so nothing the box
-lays is chosen after Confirm or left to a default of the box's own tooling. That
-tooling's taking the devices, the context length and the turn context is WeaverAgent's
-(section 10).
+the devices, the context length and the turn context. They are read from the tuple's row
+alone (`Store::laying`), so none stands before Confirm. The max-tokens-per-turn the
+tuple carries is not among them, since the box's agent-creation tool writes its own. The
+enrollment's act answers them to the box's setup only once the setup is confirmed
+(section 8.2), so nothing the box lays is chosen after Confirm or left to a default of
+the box's own tooling. That tooling's taking the devices, the context length and the
+turn context is WeaverAgent's (section 10).
 
 **The operator's SSH public keys are a console setting** (migration `0027`), one or
 more, an admin's write at `GET /admin/ssh-key`, audited with the target kind `ssh_key`
@@ -6720,7 +6767,7 @@ two connectors report.
 | the declaration screen reaches no agent and no host | `the_declaration_screen_reaches_no_agent_and_no_host` in `src/declarations_tests.rs`, with a real listener and a fake connector of each plane connected and admitted: every route is exercised, a save, a save from it and two refusals among them, and neither connector is sent a line, the server sending a connector no heartbeat of its own |
 | the bar stands in two rows: Agents, Agent Operations and IAM on top in that order, each opening the first sub-tab the person may open, then who is signed in, the open-alert count as a status and the sign-out at the right; beneath, the sub-tabs of the page's tab in their order, the agents' carrying their stage marks, the current one marked and the row named by its tab; a person sees the sub-tabs they may open, and a page without a session Agent Operations and sign-in alone | perturbation in `src/navigation_tests.rs`, `the_top_row_holds_three_tabs_and_the_status_at_the_right` and `the_second_row_holds_the_sub_tabs_of_the_pages_tab`, on the base template: swap Agents and Agent Operations or put IAM before Agent Operations, and the admin's top row fails on its order; open an admin's Agents at Your agents or IAM at Passkeys, or a person's IAM at Persons, and that person's top row fails; set the open-alert count among the tabs, before who or between Agents and Agent Operations, and it fails on its place; drop Agent Operations from a page without a session, put sign-in before it, or name the tab The Record, and that row fails; give a page of no tab the agents' tab, and the sign-in page fails on its second row; mark Agent Operations on every page, and the second row's test fails on the tab (12 cases); swap Declarations and Register or Persons and Grants, or put Your agents before Register or Passkeys before Persons, and the second row fails on its order; drop any of the four stage marks or number Declare 2, and it fails on the agents' row; move Declarations, Register, Persons or Grants out of the admin's condition, and a person's row names it; leave The Record unmarked or mark Register on Declarations, and it fails on the current sub-tab; name the agents' row Your agents or leave the IAM row unnamed, and it fails on the row's name; name the sub-tab Agents, or head The Record's page Record or Your agents' page Agents, and it fails on the name (20 cases); each caught |
 | every page declares its sub-tab, and one table names each sub-tab's tab | perturbation in `src/navigation_tests.rs`, `every_page_declares_its_tab_and_sub_tab`, over every page an admin opens and a scan of every `here` the surfaces declare: put Register under IAM, Persons under Agents or The Record under Agents, or leave Passkeys of no tab, and a page fails on its tab; have the agent page declare The Record, the hand-over Your agents or the declaration screen Register, and that page fails on its tab and sub-tab; have the passkeys page name no sub-tab, and it fails on the page and the scan (8 cases, each caught) |
-| a page's way forward stands where its condition holds and nowhere else | perturbation in `src/navigation_tests.rs`: drop a saved declaration's way forward, or the name its link carries, or plant one on the empty screen, and `a_saved_declaration_leads_on_to_registering_its_name` fails; let the register's form fill any name, or none, or drop the field's value, and it fails on the prefill; invert the hand-over's read of the admin's grant, or fix it either way, drop the box sentence under a grant, or point the Grants link at the agent's page, and `the_hand_over_leads_on_to_the_agents_page_or_says_why_not` fails (11 cases, each caught); in `src/surfaces/agents.rs`, read a failed grant read as none held, and `a_grant_read_is_held_not_held_or_unread` fails; render an unread grant as none held, or drop either of its two links, and `the_hand_over_says_an_unread_grant_is_unread` fails (4 cases, each caught) |
+| a page's way forward stands where its condition holds and nowhere else | perturbation in `src/navigation_tests.rs`: drop a saved declaration's way forward, or the name its link carries, or plant one on the empty screen, and `a_saved_declaration_leads_on_to_registering_its_name` fails; let the register's form fill any name, or none, or drop the field's value, and it fails on the prefill; invert the hand-over's read of the admin's grant, or fix it either way, drop the box sentence under a grant, or point the Grants link at the agent's page, and `the_hand_over_leads_on_to_the_agents_page_or_says_why_not` fails (11 cases, each caught); in `src/surfaces/agents.rs`, read a failed grant read as none held, and `a_grant_read_is_held_not_held_or_unread` fails; render an unread grant as none held, or drop either of its two links, and `the_hand_over_says_an_unread_grant_is_unread` fails (4 cases, each caught); in `src/setup_place_tests.rs`, `confirm_stands_only_where_every_member_is_read_and_writes_one_tuple`: draw Confirm's form with a member unread, or the confirm page's next page before Confirm, and the held page offers it, `src/setup_tests.rs`'s walk naming the second too; drop Confirm's refusal of a member unread before its first record, and the refused post records one (each measured) |
 | the agent page leads every reader on to The Record and an admin alone back to the declaration saved under the agent's name, the rail linking Declare and Provision for an admin alone | perturbation in `src/navigation_tests.rs`, `the_agent_page_leads_on_to_record_and_back_to_its_declaration`: offer the way back to every reader, or to none, and it fails on the person's page or the admin's; drop the way on to The Record or its words that the record is not filtered by the agent, or name it Record, and it fails; name the lineage's root, or a lineage of another name, and it fails on version 2; link no mark, render a linked mark as a span or point Provision at another page, and it fails on the rail; send an agent with no declaration to the list, and it fails on the way back (11 cases, each caught) |
 | the reported members are the agent's as read: each member the Declare pane reads from `show`'s facts or a load event is a field of that shape's struct at the pin, of the type it reads, under the rename it reads, and each it takes as absent is not one | `the_reported_members_are_the_agents_as_read` and `the_reported_members_were_read_at_the_builds_pin` in `src/declaration/reported.rs`, against the dated copy `src/declaration/reported-5ec7ecf8.md`: misname `show`'s state election, read a turn context from `show` or an artifact from a load event, read the load event's election by `show`'s name, or spell either flag as the other shape does, and it fails on the reader's tables; rename `LoadFacts`'s members, name the tee otherwise, give the serving record a turn context, add an engine or a turn context the reader does not read, or make the artifact optional, and it fails on the copy; move the pin without a reread, and the second fails (13 cases, each caught) |
 | each reported member reads equal, differs or not in this report, by the shape its source names, a state election by the first entry for each kind, and an absence is set beside the report as the agent reads it | `each_member_reads_equal_differs_or_not_in_this_report`, `an_absence_is_set_beside_the_report_as_the_agent_reads_it`, `a_kind_named_again_whose_first_entry_is_declared_reads_equal` and `a_kind_named_again_whose_first_entry_is_not_declared_differs` in `src/declaration/reported.rs`: read a state election's kinds in their order or a path named twice twice, compare a state election by its words, or show a difference between two elections that read alike by those words, read a null member as reported, read the tee's election in `show`'s spelling, read any engine or turn context word, or swap a difference's two sides, and the first fails; read an absent turn context as independent, an absent surprisal as true, an absent residual readout as false or an absent state election as the other default, and the second fails; keep every entry of a kind named again, and `a_kind_named_again_whose_first_entry_is_declared_reads_equal` fails; keep its last entry rather than its first, and that test and `a_kind_named_again_whose_first_entry_is_not_declared_differs` fail; drop the words that say the kind was named again, and both fail (16 cases, each caught) |
@@ -6740,17 +6787,18 @@ two connectors report.
 | a FIFO at a blob's name or at the seal key's is refused and never waited on | perturbation in `src/model_pull_tests.rs`, `a_fifo_at_a_blobs_name_is_refused_and_never_waited_on`, and in `src/hugging_face/seal.rs`'s tests: open the blob or the key waiting, and the puller, or the key's read, waits on the FIFO until a writer opens it |
 | the Hugging Face client reads no proxy from the environment | perturbation in `tests/hugging_face_proxy.rs`, a test binary of its own: drop `.no_proxy()`, and with the proxy variables naming a port where nothing listens, a request to the fake fails to connect |
 | a snapshot's link never replaces a file the repository holds | perturbation in `src/hugging_face/cache.rs`'s tests: stage the link under a fixed name beside its place, and a repository file of that name loses its link |
-| every pane of every setup page carries a stage, a backing and a status word, and a held pane names what it waits on with no input holding a value | test in `src/setup_tests.rs`, `every_pane_carries_its_stage_backing_and_status`, walking every page's rendered panes in each state it draws: drop a pane's status mark from a template, or fill a held pane's input, and the walk names the pane (both measured); the walk's own perturbations run on every build in `the_walk_names_a_pane_without_a_status_or_with_a_filled_input` |
+| every pane of every setup page carries a stage, a backing and a status word, and a held pane names what it waits on with no input holding a value | test in `src/setup_tests.rs`, `every_pane_carries_its_stage_backing_and_status`, walking every page's rendered panes in each state it draws, and `src/setup_place_tests.rs` walking the placement and confirm pages in each of theirs: drop a pane's status mark from a template, or fill a held pane's input, and the walk names the pane (both measured); the walk's own perturbations run on every build in `the_walk_names_a_pane_without_a_status_or_with_a_filled_input` |
 | the start page refuses every name admin's name rule or the box's agent-creation rule refuses | perturbation in `src/setup_tests.rs`, one case per clause, each refused and opening no setup: an uppercase letter, a `-`, a `_`, a leading digit, one character, seventeen characters, and each of the two names `weaver-admin-Spec` section 4 reserves whole, which the character rule admits; a name of sixteen characters opens one. Drop a clause from the page's rule and its case meets the store's CHECK, which holds the same rule, and answers as a fault rather than a refusal; drop it from the CHECK too and its case opens a setup (each clause measured from the page, the reserved names from both). A name ending in one of section 4's reserved suffixes carries a `-`, so the character rule refuses it |
 | the pairing page warns where the console's link address is a loopback address and the checkbox says virtual machine, and where it is an unspecified address, for a host and a virtual machine alike | perturbation in `src/setup_tests.rs`, `the_loopback_warning_shows_for_a_virtual_machine_alone` and `the_unspecified_warning_shows_for_a_host_and_a_virtual_machine`, and in `src/surfaces/setup.rs`'s tests, `the_link_address_is_read_for_its_port_its_loopback_and_unspecified`: draw the loopback warning for a host too, and the host's page warns; drop the unspecified check, or drop its paragraph from the template, and `link_listen` at `0.0.0.0` with no `link_address` draws no warning; draw it for a virtual machine alone, and the host's page draws none; read `link_listen` over `link_address`, and a `link_address` the box reaches beside it warns; take IPv4's unspecified address alone, and `::` draws none (each measured) |
 | a crafted post naming a second model, a second adapter role or the CPU is refused, saving nothing | perturbation in `src/setup_models_tests.rs`, `a_crafted_pick_is_refused_saving_nothing`, against a fake Hugging Face that counts every request, and in `src/surfaces/setup/models.rs`'s tests: take a field the pick does not take, or a field given twice, and a crafted pick is no longer refused by its shape (each measured) |
 | a pick asks Hugging Face only after the admin gate | perturbation in `src/setup_models_tests.rs`, `a_pick_asks_hugging_face_only_after_the_admin_gate`, against the fake: read the listing before the gate, and the fake counts a request from a person holding no admin grant (measured) |
 | the GGUF reader refuses a length or a count past its buffer, a header cut short and a header past its bound, without a panic or an unbounded allocation, keeps no fact past its bounds, and refuses a named fact of the wrong kind | perturbation in `src/gguf.rs`'s tests: allocate a string's claimed length before checking it against the bytes held, and the test process aborts on an allocation of 2^63 - 1 bytes; drop an array's room check, and the hostile header's test fails; let an array of arrays nest deeper, and the nesting test fails; drop the kept string's bound or the kept list's, or keep a fact under any prefix, and `a_kept_fact_past_its_bound_is_refused` fails; drop a named fact of the wrong kind as absent, and `a_named_fact_of_the_wrong_kind_is_refused` and `src/setup_models_tests.rs`'s `a_named_fact_of_the_wrong_kind_refuses_the_pick` fail (each measured) |
-| a context length above the header's maximum is refused | perturbation in `src/setup_tests.rs`: drop the bound, and a context length past the maximum is kept |
-| the deployment tuple refuses any update or delete, and a setup is confirmed once | perturbation, at the schema: drop the trigger, and an update of a tuple lands. Drop the one tuple per setup, and a second Confirm writes a second tuple |
+| a context length above the header's maximum is refused | perturbation in `src/setup_place_tests.rs`, `a_context_length_above_the_headers_maximum_is_refused_and_one_at_it_kept`: drop the bound, and a context length past the maximum is kept (measured) |
+| a context length below the box's max-tokens-per-turn is refused, and the tuple carries it | perturbation in `src/setup_place_tests.rs`, `a_context_length_below_the_boxs_max_tokens_per_turn_is_refused` and `confirm_stands_only_where_every_member_is_read_and_writes_one_tuple`: drop the floor from the save, and 4095 is kept; drop the refusal where no length fits, and a post to a decoder whose maximum is below the floor is refused for another reason; draw the field's floor as 1, and the page says so; drop the floor from the members, and the confirm page reads 2048 as a member; drop the tuple's check, and a copy of the tuple at 4095 is refused by the one-per-setup constraint instead; carry another bound, and the tuple's member is not 4096 (each measured) |
+| the deployment tuple refuses any update or delete, and a setup is confirmed once | perturbation at the schema, in `src/setup_place_tests.rs`, `confirm_stands_only_where_every_member_is_read_and_writes_one_tuple`: drop the tuple's trigger, and an update of the tuple lands; drop the one tuple per setup, and a second tuple of the setup lands; drop the trigger on a confirmed setup, or on its model rows, and an update of the setup, or of its adapter's scale, lands (each measured). A second Confirm meets the confirmed setup and is refused, recording nothing |
 | an SSH key's line is checked for its form, and its text enters no audit record | perturbation in `src/ssh_key_tests.rs`: drop the inner type's check, and a line whose blob names another type is kept |
-| the turn context is required and never defaulted | perturbation in `src/setup_tests.rs`: draw either word checked, or keep a post without one, and the test names it |
-| the devices are a non-empty set of the survey's cards, by ordinal | perturbation in `src/setup_tests.rs` with a survey supplied through a seam: drop the empty set's refusal, or the check against the survey's ordinals, and the refused post lands |
+| the turn context is required and never defaulted | perturbation in `src/setup_place_tests.rs`, `the_turn_context_is_required_and_never_defaulted`: draw continuous checked where none is kept, or keep a post without one as continuous, and the test names it (each measured) |
+| the devices are a non-empty set of the survey's cards, by ordinal | perturbation in `src/setup_place_tests.rs` with a survey supplied through the box seam, `the_devices_are_a_non_empty_set_of_the_surveys_cards_by_ordinal` and `the_devices_and_the_fit_are_held_until_the_survey_reports`: drop the empty set's refusal, or the check against the survey's ordinals, and the refused post lands; take a device before the survey reports, and the held field keeps one (each measured) |
 | the base's identity is BLAKE3 over the parts in split order | perturbation in `src/hugging_face/base_identity.rs`'s tests: hash in the listing's order, or part 1 alone, and the digest differs from BLAKE3 over part 1's bytes, then part 2's (each measured) |
 | the base's identity is computed at a start that finds it owed, and once the puller verifies a decoder's pull, and is "not read" until then | perturbation in `src/setup_models_tests.rs`, `the_base_identity_is_owed_until_a_start_hashes_it` and `a_verified_pull_wakes_the_hasher`, each waiting ten seconds against the hasher's idle recheck of fifteen: let the hasher wait before its first read, and a start with no word pending leaves the identity owed; drop the puller's word at a verified pull, and the running hasher misses it; show the identity read while it is owed, and the first test names it (each measured) |
 | a choice is offered only where every part stands, and its header's split count agrees with its names | perturbation in `src/hugging_face/choice.rs`'s tests and `src/setup_models_tests.rs`, `the_header_is_read_by_range_and_one_past_the_bound_is_not_read`: offer a choice with a part missing, or group parts by their stem alone, and the grouping's test fails; never see a split count the names contradict, and that choice offers a pick (each measured) |
@@ -6759,7 +6807,7 @@ two connectors report.
 | a decoder's pick of an adapter's file, or an adapter's pick of a model's, is refused | perturbation in `src/setup_models_tests.rs`, `an_adapters_pick_carries_a_finite_scale`: drop the check of the role against the header's type, and the crossed pick is not refused (measured) |
 | the models drive's need counts a blob two paths share once | perturbation in `src/setup_models_tests.rs`, `the_models_drives_need_counts_a_shared_blob_once`: count each path's bytes, and two parts of the same bytes count twice (measured) |
 | an adapter's pick carries a finite scale | perturbation in `src/setup_models_tests.rs`, `an_adapters_pick_carries_a_finite_scale`, and in `src/surfaces/setup/models.rs`'s tests: take a scale that is not finite, and the form no longer refuses it (measured). The store's CHECK (migration `0026`) holds a finite scale beside the form's |
-| the members the box is laid from are the confirmed tuple's, and none stand before Confirm | perturbation in `src/setup_tests.rs`: read them from the open setup rather than the tuple, and they stand before Confirm |
+| the members the box is laid from are the confirmed tuple's, and none stand before Confirm | perturbation in `src/setup_place_tests.rs`, `confirm_stands_only_where_every_member_is_read_and_writes_one_tuple`: read them from the open setup rather than the tuple, and they stand before Confirm (measured) |
 
 **A watch that cannot fail is not a test.** For each perturbation above, the
 act that lands it states what removal makes it fail and confirms it does.

@@ -121,21 +121,34 @@ impl<O: Write, E: Write> Printer<O, E> {
         Printer { command, out, err }
     }
 
-    /// One line on standard output. A line that cannot be written is the
-    /// terminal's gone, and nothing more can be said to it.
-    pub fn line<T: Serialize>(&mut self, event: &str, members: &T) {
-        let Ok(line) = serde_json::to_string(&Line { event, members }) else {
-            self.reason("a line could not be rendered");
-            return;
-        };
-        let _ = writeln!(self.out, "{}", ascii_json(&line));
-        let _ = self.out.flush();
+    /// One line on standard output, answering whether it was written and
+    /// flushed, else why not.
+    pub fn line<T: Serialize>(&mut self, event: &str, members: &T) -> Result<(), String> {
+        let line = serde_json::to_string(&Line { event, members })
+            .map_err(|_| "the line could not be rendered".to_owned())?;
+        writeln!(self.out, "{}", ascii_json(&line)).map_err(|e| e.to_string())?;
+        self.out.flush().map_err(|e| e.to_string())
     }
 
-    /// The outcome: its line, and the status the command exits with.
+    /// **The outcome**: its line, and the status the command exits with.
+    /// **A line that does not reach standard output is no success**, so
+    /// `done` answers `fault`, with the reason on standard error. Any other
+    /// status keeps its meaning, which already fails, `unknown` still
+    /// telling the caller the console may have acted.
     pub fn outcome<T: Serialize>(&mut self, status: Status, event: &str, members: &T) -> Status {
-        self.line(event, members);
-        status
+        match self.line(event, members) {
+            Ok(()) => status,
+            Err(why) => {
+                self.reason(&format!(
+                    "standard output did not take the outcome line: {why}"
+                ));
+                if status == Status::Done {
+                    Status::Fault
+                } else {
+                    status
+                }
+            }
+        }
     }
 
     /// One reason on standard error, prefixed with the command, escaped.
@@ -159,7 +172,7 @@ impl<O: Write, E: Write> Printer<O, E> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// **Every byte the printer writes is printable ASCII or a newline**,
@@ -173,7 +186,7 @@ mod tests {
         struct Reason<'a> {
             reason: &'a str,
         }
-        p.line("refused", &Reason { reason: hostile });
+        p.line("refused", &Reason { reason: hostile }).unwrap();
         p.reason(hostile);
         let (out, err) = p.into_inner();
         for b in out.iter().chain(err.iter()) {
@@ -192,6 +205,68 @@ mod tests {
             "{err}"
         );
         assert!(err.contains("e\\x5cf"), "{err}");
+    }
+
+    /// A standard output that refuses its writes or its flushes.
+    pub(crate) struct Refusing {
+        pub(crate) at_flush: bool,
+    }
+
+    impl Write for Refusing {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            if self.at_flush {
+                Ok(buf.len())
+            } else {
+                Err(std::io::ErrorKind::BrokenPipe.into())
+            }
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            if self.at_flush {
+                Err(std::io::ErrorKind::StorageFull.into())
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    /// **An outcome whose line does not reach standard output is no
+    /// success**: `done` answers `fault`, with a reason on standard error,
+    /// whether the write or the flush failed, and any other status keeps its
+    /// meaning, which already fails. A line that lands keeps `done`.
+    ///
+    /// Perturbation: ignore the line's failure, and `done` exits 0 with no
+    /// line delivered.
+    #[test]
+    fn an_outcome_whose_line_is_not_delivered_is_no_success() {
+        for at_flush in [false, true] {
+            let mut p = Printer::new("test", Refusing { at_flush }, Vec::new());
+            assert_eq!(
+                p.outcome(Status::Done, "request", &Nothing {}),
+                Status::Fault
+            );
+            assert_eq!(
+                p.outcome(Status::Unknown, "unknown", &Nothing {}),
+                Status::Unknown
+            );
+            assert_eq!(
+                p.ended(Status::Refused, "refused for a test"),
+                Status::Refused
+            );
+            let (_, err) = p.into_inner();
+            let err = String::from_utf8(err).unwrap();
+            assert_eq!(
+                err.matches("test: standard output did not take the outcome line")
+                    .count(),
+                3,
+                "{err}"
+            );
+        }
+        let mut p = Printer::new("test", Vec::new(), Vec::new());
+        assert_eq!(
+            p.outcome(Status::Done, "request", &Nothing {}),
+            Status::Done
+        );
+        assert!(p.into_inner().1.is_empty());
     }
 
     #[test]

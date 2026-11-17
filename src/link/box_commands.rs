@@ -201,7 +201,18 @@ struct Fingerprints {
 /// and its `request` line. No dial.
 pub fn request<O: Write, E: Write>(p: &mut Printer<O, E>, plane: Plane, config: &Path) -> Status {
     match key_config::request(plane, config) {
-        Ok(request) => p.outcome(Status::Done, "request", &RequestLine { request: &request }),
+        Ok(request) => {
+            let status = p.outcome(Status::Done, "request", &RequestLine { request: &request });
+            // **The way on from an undelivered line**: the config stands
+            // with its key and no certificate, which no console has seen.
+            if status != Status::Done {
+                p.reason(&format!(
+                    "{} was made with a new key and no certificate, and its request line was not delivered: remove it and run request again",
+                    config.display()
+                ));
+            }
+            status
+        }
         Err(RequestRefused::Exists(why)) => p.ended(Status::Usage, &why),
         Err(RequestRefused::Fault(why)) => p.ended(Status::Fault, &why),
     }
@@ -376,14 +387,23 @@ pub async fn pair<O: Write, E: Write>(p: &mut Printer<O, E>, args: &PairArgs) ->
         Ok(dialed) => dialed,
         Err(e) => return dial_failed(p, &args.console, &e),
     };
-    p.line(
+    // **A code nobody can read ends the pairing at once**: the box closes
+    // and the console lets it go, rather than waiting out its life.
+    if let Err(why) = p.line(
         "waiting",
         &Waiting {
             code: &dialed.code().to_string(),
             fingerprint: &dialed.fingerprint(),
             expires_in_secs: dialed.expires_in().as_secs(),
         },
-    );
+    ) {
+        return p.ended(
+            Status::Fault,
+            &format!(
+                "standard output did not take the waiting line, so its code cannot be read: {why}"
+            ),
+        );
+    }
     let answer = match dialed.next().await {
         Heard::Answer(answer) => answer,
         other => return heard(p, &other),
@@ -566,6 +586,30 @@ mod tests {
     use crate::link::authority::Authority;
     use crate::link::pair_client::Answer;
     use std::os::unix::fs::PermissionsExt;
+
+    /// **`request` whose line is not delivered says where its config stands**:
+    /// `fault`, the config made with its new key, and standard error naming
+    /// it and the way on, so a re-run's `Exists` refusal is no dead end.
+    ///
+    /// Perturbation: ignore the line's failure, and `request` exits `done`
+    /// with no request line.
+    #[test]
+    fn a_request_whose_line_is_not_delivered_names_the_config_it_made() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("admin-con.toml");
+        let out = crate::link::box_line::tests::Refusing { at_flush: false };
+        let mut p = Printer::new("admin-con request", out, Vec::new());
+        assert_eq!(request(&mut p, Plane::Admin, &config), Status::Fault);
+        assert!(config.is_file(), "the config was made");
+        let (_, err) = p.into_inner();
+        let err = String::from_utf8(err).unwrap();
+        let named = format!(
+            "admin-con request: {} was made with a new key and no certificate",
+            config.display()
+        );
+        assert!(err.contains(&named), "{err}");
+        assert!(err.contains("remove it and run request again"), "{err}");
+    }
 
     /// The setup asks' bound in these tests, the commands' own being 30 s.
     const BOUND: Duration = Duration::from_millis(1500);

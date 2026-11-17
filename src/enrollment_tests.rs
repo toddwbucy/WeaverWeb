@@ -1416,3 +1416,51 @@ async fn the_setup_keeps_the_latest_report_of_each_stage_verbatim() {
         (Status::Refused, Some("no_setup"))
     );
 }
+
+/// **A `pair` whose `waiting` line is not delivered ends at once**: its code
+/// cannot be read, so nobody can enter it, and `pair` answers `fault`, writes
+/// no answer and closes, the console holding no box for it, rather than
+/// waiting out the box's ten minutes.
+///
+/// Perturbation: ignore the `waiting` line's failure, and `pair` is still
+/// waiting when the test gives up.
+#[tokio::test]
+async fn a_pair_whose_waiting_line_is_not_delivered_ends_at_once() {
+    let Some(rig) = rig().await else { return };
+    let dir = tempfile::tempdir().unwrap();
+    for plane in [Plane::Gate, Plane::Admin] {
+        let mut p = captured();
+        let config = dir.path().join(format!("{}-con.toml", plane.as_str()));
+        assert_eq!(box_commands::request(&mut p, plane, &config), Status::Done);
+        let (out, _) = p.into_inner();
+        std::fs::write(dir.path().join(format!("{}.request", plane.as_str())), out).unwrap();
+    }
+    let args = PairArgs {
+        console: rig.listener.address().to_string(),
+        gate_request: dir.path().join("gate.request"),
+        admin_request: dir.path().join("admin.request"),
+        answer: dir.path().join("answer.json"),
+        r#box: Some("box-a".into()),
+    };
+    let refusing = crate::link::box_line::tests::Refusing { at_flush: false };
+    let mut p = Printer::new("admin-con pair", refusing, Vec::new());
+    let status = tokio::time::timeout(SOON, box_commands::pair(&mut p, &args))
+        .await
+        .expect("pair ends at once, not at the box's life");
+    assert_eq!(status, Status::Fault);
+    let (_, err) = p.into_inner();
+    let err = String::from_utf8(err).unwrap();
+    assert!(err.contains("so its code cannot be read"), "{err}");
+    assert!(
+        !dir.path().join("answer.json").exists(),
+        "no answer written"
+    );
+    let by = tokio::time::Instant::now() + SOON;
+    while !rig.listener.waiting().is_empty() {
+        assert!(
+            tokio::time::Instant::now() < by,
+            "the console still holds the box"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}

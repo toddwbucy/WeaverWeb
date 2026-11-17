@@ -344,6 +344,7 @@ async fn every_page_declares_its_tab_and_sub_tab() {
         "/passkeys",
         "/setup",
         &format!("/setup/{setup}/pairing"),
+        &format!("/setup/{setup}/models"),
         &format!("/setup/{setup}/drives"),
         &format!("/setup/{setup}/build"),
     ] {
@@ -364,6 +365,7 @@ async fn every_page_declares_its_tab_and_sub_tab() {
         ("IAM", Some("Hugging Face")),
         ("IAM", Some("SSH keys")),
         ("IAM", Some("Passkeys")),
+        ("Agents", Some("1 Declare Declarations")),
         ("Agents", Some("1 Declare Declarations")),
         ("Agents", Some("1 Declare Declarations")),
         ("Agents", Some("1 Declare Declarations")),

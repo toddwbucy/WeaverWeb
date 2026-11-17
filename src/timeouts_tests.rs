@@ -69,7 +69,9 @@ const CALLS: &[(&str, &str, Why)] = &[
     ("src/alerting.rs", "stop", Channel), // the worker's stop note
     ("src/alerting.rs", "stop", Join),    // the worker, at its stop
     ("src/alerting.rs", "drain", Reads),  // `claim_entry`, rolled back when dropped
+    ("src/hugging_face/base_identity.rs", "work", Reads), // the idle hasher's wait for its word
     ("src/hugging_face/mod.rs", "api_get", Reads), // a read of Hugging Face's API
+    ("src/hugging_face/mod.rs", "header", Reads), // a header's range read
     ("src/hugging_face/mod.rs", "access", Reads), // a `HEAD` of one file
     ("src/hugging_face/pull.rs", "work", Reads), // the idle puller's wait for its wake
     ("src/hugging_face/pull.rs", "download", Reads), // a read of a file's body

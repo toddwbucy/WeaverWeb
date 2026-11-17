@@ -106,6 +106,13 @@ pub enum Refusal {
     KeyHeld,
     /// The console holds as many SSH public keys as it keeps (Spec 6.2).
     KeysFull,
+    /// Hugging Face holds no such repository at the revision, or none the
+    /// account may see (Spec 6.2).
+    NoSuchModel,
+    /// The repository holds no such choice at the commit (Spec 6.2).
+    NoSuchChoice,
+    /// The choice is offered no pick, for the reason given (Spec 6.2).
+    Unpickable(String),
 }
 
 impl std::fmt::Display for Refusal {
@@ -220,6 +227,14 @@ impl std::fmt::Display for Refusal {
                 f,
                 "the console holds 16 SSH keys, the most it keeps, so remove one first"
             ),
+            Refusal::NoSuchModel => write!(
+                f,
+                "Hugging Face holds no such repository at that revision, or none the account may see"
+            ),
+            Refusal::NoSuchChoice => {
+                write!(f, "the repository holds no such choice at that commit")
+            }
+            Refusal::Unpickable(why) => write!(f, "the choice is offered no pick: {why}"),
         }
     }
 }

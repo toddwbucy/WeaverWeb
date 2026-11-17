@@ -4610,9 +4610,15 @@ offered only where every part from 1 to the count stands at the commit. Every ot
 the choice and the role, and the console takes the sizes and digests from Hugging Face's
 listing at that commit, never from the form. **A pick asks Hugging Face for the listing
 and the header after the admin gate and before its audited write**, so a person without
-an admin grant causes no request to Hugging Face. **The pick asks a pull** of the
-choice's parts through section 2.15's puller, an ask while a pull runs being refused and
-naming it, and the setup's role row names the pull.
+an admin grant causes no request to Hugging Face. No cache, and a connected account
+whose token does not open, are refused before Hugging Face is asked. Each answer of
+Hugging Face's that refuses the pick is resolved before the first record and records
+nothing: no such repository or choice, a part missing, a gated repository the account
+lacks, a header not read, a split count the names contradict, and a type that does not
+admit the role. A token Hugging Face refuses is one refusal record, as on the account's
+page (section 2.15). **The pick asks a pull** of the choice's parts through section
+2.15's puller, an ask while a pull runs being refused and naming it, and the setup's
+role row names the pull. The role's row and the pull's rows land in one transaction.
 
 **Each choice's header is read before any download**, by a range read of its first
 part through the commit with section 2.15's client and its `Authorization` rule. The
@@ -4620,8 +4626,12 @@ read stops at the end of the metadata or at **16 MiB**, whichever comes first, a
 running past it being "not read". Each choice's header is its own fragment, so a
 repository of many choices costs a read per choice shown, at most four reads in flight
 across the console, and the facts read are kept in the server's memory by repository,
-commit and path for the process's life, at most 1024 entries, since a file at a commit
-never changes. The pick reads its choice's header again where none is kept, and the role
+commit and path for the process's life, at most 1024 entries, the oldest dropped first,
+since a file at a commit never changes. An answer of the file's own is kept, its header
+or "not read" with the reason, and a fault of the read is not, a gated file or a refused
+token included, since it holds for the read and not for the file. The read follows a
+redirect as a pull's fetch does (section 2.15), at most five, the token on the base's
+origin alone. The pick reads its choice's header again where none is kept, and the role
 row keeps its facts.
 
 **The header is read by a GGUF reader of the console's own** (`src/gguf.rs`), linking
@@ -4638,8 +4648,12 @@ refusals and never a panic or an unbounded allocation. It answers:
 - `general.type`, so a decoder's pick of an adapter's file, or an adapter's pick of a
   model's, is refused
 
-A fact the header does not carry is shown "not read", and a choice whose header's split
-count differs from its file names is shown with that reason and offered no pick.
+**`general.type` admits a role** by this document's election of 2026-11-16: `model`, or
+no type at all, admits the decoder, `adapter` admits the adapter, and any other type
+admits neither, with that reason. A fact the header does not carry is shown "not read",
+and a choice whose header's split count differs from its file names is shown with that
+reason and offered no pick. A file that names no part counts as one, and so does a
+header without `split.count`.
 
 **Each file is named by its path under the models mount, in Hugging Face's layout**, the
 layout of the console's cache (section 2.15) and the one a box keeps its models in:
@@ -4657,8 +4671,11 @@ part, then of each later part in split order (its `weights_hash` at WeaverAgent'
 `6b91747e`). Once the decoder's pull is verified, the console hashes its cached parts
 the same way, one hash at a time on a thread of its own, and keeps the digest in one
 immutable row per repository, commit and choice (migration `0028`), since a file at a
-commit never changes. A start that finds a verified pull with no row hashes it again,
-and the page shows the identity "not read" while its hash runs. A drift between this
+commit never changes. The row names the verified pull it hashed and the bytes hashed. It
+is the server's own write, about a pull an audited pick began, and carries no audit
+record. A start that finds a verified pull with no row hashes it again, a stop of the
+server ending a hash between two reads, and the page shows the identity "not read"
+while its hash runs. A drift between this
 hash and the agent's fails closed, since admission computes the hash again and refuses a
 mismatch. **What the identity does not show** is that the adapter was converted against
 this base: it pins the box's files to the console's pull, and the pairing of adapter and
@@ -6719,16 +6736,22 @@ two connectors report.
 | every pane of every setup page carries a stage, a backing and a status word, and a held pane names what it waits on with no input holding a value | test in `src/setup_tests.rs`, `every_pane_carries_its_stage_backing_and_status`, walking every page's rendered panes in each state it draws: drop a pane's status mark from a template, or fill a held pane's input, and the walk names the pane (both measured); the walk's own perturbations run on every build in `the_walk_names_a_pane_without_a_status_or_with_a_filled_input` |
 | the start page refuses every name admin's name rule or the box's agent-creation rule refuses | perturbation in `src/setup_tests.rs`, one case per clause, each refused and opening no setup: an uppercase letter, a `-`, a `_`, a leading digit, one character, seventeen characters, and each of the two names `weaver-admin-Spec` section 4 reserves whole, which the character rule admits; a name of sixteen characters opens one. Drop a clause from the page's rule and its case meets the store's CHECK, which holds the same rule, and answers as a fault rather than a refusal; drop it from the CHECK too and its case opens a setup (each clause measured from the page, the reserved names from both). A name ending in one of section 4's reserved suffixes carries a `-`, so the character rule refuses it |
 | the pairing page warns where the console's link address is a loopback address and the checkbox says virtual machine, and where it is an unspecified address, for a host and a virtual machine alike | perturbation in `src/setup_tests.rs`, `the_loopback_warning_shows_for_a_virtual_machine_alone` and `the_unspecified_warning_shows_for_a_host_and_a_virtual_machine`, and in `src/surfaces/setup.rs`'s tests, `the_link_address_is_read_for_its_port_its_loopback_and_unspecified`: draw the loopback warning for a host too, and the host's page warns; drop the unspecified check, or drop its paragraph from the template, and `link_listen` at `0.0.0.0` with no `link_address` draws no warning; draw it for a virtual machine alone, and the host's page draws none; read `link_listen` over `link_address`, and a `link_address` the box reaches beside it warns; take IPv4's unspecified address alone, and `::` draws none (each measured) |
-| a crafted post naming a second model, a second adapter role or the CPU is refused, saving nothing | perturbation in `src/setup_tests.rs`: take any role the form names, and a second model's row lands |
-| a pick asks Hugging Face only after the admin gate | perturbation in `src/setup_tests.rs` against a fake Hugging Face: read the listing before the gate, and the fake counts a request from a person holding no admin grant |
-| the GGUF reader refuses a length or a count past its buffer, a header cut short and a header past its bound, without a panic or an unbounded allocation | perturbation in `src/gguf.rs`'s tests: read a string's length before checking it against the bytes held, and a hostile header panics or asks an allocation of its claimed size |
+| a crafted post naming a second model, a second adapter role or the CPU is refused, saving nothing | perturbation in `src/setup_models_tests.rs`, `a_crafted_pick_is_refused_saving_nothing`, against a fake Hugging Face that counts every request, and in `src/surfaces/setup/models.rs`'s tests: take a field the pick does not take, or a field given twice, and a crafted pick is no longer refused by its shape (each measured) |
+| a pick asks Hugging Face only after the admin gate | perturbation in `src/setup_models_tests.rs`, `a_pick_asks_hugging_face_only_after_the_admin_gate`, against the fake: read the listing before the gate, and the fake counts a request from a person holding no admin grant (measured) |
+| the GGUF reader refuses a length or a count past its buffer, a header cut short and a header past its bound, without a panic or an unbounded allocation | perturbation in `src/gguf.rs`'s tests: allocate a string's claimed length before checking it against the bytes held, and the test process aborts on an allocation of 2^63 - 1 bytes; drop an array's room check, and the hostile header's test fails; let an array of arrays nest deeper, and the nesting test fails (each measured) |
 | a context length above the header's maximum is refused | perturbation in `src/setup_tests.rs`: drop the bound, and a context length past the maximum is kept |
 | the deployment tuple refuses any update or delete, and a setup is confirmed once | perturbation, at the schema: drop the trigger, and an update of a tuple lands. Drop the one tuple per setup, and a second Confirm writes a second tuple |
 | an SSH key's line is checked for its form, and its text enters no audit record | perturbation in `src/ssh_key_tests.rs`: drop the inner type's check, and a line whose blob names another type is kept |
 | the turn context is required and never defaulted | perturbation in `src/setup_tests.rs`: draw either word checked, or keep a post without one, and the test names it |
 | the devices are a non-empty set of the survey's cards, by ordinal | perturbation in `src/setup_tests.rs` with a survey supplied through a seam: drop the empty set's refusal, or the check against the survey's ordinals, and the refused post lands |
-| the base's identity is BLAKE3 over the parts in split order | perturbation in `src/hugging_face/base_identity.rs`'s tests: hash in the listing's order, or part 1 alone, and the digest differs from BLAKE3 over part 1's bytes, then part 2's |
-| an adapter's pick carries a finite scale | perturbation in `src/setup_tests.rs`: drop the check, and a pick without a scale, or with one that is not finite, lands |
+| the base's identity is BLAKE3 over the parts in split order | perturbation in `src/hugging_face/base_identity.rs`'s tests: hash in the listing's order, or part 1 alone, and the digest differs from BLAKE3 over part 1's bytes, then part 2's (each measured) |
+| the base's identity is computed at a start that finds it owed, and once the puller verifies a decoder's pull, and is "not read" until then | perturbation in `src/setup_models_tests.rs`, `the_base_identity_is_owed_until_a_start_hashes_it` and `a_verified_pull_wakes_the_hasher`, each waiting ten seconds against the hasher's idle recheck of fifteen: let the hasher wait before its first read, and a start with no word pending leaves the identity owed; drop the puller's word at a verified pull, and the running hasher misses it; show the identity read while it is owed, and the first test names it (each measured) |
+| a choice is offered only where every part stands, and its header's split count agrees with its names | perturbation in `src/hugging_face/choice.rs`'s tests and `src/setup_models_tests.rs`, `the_header_is_read_by_range_and_one_past_the_bound_is_not_read`: offer a choice with a part missing, or group parts by their stem alone, and the grouping's test fails; never see a split count the names contradict, and that choice offers a pick (each measured) |
+| a header is read by range through the commit, bounded at 16 MiB, kept in memory, and at most four are read at once | perturbation in `src/setup_models_tests.rs`, `the_header_is_read_by_range_and_one_past_the_bound_is_not_read` and `at_most_four_header_reads_run_at_once`: read without the range, keep no answer, or let a header past the bound be read on to its end, and the first fails; allow eight reads in flight, and the second counts more than four (each measured). Dropping only the memory's check before the slot leaves the test passing, since the check after the slot keeps it |
+| a gated repository the account lacks offers no pick, and the page offers none without `model_cache` | perturbation in `src/setup_models_tests.rs`, `a_gated_repository_offers_no_pick_until_it_is_granted` and `without_a_cache_the_page_says_why_and_offers_no_pick`: skip the gate's check, or drop the cache's, and a pick is offered (each measured) |
+| a decoder's pick of an adapter's file, or an adapter's pick of a model's, is refused | perturbation in `src/setup_models_tests.rs`, `an_adapters_pick_carries_a_finite_scale`: drop the check of the role against the header's type, and the crossed pick is not refused (measured) |
+| the models drive's need counts a blob two paths share once | perturbation in `src/setup_models_tests.rs`, `the_models_drives_need_counts_a_shared_blob_once`: count each path's bytes, and two parts of the same bytes count twice (measured) |
+| an adapter's pick carries a finite scale | perturbation in `src/setup_models_tests.rs`, `an_adapters_pick_carries_a_finite_scale`, and in `src/surfaces/setup/models.rs`'s tests: take a scale that is not finite, and the form no longer refuses it (measured). The store's CHECK (migration `0026`) holds a finite scale beside the form's |
 | the members the box is laid from are the confirmed tuple's, and none stand before Confirm | perturbation in `src/setup_tests.rs`: read them from the open setup rather than the tuple, and they stand before Confirm |
 
 **A watch that cannot fail is not a test.** For each perturbation above, the

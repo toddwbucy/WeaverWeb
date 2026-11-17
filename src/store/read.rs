@@ -512,12 +512,93 @@ pub(crate) mod tests {
     /// `DATABASE_URL` names and migrated, for a test whose rule is
     /// store-wide (the last enabled admin) and would read the shared
     /// store's other rows. It is dropped when the test ends, a panic
-    /// included (`Drop` below); one left by a killed process is named
-    /// `wwt_...` so it can be found.
+    /// included (`Drop` below). A process that ends without unwinding (a
+    /// suite stopped mid-run, a kill) leaves it, so its name carries its
+    /// creation time, `wwt_<Unix seconds>_<16 hex>`, and its comment names
+    /// the test and the latest migration it ran. A later run's first
+    /// `fresh_store` sweeps every database of that shape older than
+    /// [`SWEEP_AGE`] with no connection (#139). A database of the older
+    /// shape, `wwt_<16 hex>`, is never swept. One of the dated shape kept
+    /// on purpose is swept after six hours, so rename it out of the shape to
+    /// keep it.
     pub(crate) struct Fresh {
         pub(crate) store: Store,
         name: String,
         base: sqlx::postgres::PgConnectOptions,
+    }
+
+    /// The age past which the sweep drops a test database of the dated
+    /// shape, longer than any suite runs.
+    const SWEEP_AGE: u64 = 6 * 3600;
+
+    fn unix_now() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("a clock after the epoch")
+            .as_secs()
+    }
+
+    /// The Unix seconds a test database's name carries, where the name has
+    /// the dated shape: `wwt_`, ten digits, `_` and sixteen lowercase hex
+    /// digits. The sweep's one rule, which also keeps every name it formats
+    /// into a statement to that shape.
+    fn dated(name: &str) -> Option<u64> {
+        let (secs, hex) = name.strip_prefix("wwt_")?.split_once('_')?;
+        let shaped = secs.len() == 10
+            && secs.bytes().all(|b| b.is_ascii_digit())
+            && hex.len() == 16
+            && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
+        if shaped { secs.parse().ok() } else { None }
+    }
+
+    fn dated_name(at: u64) -> String {
+        format!(
+            "wwt_{at:010}_{}",
+            &uuid::Uuid::new_v4().simple().to_string()[..16]
+        )
+    }
+
+    /// **The sweep**: every database of the dated shape whose name's time is
+    /// more than `older_than` seconds before `at` is dropped, by a plain
+    /// `DROP DATABASE`, which the server refuses while a connection holds
+    /// the database, so the check for a connection and the drop are one
+    /// step. A refusal is printed and passed over. Answers the names
+    /// dropped.
+    async fn sweep_aged(admin: &sqlx::PgPool, at: u64, older_than: u64) -> Vec<String> {
+        let names: Vec<String> = sqlx::query_scalar("SELECT datname FROM pg_database")
+            .fetch_all(admin)
+            .await
+            .unwrap_or_default();
+        let mut dropped = Vec::new();
+        for name in names {
+            let Some(made) = dated(&name) else { continue };
+            if at.saturating_sub(made) <= older_than {
+                continue;
+            }
+            match sqlx::query(sqlx::AssertSqlSafe(format!("DROP DATABASE {name}")))
+                .execute(admin)
+                .await
+            {
+                Ok(_) => dropped.push(name),
+                Err(e) => eprintln!("the sweep left the test database {name}: {e}"),
+            }
+        }
+        dropped
+    }
+
+    /// The process's one sweep, which every caller waits for, so no test
+    /// plants a database while it runs.
+    static SWEPT: tokio::sync::OnceCell<()> = tokio::sync::OnceCell::const_new();
+
+    async fn swept(admin: &sqlx::PgPool) {
+        SWEPT
+            .get_or_init(|| async {
+                let dropped = sweep_aged(admin, unix_now(), SWEEP_AGE).await;
+                if !dropped.is_empty() {
+                    eprintln!("swept {} aged test databases: {dropped:?}", dropped.len());
+                }
+            })
+            .await;
     }
 
     pub(crate) async fn fresh_store() -> Option<Fresh> {
@@ -528,10 +609,11 @@ pub(crate) mod tests {
             return None;
         };
         let base: sqlx::postgres::PgConnectOptions = url.parse().expect("a database URL");
-        let name = format!("wwt_{}", &uuid::Uuid::new_v4().simple().to_string()[..16]);
         let admin = sqlx::PgPool::connect_with(base.clone())
             .await
             .expect("connect");
+        swept(&admin).await;
+        let name = dated_name(unix_now());
         sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {name}")))
             .execute(&admin)
             .await
@@ -553,6 +635,23 @@ pub(crate) mod tests {
             .run(&fresh.store.pool)
             .await
             .expect("migrate");
+        // Whose it is: the test, named by its thread as the harness names
+        // it, and the latest migration it ran.
+        let latest: i64 = sqlx::query_scalar("SELECT max(version) FROM _sqlx_migrations")
+            .fetch_one(&fresh.store.pool)
+            .await
+            .expect("the latest migration");
+        let test = std::thread::current()
+            .name()
+            .unwrap_or("an unnamed thread")
+            .replace('\'', "''");
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "COMMENT ON DATABASE {} IS '{test} at migration {latest}'",
+            fresh.name
+        )))
+        .execute(&fresh.store.pool)
+        .await
+        .expect("comment on the test's database");
         Some(fresh)
     }
 
@@ -583,6 +682,126 @@ pub(crate) mod tests {
                 eprintln!("the test's database {} was not dropped", self.name);
             }
         }
+    }
+
+    /// **Only the dated shape is read as a test database** (#139): `wwt_`,
+    /// ten digits of Unix seconds, `_` and sixteen lowercase hex digits. The
+    /// older shape, `wwt_` and sixteen hex digits, never matches, so a
+    /// database kept by a name of that shape is out of the sweep's reach.
+    #[test]
+    fn only_the_dated_shape_is_read_as_a_test_database() {
+        assert_eq!(
+            dated("wwt_1763350000_0123456789abcdef"),
+            Some(1_763_350_000)
+        );
+        for name in [
+            "wwt_0123456789abcdef",
+            "wwt_176335000_0123456789abcdef",
+            "wwt_17633500000_0123456789abcdef",
+            "wwt_1763350000_0123456789abcde",
+            "wwt_1763350000_0123456789abcdef0",
+            "wwt_1763350000_0123456789ABCDEF",
+            "wwt_1763350000-0123456789abcdef",
+            "wwx_1763350000_0123456789abcdef",
+            "weaver_web",
+        ] {
+            assert_eq!(dated(name), None, "{name}");
+        }
+    }
+
+    /// **A test's database is named by its creation time and says whose it
+    /// is** (#139): its name has the dated shape, its time within ten
+    /// minutes of the test's, and its comment names the test and the latest
+    /// migration it ran.
+    #[tokio::test]
+    async fn a_test_database_is_named_by_its_time_and_says_whose_it_is() {
+        let Some(fresh) = fresh_store().await else {
+            return;
+        };
+        let made = dated(&fresh.name).expect("the dated shape");
+        assert!(unix_now().abs_diff(made) < 600, "{}", fresh.name);
+        let comment: Option<String> = sqlx::query_scalar(
+            "SELECT shobj_description(oid, 'pg_database') FROM pg_database WHERE datname = $1",
+        )
+        .bind(&fresh.name)
+        .fetch_one(&fresh.store.pool)
+        .await
+        .unwrap();
+        let latest: i64 = sqlx::query_scalar("SELECT max(version) FROM _sqlx_migrations")
+            .fetch_one(&fresh.store.pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            comment.as_deref(),
+            Some(
+                format!(
+                    "store::read::tests::a_test_database_is_named_by_its_time_and_says_whose_it_is \
+                     at migration {latest}"
+                )
+                .as_str()
+            )
+        );
+    }
+
+    /// **The sweep drops an aged test database and nothing else** (#139): of
+    /// three databases of the dated shape, the one named seven hours old is
+    /// dropped, the one named an hour old stands, and the one named seven
+    /// hours old with a connection held stands, since a plain `DROP
+    /// DATABASE` is refused while a connection holds it. The process's own
+    /// sweep is finished first, so it takes none of the three. A run that
+    /// fails here leaves only databases of the dated shape, which a later
+    /// run's sweep drops.
+    #[tokio::test]
+    async fn the_sweep_drops_only_an_aged_database_with_no_connection() {
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipped: DATABASE_URL is not set, and the sweep is tested against one");
+            return;
+        };
+        let base: sqlx::postgres::PgConnectOptions = url.parse().expect("a database URL");
+        let admin = sqlx::PgPool::connect_with(base.clone())
+            .await
+            .expect("connect");
+        swept(&admin).await;
+        let at = unix_now();
+        let aged = dated_name(at - 7 * 3600);
+        let young = dated_name(at - 3600);
+        let held = dated_name(at - 7 * 3600);
+        for name in [&aged, &young, &held] {
+            sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {name}")))
+                .execute(&admin)
+                .await
+                .expect("create");
+        }
+        let holding = <sqlx::postgres::PgConnection as sqlx::Connection>::connect_with(
+            &base.clone().database(&held),
+        )
+        .await
+        .expect("hold a connection");
+
+        let dropped = sweep_aged(&admin, at, SWEEP_AGE).await;
+        let standing: Vec<String> = sqlx::query_scalar(
+            "SELECT datname FROM pg_database WHERE datname = ANY ($1) ORDER BY datname",
+        )
+        .bind([&aged, &young, &held])
+        .fetch_all(&admin)
+        .await
+        .unwrap();
+        // A forced drop ends the held connection, so its close may fail.
+        let _ = sqlx::Connection::close(holding).await;
+        for name in [&aged, &young, &held] {
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "DROP DATABASE IF EXISTS {name} WITH (FORCE)"
+            )))
+            .execute(&admin)
+            .await
+            .unwrap();
+        }
+        admin.close().await;
+
+        assert!(dropped.contains(&aged), "{dropped:?}");
+        let mut kept = vec![young, held];
+        kept.sort();
+        assert_eq!(standing, kept);
     }
 
     async fn seed_run(s: &Store, run_id: &str, parent: Option<&str>, parting: Option<i32>) {

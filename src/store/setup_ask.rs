@@ -53,13 +53,29 @@ async fn asking_is_live(
 impl Store {
     /// **`setup describe`'s answer** (Spec 8.3) for the row whose live admin
     /// credential asks: refused `not_live` where the credential no longer is,
-    /// and `no_setup` where no setup's pairing links the row. The setup's
-    /// members are read in one snapshot. The laying is the confirmed tuple's,
-    /// which never changes once it stands.
+    /// and `no_setup` where no setup's pairing links the row. **Every member
+    /// is read in one snapshot**, the picks, the need, the confirmed tuple's
+    /// laying and the SSH keys, so a pick changed and confirmed while the
+    /// answer is read never gives the box one model's sizes with another's
+    /// laying.
     pub async fn described(
         &self,
         agent_id: &AgentId,
         fingerprint: &str,
+    ) -> anyhow::Result<Result<Described, Refusal>> {
+        self.described_held(agent_id, fingerprint, None).await
+    }
+
+    /// `described`, with a test's hold between the picks' read and the
+    /// tuple's: `reached` is sent there, and the read waits on `go`.
+    pub(crate) async fn described_held(
+        &self,
+        agent_id: &AgentId,
+        fingerprint: &str,
+        hold: Option<(
+            tokio::sync::oneshot::Sender<()>,
+            tokio::sync::oneshot::Receiver<()>,
+        )>,
     ) -> anyhow::Result<Result<Described, Refusal>> {
         let mut tx = self.pool.begin().await?;
         sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
@@ -138,9 +154,15 @@ impl Store {
                 },
             );
         }
+        if let Some((reached, go)) = hold {
+            let _ = reached.send(());
+            let _ = go.await;
+        }
+        let confirmed = Self::deployment_tuple_on(&mut tx, &setup_id).await?;
+        let held_keys = Self::ssh_keys_on(&mut tx).await?;
         tx.commit().await?;
 
-        let laying = match self.deployment_tuple(&setup_id).await? {
+        let laying = match confirmed {
             None => None,
             Some(confirmed) => {
                 let laying = Laying::of(&confirmed)?;
@@ -159,9 +181,7 @@ impl Store {
                 })
             }
         };
-        let ssh_keys = self
-            .ssh_keys()
-            .await?
+        let ssh_keys = held_keys
             .into_iter()
             .map(|k| DescribedKey {
                 key: k.line,

@@ -1051,3 +1051,127 @@ async fn setup_describe_answers_the_picks_their_need_and_the_laying_once_confirm
         "the need is the picks', confirmed or not"
     );
 }
+
+/// **Every member of `describe`'s answer comes from one snapshot** (Spec
+/// 8.3): an answer held between the picks' read and the tuple's, while the
+/// adapter's pick changes and the setup is confirmed, is whole from before
+/// the change, with no laying, and a describe after it reads the other side
+/// whole, the laying carrying the new pick.
+///
+/// Perturbation: read the tuple outside the answer's transaction, and the
+/// held answer carries the new laying beside the old picks.
+#[tokio::test]
+async fn setup_describe_reads_every_member_in_one_snapshot() {
+    let reported = Arc::new(Reported::default());
+    *reported.survey.lock().unwrap() = Some(two_cards());
+    *reported.members.lock().unwrap() = Some(box_members());
+    let Some((rig, _fake, _, _cache)) = rig_boxed(true, reported.clone()).await else {
+        return;
+    };
+    let s = rig.store();
+    let _identities = BaseIdentities::start(
+        s.clone(),
+        rig.puller.cache().cloned(),
+        rig.puller.verified(),
+    );
+    let (ada, setup) = setup_of(&rig, "karl").await;
+    let fingerprint = "2".repeat(64);
+    let (karl, _) = s
+        .register_agent(
+            "box-a",
+            "karl",
+            None,
+            &"1".repeat(64),
+            &fingerprint,
+            &"3".repeat(64),
+        )
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE agent_setup SET agent_id = $1, paired_as = 'pair', paired_at = now() \
+         WHERE setup_id = $2",
+    )
+    .bind(karl.as_str())
+    .bind(&setup)
+    .execute(&s.pool)
+    .await
+    .unwrap();
+    decoder_picked(&rig, &ada, &setup, "1").await;
+    let decoder_pull = pull_of(s, &setup, "decoder").await;
+    assert_eq!(ended(s, &decoder_pull).await, "verified");
+    let (status, body) = post_pick(
+        &rig,
+        &ada,
+        &setup,
+        pick("2", "adapter", "org/adapter", "adapter.gguf", Some("0.5")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let adapter_pull = pull_of(s, &setup, "adapter").await;
+    assert_eq!(ended(s, &adapter_pull).await, "verified");
+    let (status, body, _) = post(
+        &rig,
+        &ada,
+        &setup,
+        "placement",
+        &[
+            ("version", "3"),
+            ("context_length", "4096"),
+            ("turn_context", "independent"),
+            ("device", "0"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    identity_kept(s).await;
+    let before = s.described(&karl, &fingerprint).await.unwrap().unwrap();
+    assert_eq!(before.laying, None);
+
+    let (reached, at_hold) = tokio::sync::oneshot::channel();
+    let (go, held_until) = tokio::sync::oneshot::channel();
+    let held = {
+        let (s, karl, fingerprint) = (s.clone(), karl.clone(), fingerprint.clone());
+        tokio::spawn(async move {
+            s.described_held(&karl, &fingerprint, Some((reached, held_until)))
+                .await
+                .unwrap()
+                .unwrap()
+        })
+    };
+    at_hold.await.unwrap();
+    let changed_and_confirmed = async {
+        let version = s.setup(&setup).await.unwrap().unwrap().version.to_string();
+        let (status, body) = post_pick(
+            &rig,
+            &ada,
+            &setup,
+            pick(
+                &version,
+                "adapter",
+                "org/adapter",
+                "adapter.gguf",
+                Some("0.25"),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+        let adapter_pull = pull_of(s, &setup, "adapter").await;
+        assert_eq!(ended(s, &adapter_pull).await, "verified");
+        let version = s.setup(&setup).await.unwrap().unwrap().version.to_string();
+        let (status, body, _) = post(&rig, &ada, &setup, "confirm", &[("version", &version)]).await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    };
+    tokio::time::timeout(Duration::from_secs(30), changed_and_confirmed)
+        .await
+        .expect("the change and Confirm land while the answer is held");
+    go.send(()).unwrap();
+    let held = held.await.unwrap();
+    assert_eq!(
+        held, before,
+        "the held answer is whole from before the change"
+    );
+
+    let after = s.described(&karl, &fingerprint).await.unwrap().unwrap();
+    let laying = after.laying.expect("the laying once Confirm stands");
+    assert_eq!(laying.adapter.scale, 0.25, "the other side, whole");
+}

@@ -453,12 +453,22 @@ impl Store {
     /// **The setup's confirmed tuple**, read from its row, or none before
     /// Confirm.
     pub async fn deployment_tuple(&self, setup_id: &str) -> anyhow::Result<Option<Confirmed>> {
+        let mut conn = self.pool.acquire().await?;
+        Self::deployment_tuple_on(&mut conn, setup_id).await
+    }
+
+    /// The same read on a connection the caller holds, so it can share a
+    /// transaction's snapshot.
+    pub(crate) async fn deployment_tuple_on(
+        conn: &mut sqlx::PgConnection,
+        setup_id: &str,
+    ) -> anyhow::Result<Option<Confirmed>> {
         let Some(r) = sqlx::query(
             "SELECT t.*, p.name AS confirmed_by_name FROM deployment_tuple t \
              JOIN person p ON p.person_id = t.confirmed_by WHERE t.setup_id = $1",
         )
         .bind(setup_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *conn)
         .await?
         else {
             return Ok(None);

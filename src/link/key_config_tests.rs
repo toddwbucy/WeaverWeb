@@ -6,6 +6,8 @@
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
+use rustls::pki_types::UnixTime;
+
 use crate::link::authority::Authority;
 use crate::link::frames::Plane;
 use crate::link::key_config::{
@@ -164,13 +166,14 @@ fn a_crash_at_each_write_boundary_keeps_the_key_and_a_re_run_completes_it() {
         let (_, admin_key) = b.requested(Plane::Admin);
         let answer = b.answer(&b.authority, &gate_key, &admin_key);
         let prefix = bytes(&gate);
-        let crashed = key_config::adopt_with(Plane::Gate, &gate, &answer, &mut |at| {
-            if at == boundary {
-                Err(std::io::Error::other("a crash"))
-            } else {
-                Ok(())
-            }
-        });
+        let crashed =
+            key_config::adopt_with(Plane::Gate, &gate, &answer, UnixTime::now(), &mut |at| {
+                if at == boundary {
+                    Err(std::io::Error::other("a crash"))
+                } else {
+                    Ok(())
+                }
+            });
         assert!(
             matches!(crashed, Err(AdoptRefused::Fault(_))),
             "{boundary:?}"
@@ -293,4 +296,46 @@ fn adopt_refuses_an_answer_or_a_config_not_its_own_and_writes_nothing() {
         Err(AdoptRefused::Usage(_))
     ));
     assert_eq!(bytes(&gate), bent);
+}
+
+/// **A box whose clock is outside the certificate's window is told so**:
+/// `adopt` under a clock before the certificate's start, or past its end,
+/// answers the command's own fault naming the window's edge and the box's
+/// clock, never `not_signed`, while a certificate another authority signed
+/// stays `not_signed` under the same clock. Nothing is written.
+///
+/// Perturbation: answer every verification failure `not_signed`, and the
+/// box with a clock at the epoch is sent after the signature. Take a time
+/// refusal as the clock's without verifying again at the window's edge, and
+/// the forged certificate is told it is the clock's.
+#[test]
+fn adopt_names_the_boxs_clock_for_a_certificate_signed_and_out_of_its_window() {
+    let b = bench();
+    let (gate, gate_key) = b.requested(Plane::Gate);
+    let (_, admin_key) = b.requested(Plane::Admin);
+    let before = bytes(&gate);
+    let answer = b.answer(&b.authority, &gate_key, &admin_key);
+    let epoch = UnixTime::since_unix_epoch(std::time::Duration::ZERO);
+    let far = UnixTime::since_unix_epoch(std::time::Duration::from_secs(70_000_000_000));
+    for (clock, edge) in [(epoch, "valid from"), (far, "expired at")] {
+        match key_config::adopt_with(Plane::Gate, &gate, &answer, clock, &mut |_| Ok(())) {
+            Err(AdoptRefused::Fault(why)) => {
+                assert!(why.contains(edge), "{why}");
+                assert!(why.contains("the box's clock reads"), "{why}");
+            }
+            other => panic!("{edge}: {other:?}"),
+        }
+        assert_eq!(bytes(&gate), before, "{edge}: nothing written");
+    }
+
+    let other = Authority::init(&b.path("other"), "weaver-web", &[]).unwrap();
+    let mut forged = AnswerFile::read(&b.answer(&other, &gate_key, &admin_key)).unwrap();
+    forged.authority = b.authority.certificate_pem().to_owned();
+    let forged_path = b.path("forged-clock.json");
+    forged.write_new(&forged_path).unwrap();
+    assert!(matches!(
+        key_config::adopt_with(Plane::Gate, &gate, &forged_path, epoch, &mut |_| Ok(())),
+        Err(AdoptRefused::Refused(NOT_SIGNED))
+    ));
+    assert_eq!(bytes(&gate), before);
 }

@@ -287,15 +287,17 @@ pub const NOT_SIGNED: &str = "not_signed";
 /// plane checked against the key and the answer's authority, and the members
 /// `register` writes appended after the prefix.
 pub fn adopt(plane: Plane, config: &Path, answer: &Path) -> Result<AnswerFile, AdoptRefused> {
-    adopt_with(plane, config, answer, &mut |_| Ok(()))
+    adopt_with(plane, config, answer, UnixTime::now(), &mut |_| Ok(()))
 }
 
-/// `adopt`, answering the answer it adopted, with `at` called at each write boundary: an error from it ends
-/// the write there, as a crash would.
+/// `adopt`, answering the answer it adopted, its certificate verified at
+/// `now`, the box's clock, with `at` called at each write boundary: an error
+/// from it ends the write there, as a crash would.
 pub fn adopt_with(
     plane: Plane,
     config: &Path,
     answer: &Path,
+    now: UnixTime,
     at: &mut dyn FnMut(Boundary) -> std::io::Result<()>,
 ) -> Result<AnswerFile, AdoptRefused> {
     let usage = |e: anyhow::Error| AdoptRefused::Usage(format!("{e:#}"));
@@ -345,11 +347,34 @@ pub fn adopt_with(
     )
     .build()
     .map_err(|e| fault("building the verifier for", &e))?;
-    if verifier
-        .verify_client_cert(&certificate, &[], UnixTime::now())
-        .is_err()
-    {
-        return Err(AdoptRefused::Refused(NOT_SIGNED));
+    // **A box whose clock is outside the certificate's window is told so**,
+    // rather than sent after a signature that holds: a certificate refused for
+    // its time alone is verified again at the edge of its own window, and only
+    // one that verifies there is the clock's fault.
+    use rustls::CertificateError::{ExpiredContext, NotValidYetContext};
+    match verifier.verify_client_cert(&certificate, &[], now) {
+        Ok(_) => {}
+        Err(rustls::Error::InvalidCertificate(NotValidYetContext { time, not_before })) => {
+            return Err(clock(
+                &*verifier,
+                &certificate,
+                plane,
+                time,
+                not_before,
+                "valid from",
+            ));
+        }
+        Err(rustls::Error::InvalidCertificate(ExpiredContext { time, not_after })) => {
+            return Err(clock(
+                &*verifier,
+                &certificate,
+                plane,
+                time,
+                not_after,
+                "expired at",
+            ));
+        }
+        Err(_) => return Err(AdoptRefused::Refused(NOT_SIGNED)),
     }
 
     let tail = tail(plane, &answered);
@@ -371,6 +396,34 @@ pub fn adopt_with(
     at(Boundary::BeforeSync).map_err(|e| fault("ended before syncing", &e))?;
     file.sync_all().map_err(|e| fault("syncing", &e))?;
     Ok(answered)
+}
+
+/// **A certificate refused for its time**: the box's clock's fault where the
+/// certificate verifies at `edge`, the end of its window the clock passed,
+/// naming both times, and `not_signed` otherwise.
+fn clock(
+    verifier: &dyn rustls::server::danger::ClientCertVerifier,
+    certificate: &CertificateDer<'_>,
+    plane: Plane,
+    clock: UnixTime,
+    edge: UnixTime,
+    what: &str,
+) -> AdoptRefused {
+    if verifier.verify_client_cert(certificate, &[], edge).is_err() {
+        return AdoptRefused::Refused(NOT_SIGNED);
+    }
+    let at = |t: UnixTime| {
+        i64::try_from(t.as_secs())
+            .ok()
+            .and_then(|secs| chrono::DateTime::from_timestamp(secs, 0))
+            .map_or_else(|| format!("{} s", t.as_secs()), |d| d.to_rfc3339())
+    };
+    AdoptRefused::Fault(format!(
+        "the answer's {} certificate is {what} {}, and the box's clock reads {}: set the box's clock and run adopt again",
+        plane.as_str(),
+        at(edge),
+        at(clock)
+    ))
 }
 
 /// **What `adopt` appends**: the members `register` writes beside the key,

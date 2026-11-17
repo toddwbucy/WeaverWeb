@@ -758,13 +758,17 @@ async fn a_path_out_of_its_shape_writes_nothing_outside_the_cache() {
     assert!(matches!(asked, Err(Refusal::Name(_))), "{asked:?}");
     assert!(rig.store().pull(&pull_id).await.unwrap().is_none());
 
+    // The pull and its file in one transaction, as the store's ask writes
+    // them: the first puller, still running, sees both rows or neither, and
+    // never a running pull with no file, which it would verify (#136).
+    let mut tx = rig.store().pool.begin().await.unwrap();
     sqlx::query(
         "INSERT INTO model_pull (pull_id, repository, commit_id, asked_by, state) \
          VALUES ('mp-00000000000000aa', 'org/open', $1, $2, 'running')",
     )
     .bind(COMMIT)
     .bind(&rig.admin)
-    .execute(&rig.store().pool)
+    .execute(&mut *tx)
     .await
     .unwrap();
     sqlx::query(
@@ -774,9 +778,10 @@ async fn a_path_out_of_its_shape_writes_nothing_outside_the_cache() {
     .bind(&escaping.path)
     .bind(escaping.size as i64)
     .bind(&escaping.blob_id)
-    .execute(&rig.store().pool)
+    .execute(&mut *tx)
     .await
     .unwrap();
+    tx.commit().await.unwrap();
     puller.stop();
     let puller = rig.puller(quick());
     let (state, reason) = rig.ended("mp-00000000000000aa").await;

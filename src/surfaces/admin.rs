@@ -108,7 +108,12 @@ pub(crate) fn refused(refusal: &Refusal) -> Response {
         | Refusal::NoSuchGrant
         | Refusal::NoSuchRole
         | Refusal::NoSuchAgent
-        | Refusal::NoSuchDeclaration => StatusCode::NOT_FOUND,
+        | Refusal::NoSuchDeclaration
+        | Refusal::NotConnected
+        | Refusal::NoSuchSetup
+        | Refusal::NoSuchKey
+        | Refusal::NoSuchModel
+        | Refusal::NoSuchChoice => StatusCode::NOT_FOUND,
         Refusal::Name(_) | Refusal::Scope(_) | Refusal::Vocabulary(_) => StatusCode::BAD_REQUEST,
         Refusal::Stale
         | Refusal::Taken(_)
@@ -123,8 +128,21 @@ pub(crate) fn refused(refusal: &Refusal) -> Response {
         | Refusal::PlaneRevoked
         | Refusal::NotHead
         | Refusal::NameHeld(_)
-        | Refusal::NameChanged(_) => StatusCode::CONFLICT,
-        Refusal::HandoverFull => StatusCode::SERVICE_UNAVAILABLE,
+        | Refusal::NameChanged(_)
+        | Refusal::SealDoesNotOpen
+        | Refusal::PullRunning(_)
+        | Refusal::PullNotRunning(_)
+        | Refusal::SetupNameHeld(_)
+        | Refusal::KeyHeld
+        | Refusal::KeysFull
+        | Refusal::Unpickable(_)
+        | Refusal::SetupConfirmed
+        | Refusal::Unplaceable(_)
+        | Refusal::Unconfirmable(_) => StatusCode::CONFLICT,
+        Refusal::TokenRefused => StatusCode::UNPROCESSABLE_ENTITY,
+        Refusal::HandoverFull | Refusal::NoSealKey | Refusal::NoModelCache => {
+            StatusCode::SERVICE_UNAVAILABLE
+        }
     };
     (status, refusal.to_string()).into_response()
 }

@@ -1,0 +1,34 @@
+{#- One choice's header (Spec 6.2), a fragment: the facts read, each "not
+    read" where the header does not carry it, and the pick's form where the
+    header's general.type admits a role and the page offers a pick. -#}
+<div class="header-facts">
+{%- if let Some(f) = facts %}
+<table>
+  <tbody>
+  <tr><th>Architecture</th><td>{{ f.architecture }}</td></tr>
+  <tr><th>Precision</th><td>{{ f.precision }}</td></tr>
+  <tr><th>Maximum context</th><td>{{ f.context }}</td></tr>
+  <tr><th>Block count</th><td>{{ f.blocks }}</td></tr>
+  <tr><th>KV heads</th><td>{{ f.kv_heads }}</td></tr>
+  <tr><th>Split</th><td>{{ f.split }}</td></tr>
+  <tr><th>Type</th><td>{{ f.general_type }}</td></tr>
+  </tbody>
+</table>
+{%- endif %}
+{%- if let Some(why) = reason %}
+<p><span class="status fail">no pick</span> {{ why }}</p>
+{%- endif %}
+{%- if let Some(role) = role %}
+<form method="post" action="/setup/{{ setup_id }}/models" class="field">
+  <input type="hidden" name="version" value="{{ version }}">
+  <input type="hidden" name="role" value="{{ role }}">
+  <input type="hidden" name="repository" value="{{ repository }}">
+  <input type="hidden" name="commit" value="{{ commit }}">
+  <input type="hidden" name="choice" value="{{ choice }}">
+  {%- if adapter %}
+  <label>Scale <input name="scale" inputmode="decimal" required></label>
+  {%- endif %}
+  <button type="submit">Pick as the {{ role }}</button>
+</form>
+{%- endif %}
+</div>

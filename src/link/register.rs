@@ -1271,6 +1271,38 @@ impl Store {
         Ok(AuthorityLock { connection })
     }
 
+    /// **The authority lock, waited for within `bound`** (Spec 8.2): none
+    /// where another write held it past the bound. The bound is the store's
+    /// own, `lock_timeout` on the lock's session for the wait alone, so a
+    /// wait given up leaves no request for the lock past it.
+    pub async fn authority_lock_within(
+        &self,
+        bound: std::time::Duration,
+    ) -> anyhow::Result<Option<AuthorityLock>> {
+        let mut connection = self.pool.acquire().await?.detach();
+        // Zero turns the bound off, so the shortest is a millisecond.
+        let millis = bound.as_millis().clamp(1, i32::MAX as u128);
+        sqlx::query("SELECT set_config('lock_timeout', $1, false)")
+            .bind(format!("{millis}ms"))
+            .execute(&mut connection)
+            .await?;
+        let taken = sqlx::query("SELECT pg_advisory_lock($1)")
+            .bind(crate::link::listener::AUTHORITY_LOCK_KEY)
+            .execute(&mut connection)
+            .await;
+        match taken {
+            Ok(_) => {}
+            Err(sqlx::Error::Database(e)) if e.code().as_deref() == Some("55P03") => {
+                return Ok(None);
+            }
+            Err(e) => return Err(e.into()),
+        }
+        sqlx::query("RESET lock_timeout")
+            .execute(&mut connection)
+            .await?;
+        Ok(Some(AuthorityLock { connection }))
+    }
+
     /// **Run a closure under the row's lock and nothing else**: the cleanup
     /// the listener owes after a store error on a path that already
     /// installed, so the live map is mutated under the same exclusion as

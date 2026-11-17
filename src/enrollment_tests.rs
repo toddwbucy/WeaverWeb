@@ -614,6 +614,112 @@ async fn the_first_step_refuses_a_closed_field() {
     assert_eq!(closed.unwrap_err().reason(), "setup_closed");
 }
 
+/// **A matched box hears heartbeats while its exchange waits on the
+/// authority lock, and pairs once the lock is free** (Spec 8.2): another
+/// write holds the lock past four of the box's cadences, the box's silence.
+///
+/// Perturbation: send no heartbeat while the connection is kept, and the box
+/// hears silence and spends its code with no answer.
+#[tokio::test]
+async fn a_box_whose_exchange_waits_on_the_authority_lock_hears_heartbeats() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
+    let setup = setup.unwrap();
+    let keys = box_keys("box-a");
+    let dialed = dial(&rig, &keys.claim).await;
+    let code = dialed.code().to_string();
+    let the_box = tokio::spawn(the_box(dialed, Box::Whole));
+    let held = s.authority_lock().await.unwrap();
+    let ((status, _, body), ()) = tokio::join!(enter(&rig, &ada, &setup, &code, None), async {
+        // Past four cadences of the box's, the silence bound itself.
+        tokio::time::sleep(SILENCE + Duration::from_secs(2)).await;
+        drop(held);
+    });
+    let (heard, last) = the_box.await.unwrap();
+    assert!(matches!(heard, Heard::Answer(_)), "the box heard {heard:?}");
+    assert_eq!(last, Some(LastWord::Paired));
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    assert_eq!(rows_named(s, "karl").await, 1);
+}
+
+/// **An exchange that cannot take the authority lock within the box's life
+/// refuses the box `busy`** (Spec 8.2), rather than leaving it waiting, and
+/// writes nothing.
+///
+/// Perturbation: wait for the lock past the box's life, and the entry is
+/// still waiting when the test gives up.
+#[tokio::test]
+async fn a_box_whose_exchange_waits_past_its_life_is_refused_busy() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    rig.listener
+        .set_pairing_bounds(crate::link::pairing::Bounds {
+            life: Duration::from_secs(8),
+            ..Default::default()
+        });
+    let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
+    let setup = setup.unwrap();
+    let keys = box_keys("box-a");
+    let dialed = dial(&rig, &keys.claim).await;
+    let code = dialed.code().to_string();
+    let the_box = tokio::spawn(the_box(dialed, Box::Whole));
+    let held = s.authority_lock().await.unwrap();
+    let entered = tokio::time::timeout(SOON, enter(&rig, &ada, &setup, &code, None)).await;
+    drop(held);
+    let (status, _, body) = entered.expect("the entry is answered within the box's life");
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert!(body.contains("refused busy"), "{body}");
+    let (heard, _) = the_box.await.unwrap();
+    assert!(
+        matches!(&heard, Heard::Refused(reason) if reason == "busy"),
+        "the box heard {heard:?}"
+    );
+    assert_eq!(rows_named(s, "karl").await, 0);
+    assert!(s.setup(&setup).await.unwrap().unwrap().in_pairing_step());
+}
+
+/// **The box hears heartbeats while the pairing's write runs** (Spec 8.2,
+/// step 6), so a write that waits on the store past four of its cadences
+/// still reaches the box as `paired`.
+///
+/// Perturbation: send no heartbeat while the write runs, and the box hears
+/// silence after its word and prints unknown.
+#[tokio::test]
+async fn a_box_whose_pairings_write_waits_hears_heartbeats_and_paired() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
+    let setup = setup.unwrap();
+    let keys = box_keys("box-a");
+    let mut dialed = dial(&rig, &keys.claim).await;
+    let code = dialed.code().to_string();
+    let the_box = async {
+        let heard = tokio::time::timeout(SOON, dialed.next()).await.unwrap();
+        assert!(matches!(heard, Heard::Answer(_)), "the box heard {heard:?}");
+        // Step 6 reads the setup's row under its lock, so it waits on this
+        // one.
+        let mut held = s.pool.begin().await.unwrap();
+        sqlx::query("SELECT 1 FROM agent_setup WHERE setup_id = $1 FOR UPDATE")
+            .bind(&setup)
+            .execute(&mut *held)
+            .await
+            .unwrap();
+        dialed.written().await.unwrap();
+        let (last, ()) = tokio::join!(dialed.last_word(), async {
+            tokio::time::sleep(SILENCE + Duration::from_secs(2)).await;
+            held.rollback().await.unwrap();
+        });
+        last
+    };
+    let ((status, _, body), last) = tokio::join!(enter(&rig, &ada, &setup, &code, None), the_box);
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    assert_eq!(last, LastWord::Paired);
+}
+
 /// **A pairing naming a live box and name is refused and retires
 /// nothing** (Spec 8.2, step 1): the box hears `box_and_name_live`, the
 /// live row keeps its credentials and its version, and no row is added.

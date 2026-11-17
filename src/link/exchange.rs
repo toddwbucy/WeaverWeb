@@ -19,12 +19,15 @@
 //!    audit's outcome (`Store::pairing_write_on`), and then the last word.
 //!
 //! The caller takes the authority lock and checks the authority it loaded
-//! before step 1, as every register write through the server does.
+//! before step 1, as every register write through the server does. **The box
+//! hears a heartbeat at the link's cadence until step 4 and while step 6
+//! runs** (`pairing::Kept`), so neither the lock's wait nor the store's leaves
+//! it silent.
 
 use crate::link::authority::{Authority, SignedClient};
 use crate::link::frames::{Line, PairFromBox, PairToBox, Plane, pair_reason};
 use crate::link::listener::HANDSHAKE_SECS;
-use crate::link::pairing::{Taken, close_with};
+use crate::link::pairing::{Kept, Taken, close_with};
 use crate::link::register::{AdminWrite, AuthorityLock, Pairing, PairingAct, PairingRefusal};
 use crate::link::request;
 use crate::store::Store;
@@ -55,6 +58,12 @@ pub enum Outcome {
     /// No word from the box within the bound, or a connection that ended
     /// before it: nothing was written.
     LostWord,
+    /// The box went before its answer, a heartbeat not sent within the
+    /// write bound: nothing was written.
+    BoxGone,
+    /// The authority lock was held past the box's life by another write, so
+    /// the box was refused `busy`: nothing was written.
+    Busy,
     /// The admin's session or grant went before step 6: nothing was
     /// written, and the box hears no last word.
     AuthorityGone,
@@ -88,10 +97,10 @@ pub async fn run(lock: &mut AuthorityLock, x: Exchange<'_>, taken: Taken) -> End
         r#box,
         gate_request,
         admin_request,
-        mut connection,
-        write_bound,
+        connection: kept,
         ..
     } = taken;
+    let (cadence, write_bound) = (kept.cadence(), kept.write_bound());
     let pairing = Pairing {
         setup_id: x.setup_id,
         act: x.act,
@@ -107,7 +116,9 @@ pub async fn run(lock: &mut AuthorityLock, x: Exchange<'_>, taken: Taken) -> End
     match Store::pairing_check_on(lock.connection(), &pairing).await {
         Ok(Ok(())) => {}
         Ok(Err(refusal)) => {
-            close_with(&mut connection, &refuse(refusal.reason()), write_bound).await;
+            if let Some(mut connection) = kept.resume().await {
+                close_with(&mut connection, &refuse(refusal.reason()), write_bound).await;
+            }
             return Outcome::Refused(refusal).into();
         }
         Err(error) => return Outcome::Unknown(error).into(),
@@ -119,8 +130,10 @@ pub async fn run(lock: &mut AuthorityLock, x: Exchange<'_>, taken: Taken) -> End
     let (gate_key, admin_key) = match verified {
         Ok(keys) => keys,
         Err(why) => {
-            let refused = refuse(pair_reason::REQUEST_REFUSED);
-            close_with(&mut connection, &refused, write_bound).await;
+            if let Some(mut connection) = kept.resume().await {
+                let refused = refuse(pair_reason::REQUEST_REFUSED);
+                close_with(&mut connection, &refused, write_bound).await;
+            }
             return Outcome::Request(why).into();
         }
     };
@@ -144,7 +157,10 @@ pub async fn run(lock: &mut AuthorityLock, x: Exchange<'_>, taken: Taken) -> End
         answered: Some(answered.clone()),
     };
 
-    // 4. The answer.
+    // 4. The answer, the connection taken back from its heartbeats.
+    let Some(mut connection) = kept.resume().await else {
+        return Outcome::BoxGone.into();
+    };
     let answer = PairToBox::Answer {
         agent: x.name.to_owned(),
         agent_id: x.act.agent_id().as_str().to_owned(),
@@ -172,8 +188,10 @@ pub async fn run(lock: &mut AuthorityLock, x: Exchange<'_>, taken: Taken) -> End
         return ended(Outcome::LostWord);
     }
 
-    // 6. The row and the setup's link, in one identity transaction, then
-    // the last word.
+    // 6. The row and the setup's link, in one identity transaction, the box
+    // hearing heartbeats while it runs, then the last word. A box gone
+    // meanwhile hears none, and prints unknown.
+    let kept = Kept::new(connection, cadence, write_bound);
     let written = Store::pairing_write_on(
         lock.connection(),
         x.admin,
@@ -183,15 +201,20 @@ pub async fn run(lock: &mut AuthorityLock, x: Exchange<'_>, taken: Taken) -> End
         &x.authority.fingerprint(),
     )
     .await;
+    let mut connection = kept.resume().await;
     ended(match written {
         Ok(Ok(_revoked)) => {
-            close_with(&mut connection, &PairToBox::Paired, write_bound).await;
+            if let Some(connection) = connection.as_mut() {
+                close_with(connection, &PairToBox::Paired, write_bound).await;
+            }
             Outcome::Paired {
                 agent_id: x.act.agent_id().clone(),
             }
         }
         Ok(Err(refusal)) => {
-            close_with(&mut connection, &refuse(refusal.reason()), write_bound).await;
+            if let Some(connection) = connection.as_mut() {
+                close_with(connection, &refuse(refusal.reason()), write_bound).await;
+            }
             Outcome::Refused(refusal)
         }
         Err(error) if error.is::<crate::link::register::AuthorityGone>() => Outcome::AuthorityGone,

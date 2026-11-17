@@ -198,7 +198,9 @@ mod entry {
 
     use super::{Entered, pane};
     use crate::link::exchange::{self, Ended, Exchange, Outcome};
+    use crate::link::frames::{PairToBox, pair_reason};
     use crate::link::pair_code::Code;
+    use crate::link::pairing::close_with;
     use crate::link::register::{AdminWrite, PairingAct, PairingRefusal};
     use crate::store::Store;
     use crate::store::admin::Refusal;
@@ -459,8 +461,29 @@ mod entry {
             let session_id = session.session_id;
             let first = first.clone();
             let act = act.clone();
+            let mut taken = taken;
             tokio::spawn(async move {
-                let mut lock = store.authority_lock().await?;
+                // **The authority lock, waited for within the box's life**
+                // (Spec 8.2), the box hearing heartbeats meanwhile: a box
+                // gone ends the wait with nothing written, and a lock held
+                // past the box's life by another write refuses it `busy`.
+                let within = taken
+                    .ends
+                    .saturating_duration_since(tokio::time::Instant::now());
+                let lock = tokio::select! {
+                    lock = store.authority_lock_within(within) => lock?,
+                    _ = taken.connection.lost() => return Ok(Ended::from(Outcome::BoxGone)),
+                };
+                let Some(mut lock) = lock else {
+                    let write_bound = taken.connection.write_bound();
+                    if let Some(mut connection) = taken.connection.resume().await {
+                        let busy = PairToBox::Refused {
+                            reason: pair_reason::BUSY.to_owned(),
+                        };
+                        close_with(&mut connection, &busy, write_bound).await;
+                    }
+                    return Ok(Ended::from(Outcome::Busy));
+                };
                 // The server signs under the authority it loaded, so a
                 // rotation on disk since the start is refused, as every
                 // register write through the server refuses it.
@@ -531,6 +554,16 @@ mod entry {
                 StatusCode::CONFLICT,
                 "fail",
                 format!("refused, the box told request_refused: {why}"),
+            ),
+            Outcome::BoxGone => (
+                StatusCode::CONFLICT,
+                "fail",
+                "the box's connection ended before its answer, so nothing was written: pair the box again".to_owned(),
+            ),
+            Outcome::Busy => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "fail",
+                "another register write held the console past the box's ten minutes, so the box was refused busy and nothing was written: pair the box again".to_owned(),
             ),
             Outcome::LostWord => (
                 StatusCode::CONFLICT,

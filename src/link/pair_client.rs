@@ -196,16 +196,22 @@ impl Dialed {
         }
     }
 
-    /// **The console's last word** after the box's (Spec 8.2, step 6):
+    /// **The console's last word** after the box's (Spec 8.2, step 6),
+    /// heartbeats aside, which the console sends while its write runs:
     /// `paired`, a refusal, or, where the connection ends or stays silent
     /// for four heartbeats' cadence first, unknown.
     pub async fn last_word(&mut self) -> LastWord {
-        let line = match tokio::time::timeout(self.cadence * 4, self.reader.next()).await {
-            Ok(Line::Frame(line)) => line,
-            _ => return LastWord::Unknown,
+        let line = loop {
+            let line = match tokio::time::timeout(self.cadence * 4, self.reader.next()).await {
+                Ok(Line::Frame(line)) => line,
+                _ => return LastWord::Unknown,
+            };
+            #[cfg(test)]
+            self.transcript.push(line.clone());
+            if !matches!(decode(&line), Some(PairToBox::Heartbeat)) {
+                break line;
+            }
         };
-        #[cfg(test)]
-        self.transcript.push(line.clone());
         match decode(&line) {
             Some(PairToBox::Paired) => LastWord::Paired,
             Some(PairToBox::Refused { reason }) => match printable(&reason) {

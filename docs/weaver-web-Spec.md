@@ -6698,6 +6698,15 @@ connection, the console takes six steps under the authority lock:
    the admin grant, with the audit's outcome naming the first record, and then sends its
    last word.
 
+**The box hears a heartbeat at the link's cadence from the match until the answer, and
+again while step 6 runs**, so a box whose exchange waits on the authority lock or the
+store never reads four cadences of silence. A heartbeat that cannot be sent within the
+write bound ends the exchange with nothing written. **The exchange waits for the
+authority lock within the box's life**, ten minutes from its dial, and where another
+write holds the lock past it the console refuses the box `busy` and writes nothing, so
+`busy` names a console that cannot take the box, whether at its dial or at its exchange
+(this document's election of 2026-11-17).
+
 **This document elects that one single-use code enrolls the pair**, since both
 connectors must match on one row (the operator's ruling of 2026-10-01, section 8).
 **Nothing crosses in the clear**, since the exchange is TLS from its first byte, so

@@ -678,8 +678,16 @@ pub(crate) mod tests {
                     })
             })
             .join();
-            if !matches!(dropped, Ok(Ok(()))) {
-                eprintln!("the test's database {} was not dropped", self.name);
+            // The cause named, so a leak can be told from a stopped run's.
+            match dropped {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    eprintln!("the test's database {} was not dropped: {e:#}", self.name)
+                }
+                Err(_) => eprintln!(
+                    "the test's database {} was not dropped: its thread panicked",
+                    self.name
+                ),
             }
         }
     }

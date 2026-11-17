@@ -33,8 +33,10 @@ most of the act's open cells. The act lands them in one commit:
   is the operator's. The field is the next act's to build, not this act's.
 - An agent that elects no state, with a trace path on a missing disk: a destination that
   cannot be opened refuses the load, admin's standing rule.
-- State and save points on an appliance are later, since the first production agent
-  keeps no state.
+- State and save points on an appliance were later, as asked on 2026-11-15. The
+  operator's rulings of 2026-11-16 (setup pages) supersede that: the first production
+  agent declares a store and keeps the system prompt, and it keeps the save point the
+  unload writes, on the state disk. Operator-managed save points stay out of scope.
 - The Spark-class machine is later.
 - The run card is the operator's term for a JSON file, defined in the operator's paper,
   which is in no repository as of 2026-11-15.

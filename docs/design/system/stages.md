@@ -2,9 +2,26 @@
 
 Each row is one pane the grammar expects, with its stage mark, its backing today and where its facts come from. A pane with `unbuilt` backing is a drawing; a pane with `partly` names what is missing in its footer.
 
+On the setup pages every pane also carries its status, healthy states included, on the operator's rulings of 2026-11-16 (setup pages).
+
 ## 1 Declare, partly
 
-Declare is two screens (operator's rulings of 2026-11-11, Spec 6.1): the declaration screen, below, and the board, which wires what was declared and is unbuilt with no panes drawn yet. The declaration screen is built; the agent page's rail links this stage to the declaration saved under the agent's name, for an admin.
+Declare is a start page, the setup pages and the build page, on the operator's rulings of 2026-11-16 (setup pages) and their addendum, which replace the two screens of the rulings of 2026-11-11 as the stage's path (Spec 6.1). They are built to the confirm page, each part live or held (Spec 6.2). The setup pages run in this order: the pairing, the models, the drives, the placement and the confirm page. The declaration screen of the rulings of 2026-11-11, in the second table, is built and stays beside them, reached from the build page's stub, and the agent page's rail links this stage to the declaration saved under the agent's name, for an admin.
+
+| pane | shows | source | backing |
+| --- | --- | --- | --- |
+| Hugging Face account | the operator's account, connected once as a console setting before the start page, with a read-only or a read-write token, held sealed; the console never writes except on an explicit push in Train | the console's store (Spec 2.15) | built |
+| SSH public keys | the operator's SSH public keys, a console setting, one or more, each shown by its SHA-256 fingerprint; the drive setup's run fetches them over the paired link | the console's store (Spec 6.2) | built |
+| Start | the agent's name, one field, refused where admin's name rule or the box's agent-creation rule refuses it; the setups left open | the form | built |
+| Pairing | the checkbox saying whether the box is a virtual machine or a host; the console's link address and port, and a warning where that address is a loopback address and the checkbox says virtual machine, and where it is an unspecified address; held until the enrollment: the box waiting, which dialed this server from its setup, the fingerprint the box shows, compared with this server's own, the short one-time code the box shows, entered here, and the running report of the box's survey | the form and this server's config; then the box over its enrollment connection and the connectors | partly |
+| Models | a Hugging Face repository, then a pick from its files, a split model shown as one choice with all its parts, the precision read from the file; a gated model the account lacks shown with the link to accept it and a button to check again; the pulls' progress and record, and the base's identity | Hugging Face through the console, and the pull record (Spec 2.15) | built |
+| Beyond the first agent | what the first agent does not need (extra models, adapter roles beyond the one decoder adapter, a classifier-only agent, placement on the CPU) drawn and marked unbuilt, never live | nothing | unbuilt |
+| Drives | on an appliance, the models drive's need, sized from the bytes of the chosen files, and the SSH keys that go down; held until the box reports: the command to run at the appliance's console that starts its drive setup, then the state drive, at least 10 GiB, under which each agent has a directory of its own holding its folder and its home side by side, and the models drive, as the box mounted them at the state mount and the models mount; on a host, which attaches and formats nothing, one row drawn and marked unbuilt, since the host's own script is later: the models directory, from this server's `model_cache`, or `not set`. Planned and not drawn: the state directory and the models directory the operator names, the state directory writable with at least 10 GiB free and the models directory readable, with no separate disk asked, the models directory prefilled with that user's default Hugging Face cache so that models already pulled there are found, and beside it a command for the operator granting this server's account read-write on that cache and a models group read, since this server alone downloads there and agents read the model in place, never copied | the picks and this server's store; then the box's report over TLS | partly |
+| Placement | the context length, from the box's max-tokens-per-turn to the model's maximum read from the file's header; the turn context; the block count and the parts in shard order, from the header; held until the box reports: each model on a device, by the survey's ordinals, and the fit, called planned, from the room plan without a load, since only a load measures; "in shard order" naming the layer split across cards | the form and the header; then the survey's report and the room plan | partly |
+| Confirm | the deployment tuple in full: model repository, commit and per-part digests, the adapter likewise, image version, driver, cards by identity, guest CPU, machine, drives, placement, context length; Confirm stands only once every member is read, and goes to the build page | the pages before it and the box's report | built |
+| Build | a one-pane stub marked unbuilt, where the board and the prompt tuple panel will stand, both held | nothing yet | unbuilt |
+
+The declaration screen of the rulings of 2026-11-11, as built:
 
 | pane | shows | source | backing |
 | --- | --- | --- | --- |
@@ -19,6 +36,8 @@ Declare is two screens (operator's rulings of 2026-11-11, Spec 6.1): the declara
 | Declaration, on the agent page | the declaration saved under the agent's name, the head of that lineage: its version, last save and author; its parts, each the agent reports set beside the agent's report (equal, differs, or not in this report) and each it never reports marked so; the prompt by its length, its digest to an admin alone; the other live register rows of the name; the declaration screen's link for an admin | the saved declaration; the register row's tuple and its source | partly: which saved version the agent's file was derived from is not known until Provision writes the file and records its digest |
 
 ## 2 Provision, partly
+
+The pairing and the drives are setup pages (section 1), and on an appliance the box's side is the appliance's setup script, which this server never runs (the operator's rulings of 2026-11-16, setup pages, and their addendum, `weaver-web-PRD` section 10). The pairing belongs with the connectors and serves a host too, and the drive setup is the appliance's script alone. A host install points at a state directory and a models directory and attaches and formats nothing. The panes below stand as built, for registration and the steps on the box.
 
 | pane | shows | source | backing |
 | --- | --- | --- | --- |

@@ -4643,7 +4643,8 @@ length, the turn context and the devices the placement page keeps (the devices s
 migration `0029`). **The pages write no declaration row**, and the document's grammar of
 section 6.1 is not extended. Every write is audited with the target kind `setup`, naming
 the row. **An appliance's pairing links the setup to the register row** its exchange
-writes (section 8.2), and **the setup keeps the latest survey report of each stage**,
+writes, or whose box a replacement sets, and keeps which of the two it was (section
+8.2), and **the setup keeps the latest survey report of each stage**,
 `pairing` and `drives`, verbatim with the time it arrived, so a pairing run again never
 replaces the drives page's report, nor the reverse (section 8.3, this document's
 election of 2026-11-17).
@@ -6703,13 +6704,23 @@ section 8's claim holds as written. **The exchange's audit principal is the admi
 entered the code**, by session, its action `pair` and its target the agent row the
 exchange writes, and the row's author is that admin's `pe-` identity (section 3.2),
 since a pending enrollment is an admin's act and the server acts on the admin's entry.
-**A lost word at step 5 writes nothing.** The box then holds an answer for a row that
-does not exist, which its connectors' hello meets as not live (section 8), so a failed
-pairing fails loud. **The recovery is a second pairing**: a box that adopted an answer
-whose word was lost pairs again, and the second pairing's configs replace the first's.
-On `unknown` the pairing page says whether the row stands: where it stands, the answer
-the box wrote is good and the setup script adopts it, and where it does not, the box
-pairs again.
+**A lost word at step 5 writes nothing.** The box then holds an answer whose
+certificates are not live, for a row that does not exist or, on a replacement, a row
+whose live credentials stay the old box's, and its connectors' hello meets them as not
+live (section 8), so a failed pairing fails loud. **The recovery is a second pairing**:
+a box that adopted an answer whose word was lost pairs again, and the second pairing's
+configs replace the first's. **On `unknown` the pairing page says what the write made**,
+and not whether the row stands, since a replacement's row stands whether its write
+committed or not. Either write makes the answer's two certificates the row's live
+credentials, `pair` on the row it writes and `replace box` on the row whose box it sets
+to the new box's claim, so the page shows the row's box and its live credentials by
+their fingerprints, each as the register keeps it (section 2.12) in the authority's
+fingerprint's grouping. Where the write did not commit, the page shows no row or the old
+box's credentials, which match nothing the box holds. `pair`'s `unknown` line carries
+the fingerprints of the answer's two certificates, the setup script shows them and asks
+the operator whether the page shows the same two, and it adopts only where the operator
+confirms both. Otherwise the box pairs again, so `pair` and `replace box` resolve one
+way.
 
 **Each connector's key is made inside the appliance and never leaves it.** The console
 receives the public half alone, **as a certificate request**, PKCS #10 in PEM, whose own
@@ -6763,7 +6774,8 @@ sent:
    - `expired` (5), the window past with no code entered
    - `unreachable` (3), with the address it dialed
    - `unknown` (6), the connection ended after the answer was written and before the
-     console's last word, so the pairing page says whether the row stands
+     console's last word, with `gate` and `admin`, the fingerprints of the answer's two
+     certificates, which the setup script shows beside the pairing page's (above)
 3. **`gate-con adopt` and `admin-con adopt`**, each under its own connector's account.
    In: its config from step 1 and the answer. It checks that the answer's certificate
    for its plane carries its own key's public half and verifies under the authority the
@@ -6821,7 +6833,21 @@ fetches them with `admin-con setup describe` (sections 6.2 and 8.3). Once the mo
 picked, the console shows a command to run at the appliance's console, which starts the
 setup script's drive setup: the script lists the drives the machine sees, and formats
 and mounts the state drive and then the models drive, each after the operator confirms
-the disk. The box reads the models drive's need from `setup describe`, and it pulls the
+the disk. **A replacement's drive setup never formats the state drive**, since the state
+drive is what a new image carries: the operator's rulings of 2026-11-16 (setup pages)
+require the state mount for every agent and put the save point the unload writes on it,
+their addendum puts the agent's home on the state drive, where the agent's directory
+under the state mount holds its folder and its home side by side (section 8.3), so
+nothing the agent keeps stands on the root disk, and on the operator's ruling of
+2026-11-15 the keys and certificates live on the root disk and a new image is a new
+enrollment. The script learns which case it runs from `setup describe`'s `replacement`
+(section 8.3). On a replacement it mounts the existing state drive and checks that the
+agent's directory under the state mount is there and holds the agent's folder, whose
+save points carry over with it. The check asks no save point, since an agent never
+unloaded holds none. Where the check fails the script stops and tells the operator, and
+never falls back to formatting. Formatting the state drive is a new box's alone, after
+the operator confirms the disk, and the models drive is set up as a new box's is. The
+box reads the models drive's need from `setup describe`, and it pulls the
 model from the console's cache over TLS when the background download finishes (section
 8.3). The connectors dial the console on every boot and redial a dropped link, and load
 and unload do not drop them. Every root act runs on the machine at a screen the operator
@@ -6829,7 +6855,8 @@ is sitting at, so admin's grant does not grow, and from pairing onward the conso
 whole reach is its two connectors.
 
 **The setup connection's two asks are this document's election of 2026-11-17** (section
-8.3): `setup describe` answers the agent, its models, the models drive's need, the SSH
+8.3): `setup describe` answers the agent, whether its pairing was a replacement, its
+models, the models drive's need, the SSH
 public keys and, once Confirm stands, the members the agent is laid from, and `setup
 report` carries the survey's report. Neither is built. As built, the link carries frames
 of one line bounded at 4 MiB (`link::frames::LINE_BOUND`), and no frame names a pull of
@@ -6909,6 +6936,9 @@ statuses are section 8.2's. It makes two asks:
 - **`admin-con setup describe`.** In: its config alone. Out: one `described` line (0)
   with these members:
   - `agent` and `agent_id`, the register row's name and identity
+  - `replacement`, `true` where the setup's pairing was the replace-box write (section
+    8.2) and `false` where it wrote a new row, so the drive setup knows whether the
+    state drive it mounts is carried or new
   - `models`, absent until the models page's first pick, then one entry per role,
     `decoder` and `adapter`, each with `repository`, `commit`, `artifact` (the path of
     the choice's first part, or of the adapter's one file), `files` (each with `path`,
@@ -6954,8 +6984,10 @@ is not one**, the state mount being required for every agent at a minimum of 10 
 the operator's rulings of 2026-11-16 (setup pages), which supersede the ruling of
 2026-11-15 that required it only where the declaration elects state (`weaver-web-PRD`
 section 10.4). The appliance's setup script, started by a command the drives page shows,
-lists, formats and mounts the drives, each after the operator confirms the disk, and the
-console attaches and mounts nothing. The drives page shows the drives as the box mounted
+lists, formats and mounts the drives, each after the operator confirms the disk, except
+a replacement's state drive, which it mounts and checks and never formats (section 8.2).
+The console attaches and mounts nothing. The drives page shows the drives as the box
+mounted
 them, from the box's report at the `drives` stage (`setup report`, above). A host
 install points at a state directory and a models directory and attaches and formats
 nothing, on the addendum to the same rulings, and the drives page shows the directories
@@ -7098,6 +7130,7 @@ two connectors report.
 | a pairing naming a live box and name is refused and retires nothing | perturbation, **owed**: write the pairing's row through registration's insert, and the live row is retired |
 | a lost word writes no row | perturbation, **owed**: write the row before the box's word, drop the word, and a row stands for an answer no box adopted |
 | a row's box changes only through the replace-box write, and the row keeps the box it held | perturbation, **owed**: write the new box without the history's row, and the old box leaves the record |
+| a replacement's drive setup mounts the state drive it carries and never formats it | **owed**: `setup describe` answers `replacement` `true` after a `replace box` and `false` after a `pair`, perturbed by answering false after a replacement, which would send the carried drive to the format. The mount, its check and its refusal are the image's script's and tested there (`weaver-web-PRD` section 8) |
 | a setup ask is refused while its credential's connection stands, and counts for nothing in presence | **owed**: the real listener and a fake admin-con, a setup ask beside a standing admin connection refused `already_connected`, and a setup connection alone leaving the row not present |
 | the setup keeps the latest report of each stage, verbatim | perturbation, **owed**: keep one report per setup, and a pairing report run again replaces the drives page's |
 | an adopted pair connects | **owed**: end to end, `request`, then `pair` against the real listener with the code entered through the page, then `adopt`, and both connectors are admitted on one row |

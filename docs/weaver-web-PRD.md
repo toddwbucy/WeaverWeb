@@ -1131,7 +1131,9 @@ this crate designs around the gap until it closes.
   declares none, and a destination that cannot be opened refuses the load, admin's
   standing rule (section 10.6). The operator's rulings of 2026-11-16 (setup pages)
   require the state mount for every agent, so no agent stands without one (section
-  10.4).
+  10.4). On the operator's word of 2026-11-17 the trace is never written to the agent's
+  state or anywhere the agent can reach, so no trace path stands on the state mount
+  (section 10.4).
 - **The Spark-class machine, later, and named as later**, on the operator's ruling of
   2026-11-15, which puts it out of scope until one is had. The setup flow serves a host
   as it serves a virtual machine, on the operator's rulings of 2026-11-16 (setup pages).
@@ -1421,8 +1423,12 @@ accounts take its name, on the operator's word of 2026-11-16: the box's agent-cr
 tool lays them at setup, and the image carries no fixed account for the agent. On the
 state drive each agent has a directory of its own under the state mount, named for it,
 which holds the agent's folder and its home side by side, and a host lays the same
-under its state directory (`weaver-web-Spec` section 6.2). Every account's name and
-every path are the image's and WeaverAgent's, and none enters this repository.
+under its state directory (`weaver-web-Spec` section 6.2). **The trace is never written
+to the agent's state or anywhere the agent can reach**, on the operator's word of
+2026-11-17: it goes to Weaver Web, which stores it outside the agent's reach, so nothing
+on the state drive holds it beside the agent's state or save points (`weaver-web-Spec`
+section 10). Every account's name and every path are the image's and WeaverAgent's, and
+none enters this repository.
 With no drive attached the script warns that at least one drive is for state, about 10
 GiB recommended, and checks again once the operator attaches one. The models drive it
 asks for is sized from the chosen model, whose size it asks the console over TLS

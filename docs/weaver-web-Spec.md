@@ -6846,7 +6846,9 @@ agent's directory under the state mount is there and holds the agent's folder, w
 save points carry over with it. The check asks no save point, since an agent never
 unloaded holds none. Where the check fails the script stops and tells the operator, and
 never falls back to formatting. Formatting the state drive is a new box's alone, after
-the operator confirms the disk, and the models drive is set up as a new box's is. The
+the operator confirms the disk, and the models drive is set up as a new box's is, except
+that **a replacement's models drive is never the disk it carries as its state drive**:
+the script refuses that pick and formats nothing. The
 box reads the models drive's need from `setup describe`, and it pulls the
 model from the console's cache over TLS when the background download finishes (section
 8.3). The connectors dial the console on every boot and redial a dropped link, and load
@@ -6938,7 +6940,8 @@ statuses are section 8.2's. It makes two asks:
   - `agent` and `agent_id`, the register row's name and identity
   - `replacement`, `true` where the setup's pairing was the replace-box write (section
     8.2) and `false` where it wrote a new row, so the drive setup knows whether the
-    state drive it mounts is carried or new
+    state drive it mounts is carried or new, and refuses a carried one as the models
+    drive
   - `models`, absent until the models page's first pick, then one entry per role,
     `decoder` and `adapter`, each with `repository`, `commit`, `artifact` (the path of
     the choice's first part, or of the adapter's one file), `files` (each with `path`,
@@ -6985,7 +6988,8 @@ the operator's rulings of 2026-11-16 (setup pages), which supersede the ruling o
 2026-11-15 that required it only where the declaration elects state (`weaver-web-PRD`
 section 10.4). The appliance's setup script, started by a command the drives page shows,
 lists, formats and mounts the drives, each after the operator confirms the disk, except
-a replacement's state drive, which it mounts and checks and never formats (section 8.2).
+a replacement's state drive, which it mounts and checks, never formats and refuses as
+the models drive (section 8.2).
 The console attaches and mounts nothing. The drives page shows the drives as the box
 mounted
 them, from the box's report at the `drives` stage (`setup report`, above). A host
@@ -7131,7 +7135,7 @@ two connectors report.
 | a lost word writes no row | perturbation, **owed**: write the row before the box's word, drop the word, and a row stands for an answer no box adopted |
 | on `unknown` the pairing page shows what the write made, the row's box and its live credentials' fingerprints | **owed**: after a committed `replace box` the page shows the new certificates' fingerprints, and after a write that did not commit the old box's, or no row for `pair`, perturbed by a page that shows the answer's fingerprints rather than the row's, which would match the box's line whether the write committed or not |
 | a row's box changes only through the replace-box write, and the row keeps the box it held | perturbation, **owed**: write the new box without the history's row, and the old box leaves the record |
-| a replacement's drive setup mounts the state drive it carries and never formats it | **owed**: `setup describe` answers `replacement` `true` after a `replace box` and `false` after a `pair`, perturbed by answering false after a replacement, which would send the carried drive to the format. The mount, its check and its refusal are the image's script's and tested there (`weaver-web-PRD` section 8) |
+| a replacement's drive setup mounts the state drive it carries and never formats it | **owed**: `setup describe` answers `replacement` `true` after a `replace box` and `false` after a `pair`, perturbed by answering false after a replacement, which would send the carried drive to the format. The mount, its check, its refusal and the refusal of the carried disk as the models drive are the image's script's and tested there (`weaver-web-PRD` section 8) |
 | a setup ask is refused while its credential's connection stands, and counts for nothing in presence | **owed**: the real listener and a fake admin-con, a setup ask beside a standing admin connection refused `already_connected`, and a setup connection alone leaving the row not present |
 | the setup keeps the latest report of each stage, verbatim | perturbation, **owed**: keep one report per setup, and a pairing report run again replaces the drives page's |
 | an adopted pair connects | **owed**: end to end, `request`, then `pair` against the real listener with the code entered through the page, then `adopt`, and both connectors are admitted on one row |

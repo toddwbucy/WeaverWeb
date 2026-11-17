@@ -1010,7 +1010,8 @@ this crate designs around the gap until it closes.
   and later, at the command the console shows, lists the drives and formats and mounts
   the state drive and the models drive after the operator confirms each disk. A new
   image for an agent that stands mounts and checks the state drive it carries and never
-  formats it (`weaver-web-Spec` section 8.2). Beside it,
+  formats it, and refuses it as the models drive, formatting nothing, which the image's
+  script tests (`weaver-web-Spec` section 8.2). Beside it,
   the survey the image ships, run locally, with its report sent over TLS, the connectors
   started on every boot, and the box's two asks of the console over TLS, the chosen
   model's size and the model pulled from the cache, and the box taking the operator's
@@ -1284,7 +1285,8 @@ which starts the setup script's drive setup: the script lists the drives it sees
 formats and mounts the state drive and then the models drive, each after the operator
 confirms the disk (section 10.4). A new image for an agent that stands mounts the state
 drive it carries, checks it and never formats it, and stops and tells the operator where
-the check fails (`weaver-web-Spec` section 8.2). The drive setup is the appliance's
+the check fails or the operator picks it as the models drive (`weaver-web-Spec` section
+8.2). The drive setup is the appliance's
 script alone, and a
 host's own script is later, and named as later. A host install points at a state
 directory and a models directory and attaches and formats nothing (section 10.4). On a
@@ -1430,7 +1432,8 @@ console shows once the model is picked, lists the drives it sees, asks which one
 state, and formats and mounts each after the operator confirms the disk, on the
 operator's rulings of 2026-11-16 (setup pages), which supersede the ruling of 2026-11-15
 that the operator mounts them over SSH. A new image for an agent that stands mounts the
-state drive it carries and never formats it (`weaver-web-Spec` section 8.2). A host
+state drive it carries, never formats it and never takes it as the models drive
+(`weaver-web-Spec` section 8.2). A host
 install points at a state directory and a
 models directory, and attaches and formats nothing, on the addendum to the same rulings,
 and the drives page shows the directories the operator named with free space against the

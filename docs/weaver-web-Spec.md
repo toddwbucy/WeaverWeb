@@ -4048,28 +4048,31 @@ that user's default Hugging Face cache and a command granting the console's acco
 read-write on that cache and a models group read (section 8.3). The placement page
 places each model on a device with its context length, and the confirm page shows the
 deployment tuple in full, which Confirm closes. The build page holds the board and the
-prompt tuple panel, both held, and is a one-pane stub marked unbuilt. **None of these
-pages is built**, and section 10 carries the act that builds them.
+prompt tuple panel, both held, and is a one-pane stub marked unbuilt. **Section 6.2
+states the pages as built**, each part live or held, and what a held part waits on.
 
 **This section is the declaration screen as built on 2026-11-16**, the first of the two
-screens of the rulings of 2026-11-11. It stands until the setup pages' act recuts
-Declare and says here what of it the pages keep. **What the rulings of 2026-11-16 move,
-for that act:**
+screens of the rulings of 2026-11-11. **It stays as built beside the setup pages**, its
+rows untouched, reached from the build page's stub for the fields no setup page asks
+(section 6.2). **What the setup pages take in place of this screen's fields** (section
+6.2):
 
 - The model's source. The models page takes a Hugging Face repository and a pick from
-  its files, pinned by commit with every file's SHA-256 and size (section 8.3), where
-  this screen takes an artifact as text in the agent's grammar.
+  its files, pinned by commit with every file's SHA-256 and size (section 2.15), where
+  this screen takes an artifact as text in the agent's grammar. Which of the two a
+  loadable declaration reads is section 10's.
 - The placement. The placement page places each model on a device, placement on the CPU
   drawn and unbuilt, where this screen takes each box's GPU requirement as a card, a
   class or a pair.
 - Two tunable values. The placement page chooses the context length against the model's
   maximum, read from the file's header, and the six sampling values live in the prompt
   tuple, where this screen requires all eight at save.
-- The store. The state mount is required for every agent (section 8.3), and whether the
-  store `none` this screen offers stays is not ruled (section 10).
-- The roster offered. What is built is what the first agent needs, one decoder and the
-  one adapter on it, and extra models, adapter roles beyond the one decoder adapter and
-  a classifier-only agent are drawn and marked unbuilt.
+- The roster offered. The models page offers what the first agent needs, one decoder and
+  the one adapter on it, and extra models, adapter roles beyond the one decoder adapter
+  and a classifier-only agent are drawn and marked unbuilt.
+
+**The store stays open.** The state mount is required for every agent (section 8.3), and
+whether the store `none` this screen offers stays is not ruled (section 10).
 
 **The board** wires what was declared and shows only that. It is held and waits on
 contracts WeaverAgent has yet to write. When it comes, a component is a compiled
@@ -6575,10 +6578,11 @@ connector makes is section 8's mutual TLS.
 
 **What crosses after the pairing**, on the operator's rulings of 2026-11-16 (setup
 pages) and their addendum. The survey the image ships runs locally and sends its report
-over TLS. The console sends the operator's SSH public key down the paired link, since
-the operator's SSH door takes that key, and the setup script's first question sets
-root's password. The console holds that key, a public half and no secret, and where it
-holds it is section 10's. Once the model is picked, the console shows a command to run
+over TLS. The operator's SSH public keys cross the paired link to the box, since the
+operator's SSH door takes them, and the setup script's first question sets root's
+password. The console holds the keys as a console setting, public halves and no secret,
+and the setup script's drive-setup run fetches them over the paired link (section 6.2).
+Once the model is picked, the console shows a command to run
 at the appliance's console, which starts the setup script's drive setup: the script
 lists the drives the machine sees, and formats and mounts the state drive and then the
 models drive, each after the operator confirms the disk. The box asks the console over
@@ -6636,22 +6640,20 @@ only account that talks to Hugging Face and the only writer of that directory. A
 that machine read the model in place, read-only, through a group, since several agents
 may share one model, and never copy it. Where the console stands on another machine, the
 model crosses over TLS from the console, never from Hugging Face, as on an appliance.
-The console starts the download in the background once the model is picked, and the
-machine asks the console over TLS for the model's size and pulls it from the cache over
-TLS when the download finishes, checking its digests (section 8.2). **None of it is
-built.** As built, the link carries frames of one line bounded at 4 MiB
-(`link::frames::LINE_BOUND`), so a model's transfer from the console's cache is not a
-frame on it. Which component in the appliance pulls, over which connection, the layout
-of the cache, and how an interrupted transfer continues, are section 10's. The charter
+**The console's side is built** (section 2.15): the account, its token sealed as the
+stated exception to the digest rule, the pull a pick starts in the background, its
+record, the hash after download with the rename only on a match, and the cache in
+Hugging Face's layout. **The box's side is not built**: the machine asks the console
+over TLS for the model's size and pulls it from the cache over TLS when the download
+finishes, checking its digests (section 8.2). As built, the link carries frames of one
+line bounded at 4 MiB (`link::frames::LINE_BOUND`), so a model's transfer from the
+console's cache is not a frame on it. Which component in the appliance pulls, over which
+connection, and how an interrupted transfer continues, are section 10's. The charter
 gives the network outside the agent's edge to the two connectors and to nothing else
 (`weaver-web-PRD` section 3.0), so a puller other than a connector would move that
-sentence. **Every secret the store holds as built is a digest**, and a source's access
-token has to be presented as it is, so a token would be the first secret the store holds
-in a usable form. How a token is held at rest, and what may carry it, are section 10's.
-So are the shape of a pull's record in the store, what the hash after download is
-compared against and what becomes of a file whose hash differs, and whether a pulled
-model is an artifact of section 2.3. The console never writes to Hugging Face except on
-an explicit push in Train, on the same rulings.
+sentence. Whether a pulled model is an artifact of section 2.3 is section 10's too. The
+console never writes to Hugging Face except on an explicit push in Train, on the same
+rulings.
 
 **The image download.** Where images are published for the console to find, and where
 their published hashes come from, are section 10's.
@@ -6673,14 +6675,14 @@ granting the console's account read-write there and a models group read. A host'
 check, on the operator's word of 2026-11-16, asks that both directories exist, the state
 directory be writable with at least 10 GiB free and the models directory be readable,
 and asks no separate disk. On the addendum to the operator's rulings of 2026-11-16
-(setup pages) the agent is a real account on the box, and its home lives on the state
-drive, so the state mount's 10 GiB is that home. The agent's own folder, its
-declaration, logs, trace and save points, stands inside that home. The image ships a
-fixed agent account, and the connectors' two accounts on the same principle, and setup
-points the agent account's home at a folder named after the agent on the state drive,
-the agent's own folder inside it. A host uses a home named after the agent, with the
-same layout inside. The account's name and every path are the image's and WeaverAgent's,
-and none enters this repository. (`weaver-web-PRD` section 10.4). The refusal is
+(setup pages) the agent is a real account on the box, its home on the state drive.
+**The agent's accounts take its name**, on the operator's word of 2026-11-16: the box's
+agent-creation tool lays them at setup, named from `weaver-<name>`, and the image
+carries no fixed account for the agent (section 6.2). On the state drive each agent has
+a directory of its own under the state mount, named for it, which holds the agent's
+folder and its home side by side, and a host lays the same under its state directory.
+Every account's name and every path are the image's and WeaverAgent's, and none enters
+this repository (`weaver-web-PRD` section 10.4). The refusal is
 admin's, since load is admin's verb, so the representation this document holds is
 admin's answer to `load`, which renders as it came, as every refusal does (section 7.2).
 The report of the sizes reaches the console through admin-con, the console's one reach
@@ -7417,28 +7419,24 @@ a `web-` assertion beside `weaver-admin`'s.
   the pairing, the connectors', serve a host too, a host's own setup script being later,
   which supersedes the rulings of 2026-11-14 that kept the single-host install for the
   Spark class alone. Open: whether registration and its handover (section 8.1) stay
-  beside the pairing for a host. Settled by the operator, then by the setup pages' act.
-- **Access tokens at rest, opened 2026-11-15** (section 8.3). The Hugging Face token, a
-  read-only or a read-write token on the operator's rulings of 2026-11-16 (setup pages),
-  is held in the console's store in a usable form, the first secret the store would hold
-  so. Open: how it is held at rest, and whether a frame, a record, a log line or an
-  error may carry it. Settled by the model cache's act, with the operator's review.
-- **A pulled model's record, opened 2026-11-15** (section 8.3). The operator's rulings
-  of 2026-11-16 (setup pages) fix what a pull records: the repository, the commit, every
-  file's SHA-256 and size, one per part for a split model, the account that pulled and
-  the time, each download through the commit, hashed after it and compared. Open: the
-  record's shape in the store, what the hash after download is compared against and what
-  becomes of a file whose hash differs, and whether a pulled model is an artifact of
-  section 2.3, which the charter's section 9 holds as whether a fetch is an import.
-  Settled by the model cache's act, with the operator's review.
+  beside the pairing for a host. Settled by the operator, then by the enrollment's act.
+- **Access tokens at rest, closed 2026-11-16 by section 2.15**, opened 2026-11-15
+  (section 8.3). The Hugging Face token is sealed, the stated exception to the digest
+  rule, and enters no page, log line, audit record or error.
+- **Whether a pulled model is an artifact of section 2.3, opened 2026-11-15** (section
+  8.3) as a pulled model's record. Section 2.15 holds the record's shape, the hash after
+  download and the rename only on a match, on the operator's rulings of 2026-11-16
+  (setup pages). Open: whether a pulled model is an artifact of section 2.3, which the
+  charter's section 9 holds as whether a fetch is an import. Settled by the operator.
 - **The model store's transfer, opened 2026-11-15** (section 8.3). On the operator's
   rulings of 2026-11-16 (setup pages) the appliance asks the console over TLS for the
   chosen model's size, and pulls the model from the console's cache over TLS when the
-  background download finishes. Open: which component in the appliance pulls, over which
-  connection and frame, the layout of the cache inside the install, and how an
-  interrupted transfer continues. The charter gives the network outside the agent's edge
-  to the two connectors and to nothing else, so a puller other than a connector moves
-  that sentence of the charter. Settled by the model cache's act.
+  background download finishes. The cache's layout is Hugging Face's (section 2.15).
+  Open: which component in the appliance pulls, over which connection and frame, and how
+  an interrupted transfer continues. The charter gives the network outside the agent's
+  edge to the two connectors and to nothing else, so a puller other than a connector
+  moves that sentence of the charter. Settled by the act of the box's pull, after the
+  enrollment's.
 - **The console as the model store, opened 2026-11-15** (section 8.3): the model count
   or fleet size at which its cache stops being tolerable. No measurement exists, because
   the fleet is one. Settled by a measurement on a fleet larger than one.
@@ -7506,25 +7504,24 @@ a `web-` assertion beside `weaver-admin`'s.
   placed in a repository.
 - **The setup pages, opened 2026-11-16** (section 6.1). The operator's rulings of
   2026-11-16 (setup pages) and their addendum rule the start page, the setup pages in
-  their order and the build page, and the act that builds them ends at the confirm page.
-  Open, since no ruling places them: the page that holds the system prompt, the trace's
-  destination (a field of the declaration page on the ruling of 2026-11-15), the turn
-  context and the two decoder elections, the store and the state election, the gate's
-  tool, and the maximum tokens per turn. Also open: whether the class form of a GPU
-  requirement stands beside the placement page's placement on a device. Settled by the
-  operator, then by the setup pages' act.
+  their order and the build page, and section 6.2 builds them to the confirm page, the
+  placement page taking the turn context and the box's max-tokens-per-turn bounding the
+  context length. Open, since no ruling places them: the page that holds the system
+  prompt, the trace's destination (a field of the declaration page on the ruling of
+  2026-11-15), the two decoder elections, the store and the state election, and the
+  gate's tool. Also open: whether the class form of a GPU requirement stands beside the
+  placement page's placement on a device. Settled by the operator, then by the act that
+  builds each page.
 - **What crosses the link for the setup, opened 2026-11-16** (section 8.2). On the
   operator's rulings of 2026-11-16 (setup pages) and their addendum the box waits with
   its code, sends its survey's report, takes the operator's SSH public key, asks for the
   chosen model's size and pulls the model, each over TLS with the console. Open: the
   connection, frame and bounds of each, and the image's or WeaverAgent's side of each,
   none of which exists, an ask upstream (`weaver-web-PRD` section 8). Settled by those
-  asks, then by the model cache's act and the setup pages' act.
-- **Where the console holds the operator's SSH public key, opened 2026-11-16** (section
-  8.2). On the addendum to the operator's rulings of 2026-11-16 (setup pages) the
-  console sends the operator's SSH public key down the paired link after pairing. Open:
-  whether it is a console setting or a field of the pairing page. Settled by the setup
-  pages' act.
+  asks, then by the enrollment's act and the act of the box's pull.
+- **Where the console holds the operator's SSH public key, closed 2026-11-16 by section
+  6.2**, opened the same day (section 8.2): a console setting, one or more keys, an
+  admin's write, which the setup script's drive-setup run fetches over the paired link.
 - **The state drive's size, opened 2026-11-16** (section 8.3). The operator's rulings of
   2026-11-16 (setup pages) state every size in the flow in one unit, GiB, require the
   state mount at a minimum of 10 GiB, and have the appliance's setup script warn "about

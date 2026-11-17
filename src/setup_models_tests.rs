@@ -30,7 +30,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 
 use crate::admin_tests::{admin, form, send_as, signed_in};
-use crate::gguf::build::{Gguf, STRING};
+use crate::gguf::build::{F32, Gguf, STRING};
 use crate::hugging_face::RepoId;
 use crate::passkeys_tests::authenticator;
 use crate::setup_tests::{Rig, audited, begin, page, rig_hf, walk};
@@ -109,6 +109,14 @@ fn repos() -> Vec<Repo> {
         .raw("general.name", STRING, &(17u64 << 20).to_le_bytes())
         .bytes();
     let mismatch = with_filler(Gguf::model("granite").u16("split.count", 3).bytes(), 5, 100);
+    // A model's `general.type` followed by a float one, the last standing.
+    let float_type = with_filler(
+        Gguf::model("granite")
+            .raw("general.type", F32, &1.5f32.to_le_bytes())
+            .bytes(),
+        9,
+        100,
+    );
     let mut many = Vec::new();
     for (at, name) in [
         "a0.gguf", "a1.gguf", "a2.gguf", "a3.gguf", "a4.gguf", "a5.gguf", "a6.gguf", "a7.gguf",
@@ -168,6 +176,11 @@ fn repos() -> Vec<Repo> {
             name: "org/many",
             gated: false,
             files: many,
+        },
+        Repo {
+            name: "org/float-type",
+            gated: false,
+            files: vec![("f.gguf", float_type)],
         },
     ]
 }
@@ -858,6 +871,39 @@ async fn an_adapters_pick_carries_a_finite_scale() {
         shown.contains(r#"<tr><th>Scale</th><td class="mono">0.5</td></tr>"#),
         "{shown}"
     );
+}
+
+/// **A named fact of the wrong kind refuses the pick** (Spec 6.2): a
+/// model whose `general.type` is followed by a float one is shown "not
+/// read" with the reason and no pick's form, and a crafted pick of it is
+/// refused with nothing written, never taken as a decoder's.
+#[tokio::test]
+async fn a_named_fact_of_the_wrong_kind_refuses_the_pick() {
+    let Some((rig, _fake, _, _cache)) = rig(true).await else {
+        return;
+    };
+    let s = rig.store();
+    let (ada, setup) = setup_of(&rig, "karl").await;
+    let fragment = part(&rig, &header_of(&setup, "org/float-type", "f.gguf"), &ada).await;
+    assert!(
+        fragment.contains("not read: general.type is not a string"),
+        "{fragment}"
+    );
+    assert!(!fragment.contains("<form"), "{fragment}");
+    let (status, body) = post_pick(
+        &rig,
+        &ada,
+        &setup,
+        pick("1", "decoder", "org/float-type", "f.gguf", None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(
+        body.contains("its header was not read: general.type is not a string"),
+        "{body}"
+    );
+    assert_eq!(count(s, "agent_setup_model").await, 0);
+    assert_eq!(count(s, "model_pull").await, 0);
 }
 
 /// **A pick asks Hugging Face only after the admin gate**: a person

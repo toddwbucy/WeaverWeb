@@ -212,7 +212,7 @@ enum Kept {
     Int(u64),
     Text(String),
     Ints(Vec<u64>),
-    /// A value of another kind, read past.
+    /// A value of another kind, read past, a named fact holding it refused.
     Other,
 }
 
@@ -340,7 +340,9 @@ type Pairs = (u32, HashMap<String, Kept>, u64);
 /// **The header's pairs**, read to the end of its metadata: the magic, the
 /// version, the tensors' count, the pairs' count, then each key and its
 /// value. The values of the keys `keep` names are kept, the last of a key
-/// standing, so the kept facts are at most as many as the keys named.
+/// standing, so the kept facts are at most as many as the keys named. A
+/// value of another kind than the reader keeps is kept as `Kept::Other`,
+/// so that the fact refuses by its name rather than reading as absent.
 fn pairs(bytes: &[u8], keep: &dyn Fn(&str) -> bool) -> Result<Pairs, Refused> {
     let mut cursor = Cursor { bytes, at: 0 };
     if cursor.take(4)? != b"GGUF" {
@@ -362,9 +364,7 @@ fn pairs(bytes: &[u8], keep: &dyn Fn(&str) -> bool) -> Result<Pairs, Refused> {
         let kind = cursor.u32()?;
         let key = std::str::from_utf8(key).ok().filter(|key| keep(key));
         let value = value(&mut cursor, kind, key.is_some(), 0)?;
-        if let Some(key) = key
-            && !matches!(value, Kept::Other)
-        {
+        if let Some(key) = key {
             facts.insert(key.to_owned(), value);
         }
     }
@@ -424,6 +424,8 @@ pub(crate) mod build {
     pub const U8: u32 = 0;
     pub const U16: u32 = 2;
     pub const U32: u32 = 4;
+    pub const I32: u32 = 5;
+    pub const F32: u32 = 6;
     pub const STRING: u32 = 8;
     pub const ARRAY: u32 = 9;
 
@@ -713,6 +715,63 @@ mod tests {
         .unwrap();
         assert_eq!(header.architecture.as_deref(), Some(at.as_str()));
         assert!(matches!(header.kv_heads, Some(KvHeads::PerBlock(ref l)) if l.len() == 4096));
+    }
+
+    /// **A named fact of the wrong kind is refused, never read as absent**,
+    /// the last of a key standing, so an invalid value after a valid one
+    /// refuses: a float `general.type`, a negative block count after a
+    /// valid one, a float `general.type` after `model`, a float
+    /// architecture, and KV heads listed as floats. A key the header does
+    /// not carry still reads as absent.
+    #[test]
+    fn a_named_fact_of_the_wrong_kind_is_refused() {
+        let float = 1.5f32.to_le_bytes();
+        let mut floats = build::F32.to_le_bytes().to_vec();
+        floats.extend_from_slice(&2u64.to_le_bytes());
+        floats.extend_from_slice(&float);
+        floats.extend_from_slice(&float);
+        let cases = [
+            (
+                Gguf::new().raw("general.type", build::F32, &float),
+                "general.type is not a string",
+            ),
+            (
+                Gguf::model("granite").raw(
+                    "granite.block_count",
+                    build::I32,
+                    &(-1i32).to_le_bytes(),
+                ),
+                "granite.block_count is not an unsigned integer",
+            ),
+            (
+                Gguf::model("granite").raw("general.type", build::F32, &float),
+                "general.type is not a string",
+            ),
+            (
+                Gguf::new().raw("general.architecture", build::F32, &float),
+                "general.architecture is not a string",
+            ),
+            (
+                Gguf::model("granite").raw(
+                    "granite.attention.head_count_kv",
+                    build::ARRAY,
+                    &floats,
+                ),
+                "the KV heads are not an unsigned integer or a list of them",
+            ),
+        ];
+        for (gguf, why) in cases {
+            assert_eq!(read(&gguf.bytes()), Err(Refused::Malformed(why.into())));
+        }
+        let header = read(
+            &Gguf::new()
+                .string("general.architecture", "granite")
+                .bytes(),
+        )
+        .unwrap();
+        assert_eq!(header.general_type, None);
+        assert_eq!(header.block_count, None);
+        assert_eq!(header.kv_heads, None);
     }
 
     /// **What is not a GGUF header this reader reads is refused**: another

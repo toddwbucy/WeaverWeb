@@ -586,6 +586,29 @@ pub(crate) mod tests {
         dropped
     }
 
+    /// **The drop's fallback**, taken where the forced drop is refused
+    /// because a superuser's session, an autovacuum worker, is in the
+    /// database, which a role that is not a superuser may not end. The
+    /// sessions of the dropping role, the test's pool among them, are ended
+    /// first, which that role may do, and a plain drop follows, for which
+    /// the server signals any autovacuum worker itself and waits its own
+    /// short bound for every session to leave. A plain drop alone is refused
+    /// while the test's pool holds a session, as it still does when `Drop`
+    /// runs.
+    async fn drop_plainly(admin: &sqlx::PgPool, name: &str) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity \
+             WHERE datname = $1 AND usename = current_user AND pid <> pg_backend_pid()",
+        )
+        .bind(name)
+        .execute(admin)
+        .await?;
+        sqlx::query(sqlx::AssertSqlSafe(format!("DROP DATABASE {name}")))
+            .execute(admin)
+            .await?;
+        Ok(())
+    }
+
     /// The process's one sweep, which every caller waits for, so no test
     /// plants a database while it runs.
     static SWEPT: tokio::sync::OnceCell<()> = tokio::sync::OnceCell::const_new();
@@ -658,6 +681,9 @@ pub(crate) mod tests {
     /// **The test's database is dropped when the test ends, a panic
     /// included**: on a thread of its own with a runtime of its own, since a
     /// drop cannot await, and `WITH (FORCE)` ends the pool's connections.
+    /// Where the forced drop is refused for want of privilege (SQLSTATE
+    /// 42501), an autovacuum worker being in the database, the fallback
+    /// [`drop_plainly`] is taken once, and a failure names both errors.
     impl Drop for Fresh {
         fn drop(&mut self) {
             let (name, base) = (self.name.clone(), self.base.clone());
@@ -668,13 +694,38 @@ pub(crate) mod tests {
                     .expect("a runtime")
                     .block_on(async move {
                         let admin = sqlx::PgPool::connect_with(base).await?;
-                        sqlx::query(sqlx::AssertSqlSafe(format!(
+                        let forced = sqlx::query(sqlx::AssertSqlSafe(format!(
                             "DROP DATABASE {name} WITH (FORCE)"
                         )))
                         .execute(&admin)
-                        .await?;
+                        .await;
+                        let outcome = match forced {
+                            Ok(_) => Ok(()),
+                            Err(refused)
+                                if refused
+                                    .as_database_error()
+                                    .and_then(|e| e.code())
+                                    .as_deref()
+                                    == Some("42501") =>
+                            {
+                                match drop_plainly(&admin, &name).await {
+                                    Ok(()) => {
+                                        eprintln!(
+                                            "the test's database {name} was dropped plainly: \
+                                             the forced drop was refused: {refused}"
+                                        );
+                                        Ok(())
+                                    }
+                                    Err(plain) => Err(anyhow::anyhow!(
+                                        "the forced drop was refused: {refused}, and the plain \
+                                         drop: {plain}"
+                                    )),
+                                }
+                            }
+                            Err(e) => Err(e.into()),
+                        };
                         admin.close().await;
-                        anyhow::Ok(())
+                        outcome
                     })
             })
             .join();
@@ -749,6 +800,53 @@ pub(crate) mod tests {
                 .as_str()
             )
         );
+    }
+
+    /// **The drop's fallback ends the test's own sessions, then drops
+    /// plainly** (#139). A forced drop is refused where an autovacuum
+    /// worker, a superuser's session, is in the database, and a plain drop
+    /// alone is refused while the test's pool still holds a session, as it
+    /// does when `Drop` runs. The fallback drops a database its own role
+    /// holds a session in.
+    #[tokio::test]
+    async fn the_drops_fallback_ends_its_own_sessions_then_drops_plainly() {
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipped: DATABASE_URL is not set, and the drop is tested against one");
+            return;
+        };
+        let base: sqlx::postgres::PgConnectOptions = url.parse().expect("a database URL");
+        let admin = sqlx::PgPool::connect_with(base.clone())
+            .await
+            .expect("connect");
+        let name = dated_name(unix_now());
+        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {name}")))
+            .execute(&admin)
+            .await
+            .expect("create");
+        let holding = <sqlx::postgres::PgConnection as sqlx::Connection>::connect_with(
+            &base.clone().database(&name),
+        )
+        .await
+        .expect("hold a connection");
+
+        let dropped = drop_plainly(&admin, &name).await;
+        let standing: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM pg_database WHERE datname = $1")
+                .bind(&name)
+                .fetch_one(&admin)
+                .await
+                .unwrap();
+        let _ = sqlx::Connection::close(holding).await;
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP DATABASE IF EXISTS {name} WITH (FORCE)"
+        )))
+        .execute(&admin)
+        .await
+        .unwrap();
+        admin.close().await;
+
+        assert!(dropped.is_ok(), "{dropped:?}");
+        assert_eq!(standing, 0);
     }
 
     /// **The sweep drops an aged test database and nothing else** (#139): of

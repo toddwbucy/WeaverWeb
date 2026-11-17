@@ -76,14 +76,17 @@ pub(crate) const HANDSHAKE_SECS: u64 = 10;
 /// cadence of zero.
 pub const LEAST_SILENCE_SECS: u64 = 4;
 
-/// **The bound on a setup ask's answer from its frame's arrival** (Spec
-/// 8.3), where the silence bound is longer. The box gives an ask up at
-/// `client::ASK_SECS` from its dial, so the listener answers within this
-/// and the box keeps `SETUP_ANSWER_MARGIN_SECS` of its own bound for the
-/// dial, the handshake and the answer's read.
+/// **The bound on a setup ask's answer from the connection's accept**
+/// (Spec 8.3), where the silence bound is longer. The box gives an ask up
+/// at `client::ASK_SECS` from its dial, so the listener answers within this
+/// of the accept, the handshake, the register's lookup, the admission and
+/// the store's answer all inside it, and the box keeps
+/// `SETUP_ANSWER_MARGIN_SECS` of its own bound for its dial and its read of
+/// the answer.
 pub const SETUP_ANSWER_SECS: u64 = 20;
 
-/// What the box keeps of its own bound past the listener's answer.
+/// What the box keeps of its own bound outside the listener's: its dial
+/// before the accept and its read of the answer.
 pub const SETUP_ANSWER_MARGIN_SECS: u64 = 10;
 
 const _: () = assert!(
@@ -797,6 +800,10 @@ struct Inner {
     /// completes, so its bound can be watched.
     #[cfg(test)]
     stall_next_setup: std::sync::atomic::AtomicBool,
+    /// A lever on the register's lookup at a connection: the next one
+    /// fails, so its refusal can be watched.
+    #[cfg(test)]
+    fail_next_lookup: std::sync::atomic::AtomicBool,
     /// A test's setup answer bound in milliseconds in place of
     /// `SETUP_ANSWER_SECS`, none where 0.
     #[cfg(test)]
@@ -965,6 +972,8 @@ impl Listener {
                 stall_next_first: std::sync::atomic::AtomicBool::new(false),
                 #[cfg(test)]
                 stall_next_setup: std::sync::atomic::AtomicBool::new(false),
+                #[cfg(test)]
+                fail_next_lookup: std::sync::atomic::AtomicBool::new(false),
                 #[cfg(test)]
                 setup_answer_ms: AtomicU64::new(0),
                 #[cfg(test)]
@@ -1298,6 +1307,12 @@ impl Listener {
     #[cfg(test)]
     pub fn stall_next_setup_ask(&self) {
         self.inner.stall_next_setup.store(true, Ordering::Relaxed);
+    }
+
+    /// Make the next connection's lookup of its credential fail, once.
+    #[cfg(test)]
+    pub fn fail_next_lookup(&self) {
+        self.inner.fail_next_lookup.store(true, Ordering::Relaxed);
     }
 
     /// A test's lever: the setup answer bound, shortened from
@@ -3372,8 +3387,8 @@ async fn refuse(tx: mpsc::Sender<ToClient>, writer: tokio::task::JoinHandle<()>,
     drain_writer(writer).await;
 }
 
-/// **A setup ask's bound**: the silence bound, or `SETUP_ANSWER_SECS`
-/// where that is shorter.
+/// **A setup ask's bound** from the connection's accept: the silence
+/// bound, or `SETUP_ANSWER_SECS` where that is shorter.
 fn setup_bound(inner: &Inner) -> Duration {
     let answer = Duration::from_secs(SETUP_ANSWER_SECS);
     #[cfg(test)]
@@ -3418,6 +3433,7 @@ async fn serve_setup(
     fp: &str,
     peer: SocketAddr,
     asked: SetupAsked,
+    until: tokio::time::Instant,
     tx: mpsc::Sender<ToClient>,
     writer: tokio::task::JoinHandle<()>,
 ) {
@@ -3440,14 +3456,14 @@ async fn serve_setup(
         refuse(tx, writer, Refusal::WrongPlane).await;
         return;
     }
-    // **One deadline from the frame spans the admission and the store's
-    // answer** (Spec 8.3), at the silence bound or `SETUP_ANSWER_SECS`,
-    // whichever is shorter, so the box hears the refusal before it gives the
-    // ask up. The admission puts the claim in inside its transaction, before
-    // the commit, so past the deadline it comes out here, and the ask is
-    // refused `store_unavailable`. The admission commits nothing.
+    // **One deadline from the accept spans the lookup, the admission and
+    // the store's answer** (Spec 8.3), at the silence bound or
+    // `SETUP_ANSWER_SECS`, whichever is shorter, so the box hears the refusal
+    // before it gives the ask up. The admission puts the claim in inside its
+    // transaction, before the commit, so past the deadline it comes out
+    // here, and the ask is refused `store_unavailable`. The admission commits
+    // nothing.
     let bound = setup_bound(inner);
-    let until = tokio::time::Instant::now() + bound;
     let key = (agent.agent_id.clone(), plane);
     let mut claimed = false;
     let locked = tokio::time::timeout_at(
@@ -3463,7 +3479,7 @@ async fn serve_setup(
     let unlocked = match locked {
         Ok(Ok(())) => None,
         Ok(Err(e)) => Some(format!("could not be locked: {e:#}")),
-        Err(_) => Some(format!("was not locked within {bound:?}")),
+        Err(_) => Some(format!("was not locked within {bound:?} of the accept")),
     };
     if let Some(why) = unlocked {
         tracing::error!(
@@ -3535,7 +3551,7 @@ async fn serve_setup(
         Ok(answered) => answered,
         Err(Passed) => {
             tracing::error!(
-                "link from {peer}: {} setup {what} not answered by the store within {bound:?}",
+                "link from {peer}: {} setup {what} not answered by the store within {bound:?} of the accept",
                 agent.agent_id
             );
             Ok(Err(Refusal::StoreUnavailable))
@@ -3567,7 +3583,14 @@ async fn serve_setup(
 
 async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr) {
     let dialed = std::time::Instant::now();
-    let handshake_by = tokio::time::Instant::now() + Duration::from_secs(HANDSHAKE_SECS);
+    let accepted = tokio::time::Instant::now();
+    let handshake_by = accepted + Duration::from_secs(HANDSHAKE_SECS);
+    // **A setup ask's one deadline is made at the accept** (Spec 8.3): the
+    // box writes its frame once its handshake completes, so the handshake
+    // and the register's lookup spend the box's own bound and sit inside
+    // the deadline.
+    let bound = setup_bound(&inner);
+    let answer_by = accepted + bound;
     let mut halting = inner.halting.subscribe();
     if *halting.borrow() {
         return;
@@ -3685,12 +3708,25 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
 
     // **The lookup comes before the roster** (Spec 8): the fingerprint is
     // looked up in the register and a credential that is absent or
-    // revoked is refused here, before any byte of the hello is read.
-    let (agent, plane) = match inner.store.agent_by_fingerprint(&fp).await {
-        Ok(Some((agent, plane))) if agent.credential(plane).state == CredentialState::Live => {
+    // revoked is refused here, before any byte of the hello is read. The
+    // connection's purpose is known only at its first frame, so the lookup
+    // has the setup ask's deadline whatever the purpose, and a register that
+    // fails or is not read by then is refused `store_unavailable`, which
+    // names nothing of the register and which a connector retries on its
+    // normal backoff.
+    let looked_up = tokio::time::timeout_at(answer_by, async {
+        #[cfg(test)]
+        if inner.fail_next_lookup.swap(false, Ordering::Relaxed) {
+            anyhow::bail!("the test's lever failed the lookup");
+        }
+        inner.store.agent_by_fingerprint(&fp).await
+    })
+    .await;
+    let (agent, plane) = match looked_up {
+        Ok(Ok(Some((agent, plane)))) if agent.credential(plane).state == CredentialState::Live => {
             (agent, plane)
         }
-        Ok(Some((agent, plane))) => {
+        Ok(Ok(Some((agent, plane)))) => {
             tracing::warn!(
                 "link from {peer}: credential {} of {} ({plane}) is revoked, refused before its roster",
                 &fp[..12],
@@ -3699,7 +3735,7 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
             refuse(tx, writer, Refusal::NotLive).await;
             return;
         }
-        Ok(None) => {
+        Ok(Ok(None)) => {
             tracing::warn!(
                 "link from {peer}: credential {} is not in the register, refused before its roster",
                 &fp[..12]
@@ -3707,10 +3743,16 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
             refuse(tx, writer, Refusal::NotLive).await;
             return;
         }
-        Err(e) => {
+        Ok(Err(e)) => {
             tracing::error!("link from {peer}: the register could not be read: {e:#}");
-            drop(tx);
-            drain_writer(writer).await;
+            refuse(tx, writer, Refusal::StoreUnavailable).await;
+            return;
+        }
+        Err(_) => {
+            tracing::error!(
+                "link from {peer}: the register was not read within {bound:?} of the accept"
+            );
+            refuse(tx, writer, Refusal::StoreUnavailable).await;
             return;
         }
     };
@@ -3746,7 +3788,10 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                     plane: said_plane,
                     ask,
                 };
-                serve_setup(&inner, &agent, plane, &fp, peer, asked, tx, writer).await;
+                serve_setup(
+                    &inner, &agent, plane, &fp, peer, asked, answer_by, tx, writer,
+                )
+                .await;
                 return;
             }
             _ => {

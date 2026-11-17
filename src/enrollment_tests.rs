@@ -1834,6 +1834,145 @@ async fn a_setup_ask_whose_admission_waits_is_refused_within_the_boxs_bound() {
     );
 }
 
+/// Every connection of the store's pool that comes free within 300 ms,
+/// held, so the listener's next checkout waits until they are given back.
+async fn hold_the_pool(s: &Store) -> Vec<sqlx::pool::PoolConnection<sqlx::Postgres>> {
+    let mut held = Vec::new();
+    while let Ok(c) = tokio::time::timeout(Duration::from_millis(300), s.pool.acquire()).await {
+        held.push(c.unwrap());
+    }
+    assert!(!held.is_empty(), "the pool had a free connection to hold");
+    held
+}
+
+/// **The setup ask's deadline is made at the accept and bounds the
+/// register's lookup** (Spec 8 and 8.3): the box writes its frame once its
+/// handshake completes, so a lookup that waits spends the box's own bound.
+/// A describe whose lookup waits for a connection, every connection of the
+/// store's pool held past the box's bound, is refused `store_unavailable`
+/// within that bound, and the next ask, the pool given back, is answered.
+///
+/// Perturbations: make the deadline after the lookup, the lookup unbounded,
+/// and the box gives up first. Leave the deadline at the accept and run the
+/// lookup outside it, and the box gives up first.
+#[tokio::test]
+async fn a_setup_ask_whose_lookup_waits_is_refused_within_the_boxs_bound() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
+    let setup = setup.unwrap();
+    let on_box = tempfile::tempdir().unwrap();
+    enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a", None).await;
+    let config = on_box.path().join("admin-con.toml");
+    rig.listener.set_setup_answer_bound(Duration::from_secs(1));
+    let the_box = SILENCE / 2;
+
+    let held = hold_the_pool(s).await;
+    let gives_back = tokio::spawn(async move {
+        tokio::time::sleep(the_box + Duration::from_millis(500)).await;
+        drop(held);
+    });
+    let mut p = captured();
+    let status = box_commands::setup_describe_within(&mut p, &config, the_box).await;
+    let (line, _) = outcome_of(p);
+    assert_eq!(
+        (status, line["reason"].as_str()),
+        (Status::Refused, Some("store_unavailable")),
+        "{line}"
+    );
+    gives_back.await.unwrap();
+    let (status, line) = describe(&config).await;
+    assert_eq!(
+        (status, line["event"].as_str()),
+        (Status::Done, Some("described")),
+        "{line}"
+    );
+}
+
+/// **The lookup's wait and the admission's share the one deadline** (Spec
+/// 8.3): a describe whose lookup waits for a connection, the store's pool
+/// given back at 0.8 s, and whose admission then waits on the agent's row,
+/// held by another transaction, is refused `store_unavailable` at the
+/// deadline from the accept, within the box's bound of 1.4 s, and the next
+/// ask, the holds gone, is answered.
+///
+/// Perturbation: make the admission's deadline after the lookup, and the
+/// refusal comes at about 1.8 s, after the box has given up.
+#[tokio::test]
+async fn a_setup_ask_whose_lookup_and_admission_wait_is_refused_within_the_boxs_bound() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
+    let setup = setup.unwrap();
+    let on_box = tempfile::tempdir().unwrap();
+    let answer = enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a", None).await;
+    let config = on_box.path().join("admin-con.toml");
+    rig.listener.set_setup_answer_bound(Duration::from_secs(1));
+    let the_box = Duration::from_millis(1400);
+
+    let mut holder = s.pool.begin().await.unwrap();
+    sqlx::query("SELECT 1 FROM agent WHERE agent_id = $1 FOR UPDATE")
+        .bind(answer.agent_id.as_str())
+        .execute(&mut *holder)
+        .await
+        .unwrap();
+    let held = hold_the_pool(s).await;
+    let gives_back = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(800)).await;
+        drop(held);
+    });
+    let mut p = captured();
+    let status = box_commands::setup_describe_within(&mut p, &config, the_box).await;
+    let (line, _) = outcome_of(p);
+    assert_eq!(
+        (status, line["reason"].as_str()),
+        (Status::Refused, Some("store_unavailable")),
+        "{line}"
+    );
+    gives_back.await.unwrap();
+    holder.rollback().await.unwrap();
+    let (status, line) = describe(&config).await;
+    assert_eq!(
+        (status, line["event"].as_str()),
+        (Status::Done, Some("described")),
+        "{line}"
+    );
+}
+
+/// **A lookup that fails is refused `store_unavailable`** (Spec 8 and
+/// 8.3): the box hears a definite refusal, not a connection that ends, and
+/// the next ask is answered.
+///
+/// Perturbation: end the connection with no refusal where the register
+/// cannot be read, and the box reads `fault`.
+#[tokio::test]
+async fn a_setup_ask_whose_lookup_fails_is_refused_store_unavailable() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
+    let setup = setup.unwrap();
+    let on_box = tempfile::tempdir().unwrap();
+    enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a", None).await;
+    let config = on_box.path().join("admin-con.toml");
+
+    rig.listener.fail_next_lookup();
+    let (status, line) = describe(&config).await;
+    assert_eq!(
+        (status, line["reason"].as_str()),
+        (Status::Refused, Some("store_unavailable")),
+        "{line}"
+    );
+    let (status, line) = describe(&config).await;
+    assert_eq!(
+        (status, line["event"].as_str()),
+        (Status::Done, Some("described")),
+        "{line}"
+    );
+}
+
 /// **An entry whose request is dropped still logs what the box was
 /// answered** (Spec 8.2): the exchange's diagnostics are written in the
 /// task that runs it, not in the request's answer. The request is dropped

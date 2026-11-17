@@ -116,6 +116,7 @@ const CALLS: &[(&str, &str, Why)] = &[
     ("src/link/listener.rs", "serve_connection", Socket),    // the ClientHello
     ("src/link/listener.rs", "serve_connection", Socket),
     ("src/link/listener.rs", "serve_connection", Socket),
+    ("src/link/listener.rs", "serve_connection", Reads), // the register's lookup
     ("src/link/listener.rs", "serve_connection", Socket),
     ("src/link/listener.rs", "serve_connection", Socket),
     ("src/link/listener.rs", "serve_connection", Resendable), // `take_entry`

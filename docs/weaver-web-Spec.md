@@ -630,8 +630,8 @@ the declaration screen of section 6.1 and by nothing else, and it carries:
 - **the declaration as authored, whole, in this console's own document**,
   the grammar section 6.1 states. It is a superset of the agent's grammar,
   `weaver-types-Spec` section 2, and **the agent's file is derived from it**
-  at the corpus commit below, never stored beside it. **Better way, ruled
-  by the Planner on 2026-11-11**: the row held the agent's grammar whole
+  at the corpus commit below, never stored beside it. **Better way, elected
+  by this document on 2026-11-11**: the row held the agent's grammar whole
   until then, and that grammar has no place for what the operator's
   rulings of 2026-11-11 put on the declaration screen, a GPU requirement or
   a further model function. So the console's document holds them, and what
@@ -656,8 +656,8 @@ the declaration screen of section 6.1 and by nothing else, and it carries:
   moved from `a3543b31f264b269f66ab55d8767f25290ec9d61` when the agent
   began to require the sampler's six defaults at every serving load. A row
   saved under the earlier pin is named stale, and its reopen refuses its
-  save until the eight tunable values of section 6.1 are filled, the
-  Planner's default of 2026-11-12. A row saved under this pin before the
+  save until the eight tunable values of section 6.1 are filled, this
+  document's election of 2026-11-12. A row saved under this pin before the
   act of 2026-11-13 lacks the three elections of section 6.1 and is not
   named stale, since the pin did not move; its reopen refuses its save
   until the residual readout's election is chosen. A row saved under this
@@ -684,9 +684,10 @@ the declaration screen of section 6.1 and by nothing else, and it carries:
   act writes it yet
 - **the author**, per section 3.2
 
-**Every save appends a row, and a row's authored half never changes**, on
-the Planner's default of 2026-11-11 following the operator's ruling 9 of
-that date, that a wire edit is a new link in the lineage and not a reload
+**Every save appends a row, and a row's authored half
+never changes**, on this document's election of 2026-11-11
+following the operator's ruling 9 of that date, that a
+wire edit is a new link in the lineage and not a reload
 of the same agent; the operator's ruling on this is open (section 10). A
 trigger refuses every update to a row's authored members and every delete,
 the last `validate` reading being the one member a later act may write
@@ -1062,7 +1063,7 @@ sub-tab's tab, so no page names both and none can name a pair that does
 not stand. A person who is not an admin sees Your agents, The Record and
 Passkeys, the sub-tabs they may open.
 
-**A refusal is drawn at its own status** (on the Planner's ruling of
+**A refusal is drawn at its own status** (this document's election of
 2026-11-13, for the operator's ruling by the merge). The page's htmx
 configuration, one `htmx-config` meta in the frame and no script, swaps a
 2xx or 3xx answer and 400, 401, 403, 404, 409 and 503, and leaves the
@@ -2120,7 +2121,7 @@ it decides are stated here and in section 2.8, and the reasons are there.
   declaration screen reads a saved row** (section 6.1): a head saved before
   2026-11-14 keeps the withdrawn placement, and the pane reads it with that
   member discarded, showing no part of it. **The pane fails by itself**
-  (the Planner's read of 2026-11-13): a head this build does not read, a
+  (this document's election of 2026-11-13): a head this build does not read, a
   row saved by a newer build and read after a rollback among them, is
   named by its version with the screen's link for an admin, and the pane
   says it does not read in this build and shows no parts; a store read
@@ -2162,13 +2163,13 @@ it decides are stated here and in section 2.8, and the reasons are there.
   its text. **The digest was every grant holder's until a security review
   of 2026-11-13 found it**: an unkeyed digest of a text handed to a reader
   who may not read the text lets them confirm a guess at it, and on this
-  page it compares with nothing, so the Planner corrected the line the same
-  day. The other live
-  register rows of the name are listed: every one to an admin, and to a
-  person only those they hold a grant on, since an agent without a grant
-  answers to them exactly as one that does not exist, and the sentence
-  listing them claims only what was read of the head: the same declaration
-  behind them where one is saved under the name, none saved under it where
+  page it compares with nothing, so this document corrected the line
+  the same day. The other live register rows of the name are listed:
+  every one to an admin, and to a person only those they hold a
+  grant on, since an agent without a grant answers to them exactly
+  as one that does not exist, and the sentence listing them claims
+  only what was read of the head: the same declaration behind them
+  where one is saved under the name, none saved under it where
   none is, and nothing of a declaration where the head could not be read;
   `GET /agents/{ag}/trace` is the live view, an event stream of the
   listener's window, which says it is that window and not a record. Each
@@ -2231,8 +2232,8 @@ it decides are stated here and in section 2.8, and the reasons are there.
   grant without the verb 403; outside the ceiling 403, naming it; not
   connected 503); then the first record, durable; then the enqueue through
   the reserved slot, and the hold's commit. **A refusal's record is held to
-  the ask's one deadline, read before the record is sent** (section 7.2;
-  the Planner's default of 2026-11-12). Recorded, the person is answered
+  the ask's one deadline, read before the record is sent** (section 7.2, and
+  this document's election of 2026-11-12). Recorded, the person is answered
   the refusal itself, as above. Refused by the store, they are answered the
   server's failure (500). Not recorded when the deadline comes, they are
   answered the bound's failure (503, the ask not made within its bound),
@@ -2243,9 +2244,9 @@ it decides are stated here and in section 2.8, and the reasons are there.
   their `pe-` identity. The page offers the verbs the person's grants carry
   and the connection's ceiling grants, and after an ask waits for admin's
   answer to the silence bound and shows it. **The answer is drawn in the
-  pane that asked** (the operator's words of 2026-11-13, on the Planner's
-  ruling of that day): each verb form, the decision prompt's two options
-  and the turn form post through the vendored htmx, which sends
+  pane that asked** (the operator's words of 2026-11-13, and this
+  document's election of that day): each verb form, the decision prompt's
+  two options and the turn form post through the vendored htmx, which sends
   `HX-Request`, and the server answers that request with one fragment
   (`answer.html`, the decision's `decision_steps.html`) drawn in a slot
   below the pane that asked; a post without htmx gets the same fragment on
@@ -2265,7 +2266,7 @@ it decides are stated here and in section 2.8, and the reasons are there.
   the decision's two buttons for the request's life, drops a second submit
   of the same form while its request is in flight, and shows the asking
   line of the form's own slot, which names the page's wait. **Each verb
-  has a queue and a slot of its own** (on the Planner's ruling of
+  has a queue and a slot of its own** (this document's election of
   2026-11-14): a different verb is never held behind another's request,
   so `stop` or `force-unload` pressed during a long `load` leaves at once
   and is answered in its own slot, for a hung or wrong load is what those
@@ -2290,29 +2291,28 @@ it decides are stated here and in section 2.8, and the reasons are there.
   ended having answered it unanswered instead, and that its outcome is
   written to the audit when admin or the gate answers, the agent page's
   load state following the agent's trace. No answer is kept for a later
-  read. **The console holds a second identical verb itself** (on the
-  Planner's ruling of 2026-11-13): while the listener holds a person's
-  verb on an agent in flight, from the check that claims it on its
-  connection to its answer, a second ask of the same verb from the same
-  person on the same agent is answered at once past the grant check, 409,
-  naming when the first was taken and its first record (or that the
-  record is still being written), with no frame sent, one refusal record,
-  `already_asked` naming the first, and no alert (section 2.14). The claim
-  is taken under the live map's lock with the check, and moves into the
-  connection's map of asks at the enqueue under the same lock, so of two
-  identical asks at once one is claimed and the other held. It lives in the
-  listener's memory and goes with the connection, so a teardown or a
-  restart strands no hold. Not held: a different verb, another person's
-  same verb (an option for the operator), the server's own `show`, and a
-  turn, since two turns are two turns. **Beside the answer,
-  admin's own words** (on the Planner's ruling of 2026-11-12): the outcome's
-  stderr, cut at 2048 bytes at a character boundary as an alert's reason
-  cuts it (section 2.14), the page saying where it cut. They are
-  escaped as every value on the page is, shown and never parsed or read for
-  meaning, so a refusal's remedy that admin writes on stderr, a stale
-  `[restore]`'s among them, is read where the verb was asked. **Beside
-  `load` and `restore`, admin's `[restore]` rule** (on the Planner's ruling
-  of 2026-11-12): a declared `[restore]` loads only while the save point it
+  read. **The console holds a second identical verb itself** (this document's
+  election of 2026-11-13): while the listener holds a person's verb on an
+  agent in flight, from the check that claims it on its connection to its
+  answer, a second ask of the same verb from the same person on the same agent
+  is answered at once past the grant check, 409, naming when the first was
+  taken and its first record (or that the record is still being written), with
+  no frame sent, one refusal record, `already_asked` naming the first, and no
+  alert (section 2.14). The claim is taken under the live map's lock with the
+  check, and moves into the connection's map of asks at the enqueue under the
+  same lock, so of two identical asks at once one is claimed and the other
+  held. It lives in the listener's memory and goes with the connection, so a
+  teardown or a restart strands no hold. Not held: a different verb, another
+  person's same verb (an option for the operator), the server's own `show`,
+  and a turn, since two turns are two turns. **Beside the answer, admin's own
+  words** (this document's election of 2026-11-12): the outcome's stderr, cut
+  at 2048 bytes at a character boundary as an alert's reason cuts it (section
+  2.14), the page saying where it cut. They are escaped as every value on the
+  page is, shown and never parsed or read for meaning, so a refusal's remedy
+  that admin writes on stderr, a stale `[restore]`'s among them, is read where
+  the verb was asked. **Beside `load` and `restore`, admin's `[restore]`
+  rule** (this document's election of 2026-11-12): a declared `[restore]`
+  loads only while the save point it
   names is the manifest's latest; any save point or unload publishes past
   it, and admin then refuses the load (`config_invalid`, naming `restore`)
   until `restore` runs again or the key is removed on the box. The page
@@ -2324,26 +2324,25 @@ it decides are stated here and in section 2.8, and the reasons are there.
   `[restore]` unchanged. The page guards nothing on it: whether a
   declaration carries a stale `[restore]` is the box's, and nothing the
   console reads says so. **Beside a verb
-  admin's state table refuses, a warning** (on the Planner's ruling of
-  2026-11-12 and the operator's "warn, do not refuse" of 2026-11-11):
-  where every state of the admin-operator contract's section 4.1 table
-  that the row's last reading covers refuses an offered verb, the page
-  names the refusal, the reading and its date beside the verb's form, and
-  the verb stays offered. The row reads one of four things, each covering
-  the states whose `show` prints it: unloaded (S0, S0d and S8b once
-  nothing of the agent stands), idle (S2 and S9), active (S3), or in
-  transition while one stands (section 2.12), the transition being the
-  reading then, a turn's events keeping it (S0d and S8b while processes
-  stand, S1, S4 to S8a, S10, S11, any state while another command holds
-  the agent, and a command killed mid-command). Six cells warn: `load`
-  read idle or active (`AgentRunning`) or in transition
-  (`InvocationInFlight` where a command holds the agent, `AgentRunning`
-  where none does), and `save-point` read unloaded (`OutOfOrder`), active
-  (`ActivityNotAtRest`) or in transition (`InvocationInFlight` where a
-  command holds the agent, `OutOfOrder` where none does). `unload`,
-  `force-unload` and `restore` are answered in some state of every
-  reading, and the table gives `show`, `validate` and `stop` no column, so
-  none of them is warned of. The table is read at the corpus commit
+  admin's state table refuses, a warning** (this document's election of
+  2026-11-12, and the operator's "warn, do not refuse" of 2026-11-11): where
+  every state of the admin-operator contract's section 4.1 table that the
+  row's last reading covers refuses an offered verb, the page names the
+  refusal, the reading and its date beside the verb's form, and the verb stays
+  offered. The row reads one of four things, each covering the states whose
+  `show` prints it: unloaded (S0, S0d and S8b once nothing of the agent
+  stands), idle (S2 and S9), active (S3), or in transition while one stands
+  (section 2.12), the transition being the reading then, a turn's events
+  keeping it (S0d and S8b while processes stand, S1, S4 to S8a, S10, S11, any
+  state while another command holds the agent, and a command killed
+  mid-command). Six cells warn: `load` read idle or active (`AgentRunning`) or
+  in transition (`InvocationInFlight` where a command holds the agent,
+  `AgentRunning` where none does), and `save-point` read unloaded
+  (`OutOfOrder`), active (`ActivityNotAtRest`) or in transition
+  (`InvocationInFlight` where a command holds the agent, `OutOfOrder` where
+  none does). `unload`, `force-unload` and `restore` are answered in some
+  state of every reading, and the table gives `show`, `validate` and `stop` no
+  column, so none of them is warned of. The table is read at the corpus commit
   section 2.4 pins, and the repository holds the table and the two
   paragraphs beneath it as read; a test derives every cell from that copy
   and holds the commit to the build's pin, so the pin does not move until
@@ -2351,8 +2350,8 @@ it decides are stated here and in section 2.8, and the reasons are there.
   and its two paragraphs byte-identical to the copy. Where the contract and
   the page differ, the contract wins. A reading is the row's and can be older than the agent's
   state, which is why the warning carries its date and the box's own rule
-  decides last. **A state by event under a closed door says so** (on the
-  Planner's ruling of 2026-11-14): where the load state's source is a
+  decides last. **A state by event under a closed door says so** (this
+  document's election of 2026-11-14): where the load state's source is a
   trace event and the trace door closed at or after the state's date, no
   event can move the state, so the page writes the load state and the
   warning beside a verb each with the state's date and the door's close,
@@ -2370,11 +2369,11 @@ it decides are stated here and in section 2.8, and the reasons are there.
   from the live connection, so it needs no column on the row. A
   transition standing beside the state is the warning's reading, by
   `show`, and takes no line there. The close's own `show` (section 7.2),
-  once it answers with a state, ends the line. **Run's two panes re-read by themselves** (on the
-  Planner's ruling of 2026-11-12): the load state and the verbs are one
-  fragment, `GET /agents/{ag}/run`, which the vendored htmx re-fetches
-  every 15 s with no inline script, so a state that a load answered past
-  the silence bound writes reaches the page without a reload, and a
+  once it answers with a state, ends the line. **Run's two panes re-read by
+  themselves** (this document's election of 2026-11-12): the load state and
+  the verbs are one fragment, `GET /agents/{ag}/run`, which the vendored htmx
+  re-fetches every 15 s with no inline script, so a state that a load answered
+  past the silence bound writes reaches the page without a reload, and a
   warning never outlives the reading it was drawn from. It is read as
   section 2.14's fragments are: through the session gate without
   refreshing the session's last use, an ended session answering 401, and
@@ -2509,8 +2508,8 @@ it decides are stated here and in section 2.8, and the reasons are there.
     adds the grant there, or the host's `grant add` does.
   - Where the grant could not be read, it says so and links to both: the
     agent's page, which answers if the grant is held, and Grants. A page
-    never states a grant it did not read (CodeRabbit on #102, the Planner's
-    word of 2026-11-13).
+    never states a grant it did not read (CodeRabbit on #102, and this
+    document's election of 2026-11-13).
 
   Either way it says, in one sentence, what is done on the box between the
   two steps, since no console verb installs the file: the configs and the
@@ -2787,7 +2786,7 @@ alert, its store write bounded at ten seconds, then the operations log's
 line naming it. A full queue drops the failure and counts the drops, the
 count logged at error, so a stalled store or a full disk never holds a
 connection, a teardown or an ask. **The line and the store agree in each
-outcome of the raise** (the Planner's default of 2026-11-12):
+outcome of the raise** (this document's election of 2026-11-12):
 
 - **Raised**: the line names the alert, and the alert stands.
 - **Refused by the store**: the line names none (`"alert": null`), no
@@ -4117,18 +4116,19 @@ so a refusal names the slot the operator sees. Asking for more slots is a
 link and carries nothing typed.
 
 **Who may declare: the server-wide admin grant**, for reading and writing
-alike, on the Planner's default of 2026-11-11; the operator's ruling is open
-(section 10). A declaration comes before Provision's register, so no agent
-row exists for a per-agent role to attach to. A session whose person holds
-no live admin grant is refused at every route, and at a save with one
-record carrying the refusal. Reads are not audited. **A save is an admin
-write and takes section 2.13's one order**: (1) the form is parsed into the
-document below and the path's identity into its `de-` shape, a refusal of
-either being the ask's fault and recorded nowhere, the screen shown again
-with what was typed and the refusal where the session's person is an
-admin, and the refusal's words alone otherwise. This step runs before the
-session is read, so it is one pass over what was sent: a list's repeated
-model is found by its folded name, never by a scan of every name before
+alike, on this document's election of 2026-11-11, and the operator's
+ruling is open (section 10). A declaration comes before Provision's
+register, so no agent row exists for a per-agent role to attach to. A
+session whose person holds no live admin grant is refused at every
+route, and at a save with one record carrying the refusal. Reads are
+not audited. **A save is an admin write and takes section 2.13's one
+order**: (1) the form is parsed into the document below and the path's
+identity into its `de-` shape, a refusal of either being the ask's
+fault and recorded nowhere, the screen shown again with what was typed
+and the refusal where the session's person is an admin, and the
+refusal's words alone otherwise. This step runs before the session is
+read, so it is one pass over what was sent: a list's repeated model is
+found by its folded name, never by a scan of every name before
 it; (2) the admin gate, with
 its one refusal record, before any row is looked up; (3) the row saved from
 is resolved, unknown answering not found, a row that is not its lineage's
@@ -4221,7 +4221,7 @@ state_election  {"all_kinds": true | false,
 - **The tunable values**, ruling 8 and the act of 2026-11-12: every name a
   serving load requires in the agent's `tunable-values` at this build's
   corpus commit (section 2.4), eight at WeaverAgent `5ec7ecf8`, **each
-  required**. That is the Planner's default of 2026-11-12, following the
+  required**. That is this document's election of 2026-11-12, following the
   operator's ruling of that date that a missing name refuses the load on
   the agent's side as built and WeaverAgent adds no default, so the console
   saves no serving declaration lacking one. The document's member keeps
@@ -4242,7 +4242,7 @@ state_election  {"all_kinds": true | false,
     capacity, the positions the session opens with, which sizes each
     device's share of the KV cache at the SPU's admit.
 
-  **Five start filled in a new declaration's form**, the Planner's default:
+  **Five start filled in a new declaration's form**, this document's election:
   temperature 0.7, top-k 40, top-p 0.95, repetition penalty 1.1 and
   repetition window 64. These are the constants the SPU froze until the
   carrier, at WeaverAgent `a3543b31f264b269f66ab55d8767f25290ec9d61`,
@@ -4277,7 +4277,7 @@ state_election  {"all_kinds": true | false,
     and a value past it is refused naming its field.
   - **A context capacity of zero is refused**, as both of the agent's
     engines refuse it when the session opens.
-  - **Two edges are stated and not solved**, on the Planner's word:
+  - **Two edges are stated and not solved**, on this document's election:
     - a seed above 2^53 is rounded, since the agent holds every tunable
       value as a 64-bit float;
     - a temperature below the 32-bit float's least normal value, about
@@ -4317,7 +4317,7 @@ state_election  {"all_kinds": true | false,
 - **The gate**: its tool election, no tool or `sh`. Who it admits is its
   gate-con, filled at Provision; the access rule names the box's accounts
   and is not asked here.
-- **The three elections**, on the Planner's word of 2026-11-13, each a
+- **The three elections**, on this document's election of 2026-11-13, each a
   member of the agent's grammar at this build's corpus commit, in
   `crates/weaver-types/src/config.rs`:
   - **the turn context**, `turn-context` at the file's top level:
@@ -4350,13 +4350,13 @@ state_election  {"all_kinds": true | false,
   load requires it, what its absence means, or the turn context's values.
   The copy's commit is held to the build's pin, so the pin moves only with
   a reread.
-- **The state election**, on the Planner's word of 2026-11-13 after the
-  Executor's scope: the tee's election, `[state-election]` in the agent's
-  file, a member of `AgentConfig` at this build's corpus commit. **Which
-  kinds cross to the store**: every kind with its envelope
-  (`all_kinds` true), or only the kinds named. **Its rows**, each a kind
-  and the payload key paths that cross beside that kind's envelope, each
-  path dotted from the payload root:
+- **The state election**, on this document's election of 2026-11-13: the
+  tee's election, `[state-election]` in the agent's file, a member of
+  `AgentConfig` at this build's corpus commit. **Which kinds cross to
+  the store**: every kind with its envelope (`all_kinds` true), or only
+  the kinds named. **Its rows**, each a kind and the payload key paths
+  that cross beside that kind's envelope, each path dotted from the
+  payload root:
   - **the kind is closed** to the twenty-five kinds that can cross: the
     trace's canonical kinds, twenty-six by ruling, less `save_point`, which
     the tee never sends whatever the election. The agent's own parse
@@ -4534,18 +4534,18 @@ written, and nothing is installed, validated or seeded.
 ### 6.2 The setup pages
 
 **Declare's path is the start page, the setup pages and the build page**, on the
-operator's rulings of 2026-11-16 (setup pages), items 1 to 20 of their addendum and the
-Planner's notes after item 17. The decisions this section takes are this document's
-election of 2026-11-16, revised the same day after the appliance flow was walked by
-hand. The pages light what exists and draw the rest held: the start page, the models
-page, the drives page's need for the models drive, the placement page's context length
-and turn context, and the pairing page's checkbox, link address and port are live, and
-the pairing page's code and fingerprint, the survey's report, the drives as the box
-mounted them, the placement's devices and its planned fit, and the box's members of the
-deployment tuple are held, each waiting on the enrollment (section 8.2), the image's
-setup script or WeaverAgent's terms. **So the pages alone reach no confirmed tuple**,
-and the rulings' first test (download fresh, set up a virtual machine through the pages,
-confirm the tuple) waits on the enrollment's act and the image's setup-script act.
+operator's rulings of 2026-11-16 (setup pages) and items 1 to 20 of their addendum. The
+decisions this section takes are this document's election of 2026-11-16, revised the
+same day after the appliance flow was walked by hand. The pages light what exists and
+draw the rest held: the start page, the models page, the drives page's need for the
+models drive, the placement page's context length and turn context, and the pairing
+page's checkbox, link address and port are live, and the pairing page's code and
+fingerprint, the survey's report, the drives as the box mounted them, the placement's
+devices and its planned fit, and the box's members of the deployment tuple are held,
+each waiting on the enrollment (section 8.2), the image's setup script or WeaverAgent's
+terms. **So the pages alone reach no confirmed tuple**, and the rulings' first test
+(download fresh, set up a virtual machine through the pages, confirm the tuple) waits on
+the enrollment's act and the image's setup-script act.
 
 **The pages are an admin's**, the server-wide admin grant, as the declaration screen's
 (section 6.1): a setup comes before Provision's register, so no agent row exists for a
@@ -4839,7 +4839,7 @@ held, each once. A key is shown by its SHA-256 fingerprint, OpenSSH's form, and 
 line's text enters no audit record. Which types a box's SSH door admits is the image's
 and enters no text here. The setup script's drive-setup run fetches the keys over the
 paired link and writes them, so a changed key reaches a box when the setup command runs
-there again, and the drives page says so (the Planner's notes after item 17).
+there again, and the drives page says so (this document's election of 2026-11-16).
 
 **The pages reach no agent and no box.** A write lands in the store and, for a pick, in
 the puller's queue: no frame leaves on the link, no verb is asked, and nothing is
@@ -5182,7 +5182,7 @@ what the server holds from what is new, and a door's opening is the same
 seam as a reconnection, so it takes the same rule rather than a second
 ordering regime.
 
-**Every close of the door asks `show`** (on the Planner's ruling of
+**Every close of the door asks `show`** (this document's election of
 2026-11-14), where the ceiling grants it and admin-con's hello stated
 `close_show` (section 8), as the server's own ask, audited as the opening's
 is, and holding nothing: no deadline closes the
@@ -5412,16 +5412,15 @@ written none of that answer, and the reconnection's `show` lands in its
 place. A statement that goes out before the deadline and is answered after
 it still commits under a connection closed as incomplete, a window of one
 statement's flight that section 10 holds open. **The rule is every bounded
-write's** (the Planner's default of 2026-11-12, after a sweep of the
-server's store writes under tokio's timeouts): each first record, outcome
-and refusal the listener writes under a bound (section 2.13), the `failed`
-outcome of a first whose frame never left among them, and each write of the
-alerts' worker and drainer (section 2.14) reads its deadline before its
-write is polled, through one helper (`crate::deadline::before`).
-A write still waiting when its deadline comes, on the pool, on a lock or on
-an earlier statement's answer, is then dropped unsent, so a caller that
-reports a write as not made at its bound is telling the truth, the same one
-statement's flight excepted. Where the ceiling does not grant `show`, the
+write's** (this document's election of 2026-11-12, after a sweep of the server's
+store writes under tokio's timeouts): each first record, outcome and refusal the
+listener writes under a bound (section 2.13), the `failed` outcome of a first whose
+frame never left among them, and each write of the alerts' worker and drainer
+(section 2.14) reads its deadline before its write is polled, through one helper
+(`crate::deadline::before`). A write still waiting when its deadline comes, on the
+pool, on a lock or on an earlier statement's answer, is then dropped unsent, so a
+caller that reports a write as not made at its bound is telling the truth, the same
+one statement's flight excepted. Where the ceiling does not grant `show`, the
 server asks nothing, admission completes at `caught_up`, and the row's
 tuple and load state stand on live trace events alone, the row naming that
 source and its date per section 2.12, so a surface says the state is
@@ -5901,13 +5900,13 @@ cadences, is a protocol fault. No connector times an opening's hold by it,
 since that hold runs on no clock of the connector's. The server refuses a bound under four
 seconds or over four days, so the cadence lies between one second and the
 one day a connector accepts, both ends holding the ceiling as one constant. **This document elects the bound at sixty
-seconds, as the planner's election of 2026-10-01 and not the operator's
-ruling**, which puts the cadence at fifteen. The reason: a turn through the
-gate takes seconds to minutes and never rides the heartbeat's path, so the
-bound answers only how long a dropped connector shows as present on every
-surface. A minute is short enough that a surface is not wrong for long and
-long enough that a link's brief loss does not churn the row. The operator
-confirms or resets it in review.
+seconds, its own election of 2026-10-01 and not the operator's ruling**,
+which puts the cadence at fifteen. The reason: a turn through the gate takes
+seconds to minutes and never rides the heartbeat's path, so the bound answers
+only how long a dropped connector shows as present on every surface. A minute
+is short enough that a surface is not wrong for long and long enough that a
+link's brief loss does not churn the row. The operator confirms or resets it
+in review.
 
 **A connector reconnects on its own and never exits on a refusal**, the
 client side of the rules above, elected by the act that built gate-con on
@@ -6184,11 +6183,11 @@ run the connectors, the instance being the agent's name, so one file per
 plane serves every agent on a box and each agent's connectors start, stop
 and fail apart. A template is one text to review and to verify, where
 units generated per agent would need a generator and its tests for no gain
-while the connectors' accounts are the box's and not the agent's (the
-Planner's default of 2026-11-11, recorded as such and not as the operator's
-ruling). The templates stand under `install/units/` with each location and
-account as a placeholder the staging tool fills, and it refuses a
-template carrying a placeholder it does not fill, so none stages
+while the connectors' accounts are the box's and not the agent's (this
+document's election of 2026-11-11, recorded as such and not as the
+operator's ruling). The templates stand under `install/units/` with each
+location and account as a placeholder the staging tool fills, and it
+refuses a template carrying a placeholder it does not fill, so none stages
 half-rendered.
 
 **What every unit carries, and why:**
@@ -6196,7 +6195,7 @@ half-rendered.
 - **`User=`, the unit's account parameter, never the operator's uid**, per
   the operator's rulings of 2026-10-02 and 2026-10-03 for the connectors;
   the server takes the same rule as a system unit under its own account
-  (the Planner's default of 2026-11-11), so the console survives a restart
+  (this document's election of 2026-11-11), so the console survives a restart
   of the machine with nobody signed in. No `Group=` is set: each runs with
   its account's own groups, which the box gives it, and section 8's service
   users hold exactly what their planes need through them.
@@ -6301,7 +6300,7 @@ repository, read by the staging tool alone:
   `trace_socket`, `weaver_admin`, `admin_log`), and optionally
   `stop_grace_secs`, `verb_bound_secs` and `backfill_bytes`, which default
   as admin-con's config does. **`backfill_bytes` is bounded as admin-con
-  bounds it**, on the Planner's word of 2026-11-13: at most 268435456
+  bounds it**, on this document's election of 2026-11-13: at most 268435456
   (256 MiB), zero admitted, refused above that naming the agent's
   parameter before anything is written. It is composed into that agent's
   admin-con config alone. It sizes what a server restart refills the live
@@ -6820,7 +6819,7 @@ two connectors report.
 | a turn's text is in no audit record and no log line | perturbation, in `src/verbs_tests.rs`: put the text in the first record, and the row carries it; log it at debug in the held section, and the process's capture of every line finds it |
 | every person, role or grant written has an audit record naming its principal, and its outcome is a second record naming the first | perturbation, **owed**: update the first record with the outcome instead of appending a second, and an ask whose answer is lost reads as never answered with no trace of the rewrite; write a grant with the audit write dropped, and the grant lands with no record; add a passkey with the audit write dropped, and the write lands with no record; record the material in an authentication write's record, and a read of the audit table is a set of credentials. The server's own asks and a person's verbs and turns stand in their own rows. Lands with the IAM act |
 | the server's own asks are audited: every verb frame it sends has a first record committed before the frame enters the channel and an outcome naming it when the answer lands, and it asks `show` only | perturbation, in `src/link/server_asks_tests.rs` against the real listener and fake admin-cons: enqueue the frame before the record step, or where the record failed, at an admission and through `Listener::verb`, and a `show` reaches admin-con with no record; drop the record step's bound, and a store that stalls holds the ask past the silence bound; take the oldest entry of the connection's map of first records rather than the one the answer's id names, and an opening's answer lands as the admission's outcome; race an answered ask's outcome against the close signal, and a revocation landing mid-write leaves its first alone; disarm the guard between the record and the channel as soon as it is installed, and an ask cancelled while its send waits on a full channel keeps its entries and leaves its first alone; arm the guard only once the insert has answered, and a first whose answer is lost after its commit stands alone; drop the outcome lock from the `failed` write, and a first whose commit lands after its answer was lost stands alone; go back to a deny-list of the fault kinds that write no outcome, and a kind a connector invents writes `failed`; drop the door's verb check, and a `load` answer to a `show` ask writes `ok`; land a `show` answer's state whatever its exit status, and a refusal's object lands as the row's state; compute what remains of the admission's deadline before the outcome's write, and an admission whose write passes its deadline completes after it; read the deadline after the landing's poll rather than before it, as tokio's `timeout_at` does at every poll, and a `show` answered past the admission's deadline lands on the row while the connection closes `admission_incomplete` (6 of 20 runs alone, measured 2026-11-11), a landing handed a deadline already past is polled and read as done, and one still waiting when its deadline comes is polled at the timer's wake, where it could take a pool connection and send its statement (`link::listener::bounded_tests`, every run); read the clock at the first poll alone, and the timer's wake polls a waiting landing past its deadline; keep the timer and drop the clock, and a deadline at the instant the bound is asked, which the timer rounds up to its next tick, lets the landing be polled; drop the timer and keep the clock, and a landing that never answers holds the bound past its deadline; poll the landing before the close signal, and a close standing at a poll lets it be polled; classify a verb frame carrying both an outcome and a fault as admin's outcome, and the asker reads a success and the audit `ok` for a contradictory answer; drop the `show`-only refusal, and the server's `load` leaves with no refusal record |
-| a store write the server bounds by a deadline is never sent once its deadline has come, so a caller that reports it as not made at its bound is telling the truth | perturbation, in `src/deadline.rs` with no database: poll the write before reading its deadline, as tokio's `timeout_at` does, and a write whose wait ends at its deadline sends at the timer's wake (`a_write_waiting_at_its_deadline_is_never_sent`); keep the timer and drop the clock, and a write handed a deadline at this very instant is polled; tokio's own order is held as a test (`tokios_timeout_sends_a_write_waiting_at_its_deadline`), so an upgrade that reorders it is seen. And at each site, in `src/link/deadline_tests.rs` against the real listener and fake admin-cons, the write held just before the statement that commits it until the very deadline its site bounds it by (`deadline::hold`, a test's lever alone): bound the site's write with tokio's `timeout_at` again, and its row lands while the caller reports it not made, every run: a person's refusal while the ask answers the bound's failure, the server's refusal of a verb but `show` while the verb answers the audit's failure, and a verb's outcome, a first record and the `failed` outcome of a first whose frame never left while each is logged as not written. And in `src/alerting_deadline_tests.rs`, against the alerts' own worker and drainer on a store of their own, the same perturbation lands an alert while the operations log's line names none, a restoration on the lost-contact alert while the worker logs it as not noted, an inbox row's commit, the row gone and its alert raised, while the drainer logs it as not applied, and a row's back-off while the drainer logs it as not backed off. And the class, in `src/timeouts_tests.rs` with no database, the Planner's ruling of 2026-11-12: every call of tokio's `timeout` or `timeout_at` in code compiled outside test is held to a list, each entry naming its function and one reason it bounds no write that could commit unreported; add such a call, or put any of the act's nine sites back in tokio's order, and the scan finds it unlisted |
+| a store write the server bounds by a deadline is never sent once its deadline has come, so a caller that reports it as not made at its bound is telling the truth | perturbation, in `src/deadline.rs` with no database: poll the write before reading its deadline, as tokio's `timeout_at` does, and a write whose wait ends at its deadline sends at the timer's wake (`a_write_waiting_at_its_deadline_is_never_sent`); keep the timer and drop the clock, and a write handed a deadline at this very instant is polled; tokio's own order is held as a test (`tokios_timeout_sends_a_write_waiting_at_its_deadline`), so an upgrade that reorders it is seen. And at each site, in `src/link/deadline_tests.rs` against the real listener and fake admin-cons, the write held just before the statement that commits it until the very deadline its site bounds it by (`deadline::hold`, a test's lever alone): bound the site's write with tokio's `timeout_at` again, and its row lands while the caller reports it not made, every run: a person's refusal while the ask answers the bound's failure, the server's refusal of a verb but `show` while the verb answers the audit's failure, and a verb's outcome, a first record and the `failed` outcome of a first whose frame never left while each is logged as not written. And in `src/alerting_deadline_tests.rs`, against the alerts' own worker and drainer on a store of their own, the same perturbation lands an alert while the operations log's line names none, a restoration on the lost-contact alert while the worker logs it as not noted, an inbox row's commit, the row gone and its alert raised, while the drainer logs it as not applied, and a row's back-off while the drainer logs it as not backed off. And the class, in `src/timeouts_tests.rs` with no database, this document's election of 2026-11-12: every call of tokio's `timeout` or `timeout_at` in code compiled outside test is held to a list, each entry naming its function and one reason it bounds no write that could commit unreported; add such a call, or put any of the act's nine sites back in tokio's order, and the scan finds it unlisted |
 | a person authenticates by passkey, or by a sign-in token where the config admits one, and by nothing else | perturbation, through a soft passkey in `src/sign_in_tests.rs`: let the options load every person's passkeys, the counter rule find the credential among anyone's and the opening take any person's passkey, and another person's authenticator answering this person's challenge opens this person's session, each of the three guards holding it alone; take a ceremony without removing it, and the ceremony table's own test in `src/passkeys_tests.rs` finishes one twice, a captured sign-in assertion replayed being refused besides by the counter rule; audit the failed signature, and a stream of bad assertions fills the audit; drop the opening's check of its person, disable the person between the counter rule and the opening, and a disabled person's session opens; look the passkey up by its credential ID at the finish rather than by the identity the ceremony challenged, reset the person and re-enroll the same credential between the options and the finish, and a session opens on the re-enrolled row, and a possible clone whose passkey was removed goes unaudited. No path opens a session but the finish of a verified assertion and, where the config's `sign_in` names `token`, the redemption of a live sign-in token, whose own row is the sign-in token's below |
 | the server refuses to start on the listener's faults the design lists, and promises nothing beyond them | perturbation, each start refusal of `docs/project/design-2026-10-07-iam.md` section 3 that concerns the origin and the certificate, against certificates minted at test time in `src/listen_tests.rs`: the origin parsed by `url`, the WHATWG URL Standard a browser parses by, and required to equal its origin's ASCII serialization: drop the equality, and an origin with userinfo, a path or a trailing slash, a query, a fragment, a scheme or host in upper case, a default port written, a port with a leading zero, an IPv6 address not in its canonical form, a host a browser reads as an IPv4 address written otherwise than in dotted decimal, or an internationalized name not in its ASCII form starts, each a value no browser sends, so every state-changing request would fail the `Origin` comparison; compare the Unicode serialization instead, and an internationalized name starts in its Unicode form; keep the brackets of an IPv6 host in the name check, and a certificate for that address is refused; let `http` through off `localhost`, and the server listens on an origin where no ceremony can run; drop the refusal of an `https` origin with no certificate and key, and the listener serves it in the clear; drop the pair check, and a key that does not pair with its certificate starts; drop the name check, and a certificate for another host starts against the origin; drop either half of the validity check, and an expired or a not-yet-valid certificate starts; drop the warning, and one expiring within fourteen days starts silently. And the listener itself: let the binary serve plain where a certificate and key are configured, and `tests/startup.rs` (ignored, the real binary, started with a certificate minted at test time) gets no answer over TLS and a surface's answer in the clear; take each handshake on the accepting task, and a client that connects and never speaks stalls the next client's handshake in `src/listen_tests.rs`; drop the permit taken before each accept, and with the cap held by silent clients the next connection is accepted at once rather than waiting for a silent one's bound, at a small cap and bound the test sets; the same file shows a TLS client a surface's answer and a plain request none. And the listener's log, against a log captured in `src/listen_tests.rs`: log a client's certificate alert at debug, and a browser refusing the certificate leaves the operator nothing at the default level; warn of every one, and a second alert within the interval warns again; take every failed handshake for a certificate alert, and a plain client warns. With a certificate and no origin, the pair and the period are checked and the name check waits for an origin. A fault the list does not name, a certificate unfit for server authentication among them, is not this row's: the browser's refused handshake shows it |
 | the server refuses to start on the relying party's faults the design lists | perturbation, each refusal its own case in `src/listen_tests.rs`: drop the refusal of an `rp_id` with no `origin`, or of an `origin` with no `rp_id`, and the server listens with passkeys no browser will use; drop the refusal of an empty `rp_id`, or of one that is an IP address, bracketed or not, and every ceremony fails with the browser's `SecurityError`; drop the refusal of an origin whose host is neither the `rp_id` nor under it, or take a bare suffix for a domain under it, and an origin of another registrable domain, or one the `rp_id` sits under, starts; drop the requirement that the `rp_id`, parsed by `url` as a browser parses a host, equal its domain's ASCII serialization, and an `rp_id` in upper case or with a Unicode label starts, the config and what the ceremonies send the browser no longer one fact. A public suffix as the `rp_id` is not this row's: the browser's failure at the first ceremony shows it |
@@ -7270,15 +7269,15 @@ a `web-` assertion beside `weaver-admin`'s.
   carried it under the operator's ruling of 2026-10-08 that no deployment
   held data before it. A deployment now holds data, and a squash makes the
   server refuse a store that applied the migrations one by one, since every
-  applied migration is checksummed, so it waits on his ruling.
+  applied migration is checksummed, so it waits on the operator's ruling.
 - **The declaration's lineage, opened 2026-11-11** (sections 2.4 and 6.1).
-  The Planner's default, following the operator's ruling 9 of that date:
+  This document's election, following the operator's ruling 9 of that date:
   every save appends an immutable row whose parent is the row it was opened
   from, the lineage kept linear by the handler and the schema admitting a
   second child for the ablation's arms. Whether a saved declaration may
   instead be edited in place is the operator's ruling.
-- **Who may declare, opened 2026-11-11** (section 6.1). The Planner's
-  default is the server-wide admin grant, since no agent row exists before
+- **Who may declare, opened 2026-11-11** (section 6.1). This document's
+  election is the server-wide admin grant, since no agent row exists before
   register for a per-agent role to attach to. A role of its own for
   declaring would be an act in section 2.13's role shape; the choice is the
   operator's.
@@ -7300,7 +7299,7 @@ a `web-` assertion beside `weaver-admin`'s.
   declares nothing of it. The Spark-class machine is later, on the operator's ruling of
   2026-11-15, so this cell waits on it.
 - **The session parameters' starting values, opened 2026-11-12** (section
-  6.1). The Planner's default: the maximum tokens per turn and the context
+  6.1). This document's election: the maximum tokens per turn and the context
   capacity start empty in a new declaration's form, and the operator enters
   each. The SPU's own comment on the context capacity, at WeaverAgent
   `5ec7ecf8`, reads "The declaration now governs, sized by the operator

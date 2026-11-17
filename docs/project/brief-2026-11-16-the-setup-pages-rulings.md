@@ -50,20 +50,21 @@ the prompt rules, in the order it gives:
    belongs with the connectors and serves a host too. The drive setup is the appliance's
    script alone**, and a host's own script is later. A host install points at a state
    directory and a models directory and attaches and formats nothing, and its form of
-   the drives step is drawn and marked unbuilt. Every root act runs on the box at a
-   screen the operator is sitting at, so admin's grant does not grow. From pairing
-   onward the console's whole reach is its connectors, so `weaver-web-PRD` section 10.5
-   holds from the first minute. The setup's first question sets root's password, and the
-   operator's SSH public key reaches the box through Weaver Web over TLS after pairing,
-   so Weaver Web holds that public key and sends it down the paired link.
+   the drives step is drawn and marked unbuilt. Its models directory defaults to the
+   user's Hugging Face cache, which the console alone writes, agents reading the model
+   in place, read-only, through a group. Every root act runs on the box at a screen the
+   operator is sitting at, so admin's grant does not grow. From pairing onward the
+   console's whole reach is its connectors, so `weaver-web-PRD` section 10.5 holds from
+   the first minute. The setup's first question sets root's password, and the operator's
+   SSH public key reaches the box through Weaver Web over TLS after pairing, so Weaver
+   Web holds that public key and sends it down the paired link.
 4. **The pages.** The start page asks the agent's name. The setup pages follow in this
    order: the pairing (the code, the fingerprint and the survey's report), the models,
    the drives as the box mounted them, the placement, and the confirmed tuple. A
-   checkbox says whether the box is a virtual machine or a host, the console's shutdown
-   command enabled on a virtual machine and disabled entirely on a host, and the page
-   warns where the address is localhost and the checkbox says virtual machine. The state
-   mount is required for every agent, at a minimum of 10 GB, and the models mount takes
-   a plural name. One unit, GiB, across the whole flow.
+   checkbox says whether the box is a virtual machine or a host, and the page warns
+   where the address is localhost and the checkbox says virtual machine. The state mount
+   is required for every agent, at a minimum of 10 GiB, and the models mount takes a
+   plural name. One unit, GiB, across the whole flow.
 5. **Labels.** Every pane carries its stage, built or unbuilt, and its status, healthy
    states included.
 6. **Save points.** The first agent keeps the save point the unload writes, on the
@@ -79,9 +80,9 @@ mount and never their paths.
 
 ## The act
 
-1. **`weaver-web-PRD`.** Section 2's "Not a hypervisor driver", with the console's
-   shutdown command on a virtual machine and disabled on a host. Section 3.0's Declare
-   and Provision rows, its account of Declare, and the pane's labels. Section 8's asks.
+1. **`weaver-web-PRD`.** Section 2's "Not a hypervisor driver", with the console's stop
+   and start of an agent as admin's `unload` and `load`. Section 3.0's Declare and
+   Provision rows, its account of Declare, and the pane's labels. Section 8's asks.
    Section 9's cells on state and save points, the trace path on the state mount, the
    Spark-class machine, trust on first use, the one-time secret and the fetch. Section
    10's opening, 10.1 (pairing by a short one-time code the box shows and the operator

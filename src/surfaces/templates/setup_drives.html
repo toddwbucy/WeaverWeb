@@ -1,0 +1,72 @@
+{% extends "setup_frame.html" %}
+{% block panes %}
+{#- The drives page (Spec 6.2): the appliance's form drawn with what it
+    will show, the host's form drawn unbuilt, and the SSH keys that go down
+    by their fingerprints. The command and the drives as mounted are held,
+    each saying what it waits on, holding no input. -#}
+<section class="pane">
+  <header><span class="stage"><b>1</b> Declare</span><h2>On an appliance</h2><span class="backing built">built</span><span class="status ok">ok</span><span class="source">what the drive setup lays</span></header>
+  <div class="body">
+  <p>The drive setup lays two drives. The state drive, at least 10 GiB, holds each agent's directory of its own under the state mount, named for the agent, with the agent's folder and its home side by side inside it. The models drive holds the models in Hugging Face's layout, sized from the picks.</p>
+  </div>
+  <footer>The box shows the command, and the drives once it has mounted them, in the two panes below.</footer>
+</section>
+<section class="pane">
+  <header><span class="stage"><b>1</b> Declare</span><h2>The models drive's need</h2><span class="backing built">built</span>{% if need.is_some() %}<span class="status ok">ok</span>{% else %}<span class="status hold">hold</span>{% endif %}<span class="source">the picks, from Hugging Face's listing</span></header>
+  <div class="body">
+  {%- if let Some(need) = need %}
+  <p>{{ need.bytes }}: the {{ need.blobs }} distinct blob{% if need.blobs != 1 %}s{% endif %} of the setup's {{ need.picks }} pick{% if need.picks != 1 %}s{% endif %}, a blob two paths share counted once.</p>
+  {%- else %}
+  <p>No model is picked.</p>
+  {%- endif %}
+  </div>
+  {%- if need.is_none() %}
+  <footer>Waits on a pick on the models page.</footer>
+  {%- else %}
+  <footer>The models drive holds at least this, in Hugging Face's layout.</footer>
+  {%- endif %}
+</section>
+<section class="pane">
+  <header><span class="stage"><b>1</b> Declare</span><h2>The setup command</h2><span class="backing unbuilt">unbuilt</span><span class="status hold">hold</span></header>
+  <div class="body">
+  <p>The command run at the appliance's console to start the drive setup.</p>
+  </div>
+  <footer>Waits on the image's setup script, which names the command.</footer>
+</section>
+<section class="pane">
+  <header><span class="stage"><b>1</b> Declare</span><h2>The drives as mounted</h2><span class="backing unbuilt">unbuilt</span><span class="status hold">hold</span></header>
+  <div class="body">
+  <p>The state drive and the models drive, as the box mounted them.</p>
+  </div>
+  <footer>Waits on the box's report of its drives and its frame.</footer>
+</section>
+<section class="pane">
+  <header><span class="stage"><b>1</b> Declare</span><h2>On a host</h2><span class="backing unbuilt">unbuilt</span><span class="status hold">hold</span><span class="source">the console's <code>model_cache</code></span></header>
+  <div class="body">
+  <table>
+    <tbody>
+    <tr><th>Models directory</th><td>{% match model_cache %}{% when Some with (dir) %}<span class="mono">{{ dir }}</span>{% when None %}<span class="absent">not set</span>{% endmatch %}</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <footer>Waits on a host's drive setup, which is not built.</footer>
+</section>
+<section class="pane">
+  <header><span class="stage"><b>1</b> Declare</span><h2>The SSH keys that go down</h2><span class="backing built">built</span>{% if keys.is_empty() %}<span class="status hold">hold</span>{% else %}<span class="status ok">ok</span>{% endif %}<span class="source">the console's SSH keys</span></header>
+  <div class="body">
+  {%- if keys.is_empty() %}
+  <p>No SSH key is held.</p>
+  {%- else %}
+  <table>
+    <tbody>
+    {%- for key in keys %}
+    <tr><td class="mono">{{ key.fingerprint }}</td><td class="mono">{{ key.key_type }}</td><td>{{ key.comment }}</td></tr>
+    {%- endfor %}
+    </tbody>
+  </table>
+  {%- endif %}
+  <p><a href="/admin/ssh-key">Change the keys</a></p>
+  </div>
+  <footer>{% if keys.is_empty() %}Waits on an SSH public key, added on the SSH keys page. {% endif %}The drive setup fetches the keys over the paired link and writes them, so a changed key reaches a box when the setup command runs there again.</footer>
+</section>
+{% endblock %}

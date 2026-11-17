@@ -51,7 +51,10 @@ impl Drop for Rig {
     }
 }
 
-fn server_config(dir: &std::path::Path, link: std::net::SocketAddr) -> crate::config::ServerConfig {
+pub(crate) fn server_config(
+    dir: &std::path::Path,
+    link: std::net::SocketAddr,
+) -> crate::config::ServerConfig {
     crate::config::ServerConfig {
         listen: "127.0.0.1:0".into(),
         link_listen: "127.0.0.1:0".into(),
@@ -68,6 +71,7 @@ fn server_config(dir: &std::path::Path, link: std::net::SocketAddr) -> crate::co
         session_idle_secs: 3600,
         session_absolute_secs: 43200,
         operations_log: None,
+        model_cache: None,
         sign_in: vec![crate::config::SignInMethod::Passkey],
     }
 }
@@ -108,7 +112,7 @@ async fn rig_of(handover: Handover, silence: Duration) -> Option<Rig> {
     let agents = gate::guard(
         crate::surfaces::script_policy(routes(Seams {
             policy: policy.clone(),
-            cfg,
+            cfg: cfg.clone(),
             authority: authority.clone(),
             handover: handover.clone(),
         }))
@@ -127,9 +131,50 @@ async fn rig_of(handover: Handover, silence: Duration) -> Option<Rig> {
         .with_state(fresh.store.clone()),
         policy.clone(),
     );
+    // **The Hugging Face account's page**, for the bar's tests: its client
+    // names a port nothing answers on, so no test of this rig reaches
+    // Hugging Face.
+    let puller = crate::hugging_face::pull::Puller::start(
+        fresh.store.clone(),
+        crate::hugging_face::Client::with_base("http://127.0.0.1:9/").unwrap(),
+        None,
+        dir.path().join("authority"),
+        crate::hugging_face::pull::Settings::default(),
+    );
+    let hugging_face = gate::guard(
+        crate::surfaces::script_policy(crate::surfaces::hugging_face::routes(
+            crate::surfaces::hugging_face::Seams {
+                policy: policy.clone(),
+                client: crate::hugging_face::Client::with_base("http://127.0.0.1:9/").unwrap(),
+                authority_dir: dir.path().join("authority"),
+                puller: puller.clone(),
+            },
+        ))
+        .with_state(fresh.store.clone()),
+        policy.clone(),
+    );
+    // **The start page, the setup pages and the SSH keys' page**, for the
+    // bar's tests and the start page's New agent.
+    let setup = gate::guard(
+        crate::surfaces::script_policy(crate::surfaces::setup::routes(
+            crate::surfaces::setup::Seams {
+                policy: policy.clone(),
+                cfg: cfg.clone(),
+                client: crate::hugging_face::Client::with_base("http://127.0.0.1:9/").unwrap(),
+                puller,
+                authority_dir: dir.path().join("authority"),
+                headers: crate::hugging_face::headers::Headers::new(),
+                boxes: std::sync::Arc::new(crate::box_report::NoBox),
+            },
+        ))
+        .with_state(fresh.store.clone()),
+        policy.clone(),
+    );
     let app = app(&fresh.store, Some(passkeys()))
         .merge(agents)
-        .merge(reading);
+        .merge(reading)
+        .merge(hugging_face)
+        .merge(setup);
     Some(Rig {
         fresh,
         dir,

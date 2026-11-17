@@ -1,0 +1,49 @@
+{% extends "setup_frame.html" %}
+{% block panes %}
+{#- The pairing page (Spec 6.2): the checkbox and the console's link are
+    live. The waiting box and the survey's report are held, each saying
+    what it waits on, holding no input. -#}
+<section class="pane">
+  <header><span class="stage"><b>1</b> Declare</span><h2>Virtual machine or host</h2><span class="backing built">built</span><span class="status ok">ok</span><span class="source">the setup</span></header>
+  <div class="body">
+  <form method="post" action="/setup/{{ frame.setup_id }}/pairing">
+    <input type="hidden" name="version" value="{{ version }}">
+    <label><input type="checkbox" name="virtual_machine" value="on"{% if virtual_machine %} checked{% endif %}> The box is a virtual machine</label>
+    <button type="submit">Save</button>
+  </form>
+  </div>
+  <footer>Checked, the box is a virtual machine. Unchecked, it is a host.</footer>
+</section>
+<section class="pane">
+  <header><span class="stage"><b>1</b> Declare</span><h2>The console's link</h2><span class="backing built">built</span>{% if loopback_warning || unspecified_warning %}<span class="status fail">fail</span>{% else %}<span class="status ok">ok</span>{% endif %}<span class="source">the console's config: <code>link_address</code>, else <code>link_listen</code></span></header>
+  <div class="body">
+  <table>
+    <tbody>
+    <tr><th>Address</th><td class="mono">{{ link.address }}</td></tr>
+    <tr><th>Port</th><td class="mono">{% match link.port %}{% when Some with (port) %}{{ port }}{% when None %}the address names no port{% endmatch %}</td></tr>
+    </tbody>
+  </table>
+  {%- if loopback_warning %}
+  <p><span class="status fail">loopback</span> This is a loopback address, which a virtual machine cannot reach on the console's host. Set <code>link_address</code> in the console's config to an address the box reaches.</p>
+  {%- endif %}
+  {%- if unspecified_warning %}
+  <p><span class="status fail">unspecified</span> This is an unspecified address, which a listener binds for every interface and which names no machine to dial. Set <code>link_address</code> in the console's config to an address the box reaches.</p>
+  {%- endif %}
+  </div>
+  <footer>The box's setup asks for this address and port, and the box must reach them.</footer>
+</section>
+<section class="pane">
+  <header><span class="stage"><b>1</b> Declare</span><h2>The waiting box</h2><span class="backing unbuilt">unbuilt</span><span class="status hold">hold</span></header>
+  <div class="body">
+  <p>The box that dialed the console shows a short code and a fingerprint. The fingerprint is compared with the console's own, and the code is entered here.</p>
+  </div>
+  <footer>Waits on the box's enrollment and the image's setup script.</footer>
+</section>
+<section class="pane">
+  <header><span class="stage"><b>1</b> Declare</span><h2>The survey's report</h2><span class="backing unbuilt">unbuilt</span><span class="status hold">hold</span></header>
+  <div class="body">
+  <p>The box's survey of its machine, its cards and its drives, as it runs.</p>
+  </div>
+  <footer>Waits on the survey's report: its form, the image's or WeaverAgent's, and its frame.</footer>
+</section>
+{% endblock %}

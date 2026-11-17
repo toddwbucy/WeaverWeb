@@ -1,0 +1,26 @@
+{% extends "instrument.html" %}
+{% block title %}{{ frame.name }}, a setup - weaver-web{% endblock %}
+{% block rail %}
+{#- The setup's pages in the path's order (Spec 6.2), the current one
+    marked. A page this tree serves is a link, and the rest are drawn with
+    their backing, unbuilt. -#}
+<nav class="rail" aria-label="The setup of {{ frame.name }}">
+  {%- for step in frame.steps %}
+  {%- if let Some(href) = step.href %}
+  <a class="step{% if step.here %} here{% endif %}" href="{{ href }}"><span class="stage"><b>1</b> Declare</span> {{ step.title }}</a>
+  {%- else %}
+  <span class="step"><span class="stage"><b>1</b> Declare</span> {{ step.title }} <span class="backing unbuilt">unbuilt</span></span>
+  {%- endif %}
+  {%- endfor %}
+  <span class="left">{{ frame.setup_id }}, {{ frame.state }}, begun by {{ frame.begun_by }} at {{ frame.begun_at }}</span>
+</nav>
+{% endblock %}
+{% block body %}
+<h1>{{ frame.name }}</h1>
+<div class="stack">
+{% block panes %}{% endblock %}
+</div>
+{%- if let Some(next) = frame.next %}
+<p class="next">Next: <a href="{{ next.href }}">{{ next.title }}</a></p>
+{%- endif %}
+{% endblock %}

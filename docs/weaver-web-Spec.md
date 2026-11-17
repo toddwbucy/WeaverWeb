@@ -1047,8 +1047,9 @@ three tabs, in this order:
   experiments, the conversation with an agent, multi-agent workflow
   coordination and foundation-model support under this tab later, and puts
   the work outside it first: none of them is built here.
-- **IAM**, identity and access: Persons, Grants and Hugging Face for an
-  admin, the last the console's account at Hugging Face (section 2.15), then
+- **IAM**, identity and access: Persons, Grants, Hugging Face and SSH keys
+  for an admin, Hugging Face the console's account at Hugging Face (section
+  2.15) and SSH keys the operator's SSH public keys (section 6.2), then
   Passkeys, the person's own.
 
 A tab opens the first of its sub-tabs the person may open. At the right of
@@ -4519,8 +4520,8 @@ by `session`. Reads are not audited.
 **The routes:**
 
 - `GET /setup`, the start page: the agent's name, one field, and the setups left open,
-  each a link to its next page. Once an agent stands in the register, a New agent
-  button stands in the field's place and opens it.
+  each a link to its next page. Once an agent stands in the register, a retired one
+  included, a New agent button stands in the field's place and opens it.
 - `POST /setup`: a new setup of the name
 - `GET /setup/{su}/{page}`, where `{page}` is `pairing`, `models`, `drives`,
   `placement`, `confirm` or `build`, and `GET /setup/{su}` answers its pairing page
@@ -4565,7 +4566,7 @@ blank field passed off as a value, no input holding a value, no default device, 
 precision taken from a file's name.
 
 **The setup is one row, mutable until Confirm** (migration `0026`). It names its
-identity, `su-` and sixteen lowercase hex, the agent's name by the start page's rule
+identity, `st-` and sixteen lowercase hex, the agent's name by the start page's rule
 above, the checkbox, the person who began it and when, its state, `open` or `confirmed`,
 and a version every write checks against the page's read, a stale write answering 409
 and writing nothing. One open setup holds a name at a time. Beside it, one row per model
@@ -4575,12 +4576,18 @@ context length. **The pages write no declaration row**, and the document's gramm
 section 6.1 is not extended. Every write is audited with the target kind `setup`, naming
 the row.
 
+**The identity's prefix is `st-` and not `su-`**, since the repository's privilege scan
+(section 7.2) reads `su` standing as a word as the name of a privilege-escalating
+program. **A new setup's checkbox is drawn unchecked**, which says host: a checkbox has
+two states, and each is an answer the operator sees on the pairing page and changes
+there.
+
 **Each page:**
 
 | page | live | held, and on what |
 | --- | --- | --- |
 | Start | the name, refused by the start page's rule or where an open setup holds it; the open setups; New agent once an agent stands | nothing |
-| Pairing | the checkbox, virtual machine or host; the console's link address and port (`link_address`, else `link_listen`), which the box's setup asks for, and that the box must reach them; the warning where that address is a loopback address and the checkbox says virtual machine, and the address the box dialed too once the enrollment brings it | the waiting box, its code and its fingerprint: the enrollment (section 8.2) and the image's setup script; the survey's report: its form, the image's or WeaverAgent's, and its frame |
+| Pairing | the checkbox, virtual machine or host; the console's link address and port (`link_address`, else `link_listen`), which the box's setup asks for, and that the box must reach them; the warning where that address is a loopback address and the checkbox says virtual machine, and where it is an unspecified address, `0.0.0.0` or `::`, for a host and a virtual machine alike, since a listener binds it for every interface and it names no machine to dial (RFC 1122 admits `0.0.0.0` as a source alone, and RFC 4291 refuses `::` as a destination); and the address the box dialed too once the enrollment brings it | the waiting box, its code and its fingerprint: the enrollment (section 8.2) and the image's setup script; the survey's report: its form, the image's or WeaverAgent's, and its frame |
 | Models | the repository and its revision, resolved to a commit; each choice with its size and its header's facts; a gated repository with its accept link and a check again; the pick, which asks a pull (section 2.15), an adapter's carrying its scale; the pulls' progress and record; the base's identity, computed from the cache; the roster beyond the first agent drawn and marked unbuilt | nothing on the console's side; the box's pull from the cache is the enrollment's frame |
 | Drives | the appliance's form drawn with what it will show; the models drive's need, the bytes of the picks' distinct blobs; the host's form drawn and marked unbuilt, its models directory prefilled from `model_cache` where set; the SSH key that goes down, by its fingerprint, with a link to change it | the command that starts the drive setup: the image's setup script names it; the drives as mounted: the box's report and its frame |
 | Placement | the context length, bounded by the header's maximum; the turn context; the block count and the parts in shard order, from the header | the devices, a set of the survey's cards by ordinal: the survey's report; the fit, drawn "planned, from the box's room plan": the room plan's answer over TLS, an ask on WeaverAgent |
@@ -4713,12 +4720,12 @@ more, an admin's write at `GET /admin/ssh-key`, audited with the target kind `ss
 naming the key's identity, `sk-` and sixteen lowercase hex. A key is a public half and
 no secret, so the store holds it in clear. The console checks the line's form alone: a
 key type of OpenSSH's public-key format, base64 that decodes, and the type name inside
-the decoded blob equal to the line's, a line of at most 16 KiB and at most 16 keys held.
-A key is shown by its SHA-256 fingerprint, OpenSSH's form, and the line's text enters no
-audit record. Which types a box's SSH door admits is the image's and enters no text
-here. The setup script's drive-setup run fetches the keys over the paired link and
-writes them, so a changed key reaches a box when the setup command runs there again,
-and the drives page says so (the Planner's notes after item 17).
+the decoded blob equal to the line's, a line of at most 16 KiB, and at most 16 keys
+held, each once. A key is shown by its SHA-256 fingerprint, OpenSSH's form, and the
+line's text enters no audit record. Which types a box's SSH door admits is the image's
+and enters no text here. The setup script's drive-setup run fetches the keys over the
+paired link and writes them, so a changed key reaches a box when the setup command runs
+there again, and the drives page says so (the Planner's notes after item 17).
 
 **The pages reach no agent and no box.** A write lands in the store and, for a pick, in
 the puller's queue: no frame leaves on the link, no verb is asked, and nothing is
@@ -6709,8 +6716,9 @@ two connectors report.
 | a FIFO at a blob's name or at the seal key's is refused and never waited on | perturbation in `src/model_pull_tests.rs`, `a_fifo_at_a_blobs_name_is_refused_and_never_waited_on`, and in `src/hugging_face/seal.rs`'s tests: open the blob or the key waiting, and the puller, or the key's read, waits on the FIFO until a writer opens it |
 | the Hugging Face client reads no proxy from the environment | perturbation in `tests/hugging_face_proxy.rs`, a test binary of its own: drop `.no_proxy()`, and with the proxy variables naming a port where nothing listens, a request to the fake fails to connect |
 | a snapshot's link never replaces a file the repository holds | perturbation in `src/hugging_face/cache.rs`'s tests: stage the link under a fixed name beside its place, and a repository file of that name loses its link |
-| every pane of every setup page carries a stage, a backing and a status word, and a held pane names what it waits on with no input holding a value | test in `src/setup_tests.rs` walking every page's rendered panes: drop a pane's status mark, or fill a held pane's input, and the walk names the pane |
-| the start page refuses every name admin's name rule or the box's agent-creation rule refuses | perturbation in `src/setup_tests.rs`, one case per clause, each refused and opening no setup: an uppercase letter, a `-`, a `_`, a leading digit, one character, seventeen characters, and each of the two names `weaver-admin-Spec` section 4 reserves whole, which the character rule admits; drop each clause and its case opens a setup, and a name of sixteen characters opens one. A name ending in one of section 4's reserved suffixes carries a `-`, so the character rule refuses it |
+| every pane of every setup page carries a stage, a backing and a status word, and a held pane names what it waits on with no input holding a value | test in `src/setup_tests.rs`, `every_pane_carries_its_stage_backing_and_status`, walking every page's rendered panes in each state it draws: drop a pane's status mark from a template, or fill a held pane's input, and the walk names the pane (both measured); the walk's own perturbations run on every build in `the_walk_names_a_pane_without_a_status_or_with_a_filled_input` |
+| the start page refuses every name admin's name rule or the box's agent-creation rule refuses | perturbation in `src/setup_tests.rs`, one case per clause, each refused and opening no setup: an uppercase letter, a `-`, a `_`, a leading digit, one character, seventeen characters, and each of the two names `weaver-admin-Spec` section 4 reserves whole, which the character rule admits; a name of sixteen characters opens one. Drop a clause from the page's rule and its case meets the store's CHECK, which holds the same rule, and answers as a fault rather than a refusal; drop it from the CHECK too and its case opens a setup (each clause measured from the page, the reserved names from both). A name ending in one of section 4's reserved suffixes carries a `-`, so the character rule refuses it |
+| the pairing page warns where the console's link address is a loopback address and the checkbox says virtual machine, and where it is an unspecified address, for a host and a virtual machine alike | perturbation in `src/setup_tests.rs`, `the_loopback_warning_shows_for_a_virtual_machine_alone` and `the_unspecified_warning_shows_for_a_host_and_a_virtual_machine`, and in `src/surfaces/setup.rs`'s tests, `the_link_address_is_read_for_its_port_its_loopback_and_unspecified`: draw the loopback warning for a host too, and the host's page warns; drop the unspecified check, or drop its paragraph from the template, and `link_listen` at `0.0.0.0` with no `link_address` draws no warning; draw it for a virtual machine alone, and the host's page draws none; read `link_listen` over `link_address`, and a `link_address` the box reaches beside it warns; take IPv4's unspecified address alone, and `::` draws none (each measured) |
 | a crafted post naming a second model, a second adapter role or the CPU is refused, saving nothing | perturbation in `src/setup_tests.rs`: take any role the form names, and a second model's row lands |
 | a pick asks Hugging Face only after the admin gate | perturbation in `src/setup_tests.rs` against a fake Hugging Face: read the listing before the gate, and the fake counts a request from a person holding no admin grant |
 | the GGUF reader refuses a length or a count past its buffer, a header cut short and a header past its bound, without a panic or an unbounded allocation | perturbation in `src/gguf.rs`'s tests: read a string's length before checking it against the bytes held, and a hostile header panics or asks an allocation of its claimed size |
@@ -7255,6 +7263,10 @@ a `web-` assertion beside `weaver-admin`'s.
   charter's section 3.0, where an agent is binaries by hash plus wires by hash and "the
   two screens are a rendering of that card". Which of them, if any, carries the run card
   is not elected here. Closes when the operator's definition is placed in a repository.
+- **Abandoning an open setup, opened 2026-11-16** (section 6.2). One open setup holds
+  a name, and no route drops one, so a setup begun by mistake holds its name until it is
+  confirmed. Open: whether an admin abandons an open setup, and what an abandoned one
+  keeps. Settled by the operator.
 - **The room plan's answer, opened 2026-11-16** (section 6.2). The placement page draws
   the fit as planned, from the box's room plan, which runs on the box without a load and
   crosses over TLS as the survey's report does. Open: the room plan's terms (the weights

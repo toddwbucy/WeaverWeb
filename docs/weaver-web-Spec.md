@@ -6611,11 +6611,11 @@ a TLS connection the box already opened, and not a bearer the server issues, whi
 section 2.13 makes 32 bytes from the operating system's cryptographic random source.
 **Both ends derive it from that connection**, on this document's election of 2026-11-17.
 Each computes the TLS exporter (RFC 8446 section 7.5) of the one pairing connection,
-which is TLS 1.3 alone (below), under the label `EXPERIMENTAL-weaver-pair-code` with no
-context, and takes its first 50 bits, shown as ten characters of Crockford's base32 in
-two groups of five. **The label is private to this link**, so it takes the prefix RFC
-5705 section 4 reserves for private use without registration, `EXPERIMENTAL`, since
-every other label must be registered with IANA under Specification Required. That
+which is TLS 1.3 alone (below), under the label `EXPERIMENTAL-weaver-pair-code` with an
+empty context, and takes its first 50 bits, shown as ten characters of Crockford's
+base32 in two groups of five. **The label is private to this link**, so it takes the
+prefix RFC 5705 section 4 reserves for private use without registration, `EXPERIMENTAL`,
+since every other label must be registered with IANA under Specification Required. That
 section's advice that a label begin with `EXPORTER` guards against a collision with the
 TLS 1.2 PRF's own labels, which the TLS 1.3 exporter, derived from a secret of its own,
 does not meet. Under TLS 1.3 no context computes the same value as an empty one (RFC

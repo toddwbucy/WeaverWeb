@@ -177,7 +177,7 @@ agent in a way that blocks many.
 
 | stage | what it holds | backing |
 | --- | --- | --- |
-| 1 Declare | a start page, the setup pages and the build page (the operator's rulings of 2026-11-16, setup pages, and their addendum): the start page asks the agent's name; the setup pages run, in order, the pairing, the models, the drives as the box mounted them, the placement and the confirmed deployment tuple; the build page holds the board, which wires what was declared, and the prompt tuple panel | partly: the declaration screen of 2026-11-11 saves versioned declarations and shows the file each will become (Spec 6.1), and stands until the setup pages' act recuts it; the start page and the setup pages are unbuilt; the build page is held, the board waiting on contracts WeaverAgent has yet to write |
+| 1 Declare | a start page, the setup pages and the build page (the operator's rulings of 2026-11-16, setup pages, and their addendum): the start page asks the agent's name; the setup pages run, in order, the pairing, the models, the drives as the box mounted them, the placement and the confirmed deployment tuple; the build page holds the board, which wires what was declared, and the prompt tuple panel | partly: the start page and the setup pages stand to the confirm page, each part live or held (Spec 6.2); the declaration screen of 2026-11-11 saves versioned declarations and shows the file each will become (Spec 6.1), and stays as built beside them; the build page is held, the board waiting on contracts WeaverAgent has yet to write |
 | 2 Provision | the box's side of the setup (the operator's rulings of 2026-11-16, setup pages, and their addendum): an appliance's console goes straight into the appliance's setup script at first boot, which asks this server's address and port; the box dials this server over TLS and shows a short one-time code and this server's fingerprint; on the pairing page the operator compares the fingerprint and enters the code; the connectors send the public halves of keys made in the box, this server signs them, and mutual TLS comes up; the survey's report crosses over TLS. The pairing is the connectors' and serves a host too. Once the model is picked, this server shows a command to run at the appliance's console, which starts the script's drive setup, formatting and mounting the state drive and the models drive, each after the operator confirms the disk; the box then pulls the model from this server's cache over TLS. The drive setup is the appliance's script alone, and a host's own script is later. A host install points at a state directory and a models directory and attaches and formats nothing. Every root act runs on the box at a screen the operator is sitting at, and this server's reach is the two connectors from pairing onward (section 10). Installing the declaration Declare saved is the operator's work on the box as built, and no console verb does it. Then `validate`, which reads the installed declaration. Registration and its one-time config handover stand as built | partly: the register page and the one-time config handover are built, and an appliance's enrollment, the console's side of the pairing and the drive setup, the installing of the declaration and the validate step are not |
 | 3 Run | load, serve turns through the gate, unload | built; `load` is offered as every verb is, where the person's grants and the connection's ceiling carry it |
 | 4 Observe | availability, alerts, the live trace | built |
@@ -223,9 +223,10 @@ the design system's own (Spec section 6).
 **Declare is a start page, the setup pages and the build page**, on the operator's
 rulings of 2026-11-16 (setup pages) and their addendum, which replace the two screens of
 the rulings of 2026-11-11 as the stage's path, those having replaced the single diagram
-the design session of 2026-11-06 drew. The act that builds the pages ends at the
-confirmed deployment tuple of the confirm page, and the declaration screen of 2026-11-11
-stands as built (Spec 6.1) until that act recuts it.
+the design session of 2026-11-06 drew. The pages stand to the confirmed deployment tuple
+of the confirm page (Spec 6.2), and the declaration screen of 2026-11-11 stays as built
+beside them, reached from the build page's stub for the fields no setup page asks (Spec
+6.1).
 
 - **The start page** asks the agent's name, one field after Start, because the appliance
   names its directories and admin entry after the agent. Once an agent exists, the start
@@ -1082,7 +1083,8 @@ this crate designs around the gap until it closes.
   Section 3.6 records provenance by repository and revision. Whether the console's pull
   is this surface's import, so a pulled model ends as an artifact other surfaces can
   name, is not ruled. A local source and the other sources are later, and named as
-  later. Settled by the model cache's act, which brings it to the operator.
+  later. The Hugging Face connection's act (Spec 2.15) records each pull and leaves this
+  open. Settled by the operator.
 - **Whether a trained-weights lineage should exist at all.** Section 5
   makes reuse across a conversion an operator election because
   `weaver-analysis-PRD` section 3 versions a lens by the weights content
@@ -1270,9 +1272,9 @@ console never uses SSH.** The operator's SSH door is the operator's administrati
 into the machine, separate from Weaver Web. **The setup script's first question sets
 root's password, and the operator's SSH public key reaches the box through the console
 over TLS after pairing**, on the addendum to the operator's rulings of 2026-11-16 (setup
-pages). So the console holds the operator's SSH public key, a public half and no secret,
-and sends it down the paired link, and the operator's SSH door takes that key. Where the
-console holds it is `weaver-web-Spec` section 10's.
+pages). So the console holds the operator's SSH public keys, public halves and no
+secret, as a console setting, the setup script's drive-setup run fetches them over the
+paired link, and the operator's SSH door takes them (`weaver-web-Spec` section 6.2).
 
 **Trust on first use was a hazard to enrollment** while pairing ran over the operator's
 first SSH, which trusts the host key it meets, so a wrong machine at the given address
@@ -1414,13 +1416,13 @@ exist, the state directory be writable with at least 10 GiB free and the models
 directory be readable, and asks no separate disk. The host form shows the command
 granting the console's account read-write on that directory and a models group read
 (section 10.1). On the addendum to the operator's rulings of 2026-11-16 (setup pages)
-the agent is a real account on the box, and its home lives on the state drive, so the
-state mount's 10 GiB is that home. The agent's own folder, its declaration, logs, trace
-and save points, stands inside that home. The image ships a fixed agent account, and the
-connectors' two accounts on the same principle, and setup points the agent account's
-home at a folder named after the agent on the state drive, the agent's own folder inside
-it. A host uses a home named after the agent, with the same layout inside. The account's
-name and every path are the image's and WeaverAgent's, and none enters this repository.
+the agent is a real account on the box, its home on the state drive. The agent's
+accounts take its name, on the operator's word of 2026-11-16: the box's agent-creation
+tool lays them at setup, and the image carries no fixed account for the agent. On the
+state drive each agent has a directory of its own under the state mount, named for it,
+which holds the agent's folder and its home side by side, and a host lays the same
+under its state directory (`weaver-web-Spec` section 6.2). Every account's name and
+every path are the image's and WeaverAgent's, and none enters this repository.
 With no drive attached the script warns that at least one drive is for state, about 10
 GiB recommended, and checks again once the operator attaches one. The models drive it
 asks for is sized from the chosen model, whose size it asks the console over TLS

@@ -85,6 +85,38 @@ pub enum Heard {
     Silent,
     /// The console spoke out of turn.
     Fault(String),
+    /// **The exchange's answer** (Spec 8.2, step 4), its shapes checked and
+    /// its authority the one the handshake presented. The box writes it,
+    /// then sends its word (`Dialed::written`).
+    Answer(Answer),
+}
+
+/// **The exchange's answer as the box holds it** (Spec 8.2): the members a
+/// config needs that the box did not know, each checked in its shape, and
+/// the certificates in PEM. `adopt` checks each certificate against its
+/// own key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Answer {
+    pub agent: String,
+    pub agent_id: String,
+    pub r#box: String,
+    pub server_name: String,
+    pub authority: String,
+    pub gate: String,
+    pub admin: String,
+}
+
+/// **The console's last word**, after the box's (Spec 8.2, step 6).
+#[derive(Debug, PartialEq, Eq)]
+pub enum LastWord {
+    /// The row stands with the answer's two certificates live.
+    Paired,
+    /// The console refused, with its reason, checked printable.
+    Refused(String),
+    /// The connection ended, or went silent, after the box's word and
+    /// before the console's: the console may have written the row, and the
+    /// pairing page says what the write made.
+    Unknown,
 }
 
 /// A box waiting on the console: its connection, its code and the
@@ -123,6 +155,67 @@ impl Dialed {
         self.expires_in
     }
 
+    /// **An answer the box takes, or why not**, in fixed words: every
+    /// member in its shape, each certificate one PEM block, and the
+    /// authority the one the handshake presented, whose fingerprint the
+    /// box printed (Spec 8.2), so `adopt` verifies under the authority the
+    /// operator compared.
+    fn checked(&self, answer: Answer) -> Result<Answer, &'static str> {
+        if !crate::store::identity::is_agent_id(&answer.agent_id)
+            || crate::link::verbs::well_formed(&answer.r#box, &answer.agent).is_err()
+            || ServerName::try_from(answer.server_name.as_str()).is_err()
+        {
+            return Err("the console's answer names a member out of its shape");
+        }
+        let authority = one_certificate(&answer.authority)
+            .ok_or("the answer's authority is not one certificate")?;
+        if authority != self.authority {
+            return Err("the answer's authority is not the one the handshake presented");
+        }
+        if one_certificate(&answer.gate).is_none() || one_certificate(&answer.admin).is_none() {
+            return Err("an answer's certificate is not one certificate");
+        }
+        Ok(answer)
+    }
+
+    /// **The box's word** (Spec 8.2, step 5): it wrote the answer.
+    pub async fn written(&mut self) -> Result<(), DialError> {
+        let mut line = serde_json::to_string(&PairFromBox::Written).expect("a frame serializes");
+        line.push('\n');
+        #[cfg(test)]
+        self.transcript.push(line.trim_end().to_owned());
+        let stream = self.reader.get_mut();
+        match tokio::time::timeout(Duration::from_secs(DIAL_SECS), async {
+            stream.write_all(line.as_bytes()).await?;
+            stream.flush().await
+        })
+        .await
+        {
+            Ok(Ok(())) => Ok(()),
+            _ => Err(DialError::Fault("the box's word was not sent".into())),
+        }
+    }
+
+    /// **The console's last word** after the box's (Spec 8.2, step 6):
+    /// `paired`, a refusal, or, where the connection ends or stays silent
+    /// for four heartbeats' cadence first, unknown.
+    pub async fn last_word(&mut self) -> LastWord {
+        let line = match tokio::time::timeout(self.cadence * 4, self.reader.next()).await {
+            Ok(Line::Frame(line)) => line,
+            _ => return LastWord::Unknown,
+        };
+        #[cfg(test)]
+        self.transcript.push(line.clone());
+        match decode(&line) {
+            Some(PairToBox::Paired) => LastWord::Paired,
+            Some(PairToBox::Refused { reason }) => match printable(&reason) {
+                Some(reason) => LastWord::Refused(reason),
+                None => LastWord::Unknown,
+            },
+            _ => LastWord::Unknown,
+        }
+    }
+
     /// The next thing the console says, heartbeats aside. Silent past four
     /// heartbeats' cadence.
     pub async fn next(&mut self) -> Heard {
@@ -138,6 +231,29 @@ impl Dialed {
             self.transcript.push(line.clone());
             match decode(&line) {
                 Some(PairToBox::Heartbeat) => continue,
+                Some(PairToBox::Answer {
+                    agent,
+                    agent_id,
+                    r#box,
+                    server_name,
+                    authority,
+                    gate,
+                    admin,
+                }) => {
+                    let answer = Answer {
+                        agent,
+                        agent_id,
+                        r#box,
+                        server_name,
+                        authority,
+                        gate,
+                        admin,
+                    };
+                    return match self.checked(answer) {
+                        Ok(answer) => Heard::Answer(answer),
+                        Err(why) => Heard::Fault(why.into()),
+                    };
+                }
                 Some(PairToBox::Expired) => return Heard::Expired,
                 Some(PairToBox::Refused { reason }) => {
                     return match printable(&reason) {
@@ -173,7 +289,17 @@ fn named(frame: &PairToBox) -> &'static str {
         PairToBox::Heartbeat => "heartbeat",
         PairToBox::Expired => "expired",
         PairToBox::Refused { .. } => "refused",
+        PairToBox::Answer { .. } => "answer",
+        PairToBox::Paired => "paired",
     }
+}
+
+/// One certificate in PEM, alone, as DER.
+fn one_certificate(pem: &str) -> Option<CertificateDer<'static>> {
+    let mut bytes = pem.as_bytes();
+    let mut certificates = rustls_pemfile::certs(&mut bytes);
+    let first = certificates.next()?.ok()?;
+    certificates.next().is_none().then_some(first)
 }
 
 /// A reason as the box prints it: printable ASCII within `REASON_BOUND`, or

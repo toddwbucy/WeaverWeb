@@ -66,8 +66,8 @@ async fn rig() -> Option<Rig> {
     })
 }
 
-/// A box's claim. The requests are text alone here: the exchange that
-/// verifies them is the next sub-act's.
+/// A box's claim. The requests are text alone here, since no test of this
+/// module reaches the exchange that verifies them (`enrollment_tests`).
 fn claim(r#box: &str) -> Claim {
     Claim {
         r#box: r#box.into(),
@@ -339,11 +339,14 @@ async fn a_party_between_the_box_and_the_console_meets_a_code_that_matches_nothi
         let Line::Frame(line) = from_box.next().await else {
             panic!("the box sent no first frame");
         };
-        let PairFromBox::Hello {
+        let Ok(PairFromBox::Hello {
             r#box,
             gate_request,
             admin_request,
-        } = serde_json::from_str(&line).unwrap();
+        }) = serde_json::from_str(&line)
+        else {
+            panic!("the box's first frame is not its hello");
+        };
         let onward = pair_client::dial(
             &console,
             &Claim {
@@ -397,7 +400,8 @@ async fn the_box_shows_the_consoles_authority_fingerprint() {
 
 /// **A match spends the connection** (Spec 8.2): the box's code takes its
 /// waiting connection once, with the box's claim, and then matches
-/// nothing, and the box hears the close.
+/// nothing. The taker holds the connection for the exchange, and the box
+/// hears the close once the taker lets it go.
 #[tokio::test]
 async fn a_match_spends_the_connection() {
     let Some(rig) = rig().await else { return };
@@ -420,6 +424,7 @@ async fn a_match_spends_the_connection() {
         rig.listener.take_pairing(&code).await.is_none(),
         "a code matched twice"
     );
+    drop(taken);
     let heard = tokio::time::timeout(SOON, dialed.next()).await;
     assert!(matches!(heard, Ok(Heard::Closed)), "{heard:?}");
 }

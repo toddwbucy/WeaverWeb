@@ -25,6 +25,8 @@ pub mod declaration;
 mod declarations_tests;
 #[cfg(all(test, feature = "passkeys"))]
 mod declare_pane_tests;
+#[cfg(all(test, feature = "passkeys", feature = "enrollment"))]
+mod enrollment_tests;
 #[cfg(all(test, feature = "passkeys"))]
 mod entries_tests;
 pub mod fault;

@@ -99,6 +99,10 @@ pub struct Agent {
     /// writes a state; none where none stands. Its constituents are
     /// `constituents`.
     pub in_transition_at: Option<DateTime<Utc>>,
+    /// **"Paired, setup running"** (Spec 2.12): the row an appliance's
+    /// pairing wrote, or whose box it set, until either connector's
+    /// service is first admitted.
+    pub setup_running: bool,
 }
 
 impl Agent {
@@ -338,7 +342,8 @@ const COLUMNS: &str = "agent_id, name, box, author, version, registered_at, \
     admin_fingerprint, admin_authority, admin_state, admin_state_at, admin_connected, admin_link_at, \
     admin_incarnation, admin_address, admin_address_at, \
     tuple, tuple_at, tuple_source, load_state, load_state_at, state_source, admin_ceiling, \
-    admin_ceiling_at, constituents, constituents_at, trace_door, trace_door_at, in_transition_at";
+    admin_ceiling_at, constituents, constituents_at, trace_door, trace_door_at, in_transition_at, \
+    setup_running";
 
 fn credential_from_row(row: &PgRow, plane: &str) -> anyhow::Result<Credential> {
     let col = |s: &str| format!("{plane}_{s}");
@@ -379,6 +384,7 @@ fn agent_from_row(row: &PgRow) -> anyhow::Result<Agent> {
         trace_door: row.try_get("trace_door")?,
         trace_door_at: row.try_get("trace_door_at")?,
         in_transition_at: row.try_get("in_transition_at")?,
+        setup_running: row.try_get("setup_running")?,
     })
 }
 
@@ -614,19 +620,19 @@ impl Store {
                 retired_fingerprints.push(fp);
             }
         }
-        let id: String = sqlx::query_scalar(
-            "INSERT INTO agent (agent_id, name, box, author, gate_fingerprint, admin_fingerprint, \
-             gate_authority, admin_authority) \
-             VALUES ($7, $1, $2, $3, $4, $5, $6, $6) RETURNING agent_id",
+        let id = insert_row(
+            &mut tx,
+            &NewRow {
+                agent_id: id,
+                name,
+                r#box,
+                author,
+                gate_fingerprint: &gate_fingerprint,
+                admin_fingerprint: &admin_fingerprint,
+                authority,
+                setup_running: false,
+            },
         )
-        .bind(name)
-        .bind(r#box)
-        .bind(author)
-        .bind(gate_fingerprint)
-        .bind(admin_fingerprint)
-        .bind(authority)
-        .bind(id.as_str())
-        .fetch_one(&mut *tx)
         .await?;
         match admin {
             Some(admin) => admin.commit(tx, "register").await?,
@@ -1149,7 +1155,7 @@ impl Store {
         }
         sqlx::query(audited(format!(
             "UPDATE agent SET {p}_connected = true, {p}_link_at = now(), {p}_incarnation = $2, \
-             {p}_address = $3, {p}_address_at = now() WHERE agent_id = $1"
+             {p}_address = $3, {p}_address_at = now(), setup_running = false WHERE agent_id = $1"
         )))
         .bind(agent_id.as_str())
         .bind(incarnation)
@@ -1356,4 +1362,322 @@ async fn notify(
         .execute(&mut **tx)
         .await?;
     Ok(())
+}
+
+/// **A new register row's members**, the one insert registration and an
+/// appliance's pairing share (Spec 8.2): the pairing's check is a register
+/// write of its own and never registration's, which retires a live row of
+/// the same box and name before this insert.
+struct NewRow<'a> {
+    agent_id: &'a AgentId,
+    name: &'a str,
+    r#box: &'a str,
+    author: Option<&'a str>,
+    gate_fingerprint: &'a str,
+    admin_fingerprint: &'a str,
+    authority: &'a str,
+    setup_running: bool,
+}
+
+async fn insert_row(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    row: &NewRow<'_>,
+) -> anyhow::Result<String> {
+    Ok(sqlx::query_scalar(
+        "INSERT INTO agent (agent_id, name, box, author, gate_fingerprint, admin_fingerprint, \
+         gate_authority, admin_authority, setup_running) \
+         VALUES ($7, $1, $2, $3, $4, $5, $6, $6, $8) RETURNING agent_id",
+    )
+    .bind(row.name)
+    .bind(row.r#box)
+    .bind(row.author)
+    .bind(row.gate_fingerprint)
+    .bind(row.admin_fingerprint)
+    .bind(row.authority)
+    .bind(row.agent_id.as_str())
+    .bind(row.setup_running)
+    .fetch_one(&mut **tx)
+    .await?)
+}
+
+/// **What an appliance's pairing writes** (Spec 8.2): `pair`, a new row
+/// under an identity minted for it, or `replace box`, the live row whose
+/// box it sets to the new box's claim.
+#[derive(Debug, Clone)]
+pub enum PairingAct {
+    Pair(AgentId),
+    Replace(AgentId),
+}
+
+impl PairingAct {
+    pub fn agent_id(&self) -> &AgentId {
+        match self {
+            PairingAct::Pair(id) | PairingAct::Replace(id) => id,
+        }
+    }
+
+    /// The audit's action, and the setup's record of which write it was.
+    pub fn action(&self) -> &'static str {
+        match self {
+            PairingAct::Pair(_) => "pair",
+            PairingAct::Replace(_) => "replace box",
+        }
+    }
+}
+
+/// **Why the pairing's register write refuses** (Spec 8.2, steps 1 and 6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PairingRefusal {
+    /// The setup left its pairing step: confirmed, or paired already.
+    SetupClosed,
+    /// A live row other than the one replaced holds the box the connection
+    /// claims and the setup's name.
+    BoxAndNameLive,
+    /// The row a replacement names holds no live credential.
+    Retired,
+}
+
+impl PairingRefusal {
+    /// The reason the box reads (Spec 8.2, `pair`'s `refused` line). A
+    /// retired replacement is the setup's own refusal to the box, since
+    /// the setup can go no further as entered.
+    pub fn reason(&self) -> &'static str {
+        use crate::link::frames::pair_reason;
+        match self {
+            PairingRefusal::SetupClosed | PairingRefusal::Retired => pair_reason::SETUP_CLOSED,
+            PairingRefusal::BoxAndNameLive => pair_reason::BOX_AND_NAME_LIVE,
+        }
+    }
+}
+
+impl std::fmt::Display for PairingRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            PairingRefusal::SetupClosed => "the setup has left its pairing step",
+            PairingRefusal::BoxAndNameLive => {
+                "a live row holds the box the connection claims and the setup's name"
+            }
+            PairingRefusal::Retired => "the row the replacement names was retired",
+        })
+    }
+}
+
+/// **The pairing as the exchange's register write reads it**: the setup,
+/// the act, the box the connection claims and the setup's name.
+pub struct Pairing<'a> {
+    pub setup_id: &'a str,
+    pub act: &'a PairingAct,
+    pub r#box: &'a str,
+    pub name: &'a str,
+}
+
+/// The replaced row as its lock read it: its version, its box and the two
+/// fingerprints the replacement revokes.
+struct Replaced {
+    version: i64,
+    r#box: String,
+    fingerprints: [String; 2],
+}
+
+/// **The pairing still stands**, read under the setup's lock and the rows'
+/// (Spec 8.2): the setup in its pairing step, a replaced row live, and no
+/// other live row holding the claimed box and the setup's name.
+async fn pairing_stands(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    pairing: &Pairing<'_>,
+) -> anyhow::Result<Result<Option<Replaced>, PairingRefusal>> {
+    let setup =
+        sqlx::query("SELECT name, state, agent_id FROM agent_setup WHERE setup_id = $1 FOR UPDATE")
+            .bind(pairing.setup_id)
+            .fetch_optional(&mut **tx)
+            .await?;
+    let in_step = setup.is_some_and(|row| {
+        row.get::<String, _>("state") == "open"
+            && row.get::<Option<String>, _>("agent_id").is_none()
+            && row.get::<String, _>("name") == pairing.name
+    });
+    if !in_step {
+        return Ok(Err(PairingRefusal::SetupClosed));
+    }
+    let replaced = match pairing.act {
+        PairingAct::Pair(_) => None,
+        PairingAct::Replace(id) => {
+            let row = sqlx::query(
+                "SELECT version, box, name, gate_fingerprint, admin_fingerprint FROM agent \
+                 WHERE agent_id = $1 AND (gate_state = 'live' OR admin_state = 'live') \
+                 FOR UPDATE",
+            )
+            .bind(id.as_str())
+            .fetch_optional(&mut **tx)
+            .await?;
+            match row {
+                Some(row) if row.get::<String, _>("name") == pairing.name => Some(Replaced {
+                    version: row.get("version"),
+                    r#box: row.get("box"),
+                    fingerprints: [row.get("gate_fingerprint"), row.get("admin_fingerprint")],
+                }),
+                _ => return Ok(Err(PairingRefusal::Retired)),
+            }
+        }
+    };
+    let live = sqlx::query(
+        "SELECT agent_id FROM agent WHERE box = $1 AND name = $2 \
+         AND (gate_state = 'live' OR admin_state = 'live') AND agent_id <> $3 FOR UPDATE",
+    )
+    .bind(pairing.r#box)
+    .bind(pairing.name)
+    .bind(pairing.act.agent_id().as_str())
+    .fetch_optional(&mut **tx)
+    .await?;
+    if live.is_some() {
+        return Ok(Err(PairingRefusal::BoxAndNameLive));
+    }
+    Ok(Ok(replaced))
+}
+
+impl Store {
+    /// **The exchange's step 1** (Spec 8.2), on the authority lock's own
+    /// connection: `setup_closed` where the setup left its pairing step,
+    /// and `box_and_name_live` where a live row holds the claimed box and
+    /// the setup's name, read under the rows' locks and writing nothing,
+    /// so registration's retire of such a row stays registration's alone.
+    pub async fn pairing_check_on(
+        conn: &mut sqlx::PgConnection,
+        pairing: &Pairing<'_>,
+    ) -> anyhow::Result<Result<(), PairingRefusal>> {
+        let mut tx = conn.begin().await?;
+        let stands = pairing_stands(&mut tx, pairing).await?;
+        tx.rollback().await?;
+        Ok(stands.map(|_| ()))
+    }
+
+    /// **The exchange's step 6** (Spec 8.2), on the authority lock's own
+    /// connection, after the box's word: one identity transaction that
+    /// re-checks the session and the admin grant, reads the pairing again
+    /// under its locks, writes the row with both fingerprints live, or for
+    /// a replacement keeps the box the row held and sets the new one, links
+    /// the setup, and commits with the audit's outcome. Answers the
+    /// fingerprints a replacement revoked, whose connections close.
+    pub async fn pairing_write_on(
+        conn: &mut sqlx::PgConnection,
+        admin: AdminWrite<'_>,
+        pairing: &Pairing<'_>,
+        gate_fingerprint: &str,
+        admin_fingerprint: &str,
+        authority: &str,
+    ) -> anyhow::Result<Result<Vec<String>, PairingRefusal>> {
+        let mut tx = conn.begin().await?;
+        admin.stands(&mut tx).await?;
+        let replaced = match pairing_stands(&mut tx, pairing).await? {
+            Ok(replaced) => replaced,
+            Err(refusal) => return Ok(Err(refusal)),
+        };
+        let id = pairing.act.agent_id();
+        let mut revoked = Vec::new();
+        match replaced {
+            None => {
+                insert_row(
+                    &mut tx,
+                    &NewRow {
+                        agent_id: id,
+                        name: pairing.name,
+                        r#box: pairing.r#box,
+                        author: Some(admin.person),
+                        gate_fingerprint,
+                        admin_fingerprint,
+                        authority,
+                        setup_running: true,
+                    },
+                )
+                .await?;
+            }
+            Some(replaced) => {
+                // **The box the row held is kept** (Spec 2.12) before the
+                // row's box moves, which the schema allows only beside it.
+                sqlx::query("INSERT INTO agent_box (agent_id, box, setup_id) VALUES ($1, $2, $3)")
+                    .bind(id.as_str())
+                    .bind(&replaced.r#box)
+                    .bind(pairing.setup_id)
+                    .execute(&mut *tx)
+                    .await?;
+                let affected = sqlx::query(
+                    "UPDATE agent SET box = $3, \
+                       gate_fingerprint = $4, gate_state = 'live', gate_state_at = now(), \
+                       admin_fingerprint = $5, admin_state = 'live', admin_state_at = now(), \
+                       gate_authority = $6, admin_authority = $6, \
+                       gate_link_at = CASE WHEN gate_connected THEN now() ELSE gate_link_at END, \
+                       admin_link_at = CASE WHEN admin_connected THEN now() ELSE admin_link_at END, \
+                       gate_connected = false, admin_connected = false, \
+                       gate_incarnation = NULL, admin_incarnation = NULL, \
+                       setup_running = true, author = $7, version = version + 1 \
+                     WHERE agent_id = $1 AND version = $2",
+                )
+                .bind(id.as_str())
+                .bind(replaced.version)
+                .bind(pairing.r#box)
+                .bind(gate_fingerprint)
+                .bind(admin_fingerprint)
+                .bind(authority)
+                .bind(admin.person)
+                .execute(&mut *tx)
+                .await?
+                .rows_affected();
+                if affected != 1 {
+                    anyhow::bail!("the replaced row moved under its lock");
+                }
+                for fp in replaced.fingerprints {
+                    notify(&mut tx, &fp).await?;
+                    revoked.push(fp);
+                }
+            }
+        }
+        let linked = sqlx::query(
+            "UPDATE agent_setup SET agent_id = $1, paired_as = $2, paired_at = now(), \
+             version = version + 1 WHERE setup_id = $3 AND state = 'open' AND agent_id IS NULL",
+        )
+        .bind(id.as_str())
+        .bind(pairing.act.action())
+        .bind(pairing.setup_id)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+        if linked != 1 {
+            anyhow::bail!("the setup moved under its lock");
+        }
+        admin.commit(tx, pairing.act.action()).await?;
+        Ok(Ok(revoked))
+    }
+
+    /// **The live rows holding a name**, for the pairing page (Spec 8.2):
+    /// each row's box and its live credentials, as the register keeps them,
+    /// which is what a pairing's write made whether its answer was lost or
+    /// not.
+    pub async fn live_rows_named(&self, name: &str) -> anyhow::Result<Vec<Agent>> {
+        let rows = sqlx::query(audited(format!(
+            "SELECT {COLUMNS} FROM agent WHERE name = $1 \
+             AND (gate_state = 'live' OR admin_state = 'live') ORDER BY box, registered_at"
+        )))
+        .bind(name)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter().map(agent_from_row).collect()
+    }
+
+    /// **The boxes a row held**, oldest first (Spec 2.12): each with the
+    /// time a replacement moved it.
+    pub async fn boxes_held(
+        &self,
+        agent_id: &AgentId,
+    ) -> anyhow::Result<Vec<(String, DateTime<Utc>)>> {
+        let rows = sqlx::query(
+            "SELECT box, replaced_at FROM agent_box WHERE agent_id = $1 ORDER BY replaced_at",
+        )
+        .bind(agent_id.as_str())
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .iter()
+            .map(|r| (r.get("box"), r.get("replaced_at")))
+            .collect())
+    }
 }

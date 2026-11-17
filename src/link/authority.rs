@@ -86,6 +86,15 @@ pub struct ClientCredential {
     pub key_pem: String,
 }
 
+/// A client certificate signed over a public half the box made (Spec
+/// 8.2): the certificate and the fingerprint the register stores, and no
+/// key, since the console never held one.
+#[derive(Debug, Clone)]
+pub struct SignedClient {
+    pub fingerprint: String,
+    pub certificate_pem: String,
+}
+
 /// SHA-256 over a certificate's DER, as sixty-four hex digits.
 pub fn fingerprint(der: &[u8]) -> String {
     format!("{:x}", Sha256::digest(der))
@@ -562,9 +571,28 @@ impl Authority {
     /// in the register, not the subject; the subject is for a human reading
     /// the file.
     pub fn mint_client(&self, agent: &str, plane: Plane) -> anyhow::Result<ClientCredential> {
+        let key = KeyPair::generate()?;
+        let signed = self.sign_client(agent, plane, &key)?;
+        Ok(ClientCredential {
+            fingerprint: signed.fingerprint,
+            certificate_pem: signed.certificate_pem,
+            key_pem: key.serialize_pem(),
+        })
+    }
+
+    /// **One client certificate over a public half the authority never
+    /// held** (Spec 8.2, the exchange's step 3), signed as `mint_client`
+    /// signs: the subject the agent's name and the plane, client
+    /// authentication alone, and every member but the key the console's
+    /// own. The caller verified the request the half came from.
+    pub fn sign_client(
+        &self,
+        agent: &str,
+        plane: Plane,
+        public_half: &impl rcgen::PublicKeyData,
+    ) -> anyhow::Result<SignedClient> {
         let params = authority_params();
         let issuer = Issuer::from_params(&params, &self.key);
-        let key = KeyPair::generate()?;
         let mut client = CertificateParams::new(Vec::<String>::new())?;
         let mut dn = DistinguishedName::new();
         dn.push(DnType::CommonName, agent);
@@ -573,11 +601,10 @@ impl Authority {
         client.is_ca = IsCa::ExplicitNoCa;
         client.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
         client.key_usages = vec![KeyUsagePurpose::DigitalSignature];
-        let certificate = client.signed_by(&key, &issuer)?;
-        Ok(ClientCredential {
+        let certificate = client.signed_by(public_half, &issuer)?;
+        Ok(SignedClient {
             fingerprint: fingerprint(certificate.der().as_ref()),
             certificate_pem: certificate.pem(),
-            key_pem: key.serialize_pem(),
         })
     }
 

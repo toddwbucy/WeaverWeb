@@ -97,6 +97,7 @@ pub(crate) async fn rig_full(
             authority_dir: dir.path().join("authority"),
             headers: crate::hugging_face::headers::Headers::new(),
             boxes,
+            enrollment: None,
         }))
         .with_state(fresh.store.clone()),
         policy,

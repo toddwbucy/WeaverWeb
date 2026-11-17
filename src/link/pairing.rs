@@ -66,15 +66,34 @@ pub struct WaitingBox {
     pub waited: Duration,
 }
 
+/// A pairing connection, framed, as the console holds it.
+pub(crate) type PairConnection = LineReader<TlsStream<TcpStream>>;
+
 /// **A pairing connection a code matched**, taken out of the table: what
-/// the box claimed. The match spends the connection, and its code matches
+/// the box claimed, and the connection itself, which the exchange carries
+/// on (Spec 8.2). The match spends the connection, and its code matches
 /// nothing after.
-#[derive(Debug, Clone)]
 pub struct Taken {
     pub r#box: String,
     pub gate_request: String,
     pub admin_request: String,
     pub peer: IpAddr,
+    /// The connection, which only the exchange carries on, so a build
+    /// without the enrollment closes it at the match.
+    #[cfg(feature = "enrollment")]
+    pub(crate) connection: PairConnection,
+    /// The bound on one write to the box, the listener's own.
+    #[cfg(feature = "enrollment")]
+    pub(crate) write_bound: Duration,
+}
+
+impl std::fmt::Debug for Taken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Taken")
+            .field("box", &self.r#box)
+            .field("peer", &self.peer)
+            .finish_non_exhaustive()
+    }
 }
 
 /// An entry's question to one waiting connection.
@@ -224,11 +243,7 @@ enum Event {
 
 /// One frame to the box, bounded: a box that stopped reading ends the
 /// connection.
-async fn send(
-    reader: &mut LineReader<TlsStream<TcpStream>>,
-    frame: &PairToBox,
-    bound: Duration,
-) -> bool {
+pub(crate) async fn send(reader: &mut PairConnection, frame: &PairToBox, bound: Duration) -> bool {
     let Ok(mut line) = serde_json::to_string(frame) else {
         return false;
     };
@@ -245,11 +260,7 @@ async fn send(
 }
 
 /// A last frame, then the close.
-async fn close_with(
-    reader: &mut LineReader<TlsStream<TcpStream>>,
-    frame: &PairToBox,
-    bound: Duration,
-) {
+pub(crate) async fn close_with(reader: &mut PairConnection, frame: &PairToBox, bound: Duration) {
     if send(reader, frame, bound).await {
         let _ = tokio::time::timeout(bound, reader.get_mut().shutdown()).await;
     }
@@ -347,6 +358,10 @@ pub(crate) async fn serve(start: StartHandshake<TcpStream>, mut cx: Context<'_>)
                         gate_request,
                         admin_request,
                         peer: cx.peer,
+                        #[cfg(feature = "enrollment")]
+                        connection: reader,
+                        #[cfg(feature = "enrollment")]
+                        write_bound: cx.write_bound,
                     }));
                     return;
                 }

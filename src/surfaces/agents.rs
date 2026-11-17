@@ -242,6 +242,9 @@ struct AgentRow {
     gate_live: bool,
     admin_live: bool,
     present: bool,
+    /// **"Paired, setup running"** (Spec 2.12), until either connector's
+    /// service is first admitted.
+    setup_running: bool,
     registered: String,
     live: bool,
 }
@@ -298,6 +301,7 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, ask: Prefill) -> 
             gate_live: a.gate.state == CredentialState::Live,
             admin_live: a.admin.state == CredentialState::Live,
             present: a.present(),
+            setup_running: a.setup_running,
             registered: a.registered_at.format("%Y-%m-%d %H:%M UTC").to_string(),
             live: matches!(a.gate.state, CredentialState::Live)
                 || matches!(a.admin.state, CredentialState::Live),

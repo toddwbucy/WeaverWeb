@@ -4531,18 +4531,18 @@ written, and nothing is installed, validated or seeded.
 ### 6.2 The setup pages
 
 **Declare's path is the start page, the setup pages and the build page**, on the
-operator's rulings of 2026-11-16 (setup pages), items 1 to 20 of their addendum and the
-Planner's notes after item 17. The decisions this section takes are this document's
-election of 2026-11-16, revised the same day after the appliance flow was walked by
-hand. The pages light what exists and draw the rest held: the start page, the models
-page, the drives page's need for the models drive, the placement page's context length
-and turn context, and the pairing page's checkbox, link address and port are live, and
-the pairing page's code and fingerprint, the survey's report, the drives as the box
-mounted them, the placement's devices and its planned fit, and the box's members of the
-deployment tuple are held, each waiting on the enrollment (section 8.2), the image's
-setup script or WeaverAgent's terms. **So the pages alone reach no confirmed tuple**,
-and the rulings' first test (download fresh, set up a virtual machine through the pages,
-confirm the tuple) waits on the enrollment's act and the image's setup-script act.
+operator's rulings of 2026-11-16 (setup pages) and items 1 to 20 of their addendum. The
+decisions this section takes are this document's election of 2026-11-16, revised the
+same day after the appliance flow was walked by hand. The pages light what exists and
+draw the rest held: the start page, the models page, the drives page's need for the
+models drive, the placement page's context length and turn context, and the pairing
+page's checkbox, link address and port are live, and the pairing page's code and
+fingerprint, the survey's report, the drives as the box mounted them, the placement's
+devices and its planned fit, and the box's members of the deployment tuple are held,
+each waiting on the enrollment (section 8.2), the image's setup script or WeaverAgent's
+terms. **So the pages alone reach no confirmed tuple**, and the rulings' first test
+(download fresh, set up a virtual machine through the pages, confirm the tuple) waits on
+the enrollment's act and the image's setup-script act.
 
 **The pages are an admin's**, the server-wide admin grant, as the declaration screen's
 (section 6.1): a setup comes before Provision's register, so no agent row exists for a
@@ -4836,7 +4836,7 @@ held, each once. A key is shown by its SHA-256 fingerprint, OpenSSH's form, and 
 line's text enters no audit record. Which types a box's SSH door admits is the image's
 and enters no text here. The setup script's drive-setup run fetches the keys over the
 paired link and writes them, so a changed key reaches a box when the setup command runs
-there again, and the drives page says so (the Planner's notes after item 17).
+there again, and the drives page says so (this document's election of 2026-11-16).
 
 **The pages reach no agent and no box.** A write lands in the store and, for a pick, in
 the puller's queue: no frame leaves on the link, no verb is asked, and nothing is

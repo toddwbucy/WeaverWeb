@@ -1,5 +1,6 @@
 //! conforms: web-every-setup-pane-carries-its-stage-backing-and-status
 //! conforms: web-the-start-page-refuses-every-name-the-box-refuses
+//! conforms: web-the-pairing-page-warns-where-the-box-cannot-dial-the-link
 //!
 //! The start page and the setup pages (Spec 6.2, `src/surfaces/setup.rs`,
 //! `src/store/setup.rs`). A name outside the start page's rule opens no
@@ -8,9 +9,9 @@
 //! every page carries its stage, its backing and its status, a held pane
 //! naming what it waits on and holding no input with a value. The pairing
 //! page shows the console's link address and port, and warns where that
-//! address is loopback and the box a virtual machine. A stale write answers
-//! 409, writing nothing. Each DB-backed test runs on a store of its own. No
-//! name or address is a real one.
+//! address is loopback and the box a virtual machine, or unspecified. A
+//! stale write answers 409, writing nothing. Each DB-backed test runs on a
+//! store of its own. No name or address is a real one.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -378,8 +379,9 @@ async fn a_second_open_setup_of_one_name_is_refused() {
 /// status**, and a held pane names what it waits on with no input holding
 /// a value, over every page this tree serves in each state it draws: the
 /// start page, the pairing page with the box a host and a virtual machine
-/// at a loopback address, the drives page with no key and no model cache
-/// and then with both, and the build page.
+/// at a loopback address and with the console at an unspecified one, the
+/// drives page with no key and no model cache and then with both, and the
+/// build page.
 #[tokio::test]
 async fn every_pane_carries_its_stage_backing_and_status() {
     let cache = tempfile::tempdir().unwrap();
@@ -407,6 +409,19 @@ async fn every_pane_carries_its_stage_backing_and_status() {
     let warned = page(&rig.app, &format!("/setup/{setup}/pairing"), &ada).await;
     assert!(warned.contains("a loopback address"), "{warned}");
     walked.push(("the pairing page, warned".to_owned(), warned));
+    let Some(every) = rig_with("0.0.0.0:8081", None, None).await else {
+        return;
+    };
+    let (_, bea) = admin(&every.app, every.store(), &mut authenticator(), "bea").await;
+    let (_, _, other) = begin(&every.app, &bea, "otto").await;
+    let warned = page(
+        &every.app,
+        &format!("/setup/{}/pairing", other.unwrap()),
+        &bea,
+    )
+    .await;
+    assert!(warned.contains("an unspecified address"), "{warned}");
+    walked.push(("the pairing page, unspecified".to_owned(), warned));
     let key = crate::ssh_key_tests::line("ssh-ed25519", 1);
     let (status, _, body) = send_as(
         &rig.app,
@@ -584,6 +599,55 @@ async fn the_loopback_warning_shows_for_a_virtual_machine_alone() {
             "{link_address}: {again}"
         );
         assert!(!s.setup(&setup).await.unwrap().unwrap().virtual_machine);
+    }
+}
+
+/// **The unspecified warning shows where the console's link address is an
+/// unspecified address**, `0.0.0.0` or `::`, which a listener binds for
+/// every interface and which names no machine to dial: `link_listen` with
+/// no `link_address`, for a host and a virtual machine alike. It does not
+/// show where `link_address` names an address beside such a `link_listen`,
+/// or where `link_listen` names an address of its own.
+#[tokio::test]
+async fn the_unspecified_warning_shows_for_a_host_and_a_virtual_machine() {
+    for (link_listen, link_address, unspecified) in [
+        ("0.0.0.0:8081", None, true),
+        ("[::]:8081", None, true),
+        ("0.0.0.0:8081", Some("console.test:7443"), false),
+        ("192.0.2.10:8081", None, false),
+    ] {
+        let Some(rig) = rig_with(link_listen, link_address, None).await else {
+            return;
+        };
+        let s = rig.store();
+        let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+        let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
+        let uri = format!("/setup/{}/pairing", setup.unwrap());
+        let host = page(&rig.app, &uri, &ada).await;
+        let (status, _, _) = send_as(
+            &rig.app,
+            "POST",
+            &uri,
+            Some(form(&[("version", "1"), ("virtual_machine", "on")])),
+            &ada,
+        )
+        .await;
+        assert_eq!(status, StatusCode::SEE_OTHER);
+        let vm = page(&rig.app, &uri, &ada).await;
+        for (shown, box_is) in [(&host, "host"), (&vm, "virtual machine")] {
+            let case = format!("{link_listen}, {link_address:?}, {box_is}");
+            assert_eq!(
+                shown.contains("an unspecified address"),
+                unspecified,
+                "{case}: {shown}"
+            );
+            assert_eq!(
+                shown.contains(r#"<span class="status fail">fail</span>"#),
+                unspecified,
+                "{case}: the link's pane is failed where it warns: {shown}"
+            );
+            assert!(!shown.contains("a loopback address"), "{case}: {shown}");
+        }
     }
 }
 

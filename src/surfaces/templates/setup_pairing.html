@@ -15,7 +15,7 @@
   <footer>Checked, the box is a virtual machine. Unchecked, it is a host.</footer>
 </section>
 <section class="pane">
-  <header><span class="stage"><b>1</b> Declare</span><h2>The console's link</h2><span class="backing built">built</span>{% if warning %}<span class="status fail">fail</span>{% else %}<span class="status ok">ok</span>{% endif %}<span class="source">the console's config: <code>link_address</code>, else <code>link_listen</code></span></header>
+  <header><span class="stage"><b>1</b> Declare</span><h2>The console's link</h2><span class="backing built">built</span>{% if loopback_warning || unspecified_warning %}<span class="status fail">fail</span>{% else %}<span class="status ok">ok</span>{% endif %}<span class="source">the console's config: <code>link_address</code>, else <code>link_listen</code></span></header>
   <div class="body">
   <table>
     <tbody>
@@ -23,8 +23,11 @@
     <tr><th>Port</th><td class="mono">{% match link.port %}{% when Some with (port) %}{{ port }}{% when None %}the address names no port{% endmatch %}</td></tr>
     </tbody>
   </table>
-  {%- if warning %}
+  {%- if loopback_warning %}
   <p><span class="status fail">loopback</span> This is a loopback address, which a virtual machine cannot reach on the console's host. Set <code>link_address</code> in the console's config to an address the box reaches.</p>
+  {%- endif %}
+  {%- if unspecified_warning %}
+  <p><span class="status fail">unspecified</span> This is an unspecified address, which a listener binds for every interface and which names no machine to dial. Set <code>link_address</code> in the console's config to an address the box reaches.</p>
   {%- endif %}
   </div>
   <footer>The box's setup asks for this address and port, and the box must reach them.</footer>

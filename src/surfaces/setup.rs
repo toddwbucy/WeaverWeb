@@ -1,5 +1,6 @@
 //! conforms: web-every-setup-pane-carries-its-stage-backing-and-status
 //! conforms: web-the-start-page-refuses-every-name-the-box-refuses
+//! conforms: web-the-pairing-page-warns-where-the-box-cannot-dial-the-link
 //!
 //! **Declare's path: the start page and the setup pages** (Spec 6.2), an
 //! admin's, the server-wide admin grant, since a setup comes before
@@ -222,6 +223,11 @@ struct Link {
     /// Whether the address is a loopback address, which a virtual machine
     /// cannot reach on the console's host.
     loopback: bool,
+    /// Whether the address is an unspecified address, `0.0.0.0` or `::`,
+    /// which a listener binds for every interface and which names no
+    /// machine to dial: RFC 1122 admits `0.0.0.0` as a source alone, and
+    /// RFC 4291 refuses `::` as a destination.
+    unspecified: bool,
 }
 
 fn link_of(given: &str) -> Link {
@@ -240,19 +246,18 @@ fn link_of(given: &str) -> Link {
         .and_then(|h| h.strip_suffix(']'))
         .unwrap_or(host);
     let name = bare.trim_end_matches('.').to_ascii_lowercase();
+    let ip = bare.parse::<IpAddr>().ok().map(|ip| match ip {
+        IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(ip, IpAddr::V4),
+        v4 => v4,
+    });
     let loopback = name == "localhost"
         || name.ends_with(".localhost")
-        || match bare.parse::<IpAddr>() {
-            Ok(IpAddr::V4(ip)) => ip.is_loopback(),
-            Ok(IpAddr::V6(ip)) => {
-                ip.is_loopback() || ip.to_ipv4_mapped().is_some_and(|v4| v4.is_loopback())
-            }
-            Err(_) => false,
-        };
+        || ip.is_some_and(|ip| ip.is_loopback());
     Link {
         address: host.to_owned(),
         port,
         loopback,
+        unspecified: ip.is_some_and(|ip| ip.is_unspecified()),
     }
 }
 
@@ -475,7 +480,10 @@ struct PairingPage {
     link: Link,
     /// The address is a loopback address and the checkbox says virtual
     /// machine.
-    warning: bool,
+    loopback_warning: bool,
+    /// The address is an unspecified address, which no box dials, a host
+    /// or a virtual machine.
+    unspecified_warning: bool,
 }
 
 #[derive(Template)]
@@ -530,7 +538,8 @@ async fn page(
                 frame,
                 version: setup.version,
                 virtual_machine: setup.virtual_machine,
-                warning: link.loopback && setup.virtual_machine,
+                loopback_warning: link.loopback && setup.virtual_machine,
+                unspecified_warning: link.unspecified,
                 link,
             }
             .render()
@@ -578,11 +587,13 @@ mod tests {
     use super::link_of;
 
     /// **The console's link address read as the box asks for it**: the
-    /// host and the port apart, an IPv6 host in its brackets, and loopback
+    /// host and the port apart, an IPv6 host in its brackets, loopback
     /// named for `localhost`, a name under it, 127/8, `::1` and the
-    /// IPv4-mapped loopback. No address here is a real one.
+    /// IPv4-mapped loopback, and the unspecified address named for
+    /// `0.0.0.0`, `::` and the IPv4-mapped `0.0.0.0`. No address here is a
+    /// real one.
     #[test]
-    fn the_link_address_is_read_for_its_port_and_its_loopback() {
+    fn the_link_address_is_read_for_its_port_its_loopback_and_unspecified() {
         for (given, address, port, loopback) in [
             ("console.test:7443", "console.test", Some("7443"), false),
             ("192.0.2.10:9443", "192.0.2.10", Some("9443"), false),
@@ -606,6 +617,20 @@ mod tests {
             assert_eq!(link.address, address, "{given}");
             assert_eq!(link.port.as_deref(), port, "{given}");
             assert_eq!(link.loopback, loopback, "{given}");
+            assert!(!link.unspecified, "{given}");
+        }
+        for (given, address, port) in [
+            ("0.0.0.0:8081", "0.0.0.0", Some("8081")),
+            ("0.0.0.0", "0.0.0.0", None),
+            ("[::]:8081", "[::]", Some("8081")),
+            ("::", "::", None),
+            ("[::ffff:0.0.0.0]:8081", "[::ffff:0.0.0.0]", Some("8081")),
+        ] {
+            let link = link_of(given);
+            assert_eq!(link.address, address, "{given}");
+            assert_eq!(link.port.as_deref(), port, "{given}");
+            assert!(link.unspecified, "{given}");
+            assert!(!link.loopback, "{given}");
         }
     }
 }

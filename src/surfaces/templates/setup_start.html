@@ -1,0 +1,45 @@
+{% extends "instrument.html" %}
+{% block title %}Declarations - weaver-web{% endblock %}
+{% block body %}
+{#- The start page (Spec 6.2): the agent's name, one field, and the setups
+    left open. Once an agent stands in the register, New agent stands in
+    the field's place and opens it, a disclosure and no script. -#}
+<h1>Declarations</h1>
+<div class="stack">
+<section class="pane">
+  <header><span class="stage"><b>1</b> Declare</span><h2>A new agent</h2><span class="backing built">built</span><span class="status ok">ok</span><span class="source">the start page's rule</span></header>
+  <div class="body">
+  {%- if agent_stands %}
+  <details>
+  <summary>New agent</summary>
+  {%- endif %}
+  <form method="post" action="/setup">
+    <label>Name <input type="text" name="name" autocomplete="off" spellcheck="false" maxlength="{{ name_most }}" pattern="[a-z][a-z0-9]{1,15}" required></label>
+    <button type="submit" class="primary">Begin</button>
+  </form>
+  {%- if agent_stands %}
+  </details>
+  {%- endif %}
+  </div>
+  <footer>A lowercase letter, then lowercase letters and digits, 2 to {{ name_most }} characters in all. The box names the agent's accounts, its directories and its admin entry after it, so the name is one a box can take.</footer>
+</section>
+<section class="pane">
+  <header><span class="stage"><b>1</b> Declare</span><h2>Setups left open</h2><span class="backing built">built</span><span class="status ok">ok</span><span class="source">the store's open setups</span></header>
+  <div class="body">
+  {%- if open.is_empty() %}
+  <p>No setup is open.</p>
+  {%- else %}
+  <table>
+    <thead><tr><th>Name</th><th>Begun</th></tr></thead>
+    <tbody>
+    {%- for setup in open %}
+    <tr><td><a href="{{ setup.href }}">{{ setup.name }}</a></td><td>{{ setup.begun_by }}, {{ setup.begun_at }}</td></tr>
+    {%- endfor %}
+    </tbody>
+  </table>
+  {%- endif %}
+  </div>
+  <footer>One open setup holds a name at a time. A setup stays open until its Confirm.</footer>
+</section>
+</div>
+{% endblock %}

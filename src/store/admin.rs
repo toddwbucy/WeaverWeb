@@ -81,6 +81,45 @@ pub enum Refusal {
     NameHeld(String),
     /// A save would change its lineage's name (Spec 2.4).
     NameChanged(String),
+    /// No Hugging Face account is connected (Spec 2.15).
+    NotConnected,
+    /// Hugging Face refused the token (Spec 2.15).
+    TokenRefused,
+    /// The console holds no seal key (Spec 2.15).
+    NoSealKey,
+    /// The stored token's seal does not open under the seal key (Spec 2.15).
+    SealDoesNotOpen,
+    /// No `model_cache` is set, so no pull can run (Spec 2.15).
+    NoModelCache,
+    /// A pull runs, named here, and one runs at a time (Spec 2.15).
+    PullRunning(String),
+    /// The pull named has ended, so there is nothing to cancel (Spec 2.15).
+    PullNotRunning(String),
+    /// An open setup holds the name, and one holds a name at a time (Spec
+    /// 6.2).
+    SetupNameHeld(String),
+    /// No such setup (Spec 6.2).
+    NoSuchSetup,
+    /// No such SSH public key (Spec 6.2).
+    NoSuchKey,
+    /// The SSH public key is held already (Spec 6.2).
+    KeyHeld,
+    /// The console holds as many SSH public keys as it keeps (Spec 6.2).
+    KeysFull,
+    /// Hugging Face holds no such repository at the revision, or none the
+    /// account may see (Spec 6.2).
+    NoSuchModel,
+    /// The repository holds no such choice at the commit (Spec 6.2).
+    NoSuchChoice,
+    /// The choice is offered no pick, for the reason given (Spec 6.2).
+    Unpickable(String),
+    /// The setup is confirmed, and a confirmed setup never changes (Spec
+    /// 6.2).
+    SetupConfirmed,
+    /// The placement is not kept, for the reason given (Spec 6.2).
+    Unplaceable(String),
+    /// Confirm waits on the members named, each not read (Spec 6.2).
+    Unconfirmable(String),
 }
 
 impl std::fmt::Display for Refusal {
@@ -158,6 +197,59 @@ impl std::fmt::Display for Refusal {
                 f,
                 "{verb} is not in the vocabulary ({})",
                 crate::store::identity::VOCABULARY.join(", ")
+            ),
+            Refusal::NotConnected => write!(f, "no Hugging Face account is connected"),
+            Refusal::TokenRefused => write!(
+                f,
+                "Hugging Face refused this token, so nothing was saved; check the token on Hugging Face and paste it again"
+            ),
+            Refusal::NoSealKey => write!(
+                f,
+                "the console holds no seal key, so it can keep no token; the host's `authority seal-key` writes one"
+            ),
+            Refusal::SealDoesNotOpen => write!(
+                f,
+                "the stored token does not open under the console's seal key, which was replaced or lost; connect the account again"
+            ),
+            Refusal::NoModelCache => write!(
+                f,
+                "no model_cache is set, so the console has nowhere to keep a model, and the install sets it"
+            ),
+            Refusal::PullRunning(which) => write!(
+                f,
+                "the pull {which} runs, and one pull runs at a time, so ask again once it ends"
+            ),
+            Refusal::PullNotRunning(which) => write!(
+                f,
+                "the pull {which} has ended, so there is nothing to cancel"
+            ),
+            Refusal::SetupNameHeld(name) => write!(
+                f,
+                "an open setup holds the name {name}, and one setup holds a name at a time, so continue it from the start page"
+            ),
+            Refusal::NoSuchSetup => write!(f, "no such setup"),
+            Refusal::NoSuchKey => write!(f, "no such SSH key"),
+            Refusal::KeyHeld => write!(f, "that SSH key is held already"),
+            Refusal::KeysFull => write!(
+                f,
+                "the console holds 16 SSH keys, the most it keeps, so remove one first"
+            ),
+            Refusal::NoSuchModel => write!(
+                f,
+                "Hugging Face holds no such repository at that revision, or none the account may see"
+            ),
+            Refusal::NoSuchChoice => {
+                write!(f, "the repository holds no such choice at that commit")
+            }
+            Refusal::Unpickable(why) => write!(f, "the choice is offered no pick: {why}"),
+            Refusal::SetupConfirmed => write!(
+                f,
+                "the setup is confirmed, and a confirmed setup never changes"
+            ),
+            Refusal::Unplaceable(why) => write!(f, "the placement is not kept: {why}"),
+            Refusal::Unconfirmable(why) => write!(
+                f,
+                "Confirm stands only where every member is read, and it waits on these: {why}. Nothing was written"
             ),
         }
     }

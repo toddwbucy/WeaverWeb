@@ -1778,7 +1778,8 @@ it decides are stated here and in section 2.8, and the reasons are there.
   signal, as a person's ask runs (below) and as an entry runs (section 8.2).
   The request awaits what the task answers, so a closed tab or a proxy's
   timeout leaves no first record without its outcome, save one its bound cut
-  short (below). The refusals of steps
+  short (below), or one whose COMMIT's answer was lost and could not be read
+  back (above). The refusals of steps
   one to three stay in the request's own future, where a dropped request loses
   at most one refusal record and no act. What an answer carries past its
   commit, a token or a hand-over's handles, goes with a request dropped before

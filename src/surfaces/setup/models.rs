@@ -2,6 +2,7 @@
 //! conforms: web-a-pick-asks-hugging-face-only-after-the-admin-gate
 //! conforms: web-an-adapters-pick-carries-a-finite-scale
 //! conforms: web-an-admin-write-runs-from-its-first-record-to-its-outcome-in-a-task-the-request-cannot-cancel
+//! conforms: web-an-open-setups-adapter-pick-can-be-dropped-and-a-confirmed-setups-cannot
 //!
 //! **The models page** (Spec 6.2), a child of the setup pages' module.
 //! `GET /setup/{setup}/models` draws the setup's two roles, the first
@@ -34,7 +35,7 @@ use axum::Router;
 use axum::extract::{Form, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use serde::Deserialize;
 
 use super::{Frame, MALFORMED_SETUP, Page, Seams, admin_read, frame, landed, when};
@@ -48,13 +49,16 @@ use crate::store::Store;
 use crate::store::admin::Refusal;
 use crate::store::audit::{PersonMethod, Principal, Target};
 use crate::store::identity::is_setup_id;
-use crate::store::setup::{Pick, SetupModel};
+use crate::store::setup::{Pick, Setup, SetupModel};
 use crate::surfaces::admin::{NOT_AN_ADMIN, fault, first_of, refused, settled, step_four, writer};
 use crate::surfaces::gate::{self, Session};
 use crate::surfaces::hugging_face::bytes;
 
 /// The pick's action, as its audit records name it.
 const ACTION: &str = "setup pick";
+
+/// The drop's action, as its audit records name it.
+const DROP: &str = "setup drop";
 
 /// The fields a pick's form carries, each once.
 const PICK_FIELDS: [&str; 6] = ["version", "role", "repository", "commit", "choice", "scale"];
@@ -64,6 +68,7 @@ pub(super) fn routes(seams: &Seams) -> Router<Store> {
     let pick_seams = seams.clone();
     let header_seams = seams.clone();
     let pull_seams = seams.clone();
+    let drop_seams = seams.clone();
     Router::new()
         .route(
             "/setup/{setup}/models",
@@ -104,6 +109,18 @@ pub(super) fn routes(seams: &Seams) -> Router<Store> {
                 move |State(store): State<Store>, headers: HeaderMap, Path(setup): Path<String>| {
                     let seams = pull_seams.clone();
                     async move { pulls(store, &seams, headers, &setup).await }
+                },
+            ),
+        )
+        .route(
+            "/setup/{setup}/models/drop",
+            post(
+                move |State(store): State<Store>,
+                      headers: HeaderMap,
+                      Path(setup): Path<String>,
+                      Form(fields): Form<Vec<(String, String)>>| {
+                    let seams = drop_seams.clone();
+                    async move { drop_adapter(store, &seams, headers, &setup, fields).await }
                 },
             ),
         )
@@ -306,7 +323,13 @@ struct PickedView {
 struct RoleView {
     title: &'static str,
     name: &'static str,
+    /// Whether a setup confirms without this role: the adapter's, which is
+    /// optional (Spec 6.2), so its pane is `ok` with none picked.
+    optional: bool,
     picked: Option<PickedView>,
+    /// The setup's version for the Drop's form, where the role is optional,
+    /// picked, and the setup open.
+    drop: Option<i64>,
 }
 
 #[derive(Template)]
@@ -324,14 +347,17 @@ struct ModelsPage {
     pulls: PullsView,
 }
 
-fn role_view(role: Role, rows: &[SetupModel]) -> RoleView {
+fn role_view(role: Role, rows: &[SetupModel], setup: &Setup) -> RoleView {
     let row = rows.iter().find(|r| r.role == role.as_str());
+    let optional = role == Role::Adapter;
     RoleView {
         title: match role {
             Role::Decoder => "The decoder",
             Role::Adapter => "The adapter",
         },
         name: role.as_str(),
+        optional,
+        drop: (optional && row.is_some() && setup.state == "open").then_some(setup.version),
         picked: row.map(|r| PickedView {
             repository: r.repository.clone(),
             commit: r.commit.clone(),
@@ -405,8 +431,8 @@ async fn page(
         chrome,
         frame: frame(&setup, Page::Models),
         roles: vec![
-            role_view(Role::Decoder, &rows),
-            role_view(Role::Adapter, &rows),
+            role_view(Role::Decoder, &rows, &setup),
+            role_view(Role::Adapter, &rows, &setup),
         ],
         listing,
         no_pick,
@@ -1047,6 +1073,79 @@ async fn pick(
                     &pick,
                 )
             })
+            .await;
+        settled(&store, &first, &written).await;
+        landed(written, &setup_id, Page::Models)
+    })
+    .await
+}
+
+/// **The drop's form**: the setup's version alone, since the one role a
+/// setup confirms without is the adapter's.
+fn drop_ask(fields: &[(String, String)]) -> Result<i64, String> {
+    match fields {
+        [(name, version)] if name == "version" => version
+            .trim()
+            .parse::<i64>()
+            .ok()
+            .filter(|v| *v >= 1)
+            .ok_or_else(|| "a setup's version is 1 at least".to_owned()),
+        _ => Err(
+            "a drop takes the setup's version alone: the adapter's pick is the one dropped"
+                .to_owned(),
+        ),
+    }
+}
+
+/// **The adapter's pick dropped** (Spec 6.2), an admin write in the order of
+/// Spec 2.13: the setup's identity and the form parsed (400), the admin gate,
+/// the setup resolved, open and holding an adapter's pick (404, 409, no
+/// record), then the write under its first record. Its pull is left as it
+/// stands, and its files stay in the cache.
+async fn drop_adapter(
+    store: Store,
+    seams: &Seams,
+    headers: HeaderMap,
+    setup_id: &str,
+    fields: Vec<(String, String)>,
+) -> Response {
+    if !is_setup_id(setup_id) {
+        return (StatusCode::BAD_REQUEST, MALFORMED_SETUP).into_response();
+    }
+    let version = match drop_ask(&fields) {
+        Ok(version) => version,
+        Err(why) => return (StatusCode::BAD_REQUEST, why).into_response(),
+    };
+    let target = Target::Setup(setup_id);
+    let session = match writer(&store, &seams.policy, &headers, target, DROP).await {
+        Ok(session) => session,
+        Err(answer) => return answer,
+    };
+    match store.setup(setup_id).await {
+        Ok(Some(setup)) if setup.state == "open" => {}
+        Ok(Some(_)) => return refused(&Refusal::SetupConfirmed),
+        Ok(None) => return refused(&Refusal::NoSuchSetup),
+        Err(e) => return fault(e),
+    }
+    match store.setup_models(setup_id).await {
+        Ok(rows) if rows.iter().any(|r| r.role == Role::Adapter.as_str()) => {}
+        Ok(_) => return refused(&Refusal::NoAdapterPicked),
+        Err(e) => return fault(e),
+    }
+    let setup_id = setup_id.to_owned();
+    step_four(&seams.policy, async move {
+        let first = match first_of(&store, &session, Target::Setup(&setup_id), DROP).await {
+            Ok(first) => first,
+            Err(answer) => return answer,
+        };
+        let written = store
+            .setup_drop_adapter(
+                &session.person_id,
+                session.session_id,
+                &first,
+                &setup_id,
+                version,
+            )
             .await;
         settled(&store, &first, &written).await;
         landed(written, &setup_id, Page::Models)

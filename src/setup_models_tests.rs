@@ -2,6 +2,7 @@
 //! conforms: web-a-pick-asks-hugging-face-only-after-the-admin-gate
 //! conforms: web-an-adapters-pick-carries-a-finite-scale
 //! conforms: web-the-base-identity-is-blake3-over-the-parts-in-split-order
+//! conforms: web-an-open-setups-adapter-pick-can-be-dropped-and-a-confirmed-setups-cannot
 //!
 //! The models page (Spec 6.2, `src/surfaces/setup/models.rs`), against a
 //! fake Hugging Face of its own that lists repositories, answers a
@@ -12,7 +13,8 @@
 //! asks one pull with its record, the sizes the listing's. A crafted pick
 //! and an adapter's pick without a finite scale are refused, saving
 //! nothing, and no pick reaches Hugging Face before the admin gate. A
-//! role picked again replaces its row. The base's identity is "not read"
+//! role picked again replaces its row, and an open setup's adapter pick
+//! is dropped by a write of its own. The base's identity is "not read"
 //! while it is owed and computed at a start. The models drive's need
 //! counts a shared blob once. At most four header reads run at once. Each
 //! DB-backed test runs on a store of its own. No byte, name or address
@@ -1344,17 +1346,172 @@ async fn at_most_four_header_reads_run_at_once() {
     assert!((2..=4).contains(&most), "{most} in flight at once");
 }
 
-/// **A pick runs from its first record to its outcome in a task the request
-/// cannot cancel** (Spec 2.13, #150): the pick's request dropped while its
-/// first record is held, the pick still lands, its first record answered
-/// by its `ok` outcome, the pull it asks runs to verified, and the page
-/// then shows the pick's record.
+/// The adapter's pane on the models page.
+fn adapter_pane(page: &str) -> &str {
+    let at = page
+        .find("<h2>The adapter</h2>")
+        .unwrap_or_else(|| panic!("the adapter's pane: {page}"));
+    &page[at..at + page[at..].find("</section>").unwrap()]
+}
+
+/// **An open setup's adapter pick is dropped by a write of its own, and a
+/// confirmed setup's never is** (Spec 6.2): with an adapter picked, the
+/// models page draws its Drop. A drop posting a field beside the version is
+/// refused 400 and records nothing, and one at a stale version is refused
+/// 409 after its first record. The drop at the page's version lands: the
+/// adapter's row is gone, the setup's version moves, its first record is
+/// answered `ok`, and the adapter's pane is `ok`, says the agent loads its
+/// base alone and draws no Drop. The dropped pick's file stays in the
+/// cache. A second drop finds no adapter picked and is refused 409,
+/// recording nothing. Once a setup with an adapter is confirmed, its drop
+/// is refused 409, recording nothing, and its adapter's row stands.
+///
+/// Perturbation: drop the handler's check that the setup is open, and the
+/// confirmed setup's drop writes a first record before the store refuses
+/// it.
+#[tokio::test]
+async fn an_open_setups_adapter_pick_is_dropped_and_a_confirmed_setups_is_not() {
+    use crate::setup_place_tests::{Reported, confirmed, pairing_report};
+    let reported = Arc::new(Reported::default());
+    *reported.pairing.lock().unwrap() = Some(pairing_report());
+    let Some((rig, _fake, _, cache)) = rig_boxed(true, reported.clone()).await else {
+        return;
+    };
+    let s = rig.store();
+    let _identities = crate::hugging_face::base_identity::BaseIdentities::start(
+        s.clone(),
+        rig.puller.cache().cloned(),
+        rig.puller.verified(),
+    );
+    let (ada, setup) = setup_of(&rig, "karl").await;
+    let dropping = format!("/setup/{setup}/models/drop");
+    let action = format!(r#"<form method="post" action="{dropping}""#);
+    let none = "No adapter is picked: the agent loads its base alone.";
+    let shown = page(&rig.app, &models(&setup, "org/adapter"), &ada).await;
+    assert!(walk(&shown).is_empty(), "{:?}", walk(&shown));
+    let pane = adapter_pane(&shown);
+    assert!(
+        pane.contains(r#"<span class="status ok">ok</span>"#),
+        "{pane}"
+    );
+    assert!(pane.contains(none), "{pane}");
+    assert!(!pane.contains(&action), "{pane}");
+
+    let (status, body) = post_pick(
+        &rig,
+        &ada,
+        &setup,
+        pick("1", "adapter", "org/adapter", "adapter.gguf", Some("0.5")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let pull = pull_of(s, &setup, "adapter").await;
+    assert_eq!(ended(s, &pull).await, "verified");
+    let shown = page(&rig.app, &models(&setup, "org/adapter"), &ada).await;
+    let pane = adapter_pane(&shown);
+    assert!(pane.contains(&action), "{pane}");
+    assert!(
+        pane.contains(r#"<input type="hidden" name="version" value="2">"#),
+        "{pane}"
+    );
+
+    let dropped = |fields: &[(&str, &str)]| {
+        let (app, ada, uri) = (rig.app.clone(), ada.clone(), dropping.clone());
+        let body = form(fields);
+        async move {
+            let (status, headers, body) = send_as(&app, "POST", &uri, Some(body), &ada).await;
+            let location = headers
+                .get(header::LOCATION)
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_owned);
+            (status, body, location)
+        }
+    };
+    let (status, body, _) = dropped(&[("version", "2"), ("role", "adapter")]).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(audited(s, "setup drop").await, (0, 0, 0, 0));
+    let (status, body, _) = dropped(&[("version", "1")]).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(audited(s, "setup drop").await, (1, 0, 1, 0));
+    assert_eq!(pull_of(s, &setup, "adapter").await, pull, "nothing dropped");
+
+    let (status, body, location) = dropped(&[("version", "2")]).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    assert_eq!(
+        location.as_deref(),
+        Some(format!("/setup/{setup}/models").as_str())
+    );
+    assert_eq!(audited(s, "setup drop").await, (2, 1, 1, 0));
+    assert_eq!(s.setup(&setup).await.unwrap().unwrap().version, 3);
+    let roles: Vec<String> =
+        sqlx::query_scalar("SELECT role FROM agent_setup_model WHERE setup_id = $1")
+            .bind(&setup)
+            .fetch_all(&s.pool)
+            .await
+            .unwrap();
+    assert!(roles.is_empty(), "{roles:?}");
+    let shown = page(&rig.app, &models(&setup, "org/adapter"), &ada).await;
+    assert!(walk(&shown).is_empty(), "{:?}", walk(&shown));
+    let pane = adapter_pane(&shown);
+    assert!(
+        pane.contains(r#"<span class="status ok">ok</span>"#),
+        "{pane}"
+    );
+    assert!(pane.contains(none), "{pane}");
+    assert!(!pane.contains(&action), "{pane}");
+    let kept = crate::hugging_face::cache::Cache::at(cache.path()).unwrap();
+    for file in s.pull_files(&pull).await.unwrap() {
+        let blob = kept
+            .blob(&RepoId::parse("org/adapter").unwrap(), file.file.blob())
+            .unwrap();
+        assert!(
+            blob.is_file(),
+            "the dropped pick's file stays: {}",
+            blob.display()
+        );
+    }
+
+    let (status, body, _) = dropped(&[("version", "3")]).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(body.contains("no adapter is picked"), "{body}");
+    assert_eq!(audited(s, "setup drop").await, (2, 1, 1, 0));
+
+    // A confirmed setup's adapter is never dropped.
+    let kept = confirmed(&rig, &reported, &ada, "otto", true).await;
+    let version = s.setup(&kept).await.unwrap().unwrap().version.to_string();
+    let (status, _, body) = send_as(
+        &rig.app,
+        "POST",
+        &format!("/setup/{kept}/models/drop"),
+        Some(form(&[("version", &version)])),
+        &ada,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(body.contains("the setup is confirmed"), "{body}");
+    assert_eq!(audited(s, "setup drop").await, (2, 1, 1, 0));
+    assert_ne!(pull_of(s, &kept, "adapter").await, "", "its adapter stands");
+    let shown = page(&rig.app, &models(&kept, "org/adapter"), &ada).await;
+    assert!(
+        !adapter_pane(&shown).contains("/models/drop"),
+        "no Drop on a confirmed setup: {shown}"
+    );
+}
+
+/// **A pick and a drop each run from their first record to their outcome in
+/// a task the request cannot cancel** (Spec 2.13, #150): the pick's request
+/// dropped while its first record is held, the pick still lands, its first
+/// record answered by its `ok` outcome, the pull it asks runs to verified,
+/// and the page then shows the pick's record. The adapter's drop, its
+/// request dropped at its first record likewise, still lands: its outcome
+/// `ok`, the setup's version moved, the adapter's row gone and its pane
+/// saying the agent loads its base alone.
 ///
 /// Perturbation: run step four in the request's own future
 /// (`admin::step_four` awaiting it in place), and the first write's
 /// outcome never comes.
 #[tokio::test]
-async fn a_pick_dropped_at_its_first_record_still_asks_its_pull() {
+async fn a_pick_and_a_drop_dropped_at_their_first_records_still_land() {
     use crate::admin_tests::{dropped_at_the_hold, outcome_of, person_named};
     let Some((rig, _fake, _, _cache)) = rig(true).await else {
         return;
@@ -1410,5 +1567,40 @@ async fn a_pick_dropped_at_its_first_record_still_asks_its_pull() {
     assert!(
         pane.contains(r#"<tr><th>Choice</th><td class="mono">m-00001-of-00002.gguf</td></tr>"#),
         "{pane}"
+    );
+
+    let (status, body) = post_pick(
+        &rig,
+        &ada,
+        &setup,
+        pick("2", "adapter", "org/adapter", "adapter.gguf", Some("0.5")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    assert_eq!(
+        ended(s, &pull_of(s, &setup, "adapter").await).await,
+        "verified"
+    );
+    dropped_at_the_hold(
+        &rig.app,
+        &person,
+        &ada,
+        &format!("/setup/{setup}/models/drop"),
+        form(&[("version", "3")]),
+    )
+    .await;
+    assert_eq!(outcome_of(s, &person, "setup drop").await, "ok");
+    assert_eq!(s.setup(&setup).await.unwrap().unwrap().version, 4);
+    let roles: Vec<String> =
+        sqlx::query_scalar("SELECT role FROM agent_setup_model WHERE setup_id = $1")
+            .bind(&setup)
+            .fetch_all(&s.pool)
+            .await
+            .unwrap();
+    assert_eq!(roles, vec!["decoder"], "the drop removed the adapter's row");
+    let shown = page(&rig.app, &format!("/setup/{setup}/models"), &ada).await;
+    assert!(
+        adapter_pane(&shown).contains("No adapter is picked: the agent loads its base alone."),
+        "{shown}"
     );
 }

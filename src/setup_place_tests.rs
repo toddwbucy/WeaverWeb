@@ -6,6 +6,9 @@
 //! conforms: web-the-members-the-box-is-laid-from-are-the-confirmed-tuples-and-none-stand-before-confirm
 //! conforms: web-a-pages-way-forward-stands-where-its-condition-holds
 //! conforms: web-every-setup-pane-carries-its-stage-backing-and-status
+//! conforms: web-a-setup-with-no-adapters-pick-confirms-a-tuple-with-none
+//! conforms: web-a-tuples-adapter-members-are-all-present-or-all-absent
+//! conforms: web-describes-laying-names-an-adapter-only-where-the-tuple-holds-one
 //!
 //! The placement and confirm pages (Spec 6.2, `src/surfaces/setup/placement.rs`,
 //! `src/surfaces/setup/confirm.rs`, `src/store/tuple.rs`), against the models
@@ -18,7 +21,9 @@
 //! survey's report brings the cards, then a non-empty set of them by
 //! ordinal. Confirm stands only where every member is read, writes one
 //! immutable tuple whose members are their sources', and the laying members
-//! stand only once it does. Each DB-backed test runs on a store of its own.
+//! stand only once it does. A setup with no adapter's pick confirms a tuple
+//! with none, whose six adapter members stand whole or not at all. Each
+//! DB-backed test runs on a store of its own.
 //! No byte, name or address here is a real model's, card's or host's.
 
 use std::sync::{Arc, Mutex};
@@ -34,7 +39,7 @@ use crate::setup_models_tests::{
 };
 use crate::setup_tests::{Rig, audited, begin, page, walk};
 use crate::store::setup::MAX_TOKENS_PER_TURN;
-use crate::store::tuple::{Laying, Part};
+use crate::store::tuple::{Laying, LayingAdapter, Part};
 use crate::survey::{MODELS_MOUNT, STATE_MOUNT};
 
 /// What the test's box reports, each stage's report set as each test goes.
@@ -769,12 +774,16 @@ async fn confirm_stands_only_where_every_member_is_read_and_writes_one_tuple() {
             decoder_pull.as_str()
         )
     );
+    let adapter = tuple
+        .adapter
+        .as_ref()
+        .expect("the tuple holds the adapter picked");
     assert_eq!(
-        tuple.adapter.parts,
+        adapter.model.parts,
         parts_of(&adapter_files, "org--adapter", &["adapter.gguf"])
     );
-    assert_eq!(tuple.adapter.pull_id, adapter_pull);
-    assert_eq!(tuple.adapter_scale, 0.5);
+    assert_eq!(adapter.model.pull_id, adapter_pull);
+    assert_eq!(adapter.scale, 0.5);
     assert_eq!(tuple.base_blake3, blake3);
     assert_eq!(
         (
@@ -795,10 +804,12 @@ async fn confirm_stands_only_where_every_member_is_read_and_writes_one_tuple() {
         laying,
         Laying {
             decoder_artifact: tuple.decoder.parts[0].path.clone(),
-            adapter_artifact: tuple.adapter.parts[0].path.clone(),
-            adapter_sha256: tuple.adapter.parts[0].sha256.clone(),
-            adapter_scale: 0.5,
-            base_blake3: blake3.clone(),
+            adapter: Some(LayingAdapter {
+                artifact: adapter.model.parts[0].path.clone(),
+                sha256: adapter.model.parts[0].sha256.clone(),
+                scale: 0.5,
+                base_blake3: blake3.clone(),
+            }),
             devices: vec![0, 1],
             context_length: 4096,
             turn_context: "independent".into(),
@@ -892,6 +903,274 @@ async fn confirm_stands_only_where_every_member_is_read_and_writes_one_tuple() {
     }
     assert_eq!(count(s, "deployment_tuple").await, 1);
     assert_eq!(count(s, "agent_setup_model").await, models);
+}
+
+/// **A setup confirmed through its pages** under the rig's fake Hugging
+/// Face: the split model picked as the decoder and, where `adapter`, the
+/// fake's adapter at the scale 0.5, each pull run to verified, the
+/// placement kept, the base's identity kept and the drives report standing,
+/// then Confirm posted, under the admin's session `ada`. The setup.
+pub(crate) async fn confirmed(
+    rig: &Rig,
+    reported: &Reported,
+    ada: &str,
+    name: &str,
+    adapter: bool,
+) -> String {
+    let s = rig.store();
+    let (status, body, setup) = begin(&rig.app, ada, name).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let (ada, setup) = (ada.to_owned(), setup.unwrap());
+    decoder_picked(rig, &ada, &setup, "1").await;
+    assert_eq!(
+        ended(s, &pull_of(s, &setup, "decoder").await).await,
+        "verified"
+    );
+    let mut version = 2;
+    if adapter {
+        let (status, body) = post_pick(
+            rig,
+            &ada,
+            &setup,
+            pick("2", "adapter", "org/adapter", "adapter.gguf", Some("0.5")),
+        )
+        .await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+        assert_eq!(
+            ended(s, &pull_of(s, &setup, "adapter").await).await,
+            "verified"
+        );
+        version = 3;
+    }
+    let (status, body, _) = post(
+        rig,
+        &ada,
+        &setup,
+        "placement",
+        &[
+            ("version", &version.to_string()),
+            ("context_length", "4096"),
+            ("turn_context", "independent"),
+            ("device", "0"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    identity_kept(s).await;
+    *reported.drives.lock().unwrap() = Some(drives_report());
+    let (status, body, _) = post(
+        rig,
+        &ada,
+        &setup,
+        "confirm",
+        &[("version", &(version + 1).to_string())],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    setup
+}
+
+/// The six members of a tuple's adapter (migration `0029`).
+const ADAPTER_MEMBERS: [&str; 6] = [
+    "adapter_pull",
+    "adapter_repository",
+    "adapter_commit",
+    "adapter_choice",
+    "adapter_parts",
+    "adapter_scale",
+];
+
+/// **A tuple holds an adapter's members whole or not at all, and its
+/// base's identity either way** (Spec 6.2, migration `0032`): copies of a
+/// confirmed tuple under a second setup, each with one of its six adapter
+/// members absent and the other five present, are each refused by the
+/// whole-or-absent check, and one with the base's identity absent and no
+/// adapter by its own constraint. The copy with all six absent is accepted,
+/// as a setup with no adapter's pick confirms it.
+///
+/// Perturbation: drop `0032`'s whole-or-absent check, and a copy with five
+/// members present lands.
+#[tokio::test]
+async fn a_tuples_adapter_members_are_whole_or_absent() {
+    let reported = Arc::new(Reported::default());
+    *reported.pairing.lock().unwrap() = Some(pairing_report());
+    let Some((rig, _fake, _, _cache)) = rig_boxed(true, reported.clone()).await else {
+        return;
+    };
+    let s = rig.store();
+    let _identities = BaseIdentities::start(
+        s.clone(),
+        rig.puller.cache().cloned(),
+        rig.puller.verified(),
+    );
+    let (ada, other) = setup_of(&rig, "bob").await;
+    confirmed(&rig, &reported, &ada, "karl", true).await;
+    let copy = |tuple_id: &str, absent: &[&str]| {
+        let mut edit = serde_json::json!({"tuple_id": tuple_id, "setup_id": other});
+        for member in absent {
+            edit[*member] = serde_json::Value::Null;
+        }
+        format!(
+            "INSERT INTO deployment_tuple SELECT (jsonb_populate_record(NULL::deployment_tuple, \
+             to_jsonb(t) || '{edit}')).* FROM deployment_tuple t"
+        )
+    };
+    for member in ADAPTER_MEMBERS {
+        let sql = copy("dt-00000000000000a0", &[member]);
+        let refused = sqlx::query(sqlx::AssertSqlSafe(sql.clone()))
+            .execute(&s.pool)
+            .await
+            .expect_err(member);
+        assert!(
+            refused
+                .to_string()
+                .contains("deployment_tuple_an_adapter_whole_or_absent"),
+            "{member} absent: {refused}"
+        );
+    }
+    let mut no_base: Vec<&str> = ADAPTER_MEMBERS.to_vec();
+    no_base.push("base_blake3");
+    let refused = sqlx::query(sqlx::AssertSqlSafe(copy("dt-00000000000000a1", &no_base)))
+        .execute(&s.pool)
+        .await
+        .expect_err("no base's identity");
+    assert!(refused.to_string().contains("base_blake3"), "{refused}");
+    assert_eq!(count(s, "deployment_tuple").await, 1);
+    sqlx::query(sqlx::AssertSqlSafe(copy(
+        "dt-00000000000000a2",
+        &ADAPTER_MEMBERS,
+    )))
+    .execute(&s.pool)
+    .await
+    .expect("a tuple with no adapter");
+    assert_eq!(count(s, "deployment_tuple").await, 2);
+}
+
+/// **A setup with no adapter's pick confirms a tuple with none** (Spec
+/// 6.2, 8.3): with the decoder alone picked, the confirm page reads "none
+/// picked: the agent loads its base alone" in the adapter's place and draws
+/// no scale row, and Confirm stands. After it the page draws the same from
+/// the tuple's row, the tuple holds no adapter and holds the base's
+/// identity, the laying carries no adapter, and `setup describe`'s answer
+/// names the decoder alone among its models and no `adapter` in its laying.
+///
+/// Perturbations: read a setup with no adapter row as one whose adapter is
+/// unread, and Confirm holds on "no adapter is picked". Answer the laying's
+/// `adapter` member always, and the described laying carries one.
+#[tokio::test]
+async fn a_setup_with_no_adapter_confirms_a_tuple_and_a_laying_with_none() {
+    let reported = Arc::new(Reported::default());
+    *reported.pairing.lock().unwrap() = Some(pairing_report());
+    let Some((rig, _fake, _, _cache)) = rig_boxed(true, reported.clone()).await else {
+        return;
+    };
+    let s = rig.store();
+    let _identities = BaseIdentities::start(
+        s.clone(),
+        rig.puller.cache().cloned(),
+        rig.puller.verified(),
+    );
+    let (ada, setup) = setup_of(&rig, "karl").await;
+    let admin_fingerprint = "2".repeat(64);
+    let (karl, _) = s
+        .register_agent(
+            "box-a",
+            "karl",
+            None,
+            &"1".repeat(64),
+            &admin_fingerprint,
+            &"3".repeat(64),
+        )
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE agent_setup SET agent_id = $1, paired_as = 'pair', paired_at = now() \
+         WHERE setup_id = $2",
+    )
+    .bind(karl.as_str())
+    .bind(&setup)
+    .execute(&s.pool)
+    .await
+    .unwrap();
+    decoder_picked(&rig, &ada, &setup, "1").await;
+    assert_eq!(
+        ended(s, &pull_of(s, &setup, "decoder").await).await,
+        "verified"
+    );
+    let (status, body, _) = post(
+        &rig,
+        &ada,
+        &setup,
+        "placement",
+        &[
+            ("version", "2"),
+            ("context_length", "4096"),
+            ("turn_context", "continuous"),
+            ("device", "0"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let blake3 = identity_kept(s).await;
+    *reported.drives.lock().unwrap() = Some(drives_report());
+
+    let confirm = format!("/setup/{setup}/confirm");
+    let action = format!(r#"<form method="post" action="{confirm}">"#);
+    let none = "none picked: the agent loads its base alone";
+    let ready = read(&rig.app, &confirm, &ada).await;
+    assert!(walk(&ready).is_empty(), "{:?}", walk(&ready));
+    assert!(ready.contains(&action), "{ready}");
+    assert!(ready.contains(none), "{ready}");
+    assert!(!ready.contains("The adapter's scale"), "{ready}");
+    assert!(!ready.contains("no adapter is picked"), "{ready}");
+    let (status, body, _) = post(&rig, &ada, &setup, "confirm", &[("version", "3")]).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+
+    let confirmed = s.deployment_tuple(&setup).await.unwrap().unwrap();
+    assert_eq!(confirmed.tuple.adapter, None);
+    assert_eq!(confirmed.tuple.base_blake3, blake3);
+    let stored: (i32, Option<f64>) = sqlx::query_as(
+        "SELECT num_nulls(adapter_pull, adapter_repository, adapter_commit, adapter_choice, \
+         adapter_parts, adapter_scale), adapter_scale FROM deployment_tuple WHERE setup_id = $1",
+    )
+    .bind(&setup)
+    .fetch_one(&s.pool)
+    .await
+    .unwrap();
+    assert_eq!(stored, (6, None));
+    let laying = s.laying(&setup).await.unwrap().expect("the laying stands");
+    assert_eq!(
+        laying,
+        Laying {
+            decoder_artifact: confirmed.tuple.decoder.parts[0].path.clone(),
+            adapter: None,
+            devices: vec![0],
+            context_length: 4096,
+            turn_context: "continuous".into(),
+        }
+    );
+
+    *reported.drives.lock().unwrap() = None;
+    let shown = read(&rig.app, &confirm, &ada).await;
+    assert!(walk(&shown).is_empty(), "{:?}", walk(&shown));
+    assert!(shown.contains(&confirmed.tuple_id), "{shown}");
+    assert!(shown.contains(none), "{shown}");
+    assert!(!shown.contains("The adapter's scale"), "{shown}");
+
+    let described = s
+        .described(&karl, &admin_fingerprint)
+        .await
+        .unwrap()
+        .unwrap();
+    let answer = serde_json::to_value(&described).unwrap();
+    let models: Vec<&String> = answer["models"].as_object().unwrap().keys().collect();
+    assert_eq!(models, vec!["decoder"], "{answer}");
+    let laid = answer["laying"]
+        .as_object()
+        .expect("the laying once confirmed");
+    assert!(!laid.contains_key("adapter"), "{answer}");
+    assert_eq!(laid["tuple"], serde_json::json!(confirmed.tuple_id));
+    assert_eq!(laid["artifact"], serde_json::json!(laying.decoder_artifact));
 }
 
 /// **`setup describe`'s answer** (Spec 8.3) for a row a pairing linked to
@@ -1046,17 +1325,24 @@ async fn setup_describe_answers_the_picks_their_need_and_the_laying_once_confirm
     let shown = described.laying.expect("the laying once Confirm stands");
     assert_eq!(shown.tuple, confirmed.tuple_id);
     assert_eq!(shown.artifact, laying.decoder_artifact);
+    let (shown_adapter, laid) = (
+        shown
+            .adapter
+            .as_ref()
+            .expect("the adapter picked, described"),
+        laying.adapter.as_ref().expect("the adapter picked, laid"),
+    );
     assert_eq!(
         (
-            shown.adapter.artifact.as_str(),
-            shown.adapter.sha256.as_str(),
-            shown.adapter.base_blake3.as_str(),
-            shown.adapter.scale
+            shown_adapter.artifact.as_str(),
+            shown_adapter.sha256.as_str(),
+            shown_adapter.base_blake3.as_str(),
+            shown_adapter.scale
         ),
         (
-            laying.adapter_artifact.as_str(),
-            laying.adapter_sha256.as_str(),
-            laying.base_blake3.as_str(),
+            laid.artifact.as_str(),
+            laid.sha256.as_str(),
+            laid.base_blake3.as_str(),
             0.5
         )
     );
@@ -1195,7 +1481,11 @@ async fn setup_describe_reads_every_member_in_one_snapshot() {
 
     let after = s.described(&karl, &fingerprint).await.unwrap().unwrap();
     let laying = after.laying.expect("the laying once Confirm stands");
-    assert_eq!(laying.adapter.scale, 0.25, "the other side, whole");
+    assert_eq!(
+        laying.adapter.map(|adapter| adapter.scale),
+        Some(0.25),
+        "the other side, whole"
+    );
 }
 
 /// A source whose store fails to answer.

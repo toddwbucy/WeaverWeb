@@ -7,6 +7,8 @@
 //! conforms: web-a-setup-ask-is-refused-while-its-credentials-connection-stands-and-counts-for-nothing-in-presence
 //! conforms: web-the-setup-keeps-the-latest-report-of-each-stage-verbatim
 //! conforms: web-an-adopted-pair-connects
+//! conforms: web-a-setup-with-no-adapters-pick-confirms-a-tuple-with-none
+//! conforms: web-describes-laying-names-an-adapter-only-where-the-tuple-holds-one
 //!
 //! **An appliance's enrollment, the exchange** (Spec 8.2): a code's entry on
 //! the pairing page, against the real listener, with the box's half
@@ -2115,7 +2117,8 @@ async fn version_of(s: &Store, setup: &str) -> String {
 /// placement page names the lacking card. Once the drives report stands,
 /// its models drive short of the picks' need a warning on the drives page
 /// and no hold, Confirm writes the tuple with the box's members typed as
-/// ruled.
+/// ruled, and the box's `setup describe` reads the laying back with the
+/// adapter's members.
 #[tokio::test]
 async fn the_reports_a_box_sends_feed_placement_and_confirm() {
     let cache = crate::test_dir::tempdir().unwrap();
@@ -2329,6 +2332,168 @@ async fn the_reports_a_box_sends_feed_placement_and_confirm() {
             .await
             .unwrap();
     assert!(!stored.to_string().contains("free_bytes"), "{stored}");
+
+    // The box reads the laying back with the adapter's members.
+    let (status, line) = describe(&admin_config).await;
+    assert_eq!(status, Status::Done, "{line}");
+    let adapter = confirmed.tuple.adapter.as_ref().unwrap();
+    assert_eq!(
+        line["laying"]["adapter"],
+        serde_json::json!({
+            "artifact": adapter.model.parts[0].path,
+            "sha256": adapter.model.parts[0].sha256,
+            "base_blake3": confirmed.tuple.base_blake3,
+            "scale": 0.5,
+        }),
+        "{line}"
+    );
+}
+
+/// **A setup with no adapter confirms a tuple with none, end to end** (Spec
+/// 6.2, 8.3): a box enrolled against the real listener sends its pairing
+/// and drives reports through it. The adapter picked is named among the
+/// models the box's `setup describe` reads, and once dropped it is not, the
+/// decoder named alone. Confirm stands with the adapter's place reading none
+/// picked and no scale row, the tuple holds no adapter and the base's
+/// identity, and the box's `setup describe` reads the laying back with no
+/// `adapter` member: a base-only load.
+///
+/// Perturbation: answer the laying's `adapter` member always (the frame's
+/// `skip_serializing_if` removed), and the box reads `adapter: null`.
+#[tokio::test]
+async fn a_setup_with_no_adapter_confirms_a_tuple_with_none() {
+    let cache = crate::test_dir::tempdir().unwrap();
+    let (_fake, base) = crate::setup_models_tests::fake().await;
+    let Some(rig) = crate::setup_tests::rig_full_with(
+        None,
+        Some(cache.path().to_path_buf()),
+        &base,
+        Arc::new(crate::box_report::Kept),
+    )
+    .await
+    else {
+        return;
+    };
+    let s = rig.store();
+    let _identities = crate::hugging_face::base_identity::BaseIdentities::start(
+        s.clone(),
+        rig.puller.cache().cloned(),
+        rig.puller.verified(),
+    );
+    let (ada, setup) = crate::setup_models_tests::setup_of(&rig, "karl").await;
+    let on_box = crate::test_dir::tempdir().unwrap();
+    enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a", None).await;
+    let admin_config = on_box.path().join("admin-con.toml");
+    sent(
+        &admin_config,
+        Stage::Pairing,
+        &crate::setup_place_tests::pairing_report(),
+    )
+    .await;
+    sent(
+        &admin_config,
+        Stage::Drives,
+        &crate::setup_place_tests::drives_report(),
+    )
+    .await;
+    let models_of = |line: &serde_json::Value| -> Vec<String> {
+        line["models"]
+            .as_object()
+            .map(|m| m.keys().cloned().collect())
+            .unwrap_or_default()
+    };
+
+    crate::setup_place_tests::decoder_picked(&rig, &ada, &setup, &version_of(s, &setup).await)
+        .await;
+    let pull = crate::setup_models_tests::pull_of(s, &setup, "decoder").await;
+    assert_eq!(crate::setup_models_tests::ended(s, &pull).await, "verified");
+    let (status, body) = crate::setup_models_tests::post_pick(
+        &rig,
+        &ada,
+        &setup,
+        crate::setup_models_tests::pick(
+            &version_of(s, &setup).await,
+            "adapter",
+            "org/adapter",
+            "adapter.gguf",
+            Some("0.5"),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let (status, line) = describe(&admin_config).await;
+    assert_eq!(status, Status::Done, "{line}");
+    assert_eq!(models_of(&line), vec!["adapter", "decoder"], "{line}");
+
+    // The adapter dropped: the box reads the decoder alone.
+    let (status, body, _) = crate::setup_place_tests::post(
+        &rig,
+        &ada,
+        &setup,
+        "models/drop",
+        &[("version", &version_of(s, &setup).await)],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let (status, line) = describe(&admin_config).await;
+    assert_eq!(status, Status::Done, "{line}");
+    assert_eq!(models_of(&line), vec!["decoder"], "{line}");
+    assert!(line["laying"].is_null(), "no laying before Confirm: {line}");
+
+    let (status, body, _) = crate::setup_place_tests::post(
+        &rig,
+        &ada,
+        &setup,
+        "placement",
+        &[
+            ("version", &version_of(s, &setup).await),
+            ("context_length", "4096"),
+            ("turn_context", "continuous"),
+            ("device", "0"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let blake3 = crate::setup_place_tests::identity_kept(s).await;
+    let confirm = format!("/setup/{setup}/confirm");
+    let ready = crate::setup_place_tests::read(&rig.app, &confirm, &ada).await;
+    assert!(
+        ready.contains(&format!(r#"<form method="post" action="{confirm}">"#)),
+        "{ready}"
+    );
+    assert!(
+        ready.contains("none picked: the agent loads its base alone"),
+        "{ready}"
+    );
+    assert!(!ready.contains("The adapter's scale"), "{ready}");
+    let (status, body, _) = crate::setup_place_tests::post(
+        &rig,
+        &ada,
+        &setup,
+        "confirm",
+        &[("version", &version_of(s, &setup).await)],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let confirmed = s.deployment_tuple(&setup).await.unwrap().unwrap();
+    assert_eq!(confirmed.tuple.adapter, None);
+    assert_eq!(confirmed.tuple.base_blake3, blake3);
+
+    // The box reads the laying back with no adapter: a base-only load.
+    let (status, line) = describe(&admin_config).await;
+    assert_eq!(status, Status::Done, "{line}");
+    assert_eq!(models_of(&line), vec!["decoder"], "{line}");
+    let laid = line["laying"]
+        .as_object()
+        .expect("the laying once confirmed");
+    assert!(!laid.contains_key("adapter"), "{line}");
+    assert_eq!(laid["tuple"], serde_json::json!(confirmed.tuple_id));
+    assert_eq!(
+        laid["artifact"],
+        serde_json::json!(confirmed.tuple.decoder.parts[0].path)
+    );
+    assert_eq!(laid["devices"], serde_json::json!([0]));
+    assert_eq!(laid["turn_context"], "continuous");
 }
 
 /// The lines of `logs` since `mark` that log a refused setup report.

@@ -1,4 +1,5 @@
 //! conforms: web-the-start-page-refuses-every-name-the-box-refuses
+//! conforms: web-an-open-setups-adapter-pick-can-be-dropped-and-a-confirmed-setups-cannot
 //!
 //! **The agent's setup** (Spec 6.2, migration `0026`): one row per setup,
 //! mutable until Confirm, written by an admin alone. Each write takes the
@@ -404,6 +405,48 @@ impl Store {
         .execute(&mut *tx)
         .await?;
         commit_with_outcome(tx, "setup pick", self, first).await?;
+        Ok(Ok(()))
+    }
+
+    /// **An admin's drop of the adapter's pick** (Spec 6.2), in one
+    /// transaction under the identity exclusion: the setup's version checked
+    /// and moved and the adapter's row removed, so the setup confirms a
+    /// tuple with none. Its pull is left as it stands, a running one running
+    /// on, and its files stay in the cache. Refused where the setup was
+    /// written since the page read it, or is confirmed, and where it holds
+    /// no adapter's pick.
+    pub async fn setup_drop_adapter(
+        &self,
+        admin: &str,
+        session_id: i64,
+        first: &str,
+        setup_id: &str,
+        version: i64,
+    ) -> anyhow::Result<Result<(), Refusal>> {
+        let mut tx = self.identity_transaction().await?;
+        if let Err(refusal) = authorized(&mut tx, session_id, admin).await? {
+            return Ok(Err(refusal));
+        }
+        let written = sqlx::query(
+            "UPDATE agent_setup SET version = version + 1 \
+             WHERE setup_id = $1 AND version = $2 AND state = 'open'",
+        )
+        .bind(setup_id)
+        .bind(version)
+        .execute(&mut *tx)
+        .await?;
+        if written.rows_affected() != 1 {
+            return Ok(Err(Refusal::Stale));
+        }
+        let dropped =
+            sqlx::query("DELETE FROM agent_setup_model WHERE setup_id = $1 AND role = 'adapter'")
+                .bind(setup_id)
+                .execute(&mut *tx)
+                .await?;
+        if dropped.rows_affected() != 1 {
+            return Ok(Err(Refusal::NoAdapterPicked));
+        }
+        commit_with_outcome(tx, "setup drop", self, first).await?;
         Ok(Ok(()))
     }
 }

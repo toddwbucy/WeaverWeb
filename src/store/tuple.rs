@@ -1,12 +1,16 @@
 //! conforms: web-the-deployment-tuple-refuses-any-update-or-delete-and-a-setup-is-confirmed-once
 //! conforms: web-the-members-the-box-is-laid-from-are-the-confirmed-tuples-and-none-stand-before-confirm
+//! conforms: web-a-setup-with-no-adapters-pick-confirms-a-tuple-with-none
+//! conforms: web-a-tuples-adapter-members-are-all-present-or-all-absent
 //!
 //! **The deployment tuple** (Spec 6.2, migration `0029`): every member the
 //! box is laid from, each read from its source, and Confirm, which writes
 //! them once. `members_on` reads each member or says why it is not read,
 //! for the confirm page and again inside Confirm's transaction, so the
 //! tuple holds what the sources held at its commit. The laying members are
-//! read from the tuple alone, so none stands before Confirm.
+//! read from the tuple alone, so none stands before Confirm. **The adapter
+//! is optional** (migration `0032`): a setup with no adapter's pick reads
+//! it as none, never as a member unread, and its tuple and laying hold none.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -43,12 +47,21 @@ pub struct Model {
     pub parts: Vec<Part>,
 }
 
+/// **The tuple's adapter**, held whole (Spec 6.2, migration `0032`): the
+/// model and its scale.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Adapter {
+    pub model: Model,
+    pub scale: f64,
+}
+
 /// **The tuple's members** (Spec 6.2), every one read.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Tuple {
     pub decoder: Model,
-    pub adapter: Model,
-    pub adapter_scale: f64,
+    /// The adapter where one was picked, and none where the agent loads its
+    /// base alone (the operator's ruling of 2026-11-18).
+    pub adapter: Option<Adapter>,
     pub base_blake3: String,
     pub context_length: i64,
     /// The box's max-tokens-per-turn the context length was bounded by.
@@ -71,18 +84,26 @@ pub struct Confirmed {
 }
 
 /// **The members the box is laid from** (Spec 6.2): the decoder's artifact
-/// (its first part), the adapter's artifact, SHA-256 and scale, the base's
-/// identity, the devices, the context length and the turn context.
+/// (its first part), the devices, the context length and the turn context,
+/// and the adapter's where the tuple holds one.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Laying {
     pub decoder_artifact: String,
-    pub adapter_artifact: String,
-    pub adapter_sha256: String,
-    pub adapter_scale: f64,
-    pub base_blake3: String,
+    pub adapter: Option<LayingAdapter>,
     pub devices: Vec<i32>,
     pub context_length: i64,
     pub turn_context: String,
+}
+
+/// **The adapter's members of the laying**: its artifact, SHA-256 and
+/// scale, with the base's identity it binds to, which the box checks only
+/// against an adapter (the adapter binding's ADP-1).
+#[derive(Debug, Clone, PartialEq)]
+pub struct LayingAdapter {
+    pub artifact: String,
+    pub sha256: String,
+    pub scale: f64,
+    pub base_blake3: String,
 }
 
 /// **Each member read, or why it is not**, in words that follow "not
@@ -90,8 +111,10 @@ pub struct Laying {
 #[derive(Debug, Clone)]
 pub struct Members {
     pub decoder: Result<Model, String>,
-    pub adapter: Result<Model, String>,
-    pub adapter_scale: Result<f64, String>,
+    /// The adapter where one is picked, and `Ok(None)` where none is.
+    pub adapter: Result<Option<Model>, String>,
+    /// Its scale likewise.
+    pub adapter_scale: Result<Option<f64>, String>,
     pub base_blake3: Result<String, String>,
     pub context_length: Result<i64, String>,
     /// The box's max-tokens-per-turn, the context length's floor.
@@ -124,7 +147,7 @@ impl Members {
             Members {
                 decoder: Ok(decoder),
                 adapter: Ok(adapter),
-                adapter_scale: Ok(adapter_scale),
+                adapter_scale: Ok(scale),
                 base_blake3: Ok(base_blake3),
                 context_length: Ok(context_length),
                 max_tokens_per_turn,
@@ -132,18 +155,24 @@ impl Members {
                 virtual_machine,
                 devices: Ok(devices),
                 box_members: Ok(box_members),
-            } => Ok(Tuple {
-                decoder,
-                adapter,
-                adapter_scale,
-                base_blake3,
-                context_length,
-                max_tokens_per_turn,
-                turn_context,
-                virtual_machine,
-                devices,
-                box_members,
-            }),
+            } => {
+                let adapter = match (adapter, scale) {
+                    (Some(model), Some(scale)) => Some(Adapter { model, scale }),
+                    (None, None) => None,
+                    _ => return Err(vec!["the adapter's pick and its scale disagree".to_owned()]),
+                };
+                Ok(Tuple {
+                    decoder,
+                    adapter,
+                    base_blake3,
+                    context_length,
+                    max_tokens_per_turn,
+                    turn_context,
+                    virtual_machine,
+                    devices,
+                    box_members,
+                })
+            }
             _ => Err(unread),
         }
     }
@@ -263,15 +292,17 @@ async fn members_on(
         Some(row) => model_of(conn, "decoder", row).await?,
         None => Err("no decoder is picked".to_owned()),
     };
+    // **No adapter's pick is none**, never a member unread (Spec 6.2).
     let adapter = match &adapter_row {
-        Some(row) => model_of(conn, "adapter", row).await?,
-        None => Err("no adapter is picked".to_owned()),
+        Some(row) => model_of(conn, "adapter", row).await?.map(Some),
+        None => Ok(None),
     };
     let adapter_scale = match &adapter_row {
         Some(row) => row
             .scale
+            .map(Some)
             .ok_or_else(|| "the adapter's pick holds no scale".to_owned()),
-        None => Err("no adapter is picked".to_owned()),
+        None => Ok(None),
     };
     let base_blake3 = match &decoder_row {
         None => Err("no decoder is picked".to_owned()),
@@ -433,6 +464,8 @@ impl Store {
             Ok(tuple) => tuple,
             Err(unread) => return Ok(Err(Refusal::Unconfirmable(unread.join(", ")))),
         };
+        // The adapter's six members, or none of them (migration `0032`).
+        let adapter = tuple.adapter.as_ref();
         sqlx::query(
             "INSERT INTO deployment_tuple (tuple_id, setup_id, confirmed_by, \
              decoder_pull, decoder_repository, decoder_commit, decoder_choice, decoder_parts, \
@@ -449,12 +482,12 @@ impl Store {
         .bind(&tuple.decoder.commit)
         .bind(&tuple.decoder.choice)
         .bind(parts_json(&tuple.decoder.parts)?)
-        .bind(&tuple.adapter.pull_id)
-        .bind(&tuple.adapter.repository)
-        .bind(&tuple.adapter.commit)
-        .bind(&tuple.adapter.choice)
-        .bind(parts_json(&tuple.adapter.parts)?)
-        .bind(tuple.adapter_scale)
+        .bind(adapter.map(|a| &a.model.pull_id))
+        .bind(adapter.map(|a| &a.model.repository))
+        .bind(adapter.map(|a| &a.model.commit))
+        .bind(adapter.map(|a| &a.model.choice))
+        .bind(adapter.map(|a| parts_json(&a.model.parts)).transpose()?)
+        .bind(adapter.map(|a| a.scale))
         .bind(&tuple.base_blake3)
         .bind(tuple.context_length)
         .bind(tuple.max_tokens_per_turn)
@@ -493,12 +526,20 @@ impl Store {
         };
         let model = |prefix: &str| -> anyhow::Result<Model> {
             Ok(Model {
-                repository: r.get(format!("{prefix}_repository").as_str()),
-                commit: r.get(format!("{prefix}_commit").as_str()),
-                choice: r.get(format!("{prefix}_choice").as_str()),
-                pull_id: r.get(format!("{prefix}_pull").as_str()),
-                parts: parts_of(r.get(format!("{prefix}_parts").as_str()))?,
+                repository: r.try_get(format!("{prefix}_repository").as_str())?,
+                commit: r.try_get(format!("{prefix}_commit").as_str())?,
+                choice: r.try_get(format!("{prefix}_choice").as_str())?,
+                pull_id: r.try_get(format!("{prefix}_pull").as_str())?,
+                parts: parts_of(r.try_get(format!("{prefix}_parts").as_str())?)?,
             })
+        };
+        // The adapter's members stand together or not at all (`0032`).
+        let adapter = match r.try_get::<Option<String>, _>("adapter_pull")? {
+            None => None,
+            Some(_) => Some(Adapter {
+                model: model("adapter")?,
+                scale: r.try_get("adapter_scale")?,
+            }),
         };
         Ok(Some(Confirmed {
             tuple_id: r.get("tuple_id"),
@@ -506,8 +547,7 @@ impl Store {
             confirmed_at: r.get("confirmed_at"),
             tuple: Tuple {
                 decoder: model("decoder")?,
-                adapter: model("adapter")?,
-                adapter_scale: r.get("adapter_scale"),
+                adapter,
                 base_blake3: r.get("base_blake3"),
                 context_length: r.get("context_length"),
                 max_tokens_per_turn: r.get("max_tokens_per_turn"),
@@ -534,19 +574,30 @@ impl Laying {
     /// rule for the pages and for `setup describe`.
     pub fn of(confirmed: &Confirmed) -> anyhow::Result<Laying> {
         let t = &confirmed.tuple;
-        let (Some(decoder), Some(adapter)) = (t.decoder.parts.first(), t.adapter.parts.first())
-        else {
-            anyhow::bail!(
+        let unparted = || {
+            anyhow::anyhow!(
                 "the tuple {} names a model without a part",
                 confirmed.tuple_id
-            );
+            )
+        };
+        let decoder = t.decoder.parts.first().ok_or_else(unparted)?;
+        // **The adapter only where the tuple holds one**, with the base's
+        // identity it binds to: a laying with none is a base-only load.
+        let adapter = match &t.adapter {
+            None => None,
+            Some(adapter) => {
+                let part = adapter.model.parts.first().ok_or_else(unparted)?;
+                Some(LayingAdapter {
+                    artifact: part.path.clone(),
+                    sha256: part.sha256.clone(),
+                    scale: adapter.scale,
+                    base_blake3: t.base_blake3.clone(),
+                })
+            }
         };
         Ok(Laying {
             decoder_artifact: decoder.path.clone(),
-            adapter_artifact: adapter.path.clone(),
-            adapter_sha256: adapter.sha256.clone(),
-            adapter_scale: t.adapter_scale,
-            base_blake3: t.base_blake3.clone(),
+            adapter,
             devices: t.devices.clone(),
             context_length: t.context_length,
             turn_context: t.turn_context.clone(),

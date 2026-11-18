@@ -109,6 +109,10 @@ struct Inner {
     /// again, so the clear drops no id of a pull the puller may yet take.
     cancel: watch::Sender<HashSet<String>>,
     task: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// How many cancels were signalled, for the tests: a signal the worker
+    /// has already acted on leaves no id in `cancel`, and this count stays.
+    #[cfg(test)]
+    cancels_signalled: std::sync::atomic::AtomicUsize,
 }
 
 /// The puller: its task and the seam an ask wakes it through.
@@ -164,6 +168,8 @@ impl Puller {
             verified: Arc::new(Notify::new()),
             cancel: watch::Sender::new(HashSet::new()),
             task: std::sync::Mutex::new(None),
+            #[cfg(test)]
+            cancels_signalled: std::sync::atomic::AtomicUsize::new(0),
         });
         let task = tokio::spawn(work(inner.clone()));
         *inner.task.lock().unwrap() = Some(task);
@@ -194,6 +200,10 @@ impl Puller {
     /// landed: it stops at its next read or wait, and its partial stays. A
     /// pull the store still runs is taken again from its partial.
     pub fn cancel(&self, pull_id: &str) {
+        #[cfg(test)]
+        self.inner
+            .cancels_signalled
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.inner.cancel.send_modify(|ids| {
             ids.insert(pull_id.to_owned());
         });
@@ -204,6 +214,16 @@ impl Puller {
     #[cfg(all(test, feature = "passkeys"))]
     pub(crate) fn cancels_held(&self) -> usize {
         self.inner.cancel.borrow().len()
+    }
+
+    /// How many cancels were ever signalled to the puller, for the pull's
+    /// tests: unlike [`Puller::cancels_held`], a signal the worker already
+    /// acted on and cleared still counts.
+    #[cfg(all(test, feature = "passkeys"))]
+    pub(crate) fn cancels_signalled(&self) -> usize {
+        self.inner
+            .cancels_signalled
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// **An admin's ask of a pull**, after its first record: the rows

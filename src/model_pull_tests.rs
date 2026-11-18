@@ -1304,6 +1304,7 @@ async fn a_cancel_whose_commit_answers_past_its_bound_reaches_the_puller() {
     let web = rig.surface(&puller);
     WRITE_BOUND_FOR_TEST.with(|b| b.set(Some(BOUND)));
 
+    let signalled = puller.cancels_signalled();
     let held = hold::arm(Point::AdminWriteAnswered);
     let asked = tokio::time::Instant::now();
     let uri = format!("/admin/hugging-face/pulls/{pull_id}/cancel");
@@ -1317,6 +1318,7 @@ async fn a_cancel_whose_commit_answers_past_its_bound_reaches_the_puller() {
     );
     drop(held);
     WRITE_BOUND_FOR_TEST.with(|b| b.set(None));
+    assert_eq!(puller.cancels_signalled(), signalled + 1, "signalled once");
     assert_eq!(rig.ended(&pull_id).await, ("cancelled".into(), None));
     assert_eq!(
         pull_records(&rig, &pull_id, "model pull cancel").await,
@@ -1340,10 +1342,12 @@ async fn a_cancel_whose_commit_answers_past_its_bound_reaches_the_puller() {
 /// the converse of the cancel that reaches the puller past its bound. The
 /// request is answered 503 "not made", the COMMIT was never sent, the pull
 /// still runs, the puller holds no cancel, and the first record stands
-/// with no outcome.
+/// with no outcome. The count of signals is read, not the set the puller
+/// holds, since a worker that acted on a signal clears its id.
 ///
 /// Perturbation: await step four with no bound, and the held COMMIT goes
-/// out, the pull cancelled while the admin is told nothing was made.
+/// out, the pull cancelled while the admin is told nothing was made. Send
+/// the puller's signal before the COMMIT, and the count moves.
 #[tokio::test]
 async fn a_cancel_stalled_before_its_commit_is_not_made() {
     use crate::deadline::hold::{self, Point};
@@ -1360,6 +1364,7 @@ async fn a_cancel_stalled_before_its_commit_is_not_made() {
     let web = rig.surface(&puller);
     WRITE_BOUND_FOR_TEST.with(|b| b.set(Some(BOUND)));
 
+    let signalled = puller.cancels_signalled();
     let held = hold::arm(Point::AdminWrite);
     let uri = format!("/admin/hugging-face/pulls/{pull_id}/cancel");
     let (status, _, body) = send_as(&web, "POST", &uri, Some(String::new()), &rig.cookie).await;
@@ -1374,7 +1379,12 @@ async fn a_cancel_stalled_before_its_commit_is_not_made() {
         .await;
     assert_eq!(state, "running", "the pull still runs");
     drop(held);
-    assert_eq!(puller.cancels_held(), 0, "the puller was told nothing");
+    assert_eq!(
+        puller.cancels_signalled(),
+        signalled,
+        "the puller was told nothing"
+    );
+    assert_eq!(puller.cancels_held(), 0);
     assert_eq!(
         pull_records(&rig, &pull_id, "model pull cancel").await,
         (1, 0, 0)

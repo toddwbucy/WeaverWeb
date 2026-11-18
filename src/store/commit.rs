@@ -90,6 +90,9 @@ pub(crate) async fn commit_with_outcome(
     // **The COMMIT is going out**, in this poll: an admin write's step four
     // reads its deadline no more (`deadline::until_commit`), so the answer,
     // its read-back and what the step does after its commit are never cut.
+    // sqlx writes the COMMIT in the first poll of `tx.commit()` below, the
+    // same poll, or one scheduler turn later where the socket's write
+    // yields (`deadline::commit_sent`).
     crate::deadline::commit_sent();
     #[cfg(test)]
     let committed = match give_up_on_the_commit(kind) {

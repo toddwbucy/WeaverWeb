@@ -57,6 +57,16 @@ tokio::task_local! {
 /// **The COMMIT of the step [`until_commit`] bounds is going out**, called
 /// by `store::commit::commit_with_outcome` just before it sends an act's
 /// COMMIT, in the poll that sends it. A no-op outside such a step.
+///
+/// The mark precedes the COMMIT's write, never follows it, so the step is
+/// never cut once the COMMIT may have reached the store. sqlx 0.9.0 writes
+/// and flushes the COMMIT in the first poll of `tx.commit()`: the act's
+/// last statement has answered, so the connection's write buffer is empty
+/// and no ReadyForQuery is pending. That poll is the one that sets the mark,
+/// entered before the deadline. The write waits only where the socket's
+/// write yields, which after a completed round trip comes from tokio's
+/// cooperative budget and delays the COMMIT one turn of the scheduler, a
+/// residual inside section 10's statement flight (Spec 2.13).
 pub(crate) fn commit_sent() {
     let _ = SENT.try_with(|sent| sent.set(true));
 }
@@ -428,9 +438,12 @@ mod tests {
     /// past it** under [`until_commit`]: the COMMIT marked sent, its answer
     /// comes after the deadline, and the step's answer is the bound's.
     ///
+    /// The clock starts paused, so the first poll marks the COMMIT before
+    /// any time passes, however late the thread is scheduled.
+    ///
     /// Perturbation: read the deadline whether or not the COMMIT was sent,
     /// and the step is dropped at the deadline after its COMMIT went out.
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn a_step_whose_commit_went_out_runs_past_its_deadline() {
         let deadline = Instant::now() + Duration::from_millis(20);
         let step = async move {

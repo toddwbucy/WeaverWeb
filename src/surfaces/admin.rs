@@ -273,9 +273,11 @@ pub(crate) async fn settled<T>(
 /// the request is answered that the write was not made, which is then
 /// true. A dropped request's write can then land at most one bound after
 /// its place, its COMMIT's flight aside, never after a retry made later
-/// than that. No outcome is
-/// written past the deadline, so its first record stands with none, as a
-/// crash leaves one. **Once its COMMIT is sent the step runs to its end**:
+/// than that. No outcome is sent past the deadline, so its first record
+/// stands with none, as a crash leaves one, save a `failed` outcome whose
+/// own statement (`settled`) went out before the deadline and answers
+/// after it, one statement's flight (Spec 10), beside a 503 that is still
+/// true. **Once its COMMIT is sent the step runs to its end**:
 /// the COMMIT's answer and the read-back of a lost one
 /// (`store::commit`), the token shown once, the hand-over and the puller's
 /// signal, so a write that committed is answered as made and nothing it

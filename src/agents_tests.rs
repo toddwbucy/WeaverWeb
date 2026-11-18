@@ -719,8 +719,9 @@ async fn rotating_closes_the_old_and_admits_the_new() {
 /// (Spec 2.13): karl's rotation is held just after its COMMIT answered until
 /// a moment past the bound, the hand-over's reads of the chrome and the
 /// admin's grants after it. The step runs on, so the page hands both
-/// configs over under `no-store`, the new gate config admits, the old one
-/// is not live, and the act's outcome is `ok`.
+/// configs over under `no-store`, both handles redeem for the minting
+/// session, one config for each plane, the new gate config admits, the old
+/// one is not live, and the act's outcome is `ok`.
 ///
 /// Perturbation: bound step four with `deadline::before`, and the request
 /// is answered 503 "not made" for a rotation that landed, its two configs
@@ -753,9 +754,18 @@ async fn a_rotation_whose_commit_answers_past_its_bound_hands_its_pair_over() {
     drop(held);
     let handles = Rig::handles(&page);
     assert_eq!(handles.len(), 2, "both configs are held: {page}");
-    let (status, _, new_config) = rig.take(&handles[0], &session).await;
-    assert_eq!(status, StatusCode::OK);
-    let mut new = Connector::dial(&new_config).await;
+    let mut configs = Vec::new();
+    for handle in &handles {
+        let (status, _, config) = rig.take(handle, &session).await;
+        assert_eq!(status, StatusCode::OK, "{config}");
+        let table: toml::Table = config.parse().expect("a client config is TOML");
+        configs.push((table["plane"].as_str().unwrap().to_owned(), config));
+    }
+    configs.sort();
+    let planes: Vec<&str> = configs.iter().map(|(plane, _)| plane.as_str()).collect();
+    assert_eq!(planes, ["admin", "gate"], "one config for each plane");
+    let new_config = &configs[1].1;
+    let mut new = Connector::dial(new_config).await;
     assert!(
         matches!(new.recv().await, Some(ToClient::HelloAnswer { .. })),
         "the new credential admits"

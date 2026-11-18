@@ -1,5 +1,6 @@
 //! conforms: web-a-replacements-drive-setup-mounts-the-state-drive-it-carries-and-never-formats-it
 //! conforms: web-the-setup-keeps-the-latest-report-of-each-stage-verbatim
+//! conforms: web-describes-laying-names-an-adapter-only-where-the-tuple-holds-one
 //!
 //! **The setup connection's two asks at the store** (Spec 8.3): what `admin-con
 //! setup describe` is answered, and where `admin-con setup report` lands. Each
@@ -169,12 +170,12 @@ impl Store {
                 Some(DescribedLaying {
                     tuple: confirmed.tuple_id,
                     artifact: laying.decoder_artifact,
-                    adapter: DescribedAdapter {
-                        artifact: laying.adapter_artifact,
-                        sha256: laying.adapter_sha256,
-                        base_blake3: laying.base_blake3,
-                        scale: laying.adapter_scale,
-                    },
+                    adapter: laying.adapter.map(|adapter| DescribedAdapter {
+                        artifact: adapter.artifact,
+                        sha256: adapter.sha256,
+                        base_blake3: adapter.base_blake3,
+                        scale: adapter.scale,
+                    }),
                     devices: laying.devices,
                     context_capacity: laying.context_length,
                     turn_context: laying.turn_context,

@@ -355,7 +355,7 @@ mod tests {
     #[test]
     fn the_start_refuses_a_cache_it_cannot_write() {
         assert!(Cache::configured(None).unwrap().is_none());
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_dir::tempdir().unwrap();
         let root = dir.path().join("cache");
         assert!(Cache::configured(Some(Path::new("relative/cache"))).is_err());
         assert!(Cache::configured(Some(&root)).is_err());
@@ -394,7 +394,7 @@ mod tests {
             relative_target("onnx/sub/model.onnx", &id),
             format!("../../../../blobs/{id}")
         );
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_dir::tempdir().unwrap();
         let cache = Cache::at(dir.path()).unwrap();
         let repo = RepoId::parse("org/open").unwrap();
         let commit = "27b350a791e81d9a4d1ddca1c49282e9ec533768";
@@ -419,7 +419,7 @@ mod tests {
     /// for it would be, and the snapshot's directory holds nothing staged.
     #[test]
     fn a_link_is_never_staged_over_a_repositorys_own_file() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_dir::tempdir().unwrap();
         let cache = Cache::at(dir.path()).unwrap();
         let repo = RepoId::parse("org/open").unwrap();
         let commit = "27b350a791e81d9a4d1ddca1c49282e9ec533768";
@@ -446,7 +446,7 @@ mod tests {
     /// refused before any write.
     #[test]
     fn no_name_leaves_the_root() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_dir::tempdir().unwrap();
         let root = dir.path().join("cache");
         std::fs::create_dir(&root).unwrap();
         let cache = Cache::at(&root).unwrap();

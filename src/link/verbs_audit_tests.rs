@@ -66,7 +66,7 @@ async fn every_register_verb_is_audited_as_the_hosts() {
     let Some(lab) = Lab::open().await else { return };
     let cfg = lab_config(&lab);
 
-    let fresh = tempfile::tempdir().unwrap();
+    let fresh = crate::test_dir::tempdir().unwrap();
     let mut init_cfg = cfg.clone();
     init_cfg.authority_dir = fresh.path().join("authority");
     let answer = super::verbs::authority_init(&lab.store, &init_cfg, &[], Some("lab")).await;
@@ -76,7 +76,7 @@ async fn every_register_verb_is_audited_as_the_hosts() {
         (host("authority", None, "authority init"), "ok".into())
     );
 
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let r#box = format!("box-{}", uuid::Uuid::new_v4().simple());
     let authority = Authority::load(lab.authority.dir()).unwrap();
     let answer = super::verbs::register(
@@ -147,7 +147,7 @@ async fn a_verb_whose_first_record_cannot_be_written_does_not_act() {
         );
     };
 
-    let fresh = tempfile::tempdir().unwrap();
+    let fresh = crate::test_dir::tempdir().unwrap();
     let mut init_cfg = cfg.clone();
     init_cfg.authority_dir = fresh.path().join("authority");
     refuse();
@@ -158,7 +158,7 @@ async fn a_verb_whose_first_record_cannot_be_written_does_not_act() {
         "no authority was created"
     );
 
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let r#box = format!("box-{}", uuid::Uuid::new_v4().simple());
     let authority = Authority::load(lab.authority.dir()).unwrap();
     refuse();
@@ -267,7 +267,7 @@ async fn a_refused_first_record_leaves_the_agents_directory_as_it_was() {
     let Some(lab) = Lab::open().await else { return };
     let cfg = lab_config(&lab);
     let authority = Authority::load(lab.authority.dir()).unwrap();
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let r#box = format!("box-{}", uuid::Uuid::new_v4().simple());
     let dir = out.path().join(&r#box).join("karl");
     private_dir(&dir);
@@ -303,7 +303,7 @@ async fn a_refused_first_record_leaves_the_agents_directory_as_it_was() {
 
     // An agent of the same box and name, registered elsewhere, so `rotate`
     // has a row; its directory here still holds only the half pair.
-    let elsewhere = tempfile::tempdir().unwrap();
+    let elsewhere = crate::test_dir::tempdir().unwrap();
     let answer = super::verbs::register(
         &lab.store,
         &cfg,
@@ -358,9 +358,9 @@ async fn a_rotations_recovery_names_the_row_it_publishes() {
             answer.value["agent"].as_str().unwrap().to_owned()
         }
     };
-    let first_out = tempfile::tempdir().unwrap();
+    let first_out = crate::test_dir::tempdir().unwrap();
     let retired = register(first_out.path().to_owned()).await;
-    let second_out = tempfile::tempdir().unwrap();
+    let second_out = crate::test_dir::tempdir().unwrap();
     let replacement = register(second_out.path().to_owned()).await;
     assert_ne!(retired, replacement);
 
@@ -406,7 +406,7 @@ async fn a_register_verb_asked_by_an_identitys_shape_does_not_act() {
         );
     };
 
-    let fresh = tempfile::tempdir().unwrap();
+    let fresh = crate::test_dir::tempdir().unwrap();
     let mut init_cfg = cfg.clone();
     init_cfg.authority_dir = fresh.path().join("authority");
     let answer =
@@ -417,7 +417,7 @@ async fn a_register_verb_asked_by_an_identitys_shape_does_not_act() {
         "no authority was created"
     );
 
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let r#box = format!("box-{}", uuid::Uuid::new_v4().simple());
     let authority = Authority::load(lab.authority.dir()).unwrap();
     let answer = super::verbs::register(

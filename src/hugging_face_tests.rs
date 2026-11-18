@@ -26,7 +26,6 @@ use axum::routing::get;
 use serde_json::json;
 
 use crate::admin_tests::{admin, form, send_as, signed_in};
-use crate::agents_tests::Captured;
 use crate::hugging_face::seal::{SEAL_KEY, SealKey, write_beside};
 use crate::hugging_face::{Access, Client, Gated, ModelAt, RepoId, Token};
 use crate::link::authority::Authority;
@@ -35,6 +34,7 @@ use crate::store::Store;
 use crate::store::read::tests::{Fresh, fresh_store};
 use crate::surfaces::gate;
 use crate::surfaces::hugging_face::{Seams, routes};
+use crate::test_log::Captured;
 
 /// Three tokens the fake knows, one of each role, and one it does not.
 /// None is of Hugging Face's own form.
@@ -205,7 +205,7 @@ impl Rig {
 
 async fn rig() -> Option<Rig> {
     let fresh = fresh_store().await?;
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_dir::tempdir().unwrap();
     Authority::init(&dir.path().join("authority"), "weaver-web", &[]).unwrap();
     let (fake, base) = fake_hugging_face().await;
     let policy = gate::Policy {
@@ -425,20 +425,13 @@ async fn a_person_without_an_admin_grant_causes_no_request_to_hugging_face() {
 #[tokio::test]
 async fn the_token_enters_no_audit_row_log_line_page_or_error() {
     let captured = Captured::default();
-    let _logging = tracing::subscriber::set_default(
+    let _logging = crate::test_log::scoped(
         tracing_subscriber::fmt()
             .with_writer(captured.clone())
             .with_max_level(tracing::Level::TRACE)
             .with_ansi(false)
             .finish(),
     );
-    // **A second dispatcher, held for the test's life**: with one scoped
-    // dispatcher alone, tracing-core 0.1.36 takes a callsite's interest from
-    // the default of whichever thread meets it first
-    // (`Dispatchers::rebuilder`), so a line a test running beside this one
-    // reaches first, on a thread with no subscriber, would go uncaught here.
-    // With two registered, it asks each of them.
-    let _second = tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default());
     let Some(rig) = rig().await else { return };
     let s = rig.store();
     let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
@@ -763,7 +756,7 @@ async fn authority_seal_key_refuses_to_overwrite() {
         return;
     };
     let s = &fresh.store;
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_dir::tempdir().unwrap();
     let cfg = config(dir.path());
     let key_path = cfg.authority_dir.join(SEAL_KEY);
 
@@ -826,7 +819,7 @@ async fn authority_seal_key_waits_for_the_authority_lock() {
         return;
     };
     let s = fresh.store.clone();
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_dir::tempdir().unwrap();
     let cfg = config(dir.path());
     let key_path = cfg.authority_dir.join(SEAL_KEY);
     Authority::init(&cfg.authority_dir, "weaver-web", &[]).unwrap();

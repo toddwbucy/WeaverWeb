@@ -418,7 +418,7 @@ pub(crate) async fn rig_boxed(
     cached: bool,
     boxes: Arc<dyn BoxReports>,
 ) -> Option<(Rig, Arc<Fake>, String, tempfile::TempDir)> {
-    let cache = tempfile::tempdir().unwrap();
+    let cache = crate::test_dir::tempdir().unwrap();
     let (fake, base) = fake().await;
     let rig = rig_full(
         "127.0.0.1:8081",

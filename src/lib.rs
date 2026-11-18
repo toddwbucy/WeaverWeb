@@ -80,6 +80,10 @@ pub mod survey;
 #[cfg(test)]
 mod survey_tests;
 #[cfg(test)]
+mod test_dir;
+#[cfg(test)]
+mod test_log;
+#[cfg(test)]
 mod timeouts_tests;
 pub mod traceview;
 #[cfg(all(test, feature = "passkeys"))]

@@ -86,7 +86,7 @@ struct FakeSudo {
 
 impl FakeSudo {
     fn new() -> Self {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_dir::tempdir().unwrap();
         let program = dir.path().join("sudo");
         std::fs::write(&program, script(dir.path())).unwrap();
         std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -373,7 +373,7 @@ struct Sentinel(tempfile::TempDir);
 
 impl Sentinel {
     fn new() -> Self {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_dir::tempdir().unwrap();
         let program = dir.path().join("sudo");
         std::fs::write(
             &program,
@@ -596,7 +596,7 @@ impl Con {
             fake.answer(verb, json!({"kind": "done", "verb": verb}).to_string());
         }
         let trace = Trace::new();
-        let out = tempfile::tempdir().unwrap();
+        let out = crate::test_dir::tempdir().unwrap();
         let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
         Some(Self {
             lab,

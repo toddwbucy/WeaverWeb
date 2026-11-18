@@ -187,7 +187,7 @@ mod tests {
     /// order. No byte here is a real model's.
     #[test]
     fn the_identity_is_blake3_over_the_parts_in_split_order() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_dir::tempdir().unwrap();
         let cache = Cache::at(dir.path()).unwrap();
         let repo = RepoId::parse("org/split").unwrap();
         let one: Vec<u8> = (0..300_000u32).map(|i| (i % 251) as u8).collect();
@@ -225,7 +225,7 @@ mod tests {
     /// missing from the split, and a hash the stop ends gives no digest.
     #[test]
     fn a_blob_not_of_its_size_or_a_part_missing_is_refused() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_dir::tempdir().unwrap();
         let cache = Cache::at(dir.path()).unwrap();
         let repo = RepoId::parse("org/split").unwrap();
         let mut listed = cached(&cache, &repo, &[("lone.gguf", b"abc")]);

@@ -823,7 +823,7 @@ async fn an_unrecovered_call_passes_the_relay_the_window_and_the_live_view() {
 
     // The run's file, its relay, and admin-con's config as the install
     // completes it: the three box facts, here a temporary directory's.
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_dir::tempdir().unwrap();
     let trace = dir.path().join("trace.ndjson");
     let output = serde_json::json!({
         "kind": "model.output", "run": "run-1", "turn": "turn-1",

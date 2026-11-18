@@ -20,7 +20,7 @@ struct Bench {
 }
 
 fn bench() -> Bench {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_dir::tempdir().unwrap();
     let authority = Authority::init(&dir.path().join("authority"), "weaver-web", &[]).unwrap();
     Bench { dir, authority }
 }

@@ -72,7 +72,7 @@ struct Rig {
 
 impl Rig {
     fn new() -> Self {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_dir::tempdir().unwrap();
         let rig = Rig { dir };
         std::fs::create_dir(rig.p("bin")).unwrap();
         for p in ["weaver-web", "gate-con", "admin-con"] {
@@ -301,7 +301,7 @@ fn the_units_pass_the_service_managers_verifier() {
     let rig = Rig::new();
     rig.stage(&rig.params()).expect("stages");
     let units = rig.s("units");
-    let check = tempfile::tempdir().unwrap();
+    let check = crate::test_dir::tempdir().unwrap();
     let mut files = Vec::new();
     for (staged, as_named) in [
         ("weaver-web.service", "weaver-web.service"),

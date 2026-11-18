@@ -709,7 +709,7 @@ mod tests {
     /// conforms: web-servers-authority-is-loaded-and-never-minted-at-start
     #[test]
     fn the_authority_is_loaded_and_never_minted_at_start() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_dir::tempdir().unwrap();
         let path = dir.path().join("authority");
         let refused = Authority::load(&path).map(|_| ()).unwrap_err().to_string();
         assert!(refused.contains("never mints one at start"), "{refused}");
@@ -744,7 +744,7 @@ mod tests {
     /// with whatever key material it held, and the next init starts clean.
     #[test]
     fn a_failed_mint_leaves_no_staging_behind() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_dir::tempdir().unwrap();
         let path = dir.path().join("authority");
         FAIL_MINT.with(|f| f.set(true));
         let refused = Authority::init(&path, "weaver-web", &[])
@@ -763,7 +763,7 @@ mod tests {
     /// staging removed, and the set that stands loads whole.
     #[test]
     fn two_inits_racing_leave_one_whole_authority() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_dir::tempdir().unwrap();
         let path = dir.path().join("authority");
         CONCURRENT_INIT.with(|f| f.set(true));
         let refused = Authority::init(&path, "weaver-web", &[])
@@ -788,7 +788,7 @@ mod tests {
     /// directory and the renamed switch protect.
     #[test]
     fn a_half_replaced_authority_is_refused() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_dir::tempdir().unwrap();
         let a = dir.path().join("a");
         let b = dir.path().join("b");
         Authority::init(&a, "weaver-web", &[]).unwrap();
@@ -816,7 +816,7 @@ mod tests {
     /// repaired by `rotate`.
     #[test]
     fn a_failed_switch_restores_the_old_authority() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_dir::tempdir().unwrap();
         let path = dir.path().join("authority");
         let made = Authority::init(&path, "weaver-web", &[]).unwrap();
 
@@ -865,7 +865,7 @@ mod tests {
     /// nothing of the key is in it.
     #[test]
     fn a_client_credential_is_fingerprinted_over_its_der() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_dir::tempdir().unwrap();
         let authority = Authority::init(&dir.path().join("authority"), "weaver-web", &[]).unwrap();
         let minted = authority
             .mint_client("ag-0123456789abcdef", Plane::Gate)

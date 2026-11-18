@@ -66,7 +66,7 @@ fn close_line(text: &str) -> Vec<u8> {
 
 impl FakeGate {
     fn start() -> Self {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_dir::tempdir().unwrap();
         let path = dir.path().join("gate.sock");
         let listener = UnixListener::bind(&path).unwrap();
         let seen = Arc::new(GateSeen::default());
@@ -292,7 +292,7 @@ fn fault_kind(result: Result<GateClose, TurnError>) -> String {
 async fn gate_con_relays_a_turn_and_each_gate_failure_as_its_typed_fault() {
     let Some(lab) = Lab::open().await else { return };
     let gate = FakeGate::start();
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, "karl", &gate.path, out.path(), None).await;
     let mut con = Running::from_file(&path, FAST);
     con.wait("admitted", |s| s.admitted).await;
@@ -379,7 +379,7 @@ fn the_gate_request_line_bound_is_49041_octets() {
 async fn a_revoked_gate_con_retries_at_the_cap() {
     let Some(lab) = Lab::open().await else { return };
     let gate = FakeGate::start();
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, "karl", &gate.path, out.path(), None).await;
     let mut con = Running::from_file(&path, FAST);
     con.wait("admitted", |s| s.admitted).await;
@@ -427,7 +427,7 @@ async fn gate_con_reconnects_after_the_listener_restarts() {
         return;
     };
     let gate = FakeGate::start();
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, "karl", &gate.path, out.path(), None).await;
     let mut con = Running::from_file(&path, FAST);
     con.wait("admitted", |s| s.admitted).await;
@@ -494,7 +494,7 @@ async fn gate_con_reconnects_after_the_listener_restarts() {
 async fn a_second_gate_con_on_one_credential_is_refused_and_keeps_retrying() {
     let Some(lab) = Lab::open().await else { return };
     let gate = FakeGate::start();
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, "karl", &gate.path, out.path(), None).await;
     let mut first = Running::from_file(&path, FAST);
     first.wait("admitted", |s| s.admitted).await;
@@ -525,7 +525,7 @@ async fn a_second_gate_con_on_one_credential_is_refused_and_keeps_retrying() {
 async fn turns_past_the_in_flight_bound_wait_in_arrival_order() {
     let Some(lab) = Lab::open().await else { return };
     let gate = FakeGate::start();
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, "karl", &gate.path, out.path(), Some(2)).await;
     let mut con = Running::from_file(&path, FAST);
     con.wait("admitted", |s| s.admitted).await;
@@ -559,7 +559,7 @@ async fn turns_past_the_in_flight_bound_wait_in_arrival_order() {
 async fn shutdown_lets_a_turn_in_flight_finish() {
     let Some(lab) = Lab::open().await else { return };
     let gate = FakeGate::start();
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, "karl", &gate.path, out.path(), None).await;
     let mut con = Running::from_file(&path, FAST);
     con.wait("admitted", |s| s.admitted).await;
@@ -593,7 +593,7 @@ async fn shutdown_lets_a_turn_in_flight_finish() {
 async fn a_turn_abandoned_at_shutdown_is_answered_as_unknown() {
     let Some(lab) = Lab::open().await else { return };
     let gate = FakeGate::start();
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, "karl", &gate.path, out.path(), None).await;
     let mut con = Running::from_file(&path, FAST);
     con.wait("admitted", |s| s.admitted).await;
@@ -638,7 +638,7 @@ async fn a_turn_abandoned_at_shutdown_is_answered_as_unknown() {
 async fn a_turn_still_waiting_at_shutdown_is_answered_not_started() {
     let Some(lab) = Lab::open().await else { return };
     let gate = FakeGate::start();
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, "karl", &gate.path, out.path(), Some(1)).await;
     let mut con = Running::from_file(&path, FAST);
     con.wait("admitted", |s| s.admitted).await;
@@ -695,7 +695,7 @@ pub(super) type ServerStream = tokio_rustls::server::TlsStream<tokio::net::TcpSt
 
 impl FakeServer {
     pub(super) async fn start() -> Self {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_dir::tempdir().unwrap();
         let authority = Authority::init(&dir.path().join("authority"), "weaver-web", &[]).unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         Self {
@@ -973,7 +973,7 @@ fn write_mode(path: &Path, content: &str, mode: u32) {
 #[tokio::test]
 async fn a_config_that_is_not_trusted_is_refused_at_start() {
     let server = FakeServer::start().await;
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_dir::tempdir().unwrap();
     let good = dir.path().join("gate-con.toml");
     write_mode(
         &good,
@@ -1096,7 +1096,7 @@ async fn heartbeats_keep_an_idle_link_up() {
         return;
     };
     let gate = FakeGate::start();
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, "karl", &gate.path, out.path(), None).await;
     let mut con = Running::from_file(&path, FAST);
     con.wait("admitted", |s| s.admitted).await;
@@ -1118,7 +1118,7 @@ async fn heartbeats_keep_an_idle_link_up() {
 async fn a_reinstalled_config_is_picked_up_at_the_next_capped_retry() {
     let Some(lab) = Lab::open().await else { return };
     let gate = FakeGate::start();
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, "karl", &gate.path, out.path(), None).await;
     let mut con = Running::from_file(&path, FAST);
     con.wait("admitted", |s| s.admitted).await;
@@ -1133,7 +1133,7 @@ async fn a_reinstalled_config_is_picked_up_at_the_next_capped_retry() {
     })
     .await;
 
-    let rotated = tempfile::tempdir().unwrap();
+    let rotated = crate::test_dir::tempdir().unwrap();
     let answer = super::verbs::rotate(
         &lab.store,
         &lab_config(&lab),
@@ -1177,11 +1177,11 @@ async fn a_reinstalled_config_is_picked_up_at_the_next_capped_retry() {
 async fn a_reinstalled_config_for_another_agent_is_refused() {
     let Some(lab) = Lab::open().await else { return };
     let gate = FakeGate::start();
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, "karl", &gate.path, out.path(), None).await;
-    let twin_out = tempfile::tempdir().unwrap();
+    let twin_out = crate::test_dir::tempdir().unwrap();
     let (twin, twin_path) = installed(&lab, "karl", &gate.path, twin_out.path(), None).await;
-    let other_out = tempfile::tempdir().unwrap();
+    let other_out = crate::test_dir::tempdir().unwrap();
     let (other, other_path) = installed(&lab, "kevin", &gate.path, other_out.path(), None).await;
     let mut con = Running::from_file(&path, FAST);
     con.wait("admitted", |s| s.admitted).await;
@@ -1222,7 +1222,7 @@ async fn a_reinstalled_config_for_another_agent_is_refused() {
 async fn asks_past_the_waiting_bound_are_answered_busy() {
     let Some(lab) = Lab::open().await else { return };
     let gate = FakeGate::start();
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, "karl", &gate.path, out.path(), Some(1)).await;
     let mut cfg = GateConConfig::load(&path).unwrap();
     cfg.waiting_bound = 2;

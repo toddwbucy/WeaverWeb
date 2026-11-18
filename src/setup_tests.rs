@@ -101,7 +101,7 @@ pub(crate) async fn rig_full_with(
     boxes: Arc<dyn BoxReports>,
 ) -> Option<Rig> {
     let fresh = fresh_store().await?;
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_dir::tempdir().unwrap();
     let enrollment = match link {
         Some(_) => None,
         None => {
@@ -555,7 +555,7 @@ async fn a_second_open_setup_of_one_name_is_refused() {
 /// pages with nothing read, and the build page.
 #[tokio::test]
 async fn every_pane_carries_its_stage_backing_and_status() {
-    let cache = tempfile::tempdir().unwrap();
+    let cache = crate::test_dir::tempdir().unwrap();
     let Some(rig) = rig_with("127.0.0.1:8081", None, Some(cache.path().to_path_buf())).await else {
         return;
     };

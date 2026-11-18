@@ -44,7 +44,7 @@ struct Run {
 async fn running(grants: &[&str]) -> Option<Run> {
     let lab = Lab::open().await?;
     let trace = Trace::new();
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let invoker = FakeInvoker::new(grants, "idle");
     let mut cfg = config(&path);

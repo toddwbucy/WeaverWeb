@@ -1,4 +1,4 @@
-//! conforms: web-the-models-roster-is-the-first-agents
+//! conforms: web-the-models-roster-is-one-decoder-and-at-most-one-adapter
 //! conforms: web-a-pick-asks-hugging-face-only-after-the-admin-gate
 //! conforms: web-an-adapters-pick-carries-a-finite-scale
 //! conforms: web-the-base-identity-is-blake3-over-the-parts-in-split-order
@@ -568,7 +568,17 @@ async fn two_parts_show_as_one_choice_with_their_total_size() {
     // Nothing asked: the form and the roles, every pane walked.
     let bare = page(&rig.app, &format!("/setup/{setup}/models"), &ada).await;
     assert!(bare.contains("No decoder is picked."), "{bare}");
-    assert!(bare.contains("Beyond the first agent"), "{bare}");
+    assert!(
+        bare.contains("<h2>Beyond one decoder and one adapter</h2>"),
+        "{bare}"
+    );
+    assert!(
+        bare.contains(
+            "<footer>Waits on a ruling that widens the roster beyond one decoder and at most one adapter.</footer>"
+        ),
+        "{bare}"
+    );
+    assert!(!bare.contains("first agent"), "{bare}");
     assert!(bare.contains(r#"<span class="backing unbuilt">unbuilt</span><span class="status hold">hold</span></header>"#));
     assert!(walk(&bare).is_empty(), "{:?}", walk(&bare));
 }
@@ -797,7 +807,9 @@ async fn a_pick_asks_one_pull_and_the_page_shows_its_record() {
 /// **A crafted pick naming a second model, a second adapter role or the
 /// CPU is refused, saving nothing**: answered 400 before anything is
 /// looked up, so no record, no row, no pull and no request to Hugging
-/// Face.
+/// Face. A role beyond the roster and a field the pick does not take are
+/// each refused in the roster's words, one decoder and at most one adapter
+/// on it, naming no one agent's.
 #[tokio::test]
 async fn a_crafted_pick_is_refused_saving_nothing() {
     let Some((rig, fake, _, _cache)) = rig(true).await else {
@@ -839,6 +851,34 @@ async fn a_crafted_pick_is_refused_saving_nothing() {
     ] {
         let (status, body) = post_pick(&rig, &ada, &setup, crafted).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{why}: {body}");
+    }
+    let beyond = |role: &str| {
+        format!(
+            "the roster is one decoder and at most one adapter on it, and the role {role:?} is unbuilt"
+        )
+    };
+    let untaken = |field: &str| {
+        format!(
+            "a pick takes no {field:?}: the roster is one decoder and at most one adapter on it, placed on the GPU, and the rest of it is unbuilt"
+        )
+    };
+    for (crafted, words) in [
+        (
+            pick("1", "adapter2", "org/adapter", "adapter.gguf", Some("1")),
+            beyond("adapter2"),
+        ),
+        (
+            pick("1", "classifier", "org/lone", "lone.gguf", None),
+            beyond("classifier"),
+        ),
+        (base(&[("device", "cpu")]), untaken("device")),
+        (base(&[("placement", "cpu")]), untaken("placement")),
+    ] {
+        let (status, body) = post_pick(&rig, &ada, &setup, crafted).await;
+        assert_eq!(
+            (status, body.as_str()),
+            (StatusCode::BAD_REQUEST, words.as_str())
+        );
     }
     assert_eq!(
         fake.requests.load(Ordering::SeqCst),

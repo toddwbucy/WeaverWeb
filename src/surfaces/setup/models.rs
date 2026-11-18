@@ -1,13 +1,13 @@
-//! conforms: web-the-models-roster-is-the-first-agents
+//! conforms: web-the-models-roster-is-one-decoder-and-at-most-one-adapter
 //! conforms: web-a-pick-asks-hugging-face-only-after-the-admin-gate
 //! conforms: web-an-adapters-pick-carries-a-finite-scale
 //! conforms: web-an-admin-write-runs-from-its-first-record-to-its-outcome-in-a-task-the-request-cannot-cancel
 //! conforms: web-an-open-setups-adapter-pick-can-be-dropped-and-a-confirmed-setups-cannot
 //!
 //! **The models page** (Spec 6.2), a child of the setup pages' module.
-//! `GET /setup/{setup}/models` draws the setup's two roles, the first
-//! agent's roster of one decoder and one adapter, the rest of the roster
-//! drawn unbuilt, and, for a repository and a revision asked in its form,
+//! `GET /setup/{setup}/models` draws the setup's two roles, a roster of
+//! one decoder and at most one adapter on it, the rest of the roster drawn
+//! unbuilt, and, for a repository and a revision asked in its form,
 //! the commit the revision resolves to and each choice with its size. Each
 //! complete choice's header is its own fragment (`GET
 //! /setup/{setup}/models/header`), read by range through the commit and
@@ -174,7 +174,7 @@ async fn through(store: &Store, seams: &Seams) -> anyhow::Result<Through> {
     })
 }
 
-/// A role of the first agent's roster.
+/// A role of the models page's roster.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Role {
     Decoder,
@@ -789,13 +789,13 @@ struct PickAsk {
 }
 
 /// **A pick's form parsed to its shape**, before anything is looked up:
-/// each field of the six once and no other, the role one of the first
-/// agent's two, and the scale an adapter's alone, finite.
+/// each field of the six once and no other, the role one of the roster's
+/// two, and the scale an adapter's alone, finite.
 fn pick_ask(fields: &[(String, String)]) -> Result<PickAsk, String> {
     for (at, (name, _)) in fields.iter().enumerate() {
         if !PICK_FIELDS.contains(&name.as_str()) {
             return Err(format!(
-                "a pick takes no {name:?}: the first agent's roster is one decoder and one adapter, placed on the GPU, and the rest of it is unbuilt"
+                "a pick takes no {name:?}: the roster is one decoder and at most one adapter on it, placed on the GPU, and the rest of it is unbuilt"
             ));
         }
         if fields[..at].iter().any(|(earlier, _)| earlier == name) {
@@ -821,7 +821,7 @@ fn pick_ask(fields: &[(String, String)]) -> Result<PickAsk, String> {
         "adapter" => Role::Adapter,
         other => {
             return Err(format!(
-                "the first agent's roster is one decoder and one adapter, and the role {other:?} is unbuilt"
+                "the roster is one decoder and at most one adapter on it, and the role {other:?} is unbuilt"
             ));
         }
     };

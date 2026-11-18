@@ -242,10 +242,10 @@ beside them, reached from the build page's stub for the fields no setup page ask
   virtual machine, the page warns that the console could lose access to itself.
 - **The models.** A Hugging Face repository, then a pick from its files, a split model
   shown as one choice with all its parts, and the precision read from the file (section
-  10.4). What is built is what the first agent needs: one decoder and the one adapter on
-  it. Extra models, adapter roles beyond the one decoder adapter, a classifier-only
-  agent and placement on the CPU are drawn and marked unbuilt, never live, so a page
-  never accepts what a load refuses.
+  10.4). What is built is one decoder and, optionally, one adapter on it. Extra models,
+  adapter roles beyond the one decoder adapter, a classifier-only agent and placement on
+  the CPU are drawn and marked unbuilt, never live, so a page never accepts what a load
+  refuses.
 - **The drives**, as the box mounted them. Once the model is picked, the page shows the
   command to run at the appliance's console, which starts the appliance's drive setup
   (section 10.4), then the state drive, required for every agent at a minimum of 10 GiB,
@@ -261,9 +261,9 @@ beside them, reached from the build page's stub for the fields no setup page ask
   unit, GiB, serves the whole flow.
 - **The placement.** Each model on a device, and the context length chosen against the
   model's maximum, read from the file's header. The fit is called planned, from the room
-  plan without a load, since only a load measures. The first agent's Granite is a dense
-  transformer, so the room plan's KV cache term applies. "In shard order" names the
-  layer split across cards and says so.
+  plan without a load, since only a load measures. Which of the room plan's terms apply
+  follows from the model's header, so the page assumes no one agent's model. "In shard
+  order" names the layer split across cards and says so.
 - **Confirm.** The deployment tuple in full: the model's repository, commit and per-part
   digests, the adapter's likewise where one is picked, or that none is and the agent
   loads its base alone, the image's version, the driver, the cards by identity, the

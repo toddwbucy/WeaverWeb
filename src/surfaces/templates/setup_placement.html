@@ -45,7 +45,7 @@
   <div class="body">
   {%- if let Some(cards) = cards %}
   {%- for card in cards %}
-  <label><input type="checkbox" name="device" value="{{ card.ordinal }}"{% if card.checked %} checked{% endif %}> Card {{ card.ordinal }}: {{ card.identity }}</label>
+  <label><input type="checkbox" name="device" value="{{ card.ordinal }}"{% if card.checked %} checked{% endif %}> Card {{ card.ordinal }}: {{ card.model }}</label>
   {%- endfor %}
   <p>Each card by the ordinal the survey gives it in PCI bus order, the order the agent numbers its devices in. The checked cards hold the layers in ascending ordinal, the first card the first layers.</p>
   {%- else %}

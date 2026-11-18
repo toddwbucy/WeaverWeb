@@ -97,7 +97,7 @@ async fn rig() -> Option<Rig> {
             puller,
             authority_dir: dir.path().join("authority"),
             headers: crate::hugging_face::headers::Headers::new(),
-            boxes: Arc::new(crate::box_report::NoBox),
+            boxes: Arc::new(crate::box_report::Kept),
             enrollment: Some(Enrollment {
                 listener: listener.clone(),
                 authority: authority.clone(),
@@ -161,9 +161,53 @@ async fn dial(rig: &Rig, claim: &Claim) -> Dialed {
         .unwrap()
 }
 
+/// **A rig a box enrolls against**: the app serving the pairing page, and
+/// the real listener with its authority.
+trait Enrolling {
+    fn app(&self) -> &axum::Router;
+    fn listener(&self) -> &Listener;
+    fn authority(&self) -> &Authority;
+}
+
+impl Enrolling for Rig {
+    fn app(&self) -> &axum::Router {
+        &self.app
+    }
+
+    fn listener(&self) -> &Listener {
+        &self.listener
+    }
+
+    fn authority(&self) -> &Authority {
+        &self.authority
+    }
+}
+
+impl Enrolling for crate::setup_tests::Rig {
+    fn app(&self) -> &axum::Router {
+        &self.app
+    }
+
+    fn listener(&self) -> &Listener {
+        &self
+            .enrollment
+            .as_ref()
+            .expect("the rig serves the enrollment")
+            .0
+    }
+
+    fn authority(&self) -> &Authority {
+        &self
+            .enrollment
+            .as_ref()
+            .expect("the rig serves the enrollment")
+            .1
+    }
+}
+
 /// The code's entry as the page posts it, the comparison confirmed.
 async fn enter(
-    rig: &Rig,
+    rig: &impl Enrolling,
     session: &str,
     setup: &str,
     code: &str,
@@ -174,7 +218,7 @@ async fn enter(
         fields.push(("replace", id.as_str()));
     }
     send_as(
-        &rig.app,
+        rig.app(),
         "POST",
         &format!("/setup/{setup}/pair"),
         Some(form(&fields)),
@@ -1056,7 +1100,7 @@ fn outcome_of(p: Printer<Vec<u8>, Vec<u8>>) -> (serde_json::Value, String) {
 /// against the rig's listener with its code entered through the page, and
 /// `adopt` for each. Answers the answer `pair` wrote.
 async fn enrolled_on_box(
-    rig: &Rig,
+    rig: &impl Enrolling,
     session: &str,
     setup: &str,
     dir: &std::path::Path,
@@ -1071,7 +1115,7 @@ async fn enrolled_on_box(
         std::fs::write(dir.join(format!("{}.request", plane.as_str())), out).unwrap();
     }
     let args = PairArgs {
-        console: rig.listener.address().to_string(),
+        console: rig.listener().address().to_string(),
         gate_request: dir.join("gate.request"),
         admin_request: dir.join("admin.request"),
         answer: dir.join("answer.json"),
@@ -1099,7 +1143,7 @@ async fn enrolled_on_box(
     assert_eq!(waiting["event"], "waiting", "{waiting}");
     assert_eq!(
         waiting["fingerprint"],
-        grouped(&rig.authority.fingerprint()),
+        grouped(&rig.authority().fingerprint()),
         "the box shows the console's authority"
     );
     assert!(waiting["expires_in_secs"].as_u64().unwrap() > 0);
@@ -2038,4 +2082,220 @@ async fn an_entry_dropped_once_matched_still_logs_what_the_box_was_answered() {
         "the answered fingerprints were not logged"
     );
     assert_eq!(rows_named(s, "karl").await, 0);
+}
+
+/// A report sent by the box's `setup report` through the real listener,
+/// accepted.
+async fn sent(config: &std::path::Path, stage: Stage, text: &str) {
+    let (status, line) = report(config, stage, text.as_bytes()).await;
+    assert_eq!(status, Status::Done, "{line}");
+    assert_eq!(line["event"], "accepted", "{line}");
+}
+
+/// A report's text with one edit made.
+fn edited_report(text: String, edit: impl FnOnce(&mut serde_json::Value)) -> String {
+    let mut value: serde_json::Value = serde_json::from_str(&text).unwrap();
+    edit(&mut value);
+    value.to_string()
+}
+
+async fn version_of(s: &Store, setup: &str) -> String {
+    s.setup(setup).await.unwrap().unwrap().version.to_string()
+}
+
+/// **The reports a box sends feed the setup's pages, end to end** (Spec
+/// 6.2, 8.3): a box enrolled against the real listener sends `setup report`
+/// at each stage through it, and the pages read the kept reports through
+/// the survey's reader. The placement page offers the pairing report's one
+/// card, then the drives report's two. Confirm holds for a drive not
+/// mounted, for a state drive one byte under 9 GiB of filesystem, and for a
+/// kept device a later report lacks, naming each, and its post writes
+/// nothing. Once the drives report stands, Confirm writes the tuple with the
+/// box's members typed as ruled.
+#[tokio::test]
+async fn the_reports_a_box_sends_feed_placement_and_confirm() {
+    let cache = tempfile::tempdir().unwrap();
+    let (_fake, base) = crate::setup_models_tests::fake().await;
+    let Some(rig) = crate::setup_tests::rig_full_with(
+        None,
+        Some(cache.path().to_path_buf()),
+        &base,
+        Arc::new(crate::box_report::Kept),
+    )
+    .await
+    else {
+        return;
+    };
+    let s = rig.store();
+    let _identities = crate::hugging_face::base_identity::BaseIdentities::start(
+        s.clone(),
+        rig.puller.cache().cloned(),
+        rig.puller.verified(),
+    );
+    let (ada, setup) = crate::setup_models_tests::setup_of(&rig, "karl").await;
+    let on_box = tempfile::tempdir().unwrap();
+    enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a", None).await;
+    let admin_config = on_box.path().join("admin-con.toml");
+    let placement = format!("/setup/{setup}/placement");
+    let confirm = format!("/setup/{setup}/confirm");
+    let action = format!(r#"<form method="post" action="{confirm}">"#);
+    let read = |uri: String| {
+        let app = rig.app.clone();
+        let ada = ada.clone();
+        async move { crate::setup_place_tests::read(&app, &uri, &ada).await }
+    };
+    let card =
+        |n: u32, model: &str| format!(r#"name="device" value="{n}"> Card {n}: {model}</label>"#);
+
+    // The pairing stage's report, one card: the placement page offers it.
+    let pairing = edited_report(crate::setup_place_tests::pairing_report(), |v| {
+        v["cards"] = serde_json::json!([v["cards"][0].clone()]);
+    });
+    sent(&admin_config, Stage::Pairing, &pairing).await;
+    let offered = read(placement.clone()).await;
+    assert!(offered.contains(&card(0, "card-a")), "{offered}");
+    assert!(!offered.contains("Card 1:"), "{offered}");
+
+    // The drives stage's report, the models drive not mounted: its two cards
+    // are offered, and Confirm holds naming the drive.
+    let unmounted = edited_report(crate::setup_place_tests::drives_report(), |v| {
+        v["drives"][1] = serde_json::json!(
+            {"role": "models", "mount_point": "/mnt/weaver/models", "mounted": false}
+        );
+    });
+    sent(&admin_config, Stage::Drives, &unmounted).await;
+    let offered = read(placement.clone()).await;
+    assert!(offered.contains(&card(0, "card-a")), "{offered}");
+    assert!(offered.contains(&card(1, "card-b")), "{offered}");
+
+    crate::setup_place_tests::decoder_picked(&rig, &ada, &setup, &version_of(s, &setup).await)
+        .await;
+    let pull = crate::setup_models_tests::pull_of(s, &setup, "decoder").await;
+    assert_eq!(crate::setup_models_tests::ended(s, &pull).await, "verified");
+    let (status, body) = crate::setup_models_tests::post_pick(
+        &rig,
+        &ada,
+        &setup,
+        crate::setup_models_tests::pick(
+            &version_of(s, &setup).await,
+            "adapter",
+            "org/adapter",
+            "adapter.gguf",
+            Some("0.5"),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let pull = crate::setup_models_tests::pull_of(s, &setup, "adapter").await;
+    assert_eq!(crate::setup_models_tests::ended(s, &pull).await, "verified");
+    let (status, body, _) = crate::setup_place_tests::post(
+        &rig,
+        &ada,
+        &setup,
+        "placement",
+        &[
+            ("version", &version_of(s, &setup).await),
+            ("context_length", "4096"),
+            ("turn_context", "independent"),
+            ("device", "1"),
+            ("device", "0"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    crate::setup_place_tests::identity_kept(s).await;
+
+    let held_for = |reason: &'static str| {
+        let confirm = confirm.clone();
+        let action = action.clone();
+        let rig = &rig;
+        let ada = ada.clone();
+        let setup = setup.clone();
+        async move {
+            let held = read(confirm.clone()).await;
+            assert!(held.contains(reason), "{reason}: {held}");
+            assert!(!held.contains(&action), "{held}");
+            let version = version_of(rig.store(), &setup).await;
+            let (status, body, _) = crate::setup_place_tests::post(
+                rig,
+                &ada,
+                &setup,
+                "confirm",
+                &[("version", &version)],
+            )
+            .await;
+            assert_eq!(status, StatusCode::CONFLICT, "{body}");
+            assert!(body.contains(reason), "{reason}: {body}");
+            assert_eq!(rig.store().deployment_tuple(&setup).await.unwrap(), None);
+        }
+    };
+    held_for("the models drive at /mnt/weaver/models is not mounted").await;
+
+    // The state drive one byte under the figure holds Confirm.
+    let small_state = edited_report(crate::setup_place_tests::drives_report(), |v| {
+        v["drives"][0]["bytes"] = serde_json::json!(crate::box_report::STATE_DRIVE_FLOOR - 1);
+    });
+    sent(&admin_config, Stage::Drives, &small_state).await;
+    held_for("under 9 GiB").await;
+
+    // A later report lacking a kept device holds Confirm, naming its ordinal.
+    let one_card = edited_report(crate::setup_place_tests::drives_report(), |v| {
+        v["cards"] = serde_json::json!([v["cards"][0].clone()]);
+    });
+    sent(&admin_config, Stage::Drives, &one_card).await;
+    held_for("card 1 is not among the survey's cards").await;
+
+    // The drives report as it stands: Confirm stands and writes the tuple.
+    sent(
+        &admin_config,
+        Stage::Drives,
+        &crate::setup_place_tests::drives_report(),
+    )
+    .await;
+    let ready = read(confirm.clone()).await;
+    assert!(ready.contains(&action), "{ready}");
+    assert!(ready.contains("card-b, 0000:07:00.0, 23.99 GiB"), "{ready}");
+    let (status, body, _) = crate::setup_place_tests::post(
+        &rig,
+        &ada,
+        &setup,
+        "confirm",
+        &[("version", &version_of(s, &setup).await)],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let confirmed = s.deployment_tuple(&setup).await.unwrap().unwrap();
+    let members = &confirmed.tuple.box_members;
+    assert_eq!(members.report.stage, "drives");
+    assert_eq!(members.image.version, "2.0");
+    assert_eq!(members.driver_version, "620.70.06");
+    assert_eq!(members.cuda_runtime_version, "13.4.92");
+    let cards: Vec<_> = members
+        .cards
+        .iter()
+        .map(|c| (c.ordinal, c.model.as_str(), c.pci_address.as_str()))
+        .collect();
+    assert_eq!(
+        cards,
+        vec![(0, "card-a", "0000:06:00.0"), (1, "card-b", "0000:07:00.0")]
+    );
+    assert_eq!(members.cpu.model_name, "cpu-1");
+    assert_eq!(members.machine.product, "machine-1");
+    assert_eq!(members.machine.kernel_release, "7.3.4-arch1-2");
+    assert_eq!(
+        members
+            .drives
+            .iter()
+            .map(|d| (d.role.as_str(), d.bytes))
+            .collect::<Vec<_>>(),
+        vec![("state", 25_191_575_552), ("models", 135_089_524_736)]
+    );
+    assert_eq!(confirmed.tuple.devices, vec![0, 1]);
+    let stored: serde_json::Value =
+        sqlx::query_scalar("SELECT box_members FROM deployment_tuple WHERE setup_id = $1")
+            .bind(&setup)
+            .fetch_one(&s.pool)
+            .await
+            .unwrap();
+    assert!(!stored.to_string().contains("free_bytes"), "{stored}");
 }

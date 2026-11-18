@@ -20,7 +20,7 @@ use std::time::Duration;
 use axum::http::{HeaderMap, StatusCode, header};
 
 use crate::admin_tests::{admin, form, send_as, signed_in};
-use crate::box_report::{BoxReports, NoBox};
+use crate::box_report::{BoxReports, Kept};
 use crate::passkeys_tests::{ORIGIN, app, authenticator, passkeys};
 use crate::store::Store;
 use crate::store::read::tests::{Fresh, fresh_store};
@@ -33,6 +33,20 @@ pub(crate) struct Rig {
     pub(crate) app: axum::Router,
     /// The puller the models page asks, whose cache is `model_cache`.
     pub(crate) puller: crate::hugging_face::pull::Puller,
+    /// The real listener and its authority, where the rig serves the
+    /// enrollment (Spec 8.2), for a box's commands end to end.
+    pub(crate) enrollment: Option<(
+        crate::link::listener::Listener,
+        Arc<crate::link::authority::Authority>,
+    )>,
+}
+
+impl Drop for Rig {
+    fn drop(&mut self) {
+        if let Some((listener, _)) = &self.enrollment {
+            listener.stop_now();
+        }
+    }
 }
 
 impl Rig {
@@ -53,7 +67,7 @@ pub(crate) async fn rig_with(
         link_address,
         model_cache,
         "http://127.0.0.1:9/",
-        Arc::new(NoBox),
+        Arc::new(Kept),
     )
     .await
 }
@@ -68,11 +82,60 @@ pub(crate) async fn rig_full(
     hugging_face: &str,
     boxes: Arc<dyn BoxReports>,
 ) -> Option<Rig> {
+    rig_full_with(
+        Some((link_listen, link_address)),
+        model_cache,
+        hugging_face,
+        boxes,
+    )
+    .await
+}
+
+/// **The rig, with the real listener where `link` is none**: an authority
+/// in the rig's directory and the listener on a port of its own, which the
+/// setup pages' enrollment seam carries, so a box's commands run against it.
+pub(crate) async fn rig_full_with(
+    link: Option<(&str, Option<&str>)>,
+    model_cache: Option<PathBuf>,
+    hugging_face: &str,
+    boxes: Arc<dyn BoxReports>,
+) -> Option<Rig> {
     let fresh = fresh_store().await?;
     let dir = tempfile::tempdir().unwrap();
-    let mut cfg = crate::agents_tests::server_config(dir.path(), "127.0.0.1:1".parse().unwrap());
-    cfg.link_listen = link_listen.to_owned();
-    cfg.link_address = link_address.map(str::to_owned);
+    let enrollment = match link {
+        Some(_) => None,
+        None => {
+            let authority = Arc::new(
+                crate::link::authority::Authority::init(
+                    &dir.path().join("authority"),
+                    "weaver-web",
+                    &[],
+                )
+                .unwrap(),
+            );
+            let listener = crate::link::listener::Listener::start_with(
+                fresh.store.clone(),
+                &authority,
+                "127.0.0.1:0",
+                Duration::from_secs(4),
+                Some(dir.path().join("operations.log")),
+            )
+            .await
+            .unwrap();
+            Some((listener, authority))
+        }
+    };
+    let mut cfg = crate::agents_tests::server_config(
+        dir.path(),
+        match &enrollment {
+            Some((listener, _)) => listener.address(),
+            None => "127.0.0.1:1".parse().unwrap(),
+        },
+    );
+    if let Some((link_listen, link_address)) = link {
+        cfg.link_listen = link_listen.to_owned();
+        cfg.link_address = link_address.map(str::to_owned);
+    }
     cfg.model_cache = model_cache.clone();
     let client = crate::hugging_face::Client::with_base(hugging_face).unwrap();
     let cache = model_cache.map(|root| crate::hugging_face::cache::Cache::at(&root).unwrap());
@@ -97,7 +160,12 @@ pub(crate) async fn rig_full(
             authority_dir: dir.path().join("authority"),
             headers: crate::hugging_face::headers::Headers::new(),
             boxes,
-            enrollment: None,
+            enrollment: enrollment.as_ref().map(|(listener, authority)| {
+                crate::surfaces::setup::Enrollment {
+                    listener: listener.clone(),
+                    authority: authority.clone(),
+                }
+            }),
         }))
         .with_state(fresh.store.clone()),
         policy,
@@ -108,6 +176,7 @@ pub(crate) async fn rig_full(
         _dir: dir,
         app,
         puller,
+        enrollment,
     })
 }
 

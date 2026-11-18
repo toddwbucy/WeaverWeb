@@ -254,16 +254,38 @@ impl Store {
         &self,
         setup_id: &str,
     ) -> anyhow::Result<Vec<(String, String, chrono::DateTime<chrono::Utc>)>> {
-        let rows = sqlx::query(
-            "SELECT stage, report, arrived_at FROM agent_setup_report WHERE setup_id = $1 \
-             ORDER BY stage = 'drives', stage",
-        )
-        .bind(setup_id)
-        .fetch_all(&self.pool)
-        .await?;
-        Ok(rows
-            .iter()
-            .map(|r| (r.get("stage"), r.get("report"), r.get("arrived_at")))
-            .collect())
+        let mut conn = self.pool.acquire().await?;
+        setup_reports_on(&mut conn, setup_id).await
     }
+
+    /// **What the box reports for the setup, read through `boxes`** (Spec
+    /// 6.2), on a connection of its own: the setup pages' read.
+    pub async fn reports(
+        &self,
+        boxes: &dyn crate::box_report::BoxReports,
+        setup_id: &str,
+    ) -> anyhow::Result<crate::box_report::Reports> {
+        let mut conn = self.pool.acquire().await?;
+        boxes.reports(&mut conn, setup_id).await
+    }
+}
+
+/// **The setup's reports on `conn`**, each stage's latest, verbatim, with
+/// the time it arrived, the pairing's first: inside Confirm's transaction,
+/// once its update holds the setup's row, every report written before it.
+pub async fn setup_reports_on(
+    conn: &mut sqlx::PgConnection,
+    setup_id: &str,
+) -> anyhow::Result<Vec<(String, String, chrono::DateTime<chrono::Utc>)>> {
+    let rows = sqlx::query(
+        "SELECT stage, report, arrived_at FROM agent_setup_report WHERE setup_id = $1 \
+         ORDER BY stage = 'drives', stage",
+    )
+    .bind(setup_id)
+    .fetch_all(&mut *conn)
+    .await?;
+    Ok(rows
+        .iter()
+        .map(|r| (r.get("stage"), r.get("report"), r.get("arrived_at")))
+        .collect())
 }

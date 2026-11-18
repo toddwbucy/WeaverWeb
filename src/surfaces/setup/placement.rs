@@ -119,7 +119,7 @@ struct ContextView {
 /// A card of the survey's report, as the devices pane offers it.
 struct CardView {
     ordinal: i32,
-    identity: String,
+    model: String,
     checked: bool,
 }
 
@@ -224,13 +224,17 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, setup_id: &str) -
         }
     };
     let kept = setup.devices.clone().unwrap_or_default();
-    let cards = seams.boxes.survey(setup_id).map(|cards| {
+    let reports = match store.reports(seams.boxes.as_ref(), setup_id).await {
+        Ok(reports) => reports,
+        Err(e) => return fault(e),
+    };
+    let cards = reports.cards().map(|cards| {
         cards
             .into_iter()
             .map(|c| CardView {
                 checked: kept.contains(&c.ordinal),
                 ordinal: c.ordinal,
-                identity: c.identity,
+                model: c.model,
             })
             .collect()
     });
@@ -418,7 +422,10 @@ async fn save(
         Ok(rows) => rows,
         Err(e) => return fault(e),
     };
-    let survey = seams.boxes.survey(setup_id);
+    let survey = match store.reports(seams.boxes.as_ref(), setup_id).await {
+        Ok(reports) => reports.cards(),
+        Err(e) => return fault(e),
+    };
     if let Err(why) = held_to_sources(&ask, maximum(&rows), survey.as_deref()) {
         return refused(&Refusal::Unplaceable(why));
     }
@@ -495,7 +502,7 @@ mod tests {
         };
         let cards = [Card {
             ordinal: 3,
-            identity: "card".into(),
+            model: "card".into(),
         }];
         let held = |context_length, maximum| {
             held_to_sources(&ask(context_length, &[]), maximum, None).is_ok()

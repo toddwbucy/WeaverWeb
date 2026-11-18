@@ -4827,6 +4827,10 @@ the report.
   and names it.
 - A report that is absent or refused feeds nothing, and each page and member it would
   feed is held, naming it.
+- A report kept under one stage whose own `stage` names the other is misfiled, this
+  document's election of 2026-11-17. It feeds nothing, and what it would feed is held,
+  naming the stage it names, so a tuple never records a `pairing` report as the `drives`
+  stage's.
 
 **The pairing page's report**, this document's election of 2026-11-17: the report's
 arrival and `taken`, then its members grouped: the image, the kernel, the machine, the
@@ -4894,6 +4898,11 @@ stage's report, every drive mounted and the state drive's filesystem at 9 GiB or
 Until then Confirm holds and says which members it waits on, naming the report, the
 drive or the ordinal. A post to Confirm with a member unread is refused, writing
 nothing. Confirm then goes to the build page.
+
+**Confirm reads the box's reports inside its transaction**, this document's election of
+2026-11-17, once its update holds the setup's row. A report's write holds that row
+shared, so Confirm reads every report written before it, and a report written after it
+is refused `setup_closed`.
 
 **Confirm posts the setup's version alone**, every member read from its source and never
 from the form. Its order is section 2.13's: the version parsed (400 for any other
@@ -7435,10 +7444,12 @@ two connectors report.
 | a refusal's detail quotes a value the report chose cut to 64 bytes and escaped as the box's printer escapes | perturbation in `src/survey_tests.rs`, `a_refusals_detail_quotes_a_value_cut_to_its_bound` and `a_refusals_detail_escapes_a_control_or_non_ascii_byte`: drop the bound, and a 1000-byte `format` is quoted whole; drop the escaping, or quote the `format` or a name given twice in Rust's debug form, and ESC or a non-ASCII byte reaches the detail (each measured) |
 | a member name given twice in one object, at any depth, refuses the whole report | perturbation in `src/survey_tests.rs`, `refusal_3_a_member_name_given_twice_in_one_object_at_any_depth`: drop the check, and `stage` given twice reads its first; look at the top object alone, and a name given twice in `kernel`, in `cards[1]`, in a drive and in an unknown member reads (each measured) |
 | an integer is judged by its written form | perturbation in `src/survey_tests.rs`, `refusal_6_an_integer_negative_fractional_with_an_exponent_or_past_2_53_less_1`: read a whole number the parser gives as a float as an integer, and `1.0` and `1e3` read; drop the 2^53 - 1 bound, and 2^53 is refused as past the family's bound, not as an integer (each measured) |
-| the cards the placement page offers are the `drives` stage's report's where it reads, else the `pairing` stage's | **owed**: a `drives` report carrying a card the `pairing` report lacks, and the card is offered; prefer the `pairing` report, and it is not; refuse the `drives` report, and the `pairing` report's cards are offered |
-| Confirm's box members are the `drives` stage's report's, typed as section 6.2 lists them, and Confirm holds naming the report while it is absent or refused | **owed**: take the members from the `pairing` report, and Confirm stands with no drive mounted; drop the hold, and a refused `drives` report's setup is confirmed |
-| a kept device that a later report lacks is refused at Confirm, naming the ordinal | **owed**: drop the check, and the tuple names a card the box no longer reports |
-| a drive not mounted and a state drive whose filesystem is under 9 GiB hold Confirm, and a models drive's free space under the need is a warning | **owed**: drop each hold, and Confirm stands; move the figure by one byte, and a filesystem of exactly 9 GiB holds or one a byte under it stands; judge at 10 GiB, and a 10 GiB disk's ext4 size of about 9.75 GiB holds; hold on the models drive's free space, and Confirm holds |
+| the cards the placement page offers are the `drives` stage's report's where it reads, else the `pairing` stage's | perturbation in `src/box_report_tests.rs`, `the_cards_are_the_drives_reports_where_it_reads_else_the_pairing_reports`: prefer the `pairing` report, and the `drives` report's second card is not offered (measured); end to end in `src/enrollment_tests.rs`, `the_reports_a_box_sends_feed_placement_and_confirm`, the pairing report's one card offered, then the drives report's two |
+| Confirm's box members are the `drives` stage's report's, typed as section 6.2 lists them, and Confirm holds naming the report while it is absent, refused or misfiled | perturbation in `src/box_report_tests.rs`, `the_box_members_are_the_drives_reports_typed_as_ruled` and `confirm_holds_naming_the_drives_report_while_it_is_absent_refused_or_misfiled`: take the members from the `pairing` report, and both fail; read a misfiled report as its stage's, and a `pairing` report kept as the `drives` stage's gives the members (each measured); end to end in `src/enrollment_tests.rs`, `the_reports_a_box_sends_feed_placement_and_confirm`, the tuple written with the members |
+| a kept device that a later report lacks is refused at Confirm, naming the ordinal | perturbation end to end in `src/enrollment_tests.rs`, `the_reports_a_box_sends_feed_placement_and_confirm`: drop the check, and Confirm stands after a report carrying one card with card 1 kept (measured) |
+| a store that fails to answer the box's reports is a fault, never an absent report | perturbation in `src/setup_place_tests.rs`, `a_store_that_fails_to_answer_is_a_fault_never_an_absent_report`: read a store's error as no report, and the placement page draws its devices held (measured); end to end, the kept source made to read nothing, and the end-to-end test fails (measured) |
+| a drive not mounted and a state drive whose filesystem is under 9 GiB hold Confirm | perturbation in `src/box_report_tests.rs`, `confirm_holds_for_a_drive_not_mounted_naming_it` and `the_state_drive_holds_confirm_under_9_gib_of_filesystem_and_not_at_it`, and end to end in `src/enrollment_tests.rs`, `the_reports_a_box_sends_feed_placement_and_confirm`: drop the unmounted drive's hold, and Confirm stands with the models drive not mounted; hold at the figure, and a filesystem of exactly 9 GiB holds; move the figure a byte lower, and one a byte under it stands; judge at 10 GiB, and a 10 GiB disk's ext4 size of 10464022528 bytes holds (each measured) |
+| a models drive's free space under the need is a warning, not a hold | **owed**: hold on the models drive's free space, and Confirm holds |
 | a refused report is shown by its stage, arrival and cause, never its verbatim text or the refusal's detail, and holds what it would feed | **owed**: draw the verbatim text or the detail, and the page carries it; read a refused report's cards, and the placement page offers them |
 | the base's identity is BLAKE3 over the parts in split order | perturbation in `src/hugging_face/base_identity.rs`'s tests: hash in the listing's order, or part 1 alone, and the digest differs from BLAKE3 over part 1's bytes, then part 2's (each measured) |
 | the base's identity is computed at a start that finds it owed, and once the puller verifies a decoder's pull, and is "not read" until then | perturbation in `src/setup_models_tests.rs`, `the_base_identity_is_owed_until_a_start_hashes_it` and `a_verified_pull_wakes_the_hasher`, each waiting ten seconds against the hasher's idle recheck of fifteen: let the hasher wait before its first read, and a start with no word pending leaves the identity owed; drop the puller's word at a verified pull, and the running hasher misses it; show the identity read while it is owed, and the first test names it (each measured). `a_git_kept_decoder_part_is_hashed_from_its_blob`: hash the pull's rows as read, so a part kept in git is opened under its computed SHA-256, and the identity stays owed (measured) |

@@ -29,6 +29,7 @@ use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
 
 use super::{Frame, MALFORMED_SETUP, Page, Seams, admin_read, frame, landed, when};
+use crate::box_report::{BoxMembers, gib};
 use crate::store::Store;
 use crate::store::admin::Refusal;
 use crate::store::audit::Target;
@@ -118,10 +119,76 @@ fn model_rows(model: &Model) -> Vec<(String, String)> {
     rows
 }
 
+/// The box's machine as the tuple keeps it (Spec 6.2): the report read, the
+/// image, the driver and CUDA runtime, each card, the guest CPU and the
+/// machine.
+fn machine_rows(b: &BoxMembers) -> Vec<(String, String)> {
+    let mut rows = vec![
+        (
+            "Report".to_owned(),
+            format!(
+                "the {} stage's, taken {}",
+                b.report.stage,
+                b.report.taken.format("%Y-%m-%dT%H:%M:%SZ")
+            ),
+        ),
+        ("Image version".to_owned(), b.image.version.clone()),
+        (
+            "Image manifest SHA-256".to_owned(),
+            b.image.manifest_sha256.clone(),
+        ),
+        ("Driver".to_owned(), b.driver_version.clone()),
+        ("CUDA runtime".to_owned(), b.cuda_runtime_version.clone()),
+    ];
+    for card in &b.cards {
+        rows.push((
+            format!("Card {}", card.ordinal),
+            format!(
+                "{}, {}, {}",
+                card.model,
+                card.pci_address,
+                gib(card.memory_bytes)
+            ),
+        ));
+    }
+    rows.extend([
+        (
+            "Guest CPU".to_owned(),
+            format!("{}, {}", b.cpu.vendor, b.cpu.model_name),
+        ),
+        (
+            "CPU family, model and stepping".to_owned(),
+            format!("{}, {}, {}", b.cpu.family, b.cpu.model, b.cpu.stepping),
+        ),
+        ("Logical CPUs".to_owned(), b.cpu.logical_cpus.to_string()),
+        (
+            "CPU flags".to_owned(),
+            format!("{}: {}", b.cpu.flags.len(), b.cpu.flags.join(" ")),
+        ),
+        (
+            "Virtualization".to_owned(),
+            b.machine.virtualization.clone(),
+        ),
+        (
+            "Machine".to_owned(),
+            format!(
+                "{}, {}, {}",
+                b.machine.vendor, b.machine.product, b.machine.version
+            ),
+        ),
+        ("Memory".to_owned(), gib(b.machine.memory_total_bytes)),
+        (
+            "Kernel release".to_owned(),
+            b.machine.kernel_release.clone(),
+        ),
+    ]);
+    rows
+}
+
 /// **Every member of the tuple as a pane**, in the Spec's order.
 fn members_view(m: &Members) -> Vec<MemberView> {
     let one = |label: &str, value: String| vec![(label.to_owned(), value)];
-    let box_waits = "the box's members, which the enrollment's report brings";
+    let box_waits = "the box's members, from the drives stage's report";
     vec![
         member(
             "The decoder",
@@ -187,25 +254,33 @@ fn members_view(m: &Members) -> Vec<MemberView> {
         ),
         member(
             "The box's machine",
-            "the box's report",
+            "the drives stage's report",
             box_waits,
             &m.box_members,
-            |b| {
-                vec![
-                    ("Image version".to_owned(), b.image_version.clone()),
-                    ("Driver".to_owned(), b.driver.clone()),
-                    ("Cards".to_owned(), b.cards.join(", ")),
-                    ("Guest CPU".to_owned(), b.guest_cpu.clone()),
-                    ("Machine".to_owned(), b.machine.clone()),
-                ]
-            },
+            machine_rows,
         ),
         member(
             "The drives",
-            "the box's report",
+            "the drives stage's report",
             box_waits,
             &m.box_members,
-            |b| one("Drives", b.drives.join(", ")),
+            |b| {
+                b.drives
+                    .iter()
+                    .map(|d| {
+                        (
+                            format!("The {} drive", d.role),
+                            format!(
+                                "{}, {}, {}, project quota {}",
+                                d.label,
+                                d.filesystem,
+                                gib(d.bytes),
+                                if d.project_quota { "on" } else { "off" }
+                            ),
+                        )
+                    })
+                    .collect()
+            },
         ),
         member(
             "The devices",
@@ -289,11 +364,7 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, setup_id: &str) -
             Err(e) => return fault(e),
         }
     } else {
-        let survey = seams.boxes.survey(setup_id);
-        match store
-            .members(&setup, survey.as_deref(), seams.boxes.members(setup_id))
-            .await
-        {
+        match store.members(&setup, seams.boxes.as_ref()).await {
             Ok(members) => (members, None),
             Err(e) => return fault(e),
         }
@@ -367,12 +438,7 @@ async fn confirm(
         Ok(None) => return refused(&Refusal::NoSuchSetup),
         Err(e) => return fault(e),
     };
-    let survey = seams.boxes.survey(setup_id);
-    let reported = seams.boxes.members(setup_id);
-    match store
-        .members(&setup, survey.as_deref(), reported.clone())
-        .await
-    {
+    match store.members(&setup, seams.boxes.as_ref()).await {
         Ok(members) => {
             if let Err(unread) = members.tuple() {
                 return refused(&Refusal::Unconfirmable(unread.join(", ")));
@@ -392,8 +458,7 @@ async fn confirm(
             setup_id,
             version,
             &tuple_id,
-            survey.as_deref(),
-            reported,
+            seams.boxes.as_ref(),
         )
         .await;
     settled(&store, &first, &written).await;

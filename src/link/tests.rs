@@ -226,7 +226,7 @@ impl Fake {
 
     /// Whether the server closed the connection: end of stream or an
     /// error within the bound, as against a connection merely silent.
-    async fn closed(&mut self) -> bool {
+    pub(super) async fn closed(&mut self) -> bool {
         let mut line = String::new();
         match tokio::time::timeout(SOON, self.reader.read_line(&mut line)).await {
             Ok(Ok(0)) | Ok(Err(_)) => true,
@@ -235,15 +235,21 @@ impl Fake {
         }
     }
 
+    /// The refusal `reason`, then the connection's close: an end of stream
+    /// or an error, never a connection left open and silent, which `recv`
+    /// would also read as nothing.
     pub(super) async fn expect_refusal(&mut self, reason: Refusal) {
+        self.expect_refusal_frame(reason).await;
+        assert!(self.closed().await, "the connection closes after a refusal");
+    }
+
+    /// The refusal `reason` alone, for a test that times its arrival before
+    /// it checks the close.
+    pub(super) async fn expect_refusal_frame(&mut self, reason: Refusal) {
         match self.recv().await {
             Some(ToClient::Refusal { reason: got }) => assert_eq!(got, reason),
             other => panic!("expected the refusal {reason}, got {other:?}"),
         }
-        assert!(
-            self.recv().await.is_none(),
-            "the connection closes after a refusal"
-        );
     }
 }
 

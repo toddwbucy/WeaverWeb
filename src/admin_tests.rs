@@ -1280,6 +1280,7 @@ async fn each_write_to_a_person_dropped_at_its_first_record_still_lands() {
     assert_eq!(issued.len(), 1, "one token outstanding");
     assert_ne!(issued[0], enrolled[0], "and it is the new one");
     let row = persons_row(&app, &session, &bea).await;
+    assert!(row.contains("<td>enabled</td>"), "{row}");
     assert!(row.contains("<td>outstanding</td>"), "{row}");
 
     let v = version(s, &bea).await;
@@ -1454,4 +1455,154 @@ async fn an_admin_write_stalled_past_its_bound_never_commits() {
     assert_eq!(status, StatusCode::SEE_OTHER, "the retry lands: {page}");
     assert_eq!(name_of(s, &bea).await, "beatrix");
     assert_eq!(audited(s, &ada, &bea, "person rename").await, (2, 1, 0));
+}
+
+/// **A step four whose COMMIT went out before its bound runs to its end**
+/// (Spec 2.13): bea's rename is held just after its COMMIT answered until a
+/// moment past the deadline step four was placed under, as an answer that
+/// comes late, or a step slow after its commit, would hold it. The bound's
+/// wake finds the COMMIT sent and lets the step run on, so the request is
+/// answered 303 past the deadline, the name is changed and the act's
+/// outcome stands `ok`.
+///
+/// Perturbation: bound step four with `deadline::before`, which reads the
+/// deadline whether or not the COMMIT went out, and the request is
+/// answered 503 "not made" for a rename that landed.
+#[tokio::test]
+async fn an_admin_write_whose_commit_answers_past_its_bound_is_answered_as_made() {
+    use crate::deadline::hold::{self, Point};
+    use crate::surfaces::admin::WRITE_BOUND_FOR_TEST;
+    const BOUND: Duration = Duration::from_millis(1500);
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let app = app(s, Some(passkeys()));
+    let (ada, session) = admin(&app, s, &mut authenticator(), "ada").await;
+    let (bea, _) = person_with_token(s, "bea").await;
+    let v = version(s, &bea).await;
+    let rename = form(&[("person", &bea), ("version", &v), ("name", "beatrix")]);
+    WRITE_BOUND_FOR_TEST.with(|b| b.set(Some(BOUND)));
+
+    let held = hold::arm(Point::AdminWriteAnswered);
+    let asked = tokio::time::Instant::now();
+    let (status, _, page) = send_as(
+        &app,
+        "POST",
+        "/admin/persons/rename",
+        Some(rename),
+        &session,
+    )
+    .await;
+    let took = asked.elapsed();
+    assert_eq!(status, StatusCode::SEE_OTHER, "answered as made: {page}");
+    assert!(took >= BOUND, "answered past the bound: {took:?}");
+    assert!(
+        held.reached() && held.let_go(),
+        "held after its commit until past the deadline"
+    );
+    drop(held);
+    assert_eq!(name_of(s, &bea).await, "beatrix");
+    assert_eq!(audited(s, &ada, &bea, "person rename").await, (1, 1, 0));
+    pool_settled(s).await;
+}
+
+/// **A token whose COMMIT answers past its bound is shown once**: bea's
+/// token is held just after its COMMIT answered until a moment past the
+/// bound, the page's chrome read after it. The step runs on, so the page
+/// shows the token under `no-store`, the token shown is the one held as a
+/// digest, the enrollment's is superseded, and the act's outcome is `ok`.
+///
+/// Perturbation: bound step four with `deadline::before`, and the request
+/// is answered 503 "not made" while the token it issued is live and lost.
+#[tokio::test]
+async fn a_token_whose_commit_answers_past_its_bound_is_shown_once() {
+    use crate::deadline::hold::{self, Point};
+    use crate::surfaces::admin::WRITE_BOUND_FOR_TEST;
+    const BOUND: Duration = Duration::from_millis(1500);
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let app = app(s, Some(passkeys()));
+    let (ada, session) = admin(&app, s, &mut authenticator(), "ada").await;
+    let (bea, _) = person_with_token(s, "bea").await;
+    let enrolled = unended_tokens(s, &bea).await;
+    assert_eq!(enrolled.len(), 1, "the enrollment's one token");
+    WRITE_BOUND_FOR_TEST.with(|b| b.set(Some(BOUND)));
+
+    let held = hold::arm(Point::AdminWriteAnswered);
+    let asked = tokio::time::Instant::now();
+    let (status, headers, shown) = send_as(
+        &app,
+        "POST",
+        "/admin/persons/token",
+        Some(form(&[("person", &bea)])),
+        &session,
+    )
+    .await;
+    let took = asked.elapsed();
+    assert_eq!(status, StatusCode::OK, "the token is shown: {shown}");
+    assert_eq!(headers[header::CACHE_CONTROL], "no-store");
+    assert!(took >= BOUND, "answered past the bound: {took:?}");
+    assert!(
+        held.reached() && held.let_go(),
+        "held after its commit until past the deadline"
+    );
+    drop(held);
+    let token = token_in(&shown);
+    assert_eq!(
+        unended_tokens(s, &bea).await,
+        vec![identity::digest(&token)],
+        "the token shown is the one outstanding"
+    );
+    assert_eq!(audited(s, &ada, &bea, "person token").await, (1, 1, 0));
+}
+
+/// **A token stalled before its COMMIT is not issued, and says so**: bea's
+/// token is held just before its COMMIT until the very deadline, the
+/// converse of the token shown past its bound. The request is answered 503
+/// "not made", the COMMIT was never sent, the enrollment's token stays the
+/// one outstanding, and the first record stands with no outcome.
+///
+/// Perturbation: await step four with no bound, and the held COMMIT goes
+/// out, a new token superseding the enrollment's while the admin is told
+/// nothing was made.
+#[tokio::test]
+async fn a_token_stalled_before_its_commit_is_not_issued() {
+    use crate::deadline::hold::{self, Point};
+    use crate::surfaces::admin::WRITE_BOUND_FOR_TEST;
+    const BOUND: Duration = Duration::from_millis(1500);
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let app = app(s, Some(passkeys()));
+    let (ada, session) = admin(&app, s, &mut authenticator(), "ada").await;
+    let (bea, _) = person_with_token(s, "bea").await;
+    let enrolled = unended_tokens(s, &bea).await;
+    WRITE_BOUND_FOR_TEST.with(|b| b.set(Some(BOUND)));
+
+    let held = hold::arm(Point::AdminWrite);
+    let (status, _, page) = send_as(
+        &app,
+        "POST",
+        "/admin/persons/token",
+        Some(form(&[("person", &bea)])),
+        &session,
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{page}");
+    assert!(page.contains("the write was not made"), "{page}");
+    assert!(!held.let_go(), "the COMMIT was never sent");
+    let tokens = held
+        .settled(|| unended_tokens(s, &bea), |t| t != &enrolled)
+        .await;
+    assert_eq!(
+        tokens, enrolled,
+        "the enrollment's token stays the one outstanding"
+    );
+    drop(held);
+    assert_eq!(audited(s, &ada, &bea, "person token").await, (1, 0, 0));
+    pool_settled(s).await;
 }

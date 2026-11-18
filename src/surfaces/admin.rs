@@ -1,6 +1,6 @@
 //! conforms: web-an-admins-write-to-a-person-is-checked-in-its-transaction
 //! conforms: web-an-admin-write-runs-from-its-first-record-to-its-outcome-in-a-task-the-request-cannot-cancel
-//! conforms: web-an-admin-writes-step-four-is-bounded-from-its-place-to-its-commit-and-never-commits-past-it
+//! conforms: web-an-admin-writes-step-four-is-bounded-from-its-place-until-its-commit-is-sent-never-sends-one-past-it-and-runs-to-its-end-once-it-has
 //!
 //! **An admin's writes to persons** (Spec 2.13; act 11, PR 5a): the page
 //! that lists every person, and enrolling, issuing a token, disabling,
@@ -265,28 +265,47 @@ pub(crate) async fn settled<T>(
 /// refusal record and no act. A person's own writes, through `audit_first`,
 /// are not run so (#159).
 ///
-/// **Step four is bounded from its place to its commit** by the policy's
-/// `write_bound`, the silence bound, under [`crate::deadline::before`], which
-/// never polls the write at or past its deadline: a step still waiting
-/// there is dropped where it stands, its transaction never committed and
-/// its connection back in the pool, and the request is answered that the
-/// write was not made. A dropped request's write can then land at most
-/// one bound after its place, never after a retry made later than that.
-/// No outcome is written past the deadline, so its first record stands
-/// with none, as a crash leaves one.
+/// **Step four is bounded from its place until its COMMIT is sent** by the
+/// policy's `write_bound`, the silence bound, under
+/// [`crate::deadline::until_commit`], which never polls the step at or past
+/// its deadline while its COMMIT has not gone out: a step still short of it
+/// there is dropped where it stands, its transaction never committed, and
+/// the request is answered that the write was not made, which is then
+/// true. A dropped request's write can then land at most one bound after
+/// its place, its COMMIT's flight aside, never after a retry made later
+/// than that. No outcome is
+/// written past the deadline, so its first record stands with none, as a
+/// crash leaves one. **Once its COMMIT is sent the step runs to its end**:
+/// the COMMIT's answer and the read-back of a lost one
+/// (`store::commit`), the token shown once, the hand-over and the puller's
+/// signal, so a write that committed is answered as made and nothing it
+/// owes the admin is dropped.
 pub(crate) async fn step_four<F>(policy: &Policy, step: F) -> Response
 where
     F: std::future::Future<Output = Response> + Send + 'static,
 {
     let deadline = tokio::time::Instant::now() + write_bound(policy);
+    #[cfg(test)]
+    watched(|w| {
+        if w.deadline.get().is_none() {
+            w.deadline.set(Some(deadline));
+        }
+    });
     let bounded = async move {
         #[cfg(test)]
-        crate::deadline::hold::bound(crate::deadline::hold::Point::AdminWrite, deadline);
-        match crate::deadline::before(step, deadline).await {
+        for point in [
+            crate::deadline::hold::Point::AdminWrite,
+            crate::deadline::hold::Point::AdminWriteAnswered,
+        ] {
+            crate::deadline::hold::bound(point, deadline);
+        }
+        match crate::deadline::until_commit(step, deadline).await {
             Ok(answer) => answer,
             Err(crate::deadline::Passed) => {
+                #[cfg(test)]
+                watched(|w| w.passed.notify_one());
                 tracing::error!(
-                    "an admin's write did not commit within its bound and was dropped unsent"
+                    "an admin's write had not sent its commit within its bound and was dropped unsent"
                 );
                 (
                     StatusCode::SERVICE_UNAVAILABLE,
@@ -317,6 +336,36 @@ thread_local! {
     /// A test's shorter step-four bound, read where step four is placed.
     pub(crate) static WRITE_BOUND_FOR_TEST: std::cell::Cell<Option<std::time::Duration>> =
         const { std::cell::Cell::new(None) };
+    /// A test's watch on the next step four placed on its thread.
+    static WATCHED: std::cell::RefCell<Option<std::rc::Rc<Watched>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// **A test's watch on step four**: the deadline the first step placed
+/// after [`watch`] took, and a permit for each step its deadline dropped.
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct Watched {
+    pub(crate) deadline: std::cell::Cell<Option<tokio::time::Instant>>,
+    pub(crate) passed: tokio::sync::Notify,
+}
+
+/// Watch the next step four placed on this thread. Its callers are the
+/// router's tests, so it needs the `passkeys` feature.
+#[cfg(all(test, feature = "passkeys"))]
+pub(crate) fn watch() -> std::rc::Rc<Watched> {
+    let watched = std::rc::Rc::new(Watched::default());
+    WATCHED.with(|w| *w.borrow_mut() = Some(watched.clone()));
+    watched
+}
+
+#[cfg(test)]
+fn watched(f: impl FnOnce(&Watched)) {
+    WATCHED.with(|w| {
+        if let Some(watched) = w.borrow().as_ref() {
+            f(watched);
+        }
+    });
 }
 
 /// Back to the page, the write landed.

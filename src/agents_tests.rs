@@ -715,6 +715,134 @@ async fn rotating_closes_the_old_and_admits_the_new() {
     );
 }
 
+/// **A rotation whose COMMIT answers past its bound hands its pair over**
+/// (Spec 2.13): karl's rotation is held just after its COMMIT answered until
+/// a moment past the bound, the hand-over's reads of the chrome and the
+/// admin's grants after it. The step runs on, so the page hands both
+/// configs over under `no-store`, the new gate config admits, the old one
+/// is not live, and the act's outcome is `ok`.
+///
+/// Perturbation: bound step four with `deadline::before`, and the request
+/// is answered 503 "not made" for a rotation that landed, its two configs
+/// dropped with it.
+#[tokio::test]
+async fn a_rotation_whose_commit_answers_past_its_bound_hands_its_pair_over() {
+    use crate::deadline::hold::{self, Point};
+    use crate::surfaces::admin::WRITE_BOUND_FOR_TEST;
+    const BOUND: Duration = Duration::from_millis(1500);
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, session) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (id, handles) = rig.register(&session, "box-a", "karl").await;
+    let (_, _, old_config) = rig.take(&handles[0], &session).await;
+    WRITE_BOUND_FOR_TEST.with(|b| b.set(Some(BOUND)));
+
+    let held = hold::arm(Point::AdminWriteAnswered);
+    let asked = tokio::time::Instant::now();
+    let (status, headers, page) = rig
+        .post("/admin/agents/rotate", form(&[("agent", &id)]), &session)
+        .await;
+    let took = asked.elapsed();
+    assert_eq!(status, StatusCode::OK, "the pair is handed over: {page}");
+    assert_eq!(headers[header::CACHE_CONTROL], "no-store");
+    assert!(took >= BOUND, "answered past the bound: {took:?}");
+    assert!(
+        held.reached() && held.let_go(),
+        "held after its commit until past the deadline"
+    );
+    drop(held);
+    let handles = Rig::handles(&page);
+    assert_eq!(handles.len(), 2, "both configs are held: {page}");
+    let (status, _, new_config) = rig.take(&handles[0], &session).await;
+    assert_eq!(status, StatusCode::OK);
+    let mut new = Connector::dial(&new_config).await;
+    assert!(
+        matches!(new.recv().await, Some(ToClient::HelloAnswer { .. })),
+        "the new credential admits"
+    );
+    let mut old = Connector::dial(&old_config).await;
+    assert!(
+        matches!(
+            old.recv().await,
+            Some(ToClient::Refusal {
+                reason: LinkRefusal::NotLive
+            })
+        ),
+        "the old credential is not live"
+    );
+    assert_eq!(
+        rows(
+            s,
+            &format!(
+                "SELECT count(*) FROM audit WHERE target_id = '{id}' AND action = 'rotate' AND outcome = 'ok'"
+            )
+        )
+        .await,
+        1
+    );
+}
+
+/// **A rotation stalled before its COMMIT is not made, and says so**:
+/// karl's rotation is held just before its COMMIT until the very deadline,
+/// the converse of the pair handed over past its bound. The request is
+/// answered 503 "not made" with no config handed over, the COMMIT was never
+/// sent, the row keeps its gate credential, which still admits, and the
+/// first record stands with no outcome.
+///
+/// Perturbation: await step four with no bound, and the held COMMIT goes
+/// out, the row rotated while the admin is told nothing was made.
+#[tokio::test]
+async fn a_rotation_stalled_before_its_commit_is_not_made() {
+    use crate::deadline::hold::{self, Point};
+    use crate::surfaces::admin::WRITE_BOUND_FOR_TEST;
+    const BOUND: Duration = Duration::from_millis(1500);
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, session) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (id, handles) = rig.register(&session, "box-a", "karl").await;
+    let (_, _, old_config) = rig.take(&handles[0], &session).await;
+    let gate_fingerprint = || async {
+        sqlx::query_scalar::<_, String>("SELECT gate_fingerprint FROM agent WHERE agent_id = $1")
+            .bind(&id)
+            .fetch_one(&s.pool)
+            .await
+            .unwrap()
+    };
+    let before = gate_fingerprint().await;
+    WRITE_BOUND_FOR_TEST.with(|b| b.set(Some(BOUND)));
+
+    let held = hold::arm(Point::AdminWrite);
+    let (status, _, page) = rig
+        .post("/admin/agents/rotate", form(&[("agent", &id)]), &session)
+        .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{page}");
+    assert!(page.contains("the write was not made"), "{page}");
+    assert!(Rig::handles(&page).is_empty(), "no config handed over");
+    assert!(!held.let_go(), "the COMMIT was never sent");
+    let after = held.settled(gate_fingerprint, |f| f != &before).await;
+    assert_eq!(after, before, "the row keeps its gate credential");
+    drop(held);
+    let mut old = Connector::dial(&old_config).await;
+    assert!(
+        matches!(old.recv().await, Some(ToClient::HelloAnswer { .. })),
+        "the old credential still admits"
+    );
+    let count = |what: &'static str| {
+        let id = id.clone();
+        async move {
+            rows(
+                s,
+                &format!(
+                    "SELECT count(*) FROM audit WHERE target_id = '{id}' AND action = 'rotate' AND {what}"
+                ),
+            )
+            .await
+        }
+    };
+    assert_eq!(count("answers IS NULL AND refusal IS NULL").await, 1);
+    assert_eq!(count("outcome IS NOT NULL").await, 0);
+}
+
 /// **The four-step order**: a malformed box, name or `ag-` answers 400
 /// with no record from anyone; a session holding no admin grant is refused
 /// with one record before any lookup, alike for a known agent and an

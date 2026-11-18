@@ -54,8 +54,8 @@ pub struct Policy {
     pub origin: Option<String>,
     pub idle: Duration,
     pub absolute: Duration,
-    /// **An admin write's bound** from its place to its commit (Spec
-    /// 2.13): the silence bound.
+    /// **An admin write's bound** from its place until its COMMIT is sent
+    /// (Spec 2.13): the silence bound.
     pub write_bound: Duration,
 }
 

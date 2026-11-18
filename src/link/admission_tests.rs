@@ -75,8 +75,12 @@ async fn a_hello_whose_admission_waits_on_a_held_row_is_refused_within_the_conne
     let mut fake = lab.connect(&karl.gate).await;
     tokio::time::sleep(SPENT).await;
     fake.send(gate_hello(&karl)).await;
-    fake.expect_refusal(Refusal::StoreUnavailable).await;
+    fake.expect_refusal_frame(Refusal::StoreUnavailable).await;
     let took = dialed.elapsed();
+    assert!(
+        fake.closed().await,
+        "the connection closes after the refusal"
+    );
     assert!(
         took >= BOUND,
         "refused at the bound and not before: {took:?}"

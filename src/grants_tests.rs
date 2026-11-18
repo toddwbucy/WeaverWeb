@@ -1078,13 +1078,15 @@ async fn each_write_to_a_grant_or_role_dropped_at_its_first_record_still_lands()
 /// **A grant add dropped and stalled past its bound never lands after its
 /// retry** (Spec 2.13): ada's grant of observer on karl to bea is dropped
 /// while held before its first record, as a write waiting on the store
-/// waits. Ada adds the grant again, the retry lands, and she removes it.
-/// The first's bound passes and its hold is let go: it was dropped at its
-/// deadline, so it writes nothing, and the removal stands, bea holding no
-/// live grant and the audit one add's first record, the retry's.
+/// waits. Ada adds the grant again, the retry lands, and ada removes it,
+/// both before the first's deadline as step four recorded it. Step four
+/// then reports the first dropped at its deadline, its hold is let go, and
+/// it writes nothing: the removal stands, bea holding no live grant and the
+/// audit one add's first record, the retry's.
 ///
-/// Perturbation: await step four with no bound, and the held write, let
-/// go, grants bea observer again after its removal.
+/// Perturbation: await step four with no bound, and the first is never
+/// reported dropped, so the test fails at that wait. Let go regardless, it
+/// grants bea observer again after its removal.
 #[tokio::test]
 async fn a_dropped_grant_add_never_lands_after_its_retry_and_a_removal() {
     use crate::admin_tests::dropped_and_held;
@@ -1101,10 +1103,12 @@ async fn a_dropped_grant_add_never_lands_after_its_retry_and_a_removal() {
     let ask = form(&[("person", &bea), ("role", "observer"), ("agent", &k)]);
     WRITE_BOUND_FOR_TEST.with(|b| b.set(Some(BOUND)));
 
+    let watched = crate::surfaces::admin::watch();
     let release = dropped_and_held(&app, &ada, &session, "/admin/grants/grant", ask.clone()).await;
-    // The first was placed before its hold was reached, so its deadline is
-    // before this instant and the bound.
-    let placed_by = tokio::time::Instant::now();
+    let deadline = watched
+        .deadline
+        .get()
+        .expect("the first's step four was placed");
     let (status, _, page) = send_as(&app, "POST", "/admin/grants/grant", Some(ask), &session).await;
     assert_eq!(status, StatusCode::SEE_OTHER, "the retry lands: {page}");
     let (granted, _) = s
@@ -1123,13 +1127,14 @@ async fn a_dropped_grant_add_never_lands_after_its_retry_and_a_removal() {
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER, "the removal lands: {page}");
     assert!(
-        placed_by.elapsed() < BOUND,
-        "the retry and the removal came within the first's bound"
+        tokio::time::Instant::now() < deadline,
+        "the retry and the removal came before the first's deadline"
     );
 
-    tokio::time::sleep_until(placed_by + BOUND + Duration::from_millis(250)).await;
+    tokio::time::timeout(Duration::from_secs(10), watched.passed.notified())
+        .await
+        .expect("the first was dropped at its deadline");
     release.notify_one();
-    tokio::time::sleep(Duration::from_secs(1)).await;
     assert!(
         s.live_grant(&bea, "observer", Some(&k))
             .await

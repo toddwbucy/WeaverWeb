@@ -1277,6 +1277,112 @@ async fn a_cancel_stops_a_pull_waiting_for_its_headers() {
     puller.stop();
 }
 
+/// **A cancel whose COMMIT answers past its bound still reaches the
+/// puller** (Spec 2.13): the CDN holds the pull's headers, and the admin's
+/// cancel is held just after its COMMIT answered until a moment past the
+/// bound. The step runs on to the puller's signal, so the request is
+/// answered 303 past the deadline, the pull ends `cancelled` with its
+/// `ok` outcome, and the next ask runs and verifies at once, the held pull
+/// having stopped.
+///
+/// Perturbation: bound step four with `deadline::before`, and the request
+/// is answered 503 "not made" for a cancel that landed, and the puller,
+/// never told, stays in the held pull, so the next ask never runs.
+#[tokio::test]
+async fn a_cancel_whose_commit_answers_past_its_bound_reaches_the_puller() {
+    use crate::deadline::hold::{self, Point};
+    use crate::surfaces::admin::WRITE_BOUND_FOR_TEST;
+    const BOUND: Duration = Duration::from_millis(1500);
+    let Some(rig) = rig().await else { return };
+    rig.fakes.modes.lock().unwrap().push_back(Mode::Held);
+    let puller = rig.puller(Settings {
+        stall: Duration::from_secs(60),
+        ..quick()
+    });
+    let (pull_id, _) = rig.ask(&puller, &[model_file()]).await;
+    cdn_asked(&rig, 1).await;
+    let web = rig.surface(&puller);
+    WRITE_BOUND_FOR_TEST.with(|b| b.set(Some(BOUND)));
+
+    let held = hold::arm(Point::AdminWriteAnswered);
+    let asked = tokio::time::Instant::now();
+    let uri = format!("/admin/hugging-face/pulls/{pull_id}/cancel");
+    let (status, _, body) = send_as(&web, "POST", &uri, Some(String::new()), &rig.cookie).await;
+    let took = asked.elapsed();
+    assert_eq!(status, StatusCode::SEE_OTHER, "answered as made: {body}");
+    assert!(took >= BOUND, "answered past the bound: {took:?}");
+    assert!(
+        held.reached() && held.let_go(),
+        "held after its commit until past the deadline"
+    );
+    drop(held);
+    WRITE_BOUND_FOR_TEST.with(|b| b.set(None));
+    assert_eq!(rig.ended(&pull_id).await, ("cancelled".into(), None));
+    assert_eq!(
+        pull_records(&rig, &pull_id, "model pull cancel").await,
+        (1, 1, 0)
+    );
+
+    let (again, asked) = rig.ask(&puller, &[model_file()]).await;
+    assert!(asked.is_ok(), "{asked:?}");
+    assert_eq!(
+        rig.ended(&again).await,
+        ("verified".into(), None),
+        "the puller was told, so the held pull stopped"
+    );
+    assert_eq!(rig.cdn().len(), 2, "{:?}", rig.cdn());
+    rig.fakes.release.notify_one();
+    puller.stop();
+}
+
+/// **A cancel stalled before its COMMIT is not made, and says so**: the
+/// admin's cancel is held just before its COMMIT until the very deadline,
+/// the converse of the cancel that reaches the puller past its bound. The
+/// request is answered 503 "not made", the COMMIT was never sent, the pull
+/// still runs, the puller holds no cancel, and the first record stands
+/// with no outcome.
+///
+/// Perturbation: await step four with no bound, and the held COMMIT goes
+/// out, the pull cancelled while the admin is told nothing was made.
+#[tokio::test]
+async fn a_cancel_stalled_before_its_commit_is_not_made() {
+    use crate::deadline::hold::{self, Point};
+    use crate::surfaces::admin::WRITE_BOUND_FOR_TEST;
+    const BOUND: Duration = Duration::from_millis(1500);
+    let Some(rig) = rig().await else { return };
+    rig.fakes.modes.lock().unwrap().push_back(Mode::Held);
+    let puller = rig.puller(Settings {
+        stall: Duration::from_secs(60),
+        ..quick()
+    });
+    let (pull_id, _) = rig.ask(&puller, &[model_file()]).await;
+    cdn_asked(&rig, 1).await;
+    let web = rig.surface(&puller);
+    WRITE_BOUND_FOR_TEST.with(|b| b.set(Some(BOUND)));
+
+    let held = hold::arm(Point::AdminWrite);
+    let uri = format!("/admin/hugging-face/pulls/{pull_id}/cancel");
+    let (status, _, body) = send_as(&web, "POST", &uri, Some(String::new()), &rig.cookie).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert!(body.contains("the write was not made"), "{body}");
+    assert!(!held.let_go(), "the COMMIT was never sent");
+    let state = held
+        .settled(
+            || async { rig.store().pull(&pull_id).await.unwrap().unwrap().state },
+            |state| state != "running",
+        )
+        .await;
+    assert_eq!(state, "running", "the pull still runs");
+    drop(held);
+    assert_eq!(puller.cancels_held(), 0, "the puller was told nothing");
+    assert_eq!(
+        pull_records(&rig, &pull_id, "model pull cancel").await,
+        (1, 0, 0)
+    );
+    rig.fakes.release.notify_one();
+    puller.stop();
+}
+
 /// **A cancel that lands during a blob's check starts no partial's hash**:
 /// step 2 hashes a blob that does not match, the pull is held at step 3 as
 /// the check's end would hold it, an admin's cancel lands there, and once

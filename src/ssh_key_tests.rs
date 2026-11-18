@@ -314,14 +314,16 @@ async fn an_add_and_a_removal_dropped_at_their_first_records_still_land() {
 
 /// **A key add dropped and stalled past its bound never lands after its
 /// retry** (Spec 2.13): ada's add of a key is dropped while held before its
-/// first record, as a write waiting on the store waits. She adds the key
-/// again, the retry lands, and she removes it. The first's bound passes and
-/// its hold is let go: it was dropped at its deadline, so it writes
-/// nothing, and the removal stands, no key held and the audit one add's
-/// first record, the retry's.
+/// first record, as a write waiting on the store waits. Ada adds the key
+/// again, the retry lands, and ada removes it, both before the first's
+/// deadline as step four recorded it. Step four then reports the first
+/// dropped at its deadline, its hold is let go, and it writes nothing: the
+/// removal stands, no key held and the audit one add's first record, the
+/// retry's.
 ///
-/// Perturbation: await step four with no bound, and the held write, let
-/// go, adds the key again after its removal.
+/// Perturbation: await step four with no bound, and the first is never
+/// reported dropped, so the test fails at that wait. Let go regardless, it
+/// adds the key again after its removal.
 #[tokio::test]
 async fn a_dropped_key_add_never_lands_after_its_retry_and_a_removal() {
     use crate::admin_tests::dropped_and_held;
@@ -335,6 +337,7 @@ async fn a_dropped_key_add_never_lands_after_its_retry_and_a_removal() {
     let given = line("ssh-ed25519", 3);
     WRITE_BOUND_FOR_TEST.with(|b| b.set(Some(BOUND)));
 
+    let watched = crate::surfaces::admin::watch();
     let release = dropped_and_held(
         &rig.app,
         &person,
@@ -343,9 +346,10 @@ async fn a_dropped_key_add_never_lands_after_its_retry_and_a_removal() {
         form(&[("line", &given)]),
     )
     .await;
-    // The first was placed before its hold was reached, so its deadline is
-    // before this instant and the bound.
-    let placed_by = tokio::time::Instant::now();
+    let deadline = watched
+        .deadline
+        .get()
+        .expect("the first's step four was placed");
     let (status, body) = add(&rig.app, &ada, &given).await;
     assert_eq!(status, StatusCode::SEE_OTHER, "the retry lands: {body}");
     assert_eq!(keys(s).await, 1);
@@ -361,13 +365,17 @@ async fn a_dropped_key_add_never_lands_after_its_retry_and_a_removal() {
     assert_eq!(status, StatusCode::SEE_OTHER, "the removal lands: {body}");
     assert_eq!(keys(s).await, 0);
     assert!(
-        placed_by.elapsed() < BOUND,
-        "the retry and the removal came within the first's bound"
+        tokio::time::Instant::now() < deadline,
+        "the retry and the removal came before the first's deadline"
     );
 
-    tokio::time::sleep_until(placed_by + BOUND + std::time::Duration::from_millis(250)).await;
+    tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        watched.passed.notified(),
+    )
+    .await
+    .expect("the first was dropped at its deadline");
     release.notify_one();
-    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     assert_eq!(keys(s).await, 0, "the removal stands");
     assert_eq!(
         audited(s, "ssh-key add").await,

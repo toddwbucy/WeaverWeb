@@ -6259,6 +6259,23 @@ closes on. A second channel between the
 two processes would be a second thing to configure and secure for one
 message the store already carries.
 
+**A hello's admission is bounded from its connection's accept** (#151). A
+connector gives its hello up 10 seconds from its dial (`HELLO_SECS`), its
+handshake, its hello and the answer inside that bound, and keeps 3 of them
+for its dial and its read of the answer, so the admission commits within 7
+seconds of the accept (`HELLO_ANSWER_SECS`, `HELLO_ANSWER_MARGIN_SECS`), the
+handshake and the register's lookup spending the same bound. It is a
+committing write, never polled past its deadline, as section 7.2's bounded
+writes are. Past the deadline the hello is refused `store_unavailable`, which
+the connector retries on its backoff. The entry the admission's install put
+in comes out at once and is logged, without the row's lock, since the store
+did not answer within the bound, as a setup ask's claim comes out past its
+deadline (section 8.3). A commit sent before the deadline that lands after
+it leaves the row connected under an incarnation with no socket, which the
+reconciliation writes disconnected. So a stalled store holds no hello past
+its connector's bound, and the connector's next hello meets no entry of the
+first.
+
 **A link-state write is bound to the connection it describes, under the
 same exclusion.** Every connection the listener admits carries an
 incarnation of the listener's own, a link-state write names the incarnation
@@ -7285,6 +7302,7 @@ two connectors report.
 | a pairing connection writes nothing before its code matches | perturbation in `src/link/pairing_tests.rs`, on a store of its own: a box dials, says its first frame, waits through heartbeats and meets a code not its own, and every table's rows and the operations log stay as they were. Write to the store as a pairing connection is served, and a table's rows change |
 | the pairing's code crosses the link in no frame | perturbation in `src/link/pairing_tests.rs`: every line the box's half sent and heard, from its first frame through the heartbeats to `expired`, holds the code in no form. Send the code in the first frame, and the recorded stream holds it |
 | the pairing's code is the first 50 bits of a 32-byte export under its label, in Crockford's base32 | perturbation in `src/link/pair_code.rs`, the one encoder both ends use: section 8.2's illustrative example, its bytes after the seventh set, gives `HWX5R 0F74A`, and the bits taken least significant first give another code. In `src/link/pairing_tests.rs`, both ends of one session of the pairing configuration derive one code, and a 16-byte export under the label gives another |
+| a hello's admission is bounded from its connection's accept and leaves no live entry past its deadline | perturbation in `src/link/admission_tests.rs`, against the real listener and store with a fake connector's hello, the bound shortened to 1.5 s. `a_hello_whose_admission_waits_on_a_held_row_is_refused_within_the_connectors_bound`: the agent's row held by another transaction, the hello is refused `store_unavailable` at the bound from the dial and within the connector's `HELLO_SECS`, no entry stands, and once the hold goes the row reads disconnected and the next hello is admitted. Await the admission with no bound, and no answer comes within the fake's wait. `a_hello_whose_admission_commits_past_its_deadline_leaves_no_live_entry`: the admission held just before its commit to its very deadline, its entry installed, the hello is refused `store_unavailable`, no entry stands, the row reads disconnected once the hold goes, and the next hello is admitted. Bound the admission with tokio's `timeout_at`, and the held commit lands, the row reading connected. Leave the installed entry in past the deadline, and it stands after the refusal (each measured) |
 | the pairing page reads an entry in Crockford's form, and a malformed entry is no miss | perturbation in `src/link/pair_code.rs` and `src/enrollment_tests.rs`: the encoder's inverse accepts `hwx5r-0f74a` and `HWX5R 0F74A` as section 8.2's example code and refuses `HWX5U0F74A` as malformed (read the entry without folding its case, and the first is refused), and on the pairing page `HWX5U0F74A` is answered as malformed, writes no record and leaves the setup's misses at nought. Count a malformed entry as a miss, and the count moves. Five codes matching no waiting box are five refusal records, none quoting the code, and close the field, so the box's own code is refused while it is closed: quote the code in the record, or leave the field open, and the test fails. Twelve wrong entries sent together count exactly five misses, the seven after the fifth comparing nothing, since one lock on the setup's row spans the field's check, the comparison and the miss: read the field without that lock, and the count runs past five. The exchange's first step refuses a field five misses closed, a second guard: drop the field from that check, and the pairing stands |
 | an entry runs from the field's lock to its outcome's record in a task the request cannot cancel | perturbation in `src/enrollment_tests.rs`, `an_entry_dropped_once_its_code_matched_still_pairs_the_box`: the request is dropped while the matched entry's first record is held, and the box still hears its answer and `paired`, one row standing for the name. Run the continuation from the match in the request's own future, and the box hears its connection closed (measured) |
 | a match spends its connection only once its entry holds it | perturbation in `src/link/pairing_tests.rs`, `a_probe_its_entry_gave_up_on_spends_nothing`: a comparison whose entry stopped waiting reaches the waiting connection, and the box's own code entered after takes it. Drop both the closed comparison's check and the hand-over's taking back, and the box is gone, its code matching nothing. Either alone leaves the test passing, since the other catches it (each measured) |

@@ -492,7 +492,7 @@ fn config_file() -> RepoFile {
 
 async fn rig() -> Option<Rig> {
     let fresh = fresh_store().await?;
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_dir::tempdir().unwrap();
     std::fs::create_dir(dir.path().join("cache")).unwrap();
     crate::link::authority::Authority::init(&dir.path().join("authority"), "weaver-web", &[])
         .unwrap();
@@ -1882,21 +1882,14 @@ async fn a_cancel_takes_the_admin_writes_order() {
 /// every pull's reason, and the audit, none of them carries the token.
 #[tokio::test]
 async fn a_pull_carries_its_token_into_no_log_line_page_or_error() {
-    let captured = crate::agents_tests::Captured::default();
-    let _logging = tracing::subscriber::set_default(
+    let captured = crate::test_log::Captured::default();
+    let _logging = crate::test_log::scoped(
         tracing_subscriber::fmt()
             .with_writer(captured.clone())
             .with_max_level(tracing::Level::TRACE)
             .with_ansi(false)
             .finish(),
     );
-    // **A second dispatcher, held for the test's life**: with one scoped
-    // dispatcher alone, tracing-core 0.1.36 takes a callsite's interest from
-    // the default of whichever thread meets it first
-    // (`Dispatchers::rebuilder`), so the puller of a test running beside
-    // this one, on a thread with no subscriber, would leave the puller's
-    // lines uncaught here. With two registered, it asks each of them.
-    let _second = tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default());
     let Some(rig) = rig().await else { return };
     let puller = rig.puller(quick());
     let (verified, _) = rig.ask(&puller, &[config_file(), model_file()]).await;

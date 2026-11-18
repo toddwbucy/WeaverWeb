@@ -63,7 +63,7 @@ impl Rig {
 
 async fn rig() -> Option<Rig> {
     let fresh = fresh_store().await?;
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_dir::tempdir().unwrap();
     let authority =
         Arc::new(Authority::init(&dir.path().join("authority"), "weaver-web", &[]).unwrap());
     let listener = Listener::start_with(
@@ -1243,7 +1243,7 @@ async fn an_adopted_pair_connects() {
     let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
     let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
     let setup = setup.unwrap();
-    let on_box = tempfile::tempdir().unwrap();
+    let on_box = crate::test_dir::tempdir().unwrap();
     let answer = enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a", None).await;
     let id: AgentId = answer.agent_id.parse().unwrap();
     let mut connections = Vec::new();
@@ -1277,7 +1277,7 @@ async fn setup_describe_answers_replacement_after_replace_box_alone() {
     let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
     let (_, _, first) = begin(&rig.app, &ada, "karl").await;
     let first = first.unwrap();
-    let old_box = tempfile::tempdir().unwrap();
+    let old_box = crate::test_dir::tempdir().unwrap();
     let answer = enrolled_on_box(&rig, &ada, &first, old_box.path(), "box-a", None).await;
     let old_admin = old_box.path().join("admin-con.toml");
     let (status, described) = describe(&old_admin).await;
@@ -1294,7 +1294,7 @@ async fn setup_describe_answers_replacement_after_replace_box_alone() {
     let (_, _, second) = begin(&rig.app, &ada, "karl").await;
     let second = second.unwrap();
     let karl: AgentId = answer.agent_id.parse().unwrap();
-    let new_box = tempfile::tempdir().unwrap();
+    let new_box = crate::test_dir::tempdir().unwrap();
     let replaced = enrolled_on_box(&rig, &ada, &second, new_box.path(), "box-b", Some(&karl)).await;
     assert_eq!(
         replaced.agent_id, answer.agent_id,
@@ -1321,7 +1321,7 @@ async fn a_setup_ask_beside_a_standing_connection_is_refused_and_counts_for_noth
     let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
     let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
     let setup = setup.unwrap();
-    let on_box = tempfile::tempdir().unwrap();
+    let on_box = crate::test_dir::tempdir().unwrap();
     let answer = enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a", None).await;
     let id: AgentId = answer.agent_id.parse().unwrap();
     let admin_config = on_box.path().join("admin-con.toml");
@@ -1367,7 +1367,7 @@ async fn the_setup_keeps_the_latest_report_of_each_stage_verbatim() {
     let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
     let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
     let setup = setup.unwrap();
-    let on_box = tempfile::tempdir().unwrap();
+    let on_box = crate::test_dir::tempdir().unwrap();
     let answer = enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a", None).await;
     let admin_config = on_box.path().join("admin-con.toml");
     let first = "{ \"cards\" : [1,  2] }\n";
@@ -1443,7 +1443,7 @@ async fn the_setup_keeps_the_latest_report_of_each_stage_verbatim() {
     assert_eq!(line["agent_id"], answer.agent_id.as_str());
 
     // A row the host's `register` wrote has no setup.
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let cfg = crate::agents_tests::server_config(rig._dir.path(), rig.listener.address());
     let registered =
         crate::link::verbs::register(s, &cfg, &rig.authority, "box-z", "zed", out.path(), None)
@@ -1472,7 +1472,7 @@ async fn the_setup_keeps_the_latest_report_of_each_stage_verbatim() {
 #[tokio::test]
 async fn a_pair_whose_waiting_line_is_not_delivered_ends_at_once() {
     let Some(rig) = rig().await else { return };
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_dir::tempdir().unwrap();
     for plane in [Plane::Gate, Plane::Admin] {
         let mut p = captured();
         let config = dir.path().join(format!("{}-con.toml", plane.as_str()));
@@ -1729,7 +1729,7 @@ async fn a_setup_ask_the_store_holds_past_the_bound_is_refused_and_lets_its_clai
     let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
     let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
     let setup = setup.unwrap();
-    let on_box = tempfile::tempdir().unwrap();
+    let on_box = crate::test_dir::tempdir().unwrap();
     enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a", None).await;
     let config = on_box.path().join("admin-con.toml");
     let the_box = SILENCE * 3;
@@ -1850,7 +1850,7 @@ async fn a_setup_ask_whose_admission_waits_is_refused_within_the_boxs_bound() {
     let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
     let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
     let setup = setup.unwrap();
-    let on_box = tempfile::tempdir().unwrap();
+    let on_box = crate::test_dir::tempdir().unwrap();
     let answer = enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a", None).await;
     let config = on_box.path().join("admin-con.toml");
     rig.listener.set_setup_answer_bound(Duration::from_secs(1));
@@ -1907,7 +1907,7 @@ async fn a_setup_ask_whose_lookup_waits_is_refused_within_the_boxs_bound() {
     let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
     let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
     let setup = setup.unwrap();
-    let on_box = tempfile::tempdir().unwrap();
+    let on_box = crate::test_dir::tempdir().unwrap();
     enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a", None).await;
     let config = on_box.path().join("admin-con.toml");
     rig.listener.set_setup_answer_bound(Duration::from_secs(1));
@@ -1951,7 +1951,7 @@ async fn a_setup_ask_whose_lookup_and_admission_wait_is_refused_within_the_boxs_
     let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
     let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
     let setup = setup.unwrap();
-    let on_box = tempfile::tempdir().unwrap();
+    let on_box = crate::test_dir::tempdir().unwrap();
     let answer = enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a", None).await;
     let config = on_box.path().join("admin-con.toml");
     rig.listener.set_setup_answer_bound(Duration::from_secs(1));
@@ -1999,7 +1999,7 @@ async fn a_setup_ask_whose_lookup_fails_is_refused_store_unavailable() {
     let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
     let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
     let setup = setup.unwrap();
-    let on_box = tempfile::tempdir().unwrap();
+    let on_box = crate::test_dir::tempdir().unwrap();
     enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a", None).await;
     let config = on_box.path().join("admin-con.toml");
 
@@ -2029,8 +2029,8 @@ async fn a_setup_ask_whose_lookup_fails_is_refused_store_unavailable() {
 /// dropped request logs nothing of them.
 #[tokio::test]
 async fn an_entry_dropped_once_matched_still_logs_what_the_box_was_answered() {
-    let logs = crate::agents_tests::Captured::default();
-    let _logging = tracing::subscriber::set_default(
+    let logs = crate::test_log::Captured::default();
+    let _logging = crate::test_log::scoped(
         tracing_subscriber::fmt()
             .with_writer(logs.clone())
             .with_max_level(tracing::Level::TRACE)
@@ -2118,7 +2118,7 @@ async fn version_of(s: &Store, setup: &str) -> String {
 /// ruled.
 #[tokio::test]
 async fn the_reports_a_box_sends_feed_placement_and_confirm() {
-    let cache = tempfile::tempdir().unwrap();
+    let cache = crate::test_dir::tempdir().unwrap();
     let (_fake, base) = crate::setup_models_tests::fake().await;
     let Some(rig) = crate::setup_tests::rig_full_with(
         None,
@@ -2137,7 +2137,7 @@ async fn the_reports_a_box_sends_feed_placement_and_confirm() {
         rig.puller.verified(),
     );
     let (ada, setup) = crate::setup_models_tests::setup_of(&rig, "karl").await;
-    let on_box = tempfile::tempdir().unwrap();
+    let on_box = crate::test_dir::tempdir().unwrap();
     enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a", None).await;
     let admin_config = on_box.path().join("admin-con.toml");
     let placement = format!("/setup/{setup}/placement");
@@ -2332,7 +2332,7 @@ async fn the_reports_a_box_sends_feed_placement_and_confirm() {
 }
 
 /// The lines of `logs` since `mark` that log a refused setup report.
-fn refusals_logged(logs: &crate::agents_tests::Captured, mark: usize) -> Vec<String> {
+fn refusals_logged(logs: &crate::test_log::Captured, mark: usize) -> Vec<String> {
     let bytes = logs.0.lock().unwrap();
     String::from_utf8_lossy(&bytes[mark.min(bytes.len())..])
         .lines()
@@ -2352,8 +2352,8 @@ fn refusals_logged(logs: &crate::agents_tests::Captured, mark: usize) -> Vec<Str
 /// a line.
 #[tokio::test]
 async fn a_refused_reports_arrival_is_logged_once_with_its_detail_escaped() {
-    let logs = crate::agents_tests::Captured::default();
-    let _logging = tracing::subscriber::set_default(
+    let logs = crate::test_log::Captured::default();
+    let _logging = crate::test_log::scoped(
         tracing_subscriber::fmt()
             .with_writer(logs.clone())
             .with_max_level(tracing::Level::TRACE)
@@ -2364,7 +2364,7 @@ async fn a_refused_reports_arrival_is_logged_once_with_its_detail_escaped() {
     let (_, ada) = admin(&rig.app, rig.store(), &mut authenticator(), "ada").await;
     let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
     let setup = setup.unwrap();
-    let on_box = tempfile::tempdir().unwrap();
+    let on_box = crate::test_dir::tempdir().unwrap();
     enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a", None).await;
     let config = on_box.path().join("admin-con.toml");
     let mark = logs.mark();
@@ -2431,7 +2431,7 @@ async fn the_panes_are_served_in_each_status_as_the_box_reports() {
     let (_, ada) = admin(&rig.app, rig.store(), &mut authenticator(), "ada").await;
     let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
     let setup = setup.unwrap();
-    let on_box = tempfile::tempdir().unwrap();
+    let on_box = crate::test_dir::tempdir().unwrap();
     enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a", None).await;
     let config = on_box.path().join("admin-con.toml");
     let page_of = |name: &str| {

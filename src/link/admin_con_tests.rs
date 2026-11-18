@@ -80,7 +80,7 @@ impl Trace {
     }
 
     fn closed_with(shape: impl FnOnce(FakeRelay) -> FakeRelay) -> Self {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_dir::tempdir().unwrap();
         let path = dir.path().join("trace.ndjson");
         std::fs::write(&path, "").unwrap();
         let relay = shape(FakeRelay::new(&path));
@@ -472,7 +472,7 @@ async fn admin_con_relays_the_trace_and_lands_live_events() {
     for n in 1..=3 {
         trace.append(n, "turn");
     }
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let mut con = Running::start(config(&path), Arc::new(NoVerbs));
     con.wait("admitted", |s| s.admitted).await;
@@ -513,7 +513,7 @@ async fn an_empty_ceiling_admits_without_show_and_refuses_every_verb() {
     };
     let trace = Trace::new();
     trace.append(1, "turn");
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let mut con = Running::start(config(&path), Arc::new(NoVerbs));
     con.wait("admitted", |s| s.admitted).await;
@@ -540,7 +540,7 @@ async fn an_empty_ceiling_admits_without_show_and_refuses_every_verb() {
 async fn the_server_never_asks_a_verb_outside_the_ceiling() {
     let Some(lab) = Lab::open().await else { return };
     let trace = Trace::new();
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let invoker = FakeInvoker::new(&["show"], "idle");
     let mut con = Running::start(config(&path), invoker.clone());
@@ -572,7 +572,7 @@ async fn the_server_never_asks_a_verb_outside_the_ceiling() {
 async fn a_ceiling_naming_force_unload_is_carried() {
     let Some(lab) = Lab::open().await else { return };
     let trace = Trace::new();
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let invoker = FakeInvoker::new(&["show", "force-unload"], "idle");
     let mut con = Running::start(config(&path), invoker.clone());
@@ -671,7 +671,7 @@ async fn the_trace_is_replayed_from_the_acknowledged_position() {
     for n in 1..=3 {
         trace.append(n, "turn");
     }
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let mut con = Running::start(config(&path), Arc::new(NoVerbs));
     con.wait("admitted", |s| s.admitted).await;
@@ -705,7 +705,7 @@ async fn a_rotation_while_the_link_is_down_is_marked_and_relayed_from_the_start(
     for n in 1..=3 {
         trace.append(n, "turn");
     }
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let mut con = Running::start(config(&path), Arc::new(NoVerbs));
     con.wait("admitted", |s| s.admitted).await;
@@ -742,7 +742,7 @@ async fn a_truncation_regrown_past_the_offset_is_marked() {
     for n in 1..=3 {
         trace.append(n, "turn");
     }
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let mut con = Running::start(config(&path), Arc::new(NoVerbs));
     con.wait("admitted", |s| s.admitted).await;
@@ -785,7 +785,7 @@ async fn a_server_restart_relays_a_bounded_tail_with_a_mark() {
     for n in 1..=30 {
         trace.append(n, "turn");
     }
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let bound = 5 * record(30, "turn").len() as u64;
     let (id, path) = installed(&lab, &trace.socket, out.path(), Some(bound)).await;
     let mut con = Running::start(config(&path), Arc::new(NoVerbs));
@@ -841,7 +841,7 @@ async fn a_server_restart_bounds_its_backfill_at_the_length() {
     for n in 1..=30 {
         trace.append(n, "turn");
     }
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let bound = 5 * record(30, "turn").len() as u64;
     let (id, path) = installed(&lab, &trace.socket, out.path(), Some(bound)).await;
     let mut con = Running::start(config(&path), Arc::new(NoVerbs));
@@ -948,7 +948,7 @@ async fn an_unterminated_record_is_relayed_only_whole() {
         })
     );
     let (head, rest) = second.as_bytes().split_at(70 * 1024);
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let mut con = Running::start(config(&path), Arc::new(NoVerbs));
     con.wait("admitted", |s| s.admitted).await;
@@ -973,7 +973,7 @@ async fn an_unterminated_record_is_relayed_only_whole() {
 async fn an_answer_takes_its_place_at_the_invocation() {
     let Some(lab) = Lab::open().await else { return };
     let trace = Trace::new();
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let invoker = FakeInvoker::new(&["show"], "idle");
     let mut con = Running::start(config(&path), invoker.clone());
@@ -1006,7 +1006,7 @@ async fn an_answer_takes_its_place_at_the_invocation() {
 async fn the_drain_runs_before_the_invocation() {
     let Some(lab) = Lab::open().await else { return };
     let trace = Trace::new();
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let invoker = FakeInvoker::new(&["show"], "unloaded");
     let mut con = Running::start(config(&path), invoker.clone());
@@ -1039,7 +1039,7 @@ async fn the_drain_runs_before_the_invocation() {
 async fn one_verb_runs_at_a_time() {
     let Some(lab) = Lab::open().await else { return };
     let trace = Trace::new();
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let invoker = FakeInvoker::new(&["show"], "idle");
     let mut con = Running::start(config(&path), invoker.clone());
@@ -1074,7 +1074,7 @@ async fn one_verb_runs_at_a_time() {
 async fn an_admin_con_config_that_is_not_trusted_is_refused_at_start() {
     use std::os::unix::fs::PermissionsExt;
     let server = FakeServer::start().await;
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_dir::tempdir().unwrap();
     let text = |plane: Plane, extra: &str| {
         let link = server.link(plane);
         let mut table = toml::Table::new();
@@ -1178,7 +1178,7 @@ async fn a_record_past_the_bound_before_the_boundary_does_not_end_the_replay() {
     trace.append(1, "turn");
     trace.append_raw(&oversized(admin_con::RECORD_BOUND + 4096));
     trace.append(2, "load");
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), Some(16 * 1024 * 1024)).await;
     let mut con = Running::start(config(&path), Arc::new(NoVerbs));
     con.wait("admitted", |s| s.admitted).await;
@@ -1208,7 +1208,7 @@ async fn a_reconnection_at_a_marked_record_resumes_without_a_false_truncation() 
     let Some(lab) = Lab::open().await else { return };
     let trace = Trace::new();
     trace.append(1, "turn");
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let bound = 4 * record(10, "turn").len() as u64;
     let (id, path) = installed(&lab, &trace.socket, out.path(), Some(bound)).await;
     let mut con = Running::start(config(&path), Arc::new(NoVerbs));
@@ -1255,7 +1255,7 @@ async fn a_record_that_encodes_past_the_line_bound_is_marked() {
     nul.push(b'\n');
     trace.append_raw(&nul);
     trace.append(2, "turn");
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), Some(16 * 1024 * 1024)).await;
     let mut con = Running::start(config(&path), Arc::new(NoVerbs));
     con.wait("admitted", |s| s.admitted).await;
@@ -1284,7 +1284,7 @@ async fn a_backfill_of_small_records_lands_on_one_admission() {
         body.push_str(&format!("{{\"wall_ms\":1,\"payload\":{{\"n\":{n}}}}}\n"));
     }
     trace.append_raw(body.as_bytes());
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), Some(2 * 1024 * 1024)).await;
     let mut con = Running::start(config(&path), Arc::new(NoVerbs));
     con.wait("admitted", |s| s.admitted).await;
@@ -1310,7 +1310,7 @@ async fn a_backfill_of_small_records_lands_on_one_admission() {
 async fn a_verb_past_its_bound_answers_unknown() {
     let Some(lab) = Lab::open().await else { return };
     let trace = Trace::new();
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let invoker = FakeInvoker::new(&["show"], "idle");
     let mut cfg = config(&path);
@@ -1347,7 +1347,7 @@ async fn a_grants_ask_that_never_answers_declares_the_empty_ceiling() {
     }
     let Some(lab) = Lab::open().await else { return };
     let trace = Trace::new();
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let mut cfg = config(&path);
     cfg.grants_bound = Duration::from_millis(300);
@@ -1368,14 +1368,14 @@ async fn a_reinstalled_config_for_another_agent_is_refused() {
     let Some(lab) = Lab::open().await else { return };
     let trace = Trace::new();
     trace.append(1, "turn");
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let twin_trace = Trace::new();
-    let twin_out = tempfile::tempdir().unwrap();
+    let twin_out = crate::test_dir::tempdir().unwrap();
     let (twin, twin_path) =
         installed_as(&lab, "karl", &twin_trace.socket, twin_out.path(), None).await;
     let other_trace = Trace::new();
-    let other_out = tempfile::tempdir().unwrap();
+    let other_out = crate::test_dir::tempdir().unwrap();
     let (other, other_path) =
         installed_as(&lab, "kevin", &other_trace.socket, other_out.path(), None).await;
     let mut con = Running::from_file(&path);
@@ -1435,7 +1435,7 @@ async fn the_admissions_show_is_answered_during_a_long_replay() {
         body.push_str(&format!("{{\"wall_ms\":1,\"payload\":{{\"n\":{n}}}}}\n"));
     }
     trace.append_raw(body.as_bytes());
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), Some(8 * 1024 * 1024)).await;
     let invoker = FakeInvoker::new(&["show"], "idle");
     let started = tokio::time::Instant::now();
@@ -1481,7 +1481,7 @@ async fn a_backfill_starting_inside_a_record_past_the_bound_keeps_what_follows()
     for n in 4..=6 {
         trace.append(n, "turn");
     }
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let backfill = trace.len() - (head + 100);
     let (id, path) = installed(&lab, &trace.socket, out.path(), Some(backfill)).await;
     let mut con = Running::start(config(&path), Arc::new(NoVerbs));
@@ -1697,7 +1697,7 @@ async fn the_admissions_show_converges_on_its_snapshot() {
     let Some(lab) = Lab::open().await else { return };
     let trace = Trace::new();
     trace.append(1, "unload");
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let invoker = FakeInvoker::new(&["show"], "idle");
     invoker.script(Step {
@@ -1836,7 +1836,7 @@ async fn a_stop_during_an_opening_that_waits_on_its_read_returns_within_the_grac
 async fn a_verb_whose_link_ends_in_flight_is_answered_as_unknown() {
     let Some(lab) = Lab::open().await else { return };
     let trace = Trace::new();
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let invoker = FakeInvoker::new(&["show"], "idle");
     let mut con = Running::start(config(&path), invoker.clone());
@@ -1873,7 +1873,7 @@ async fn a_verb_whose_link_ends_in_flight_is_answered_as_unknown() {
 async fn a_verb_still_waiting_at_shutdown_is_answered_not_started() {
     let Some(lab) = Lab::open().await else { return };
     let trace = Trace::new();
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let invoker = FakeInvoker::new(&["show"], "idle");
     let mut con = Running::start(config(&path), invoker.clone());
@@ -1919,7 +1919,7 @@ async fn a_verb_still_draining_at_a_stop_is_answered_not_started() {
     let Some(lab) = Lab::open().await else { return };
     let trace = Trace::new();
     trace.append(1, "turn");
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let invoker = FakeInvoker::new(&["show"], "idle");
     let con = Running::start(config(&path), invoker.clone());
@@ -1978,7 +1978,7 @@ async fn a_live_truncation_is_marked_and_relayed_from_the_start() {
     for n in 1..=3 {
         trace.append(n, "turn");
     }
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let mut con = Running::start(config(&path), Arc::new(NoVerbs));
     con.wait("admitted", |s| s.admitted).await;
@@ -2005,7 +2005,7 @@ async fn a_header_without_a_birth_time_resumes_without_a_mark() {
     let Some(lab) = Lab::open().await else { return };
     let trace = Trace::with(FakeRelay::without_birth);
     trace.append(1, "turn");
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let mut con = Running::start(config(&path), Arc::new(NoVerbs));
     con.wait("admitted", |s| s.admitted).await;
@@ -2032,7 +2032,7 @@ async fn a_replaced_stream_resumes_from_its_position() {
     let Some(lab) = Lab::open().await else { return };
     let trace = Trace::new();
     trace.append(1, "turn");
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let mut con = Running::start(config(&path), Arc::new(NoVerbs));
     con.wait("admitted", |s| s.admitted).await;
@@ -2078,7 +2078,7 @@ async fn a_long_outage_is_replayed_by_a_second_read() {
     for n in 1..=3 {
         trace.append(n, "turn");
     }
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let bound = 4 * record(10, "turn").len() as u64;
     let (id, path) = installed(&lab, &trace.socket, out.path(), Some(bound)).await;
     let mut con = Running::start(config(&path), Arc::new(NoVerbs));
@@ -2116,7 +2116,7 @@ async fn a_long_outage_is_replayed_by_a_second_read() {
 async fn a_closed_door_is_admitted_at_once_and_its_opening_asks_show() {
     let Some(lab) = Lab::open().await else { return };
     let mut trace = Trace::closed();
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let invoker = FakeInvoker::new(&["show", "load"], "unloaded");
     let mut con = Running::start(config(&path), invoker.clone());
@@ -2162,7 +2162,7 @@ async fn a_closed_door_is_admitted_at_once_and_its_opening_asks_show() {
 async fn an_opening_replays_the_closed_interval_and_writes_no_row() {
     let Some(lab) = Lab::open().await else { return };
     let mut trace = Trace::closed();
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let mut con = Running::start(config(&path), Arc::new(NoVerbs));
     con.wait("admitted", |s| s.admitted).await;
@@ -2194,7 +2194,7 @@ async fn the_doors_closing_and_reopening_land_on_the_row() {
     let Some(lab) = Lab::open().await else { return };
     let mut trace = Trace::new();
     trace.append(1, "turn");
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let mut con = Running::start(config(&path), Arc::new(NoVerbs));
     con.wait("admitted", |s| s.admitted).await;
@@ -2225,7 +2225,7 @@ async fn an_opening_waits_for_the_invocation_in_flight() {
         return;
     };
     let mut trace = Trace::closed();
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let invoker = FakeInvoker::new(&["show", "load"], "unloaded");
     let mut cfg = config(&path);
@@ -2274,7 +2274,7 @@ async fn a_relay_that_drops_every_stream_is_redialed_on_the_backoff() {
     let Some(lab) = Lab::open().await else { return };
     let mut trace = Trace::new();
     trace.append(1, "turn");
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let mut con = Running::start(config(&path), Arc::new(NoVerbs));
     con.wait("admitted", |s| s.admitted).await;
@@ -2327,7 +2327,7 @@ async fn a_never_idle_writer_is_admitted_at_the_boundarys_bound() {
     let trace = Trace::new();
     trace.relay.counts.omit_length.store(true, Ordering::SeqCst);
     let writer = never_idle(&trace);
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let mut cfg = config(&path);
     cfg.boundary_bound = Duration::from_secs(1);
@@ -2352,7 +2352,7 @@ async fn a_verb_behind_a_never_idle_writer_runs_at_the_drains_bound() {
     let Some(lab) = Lab::open().await else { return };
     let trace = Trace::new();
     let writer = never_idle(&trace);
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let invoker = FakeInvoker::new(&["show", "unload"], "idle");
     let mut cfg = config(&path);
@@ -2390,7 +2390,7 @@ async fn a_never_idle_writer_is_admitted_at_the_length() {
     let trace = Trace::new();
     trace.append(1, "turn");
     let writer = never_idle_as(&trace, "turn.started");
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let mut cfg = config(&path);
     cfg.boundary_bound = Duration::from_secs(10);
@@ -2427,7 +2427,7 @@ async fn start_with_a_record_in_the_gap(
     use std::sync::atomic::Ordering;
     let counts = &trace.relay.counts;
     counts.header_delay_ms.store(1_000, Ordering::SeqCst);
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(lab, &trace.socket, out.path(), None).await;
     let con = Running::start(config(&path), Arc::new(NoVerbs));
     let until = tokio::time::Instant::now() + SOON;
@@ -2519,7 +2519,7 @@ async fn an_opening_at_the_length_is_admitted_with_nothing_read() {
     for n in 1..=3 {
         trace.append(n, "turn");
     }
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let mut cfg = config(&path);
     cfg.boundary_bound = Duration::from_secs(10);
@@ -2581,7 +2581,7 @@ async fn a_truncation_during_an_opening_is_marked_at_the_replays_front() {
         .counts
         .chunk_pause_ms
         .store(300, Ordering::SeqCst);
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let mut con = Running::start(config(&path), Arc::new(NoVerbs));
     let until = tokio::time::Instant::now() + SOON;
@@ -2652,7 +2652,7 @@ async fn a_refused_position_at_an_opening_is_marked_under_no_server_position() {
     for n in 1..=3 {
         trace.append(n, "turn");
     }
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let mut con = Running::start(config(&path), Arc::new(NoVerbs));
     con.wait("admitted", |s| s.admitted).await;
@@ -2695,7 +2695,7 @@ async fn a_new_file_at_an_opening_is_marked_under_no_server_position() {
     for n in 1..=3 {
         trace.append(n, "turn");
     }
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let mut con = Running::start(config(&path), Arc::new(NoVerbs));
     con.wait("admitted", |s| s.admitted).await;
@@ -2738,7 +2738,7 @@ async fn a_header_held_past_the_bound_leaves_the_door_closed() {
         .counts
         .header_delay_ms
         .store(6_000, Ordering::SeqCst);
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let mut cfg = config(&path);
     cfg.boundary_bound = Duration::from_secs(1);
@@ -2766,7 +2766,7 @@ async fn a_refused_position_is_marked_once_under_the_servers_position() {
     for n in 1..=3 {
         trace.append(n, "turn");
     }
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let invoker = FakeInvoker::new(&["show"], "idle");
     let mut cfg = config(&path);
@@ -2819,7 +2819,7 @@ async fn an_opening_serves_its_show_before_a_verb_queued_at_it() {
         return;
     };
     let mut trace = Trace::closed();
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let invoker = FakeInvoker::new(&["show", "validate"], "unloaded");
     let mut con = Running::start(config(&path), invoker.clone());
@@ -2876,7 +2876,7 @@ async fn an_openings_show_is_taken_past_a_full_queue() {
     use std::sync::atomic::Ordering;
     let Some(lab) = Lab::open().await else { return };
     let mut trace = Trace::closed();
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let invoker = FakeInvoker::new(&["show", "validate"], "unloaded");
     let mut con = Running::start(config(&path), invoker.clone());
@@ -2954,7 +2954,7 @@ async fn an_acknowledgement_past_a_bounded_boundary_is_caught_up() {
         body.push_str(&format!("{{\"wall_ms\":1,\"payload\":{{\"n\":{n}}}}}\n"));
     }
     trace.append_raw(body.as_bytes());
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let invoker = FakeInvoker::new(&["show"], "idle");
     let mut con = Running::start(config(&path), invoker.clone());
@@ -3007,7 +3007,7 @@ async fn a_half_header_at_a_redial_closes_the_door_rather_than_refusing() {
     for n in 1..=3 {
         trace.append(n, "turn");
     }
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let mut con = Running::start(config(&path), Arc::new(NoVerbs));
     con.wait("admitted", |s| s.admitted).await;
@@ -3053,7 +3053,7 @@ async fn a_rewritten_file_below_an_acknowledgement_past_the_boundary_is_replayed
         body
     };
     trace.append_raw(filler(1, 2 * 1024 * 1024).as_bytes());
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let invoker = FakeInvoker::new(&["show"], "unloaded");
     let mut con = Running::start(config(&path), invoker.clone());
@@ -3119,7 +3119,7 @@ async fn the_verification_gets_only_what_remains_of_the_openings_bound() {
         body.push_str(&format!("{{\"wall_ms\":1,\"payload\":{{\"n\":{n}}}}}\n"));
     }
     trace.append_raw(body.as_bytes());
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let mut con = Running::start(config(&path), Arc::new(NoVerbs));
     con.wait("admitted", |s| s.admitted).await;
@@ -3264,7 +3264,7 @@ async fn acknowledged_long_trace(
         body.push_str(&format!("{{\"wall_ms\":1,\"payload\":{{\"n\":{n}}}}}\n"));
     }
     trace.append_raw(body.as_bytes());
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(lab, &trace.socket, out.path(), None).await;
     let mut con = Running::start(config(&path), Arc::new(NoVerbs));
     con.wait("admitted", |s| s.admitted).await;
@@ -3469,7 +3469,7 @@ async fn a_new_file_at_offset_zero_is_marked() {
     for n in 1..=3 {
         trace.append(n, "turn");
     }
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let mut con = Running::start(config(&path), Arc::new(NoVerbs));
     con.wait("admitted", |s| s.admitted).await;
@@ -4074,7 +4074,7 @@ async fn an_openings_show_the_store_does_not_land_keeps_the_hold() {
         return;
     };
     let mut trace = Trace::closed();
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let invoker = FakeInvoker::new(&["show", "load"], "unloaded");
     let mut con = Running::start(config(&path), invoker.clone());
@@ -4134,7 +4134,7 @@ async fn an_openings_show_the_store_does_not_land_keeps_the_hold() {
 async fn a_shutdown_invokes_nothing_though_the_ceiling_grants_unload() {
     let Some(lab) = Lab::open().await else { return };
     let trace = Trace::new();
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (_id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let invoker = FakeInvoker::new(&["show", "unload"], "idle");
     let mut con = Running::start(config(&path), invoker.clone());
@@ -4153,7 +4153,7 @@ async fn a_shutdown_invokes_nothing_though_the_ceiling_grants_unload() {
 async fn admin_con_sends_another_partys_line_upstream() {
     let Some(lab) = Lab::open().await else { return };
     let trace = Trace::new();
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let invoker = FakeInvoker::new(&["show"], "idle");
     let mut con = Running::start(config(&path), invoker.clone());
@@ -4217,7 +4217,7 @@ async fn a_window_whose_acks_were_dropped_is_sent_again() {
         return;
     };
     let trace = Trace::new();
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let invoker = FakeInvoker::new(&["show"], "idle");
     let mut con = Running::start(config(&path), invoker.clone());
@@ -4273,7 +4273,7 @@ async fn a_steady_stream_never_postpones_the_resend() {
         return;
     };
     let trace = Trace::new();
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
     let invoker = FakeInvoker::new(&["show"], "idle");
     let mut con = Running::start(config(&path), invoker.clone());

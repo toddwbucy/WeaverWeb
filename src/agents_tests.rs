@@ -28,6 +28,7 @@ use crate::store::read::tests::{Fresh, fresh_store};
 use crate::surfaces::admin::READ_HOLD;
 use crate::surfaces::agents::{HANDOVER_LIFETIME, HANDOVERS_HELD, Handover, Seams, routes};
 use crate::surfaces::gate;
+use crate::test_log::Captured;
 
 /// A store of its own, an authority minted for the test, a listener over
 /// both, and the app with the agents surface mounted as the server mounts
@@ -91,7 +92,7 @@ async fn rig_with(handover: Handover) -> Option<Rig> {
 
 async fn rig_of(handover: Handover, silence: Duration) -> Option<Rig> {
     let fresh = fresh_store().await?;
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_dir::tempdir().unwrap();
     let authority =
         Arc::new(Authority::init(&dir.path().join("authority"), "weaver-web", &[]).unwrap());
     let listener = Listener::start_with(
@@ -429,55 +430,6 @@ impl Connector {
     }
 }
 
-/// The log lines at every level, captured on the test's own thread.
-#[derive(Clone, Default)]
-pub(crate) struct Captured(pub(crate) Arc<std::sync::Mutex<Vec<u8>>>);
-
-impl std::io::Write for Captured {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(bytes);
-        Ok(bytes.len())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
-impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Captured {
-    type Writer = Captured;
-    fn make_writer(&'a self) -> Self::Writer {
-        self.clone()
-    }
-}
-
-impl Captured {
-    /// Where the capture stands now: the lines a test reads come after it.
-    pub(crate) fn mark(&self) -> usize {
-        self.0.lock().unwrap().len()
-    }
-
-    /// **A line of the capture** written since `from` and holding every
-    /// needle, looked for until `within` has passed.
-    pub(crate) async fn logged(&self, from: usize, needles: &[&str], within: Duration) -> bool {
-        let until = tokio::time::Instant::now() + within;
-        loop {
-            let found = {
-                let bytes = self.0.lock().unwrap();
-                String::from_utf8_lossy(&bytes[from.min(bytes.len())..])
-                    .lines()
-                    .any(|line| needles.iter().all(|needle| line.contains(needle)))
-            };
-            if found {
-                return true;
-            }
-            if tokio::time::Instant::now() >= until {
-                return false;
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-    }
-}
-
 /// The body of a PEM, the lines between its armour, which is the part a
 /// leak would carry.
 fn pem_body(pem: &str) -> String {
@@ -493,7 +445,7 @@ fn pem_body(pem: &str) -> String {
 #[tokio::test]
 async fn registering_hands_over_two_configs_each_taken_once_and_valid() {
     let captured = Captured::default();
-    let _logging = tracing::subscriber::set_default(
+    let _logging = crate::test_log::scoped(
         tracing_subscriber::fmt()
             .with_writer(captured.clone())
             .with_max_level(tracing::Level::TRACE)
@@ -1740,7 +1692,7 @@ async fn the_hosts_rotate_refuses_a_retired_row() {
     assert_eq!(status, StatusCode::SEE_OTHER);
 
     let cfg = server_config(rig.dir.path(), rig.listener.address());
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let rotated =
         crate::link::verbs::rotate(s, &cfg, &rig.authority, &id, out.path(), Some("lab")).await;
     assert!(!rotated.ok, "{}", rotated.value);

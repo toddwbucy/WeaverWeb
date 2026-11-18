@@ -47,7 +47,7 @@ impl Drop for Rig {
 
 async fn rig() -> Option<Rig> {
     let fresh = fresh_store().await?;
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_dir::tempdir().unwrap();
     let authority = Authority::init(&dir.path().join("authority"), "weaver-web", &[]).unwrap();
     let listener = Listener::start_with(
         fresh.store.clone(),
@@ -288,7 +288,7 @@ async fn the_pairing_code_crosses_the_link_in_no_frame() {
 /// itself is `pair_code`'s test of the Spec's example.
 #[tokio::test]
 async fn both_ends_derive_one_code_from_a_32_byte_export() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_dir::tempdir().unwrap();
     let authority = Authority::init(&dir.path().join("authority"), "weaver-web", &[]).unwrap();
     let (box_io, console_io) = tokio::io::duplex(64 * 1024);
     let name = rustls::pki_types::ServerName::try_from("127.0.0.1").unwrap();
@@ -601,7 +601,7 @@ async fn the_console_closes_a_waiting_box_expired_at_its_life() {
 /// completes the handshake.
 #[tokio::test]
 async fn a_chain_that_does_not_hold_together_is_refused_at_the_box() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_dir::tempdir().unwrap();
     let console = Authority::init(&dir.path().join("console"), "weaver-web", &[]).unwrap();
     let other = Authority::init(&dir.path().join("other"), "weaver-web", &[]).unwrap();
     let (box_io, console_io) = tokio::io::duplex(64 * 1024);
@@ -649,7 +649,7 @@ async fn the_pairing_is_tls_1_3_alone() {
 /// A console of the test's making: it completes the pairing's handshake
 /// under its own authority, reads the first frame, and answers `lines`.
 async fn console_saying(lines: &'static [&'static str]) -> SocketAddr {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_dir::tempdir().unwrap();
     let authority = Authority::init(&dir.path().join("authority"), "weaver-web", &[]).unwrap();
     let acceptor = TlsAcceptor::from(authority.pairing_tls().unwrap());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

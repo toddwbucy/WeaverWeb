@@ -245,7 +245,7 @@ mod tests {
     /// refuse**, so the two ends agree from one constant.
     #[test]
     fn a_silence_bound_past_four_days_is_refused() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_dir::tempdir().unwrap();
         let path = dir.path().join("server.toml");
         let write = |bound: u64| {
             std::fs::write(
@@ -270,7 +270,7 @@ mod tests {
     /// refused at load past it or at zero; 24 hours where unset.
     #[test]
     fn a_token_lifetime_past_seven_days_is_refused() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_dir::tempdir().unwrap();
         let path = dir.path().join("server.toml");
         let base =
             "listen = \"127.0.0.1:0\"\ndatabase = \"postgres:///x\"\nauthority_dir = \"/a\"\n";
@@ -293,7 +293,7 @@ mod tests {
     /// largest integer a config can hold among them.
     #[test]
     fn a_sessions_limits_default_and_refuse_what_cannot_hold() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_dir::tempdir().unwrap();
         let path = dir.path().join("server.toml");
         let base =
             "listen = \"127.0.0.1:0\"\ndatabase = \"postgres:///x\"\nauthority_dir = \"/a\"\n";
@@ -330,7 +330,7 @@ mod tests {
     /// does not know.
     #[test]
     fn sign_in_is_by_passkey_unless_the_config_names_the_token() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_dir::tempdir().unwrap();
         let path = dir.path().join("server.toml");
         let base =
             "listen = \"127.0.0.1:0\"\ndatabase = \"postgres:///x\"\nauthority_dir = \"/a\"\n";

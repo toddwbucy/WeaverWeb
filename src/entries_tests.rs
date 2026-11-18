@@ -509,7 +509,7 @@ fn wait_pending(entries: &Entries, n: usize) -> Vec<(String, serde_json::Value)>
 /// over the path, and a line after it are a discontinuity and that line.
 #[test]
 fn admin_log_is_read_from_the_start_and_a_truncation_is_marked() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_dir::tempdir().unwrap();
     let path = dir.path().join("admin.log");
     std::fs::write(
         &path,
@@ -578,7 +578,7 @@ fn admin_log_is_read_from_the_start_and_a_truncation_is_marked() {
 /// is the connector's own failure, once.
 #[test]
 fn admin_log_refuses_a_link_and_a_fifo() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_dir::tempdir().unwrap();
     let real = dir.path().join("real.log");
     std::fs::write(&real, "").unwrap();
     let link = dir.path().join("admin.log");
@@ -679,7 +679,7 @@ async fn entries_acknowledged_are_applied_from_their_durable_copy() {
 /// lines written before the file was found are skipped.
 #[test]
 fn admin_log_absent_at_the_start_is_read_from_its_start() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_dir::tempdir().unwrap();
     let path = dir.path().join("admin.log");
     let entries = Entries::new("admin-con");
     let (stop, shutdown) = tokio::sync::watch::channel(false);
@@ -711,7 +711,7 @@ fn admin_log_absent_at_the_start_is_read_from_its_start() {
 /// at the old offset, mid-line.
 #[test]
 fn admin_log_truncated_and_regrown_between_looks_is_reread_whole() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_dir::tempdir().unwrap();
     let path = dir.path().join("admin.log");
     std::fs::write(&path, "").unwrap();
     let entries = Entries::new("admin-con");
@@ -993,7 +993,7 @@ async fn the_drain_is_fair_to_a_row_behind_slow_failures() {
 /// half record's rest is sent as a line of its own.
 #[test]
 fn admin_log_started_mid_line_skips_its_rest() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_dir::tempdir().unwrap();
     let path = dir.path().join("admin.log");
     let first = line("load", THEIRS, json!({"kind": "config_invalid"})).to_string();
     let (head, rest) = first.split_at(first.len() / 2);
@@ -1170,7 +1170,7 @@ async fn a_stop_writes_its_teardowns_alerts_before_it_returns() {
 /// are owed.
 #[test]
 fn admin_log_sends_a_blank_line_as_unparsed() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_dir::tempdir().unwrap();
     let path = dir.path().join("admin.log");
     std::fs::write(&path, "").unwrap();
     let entries = Entries::new("admin-con");

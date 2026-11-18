@@ -595,7 +595,7 @@ mod tests {
     /// with no request line.
     #[test]
     fn a_request_whose_line_is_not_delivered_names_the_config_it_made() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_dir::tempdir().unwrap();
         let config = dir.path().join("admin-con.toml");
         let out = crate::link::box_line::tests::Refusing { at_flush: false };
         let mut p = Printer::new("admin-con request", out, Vec::new());
@@ -662,7 +662,7 @@ mod tests {
     /// answers `fault` and `report` `unknown`.
     #[tokio::test]
     async fn a_setup_ask_whose_dial_or_handshake_stalls_is_unreachable() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_dir::tempdir().unwrap();
         let authority = Authority::init(&dir.path().join("authority"), "weaver-web", &[]).unwrap();
 
         let silent = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -715,7 +715,7 @@ mod tests {
     /// `unreachable`.
     #[tokio::test]
     async fn a_setup_ask_sent_and_unanswered_is_unknown_for_a_report_and_a_fault_for_a_describe() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_dir::tempdir().unwrap();
         let authority = Authority::init(&dir.path().join("authority"), "weaver-web", &[]).unwrap();
         let acceptor = tokio_rustls::TlsAcceptor::from(authority.server_tls().unwrap());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

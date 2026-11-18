@@ -97,7 +97,7 @@ impl FakeRelay {
     /// A fake relay for the trace at `trace`, not yet running: the door is
     /// closed until `start`.
     pub(crate) fn new(trace: &Path) -> Self {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_dir::tempdir().unwrap();
         let socket = dir.path().join("trace.sock");
         Self {
             _dir: dir,

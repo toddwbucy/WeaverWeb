@@ -1,3 +1,5 @@
+//! conforms: web-describes-laying-names-an-adapter-only-where-the-tuple-holds-one
+//!
 //! The link's vocabulary (Spec section 8, and the clauses of 7.2 the server
 //! enacts): NDJSON over the TLS stream, one frame per line, `svc` the tag.
 //! Acts 3 and 4 implement the client side of these shapes.
@@ -426,7 +428,11 @@ pub struct DescribedFile {
 pub struct DescribedLaying {
     pub tuple: String,
     pub artifact: String,
-    pub adapter: DescribedAdapter,
+    /// **The adapter, only where the tuple holds one** (Spec 8.3): absent,
+    /// the laying is a base-only load, as the adapter binding's ADP-1 omits
+    /// its table. An answer carrying one reads as it did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adapter: Option<DescribedAdapter>,
     pub devices: Vec<i32>,
     pub context_capacity: i64,
     pub turn_context: String,

@@ -205,7 +205,7 @@ mod tests {
     /// a writer came.
     #[test]
     fn a_fifo_at_the_keys_name_is_refused_and_never_waited_on() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_dir::tempdir().unwrap();
         let path = dir.path().join(SEAL_KEY);
         let name = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
         // SAFETY: `name` is a NUL-terminated path.

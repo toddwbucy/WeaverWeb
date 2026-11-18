@@ -120,6 +120,9 @@ pub enum Refusal {
     Unplaceable(String),
     /// Confirm waits on the members named, each not read (Spec 6.2).
     Unconfirmable(String),
+    /// The setup holds no adapter's pick, so there is none to drop (Spec
+    /// 6.2).
+    NoAdapterPicked,
 }
 
 impl std::fmt::Display for Refusal {
@@ -250,6 +253,10 @@ impl std::fmt::Display for Refusal {
             Refusal::Unconfirmable(why) => write!(
                 f,
                 "Confirm stands only where every member is read, and it waits on these: {why}. Nothing was written"
+            ),
+            Refusal::NoAdapterPicked => write!(
+                f,
+                "no adapter is picked, so there is none to drop: the agent loads its base alone"
             ),
         }
     }

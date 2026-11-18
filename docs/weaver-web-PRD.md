@@ -242,10 +242,10 @@ beside them, reached from the build page's stub for the fields no setup page ask
   virtual machine, the page warns that the console could lose access to itself.
 - **The models.** A Hugging Face repository, then a pick from its files, a split model
   shown as one choice with all its parts, and the precision read from the file (section
-  10.4). What is built is what the first agent needs: one decoder and the one adapter on
-  it. Extra models, adapter roles beyond the one decoder adapter, a classifier-only
-  agent and placement on the CPU are drawn and marked unbuilt, never live, so a page
-  never accepts what a load refuses.
+  10.4). What is built is one decoder and, optionally, one adapter on it. Extra models,
+  adapter roles beyond the one decoder adapter, a classifier-only agent and placement on
+  the CPU are drawn and marked unbuilt, never live, so a page never accepts what a load
+  refuses.
 - **The drives**, as the box mounted them. Once the model is picked, the page shows the
   command to run at the appliance's console, which starts the appliance's drive setup
   (section 10.4), then the state drive, required for every agent at a minimum of 10 GiB,
@@ -261,13 +261,14 @@ beside them, reached from the build page's stub for the fields no setup page ask
   unit, GiB, serves the whole flow.
 - **The placement.** Each model on a device, and the context length chosen against the
   model's maximum, read from the file's header. The fit is called planned, from the room
-  plan without a load, since only a load measures. The first agent's Granite is a dense
-  transformer, so the room plan's KV cache term applies. "In shard order" names the
-  layer split across cards and says so.
+  plan without a load, since only a load measures. Which of the room plan's terms apply
+  follows from the model's header, so the page assumes no one agent's model. "In shard
+  order" names the layer split across cards and says so.
 - **Confirm.** The deployment tuple in full: the model's repository, commit and per-part
-  digests, the adapter's likewise, the image's version, the driver, the cards by
-  identity, the guest processor, the machine, the drives, the placement and the context
-  length. Confirm goes to the build page.
+  digests, the adapter's likewise where one is picked, or that none is and the agent
+  loads its base alone, the image's version, the driver, the cards by identity, the
+  guest processor, the machine, the drives, the placement and the context length.
+  Confirm goes to the build page.
 - **The build page** holds the board and the prompt tuple panel. Both are held, and the
   page is a one-pane stub marked unbuilt. The six sampling values live in the prompt
   tuple, so a first agent declared and set up through Confirm cannot load until the
@@ -1153,14 +1154,14 @@ this crate designs around the gap until it closes.
   (`weaver-web-Spec` sections 8.1 and 8.2) stay beside the pairing for a host is not
   ruled.
 - **State and save points on an appliance**, on the operator's rulings of 2026-11-16
-  (setup pages), which supersede the ruling of 2026-11-15 that made both later. The
-  first production agent declares a store and keeps the system prompt, and it keeps the
+  (setup pages), which supersede the ruling of 2026-11-15 that made both later. State is
+  in scope on an appliance. An agent may declare a store, and one that does keeps the
   save point the unload writes, on the state disk, which every agent mounts (section
-  10.4). The first test exercises it: the prompt into state, load, unload, shut the
-  virtual machine down, restart, reload, and the prompt is restored. Operator-managed
-  save points stay out of scope, later and named as later. Whether the record of an
-  upgrade, held while state on an appliance was later (section 8), is taken up with
-  this is not ruled.
+  10.4). The first test exercises it with the first agent's store: the prompt into
+  state, load, unload, shut the virtual machine down, restart, reload, and the prompt is
+  restored. Operator-managed save points stay out of scope, later and named as later.
+  Whether the record of an upgrade, held while state on an appliance was later (section
+  8), is taken up with this is not ruled.
 - **Trust on first use**, the hazard of section 10.1 while pairing ran over the
   operator's first SSH. The operator's rulings of 2026-11-16 (setup pages) and their
   addendum move the pairing to a short one-time code the box shows beside the
@@ -1205,13 +1206,14 @@ for a host. The Spark-class machine is later, on the operator's ruling of 2026-1
 (section 9). The section adds no ruling of its own. A question the rulings leave open is
 named in section 9, or in `weaver-web-Spec` section 10 where it is the Spec's.
 
-**The stance**, on the operator's ruling of 2026-11-15. The suite ships a tuple, and
-each operator produces tuples of the operator's own. The image is disposable and carries
-what runs, and the mounts carry what the agent keeps. Whatever an operator adds or
-changes after boot is the operator's to account for, and the suite offers no guarantee
-about a changed machine. Inbound is the suite's, and outbound is the operator's. The
-suite builds the virtual machine and the service as simply as will work, and anything
-that adds machinery for a later need is a later item.
+**The stance**, on the operator's ruling of 2026-11-15. The suite ships a blank agent
+and the console's path to a tuple, and each operator, the suite first among them,
+produces tuples of the operator's own. The image is disposable and carries what runs,
+and the mounts carry what the agent keeps. Whatever an operator adds or changes after
+boot is the operator's to account for, and the suite offers no guarantee about a changed
+machine. Inbound is the suite's, and outbound is the operator's. The suite builds the
+virtual machine and the service as simply as will work, and anything that adds machinery
+for a later need is a later item.
 
 **Five terms carry one meaning each in this section.**
 
@@ -1486,12 +1488,13 @@ and, from the load onward, as used under the newer version. **The run card recor
 tuple as shipped**, on the ruling of 2026-11-15, and no guarantee is offered about the
 tuple as it runs. The record of an upgrade is WeaverAgent's, an ask upstream that is
 held (section 8), and how the console shows it is `weaver-web-Spec` section 10's.
-**State is in scope for the first agent**, on the operator's rulings of 2026-11-16
-(setup pages), which supersede the ruling of 2026-11-15 that put state and save points
-on an appliance out of scope. The first production agent declares a store and keeps the
-system prompt, and it keeps the save point the unload writes, on the state disk, by the
-existing save point path and with no new persistent store. Operator-managed save points
-stay out of scope (section 9).
+**State is in scope on an appliance**, on the operator's rulings of 2026-11-16 (setup
+pages), which supersede the ruling of 2026-11-15 that put state and save points on an
+appliance out of scope. An agent may declare a store, and one that does keeps the save
+point the unload writes, on the state disk, which every agent mounts, by the existing
+save point path and with no new persistent store. Operator-managed save points stay out
+of scope (section 9). The first agent declares a store and keeps its system prompt
+there, its own choice as its decoder is (section 10.4).
 
 **What lets the operator tell a stopped service from a machine that is down is open, and
 it is the console's to show.** What the appliance exposes for it is an ask upstream

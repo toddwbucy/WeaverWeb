@@ -1,12 +1,15 @@
 //! conforms: web-the-deployment-tuple-refuses-any-update-or-delete-and-a-setup-is-confirmed-once
 //! conforms: web-the-members-the-box-is-laid-from-are-the-confirmed-tuples-and-none-stand-before-confirm
 //! conforms: web-an-admin-write-runs-from-its-first-record-to-its-outcome-in-a-task-the-request-cannot-cancel
+//! conforms: web-a-setup-with-no-adapters-pick-confirms-a-tuple-with-none
 //!
 //! **The confirm page and Confirm** (Spec 6.2), a child of the setup pages'
 //! module. `GET /setup/{setup}/confirm` draws every member of the
 //! deployment tuple with its source, read or held, each held one saying
 //! what it waits on, and Confirm, which stands only where every member is
-//! read. Once the setup is confirmed the page draws the tuple from its row
+//! read. Where no adapter is picked, the adapter's place reads that the
+//! agent loads its base alone, and no scale is drawn. Once the setup is
+//! confirmed the page draws the tuple from its row
 //! alone and offers the build page.
 //!
 //! **Confirm** (`POST /setup/{setup}/confirm`) takes the admin writes'
@@ -186,32 +189,63 @@ fn machine_rows(b: &BoxMembers) -> Vec<(String, String)> {
     rows
 }
 
-/// **Every member of the tuple as a pane**, in the Spec's order.
-fn members_view(m: &Members) -> Vec<MemberView> {
-    let one = |label: &str, value: String| vec![(label.to_owned(), value)];
-    let box_waits = "the box's members, from the drives stage's report";
+/// **Where no adapter is picked**, the adapter's place on the page (Spec
+/// 6.2).
+const NO_ADAPTER: &str = "none picked: the agent loads its base alone";
+
+/// **The adapter's members as panes**: where none is picked, one pane saying
+/// so and no scale's, and where one is, its model and its scale, each read
+/// or held (Spec 6.2).
+fn adapter_view(m: &Members) -> Vec<MemberView> {
+    if matches!((&m.adapter, &m.adapter_scale), (Ok(None), Ok(None))) {
+        return vec![MemberView {
+            title: "The adapter",
+            source: "the setup's picks",
+            rows: vec![("Adapter".to_owned(), NO_ADAPTER.to_owned())],
+            why: None,
+            waits: "an adapter's pick on the models page, where one is wanted",
+        }];
+    }
+    let none_picked = || "no adapter is picked".to_owned();
+    let model = m
+        .adapter
+        .clone()
+        .and_then(|adapter| adapter.ok_or_else(none_picked));
+    let scale = m
+        .adapter_scale
+        .clone()
+        .and_then(|scale| scale.ok_or_else(none_picked));
     vec![
-        member(
-            "The decoder",
-            "the pull's record, verified",
-            "the decoder's pull, verified",
-            &m.decoder,
-            model_rows,
-        ),
         member(
             "The adapter",
             "the pull's record, verified",
             "the adapter's pull, verified",
-            &m.adapter,
+            &model,
             model_rows,
         ),
         member(
             "The adapter's scale",
             "the setup, the adapter's pick",
             "the adapter's pick on the models page",
-            &m.adapter_scale,
-            |s| one("Scale", s.to_string()),
+            &scale,
+            |s| vec![("Scale".to_owned(), s.to_string())],
         ),
+    ]
+}
+
+/// **Every member of the tuple as a pane**, in the Spec's order.
+fn members_view(m: &Members) -> Vec<MemberView> {
+    let one = |label: &str, value: String| vec![(label.to_owned(), value)];
+    let box_waits = "the box's members, from the drives stage's report";
+    let mut views = vec![member(
+        "The decoder",
+        "the pull's record, verified",
+        "the decoder's pull, verified",
+        &m.decoder,
+        model_rows,
+    )];
+    views.extend(adapter_view(m));
+    views.extend([
         member(
             "The base's identity",
             "the console's hash of the cached parts",
@@ -298,7 +332,8 @@ fn members_view(m: &Members) -> Vec<MemberView> {
                 )
             },
         ),
-    ]
+    ]);
+    views
 }
 
 /// The tuple as confirmed, for the Confirm pane.
@@ -340,8 +375,8 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, setup_id: &str) -
                 (
                     Members {
                         decoder: Ok(t.decoder),
-                        adapter: Ok(t.adapter),
-                        adapter_scale: Ok(t.adapter_scale),
+                        adapter: Ok(t.adapter.as_ref().map(|a| a.model.clone())),
+                        adapter_scale: Ok(t.adapter.as_ref().map(|a| a.scale)),
                         base_blake3: Ok(t.base_blake3),
                         context_length: Ok(t.context_length),
                         max_tokens_per_turn: t.max_tokens_per_turn,

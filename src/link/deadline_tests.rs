@@ -21,7 +21,7 @@ use super::tests::{Lab, SOON, operator, show_answer};
 use crate::deadline::hold::{self, Point};
 use crate::store::AgentId;
 use crate::store::audit::{FIRST_FAULT, FirstFault};
-use crate::verbs_tests::global_capture;
+use crate::test_log::global_capture;
 
 /// The silence bound, and so every site's bound: short, so each held
 /// write waits seconds and not a minute.

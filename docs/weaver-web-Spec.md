@@ -4146,9 +4146,9 @@ rows untouched, reached from the build page's stub for the fields no setup page 
 - Two tunable values. The placement page chooses the context length against the model's
   maximum, read from the file's header, and the six sampling values live in the prompt
   tuple, where this screen requires all eight at save.
-- The roster offered. The models page offers what the first agent needs, one decoder and
-  the one adapter on it, and extra models, adapter roles beyond the one decoder adapter
-  and a classifier-only agent are drawn and marked unbuilt.
+- The roster offered. The models page offers one decoder and at most one adapter on it,
+  and extra models, adapter roles beyond the one decoder adapter and a classifier-only
+  agent are drawn and marked unbuilt.
 
 **The store stays open.** The state mount is required for every agent (section 8.3), and
 whether the store `none` this screen offers stays is not ruled (section 10).
@@ -4646,6 +4646,7 @@ by `session`. Reads are not audited.
   `placement`, `confirm` or `build`, and `GET /setup/{su}` answers its pairing page
 - `POST /setup/{su}/pairing`: the checkbox
 - `POST /setup/{su}/models`: a pick, an adapter's carrying its scale
+- `POST /setup/{su}/models/drop`: the adapter's pick dropped
 - `GET /setup/{su}/models/header`: one choice's header, a fragment
 - `GET /setup/{su}/models/pull`: the setup's pulls with their progress and the base's
   identity, a fragment the page re-fetches every 15 s through the session's background
@@ -4713,20 +4714,40 @@ there.
 | --- | --- | --- |
 | Start | the name, refused by the start page's rule or where an open setup holds it; the open setups; New agent once an agent stands | nothing |
 | Pairing | the checkbox, virtual machine or host; the console's link address and port (`link_address`, else `link_listen`), which the box's setup asks for, and that the box must reach them; the warning where that address is a loopback address and the checkbox says virtual machine, and where it is an unspecified address, `0.0.0.0` or `::`, for a host and a virtual machine alike, since a listener binds it for every interface and it names no machine to dial (RFC 1122 admits `0.0.0.0` as a source alone, and RFC 4291 refuses `::` as a destination); the waiting boxes, each by the name it claims, its peer address and its wait, the console's fingerprint, the fingerprint's confirmation and the code's field, where the console's build serves the enrollment (section 8.2); the survey's report at the `pairing` stage, read or refused by section 8.3's reader and shown as below | nothing on the console's side; a box that dials and reports: the image's setup script |
-| Models | the repository and its revision, resolved to a commit; each choice with its size and its header's facts; a gated repository with its accept link and a check again; the pick, which asks a pull (section 2.15), an adapter's carrying its scale; the pulls' progress and record; the base's identity, computed from the cache; the roster beyond the first agent drawn and marked unbuilt | nothing on the console's side; the box's pull from the cache: the act of the box's pull (section 10) |
+| Models | the repository and its revision, resolved to a commit; each choice with its size and its header's facts; a gated repository with its accept link and a check again; the pick, which asks a pull (section 2.15), an adapter's carrying its scale; the adapter's pane, `ok` with none picked, saying the agent then loads its base alone, and a picked adapter's Drop; the pulls' progress and record; the base's identity, computed from the cache; the roster beyond one decoder and its one adapter drawn and marked unbuilt | nothing on the console's side; the box's pull from the cache: the act of the box's pull (section 10) |
 | Drives | the appliance's form drawn with what it will show; the models drive's need, the bytes of the picks' distinct blobs; the drives as mounted, from the `drives` stage's report, with the judgments below; the host's form drawn and marked unbuilt, its models directory prefilled from `model_cache` where set; the SSH key that goes down, by its fingerprint, with a link to change it | the command that starts the drive setup: the image's setup script names it |
 | Placement | the context length, bounded below by the box's max-tokens-per-turn and above by the header's maximum; the turn context; the block count and the parts in shard order, from the header; the devices, a set of the reported cards by ordinal, held until a report brings them | the fit, drawn "planned, from the box's room plan": the room plan's answer over TLS, an ask on WeaverAgent |
-| Confirm | every member of the tuple with its source, read or held, the box's members from the `drives` stage's report | nothing on the console's side; Confirm stands only once every member is read, the box's members once the box reports its drives |
+| Confirm | every member of the tuple with its source, read or held, the box's members from the `drives` stage's report; where no adapter is picked, "none picked: the agent loads its base alone" in the adapter's place, and no scale row | nothing on the console's side; Confirm stands only once every member is read, the box's members once the box reports its drives |
 | Build | one pane, marked unbuilt, saying the box lays the agent from the tuple once Confirm stands, and linking the declaration screen as built for the fields no setup page asks | the board and the prompt tuple panel, held by the rulings |
 
-**The models page's roster is the first agent's**: one decoder and one adapter on it.
-Extra models, adapter roles beyond the one decoder adapter, a classifier-only agent and
-placement on the CPU are drawn and marked unbuilt, never live, and a post that names
-any of them is refused, saving nothing. A pick for a role the setup holds replaces that
-role's row, and the files the earlier pick pulled stay in the cache. **An adapter's pick
-carries its scale**, a finite number with no default, as the adapter binding's ADP-1 at
-WeaverAgent's `6b91747e` admits it: a pick without one, or with one that is not finite,
-is refused, saving nothing.
+**The models page's roster is one decoder and at most one adapter on it**, the adapter
+optional, on the operator's ruling of 2026-11-18. Extra models, adapter roles beyond the
+one decoder adapter, a classifier-only agent and placement on the CPU are drawn and
+marked unbuilt, never live, and a post that names any of them is refused, saving
+nothing. A pick for a role the setup holds replaces that role's row, and the files the
+earlier pick pulled stay in the cache. **An adapter's pick carries its scale**, a finite
+number with no default, as the adapter binding's ADP-1 at WeaverAgent's `6b91747e`
+admits it: a pick without one, or with one that is not finite, is refused, saving
+nothing.
+
+**The adapter is optional**, on the operator's ruling of 2026-11-18, within the scope of
+the ruling of 2026-11-16: at most one adapter, from Hugging Face alone. A setup with no
+adapter's pick reaches Confirm and confirms a tuple with none, and the agent is laid on
+its base alone. **An adapter's pick is dropped by a write of its own**,
+`POST /setup/{su}/models/drop`, which posts the setup's version alone. The form is
+parsed to its shape before the admin gate, any other field answering 400. After the gate
+the setup must stand (404), be open (409) and hold an adapter's pick (409), each refusal
+recording nothing. The write deletes the adapter's row under the version check, a stale
+version answering 409 after the first record, as every admin write's does, and its step
+four runs in the task, and under the bound, that every admin write's runs in (section
+2.13). A confirmed setup's model rows refuse the delete at the store too, by the trigger
+below. A pull of the dropped pick's files still running runs on, shown with its cancel
+on the account's page (section 2.15). The dropped pick's files stay in the console's
+cache as every pulled file does, a replaced pick's too, nothing removing them, and are
+laid nowhere, since the laying reads the tuple and `describe`'s `models` the setup's
+picks. A later pick of the same adapter asks a pull that finds each blob standing,
+records it found and fetches nothing, and resumes a cancelled pull's partial by range
+(section 2.15). Only the adapter's pick is dropped, since every tuple holds a decoder.
 
 **A choice is a model, not a file.** Files named `<stem>-NNNNN-of-MMMMM.gguf` with one
 stem and one count group into one choice listing every part and their total size,
@@ -4813,9 +4834,11 @@ audited pick began, and carries no audit record. A start that finds a verified p
 no row hashes it again, a stop of the server ending a hash between two reads, and the
 page shows the identity "not read" while its hash runs. A drift between this hash and
 the agent's fails closed, since admission computes the hash again and refuses a
-mismatch. **What the identity does not show** is that the adapter was converted against
-this base: it pins the box's files to the console's pull, and the pairing of adapter and
-base stays the operator's pick (section 10).
+mismatch. **The identity is computed for every verified decoder**, an adapter picked or
+not, and the tuple records it either way, so Confirm waits on it either way. **What the
+identity does not show** is that the adapter was converted against this base: it pins
+the box's files to the console's pull, and the pairing of adapter and base stays the
+operator's pick (section 10).
 
 **The context length** is an integer from the box's max-tokens-per-turn to the header's
 maximum. One below the bound or above the maximum is refused, saving nothing, and one at
@@ -4921,8 +4944,8 @@ source:
 | member | source |
 | --- | --- |
 | the model's repository, commit, and each part's path under the models mount, blob, SHA-256 and bytes | the pull's record, verified (section 2.15) |
-| the adapter's, likewise | the pull's record, verified |
-| the adapter's scale | the setup, the adapter's pick |
+| the adapter's, likewise, where one is picked | the pull's record, verified |
+| the adapter's scale, where one is picked | the setup, the adapter's pick |
 | the base's identity | the console's hash of the cached parts, above |
 | the context length | the setup, bounded by the box's max-tokens-per-turn and the header |
 | the box's max-tokens-per-turn | the console's constant, `MAX_TOKENS_PER_TURN`, 4096 |
@@ -4937,19 +4960,25 @@ source:
 | the report read, by its stage and `taken` | the `drives` stage's report |
 | the devices | the placement page, from the reported cards |
 
+**A tuple holds an adapter's members whole or not at all** (migration `0032`): its
+repository, commit, choice, parts, pull and scale stand together, each held by its own
+check, or are all absent where no adapter was picked. The base's identity is required
+either way.
+
 **The box's members are typed**, on the operator's rulings of 2026-11-17 (the survey's
 reading). The tuple takes the report's facts of the machine and none of the moment's,
 so not a drive's free space, which moves with use, and not whether the driver is
 loaded, which the cards imply. The memory total and the kernel release are kept, since
 they describe what the agent ran on.
 
-**Confirm's way forward stands only where every member is read**: both pulls verified,
-the base's identity computed, the context length and the turn context kept, the devices
-chosen and each among the reported cards, and the box's members read from the `drives`
-stage's report, every drive mounted and the state drive's filesystem at 9 GiB or more.
-Until then Confirm holds and says which members it waits on, naming the report, the
-drive or the ordinal. A post to Confirm with a member unread is refused, writing
-nothing. Confirm then goes to the build page.
+**Confirm's way forward stands only where every member is read**: the decoder's pull
+verified, and the adapter's where one is picked, the base's identity computed, the
+context length and the turn context kept, the devices chosen and each among the reported
+cards, and the box's members read from the `drives` stage's report, every drive mounted
+and the state drive's filesystem at 9 GiB or more. Until then Confirm holds and says
+which members it waits on, naming the report, the drive or the ordinal. A post to
+Confirm with a member unread is refused, writing nothing. Confirm then goes to the build
+page.
 
 **Confirm reads the box's reports inside its transaction**, this document's election of
 2026-11-17, once its update holds the setup's row. A report's write holds that row
@@ -4965,19 +4994,26 @@ member again inside its transaction and writes the tuple from what it read, so t
 holds what the sources held at its commit. Each part's path is relative to the models
 mount, in Hugging Face's layout (`models--<owner>--<name>/snapshots/<commit>/<path>`),
 and its blob is the cache's name for it (section 2.15). The tuple references its setup,
-its two pulls, the person who confirmed and the base's identity row it read, by that
-row's digest too. **A confirmed setup never changes**: a trigger refuses any update or
-delete of the setup, and any write of its model rows, once it is confirmed. A truncation
-fires no row trigger, so a statement trigger refuses a truncation of the model rows
-while any setup is confirmed, and a truncation of the setups is refused by the
-references to them and, cascaded, by the tuple's guard. So a second Confirm meets a
-confirmed setup, and the tuple's one-per-setup constraint stands behind it. **The
-confirm page's way forward is Confirm itself**: the next page is offered only once the
-setup is confirmed, and a confirmed setup's page draws the tuple from its row alone.
+the decoder's pull and the adapter's where it holds one, the person who confirmed and
+the base's identity row it read, by that row's digest too. **A confirmed setup never
+changes**: a trigger refuses any update or delete of the setup, and any write of its
+model rows, once it is confirmed. A truncation fires no row trigger, so a statement
+trigger refuses a truncation of the model rows while any setup is confirmed, and a
+truncation of the setups is refused by the references to them and, cascaded, by the
+tuple's guard. So a second Confirm meets a confirmed setup, and the tuple's
+one-per-setup constraint stands behind it. **The confirm page's way forward is Confirm
+itself**: the next page is offered only once the setup is confirmed, and a confirmed
+setup's page draws the tuple from its row alone. **Where no adapter is picked, the
+confirm page reads "none picked: the agent loads its base alone"** in the adapter's
+place and draws no scale row, from the setup before Confirm and from the tuple's row
+after it.
 
 **The box is laid from the tuple.** The tuple holds every member the agent is laid from:
-the decoder's artifact, the adapter's artifact, SHA-256 and scale, the base's identity,
-the devices, the context length and the turn context. They are read from the tuple's row
+the decoder's artifact, the devices, the context length and the turn context, and where
+it holds an adapter, the adapter's artifact, SHA-256 and scale with the base's identity
+it binds to. A laying with no adapter carries no base identity, since the box checks the
+base's digest only against an adapter's, and an absent adapter is a base-only load (the
+adapter binding's ADP-1 at WeaverAgent's `be56d8c2`). They are read from the tuple's row
 alone (`Store::laying`), so none stands before Confirm. The max-tokens-per-turn the
 tuple carries is not among them, since the box's agent-creation tool writes its own.
 `admin-con setup describe` answers them to the box's setup, as `laying`, only once the
@@ -7136,17 +7172,18 @@ a `setup` frame after a hello is refused as malformed. It makes two asks:
     8.2) and `false` where it wrote a new row, so the drive setup knows whether the
     state drive it mounts is carried or new, and refuses a carried one as the models
     drive
-  - `models`, absent until the models page's first pick, then one entry per role,
-    `decoder` and `adapter`, each with `repository`, `commit`, `artifact` (the path of
-    the choice's first part, or of the adapter's one file), `files` (each with `path`,
-    `blob`, `bytes` and `sha256`) and `pull` (`running`, `verified` or `failed`, the
-    console's own download)
+  - `models`, absent until the models page's first pick, then one entry per role the
+    setup holds, `decoder` and, where one is picked, `adapter`, each with `repository`,
+    `commit`, `artifact` (the path of the choice's first part, or of the adapter's one
+    file), `files` (each with `path`, `blob`, `bytes` and `sha256`) and `pull`
+    (`running`, `verified` or `failed`, the console's own download)
   - `bytes`, the models drive's need: the bytes of the picks' distinct blobs, a blob two
     paths share counted once
   - `laying`, absent until Confirm, then the members the agent is laid from, read from
     the confirmed tuple (section 6.2): `tuple`, its `dt-` identity, `artifact`,
-    `adapter` (`artifact`, `sha256`, `base_blake3` and `scale`), `devices`,
-    `context_capacity` and `turn_context`
+    `adapter` (`artifact`, `sha256`, `base_blake3` and `scale`) where the tuple holds
+    one and absent where it holds none, `devices`, `context_capacity` and
+    `turn_context`
   - `ssh_keys`, each key of the console setting as stored, with its fingerprint in
     OpenSSH's SHA256 form, empty where none is set
 - **`admin-con setup report --stage pairing|drives`.** In: the survey's report on
@@ -7165,14 +7202,15 @@ a `setup` frame after a hello is refused as malformed. It makes two asks:
 layout of the console's cache (section 2.15). The mount is the box's, so no mount enters
 the answer, and the setup script joins its own mount to each path. Where `models` is
 absent the script says the model is picked in Weaver Web first, and where `laying` is
-absent it says the setup waits on Confirm and asks again. A rerun asks again, so a
-changed SSH key is the key written. **The survey's format is the image's**, since its
-survey script produces it: `weaver-survey/1`, stated in the suite repository's
+absent it says the setup waits on Confirm and asks again. A laying with no `adapter` is
+a base-only load, and the script's passing none of the agent-creation tool's adapter
+options there is the image's, a sentence in `toddwbucy/WeaverTools#39`. A rerun asks
+again, so a changed SSH key is the key written. **The survey's format is the image's**,
+since its survey script produces it: `weaver-survey/1`, stated in the suite repository's
 `docs/profiles/weaver-survey-format.md`, merged by `toddwbucy/WeaverTools#37` at
-`75ae7c54`. **What follows the laying**, whether the agent starts
-at once, at boot or at the console's Start, is section 10's, in a cell that cites the
-operator's answers of 2026-11-16 on `toddwbucy/WeaverAgent#579` and names the four
-passages that bear on it.
+`75ae7c54`. **What follows the laying**, whether the agent starts at once, at boot or at
+the console's Start, is section 10's, in a cell that cites the operator's answers of
+2026-11-16 on `toddwbucy/WeaverAgent#579` and names the four passages that bear on it.
 
 **The pages read the survey's report through one reader** (`src/survey.rs`), which
 takes a report only as `weaver-survey/1` and refuses the whole report for any cause of
@@ -7264,15 +7302,15 @@ server's own asks are `show` alone (section 2.13), and `load` is asked only for 
 whose grant carries it, through the page, so nothing in this crate starts an agent at an
 admission. How an appliance's connector instances come to be enabled after its
 enrollment, since the image enables none (section 8.1), is section 10's. **State is
-transferable, and an upgrade moves state and model**, on the same ruling. **The first
-production agent declares a store and keeps the system prompt**, on the operator's
-rulings of 2026-11-16 (setup pages), which supersede the ruling of 2026-11-15 that put
-state and save points on an appliance out of scope: it keeps the save point the unload
-writes, on the state disk, by the existing save point path, and operator-managed save
-points stay out of scope. Reproducibility is claimed within one version on one hardware
-set. Nothing is claimed about it across versions. How the console shows an upgrade as a
-change of the deployment tuple, and what lets the operator tell a stopped service from a
-machine that is down, are section 10's.
+transferable, and an upgrade moves state and model**, on the same ruling. **State is in
+scope on an appliance**, on the operator's rulings of 2026-11-16 (setup pages), which
+supersede the ruling of 2026-11-15 that put state and save points on an appliance out of
+scope. An agent may declare a store, and one that does keeps the save point the unload
+writes, on the state disk, which every agent mounts, by the existing save point path.
+Operator-managed save points stay out of scope. Reproducibility is claimed within one
+version on one hardware set. Nothing is claimed about it across versions. How the
+console shows an upgrade as a change of the deployment tuple, and what lets the operator
+tell a stopped service from a machine that is down, are section 10's.
 
 **The trace's destination.** The charter's requirement is a field of the declaration
 screen, set when the agent is created, naming where the agent hands its trace: a file,
@@ -7413,7 +7451,7 @@ two connectors report.
 | the host's write of a role refuses a stale version | perturbation in `src/host_tests.rs`: drop the version from the role's update, hold one write after its read while another commits, and the held write overwrites the other's verbs. A grant's removal carries its version too; the re-check of its liveness under the exclusion already refuses a grant another removal revoked, so the version adds no instrument of its own there |
 | a person's name stays unique in its canonical form at rename | perturbation in `src/admin_tests.rs`: drop the check at rename, and a rename to a name another person's form already holds, in case or in width, fails at the store's key as a fault rather than refusing; drop that key too, and it lands; leave the person's own row in the check, and a person renamed to their own name in another case is refused |
 | an admin's write to a person is refused without a live admin grant, re-checked in its transaction, never on their own row, never leaves no enabled admin, and a disable revokes the outstanding token | perturbation in `src/admin_tests.rs`: drop the page's admin check, and a person holding no live admin grant reads every person; drop the write's admin check at the surface, and such a person's write is audited as begun rather than refused; drop the live admin grant from the transaction's re-check, revoke the grant between the surface's read and the write, and the write lands; take the disable's transaction without the exclusion, have two admins disable each other at once, and no enabled admin remains; drop the session's standing from the re-check, and the second of those disables is refused only as the last admin; drop the count of the admins that would remain, and the last enabled admin is disabled; drop the disable's or the rename's own-row refusal, and an admin disables or renames themselves; drop the token's revocation from the disable, and a disabled person's token stays live; drop the passkey check at the admin's token, and a token is issued for a person holding a credential; drop the name's check at the admin's enroll, and a taken name fails at the store's key as a fault rather than refusing; drop the version from the rename, and a rename from a stale page lands; drop the identity shape's refusal from the rename, and a name spells an identity; drop the first record, and a write lands unaudited; drop `no-store` from the token's answer, and it may be cached; drop the parse of a submitted identity at the boundary, at any of the four writes naming a person, and a malformed one is the server's failure (500) rather than the ask's (400); drop it at a passkey's removal, and the audit's passkey target check refuses a malformed one as the server's failure (500); drop that check too, and a malformed passkey lands an audit row as the removal's target |
-| an admin write runs from its first record to its outcome in a task the request cannot cancel | perturbation, one test per surface file, each of the twenty-four writes in turn: its request dropped while its first record is held (`READ_HOLD`, at `first_of`), the write lands, its first record is answered by its `ok` outcome, and the next page view reads the state it left. `src/admin_tests.rs`: the five writes to persons. `src/grants_tests.rs`: grant add, grant remove and role set. `src/agents_tests.rs`: register, rotate, revoke and retire, a register's and a rotation's two client configs held for the session that minted them. `src/hugging_face_tests.rs`: connect, check and disconnect. `src/model_pull_tests.rs`: a pull's cancel, the puller still told. `src/ssh_key_tests.rs`: add and remove. `src/setup_tests.rs`: begin and the pairing page's write. `src/setup_models_tests.rs`: a pick, its pull run to verified. `src/setup_place_tests.rs`: a placement and Confirm. `src/declarations_tests.rs`: a save. Run step four in the request's own future (`admin::step_four` awaiting it in place), and the first write's outcome never comes in each of the ten tests. Leave the cancel's signal out of its task, and the next pull waits behind the cancelled one (each measured) |
+| an admin write runs from its first record to its outcome in a task the request cannot cancel | perturbation, one test per surface file, each of the twenty-five writes in turn: its request dropped while its first record is held (`READ_HOLD`, at `first_of`), the write lands, its first record is answered by its `ok` outcome, and the next page view reads the state it left. `src/admin_tests.rs`: the five writes to persons. `src/grants_tests.rs`: grant add, grant remove and role set. `src/agents_tests.rs`: register, rotate, revoke and retire, a register's and a rotation's two client configs held for the session that minted them. `src/hugging_face_tests.rs`: connect, check and disconnect. `src/model_pull_tests.rs`: a pull's cancel, the puller still told. `src/ssh_key_tests.rs`: add and remove. `src/setup_tests.rs`: begin and the pairing page's write. `src/setup_models_tests.rs`: a pick, its pull run to verified, and the adapter's drop. `src/setup_place_tests.rs`: a placement and Confirm. `src/declarations_tests.rs`: a save. Run step four in the request's own future (`admin::step_four` awaiting it in place), and the first write's outcome never comes in each of the ten tests. Leave the cancel's signal out of its task, and the next pull waits behind the cancelled one (each measured) |
 | an admin write's step four is bounded from its place until its COMMIT is sent, never sends one past it, and runs to its end once it has | perturbation through the real router, session gate and store, the bound shortened. `src/deadline.rs`, `a_step_whose_commit_went_out_runs_past_its_deadline`, `a_step_short_of_its_commit_at_its_deadline_is_never_sent` and `a_mark_outside_a_bounded_step_is_no_mark`: the mark set by `store::commit` alone ends the bound. `src/admin_tests.rs`, `an_admin_write_stalled_past_its_bound_never_commits`: a rename held just before its COMMIT to its very deadline, the bound 1.5 s, is answered 503 at the bound, the hold never let go, the name stands, its first record reads with no outcome, and no connection stays lent or transaction open; a retry then lands. `an_admin_write_whose_commit_answers_past_its_bound_is_answered_as_made`, `a_token_whose_commit_answers_past_its_bound_is_shown_once` (`src/admin_tests.rs`), `a_rotation_whose_commit_answers_past_its_bound_hands_its_pair_over` (`src/agents_tests.rs`) and `a_cancel_whose_commit_answers_past_its_bound_reaches_the_puller` (`src/model_pull_tests.rs`): each held just after its COMMIT answered until past the deadline, and each answered as made, the name changed, the token shown once and live, both configs handed over and the new one admitted, the puller told and its held pull stopped. Their converses, `a_token_stalled_before_its_commit_is_not_issued`, `a_rotation_stalled_before_its_commit_is_not_made` and `a_cancel_stalled_before_its_commit_is_not_made`: held just before the COMMIT, each answered 503 "not made", the COMMIT never sent and nothing changed. `src/grants_tests.rs`, `a_dropped_grant_add_never_lands_after_its_retry_and_a_removal`, and `src/ssh_key_tests.rs`, `a_dropped_key_add_never_lands_after_its_retry_and_a_removal`: the add's request dropped while held before its first record, the bound 3 s, a retry lands and a removal follows before the deadline step four recorded, step four reports the first dropped, its hold is let go, and the removal stands, the add's one first record the retry's. Bound step four with `deadline::before`, and the four answered-past-the-bound tests fail, answered 503 "not made". Await it with no bound, and the held COMMITs go out, the stalled rename landing and the token issued, the rotation made and the pull cancelled with no 503, and the late grant and the late key are never reported dropped. Bound it with tokio's `timeout_at`, and both sets fail, the holds before the COMMIT let go at the deadline (each measured 2026-11-18) |
 | a credential ID belongs to one passkey of one person | perturbation in `src/passkeys_tests.rs` and `src/keys_tests.rs`, through a soft passkey: drop the addition's check of a credential ID already held, under the identity exclusion, and a registration whose ID another person holds fails at the store's key rather than refusing, its grant spent either way; drop that key too (the passkey table's primary key on the credential ID) with the checks, and the ID lands a second passkey row, so one credential signs in as either person |
 | a signature counter that did not rise refuses the sign-in, and the stored passkey is updated by a locked read, merge and write | perturbation in `src/sign_in_tests.rs`, the counter rule driven through its `Assertion` seam where a soft passkey cannot reach: drop the library's `CredentialPossibleCompromise` arm, and a clone's sign-in is refused unaudited; swallow the error where the possible clone's refusal cannot be recorded, and it answers the ordinary refusal over a record the audit lost; drop the rule's own comparison, and a counter raised between the options and the finish signs in; drop the write of the merged passkey, and the stored counter never rises; drop the row's lock, and of two concurrent assertions with one nonzero counter both succeed, and a concurrent assertion erases another's backup-eligibility upgrade; apply the refusal to a zero counter, and two zero-counter assertions are refused; drop the rule's commit, and the counter does not persist where the opening then fails |
@@ -7501,7 +7539,7 @@ two connectors report.
 | each reported member reads equal, differs or not in this report, by the shape its source names, a state election by the first entry for each kind, and an absence is set beside the report as the agent reads it | `each_member_reads_equal_differs_or_not_in_this_report`, `an_absence_is_set_beside_the_report_as_the_agent_reads_it`, `a_kind_named_again_whose_first_entry_is_declared_reads_equal` and `a_kind_named_again_whose_first_entry_is_not_declared_differs` in `src/declaration/reported.rs`: read a state election's kinds in their order or a path named twice twice, compare a state election by its words, or show a difference between two elections that read alike by those words, read a null member as reported, read the tee's election in `show`'s spelling, read any engine or turn context word, or swap a difference's two sides, and the first fails; read an absent turn context as independent, an absent surprisal as true, an absent residual readout as false or an absent state election as the other default, and the second fails; keep every entry of a kind named again, and `a_kind_named_again_whose_first_entry_is_declared_reads_equal` fails; keep its last entry rather than its first, and that test and `a_kind_named_again_whose_first_entry_is_not_declared_differs` fail; drop the words that say the kind was named again, and both fail (16 cases, each caught) |
 | the agent page sets what the agent reports beside the declaration saved under its name, to every grant holder, never says which version the agent was loaded from, and fails by itself where its head does not read or a read inside it fails | perturbation in `src/declare_pane_tests.rs`: change the empty state's sentence, or offer a new declaration to every reader or to none, and `with_no_declaration_saved_the_pane_says_so` fails; give the screen's link to every reader or to none, mark a reported part with no load as never reported or the reverse, read the pane for an admin alone, name the lineage's root for its head, or show the declared value as the verdict, and `a_saved_declaration_with_no_load_shows_its_parts` fails; never compare the decoder, drop the sentence that a difference may only mean an older version, plant "loaded from", or read a load event as `show`'s answer, and `a_load_the_agent_reports_is_set_beside_the_head` fails; read a tuple of no named source as `show`'s, or say it is no load, and `a_load_whose_source_the_row_does_not_name_is_set_beside_nothing` fails; show the prompt's text or its length in bytes, render its digest for a person who is not an admin, or for no one, and `the_prompt_is_shown_by_its_length_and_its_digest_to_an_admin_alone` fails; drop the name, the row's own identity or the live credential from the others' filter, show a person every row of the register, or never render the others, and `the_other_rows_of_the_name_are_listed_as_far_as_the_reader_may_see` fails; say the same declaration stands behind the other rows whatever the head, or say none is saved under the name where the head could not be read, and `the_other_rows_claim_only_what_was_read_of_the_head` fails (27 cases); panic where a head does not read, say it reads, or give its screen's link to every reader, and `a_head_that_does_not_read_fails_in_the_pane_alone` fails; offer a new declaration on an unread head or say none is saved, read unread others as none or never render their sentence, or show an unread author as nothing, and `a_read_that_fails_inside_the_pane_is_stated_there` fails; read a failed lookup as none saved, fault the page on it, or lead the way back to a new declaration, and `a_head_lookup_that_fails_leaves_the_agent_page_standing`; read the head by the parse alone, and `a_head_saved_with_the_withdrawn_placement_reads_in_the_pane` fails (12 cases); each caught |
 | a person without an admin grant causes no request to Hugging Face | perturbation in `src/hugging_face_tests.rs` against a fake Hugging Face: check the token before the admin gate, and the fake counts a request from a person holding no admin grant |
-| the Hugging Face token is held sealed and enters no page, log line, audit record or error | perturbation in `src/hugging_face_tests.rs`: store the token as given, and the row's columns carry its bytes. In `the_token_enters_no_audit_row_log_line_page_or_error`, every log line at every level captured: log the token in a connect, and the capture holds it. Echo it in a refused connect's answer, and the body holds it. Write it into the refusal's record, and the audit holds it. In `src/model_pull_tests.rs`, `a_pull_carries_its_token_into_no_log_line_page_or_error`: log the token in the puller's fetch, or write it into a failed pull's reason, and the capture holds it. Each capture holds a second dispatcher, since with one scoped dispatcher alone tracing-core 0.1.36 takes a callsite's interest from the first thread that meets it |
+| the Hugging Face token is held sealed and enters no page, log line, audit record or error | perturbation in `src/hugging_face_tests.rs`: store the token as given, and the row's columns carry its bytes. In `the_token_enters_no_audit_row_log_line_page_or_error`, every log line at every level captured: log the token in a connect, and the capture holds it. Echo it in a refused connect's answer, and the body holds it. Write it into the refusal's record, and the audit holds it. In `src/model_pull_tests.rs`, `a_pull_carries_its_token_into_no_log_line_page_or_error`: log the token in the puller's fetch, or write it into a failed pull's reason, and the capture holds it. Each capture is scoped through `src/test_log.rs`, which first installs the process's capture, a dispatcher interested in every callsite for the process's life, since with one scoped dispatcher alone tracing-core 0.1.36 takes a callsite's interest from the first thread that meets it (#164) |
 | the account's version is never repeated across a disconnect | perturbation in `src/hugging_face_tests.rs`, `a_version_read_before_a_disconnect_is_stale_after_a_connect_again`: start every insert's version at 1, and a page read before a disconnect and a connect again writes over the new account, its connect answering 303 where the test expects 409 |
 | `Authorization` goes to `huggingface.co` alone | perturbation in `src/model_pull_tests.rs` against a fake Hugging Face and a fake CDN on a second listener: send the header on every hop, and the CDN listener sees it |
 | every download names the commit and never a branch | perturbation in `src/model_pull_tests.rs`: let an ask name a branch, and the store's check on the pull's commit refuses its row where the test expects the ask's refusal before any row. The fake answers a 40-hex commit alone, and every request it sees names the commit |
@@ -7518,7 +7556,7 @@ two connectors report.
 | every pane of every setup page carries a stage, a backing and a status word, and a held pane names what it waits on with no input holding a value | test in `src/setup_tests.rs`, `every_pane_carries_its_stage_backing_and_status`, walking every page's rendered panes in each state it draws, and `src/setup_place_tests.rs` walking the placement and confirm pages in each of theirs: drop a pane's status mark from a template, or fill a held pane's input, and the walk names the pane (both measured); judge a pane's text areas together, and an empty one masks another that holds a value (measured); the walk's own perturbations run on every build in `the_walk_names_a_pane_without_a_status_or_with_a_filled_input` |
 | the start page refuses every name admin's name rule or the box's agent-creation rule refuses | perturbation in `src/setup_tests.rs`, one case per clause, each refused and opening no setup: an uppercase letter, a `-`, a `_`, a leading digit, one character, seventeen characters, and each of the two names `weaver-admin-Spec` section 4 reserves whole, which the character rule admits; a name of sixteen characters opens one. Drop a clause from the page's rule and its case meets the store's CHECK, which holds the same rule, and answers as a fault rather than a refusal; drop it from the CHECK too and its case opens a setup (each clause measured from the page, the reserved names from both). A name ending in one of section 4's reserved suffixes carries a `-`, so the character rule refuses it |
 | the pairing page warns where the console's link address is a loopback address and the checkbox says virtual machine, and where it is an unspecified address, for a host and a virtual machine alike | perturbation in `src/setup_tests.rs`, `the_loopback_warning_shows_for_a_virtual_machine_alone` and `the_unspecified_warning_shows_for_a_host_and_a_virtual_machine`, and in `src/surfaces/setup.rs`'s tests, `the_link_address_is_read_for_its_port_its_loopback_and_unspecified`: draw the loopback warning for a host too, and the host's page warns; drop the unspecified check, or drop its paragraph from the template, and `link_listen` at `0.0.0.0` with no `link_address` draws no warning; draw it for a virtual machine alone, and the host's page draws none; read `link_listen` over `link_address`, and a `link_address` the box reaches beside it warns; take IPv4's unspecified address alone, and `::` draws none (each measured) |
-| a crafted post naming a second model, a second adapter role or the CPU is refused, saving nothing | perturbation in `src/setup_models_tests.rs`, `a_crafted_pick_is_refused_saving_nothing`, against a fake Hugging Face that counts every request, and in `src/surfaces/setup/models.rs`'s tests: take a field the pick does not take, or a field given twice, and a crafted pick is no longer refused by its shape (each measured) |
+| a crafted post naming a second model, a second adapter role or the CPU is refused, saving nothing | perturbation in `src/setup_models_tests.rs`, `a_crafted_pick_is_refused_saving_nothing`, against a fake Hugging Face that counts every request, and in `src/surfaces/setup/models.rs`'s tests: take a field the pick does not take, or a field given twice, and a crafted pick is no longer refused by its shape (each measured). The same test holds a role beyond the roster and a field the pick does not take to their refusals' words, which name the roster as one decoder and at most one adapter on it and no one agent's |
 | a pick asks Hugging Face only after the admin gate | perturbation in `src/setup_models_tests.rs`, `a_pick_asks_hugging_face_only_after_the_admin_gate`, against the fake: read the listing before the gate, and the fake counts a request from a person holding no admin grant (measured) |
 | the GGUF reader refuses a length or a count past its buffer, a header cut short and a header past its bound, without a panic or an unbounded allocation, keeps no fact past its bounds, and refuses a named fact of the wrong kind | perturbation in `src/gguf.rs`'s tests: allocate a string's claimed length before checking it against the bytes held, and the test process aborts on an allocation of 2^63 - 1 bytes; drop an array's room check, and the hostile header's test fails; let an array of arrays nest deeper, and the nesting test fails; drop the kept string's bound or the kept list's, or keep a fact under any prefix, and `a_kept_fact_past_its_bound_is_refused` fails; drop a named fact of the wrong kind as absent, and `a_named_fact_of_the_wrong_kind_is_refused` and `src/setup_models_tests.rs`'s `a_named_fact_of_the_wrong_kind_refuses_the_pick` fail (each measured) |
 | a context length above the header's maximum is refused | perturbation in `src/setup_place_tests.rs`, `a_context_length_above_the_headers_maximum_is_refused_and_one_at_it_kept`: drop the bound, and a context length past the maximum is kept (measured) |
@@ -7552,6 +7590,10 @@ two connectors report.
 | the models drive's need counts a blob two paths share once | perturbation in `src/setup_models_tests.rs`, `the_models_drives_need_counts_a_shared_blob_once`: count each path's bytes, and two parts of the same bytes count twice (measured) |
 | an adapter's pick carries a finite scale | perturbation in `src/setup_models_tests.rs`, `an_adapters_pick_carries_a_finite_scale`, and in `src/surfaces/setup/models.rs`'s tests: take a scale that is not finite, and the form no longer refuses it (measured). The store's CHECK (migration `0026`) holds a finite scale beside the form's |
 | the members the box is laid from are the confirmed tuple's, and none stand before Confirm | perturbation in `src/setup_place_tests.rs`, `confirm_stands_only_where_every_member_is_read_and_writes_one_tuple`: read them from the open setup rather than the tuple, and they stand before Confirm (measured) |
+| a setup with no adapter's pick confirms a tuple with none, its confirm page reading "none picked: the agent loads its base alone" with no scale row, and its laying carries no adapter | perturbation, end to end from the pairing through Confirm in `src/enrollment_tests.rs`, `a_setup_with_no_adapter_confirms_a_tuple_with_none` (a box enrolled against the real listener sends its reports through it, its adapter is picked and dropped, and its `setup describe` names the decoder alone), and in `src/setup_place_tests.rs`, `a_setup_with_no_adapter_confirms_a_tuple_and_a_laying_with_none` (the page before Confirm and after it, from the tuple's row, and the tuple's six adapter columns absent): read a setup with no adapter row as one with an adapter unread, and Confirm holds on "no adapter is picked" in both (measured 2026-11-18) |
+| a tuple's adapter members are all present or all absent, and its base's identity is required either way | perturbation at the schema in `src/setup_place_tests.rs`, `a_tuples_adapter_members_are_whole_or_absent`: copies of a confirmed tuple under a second setup, each with one of the six adapter members absent, are each refused by the check, one with all six and the base's identity absent by the base's own constraint, and one with all six absent accepted; drop migration `0032`'s check, and a tuple holding five of the six adapter members lands (measured 2026-11-18) |
+| an open setup's adapter pick can be dropped, in a task the request cannot cancel, and a confirmed setup's cannot | perturbation in `src/setup_models_tests.rs`: `an_open_setups_adapter_pick_is_dropped_and_a_confirmed_setups_is_not`, the drop's refusals (a field beside the version 400 and no record, a stale version 409 after its first record, no adapter picked 409 and no record), the drop landing (the adapter's row gone, the version moved, the pane `ok` saying the agent loads its base alone and drawing no Drop, the dropped pick's files in the cache), and a confirmed setup's drop refused 409 with no record and its adapter row standing: drop the handler's check that the setup is open, and the confirmed setup's drop writes a first record before the store refuses it as stale; `a_pick_and_a_drop_dropped_at_their_first_records_still_land`: run the drop's step four in the request's own future, and a drop whose request is dropped at the hold leaves its first record without its outcome (each measured 2026-11-18) |
+| `describe`'s laying names an adapter only where the tuple holds one | perturbation through the real listener in `src/enrollment_tests.rs`: `a_setup_with_no_adapter_confirms_a_tuple_with_none`, the box reading a laying with no `adapter` member, and `the_reports_a_box_sends_feed_placement_and_confirm`, the box reading a tuple's adapter back whole (its artifact, SHA-256, base's identity and scale); and `a_setup_with_no_adapter_confirms_a_tuple_and_a_laying_with_none` in `src/setup_place_tests.rs`: answer the laying's `adapter` member always, and the laying of a tuple with no adapter carries the member, null, in both (measured 2026-11-18) |
 
 **A watch that cannot fail is not a test.** For each perturbation above, the
 act that lands it states what removal makes it fail and confirms it does.
@@ -8043,10 +8085,10 @@ a `web-` assertion beside `weaver-admin`'s.
   shipped. The record of an upgrade is WeaverAgent's, an ask upstream, held. Open: how
   the console shows it. Settled by the act that reads WeaverAgent's member once it is
   written. State and save points on an appliance were later, on the operator's ruling of
-  2026-11-15. The operator's rulings of 2026-11-16 (setup pages) supersede it: the first
-  production agent declares a store and keeps the system prompt, and it keeps the save
-  point the unload writes, on the state disk. Whether the record of an upgrade is taken
-  up with it is not ruled.
+  2026-11-15. The operator's rulings of 2026-11-16 (setup pages) supersede it: state is
+  in scope on an appliance, and an agent that declares a store keeps the save point the
+  unload writes, on the state disk, which every agent mounts. Whether the record of an
+  upgrade is taken up with it is not ruled.
 - **A stopped service against a machine that is down, opened 2026-11-15** (section 8.3).
   Open: what the appliance exposes so that the operator can tell the two apart, an ask
   upstream (`weaver-web-PRD` section 8), and how the console shows it. Settled when the
@@ -8140,13 +8182,14 @@ a `web-` assertion beside `weaver-admin`'s.
   identity the console computes pins a box's files to the console's pull and does not
   show that the adapter was converted against that base. An adapter's repository that
   declared the identity it was converted against could be compared with it at the pick,
-  and no repository the first agent uses declares one. Open: whether and where an
+  and no repository met so far declares one. Open: whether and where an
   adapter declares it. Settled by the operator.
 - **The laying's three members, opened 2026-11-16** (section 6.2). The box's
   agent-creation tool at WeaverAgent's `6b91747e` takes the artifact, the adapter's four
-  members and the store, writes the devices and the context length fixed and writes no
-  turn context. Open: its taking those three, `toddwbucy/WeaverAgent#580`. Settled by
-  WeaverAgent's act and the image's, which lays the agent after Confirm.
+  members and the store, the four all or none at `be56d8c2`, none being a base-only
+  load, writes the devices and the context length fixed and writes no turn context.
+  Open: its taking those three, `toddwbucy/WeaverAgent#580`. Settled by WeaverAgent's
+  act and the image's, which lays the agent after Confirm.
 - **The trace kept outside the agent's reach, opened 2026-11-17 and closed the same day
   by the operator** (sections 6.1 and 8.3). The operator's words of 2026-11-17 that
   opened it: "remember that the trace doesnt get written to state or anywhere the agent

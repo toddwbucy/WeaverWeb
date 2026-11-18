@@ -278,7 +278,7 @@ impl Lab {
     pub(super) async fn open_with(silence: Duration) -> Option<Self> {
         let serial = serial().lock().await;
         let store = store().await?;
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_dir::tempdir().unwrap();
         let authority = Authority::init(&dir.path().join("authority"), "weaver-web", &[]).unwrap();
         let listener = Listener::start(store.clone(), &authority, "127.0.0.1:0", silence)
             .await
@@ -866,7 +866,7 @@ async fn an_agent_is_present_only_when_both_planes_connect_from_its_row() {
 async fn a_credential_of_another_authority_fails_the_handshake() {
     let Some(lab) = Lab::open().await else { return };
     let karl = lab.register("karl").await;
-    let other_dir = tempfile::tempdir().unwrap();
+    let other_dir = crate::test_dir::tempdir().unwrap();
     let other = Authority::init(other_dir.path(), "weaver-web", &[]).unwrap();
     let foreign = other.mint_client(&karl.name, Plane::Gate).unwrap();
 
@@ -2097,7 +2097,7 @@ pub(super) fn lab_config(lab: &Lab) -> crate::config::ServerConfig {
 async fn a_minting_verb_waits_for_the_authority_lock_and_refuses_a_rotated_authority() {
     let Some(lab) = Lab::open().await else { return };
     let cfg = lab_config(&lab);
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let r#box = format!("box-{}", uuid::Uuid::new_v4().simple());
 
     // Held by this test, as a concurrent rotation would hold it.
@@ -2122,7 +2122,7 @@ async fn a_minting_verb_waits_for_the_authority_lock_and_refuses_a_rotated_autho
     // Rotated on disk after the verb loaded its authority: refused.
     let stale = Authority::load(lab.authority.dir()).unwrap();
     Authority::rotate(lab.authority.dir(), "weaver-web", &[]).unwrap();
-    let out3 = tempfile::tempdir().unwrap();
+    let out3 = crate::test_dir::tempdir().unwrap();
     let answer = super::verbs::register(
         &lab.store,
         &cfg,
@@ -2153,7 +2153,7 @@ async fn a_minting_verb_waits_for_the_authority_lock_and_refuses_a_rotated_autho
 async fn a_second_registration_does_not_overwrite_the_firsts_configs() {
     let Some(lab) = Lab::open().await else { return };
     let cfg = lab_config(&lab);
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let r#box = format!("box-{}", uuid::Uuid::new_v4().simple());
     let first = super::verbs::register(
         &lab.store,
@@ -2380,7 +2380,7 @@ async fn register_refuses_a_config_whose_server_name_differs_from_the_authoritys
     let Some(lab) = Lab::open().await else { return };
     let mut cfg = lab_config(&lab);
     cfg.server_name = "moved".into();
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let r#box = format!("box-{}", uuid::Uuid::new_v4().simple());
     let answer = super::verbs::register(
         &lab.store,
@@ -2437,7 +2437,7 @@ async fn register_refuses_a_config_whose_server_name_differs_from_the_authoritys
 async fn a_box_that_names_a_parent_directory_is_refused() {
     let Some(lab) = Lab::open().await else { return };
     let cfg = lab_config(&lab);
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     for bad in [".", "..", "foo/../../victim", "/absolute", "with space"] {
         let answer = super::verbs::register(
             &lab.store,
@@ -2505,7 +2505,7 @@ async fn a_box_that_names_a_parent_directory_is_refused() {
 async fn a_store_refusal_discards_the_staged_configs() {
     let Some(lab) = Lab::open().await else { return };
     let cfg = lab_config(&lab);
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     // The schema refuses a box with a slash; the verb lets it through to
     // the store, which is the failure staged here.
     let answer = super::verbs::register(
@@ -2548,7 +2548,7 @@ fn walkdir(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
 async fn a_commit_whose_answer_was_lost_is_read_back_and_published() {
     let Some(lab) = Lab::open().await else { return };
     let cfg = lab_config(&lab);
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let r#box = format!("box-{}", uuid::Uuid::new_v4().simple());
 
     super::register::FAIL_AFTER_COMMIT.with(|f| f.set(Some("register")));
@@ -2843,8 +2843,8 @@ async fn the_revocation_read_back_asks_about_the_set_it_selected() {
 async fn a_symlink_under_the_output_path_refuses_the_registration() {
     let Some(lab) = Lab::open().await else { return };
     let cfg = lab_config(&lab);
-    let out = tempfile::tempdir().unwrap();
-    let elsewhere = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
+    let elsewhere = crate::test_dir::tempdir().unwrap();
     let r#box = format!("box-{}", uuid::Uuid::new_v4().simple());
 
     // A symlink at the staging path.
@@ -2903,7 +2903,7 @@ async fn a_symlink_under_the_output_path_refuses_the_registration() {
     );
 
     // A symlinked box directory.
-    let other_out = tempfile::tempdir().unwrap();
+    let other_out = crate::test_dir::tempdir().unwrap();
     let linked_box = elsewhere.path().join("linked-box");
     std::fs::create_dir(&linked_box).unwrap();
     std::os::unix::fs::symlink(&linked_box, other_out.path().join(&r#box)).unwrap();
@@ -2930,7 +2930,7 @@ async fn a_symlink_under_the_output_path_refuses_the_registration() {
 
     // A real directory a registration created, swapped for a symlink before
     // the next registration: refused at the open, following nothing.
-    let third_out = tempfile::tempdir().unwrap();
+    let third_out = crate::test_dir::tempdir().unwrap();
     let first = super::verbs::register(
         &lab.store,
         &cfg,
@@ -2976,7 +2976,7 @@ async fn a_symlink_under_the_output_path_refuses_the_registration() {
 async fn a_staging_write_that_fails_leaves_no_entry_behind() {
     let Some(lab) = Lab::open().await else { return };
     let cfg = lab_config(&lab);
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let r#box = format!("box-{}", uuid::Uuid::new_v4().simple());
     let dir = out.path().join(&r#box).join("retry");
 
@@ -3029,7 +3029,7 @@ async fn a_config_directory_another_party_could_write_is_refused() {
     use std::os::unix::fs::PermissionsExt;
     let Some(lab) = Lab::open().await else { return };
     let cfg = lab_config(&lab);
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let r#box = format!("box-{}", uuid::Uuid::new_v4().simple());
     let box_dir = out.path().join(&r#box);
     let dir = box_dir.join("shared");
@@ -3106,7 +3106,7 @@ async fn a_config_directory_another_party_could_write_is_refused() {
 /// admin config after the gate's is.
 #[test]
 fn a_staging_entry_swapped_before_the_publish_is_refused() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::test_dir::tempdir().unwrap();
     let authority = Authority::init(&tmp.path().join("authority"), "weaver-web", &[]).unwrap();
     let cfg = crate::config::ServerConfig {
         listen: "127.0.0.1:0".into(),
@@ -3453,7 +3453,7 @@ async fn a_landing_that_stalls_closes_the_connection_without_an_ack() {
 async fn a_retained_staged_pair_is_published_where_the_register_carries_it() {
     let Some(lab) = Lab::open().await else { return };
     let cfg = lab_config(&lab);
-    let out = tempfile::tempdir().unwrap();
+    let out = crate::test_dir::tempdir().unwrap();
     let r#box = format!("box-{}", uuid::Uuid::new_v4().simple());
     let authority_fp = lab.authority.fingerprint();
     let stage = |name: &str| {

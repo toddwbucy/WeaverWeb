@@ -334,7 +334,7 @@ fn an_https_origin_needs_a_certificate_and_key() {
         now,
         "tls_certificate and tls_key are not configured",
     );
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_dir::tempdir().unwrap();
     let (cert, _, _) = mint(&dir, "a", &["example.test"], now - days(1), now + days(90));
     let mut c = cfg();
     c.tls_certificate = Some(cert);
@@ -345,7 +345,7 @@ fn an_https_origin_needs_a_certificate_and_key() {
 #[test]
 fn a_key_that_does_not_pair_is_refused() {
     let now = OffsetDateTime::now_utc();
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_dir::tempdir().unwrap();
     let (cert, _, _) = mint(&dir, "a", &["example.test"], now - days(1), now + days(90));
     let (_, other_key, _) = mint(&dir, "b", &["example.test"], now - days(1), now + days(90));
     refused(
@@ -360,7 +360,7 @@ fn a_key_that_does_not_pair_is_refused() {
 #[test]
 fn a_certificate_for_another_name_is_refused() {
     let now = OffsetDateTime::now_utc();
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_dir::tempdir().unwrap();
     let (cert, key, _) = mint(&dir, "a", &["other.test"], now - days(1), now + days(90));
     let pair = Some((cert, key));
     refused(
@@ -408,7 +408,7 @@ fn a_certificate_for_another_name_is_refused() {
 #[test]
 fn a_certificate_outside_its_period_is_refused_and_a_near_one_warned() {
     let now = OffsetDateTime::now_utc();
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_dir::tempdir().unwrap();
     let origin = Some("https://example.test");
     let (cert, key, _) = mint(
         &dir,
@@ -481,7 +481,7 @@ async fn serving_bounded(
     tokio_rustls::TlsConnector,
 ) {
     let now = OffsetDateTime::now_utc();
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_dir::tempdir().unwrap();
     let (cert, key, der) = mint(&dir, "a", &["localhost"], now - days(1), now + days(90));
     let (tls, _) = browser_tls(&with(Some("https://localhost"), Some((cert, key))), now)
         .unwrap()
@@ -673,7 +673,7 @@ async fn refuse_the_certificate(address: std::net::SocketAddr) {
 async fn a_certificate_alert_is_warned_at_most_once_an_interval() {
     use tokio::io::AsyncWriteExt;
     let captured = Captured::default();
-    let _logging = tracing::subscriber::set_default(
+    let _logging = crate::test_log::scoped(
         tracing_subscriber::fmt()
             .with_writer(captured.clone())
             .with_max_level(tracing::Level::WARN)

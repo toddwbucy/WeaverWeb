@@ -101,7 +101,7 @@ pub(crate) async fn rig_full_with(
     boxes: Arc<dyn BoxReports>,
 ) -> Option<Rig> {
     let fresh = fresh_store().await?;
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_dir::tempdir().unwrap();
     let enrollment = match link {
         Some(_) => None,
         None => {
@@ -487,6 +487,7 @@ async fn a_person_without_an_admin_grant_is_refused_before_any_setup_is_looked_u
                 vec![("version", "1"), ("turn_context", "continuous")],
             ),
             ("confirm", vec![("version", "1")]),
+            ("models/drop", vec![("version", "1")]),
         ] {
             let (status, _, body) = send_as(
                 &rig.app,
@@ -506,6 +507,7 @@ async fn a_person_without_an_admin_grant_is_refused_before_any_setup_is_looked_u
     assert_eq!(audited(s, "setup pairing").await, (0, 0, 0, 2));
     assert_eq!(audited(s, "setup placement").await, (0, 0, 0, 2));
     assert_eq!(audited(s, "setup confirm").await, (0, 0, 0, 2));
+    assert_eq!(audited(s, "setup drop").await, (0, 0, 0, 2));
     assert_eq!(audited(s, "setup begin").await, (1, 1, 0, 1));
     assert_eq!(setups(s).await, 1, "bea's begin opens no setup");
     let kept = s.setup(&setup).await.unwrap().unwrap();
@@ -555,7 +557,7 @@ async fn a_second_open_setup_of_one_name_is_refused() {
 /// pages with nothing read, and the build page.
 #[tokio::test]
 async fn every_pane_carries_its_stage_backing_and_status() {
-    let cache = tempfile::tempdir().unwrap();
+    let cache = crate::test_dir::tempdir().unwrap();
     let Some(rig) = rig_with("127.0.0.1:8081", None, Some(cache.path().to_path_buf())).await else {
         return;
     };
@@ -958,6 +960,16 @@ async fn an_unknown_setup_is_not_found_and_a_malformed_one_refused() {
         ),
         ("POST", "/setup/st-0123/confirm", StatusCode::BAD_REQUEST),
         (
+            "POST",
+            "/setup/st-0123456789abcdef/models/drop",
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            "POST",
+            "/setup/st-0123/models/drop",
+            StatusCode::BAD_REQUEST,
+        ),
+        (
             "GET",
             &format!("/setup/{setup}/elsewhere"),
             StatusCode::NOT_FOUND,
@@ -975,6 +987,7 @@ async fn an_unknown_setup_is_not_found_and_a_malformed_one_refused() {
         assert_eq!(status, want, "{method} {uri}: {answer}");
     }
     assert_eq!(audited(s, "setup pairing").await, (0, 0, 0, 0));
+    assert_eq!(audited(s, "setup drop").await, (0, 0, 0, 0));
 }
 
 /// **The start page draws New agent once an agent stands in the

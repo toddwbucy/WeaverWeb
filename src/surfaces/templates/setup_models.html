@@ -1,13 +1,16 @@
 {% extends "setup_frame.html" %}
 {% block panes %}
-{#- The models page (Spec 6.2): the first agent's two roles, the rest of
+{#- The models page (Spec 6.2): the roster's two roles, the rest of
     the roster drawn unbuilt, a repository asked at a revision with its
     choices, each complete one's header its own fragment with the pick's
     form, and the setup's pulls with the base's identity, a fragment the
     page re-fetches every 15 s. No inline script. -#}
+{#- The adapter is optional: its pane is ok with none picked, the agent
+    then loading its base alone, and a picked one is dropped by its own
+    form while the setup is open. -#}
 {%- for role in roles %}
 <section class="pane">
-  <header><span class="stage"><b>1</b> Declare</span><h2>{{ role.title }}</h2><span class="backing built">built</span>{% if role.picked.is_some() %}<span class="status ok">ok</span>{% else %}<span class="status hold">hold</span>{% endif %}<span class="source">the pick, and its header</span></header>
+  <header><span class="stage"><b>1</b> Declare</span><h2>{{ role.title }}</h2><span class="backing built">built</span>{% if role.picked.is_some() || role.optional %}<span class="status ok">ok</span>{% else %}<span class="status hold">hold</span>{% endif %}<span class="source">the pick, and its header</span></header>
   <div class="body">
   {%- if let Some(picked) = role.picked %}
   <table>
@@ -26,19 +29,31 @@
     <tr><th>Picked</th><td>{{ picked.picked_by }}, {{ picked.picked_at }}</td></tr>
     </tbody>
   </table>
+  {%- if let Some(version) = role.drop %}
+  <form method="post" action="/setup/{{ frame.setup_id }}/models/drop">
+    <input type="hidden" name="version" value="{{ version }}">
+    <button type="submit">Drop the {{ role.name }}</button>
+  </form>
+  {%- endif %}
+  {%- else if role.optional %}
+  <p>No {{ role.name }} is picked: the agent loads its base alone.</p>
   {%- else %}
   <p>No {{ role.name }} is picked.</p>
   {%- endif %}
   </div>
-  {%- if role.picked.is_none() %}
+  {%- if role.picked.is_none() && role.optional %}
+  <footer>A pick from a repository below adds one, and none is needed.</footer>
+  {%- else if role.picked.is_none() %}
   <footer>Waits on a pick from a repository below.</footer>
+  {%- else if role.optional %}
+  <footer>A pick of this role again replaces this row, and a drop removes it. The files the earlier pick pulled stay in the cache either way.</footer>
   {%- else %}
   <footer>A pick of this role again replaces this row, and the files the earlier pick pulled stay in the cache.</footer>
   {%- endif %}
 </section>
 {%- endfor %}
 <section class="pane">
-  <header><span class="stage"><b>1</b> Declare</span><h2>Beyond the first agent</h2><span class="backing unbuilt">unbuilt</span><span class="status hold">hold</span></header>
+  <header><span class="stage"><b>1</b> Declare</span><h2>Beyond one decoder and one adapter</h2><span class="backing unbuilt">unbuilt</span><span class="status hold">hold</span></header>
   <div class="body">
   <ul>
     <li>Extra models</li>
@@ -48,7 +63,7 @@
   </ul>
   <p>A pick that names any of these is refused, saving nothing.</p>
   </div>
-  <footer>Waits on a ruling that widens the roster beyond the first agent's one decoder and one adapter.</footer>
+  <footer>Waits on a ruling that widens the roster beyond one decoder and at most one adapter.</footer>
 </section>
 <section class="pane">
   <header><span class="stage"><b>1</b> Declare</span><h2>A repository</h2><span class="backing built">built</span><span class="status ok">ok</span><span class="source">Hugging Face's listing</span></header>

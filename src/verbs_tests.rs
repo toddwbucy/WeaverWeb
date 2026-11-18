@@ -14,7 +14,7 @@ use serde_json::json;
 
 use crate::adapters::gate::GateClose;
 use crate::admin_tests::{admin, form, send_as, signed_in};
-use crate::agents_tests::{Captured, Connector, Rig, rig_silenced};
+use crate::agents_tests::{Connector, Rig, rig_silenced};
 use crate::host;
 use crate::link::frames::{
     FromClient, Position, Principal, Refusal, ToClient, TurnFault, VerbOutcome,
@@ -23,6 +23,7 @@ use crate::link::listener::{Act, AskPoint, Asker, TurnError, TurnText, VerbError
 use crate::passkeys_tests::authenticator;
 use crate::store::AgentId;
 use crate::store::audit::FAIL_FIRST_RECORD;
+use crate::test_log::global_capture;
 use crate::traceview::TraceEvent;
 
 pub(crate) const UNKNOWN: &str = "ag-0123456789abcdef";
@@ -1457,28 +1458,6 @@ async fn the_turn_form_says_when_the_conversation_is_shared() {
         .await
         .unwrap();
     assert!(!page().await.contains(note), "the second disabled: no note");
-}
-
-/// **One capture for every thread of the test binary**, installed once as
-/// the process's default: a capture scoped to this test's thread misses
-/// lines when other tests run beside it (measured 2026-10-14: the stall's
-/// own line was absent in every parallel run and present alone), while the
-/// process's default receives every line no scoped capture takes. The
-/// text checked is this test's alone, so every other test's lines in it
-/// only widen the check.
-pub(crate) fn global_capture() -> &'static Captured {
-    static CAPTURE: std::sync::OnceLock<Captured> = std::sync::OnceLock::new();
-    CAPTURE.get_or_init(|| {
-        let captured = Captured::default();
-        let _ = tracing::subscriber::set_global_default(
-            tracing_subscriber::fmt()
-                .with_writer(captured.clone())
-                .with_max_level(tracing::Level::TRACE)
-                .with_ansi(false)
-                .finish(),
-        );
-        captured
-    })
 }
 
 /// **A turn's text appears in no log line**: across a placed turn, a

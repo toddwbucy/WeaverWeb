@@ -23,7 +23,7 @@ use crate::deadline::hold::{self, Point};
 use crate::store::alerts::{AlertKind, Raise, TakenEntry};
 use crate::store::read::tests::fresh_store;
 use crate::store::{AgentId, Store};
-use crate::verbs_tests::global_capture;
+use crate::test_log::global_capture;
 
 /// The slack past a bound before a test gives up on what it waits for.
 const SOON: Duration = Duration::from_secs(5);
@@ -133,7 +133,7 @@ async fn an_alert_unraised_at_its_bound_was_never_sent_and_its_line_names_none()
     };
     let store = fresh.store.clone();
     let karl = agent(&store).await;
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_dir::tempdir().unwrap();
     let log = dir.path().join("operations.log");
     let capture = global_capture();
     let from = capture.mark();
@@ -241,7 +241,7 @@ async fn an_inbox_row_unapplied_at_its_bound_was_never_committed() {
     let store = fresh.store.clone();
     let karl = agent(&store).await;
     let inbox_id = inbox_row(&store, &karl).await;
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_dir::tempdir().unwrap();
     let capture = global_capture();
     let from = capture.mark();
     let held = hold::arm(Point::Apply);

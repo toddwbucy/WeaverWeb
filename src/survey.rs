@@ -19,7 +19,8 @@ use std::collections::HashSet;
 use std::fmt;
 
 use chrono::{DateTime, NaiveDateTime, Utc};
-use serde::de::{self, Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
+use serde::de::{Deserialize, Deserializer, MapAccess, Visitor};
+use serde_json::value::RawValue;
 
 /// The one version this reader knows.
 pub const FORMAT: &str = "weaver-survey/1";
@@ -260,90 +261,40 @@ pub fn read(report: &[u8]) -> Result<Survey, Refused> {
 enum Node {
     Null,
     Bool(bool),
-    /// A number written as a whole number with no sign, fraction or exponent,
-    /// and within 2^64 - 1.
+    /// A number written as digits alone, within 2^64 - 1.
     Whole(u64),
     /// Any other number: a minus sign, `-0` included, a fraction part, an
     /// exponent, or past 2^64 - 1.
     OtherNumber,
+    /// A string, decoded, a lone surrogate escape as U+FFFD, which no
+    /// string of section 1 admits.
     String(String),
     Array(Vec<Node>),
-    Object(Vec<(String, Node)>),
+    Object(Vec<(Name, Node)>),
 }
 
-impl<'de> Deserialize<'de> for Node {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Node, D::Error> {
-        deserializer.deserialize_any(NodeVisitor)
-    }
-}
+/// **A member's name as its bytes**: UTF-8, a lone surrogate escape kept as
+/// its WTF-8 bytes, so two names are one name exactly where their UTF-16
+/// code units are (RFC 8259 section 8.3).
+type Name = Vec<u8>;
 
-struct NodeVisitor;
-
-/// `serde_json`, built without `arbitrary_precision`, calls `visit_u64` for a
-/// number written with no sign, fraction or exponent that fits a `u64`,
-/// `visit_i64` for one with a minus sign, and `visit_f64` for every other,
-/// `-0` and a whole number past `u64` among them.
-impl<'de> Visitor<'de> for NodeVisitor {
-    type Value = Node;
-
-    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("a JSON value")
-    }
-
-    fn visit_unit<E: de::Error>(self) -> Result<Node, E> {
-        Ok(Node::Null)
-    }
-
-    fn visit_bool<E: de::Error>(self, v: bool) -> Result<Node, E> {
-        Ok(Node::Bool(v))
-    }
-
-    fn visit_u64<E: de::Error>(self, v: u64) -> Result<Node, E> {
-        Ok(Node::Whole(v))
-    }
-
-    fn visit_i64<E: de::Error>(self, _: i64) -> Result<Node, E> {
-        Ok(Node::OtherNumber)
-    }
-
-    fn visit_f64<E: de::Error>(self, _: f64) -> Result<Node, E> {
-        Ok(Node::OtherNumber)
-    }
-
-    fn visit_str<E: de::Error>(self, v: &str) -> Result<Node, E> {
-        Ok(Node::String(v.to_owned()))
-    }
-
-    fn visit_string<E: de::Error>(self, v: String) -> Result<Node, E> {
-        Ok(Node::String(v))
-    }
-
-    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Node, A::Error> {
-        let mut items = Vec::new();
-        while let Some(item) = seq.next_element()? {
-            items.push(item);
-        }
-        Ok(Node::Array(items))
-    }
-
-    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Node, A::Error> {
-        let mut entries = Vec::new();
-        while let Some(entry) = map.next_entry::<String, Node>()? {
-            entries.push(entry);
-        }
-        Ok(Node::Object(entries))
-    }
-}
+/// Nesting past this many arrays and objects is refused, the bound
+/// `serde_json`'s own parser keeps (its 128th level refused), since the
+/// tree is built by recursion.
+const DEPTH_BOUND: usize = 127;
 
 /// The text into the tree: UTF-8, one JSON value, and nothing after it but
-/// one newline. Whitespace before the value is free.
+/// one newline. Whitespace before the value is free. `serde_json` checks
+/// the grammar and hands each value over as its text, so no number is
+/// parsed but by its written form, and a number past any float is a number
+/// like another.
 fn parse(report: &[u8]) -> Result<Node, Refused> {
     let Ok(text) = std::str::from_utf8(report) else {
         return refused(Cause::Encoding, "the bytes are not UTF-8");
     };
-    let mut values = serde_json::Deserializer::from_str(text).into_iter::<Node>();
-    let node = match values.next() {
-        Some(Ok(node)) => node,
+    let mut values = serde_json::Deserializer::from_str(text).into_iter::<&RawValue>();
+    let raw = match values.next() {
+        Some(Ok(raw)) => raw,
         Some(Err(e)) => return refused(Cause::Encoding, e.to_string()),
         None => return refused(Cause::Encoding, "the report is empty"),
     };
@@ -354,7 +305,113 @@ fn parse(report: &[u8]) -> Result<Node, Refused> {
             "something follows the object other than one newline",
         );
     }
-    Ok(node)
+    node(raw.get(), 0).map_err(|detail| Refused {
+        cause: Cause::Encoding,
+        detail,
+    })
+}
+
+/// One value's text into the tree, its arrays and objects read again
+/// member by member.
+fn node(text: &str, depth: usize) -> Result<Node, String> {
+    let nested = |depth: usize| {
+        if depth >= DEPTH_BOUND {
+            Err(format!(
+                "the report nests past {DEPTH_BOUND} arrays and objects"
+            ))
+        } else {
+            Ok(())
+        }
+    };
+    match text.as_bytes().first() {
+        Some(b'{') => {
+            nested(depth)?;
+            let Entries(entries) = serde_json::from_str(text).map_err(|e| e.to_string())?;
+            let mut members = Vec::with_capacity(entries.len());
+            for (name, value) in entries {
+                members.push((name, node(value.get(), depth + 1)?));
+            }
+            Ok(Node::Object(members))
+        }
+        Some(b'[') => {
+            nested(depth)?;
+            let items: Vec<&RawValue> = serde_json::from_str(text).map_err(|e| e.to_string())?;
+            let mut nodes = Vec::with_capacity(items.len());
+            for item in items {
+                nodes.push(node(item.get(), depth + 1)?);
+            }
+            Ok(Node::Array(nodes))
+        }
+        Some(b'"') => serde_json::from_str(text)
+            .map(|Bytes(bytes)| Node::String(String::from_utf8_lossy(&bytes).into_owned()))
+            .map_err(|e| e.to_string()),
+        Some(b't') => Ok(Node::Bool(true)),
+        Some(b'f') => Ok(Node::Bool(false)),
+        Some(b'n') => Ok(Node::Null),
+        _ => Ok(number(text)),
+    }
+}
+
+/// **A number by its written form**: digits alone that fit a `u64` are a
+/// whole number, and every other form is not one.
+fn number(text: &str) -> Node {
+    if text.bytes().all(|b| b.is_ascii_digit()) {
+        text.parse().map_or(Node::OtherNumber, Node::Whole)
+    } else {
+        Node::OtherNumber
+    }
+}
+
+/// An object's members as the text gives them, a name given twice kept
+/// twice, each value as its text.
+struct Entries<'a>(Vec<(Name, &'a RawValue)>);
+
+impl<'de: 'a, 'a> Deserialize<'de> for Entries<'a> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Entries<'a>, D::Error> {
+        struct EntriesVisitor<'a>(std::marker::PhantomData<&'a ()>);
+
+        impl<'de: 'a, 'a> Visitor<'de> for EntriesVisitor<'a> {
+            type Value = Entries<'a>;
+
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("a JSON object")
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Entries<'a>, A::Error> {
+                let mut entries = Vec::new();
+                while let Some((Bytes(name), value)) = map.next_entry::<Bytes, &'a RawValue>()? {
+                    entries.push((name, value));
+                }
+                Ok(Entries(entries))
+            }
+        }
+
+        deserializer.deserialize_map(EntriesVisitor(std::marker::PhantomData))
+    }
+}
+
+/// **A JSON string as its bytes**, its escapes decoded and a lone surrogate
+/// kept as WTF-8, where decoding to a `String` would refuse it.
+struct Bytes(Vec<u8>);
+
+impl<'de> Deserialize<'de> for Bytes {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Bytes, D::Error> {
+        struct BytesVisitor;
+
+        impl Visitor<'_> for BytesVisitor {
+            type Value = Bytes;
+
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("a JSON string")
+            }
+
+            fn visit_bytes<E: serde::de::Error>(self, bytes: &[u8]) -> Result<Bytes, E> {
+                Ok(Bytes(bytes.to_vec()))
+            }
+        }
+
+        deserializer.deserialize_bytes(BytesVisitor)
+    }
 }
 
 /// The path of the first object, at any depth, that gives a name twice.
@@ -363,13 +420,13 @@ fn name_twice(node: &Node, path: &str) -> Option<String> {
         Node::Object(entries) => {
             let mut seen = HashSet::new();
             for (name, _) in entries {
-                if !seen.insert(name.as_str()) {
-                    return Some(format!("{} gives {name:?} twice", shown(path)));
+                if !seen.insert(name.as_slice()) {
+                    return Some(format!("{} gives {:?} twice", shown(path), text(name)));
                 }
             }
             entries
                 .iter()
-                .find_map(|(name, value)| name_twice(value, &join(path, name)))
+                .find_map(|(name, value)| name_twice(value, &join(path, &text(name))))
         }
         Node::Array(items) => items
             .iter()
@@ -377,6 +434,11 @@ fn name_twice(node: &Node, path: &str) -> Option<String> {
             .find_map(|(i, item)| name_twice(item, &format!("{path}[{i}]"))),
         _ => None,
     }
+}
+
+/// A name as a refusal's detail shows it.
+fn text(name: &[u8]) -> std::borrow::Cow<'_, str> {
+    String::from_utf8_lossy(name)
 }
 
 fn join(path: &str, name: &str) -> String {
@@ -394,12 +456,12 @@ fn shown(path: &str) -> &str {
 /// An object's members, by name, with its path for a refusal's detail.
 /// The tree holds no name twice once `name_twice` has passed it.
 struct Members<'a> {
-    entries: &'a [(String, Node)],
+    entries: &'a [(Name, Node)],
     path: String,
 }
 
 impl<'a> Members<'a> {
-    fn new(entries: &'a [(String, Node)], path: &str) -> Members<'a> {
+    fn new(entries: &'a [(Name, Node)], path: &str) -> Members<'a> {
         Members {
             entries,
             path: path.to_owned(),
@@ -407,7 +469,10 @@ impl<'a> Members<'a> {
     }
 
     fn find(&self, name: &str) -> Option<&'a Node> {
-        self.entries.iter().find(|(n, _)| n == name).map(|(_, v)| v)
+        self.entries
+            .iter()
+            .find(|(n, _)| n.as_slice() == name.as_bytes())
+            .map(|(_, v)| v)
     }
 
     fn has(&self, name: &str) -> bool {

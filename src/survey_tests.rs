@@ -435,3 +435,64 @@ fn a_refusal_names_its_cause_in_the_formats_words() {
     );
     assert!(text.contains("not one JSON object"), "{text}");
 }
+
+#[test]
+fn an_unknown_member_with_a_number_past_any_float_is_ignored() {
+    let report = replaced(
+        "\"stage\": \"drives\",",
+        "\"stage\": \"drives\", \"later\": 1e400,",
+    );
+    assert!(
+        read(report.as_bytes()).is_ok(),
+        "{:?}",
+        read(report.as_bytes())
+    );
+    let known = replaced("\"family\": 25,", "\"family\": 1e400,");
+    assert_eq!(cause(known), Cause::Integer);
+}
+
+#[test]
+fn nesting_is_read_to_the_parsers_own_bound_and_refused_past_it() {
+    let nested = |levels: usize| {
+        let inner = format!("{}{}", "[".repeat(levels), "]".repeat(levels));
+        replaced(
+            "\"stage\": \"drives\",",
+            &format!("\"stage\": \"drives\", \"later\": {inner},"),
+        )
+    };
+    assert!(
+        read(nested(126).as_bytes()).is_ok(),
+        "the report and 126 arrays"
+    );
+    assert_eq!(cause(nested(127)), Cause::Encoding);
+    assert_eq!(cause(nested(20_000)), Cause::Encoding);
+}
+
+#[test]
+fn an_unknown_member_with_a_lone_surrogate_is_ignored_and_names_compare_by_code_units() {
+    let later = |member: &str| {
+        replaced(
+            "\"stage\": \"drives\",",
+            &format!("\"stage\": \"drives\", \"later\": {member},"),
+        )
+    };
+    let report = later(r#"{"\ud800": "\udfff", "\ud801": 1, "\ud83d\ude00": "\ud83d"}"#);
+    assert!(
+        read(report.as_bytes()).is_ok(),
+        "{:?}",
+        read(report.as_bytes())
+    );
+    assert_eq!(
+        cause(later(r#"{"\ud800": 1, "\uD800": 2}"#)),
+        Cause::NameTwice
+    );
+    assert_eq!(
+        cause(later("{\"\\ud83d\\ude00\": 1, \"\u{1F600}\": 2}")),
+        Cause::NameTwice
+    );
+    let known = replaced(
+        "\"release\": \"7.3.4-arch1-2\"",
+        r#""release": "7.3.4\ud800""#,
+    );
+    assert_eq!(cause(known), Cause::String);
+}

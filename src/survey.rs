@@ -37,6 +37,10 @@ pub const CARDS_BOUND: usize = 16;
 /// At most this many CPU flags, and at least one.
 pub const FLAGS_BOUND: usize = 512;
 
+/// **The bytes of a value the report chose that a refusal's detail quotes**,
+/// at most: enough to find the value, never the report's text.
+pub const QUOTE_BOUND: usize = 64;
+
 /// **A report read whole.**
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Survey {
@@ -248,7 +252,9 @@ pub fn read(report: &[u8]) -> Result<Survey, Refused> {
     let top = Members::new(top, "");
     match top.find("format") {
         Some(Node::String(format)) if format == FORMAT => {}
-        Some(Node::String(other)) => return refused(Cause::Format, format!("format {other:?}")),
+        Some(Node::String(other)) => {
+            return refused(Cause::Format, format!("format {}", quoted(other)));
+        }
         Some(_) => return refused(Cause::Format, "format is not a string"),
         None => return refused(Cause::Format, "format is missing"),
     }
@@ -421,7 +427,11 @@ fn name_twice(node: &Node, path: &str) -> Option<String> {
             let mut seen = HashSet::new();
             for (name, _) in entries {
                 if !seen.insert(name.as_slice()) {
-                    return Some(format!("{} gives {:?} twice", shown(path), text(name)));
+                    return Some(format!(
+                        "{} gives {} twice",
+                        cut(shown(path)),
+                        quoted(&text(name))
+                    ));
                 }
             }
             entries
@@ -436,9 +446,33 @@ fn name_twice(node: &Node, path: &str) -> Option<String> {
     }
 }
 
-/// A name as a refusal's detail shows it.
+/// A name as text, a lone surrogate as U+FFFD.
 fn text(name: &[u8]) -> std::borrow::Cow<'_, str> {
     String::from_utf8_lossy(name)
+}
+
+/// **A value the report chose, as a refusal's detail quotes it**, for the
+/// console's log and never a page (Spec 6.2): between quotes, as `cut`
+/// gives it.
+fn quoted(value: &str) -> String {
+    format!("\"{}\"", cut(value))
+}
+
+/// **A value cut to `QUOTE_BOUND` bytes and escaped**: its first bytes to
+/// the bound, at a character's boundary, each byte outside printable ASCII
+/// and the backslash written `\xNN` by the box's printer, and where it was
+/// cut, the value's length.
+fn cut(value: &str) -> String {
+    let mut end = value.len().min(QUOTE_BOUND);
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    let shown = crate::link::box_line::escaped(&value[..end]);
+    if end < value.len() {
+        format!("{shown}... (cut, {} bytes)", value.len())
+    } else {
+        shown
+    }
 }
 
 fn join(path: &str, name: &str) -> String {
@@ -665,11 +699,11 @@ fn members(top: &Members<'_>) -> Result<Survey, Refused> {
     let stage = match top.raw_string("stage")? {
         "pairing" => Stage::Pairing,
         "drives" => Stage::Drives,
-        other => return refused(Cause::StageOrTaken, format!("stage {other:?}")),
+        other => return refused(Cause::StageOrTaken, format!("stage {}", quoted(other))),
     };
     let taken_text = top.raw_string("taken")?;
     let Some(taken) = taken(taken_text) else {
-        return refused(Cause::StageOrTaken, format!("taken {taken_text:?}"));
+        return refused(Cause::StageOrTaken, format!("taken {}", quoted(taken_text)));
     };
 
     let image = top.object("image")?;
@@ -749,7 +783,7 @@ fn flags(cpu: &Members<'_>) -> Result<Vec<String>, Refused> {
     {
         return refused(
             Cause::Bound,
-            format!("{at} gives {:?} before {:?}", w[0], w[1]),
+            format!("{at} gives {} before {}", quoted(&w[0]), quoted(&w[1])),
         );
     }
     Ok(flags)
@@ -827,7 +861,9 @@ fn drives(top: &Members<'_>) -> Result<Vec<Drive>, Refused> {
             return refused(
                 Cause::Drives,
                 format!(
-                    "{path} is {role_text:?} at {mount_point:?}, not state then models at their mount points"
+                    "{path} is {} at {}, not state then models at their mount points",
+                    quoted(role_text),
+                    quoted(mount_point)
                 ),
             );
         };

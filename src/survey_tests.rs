@@ -4,7 +4,7 @@
 
 use serde_json::{Value, json};
 
-use crate::survey::{Cause, MODELS_MOUNT, Mount, Role, STATE_MOUNT, Stage, read};
+use crate::survey::{Cause, MODELS_MOUNT, Mount, QUOTE_BOUND, Role, STATE_MOUNT, Stage, read};
 
 /// The format's worked example, carried as written (its section 6).
 const EXAMPLE: &str = include_str!("../tests/fixtures/weaver-survey-1-worked-example.json");
@@ -495,4 +495,70 @@ fn an_unknown_member_with_a_lone_surrogate_is_ignored_and_names_compare_by_code_
         r#""release": "7.3.4\ud800""#,
     );
     assert_eq!(cause(known), Cause::String);
+}
+
+/// A refusal's detail is for the console's log, never a page: printable
+/// ASCII alone, whatever the report holds.
+fn printable(detail: &str) -> bool {
+    detail.bytes().all(|b| (0x20..0x7f).contains(&b))
+}
+
+#[test]
+fn a_refusals_detail_quotes_a_value_cut_to_its_bound() {
+    let long = "x".repeat(1000);
+    let report = replaced(
+        "\"format\": \"weaver-survey/1\"",
+        &format!("\"format\": \"{long}\""),
+    );
+    let refused = read(report.as_bytes()).unwrap_err();
+    assert_eq!(refused.cause, Cause::Format);
+    assert!(
+        refused.detail.contains(&"x".repeat(QUOTE_BOUND)),
+        "{}",
+        refused.detail
+    );
+    assert!(
+        !refused.detail.contains(&"x".repeat(QUOTE_BOUND + 1)),
+        "{}",
+        refused.detail
+    );
+    assert!(refused.detail.contains("1000 bytes"), "{}", refused.detail);
+    let name = "y".repeat(5000);
+    let twice = replaced(
+        "\"stage\": \"drives\",",
+        &format!(
+            "\"stage\": \"drives\", \"later\": {{\"{name}\": {{\"{name}\": 1, \"{name}\": 2}}}},"
+        ),
+    );
+    let refused = read(twice.as_bytes()).unwrap_err();
+    assert_eq!(refused.cause, Cause::NameTwice);
+    assert!(
+        refused.detail.len() < 4 * 3 * QUOTE_BOUND,
+        "{}",
+        refused.detail.len()
+    );
+}
+
+#[test]
+fn a_refusals_detail_escapes_a_control_or_non_ascii_byte() {
+    let report = replaced(
+        "\"format\": \"weaver-survey/1\"",
+        "\"format\": \"\\u001b[2J\\u00e9\"",
+    );
+    let refused = read(report.as_bytes()).unwrap_err();
+    assert_eq!(refused.cause, Cause::Format);
+    assert!(
+        refused.detail.contains("\\x1b[2J\\xc3\\xa9"),
+        "{}",
+        refused.detail
+    );
+    assert!(printable(&refused.detail), "{:?}", refused.detail);
+    let twice = replaced(
+        "\"stage\": \"drives\",",
+        "\"stage\": \"drives\", \"later\": {\"\\u001b\": 1, \"\\u001b\": 2},",
+    );
+    let refused = read(twice.as_bytes()).unwrap_err();
+    assert_eq!(refused.cause, Cause::NameTwice);
+    assert!(refused.detail.contains("\\x1b"), "{}", refused.detail);
+    assert!(printable(&refused.detail), "{:?}", refused.detail);
 }

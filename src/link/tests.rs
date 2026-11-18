@@ -364,7 +364,7 @@ impl Lab {
     /// Connect, say hello with a tail at 100, take the hello answer and,
     /// on the admin plane, the `show` ask that follows it, then say the
     /// replay is caught up (nothing to replay).
-    async fn admit(&self, agent: &Registered, plane: Plane) -> Fake {
+    pub(super) async fn admit(&self, agent: &Registered, plane: Plane) -> Fake {
         self.admit_with(agent, plane, true).await
     }
 

@@ -4646,6 +4646,7 @@ by `session`. Reads are not audited.
   `placement`, `confirm` or `build`, and `GET /setup/{su}` answers its pairing page
 - `POST /setup/{su}/pairing`: the checkbox
 - `POST /setup/{su}/models`: a pick, an adapter's carrying its scale
+- `POST /setup/{su}/models/drop`: the adapter's pick dropped
 - `GET /setup/{su}/models/header`: one choice's header, a fragment
 - `GET /setup/{su}/models/pull`: the setup's pulls with their progress and the base's
   identity, a fragment the page re-fetches every 15 s through the session's background
@@ -4713,10 +4714,10 @@ there.
 | --- | --- | --- |
 | Start | the name, refused by the start page's rule or where an open setup holds it; the open setups; New agent once an agent stands | nothing |
 | Pairing | the checkbox, virtual machine or host; the console's link address and port (`link_address`, else `link_listen`), which the box's setup asks for, and that the box must reach them; the warning where that address is a loopback address and the checkbox says virtual machine, and where it is an unspecified address, `0.0.0.0` or `::`, for a host and a virtual machine alike, since a listener binds it for every interface and it names no machine to dial (RFC 1122 admits `0.0.0.0` as a source alone, and RFC 4291 refuses `::` as a destination); the waiting boxes, each by the name it claims, its peer address and its wait, the console's fingerprint, the fingerprint's confirmation and the code's field, where the console's build serves the enrollment (section 8.2); the survey's report at the `pairing` stage, read or refused by section 8.3's reader and shown as below | nothing on the console's side; a box that dials and reports: the image's setup script |
-| Models | the repository and its revision, resolved to a commit; each choice with its size and its header's facts; a gated repository with its accept link and a check again; the pick, which asks a pull (section 2.15), an adapter's carrying its scale; the pulls' progress and record; the base's identity, computed from the cache; the roster beyond the first agent drawn and marked unbuilt | nothing on the console's side; the box's pull from the cache: the act of the box's pull (section 10) |
+| Models | the repository and its revision, resolved to a commit; each choice with its size and its header's facts; a gated repository with its accept link and a check again; the pick, which asks a pull (section 2.15), an adapter's carrying its scale; the adapter's pane, `ok` with none picked, saying the agent then loads its base alone, and a picked adapter's Drop; the pulls' progress and record; the base's identity, computed from the cache; the roster beyond the first agent drawn and marked unbuilt | nothing on the console's side; the box's pull from the cache: the act of the box's pull (section 10) |
 | Drives | the appliance's form drawn with what it will show; the models drive's need, the bytes of the picks' distinct blobs; the drives as mounted, from the `drives` stage's report, with the judgments below; the host's form drawn and marked unbuilt, its models directory prefilled from `model_cache` where set; the SSH key that goes down, by its fingerprint, with a link to change it | the command that starts the drive setup: the image's setup script names it |
 | Placement | the context length, bounded below by the box's max-tokens-per-turn and above by the header's maximum; the turn context; the block count and the parts in shard order, from the header; the devices, a set of the reported cards by ordinal, held until a report brings them | the fit, drawn "planned, from the box's room plan": the room plan's answer over TLS, an ask on WeaverAgent |
-| Confirm | every member of the tuple with its source, read or held, the box's members from the `drives` stage's report | nothing on the console's side; Confirm stands only once every member is read, the box's members once the box reports its drives |
+| Confirm | every member of the tuple with its source, read or held, the box's members from the `drives` stage's report; where no adapter is picked, "none picked: the agent loads its base alone" in the adapter's place, and no scale row | nothing on the console's side; Confirm stands only once every member is read, the box's members once the box reports its drives |
 | Build | one pane, marked unbuilt, saying the box lays the agent from the tuple once Confirm stands, and linking the declaration screen as built for the fields no setup page asks | the board and the prompt tuple panel, held by the rulings |
 
 **The models page's roster is the first agent's**: one decoder and one adapter on it.
@@ -4727,6 +4728,21 @@ role's row, and the files the earlier pick pulled stay in the cache. **An adapte
 carries its scale**, a finite number with no default, as the adapter binding's ADP-1 at
 WeaverAgent's `6b91747e` admits it: a pick without one, or with one that is not finite,
 is refused, saving nothing.
+
+**The adapter is optional**, on the operator's ruling of 2026-11-18, within the scope of
+the ruling of 2026-11-16: at most one adapter, from Hugging Face alone. A setup with no
+adapter's pick reaches Confirm and confirms a tuple with none, and the agent is laid on
+its base alone. **An adapter's pick is dropped by a write of its own**,
+`POST /setup/{su}/models/drop`, which posts the setup's version alone. The form is
+parsed to its shape before the admin gate, any other field answering 400. After the gate
+the setup must stand (404), be open (409) and hold an adapter's pick (409), each refusal
+recording nothing. The write deletes the adapter's row under the version check, a stale
+version answering 409 after the first record, as every admin write's does, and its step
+four runs in the task, and under the bound, that every admin write's runs in (section
+2.13). A confirmed setup's model rows refuse the delete at the store too, by the trigger
+below. The files the dropped pick pulled stay in the cache, as a replaced pick's do, and
+a pull of them still running runs on, shown with its cancel on the account's page
+(section 2.15). Only the adapter's pick is dropped, since every tuple holds a decoder.
 
 **A choice is a model, not a file.** Files named `<stem>-NNNNN-of-MMMMM.gguf` with one
 stem and one count group into one choice listing every part and their total size,
@@ -4813,9 +4829,11 @@ audited pick began, and carries no audit record. A start that finds a verified p
 no row hashes it again, a stop of the server ending a hash between two reads, and the
 page shows the identity "not read" while its hash runs. A drift between this hash and
 the agent's fails closed, since admission computes the hash again and refuses a
-mismatch. **What the identity does not show** is that the adapter was converted against
-this base: it pins the box's files to the console's pull, and the pairing of adapter and
-base stays the operator's pick (section 10).
+mismatch. **The identity is computed for every verified decoder**, an adapter picked or
+not, and the tuple records it either way, so Confirm waits on it either way. **What the
+identity does not show** is that the adapter was converted against this base: it pins
+the box's files to the console's pull, and the pairing of adapter and base stays the
+operator's pick (section 10).
 
 **The context length** is an integer from the box's max-tokens-per-turn to the header's
 maximum. One below the bound or above the maximum is refused, saving nothing, and one at
@@ -4921,8 +4939,8 @@ source:
 | member | source |
 | --- | --- |
 | the model's repository, commit, and each part's path under the models mount, blob, SHA-256 and bytes | the pull's record, verified (section 2.15) |
-| the adapter's, likewise | the pull's record, verified |
-| the adapter's scale | the setup, the adapter's pick |
+| the adapter's, likewise, where one is picked | the pull's record, verified |
+| the adapter's scale, where one is picked | the setup, the adapter's pick |
 | the base's identity | the console's hash of the cached parts, above |
 | the context length | the setup, bounded by the box's max-tokens-per-turn and the header |
 | the box's max-tokens-per-turn | the console's constant, `MAX_TOKENS_PER_TURN`, 4096 |
@@ -4937,19 +4955,25 @@ source:
 | the report read, by its stage and `taken` | the `drives` stage's report |
 | the devices | the placement page, from the reported cards |
 
+**A tuple holds an adapter's members whole or not at all** (migration `0032`): its
+repository, commit, choice, parts, pull and scale stand together, each held by its own
+check, or are all absent where no adapter was picked. The base's identity is required
+either way.
+
 **The box's members are typed**, on the operator's rulings of 2026-11-17 (the survey's
 reading). The tuple takes the report's facts of the machine and none of the moment's,
 so not a drive's free space, which moves with use, and not whether the driver is
 loaded, which the cards imply. The memory total and the kernel release are kept, since
 they describe what the agent ran on.
 
-**Confirm's way forward stands only where every member is read**: both pulls verified,
-the base's identity computed, the context length and the turn context kept, the devices
-chosen and each among the reported cards, and the box's members read from the `drives`
-stage's report, every drive mounted and the state drive's filesystem at 9 GiB or more.
-Until then Confirm holds and says which members it waits on, naming the report, the
-drive or the ordinal. A post to Confirm with a member unread is refused, writing
-nothing. Confirm then goes to the build page.
+**Confirm's way forward stands only where every member is read**: the decoder's pull
+verified, and the adapter's where one is picked, the base's identity computed, the
+context length and the turn context kept, the devices chosen and each among the reported
+cards, and the box's members read from the `drives` stage's report, every drive mounted
+and the state drive's filesystem at 9 GiB or more. Until then Confirm holds and says
+which members it waits on, naming the report, the drive or the ordinal. A post to
+Confirm with a member unread is refused, writing nothing. Confirm then goes to the build
+page.
 
 **Confirm reads the box's reports inside its transaction**, this document's election of
 2026-11-17, once its update holds the setup's row. A report's write holds that row
@@ -4965,19 +4989,26 @@ member again inside its transaction and writes the tuple from what it read, so t
 holds what the sources held at its commit. Each part's path is relative to the models
 mount, in Hugging Face's layout (`models--<owner>--<name>/snapshots/<commit>/<path>`),
 and its blob is the cache's name for it (section 2.15). The tuple references its setup,
-its two pulls, the person who confirmed and the base's identity row it read, by that
-row's digest too. **A confirmed setup never changes**: a trigger refuses any update or
-delete of the setup, and any write of its model rows, once it is confirmed. A truncation
-fires no row trigger, so a statement trigger refuses a truncation of the model rows
-while any setup is confirmed, and a truncation of the setups is refused by the
-references to them and, cascaded, by the tuple's guard. So a second Confirm meets a
-confirmed setup, and the tuple's one-per-setup constraint stands behind it. **The
-confirm page's way forward is Confirm itself**: the next page is offered only once the
-setup is confirmed, and a confirmed setup's page draws the tuple from its row alone.
+the decoder's pull and the adapter's where it holds one, the person who confirmed and
+the base's identity row it read, by that row's digest too. **A confirmed setup never
+changes**: a trigger refuses any update or delete of the setup, and any write of its
+model rows, once it is confirmed. A truncation fires no row trigger, so a statement
+trigger refuses a truncation of the model rows while any setup is confirmed, and a
+truncation of the setups is refused by the references to them and, cascaded, by the
+tuple's guard. So a second Confirm meets a confirmed setup, and the tuple's
+one-per-setup constraint stands behind it. **The confirm page's way forward is Confirm
+itself**: the next page is offered only once the setup is confirmed, and a confirmed
+setup's page draws the tuple from its row alone. **Where no adapter is picked, the
+confirm page reads "none picked: the agent loads its base alone"** in the adapter's
+place and draws no scale row, from the setup before Confirm and from the tuple's row
+after it.
 
 **The box is laid from the tuple.** The tuple holds every member the agent is laid from:
-the decoder's artifact, the adapter's artifact, SHA-256 and scale, the base's identity,
-the devices, the context length and the turn context. They are read from the tuple's row
+the decoder's artifact, the devices, the context length and the turn context, and where
+it holds an adapter, the adapter's artifact, SHA-256 and scale with the base's identity
+it binds to. A laying with no adapter carries no base identity, since the box checks the
+base's digest only against an adapter's, and an absent adapter is a base-only load (the
+adapter binding's ADP-1 at WeaverAgent's `be56d8c2`). They are read from the tuple's row
 alone (`Store::laying`), so none stands before Confirm. The max-tokens-per-turn the
 tuple carries is not among them, since the box's agent-creation tool writes its own.
 `admin-con setup describe` answers them to the box's setup, as `laying`, only once the
@@ -7136,17 +7167,18 @@ a `setup` frame after a hello is refused as malformed. It makes two asks:
     8.2) and `false` where it wrote a new row, so the drive setup knows whether the
     state drive it mounts is carried or new, and refuses a carried one as the models
     drive
-  - `models`, absent until the models page's first pick, then one entry per role,
-    `decoder` and `adapter`, each with `repository`, `commit`, `artifact` (the path of
-    the choice's first part, or of the adapter's one file), `files` (each with `path`,
-    `blob`, `bytes` and `sha256`) and `pull` (`running`, `verified` or `failed`, the
-    console's own download)
+  - `models`, absent until the models page's first pick, then one entry per role the
+    setup holds, `decoder` and, where one is picked, `adapter`, each with `repository`,
+    `commit`, `artifact` (the path of the choice's first part, or of the adapter's one
+    file), `files` (each with `path`, `blob`, `bytes` and `sha256`) and `pull`
+    (`running`, `verified` or `failed`, the console's own download)
   - `bytes`, the models drive's need: the bytes of the picks' distinct blobs, a blob two
     paths share counted once
   - `laying`, absent until Confirm, then the members the agent is laid from, read from
     the confirmed tuple (section 6.2): `tuple`, its `dt-` identity, `artifact`,
-    `adapter` (`artifact`, `sha256`, `base_blake3` and `scale`), `devices`,
-    `context_capacity` and `turn_context`
+    `adapter` (`artifact`, `sha256`, `base_blake3` and `scale`) where the tuple holds
+    one and absent where it holds none, `devices`, `context_capacity` and
+    `turn_context`
   - `ssh_keys`, each key of the console setting as stored, with its fingerprint in
     OpenSSH's SHA256 form, empty where none is set
 - **`admin-con setup report --stage pairing|drives`.** In: the survey's report on
@@ -7165,14 +7197,15 @@ a `setup` frame after a hello is refused as malformed. It makes two asks:
 layout of the console's cache (section 2.15). The mount is the box's, so no mount enters
 the answer, and the setup script joins its own mount to each path. Where `models` is
 absent the script says the model is picked in Weaver Web first, and where `laying` is
-absent it says the setup waits on Confirm and asks again. A rerun asks again, so a
-changed SSH key is the key written. **The survey's format is the image's**, since its
-survey script produces it: `weaver-survey/1`, stated in the suite repository's
+absent it says the setup waits on Confirm and asks again. A laying with no `adapter` is
+a base-only load, and the script's passing none of the agent-creation tool's adapter
+options there is the image's, a sentence in `toddwbucy/WeaverTools#39`. A rerun asks
+again, so a changed SSH key is the key written. **The survey's format is the image's**,
+since its survey script produces it: `weaver-survey/1`, stated in the suite repository's
 `docs/profiles/weaver-survey-format.md`, merged by `toddwbucy/WeaverTools#37` at
-`75ae7c54`. **What follows the laying**, whether the agent starts
-at once, at boot or at the console's Start, is section 10's, in a cell that cites the
-operator's answers of 2026-11-16 on `toddwbucy/WeaverAgent#579` and names the four
-passages that bear on it.
+`75ae7c54`. **What follows the laying**, whether the agent starts at once, at boot or at
+the console's Start, is section 10's, in a cell that cites the operator's answers of
+2026-11-16 on `toddwbucy/WeaverAgent#579` and names the four passages that bear on it.
 
 **The pages read the survey's report through one reader** (`src/survey.rs`), which
 takes a report only as `weaver-survey/1` and refuses the whole report for any cause of
@@ -7552,12 +7585,17 @@ two connectors report.
 | the models drive's need counts a blob two paths share once | perturbation in `src/setup_models_tests.rs`, `the_models_drives_need_counts_a_shared_blob_once`: count each path's bytes, and two parts of the same bytes count twice (measured) |
 | an adapter's pick carries a finite scale | perturbation in `src/setup_models_tests.rs`, `an_adapters_pick_carries_a_finite_scale`, and in `src/surfaces/setup/models.rs`'s tests: take a scale that is not finite, and the form no longer refuses it (measured). The store's CHECK (migration `0026`) holds a finite scale beside the form's |
 | the members the box is laid from are the confirmed tuple's, and none stand before Confirm | perturbation in `src/setup_place_tests.rs`, `confirm_stands_only_where_every_member_is_read_and_writes_one_tuple`: read them from the open setup rather than the tuple, and they stand before Confirm (measured) |
+| a setup with no adapter's pick confirms a tuple with none, its confirm page reading "none picked: the agent loads its base alone" with no scale row, and its laying carries no adapter | perturbation, **owed** to the optional adapter's tuple sub-act, end to end from the pairing through Confirm: read a setup with no adapter row as one with an adapter unread, and Confirm holds on "no adapter is picked" |
+| a tuple's adapter members are all present or all absent, and its base's identity is required either way | perturbation at the schema, **owed** to the same sub-act: drop migration `0032`'s check, and a tuple holding five of the six adapter members lands, while one holding none is accepted with the check and without it |
+| an open setup's adapter pick can be dropped, in a task the request cannot cancel, and a confirmed setup's cannot | perturbation, **owed** to the same sub-act: drop the open check and the confirmed setup's trigger, and a confirmed setup's adapter row is deleted; run the drop's step four in the request's own future, and a drop whose request is dropped at the hold leaves its first record without its outcome |
+| `describe`'s laying names an adapter only where the tuple holds one | perturbation, **owed** to the same sub-act: answer the laying's `adapter` member always, and the laying of a tuple with no adapter carries one |
 
 **A watch that cannot fail is not a test.** For each perturbation above, the
 act that lands it states what removal makes it fail and confirms it does.
 
 **A row marked owed has no instrument and is not counted as enforced.**
-Two stand so marked as of 2026-10-16. The pull request of the in-transition
+Two stand so marked as of 2026-10-16, and four more as of 2026-11-18, the optional
+adapter's, which its tuple sub-act builds. The pull request of the in-transition
 `show` of 2026-10-16 stood up an `in_transition` claiming no state and ended
 by the next state, each clause shown to fail with its guard removed. Act 12's pull request of the
 connectors' entries of 2026-10-15 stood up an alert only for a box line that
@@ -8144,9 +8182,10 @@ a `web-` assertion beside `weaver-admin`'s.
   adapter declares it. Settled by the operator.
 - **The laying's three members, opened 2026-11-16** (section 6.2). The box's
   agent-creation tool at WeaverAgent's `6b91747e` takes the artifact, the adapter's four
-  members and the store, writes the devices and the context length fixed and writes no
-  turn context. Open: its taking those three, `toddwbucy/WeaverAgent#580`. Settled by
-  WeaverAgent's act and the image's, which lays the agent after Confirm.
+  members and the store, the four all or none at `be56d8c2`, none being a base-only
+  load, writes the devices and the context length fixed and writes no turn context.
+  Open: its taking those three, `toddwbucy/WeaverAgent#580`. Settled by WeaverAgent's
+  act and the image's, which lays the agent after Confirm.
 - **The trace kept outside the agent's reach, opened 2026-11-17 and closed the same day
   by the operator** (sections 6.1 and 8.3). The operator's words of 2026-11-17 that
   opened it: "remember that the trace doesnt get written to state or anywhere the agent

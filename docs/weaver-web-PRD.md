@@ -265,9 +265,10 @@ beside them, reached from the build page's stub for the fields no setup page ask
   transformer, so the room plan's KV cache term applies. "In shard order" names the
   layer split across cards and says so.
 - **Confirm.** The deployment tuple in full: the model's repository, commit and per-part
-  digests, the adapter's likewise, the image's version, the driver, the cards by
-  identity, the guest processor, the machine, the drives, the placement and the context
-  length. Confirm goes to the build page.
+  digests, the adapter's likewise where one is picked, or that none is and the agent
+  loads its base alone, the image's version, the driver, the cards by identity, the
+  guest processor, the machine, the drives, the placement and the context length.
+  Confirm goes to the build page.
 - **The build page** holds the board and the prompt tuple panel. Both are held, and the
   page is a one-pane stub marked unbuilt. The six sampling values live in the prompt
   tuple, so a first agent declared and set up through Confirm cannot load until the

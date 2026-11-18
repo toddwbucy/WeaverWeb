@@ -4851,9 +4851,10 @@ drive:
   a hold, since the box's pull is an act of its own (section 10).
 
 **A refused report**, this document's election of 2026-11-17: its pane names the stage,
-the arrival and the cause in the format's words, with the status refused. The verbatim
-text is not drawn. Each page and member the report would feed stays held, naming the
-refusal.
+the arrival and the cause by its number and in the format's words, with the status
+refused. Neither the verbatim text nor the refusal's detail is drawn, the detail being
+for the console's log (section 8.3). Each page and member the report would feed stays
+held, naming the refusal.
 
 **Confirm writes the deployment tuple**, one row, immutable (migration `0029`): a
 trigger of the kind migration `0023` uses refuses any update and any delete, and a
@@ -7110,6 +7111,13 @@ kept verbatim. Four of the format's rules bear on how the reader is built:
   and RFC 8259 lets a parser set, this document's election of 2026-11-17, since section
   1's members nest three deep. A `format` naming another version is refused.
 
+**A refusal's detail** says where the reader met the cause, for the console's log and
+never a page, this document's election of 2026-11-17. A value the report chose is quoted
+cut to its first 64 bytes (`QUOTE_BOUND`), at a character's boundary, each byte outside
+printable ASCII and the backslash written `\xNN` as the box's printer writes a reason,
+and the value's length is named where it was cut. A value reaching a log or a terminal
+then moves no cursor and carries no more of the report than finds it.
+
 **The image download.** Where images are published for the console to find, and where
 their published hashes come from, are section 10's.
 
@@ -7424,13 +7432,14 @@ two connectors report.
 | a report is read only as `weaver-survey/1` that passes every refusal of the format's section 3, and no member of a refused one is read | perturbation in `src/survey_tests.rs`, one test per cause of the format's section 3, `refusal_1_bytes_that_are_not_one_json_object_in_utf_8` to `refusal_11_an_integer_or_a_count_outside_its_bound`, each case asserting its cause, beside `the_worked_example_reads_whole` on the format's example carried as written (`tests/fixtures/weaver-survey-1-worked-example.json`): admit bytes after the object, raise the 64 KiB bound, take a prefix of the format, read a string as a boolean, take any byte as printable, admit a byte past a string's bound, drop the patterns, take any stage, admit an offset `taken`, drop the ordinal's check, admit an address repeated, take any mount point, any count of drives or an unmounted drive's members, admit a flag repeated, a seventeenth card or a family past 65535, and that cause's test fails (each measured) |
 | a member the reader does not know is kept and ignored, at any depth, whatever its value | perturbation in `src/survey_tests.rs`, `a_member_the_reader_does_not_know_is_kept_and_ignored_at_any_depth`: refuse a top-level member the reader does not know, and the report carrying one at the top, in `cpu`, in a card and in a drive is refused (measured); `an_unknown_member_with_a_number_past_any_float_is_ignored`: read a number by its value, and an unknown member written `1e400` refuses the report (measured); `an_unknown_member_with_a_lone_surrogate_is_ignored_and_names_compare_by_code_units`: decode a string to UTF-8, and an unknown member holding `"\ud800"` refuses the report; compare names by their text, and two lone surrogates read as one name given twice (each measured) |
 | nesting past 127 arrays and objects is refused under cause 1 | perturbation in `src/survey_tests.rs`, `nesting_is_read_to_the_parsers_own_bound_and_refused_past_it`: double the bound, and 128 levels read (measured) |
+| a refusal's detail quotes a value the report chose cut to 64 bytes and escaped as the box's printer escapes | perturbation in `src/survey_tests.rs`, `a_refusals_detail_quotes_a_value_cut_to_its_bound` and `a_refusals_detail_escapes_a_control_or_non_ascii_byte`: drop the bound, and a 1000-byte `format` is quoted whole; drop the escaping, or quote the `format` or a name given twice in Rust's debug form, and ESC or a non-ASCII byte reaches the detail (each measured) |
 | a member name given twice in one object, at any depth, refuses the whole report | perturbation in `src/survey_tests.rs`, `refusal_3_a_member_name_given_twice_in_one_object_at_any_depth`: drop the check, and `stage` given twice reads its first; look at the top object alone, and a name given twice in `kernel`, in `cards[1]`, in a drive and in an unknown member reads (each measured) |
 | an integer is judged by its written form | perturbation in `src/survey_tests.rs`, `refusal_6_an_integer_negative_fractional_with_an_exponent_or_past_2_53_less_1`: read a whole number the parser gives as a float as an integer, and `1.0` and `1e3` read; drop the 2^53 - 1 bound, and 2^53 is refused as past the family's bound, not as an integer (each measured) |
 | the cards the placement page offers are the `drives` stage's report's where it reads, else the `pairing` stage's | **owed**: a `drives` report carrying a card the `pairing` report lacks, and the card is offered; prefer the `pairing` report, and it is not; refuse the `drives` report, and the `pairing` report's cards are offered |
 | Confirm's box members are the `drives` stage's report's, typed as section 6.2 lists them, and Confirm holds naming the report while it is absent or refused | **owed**: take the members from the `pairing` report, and Confirm stands with no drive mounted; drop the hold, and a refused `drives` report's setup is confirmed |
 | a kept device that a later report lacks is refused at Confirm, naming the ordinal | **owed**: drop the check, and the tuple names a card the box no longer reports |
 | a drive not mounted and a state drive whose filesystem is under 9 GiB hold Confirm, and a models drive's free space under the need is a warning | **owed**: drop each hold, and Confirm stands; move the figure by one byte, and a filesystem of exactly 9 GiB holds or one a byte under it stands; judge at 10 GiB, and a 10 GiB disk's ext4 size of about 9.75 GiB holds; hold on the models drive's free space, and Confirm holds |
-| a refused report is shown by its stage, arrival and cause, never its verbatim text, and holds what it would feed | **owed**: draw the verbatim text, and the page carries it; read a refused report's cards, and the placement page offers them |
+| a refused report is shown by its stage, arrival and cause, never its verbatim text or the refusal's detail, and holds what it would feed | **owed**: draw the verbatim text or the detail, and the page carries it; read a refused report's cards, and the placement page offers them |
 | the base's identity is BLAKE3 over the parts in split order | perturbation in `src/hugging_face/base_identity.rs`'s tests: hash in the listing's order, or part 1 alone, and the digest differs from BLAKE3 over part 1's bytes, then part 2's (each measured) |
 | the base's identity is computed at a start that finds it owed, and once the puller verifies a decoder's pull, and is "not read" until then | perturbation in `src/setup_models_tests.rs`, `the_base_identity_is_owed_until_a_start_hashes_it` and `a_verified_pull_wakes_the_hasher`, each waiting ten seconds against the hasher's idle recheck of fifteen: let the hasher wait before its first read, and a start with no word pending leaves the identity owed; drop the puller's word at a verified pull, and the running hasher misses it; show the identity read while it is owed, and the first test names it (each measured). `a_git_kept_decoder_part_is_hashed_from_its_blob`: hash the pull's rows as read, so a part kept in git is opened under its computed SHA-256, and the identity stays owed (measured) |
 | a choice is offered only where every part stands, and its header's split count agrees with its names | perturbation in `src/hugging_face/choice.rs`'s tests and `src/setup_models_tests.rs`, `the_header_is_read_by_range_and_one_past_the_bound_is_not_read`: offer a choice with a part missing, or group parts by their stem alone, and the grouping's test fails; never see a split count the names contradict, and that choice offers a pick (each measured) |

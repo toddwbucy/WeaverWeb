@@ -1,0 +1,45 @@
+{
+  "format": "weaver-survey/1",
+  "stage": "drives",
+  "taken": "2026-11-17T09:00:00Z",
+  "image": {
+    "version": "2.0",
+    "manifest_sha256":
+      "5b1f0c9e7a2d4486b3e0f19c2d7a65e8c41f03b9d2a7e6158c0b94f3a1d2e7c6"
+  },
+  "kernel": {"release": "7.3.4-arch1-2"},
+  "machine": {
+    "virtualization": "kvm",
+    "vendor": "QEMU",
+    "product": "Standard PC (Q35 + ICH9, 2009)",
+    "version": "pc-q35-9.2"
+  },
+  "cpu": {
+    "vendor": "AuthenticAMD",
+    "model_name": "AMD EPYC 9354P 32-Core Processor",
+    "family": 25,
+    "model": 17,
+    "stepping": 1,
+    "logical_cpus": 16,
+    "flags": ["aes", "avx", "avx2", "avx512_bf16", "avx512_vnni", "avx512bw",
+              "avx512cd", "avx512dq", "avx512f", "avx512vl", "bmi1", "bmi2", "f16c",
+              "fma", "fpu", "sse", "sse2", "sse4_1", "sse4_2", "ssse3"]
+  },
+  "memory": {"total_bytes": 33071620096},
+  "driver": {"version": "620.70.06", "loaded": true},
+  "cuda_runtime": {"version": "13.4.92"},
+  "cards": [
+    {"ordinal": 0, "name": "NVIDIA RTX A5000", "pci_address": "0000:06:00.0",
+     "memory_bytes": 25757220864},
+    {"ordinal": 1, "name": "NVIDIA RTX A5000", "pci_address": "0000:07:00.0",
+     "memory_bytes": 25757220864}
+  ],
+  "drives": [
+    {"role": "state", "mount_point": "/mnt/weaver/state", "mounted": true,
+     "label": "weaver-state", "filesystem": "ext4", "bytes": 25191575552,
+     "free_bytes": 23863877632, "project_quota": true},
+    {"role": "models", "mount_point": "/mnt/weaver/models", "mounted": true,
+     "label": "weaver-models", "filesystem": "ext4", "bytes": 135089524736,
+     "free_bytes": 72464760832, "project_quota": false}
+  ]
+}

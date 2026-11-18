@@ -10,7 +10,8 @@
 //! The placement and confirm pages (Spec 6.2, `src/surfaces/setup/placement.rs`,
 //! `src/surfaces/setup/confirm.rs`, `src/store/tuple.rs`), against the models
 //! page's fake Hugging Face and a box whose reports each test sets through
-//! the seam the enrollment's act fills. A context length above the
+//! the `boxes` seam, the worked example of `weaver-survey/1` with its names
+//! made up. A context length above the
 //! decoder's maximum or below the box's max-tokens-per-turn is refused, and
 //! one at either bound kept. The turn context is
 //! required and never drawn checked. The devices are held until the
@@ -26,7 +27,7 @@ use std::time::Duration;
 use axum::http::{StatusCode, header};
 
 use crate::admin_tests::{form, send_as};
-use crate::box_report::{BoxMembers, BoxReports, Card, NoBox};
+use crate::box_report::{BoxMembers, BoxReports, Kept, Reports};
 use crate::hugging_face::base_identity::BaseIdentities;
 use crate::setup_models_tests::{
     COMMIT, count, ended, pick, post_pick, pull_of, rig_boxed, setup_of,
@@ -34,57 +35,78 @@ use crate::setup_models_tests::{
 use crate::setup_tests::{Rig, audited, begin, page, walk};
 use crate::store::setup::MAX_TOKENS_PER_TURN;
 use crate::store::tuple::{Laying, Part};
+use crate::survey::{MODELS_MOUNT, STATE_MOUNT};
 
-/// What the test's box reports, set as each test goes.
+/// What the test's box reports, each stage's report set as each test goes.
 #[derive(Default)]
-struct Reported {
-    survey: Mutex<Option<Vec<Card>>>,
-    members: Mutex<Option<BoxMembers>>,
+pub(crate) struct Reported {
+    pub(crate) pairing: Mutex<Option<String>>,
+    pub(crate) drives: Mutex<Option<String>>,
 }
 
 impl BoxReports for Reported {
-    fn survey(&self, _setup_id: &str) -> Option<Vec<Card>> {
-        self.survey.lock().unwrap().clone()
-    }
-
-    fn members(&self, _setup_id: &str) -> Option<BoxMembers> {
-        self.members.lock().unwrap().clone()
+    fn reports<'a>(
+        &'a self,
+        _conn: &'a mut sqlx::PgConnection,
+        _setup_id: &'a str,
+    ) -> futures::future::BoxFuture<'a, anyhow::Result<Reports>> {
+        let mut rows = Vec::new();
+        for (stage, report) in [("pairing", &self.pairing), ("drives", &self.drives)] {
+            if let Some(report) = report.lock().unwrap().clone() {
+                rows.push((stage.to_owned(), report, chrono::Utc::now()));
+            }
+        }
+        Box::pin(async move { Ok(Reports::of(&rows)) })
     }
 }
 
-fn two_cards() -> Vec<Card> {
-    vec![
-        Card {
-            ordinal: 0,
-            identity: "card-a".into(),
-        },
-        Card {
-            ordinal: 1,
-            identity: "card-b".into(),
-        },
-    ]
+const EXAMPLE: &str = include_str!("../tests/fixtures/weaver-survey-1-worked-example.json");
+
+/// The format's worked example at `stage`, its cards', CPU's and machine's
+/// names made up: as written at the drives stage, and both drives not
+/// mounted at the pairing stage.
+pub(crate) fn report(stage: &str) -> String {
+    let mut v: serde_json::Value = serde_json::from_str(EXAMPLE).unwrap();
+    v["stage"] = serde_json::json!(stage);
+    v["cards"][0]["name"] = serde_json::json!("card-a");
+    v["cards"][1]["name"] = serde_json::json!("card-b");
+    v["cpu"]["vendor"] = serde_json::json!("cpu-vendor");
+    v["cpu"]["model_name"] = serde_json::json!("cpu-1");
+    v["machine"]["vendor"] = serde_json::json!("machine-vendor");
+    v["machine"]["product"] = serde_json::json!("machine-1");
+    if stage == "pairing" {
+        v["drives"] = serde_json::json!([
+            {"role": "state", "mount_point": STATE_MOUNT, "mounted": false},
+            {"role": "models", "mount_point": MODELS_MOUNT, "mounted": false},
+        ]);
+    }
+    v.to_string()
 }
 
+pub(crate) fn pairing_report() -> String {
+    report("pairing")
+}
+
+pub(crate) fn drives_report() -> String {
+    report("drives")
+}
+
+/// The box's members the drives report gives.
 fn box_members() -> BoxMembers {
-    BoxMembers {
-        image_version: "image-1".into(),
-        driver: "driver-1".into(),
-        cards: vec!["card-a".into(), "card-b".into()],
-        guest_cpu: "cpu-1".into(),
-        machine: "machine-1".into(),
-        drives: vec!["the state drive".into(), "the models drive".into()],
-    }
+    Reports::of(&[("drives".into(), drives_report(), chrono::Utc::now())])
+        .members()
+        .unwrap()
 }
 
 /// A page answered 200 under a session, framed, the apostrophe as askama
 /// escapes it read back for the assertions.
-async fn read(app: &axum::Router, uri: &str, session: &str) -> String {
+pub(crate) async fn read(app: &axum::Router, uri: &str, session: &str) -> String {
     page(app, uri, session).await.replace("&#39;", "'")
 }
 
 /// A post to one of the setup's pages: the answer, its body and where it
 /// leads.
-async fn post(
+pub(crate) async fn post(
     rig: &Rig,
     session: &str,
     setup: &str,
@@ -107,7 +129,7 @@ async fn post(
 }
 
 /// The split model picked as the decoder at `version`.
-async fn decoder_picked(rig: &Rig, session: &str, setup: &str, version: &str) {
+pub(crate) async fn decoder_picked(rig: &Rig, session: &str, setup: &str, version: &str) {
     let (status, body) = post_pick(
         rig,
         session,
@@ -132,7 +154,7 @@ async fn decoder_picked(rig: &Rig, session: &str, setup: &str, version: &str) {
 /// one at it is kept.
 #[tokio::test]
 async fn a_context_length_above_the_headers_maximum_is_refused_and_one_at_it_kept() {
-    let Some((rig, _fake, _, _cache)) = rig_boxed(true, Arc::new(NoBox)).await else {
+    let Some((rig, _fake, _, _cache)) = rig_boxed(true, Arc::new(Kept)).await else {
         return;
     };
     let s = rig.store();
@@ -253,7 +275,7 @@ async fn a_context_length_above_the_headers_maximum_is_refused_and_one_at_it_kep
 #[tokio::test]
 async fn a_context_length_below_the_boxs_max_tokens_per_turn_is_refused() {
     assert_eq!(MAX_TOKENS_PER_TURN, 4096, "create-agent.sh's value");
-    let Some((rig, _fake, _, _cache)) = rig_boxed(true, Arc::new(NoBox)).await else {
+    let Some((rig, _fake, _, _cache)) = rig_boxed(true, Arc::new(Kept)).await else {
         return;
     };
     let s = rig.store();
@@ -344,7 +366,7 @@ async fn a_context_length_below_the_boxs_max_tokens_per_turn_is_refused() {
 /// drawn checked, and a stale version answers 409.
 #[tokio::test]
 async fn the_turn_context_is_required_and_never_defaulted() {
-    let Some((rig, _fake, _, _cache)) = rig_boxed(false, Arc::new(NoBox)).await else {
+    let Some((rig, _fake, _, _cache)) = rig_boxed(false, Arc::new(Kept)).await else {
         return;
     };
     let s = rig.store();
@@ -440,7 +462,7 @@ async fn the_turn_context_is_required_and_never_defaulted() {
 /// is refused, saving nothing.
 #[tokio::test]
 async fn the_devices_and_the_fit_are_held_until_the_survey_reports() {
-    let Some((rig, _fake, _, _cache)) = rig_boxed(false, Arc::new(NoBox)).await else {
+    let Some((rig, _fake, _, _cache)) = rig_boxed(false, Arc::new(Kept)).await else {
         return;
     };
     let s = rig.store();
@@ -491,7 +513,7 @@ async fn the_devices_and_the_fit_are_held_until_the_survey_reports() {
 #[tokio::test]
 async fn the_devices_are_a_non_empty_set_of_the_surveys_cards_by_ordinal() {
     let reported = Arc::new(Reported::default());
-    *reported.survey.lock().unwrap() = Some(two_cards());
+    *reported.pairing.lock().unwrap() = Some(pairing_report());
     let Some((rig, _fake, _, _cache)) = rig_boxed(false, reported.clone()).await else {
         return;
     };
@@ -567,7 +589,7 @@ async fn the_devices_are_a_non_empty_set_of_the_surveys_cards_by_ordinal() {
 
 /// The base's identity of the split model, once its hash is kept, within
 /// ten seconds.
-async fn identity_kept(s: &crate::store::Store) -> String {
+pub(crate) async fn identity_kept(s: &crate::store::Store) -> String {
     for _ in 0..200 {
         if let Some(identity) = s
             .base_identity("org/split", COMMIT, "m-00001-of-00002.gguf")
@@ -596,7 +618,7 @@ async fn identity_kept(s: &crate::store::Store) -> String {
 #[tokio::test]
 async fn confirm_stands_only_where_every_member_is_read_and_writes_one_tuple() {
     let reported = Arc::new(Reported::default());
-    *reported.survey.lock().unwrap() = Some(two_cards());
+    *reported.pairing.lock().unwrap() = Some(pairing_report());
     let Some((rig, _fake, _, _cache)) = rig_boxed(true, reported.clone()).await else {
         return;
     };
@@ -664,14 +686,14 @@ async fn confirm_stands_only_where_every_member_is_read_and_writes_one_tuple() {
     assert!(waiting.contains("Waits on the box's members"), "{waiting}");
     let (status, body, _) = post(&rig, &ada, &setup, "confirm", &[("version", "4")]).await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
-    assert!(body.contains("the box's members"), "{body}");
+    assert!(body.contains("the drives stage's report"), "{body}");
     assert_eq!(count(s, "deployment_tuple").await, 0);
     let open = s.setup(&setup).await.unwrap().unwrap();
     assert_eq!((open.state.as_str(), open.version), ("open", 4));
     assert_eq!(audited(s, "setup confirm").await, (0, 0, 0, 0));
     assert_eq!(s.laying(&setup).await.unwrap(), None);
 
-    *reported.members.lock().unwrap() = Some(box_members());
+    *reported.drives.lock().unwrap() = Some(drives_report());
     let ready = read(&rig.app, &confirm, &ada).await;
     assert!(walk(&ready).is_empty(), "{:?}", walk(&ready));
     assert!(ready.contains(&action), "{ready}");
@@ -784,11 +806,11 @@ async fn confirm_stands_only_where_every_member_is_read_and_writes_one_tuple() {
     );
 
     // Drawn from the tuple's row after Confirm, whatever the box reports.
-    *reported.members.lock().unwrap() = None;
+    *reported.drives.lock().unwrap() = None;
     let shown = read(&rig.app, &confirm, &ada).await;
     assert!(walk(&shown).is_empty(), "{:?}", walk(&shown));
     assert!(shown.contains(&confirmed.tuple_id), "{shown}");
-    assert!(shown.contains("image-1"), "{shown}");
+    assert!(shown.contains("card-b, 0000:07:00.0"), "{shown}");
     assert!(!shown.contains(&action), "{shown}");
     assert!(
         shown.contains(&format!(
@@ -881,7 +903,7 @@ async fn confirm_stands_only_where_every_member_is_read_and_writes_one_tuple() {
 #[tokio::test]
 async fn setup_describe_answers_the_picks_their_need_and_the_laying_once_confirmed() {
     let reported = Arc::new(Reported::default());
-    *reported.survey.lock().unwrap() = Some(two_cards());
+    *reported.pairing.lock().unwrap() = Some(pairing_report());
     let Some((rig, _fake, _, _cache)) = rig_boxed(true, reported.clone()).await else {
         return;
     };
@@ -1011,7 +1033,7 @@ async fn setup_describe_answers_the_picks_their_need_and_the_laying_once_confirm
     }
     assert_eq!(picked.bytes, need);
 
-    *reported.members.lock().unwrap() = Some(box_members());
+    *reported.drives.lock().unwrap() = Some(drives_report());
     let (status, body, _) = post(&rig, &ada, &setup, "confirm", &[("version", "4")]).await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
     let confirmed = s.deployment_tuple(&setup).await.unwrap().unwrap();
@@ -1063,8 +1085,8 @@ async fn setup_describe_answers_the_picks_their_need_and_the_laying_once_confirm
 #[tokio::test]
 async fn setup_describe_reads_every_member_in_one_snapshot() {
     let reported = Arc::new(Reported::default());
-    *reported.survey.lock().unwrap() = Some(two_cards());
-    *reported.members.lock().unwrap() = Some(box_members());
+    *reported.pairing.lock().unwrap() = Some(pairing_report());
+    *reported.drives.lock().unwrap() = Some(drives_report());
     let Some((rig, _fake, _, _cache)) = rig_boxed(true, reported.clone()).await else {
         return;
     };
@@ -1174,4 +1196,53 @@ async fn setup_describe_reads_every_member_in_one_snapshot() {
     let after = s.described(&karl, &fingerprint).await.unwrap().unwrap();
     let laying = after.laying.expect("the laying once Confirm stands");
     assert_eq!(laying.adapter.scale, 0.25, "the other side, whole");
+}
+
+/// A source whose store fails to answer.
+struct Failing;
+
+impl BoxReports for Failing {
+    fn reports<'a>(
+        &'a self,
+        _conn: &'a mut sqlx::PgConnection,
+        _setup_id: &'a str,
+    ) -> futures::future::BoxFuture<'a, anyhow::Result<Reports>> {
+        Box::pin(async { Err(anyhow::anyhow!("the store did not answer")) })
+    }
+}
+
+/// **A store that fails to answer is a fault, never an absent report**
+/// (Spec 6.2): the placement and confirm pages answer 500 rather than draw
+/// the devices or the box's members held, and so does a placement's post.
+#[tokio::test]
+async fn a_store_that_fails_to_answer_is_a_fault_never_an_absent_report() {
+    let Some((rig, _fake, _, _cache)) = rig_boxed(false, Arc::new(Failing)).await else {
+        return;
+    };
+    let (ada, setup) = setup_of(&rig, "karl").await;
+    for page in ["placement", "confirm"] {
+        let (status, _, body) = send_as(
+            &rig.app,
+            "GET",
+            &format!("/setup/{setup}/{page}"),
+            None,
+            &ada,
+        )
+        .await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{page}: {body}");
+        assert!(!body.contains("wait"), "{page}: {body}");
+    }
+    let version = rig.store().setup(&setup).await.unwrap().unwrap().version;
+    let (status, body, _) = post(
+        &rig,
+        &ada,
+        &setup,
+        "placement",
+        &[
+            ("version", &version.to_string()),
+            ("turn_context", "independent"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
 }

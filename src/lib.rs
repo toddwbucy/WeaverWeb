@@ -18,6 +18,8 @@ mod alerting_deadline_tests;
 #[cfg(all(test, feature = "passkeys"))]
 mod alerts_tests;
 pub mod box_report;
+#[cfg(test)]
+mod box_report_tests;
 pub mod config;
 pub(crate) mod deadline;
 pub mod declaration;
@@ -58,6 +60,8 @@ mod reading_tests;
 #[cfg(all(test, feature = "passkeys"))]
 mod setup_models_tests;
 #[cfg(all(test, feature = "passkeys"))]
+mod setup_panes_tests;
+#[cfg(all(test, feature = "passkeys"))]
 mod setup_place_tests;
 #[cfg(all(test, feature = "passkeys"))]
 mod setup_tests;
@@ -72,6 +76,9 @@ pub mod stage;
 mod stage_tests;
 pub mod store;
 pub mod surfaces;
+pub mod survey;
+#[cfg(test)]
+mod survey_tests;
 #[cfg(test)]
 mod timeouts_tests;
 pub mod traceview;

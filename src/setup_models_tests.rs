@@ -30,7 +30,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 
 use crate::admin_tests::{admin, form, send_as, signed_in};
-use crate::box_report::{BoxReports, NoBox};
+use crate::box_report::{BoxReports, Kept};
 use crate::gguf::build::{F32, Gguf, STRING};
 use crate::hugging_face::RepoId;
 use crate::passkeys_tests::authenticator;
@@ -387,7 +387,7 @@ async fn resolve(
 }
 
 /// The fake on a listener of its own, and its base.
-async fn fake() -> (Arc<Fake>, String) {
+pub(crate) async fn fake() -> (Arc<Fake>, String) {
     let fake = Arc::new(Fake {
         repos: repos(),
         ..Default::default()
@@ -408,7 +408,7 @@ async fn fake() -> (Arc<Fake>, String) {
 /// A rig over the fake, with a model cache where `cached`, and no box
 /// reporting.
 async fn rig(cached: bool) -> Option<(Rig, Arc<Fake>, String, tempfile::TempDir)> {
-    rig_boxed(cached, Arc::new(NoBox)).await
+    rig_boxed(cached, Arc::new(Kept)).await
 }
 
 /// A rig over the fake, with a model cache where `cached`, and what the

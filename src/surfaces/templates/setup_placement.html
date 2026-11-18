@@ -41,19 +41,32 @@
   <footer>{% if turn.is_empty() %}None is kept. {% endif %}The agent reads its absence as continuous, so the page never leaves the election to that default.</footer>
 </section>
 <section class="pane">
-  <header><span class="stage"><b>1</b> Declare</span><h2>The devices</h2><span class="backing built">built</span>{% if cards.is_some() %}<span class="status ok">ok</span>{% else %}<span class="status hold">hold</span>{% endif %}<span class="source">the survey's report</span></header>
+  <header><span class="stage"><b>1</b> Declare</span><h2>The devices</h2><span class="backing built">built</span><span class="status {{ devices.class }}">{{ devices.word }}</span><span class="source">{{ devices.source }}</span></header>
   <div class="body">
+  {%- for note in devices.notes %}
+  <p>{{ note }}</p>
+  {%- endfor %}
   {%- if let Some(cards) = cards %}
   {%- for card in cards %}
-  <label><input type="checkbox" name="device" value="{{ card.ordinal }}"{% if card.checked %} checked{% endif %}> Card {{ card.ordinal }}: {{ card.identity }}</label>
+  <label><input type="checkbox" name="device" value="{{ card.ordinal }}"{% if card.checked %} checked{% endif %}> Card {{ card.ordinal }}: {{ card.model }}</label>
+  {%- endfor %}
+  {%- if cards.is_empty() %}
+  <p>The box reported no card: a reading, not a fault.</p>
+  {%- endif %}
+  {%- for ordinal in devices.lacking %}
+  <p><span class="status fail">lacking</span> Card {{ ordinal }} is kept, and {{ devices.source }} lacks it: Confirm refuses the placement until it is saved on the reported cards.</p>
   {%- endfor %}
   <p>Each card by the ordinal the survey gives it in PCI bus order, the order the agent numbers its devices in. The checked cards hold the layers in ascending ordinal, the first card the first layers.</p>
   {%- else %}
-  <p>Not read: the survey has reported no cards.</p>
+  <p>Not read: no report the reader reads has brought the cards.</p>
   {%- endif %}
   </div>
   {%- if cards.is_none() %}
+  {%- if devices.class == "hold" %}
   <footer>Waits on the survey's report, which brings the cards.</footer>
+  {%- else %}
+  <footer>Waits on a report the reader reads, at the drives stage or the pairing stage, which brings the cards.</footer>
+  {%- endif %}
   {%- else %}
   <footer>A set of one card at least, and no card is checked until one is kept.</footer>
   {%- endif %}

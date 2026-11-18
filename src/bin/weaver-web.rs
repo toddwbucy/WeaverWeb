@@ -545,7 +545,7 @@ async fn serve(cfg: Arc<ServerConfig>) -> anyhow::Result<()> {
                 headers: weaver_web::hugging_face::headers::Headers::new(),
                 // No box reports until the enrollment's act builds the
                 // source, so the devices and the box's members are held.
-                boxes: std::sync::Arc::new(weaver_web::box_report::NoBox),
+                boxes: std::sync::Arc::new(weaver_web::box_report::Kept),
                 // **The enrollment** (Spec 8.2): the boxes waiting at the
                 // link port, and the authority the server loaded, which
                 // signs at an exchange.

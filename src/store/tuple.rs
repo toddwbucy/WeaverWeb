@@ -12,7 +12,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{PgConnection, Row};
 
-use crate::box_report::{BoxMembers, Card};
+use crate::box_report::{BoxMembers, BoxReports, Card};
 use crate::gguf::Header;
 use crate::hugging_face::RepoId;
 use crate::hugging_face::cache::snapshot_path;
@@ -227,13 +227,15 @@ async fn model_of(
 
 /// **Each member of the setup's tuple, read from its source or not**, on
 /// `conn`: the role rows and their pulls' records, the base's identity, the
-/// setup's fields, the survey's cards and the box's report.
+/// setup's fields, and what the box reports (Spec 6.2): the cards, the
+/// drives stage's report's or the pairing stage's, and the box's members,
+/// the drives stage's report's or why Confirm holds.
 async fn members_on(
     conn: &mut PgConnection,
     setup_id: &str,
     fields: &Fields,
     survey: Option<&[Card]>,
-    reported: Option<BoxMembers>,
+    reported: Result<BoxMembers, String>,
 ) -> anyhow::Result<Members> {
     let rows = sqlx::query(
         "SELECT m.role, m.repository, m.commit_id, m.choice, m.pull_id, mp.state AS pull_state, \
@@ -328,7 +330,7 @@ async fn members_on(
             None => Ok(devices.clone()),
         },
     };
-    let box_members = reported.ok_or_else(|| "the box's members are not reported".to_owned());
+    let box_members = reported;
     Ok(Members {
         decoder,
         adapter,
@@ -358,24 +360,33 @@ impl Store {
     pub async fn members(
         &self,
         setup: &crate::store::setup::Setup,
-        survey: Option<&[Card]>,
-        reported: Option<BoxMembers>,
+        boxes: &dyn BoxReports,
     ) -> anyhow::Result<Members> {
         let mut conn = self.pool.acquire().await?;
+        let reports = boxes.reports(&mut conn, &setup.setup_id).await?;
         let fields = Fields {
             virtual_machine: setup.virtual_machine,
             context_length: setup.context_length,
             turn_context: setup.turn_context.clone(),
             devices: setup.devices.clone(),
         };
-        members_on(&mut conn, &setup.setup_id, &fields, survey, reported).await
+        members_on(
+            &mut conn,
+            &setup.setup_id,
+            &fields,
+            reports.cards().as_deref(),
+            reports.members(),
+        )
+        .await
     }
 
     /// **Confirm** (Spec 6.2), over the open setup read at `version`, in one
     /// transaction under the identity exclusion: the setup moved to
-    /// `confirmed`, every member read again inside it, and the tuple written
-    /// with the identity `tuple_id`. Stale where the setup is not what the
-    /// page read, and refused, writing nothing, where a member is not read.
+    /// `confirmed`, every member read again inside it, the box's reports
+    /// among them, read through `boxes` once the update holds the setup's
+    /// row, and the tuple written with the identity `tuple_id`. Stale where
+    /// the setup is not what the page read, and refused, writing nothing,
+    /// where a member is not read.
     #[allow(clippy::too_many_arguments)]
     pub async fn confirm(
         &self,
@@ -385,8 +396,7 @@ impl Store {
         setup_id: &str,
         version: i64,
         tuple_id: &str,
-        survey: Option<&[Card]>,
-        reported: Option<BoxMembers>,
+        boxes: &dyn BoxReports,
     ) -> anyhow::Result<Result<(), Refusal>> {
         let mut tx = self.identity_transaction().await?;
         if let Err(refusal) = authorized(&mut tx, session_id, admin).await? {
@@ -410,7 +420,15 @@ impl Store {
             turn_context: row.get("turn_context"),
             devices: row.get("devices"),
         };
-        let members = members_on(&mut tx, setup_id, &fields, survey, reported).await?;
+        let reports = boxes.reports(&mut tx, setup_id).await?;
+        let members = members_on(
+            &mut tx,
+            setup_id,
+            &fields,
+            reports.cards().as_deref(),
+            reports.members(),
+        )
+        .await?;
         let tuple = match members.tuple() {
             Ok(tuple) => tuple,
             Err(unread) => return Ok(Err(Refusal::Unconfirmable(unread.join(", ")))),

@@ -14,8 +14,8 @@
 //! module `models` (`setup/models.rs`), the placement page and its post
 //! `placement` (`setup/placement.rs`), and the confirm page and Confirm
 //! `confirm` (`setup/confirm.rs`). What the box reports, the survey's cards
-//! and the box's members, comes through the `boxes` seam, which answers none
-//! until the enrollment's act builds its source.
+//! and the box's members, comes through the `boxes` seam, which reads the
+//! reports the setup keeps through the survey's reader (`box_report::Kept`).
 //!
 //! **Every pane carries its stage, its backing and its status**, and a
 //! held pane says in its footer what it waits on and holds no input with a

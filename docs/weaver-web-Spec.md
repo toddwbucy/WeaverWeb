@@ -4841,9 +4841,12 @@ filesystem, size, free space and project quota. Three judgments, each shown on t
 drive:
 
 - A drive not mounted holds Confirm, naming it.
-- A state drive whose filesystem's size is under 10 GiB holds Confirm, naming its size,
-  since the state mount is required for every agent at a minimum of 10 GiB (section
-  8.3).
+- A state drive whose filesystem's size is under 9 GiB (9663676416 bytes) holds Confirm,
+  naming its size, on the operator's ruling of 2026-11-17 (the state drive's figure).
+  The state mount is required for every agent at a minimum of 10 GiB of disk (section
+  8.3), and the judgment is made at 9 GiB of filesystem because a filesystem reports
+  less than its disk: a 10 GiB disk formatted ext4 with its defaults reports about
+  9.75 GiB, which clears the figure.
 - A models drive whose free space is under the models drive's need is a warning and not
   a hold, since the box's pull is an act of its own (section 10).
 
@@ -4886,7 +4889,7 @@ they describe what the agent ran on.
 **Confirm's way forward stands only where every member is read**: both pulls verified,
 the base's identity computed, the context length and the turn context kept, the devices
 chosen and each among the reported cards, and the box's members read from the `drives`
-stage's report, every drive mounted and the state drive's filesystem at 10 GiB or more.
+stage's report, every drive mounted and the state drive's filesystem at 9 GiB or more.
 Until then Confirm holds and says which members it waits on, naming the report, the
 drive or the ordinal. A post to Confirm with a member unread is refused, writing
 nothing. Confirm then goes to the build page.
@@ -7419,7 +7422,7 @@ two connectors report.
 | the cards the placement page offers are the `drives` stage's report's where it reads, else the `pairing` stage's | **owed**: a `drives` report carrying a card the `pairing` report lacks, and the card is offered; prefer the `pairing` report, and it is not; refuse the `drives` report, and the `pairing` report's cards are offered |
 | Confirm's box members are the `drives` stage's report's, typed as section 6.2 lists them, and Confirm holds naming the report while it is absent or refused | **owed**: take the members from the `pairing` report, and Confirm stands with no drive mounted; drop the hold, and a refused `drives` report's setup is confirmed |
 | a kept device that a later report lacks is refused at Confirm, naming the ordinal | **owed**: drop the check, and the tuple names a card the box no longer reports |
-| a drive not mounted and a state drive under 10 GiB hold Confirm, and a models drive's free space under the need is a warning | **owed**: drop each hold, and Confirm stands; hold on the models drive's free space, and Confirm holds |
+| a drive not mounted and a state drive whose filesystem is under 9 GiB hold Confirm, and a models drive's free space under the need is a warning | **owed**: drop each hold, and Confirm stands; move the figure by one byte, and a filesystem of exactly 9 GiB holds or one a byte under it stands; judge at 10 GiB, and a 10 GiB disk's ext4 size of about 9.75 GiB holds; hold on the models drive's free space, and Confirm holds |
 | a refused report is shown by its stage, arrival and cause, never its verbatim text, and holds what it would feed | **owed**: draw the verbatim text, and the page carries it; read a refused report's cards, and the placement page offers them |
 | the base's identity is BLAKE3 over the parts in split order | perturbation in `src/hugging_face/base_identity.rs`'s tests: hash in the listing's order, or part 1 alone, and the digest differs from BLAKE3 over part 1's bytes, then part 2's (each measured) |
 | the base's identity is computed at a start that finds it owed, and once the puller verifies a decoder's pull, and is "not read" until then | perturbation in `src/setup_models_tests.rs`, `the_base_identity_is_owed_until_a_start_hashes_it` and `a_verified_pull_wakes_the_hasher`, each waiting ten seconds against the hasher's idle recheck of fifteen: let the hasher wait before its first read, and a start with no word pending leaves the identity owed; drop the puller's word at a verified pull, and the running hasher misses it; show the identity read while it is owed, and the first test names it (each measured). `a_git_kept_decoder_part_is_hashed_from_its_blob`: hash the pull's rows as read, so a part kept in git is opened under its computed SHA-256, and the identity stays owed (measured) |
@@ -7983,8 +7986,10 @@ a `web-` assertion beside `weaver-admin`'s.
   (section 8.3). The operator's rulings of 2026-11-16 (setup pages) state every size in
   the flow in one unit, GiB, require the state mount at a minimum of 10 GiB, and have
   the appliance's setup script warn "about 10 GiB recommended" where no drive is
-  attached. A smaller state drive holds Confirm, on the operator's rulings of 2026-11-17
-  (the survey's reading).
+  attached. A state drive whose filesystem is under 9 GiB holds Confirm, on the
+  operator's rulings of 2026-11-17 (the survey's reading), and the figure is the
+  operator's ruling of the same day (the state drive's figure), since a filesystem
+  reports less than its disk.
 - **Abandoning an open setup, opened 2026-11-16** (section 6.2). One open setup holds
   a name, and no route drops one, so a setup begun by mistake holds its name until it is
   confirmed. Open: whether an admin abandons an open setup, and what an abandoned one

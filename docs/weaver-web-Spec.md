@@ -4567,16 +4567,17 @@ written, and nothing is installed, validated or seeded.
 operator's rulings of 2026-11-16 (setup pages) and items 1 to 20 of their addendum. The
 decisions this section takes are this document's election of 2026-11-16, revised the
 same day after the appliance flow was walked by hand. The pages light what exists and
-draw the rest held: the start page, the models page, the drives page's need for the
-models drive, the placement page's context length and turn context, and the pairing
-page's checkbox, link address and port are live, and the pairing page's code and
-fingerprint, the survey's report, the drives as the box mounted them, the placement's
-devices and its planned fit, and the box's members of the deployment tuple are held,
-each waiting on the enrollment's code act (section 8.2), the survey's format, the
-image's setup script or WeaverAgent's terms. **So the pages alone reach no confirmed
-tuple**, and the rulings' first test (download fresh, set up a virtual machine through
-the pages, confirm the tuple) waits on the enrollment's code act, the survey's reading
-act and the image's setup-script act.
+draw the rest held. Live: the start page, the models page, the pairing page's checkbox,
+link address and port, its waiting boxes, fingerprint and code where the console's
+build serves the enrollment (section 8.2), the survey's report, the drives page's need
+for the models drive and the drives as the box mounted them, the placement page's
+context length, turn context and devices, and the box's members of the deployment
+tuple. The survey's report, the drives as mounted, the devices and the box's members
+come from the box's reports (section 8.3). Held: the command that starts the drive
+setup and the placement's planned fit, waiting on the image's setup script and
+WeaverAgent's terms. **So the pages reach a confirmed tuple only from a box that has
+paired and reported**, and the rulings' first test (download fresh, set up a virtual
+machine through the pages, confirm the tuple) waits on the image's setup-script act.
 
 **The pages are an admin's**, the server-wide admin grant, as the declaration screen's
 (section 6.1): a setup comes before Provision's register, so no agent row exists for a
@@ -4661,11 +4662,11 @@ there.
 | page | live | held, and on what |
 | --- | --- | --- |
 | Start | the name, refused by the start page's rule or where an open setup holds it; the open setups; New agent once an agent stands | nothing |
-| Pairing | the checkbox, virtual machine or host; the console's link address and port (`link_address`, else `link_listen`), which the box's setup asks for, and that the box must reach them; the warning where that address is a loopback address and the checkbox says virtual machine, and where it is an unspecified address, `0.0.0.0` or `::`, for a host and a virtual machine alike, since a listener binds it for every interface and it names no machine to dial (RFC 1122 admits `0.0.0.0` as a source alone, and RFC 4291 refuses `::` as a destination); and the waiting box's peer address too once the enrollment's code act brings it (section 8.2) | the waiting boxes, each by the name it claims, its peer address and its wait, the console's fingerprint, the fingerprint's confirmation and the code's field: the enrollment's code act (section 8.2) and the image's setup script; the survey's report: carried by `setup report` at the `pairing` stage (section 8.3), its members read once its format merges (`toddwbucy/WeaverTools#37`) |
+| Pairing | the checkbox, virtual machine or host; the console's link address and port (`link_address`, else `link_listen`), which the box's setup asks for, and that the box must reach them; the warning where that address is a loopback address and the checkbox says virtual machine, and where it is an unspecified address, `0.0.0.0` or `::`, for a host and a virtual machine alike, since a listener binds it for every interface and it names no machine to dial (RFC 1122 admits `0.0.0.0` as a source alone, and RFC 4291 refuses `::` as a destination); the waiting boxes, each by the name it claims, its peer address and its wait, the console's fingerprint, the fingerprint's confirmation and the code's field, where the console's build serves the enrollment (section 8.2); the survey's report at the `pairing` stage, read or refused by section 8.3's reader and shown as below | nothing on the console's side; a box that dials and reports: the image's setup script |
 | Models | the repository and its revision, resolved to a commit; each choice with its size and its header's facts; a gated repository with its accept link and a check again; the pick, which asks a pull (section 2.15), an adapter's carrying its scale; the pulls' progress and record; the base's identity, computed from the cache; the roster beyond the first agent drawn and marked unbuilt | nothing on the console's side; the box's pull from the cache: the act of the box's pull (section 10) |
-| Drives | the appliance's form drawn with what it will show; the models drive's need, the bytes of the picks' distinct blobs; the host's form drawn and marked unbuilt, its models directory prefilled from `model_cache` where set; the SSH key that goes down, by its fingerprint, with a link to change it | the command that starts the drive setup: the image's setup script names it; the drives as mounted: the box's report, carried by `setup report` at the `drives` stage (section 8.3), its members read once its format merges |
-| Placement | the context length, bounded below by the box's max-tokens-per-turn and above by the header's maximum; the turn context; the block count and the parts in shard order, from the header | the devices, a set of the survey's cards by ordinal: the survey's report; the fit, drawn "planned, from the box's room plan": the room plan's answer over TLS, an ask on WeaverAgent |
-| Confirm | every member of the tuple with its source, read or held | the box's members and the devices; Confirm stands only once every member is read |
+| Drives | the appliance's form drawn with what it will show; the models drive's need, the bytes of the picks' distinct blobs; the drives as mounted, from the `drives` stage's report, with the judgments below; the host's form drawn and marked unbuilt, its models directory prefilled from `model_cache` where set; the SSH key that goes down, by its fingerprint, with a link to change it | the command that starts the drive setup: the image's setup script names it |
+| Placement | the context length, bounded below by the box's max-tokens-per-turn and above by the header's maximum; the turn context; the block count and the parts in shard order, from the header; the devices, a set of the reported cards by ordinal, held until a report brings them | the fit, drawn "planned, from the box's room plan": the room plan's answer over TLS, an ask on WeaverAgent |
+| Confirm | every member of the tuple with its source, read or held, the box's members from the `drives` stage's report | nothing on the console's side; Confirm stands only once every member is read, the box's members once the box reports its drives |
 | Build | one pane, marked unbuilt, saying the box lays the agent from the tuple once Confirm stands, and linking the declaration screen as built for the fields no setup page asks | the board and the prompt tuple panel, held by the rulings |
 
 **The models page's roster is the first agent's**: one decoder and one adapter on it.
@@ -4783,13 +4784,17 @@ and says why, and every post is refused.
 post without one, or with another word, is refused, saving nothing. The agent reads its
 absence as `continuous`, so the page never leaves the election to that default.
 
-**The devices** are a set of the survey's cards, each named by the ordinal the survey's
-report gives it in PCI bus order, the order the agent numbers its devices in. No card is
-drawn checked. An empty set, an ordinal the report lacks and a repeated ordinal are each
-refused, saving nothing, since the agent's declaration refuses an empty set rather than
-default to a device. The checked ordinals in ascending order are the shard order, the
-first card holding the first layers, and another order is drawn unbuilt. Until the
-survey's report brings the cards, the field is held with that reason.
+**The devices** are a set of the reported cards (which report, below), each named by the
+ordinal the report gives it in PCI bus order, the order the agent numbers its devices
+in. No card is drawn checked. An empty set, an ordinal the report lacks and a repeated
+ordinal are each refused, saving nothing, since the agent's declaration refuses an empty
+set rather than default to a device. The checked ordinals in ascending order are the
+shard order, the first card holding the first layers, and another order is drawn
+unbuilt. Until a report brings the cards, the field is held with that reason, and a
+report that carries no card says the box reported none, a reading and not a fault. **A
+kept device that a later report lacks** is named on the placement page and refused at
+Confirm, naming the ordinal, so the tuple never names a card the box no longer reports
+(this document's election of 2026-11-17).
 
 **The placement's save writes the three fields together**, each held to its source, and
 a field the page holds is written none. The form is parsed to its shape before the admin
@@ -4805,11 +4810,47 @@ survey's report, an empty set once it has reported, and an ordinal it lacks. A s
 version answers 409 after the first record, as every admin write's does.
 
 **What the box reports reaches the pages through one source** (`src/box_report.rs`):
-the survey's cards and the box's members. Its source over the reports the setup keeps
-(section 8.3) is the survey's reading act's, once the survey's format merges
-(`toddwbucy/WeaverTools#37`). Until then the server's source answers none, so the
-devices and the box's members are held, and the setup pages' tests supply a report
-through the same seam.
+the cards and the box's members, read from the reports the setup keeps by the survey's
+reader (`src/survey.rs`, section 8.3). The setup pages' tests supply a report through
+the same seam. A store that fails to answer is a fault, never an absent report. Each
+pane a report feeds carries its status, healthy included: read, refused, or waiting on
+the report.
+
+**Which report feeds what**, this document's election of 2026-11-17:
+
+- The pairing page shows the `pairing` stage's report, and the drives page the `drives`
+  stage's.
+- The cards the placement page offers come from the `drives` stage's report where it
+  stands and reads, else from the `pairing` stage's.
+- Every box member Confirm reads comes from the `drives` stage's report alone, since at
+  the `pairing` stage neither drive is mounted. Until it stands and reads, Confirm holds
+  and names it.
+- A report that is absent or refused feeds nothing, and each page and member it would
+  feed is held, naming it.
+
+**The pairing page's report**, this document's election of 2026-11-17: the report's
+arrival and `taken`, then its members grouped: the image, the kernel, the machine, the
+CPU (its flags as a count, the list folded), the memory, the driver and whether it is
+loaded, the CUDA runtime, and the cards, each with its ordinal, model, PCI address and
+memory. A box with no card says so, a reading and not a fault. A `pairing` stage report
+whose drives are both not mounted is a valid report, read whole.
+
+**The drives as mounted**, on the operator's rulings of 2026-11-17 (the survey's
+reading): each drive of the `drives` stage's report with its role, mount point, label,
+filesystem, size, free space and project quota. Three judgments, each shown on the
+drive:
+
+- A drive not mounted holds Confirm, naming it.
+- A state drive whose filesystem's size is under 10 GiB holds Confirm, naming its size,
+  since the state mount is required for every agent at a minimum of 10 GiB (section
+  8.3).
+- A models drive whose free space is under the models drive's need is a warning and not
+  a hold, since the box's pull is an act of its own (section 10).
+
+**A refused report**, this document's election of 2026-11-17: its pane names the stage,
+the arrival and the cause in the format's words, with the status refused. The verbatim
+text is not drawn. Each page and member the report would feed stays held, naming the
+refusal.
 
 **Confirm writes the deployment tuple**, one row, immutable (migration `0029`): a
 trigger of the kind migration `0023` uses refuses any update and any delete, and a
@@ -4827,16 +4868,28 @@ source:
 | the box's max-tokens-per-turn | the console's constant, `MAX_TOKENS_PER_TURN`, 4096 |
 | the turn context | the setup |
 | the virtual machine or host | the setup's checkbox |
-| the image version, the driver, the cards by model, each with its ordinal in PCI bus order, the guest CPU, the machine | the box's report |
-| the drives | the box's report |
-| the devices | the placement page, from the survey's report |
+| the image's version and its manifest's SHA-256 | the `drives` stage's report |
+| the driver's version and the CUDA runtime's version | the `drives` stage's report |
+| the cards, each by its ordinal in PCI bus order, its model, its PCI address and its memory | the `drives` stage's report |
+| the guest CPU: its vendor, model name, family, model, stepping, logical CPUs and flags | the `drives` stage's report |
+| the machine: its virtualization, vendor, product and version, the memory total and the kernel release | the `drives` stage's report |
+| the drives, each by its role, label, filesystem, size and project quota | the `drives` stage's report |
+| the report read, by its stage and `taken` | the `drives` stage's report |
+| the devices | the placement page, from the reported cards |
+
+**The box's members are typed**, on the operator's rulings of 2026-11-17 (the survey's
+reading). The tuple takes the report's facts of the machine and none of the moment's,
+so not a drive's free space, which moves with use, and not whether the driver is
+loaded, which the cards imply. The memory total and the kernel release are kept, since
+they describe what the agent ran on.
 
 **Confirm's way forward stands only where every member is read**: both pulls verified,
 the base's identity computed, the context length and the turn context kept, the devices
-chosen, and the box's members answered. The box's members come from the source the
-survey's reading act builds (above), and until it the source answers none, so Confirm
-holds and says which members it waits on. A post to Confirm with a member unread is
-refused, writing nothing. Confirm then goes to the build page.
+chosen and each among the reported cards, and the box's members read from the `drives`
+stage's report, every drive mounted and the state drive's filesystem at 10 GiB or more.
+Until then Confirm holds and says which members it waits on, naming the report, the
+drive or the ordinal. A post to Confirm with a member unread is refused, writing
+nothing. Confirm then goes to the build page.
 
 **Confirm posts the setup's version alone**, every member read from its source and never
 from the form. Its order is section 2.13's: the version parsed (400 for any other
@@ -7021,12 +7074,32 @@ the answer, and the setup script joins its own mount to each path. Where `models
 absent the script says the model is picked in Weaver Web first, and where `laying` is
 absent it says the setup waits on Confirm and asks again. A rerun asks again, so a
 changed SSH key is the key written. **The survey's format is the image's**, since its
-survey script produces it, stated in the image's profile by the pull request
-`toddwbucy/WeaverTools#37`, open as of 2026-11-17, and the pages read its members in an
-act of their own once it merges. **What follows the laying**, whether the agent starts
+survey script produces it: `weaver-survey/1`, stated in the suite repository's
+`docs/profiles/weaver-survey-format.md`, merged by `toddwbucy/WeaverTools#37` at
+`75ae7c54`. **What follows the laying**, whether the agent starts
 at once, at boot or at the console's Start, is section 10's, in a cell that cites the
 operator's answers of 2026-11-16 on `toddwbucy/WeaverAgent#579` and names the four
 passages that bear on it.
+
+**The pages read the survey's report through one reader** (`src/survey.rs`), which
+takes a report only as `weaver-survey/1` and refuses the whole report for any cause of
+the format's section 3, so no member of a refused report is read and the report stays
+kept verbatim. Four of the format's rules bear on how the reader is built:
+
+- **A member name given twice in one object, at any depth**, refuses the report, since
+  parsers differ on which one wins. The reader sees every object's names as it reads
+  them, never through a parsed value that keeps one of the two.
+- **An integer is judged by its written form**: one written with a minus sign (`-0`
+  included), a fraction part (`1.0` included) or an exponent, or above 2^53 - 1, is
+  refused, whatever value a parser would give it.
+- **Refusal 10 applies as written**: `drives` is exactly `state` then `models` with
+  their mount points. The appliance profile's two fixed mount points are the format's
+  constants and stand in the reader and its fixtures, on the operator's ruling of
+  2026-11-17 (the survey's reading). A real machine's paths, names and readings stay
+  out of the repository.
+- **A member the reader does not know is kept and ignored, at any depth**, so an
+  optional member a later survey adds within one version refuses nothing. A `format`
+  naming another version is refused.
 
 **The image download.** Where images are published for the console to find, and where
 their published hashes come from, are section 10's.
@@ -7041,8 +7114,8 @@ lists, formats and mounts the drives, each after the operator confirms the disk,
 a replacement's state drive, which it mounts and checks, never formats and refuses as
 the models drive (section 8.2).
 The console attaches and mounts nothing. The drives page shows the drives as the box
-mounted
-them, from the box's report at the `drives` stage (`setup report`, above). A host
+mounted them, from the box's report at the `drives` stage (`setup report`, above), with
+section 6.2's judgments. A host
 install points at a state directory and a models directory and attaches and formats
 nothing, on the addendum to the same rulings, and the drives page shows the directories
 the operator named with free space against the need. A host's models directory defaults
@@ -7339,6 +7412,15 @@ two connectors report.
 | an SSH key's line is checked for its form, and its text enters no audit record | perturbation in `src/ssh_key_tests.rs`: drop the inner type's check, and a line whose blob names another type is kept |
 | the turn context is required and never defaulted | perturbation in `src/setup_place_tests.rs`, `the_turn_context_is_required_and_never_defaulted`: draw continuous checked where none is kept, or keep a post without one as continuous, and the test names it (each measured) |
 | the devices are a non-empty set of the survey's cards, by ordinal | perturbation in `src/setup_place_tests.rs` with a survey supplied through the box seam, `the_devices_are_a_non_empty_set_of_the_surveys_cards_by_ordinal` and `the_devices_and_the_fit_are_held_until_the_survey_reports`: drop the empty set's refusal, or the check against the survey's ordinals, and the refused post lands; take a device before the survey reports, and the held field keeps one (each measured) |
+| a report is read only as `weaver-survey/1` that passes every refusal of the format's section 3, and no member of a refused one is read | **owed**: one report per cause of the format's section 3, each refused naming its cause, and the format's worked example, carried as written, read whole; drop a cause, and its report reads |
+| a member the reader does not know is kept and ignored, at any depth | **owed**: a report carrying an unknown member at the top, in a card and in a drive reads whole; refuse an unknown member, and the report is refused |
+| a member name given twice in one object, at any depth, refuses the whole report | **owed**: a name given twice at the top, in `cards[1]` and in a drive each refuses the report; read through a parsed value, and the second value reads |
+| an integer is judged by its written form | **owed**: `1.0`, `1e3`, `-0`, `-1` and 2^53 are each refused and 2^53 - 1 reads; read the number as a float, and `1e3` reads as 1000 |
+| the cards the placement page offers are the `drives` stage's report's where it reads, else the `pairing` stage's | **owed**: a `drives` report carrying a card the `pairing` report lacks, and the card is offered; prefer the `pairing` report, and it is not; refuse the `drives` report, and the `pairing` report's cards are offered |
+| Confirm's box members are the `drives` stage's report's, typed as section 6.2 lists them, and Confirm holds naming the report while it is absent or refused | **owed**: take the members from the `pairing` report, and Confirm stands with no drive mounted; drop the hold, and a refused `drives` report's setup is confirmed |
+| a kept device that a later report lacks is refused at Confirm, naming the ordinal | **owed**: drop the check, and the tuple names a card the box no longer reports |
+| a drive not mounted and a state drive under 10 GiB hold Confirm, and a models drive's free space under the need is a warning | **owed**: drop each hold, and Confirm stands; hold on the models drive's free space, and Confirm holds |
+| a refused report is shown by its stage, arrival and cause, never its verbatim text, and holds what it would feed | **owed**: draw the verbatim text, and the page carries it; read a refused report's cards, and the placement page offers them |
 | the base's identity is BLAKE3 over the parts in split order | perturbation in `src/hugging_face/base_identity.rs`'s tests: hash in the listing's order, or part 1 alone, and the digest differs from BLAKE3 over part 1's bytes, then part 2's (each measured) |
 | the base's identity is computed at a start that finds it owed, and once the puller verifies a decoder's pull, and is "not read" until then | perturbation in `src/setup_models_tests.rs`, `the_base_identity_is_owed_until_a_start_hashes_it` and `a_verified_pull_wakes_the_hasher`, each waiting ten seconds against the hasher's idle recheck of fifteen: let the hasher wait before its first read, and a start with no word pending leaves the identity owed; drop the puller's word at a verified pull, and the running hasher misses it; show the identity read while it is owed, and the first test names it (each measured). `a_git_kept_decoder_part_is_hashed_from_its_blob`: hash the pull's rows as read, so a part kept in git is opened under its computed SHA-256, and the identity stays owed (measured) |
 | a choice is offered only where every part stands, and its header's split count agrees with its names | perturbation in `src/hugging_face/choice.rs`'s tests and `src/setup_models_tests.rs`, `the_header_is_read_by_range_and_one_past_the_bound_is_not_read`: offer a choice with a part missing, or group parts by their stem alone, and the grouping's test fails; never see a split count the names contradict, and that choice offers a pick (each measured) |
@@ -7897,11 +7979,12 @@ a `web-` assertion beside `weaver-admin`'s.
   6.2**, opened the same day (section 8.2): a console setting, one or more keys, an
   admin's write, which the setup script's drive-setup run fetches with `admin-con setup
   describe` (section 8.3).
-- **The state drive's size, opened 2026-11-16** (section 8.3). The operator's rulings of
-  2026-11-16 (setup pages) state every size in the flow in one unit, GiB, require the
-  state mount at a minimum of 10 GiB, and have the appliance's setup script warn "about
-  10 GiB recommended" where no drive is attached. Open: whether a smaller state drive is
-  refused or warned of. Settled by the operator.
+- **The state drive's size, closed 2026-11-17 by section 6.2**, opened 2026-11-16
+  (section 8.3). The operator's rulings of 2026-11-16 (setup pages) state every size in
+  the flow in one unit, GiB, require the state mount at a minimum of 10 GiB, and have
+  the appliance's setup script warn "about 10 GiB recommended" where no drive is
+  attached. A smaller state drive holds Confirm, on the operator's rulings of 2026-11-17
+  (the survey's reading).
 - **Abandoning an open setup, opened 2026-11-16** (section 6.2). One open setup holds
   a name, and no route drops one, so a setup begun by mistake holds its name until it is
   confirmed. Open: whether an admin abandons an open setup, and what an abandoned one
@@ -7912,13 +7995,11 @@ a `web-` assertion beside `weaver-admin`'s.
   per device in shard order, the KV term, the headroom) and its frame, an ask on
   WeaverAgent (`weaver-web-PRD` section 8). Settled by WeaverAgent's answer, then by the
   act that lights the placement page.
-- **The box's members of the tuple, opened 2026-11-16** (section 6.2), narrowed
-  2026-11-17 by section 8.3. The image version, the driver, the cards by model, each
-  with its ordinal in PCI bus order, the guest CPU, the machine and the drives come from
-  the box's report, which `setup report` carries and the setup keeps, the latest of each
-  stage, and the devices the placement page offers come from the same report. Open: the
-  report's form, the survey's format (`toddwbucy/WeaverTools#37`). Settled by the
-  image's act that states it, then by the survey's reading act.
+- **The box's members of the tuple, closed 2026-11-17 by sections 6.2 and 8.3**,
+  opened 2026-11-16 (section 6.2). The report's form is `weaver-survey/1`, merged by
+  `toddwbucy/WeaverTools#37`, and the members are typed as section 6.2's table lists
+  them, from the `drives` stage's report, on the operator's rulings of 2026-11-17 (the
+  survey's reading).
 - **Two sources for a model, opened 2026-11-16** (sections 2.4, 6.1 and 6.2). The
   declaration screen's artifact text and GPU requirement stand beside the setup's
   repository, commit, digests and placement, and no load reads either as built.

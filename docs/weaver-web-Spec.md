@@ -4841,16 +4841,20 @@ filesystem, size, free space and project quota. Three judgments, each shown on t
 drive:
 
 - A drive not mounted holds Confirm, naming it.
-- A state drive whose filesystem's size is under 10 GiB holds Confirm, naming its size,
-  since the state mount is required for every agent at a minimum of 10 GiB (section
-  8.3).
+- A state drive whose filesystem's size is under 9 GiB (9663676416 bytes) holds Confirm,
+  naming its size, on the operator's ruling of 2026-11-17 (the state drive's figure).
+  The state mount is required for every agent at a minimum of 10 GiB of disk (section
+  8.3), and the judgment is made at 9 GiB of filesystem because a filesystem reports
+  less than its disk: a 10 GiB disk formatted ext4 with its defaults reports about
+  9.75 GiB, which clears the figure.
 - A models drive whose free space is under the models drive's need is a warning and not
   a hold, since the box's pull is an act of its own (section 10).
 
 **A refused report**, this document's election of 2026-11-17: its pane names the stage,
-the arrival and the cause in the format's words, with the status refused. The verbatim
-text is not drawn. Each page and member the report would feed stays held, naming the
-refusal.
+the arrival and the cause by its number and in the format's words, with the status
+refused. Neither the verbatim text nor the refusal's detail is drawn, the detail being
+for the console's log (section 8.3). Each page and member the report would feed stays
+held, naming the refusal.
 
 **Confirm writes the deployment tuple**, one row, immutable (migration `0029`): a
 trigger of the kind migration `0023` uses refuses any update and any delete, and a
@@ -4886,7 +4890,7 @@ they describe what the agent ran on.
 **Confirm's way forward stands only where every member is read**: both pulls verified,
 the base's identity computed, the context length and the turn context kept, the devices
 chosen and each among the reported cards, and the box's members read from the `drives`
-stage's report, every drive mounted and the state drive's filesystem at 10 GiB or more.
+stage's report, every drive mounted and the state drive's filesystem at 9 GiB or more.
 Until then Confirm holds and says which members it waits on, naming the report, the
 drive or the ordinal. A post to Confirm with a member unread is refused, writing
 nothing. Confirm then goes to the build page.
@@ -7098,8 +7102,21 @@ kept verbatim. Four of the format's rules bear on how the reader is built:
   2026-11-17 (the survey's reading). A real machine's paths, names and readings stay
   out of the repository.
 - **A member the reader does not know is kept and ignored, at any depth**, so an
-  optional member a later survey adds within one version refuses nothing. A `format`
-  naming another version is refused.
+  optional member a later survey adds within one version refuses nothing, whatever its
+  value. The reader holds each number by its written form, computing a value for digits
+  alone, so a number past any float's range refuses nothing. A string's lone surrogate
+  escape, which RFC 8259's grammar admits, is held as U+FFFD, which no string of section
+  1 admits, and two names are one name where their UTF-16 code units are. Nesting past
+  127 arrays and objects is refused under cause 1, the bound `serde_json`'s parser keeps
+  and RFC 8259 lets a parser set, this document's election of 2026-11-17, since section
+  1's members nest three deep. A `format` naming another version is refused.
+
+**A refusal's detail** says where the reader met the cause, for the console's log and
+never a page, this document's election of 2026-11-17. A value the report chose is quoted
+cut to its first 64 bytes (`QUOTE_BOUND`), at a character's boundary, each byte outside
+printable ASCII and the backslash written `\xNN` as the box's printer writes a reason,
+and the value's length is named where it was cut. A value reaching a log or a terminal
+then moves no cursor and carries no more of the report than finds it.
 
 **The image download.** Where images are published for the console to find, and where
 their published hashes come from, are section 10's.
@@ -7412,15 +7429,17 @@ two connectors report.
 | an SSH key's line is checked for its form, and its text enters no audit record | perturbation in `src/ssh_key_tests.rs`: drop the inner type's check, and a line whose blob names another type is kept |
 | the turn context is required and never defaulted | perturbation in `src/setup_place_tests.rs`, `the_turn_context_is_required_and_never_defaulted`: draw continuous checked where none is kept, or keep a post without one as continuous, and the test names it (each measured) |
 | the devices are a non-empty set of the survey's cards, by ordinal | perturbation in `src/setup_place_tests.rs` with a survey supplied through the box seam, `the_devices_are_a_non_empty_set_of_the_surveys_cards_by_ordinal` and `the_devices_and_the_fit_are_held_until_the_survey_reports`: drop the empty set's refusal, or the check against the survey's ordinals, and the refused post lands; take a device before the survey reports, and the held field keeps one (each measured) |
-| a report is read only as `weaver-survey/1` that passes every refusal of the format's section 3, and no member of a refused one is read | **owed**: one report per cause of the format's section 3, each refused naming its cause, and the format's worked example, carried as written, read whole; drop a cause, and its report reads |
-| a member the reader does not know is kept and ignored, at any depth | **owed**: a report carrying an unknown member at the top, in a card and in a drive reads whole; refuse an unknown member, and the report is refused |
-| a member name given twice in one object, at any depth, refuses the whole report | **owed**: a name given twice at the top, in `cards[1]` and in a drive each refuses the report; read through a parsed value, and the second value reads |
-| an integer is judged by its written form | **owed**: `1.0`, `1e3`, `-0`, `-1` and 2^53 are each refused and 2^53 - 1 reads; read the number as a float, and `1e3` reads as 1000 |
+| a report is read only as `weaver-survey/1` that passes every refusal of the format's section 3, and no member of a refused one is read | perturbation in `src/survey_tests.rs`, one test per cause of the format's section 3, `refusal_1_bytes_that_are_not_one_json_object_in_utf_8` to `refusal_11_an_integer_or_a_count_outside_its_bound`, each case asserting its cause, beside `the_worked_example_reads_whole` on the format's example carried as written (`tests/fixtures/weaver-survey-1-worked-example.json`): admit bytes after the object, raise the 64 KiB bound, take a prefix of the format, read a string as a boolean, take any byte as printable, admit a byte past a string's bound, drop the patterns, take any stage, admit an offset `taken`, drop the ordinal's check, admit an address repeated, take any mount point, any count of drives or an unmounted drive's members, admit a flag repeated, a seventeenth card or a family past 65535, and that cause's test fails (each measured) |
+| a member the reader does not know is kept and ignored, at any depth, whatever its value | perturbation in `src/survey_tests.rs`, `a_member_the_reader_does_not_know_is_kept_and_ignored_at_any_depth`: refuse a top-level member the reader does not know, and the report carrying one at the top, in `cpu`, in a card and in a drive is refused (measured); `an_unknown_member_with_a_number_past_any_float_is_ignored`: read a number by its value, and an unknown member written `1e400` refuses the report (measured); `an_unknown_member_with_a_lone_surrogate_is_ignored_and_names_compare_by_code_units`: decode a string to UTF-8, and an unknown member holding `"\ud800"` refuses the report; compare names by their text, and two lone surrogates read as one name given twice (each measured) |
+| nesting past 127 arrays and objects is refused under cause 1 | perturbation in `src/survey_tests.rs`, `nesting_is_read_to_the_parsers_own_bound_and_refused_past_it`: double the bound, and 128 levels read (measured) |
+| a refusal's detail quotes a value the report chose cut to 64 bytes and escaped as the box's printer escapes | perturbation in `src/survey_tests.rs`, `a_refusals_detail_quotes_a_value_cut_to_its_bound` and `a_refusals_detail_escapes_a_control_or_non_ascii_byte`: drop the bound, and a 1000-byte `format` is quoted whole; drop the escaping, or quote the `format` or a name given twice in Rust's debug form, and ESC or a non-ASCII byte reaches the detail (each measured) |
+| a member name given twice in one object, at any depth, refuses the whole report | perturbation in `src/survey_tests.rs`, `refusal_3_a_member_name_given_twice_in_one_object_at_any_depth`: drop the check, and `stage` given twice reads its first; look at the top object alone, and a name given twice in `kernel`, in `cards[1]`, in a drive and in an unknown member reads (each measured) |
+| an integer is judged by its written form | perturbation in `src/survey_tests.rs`, `refusal_6_an_integer_negative_fractional_with_an_exponent_or_past_2_53_less_1`: read a whole number the parser gives as a float as an integer, and `1.0` and `1e3` read; drop the 2^53 - 1 bound, and 2^53 is refused as past the family's bound, not as an integer (each measured) |
 | the cards the placement page offers are the `drives` stage's report's where it reads, else the `pairing` stage's | **owed**: a `drives` report carrying a card the `pairing` report lacks, and the card is offered; prefer the `pairing` report, and it is not; refuse the `drives` report, and the `pairing` report's cards are offered |
 | Confirm's box members are the `drives` stage's report's, typed as section 6.2 lists them, and Confirm holds naming the report while it is absent or refused | **owed**: take the members from the `pairing` report, and Confirm stands with no drive mounted; drop the hold, and a refused `drives` report's setup is confirmed |
 | a kept device that a later report lacks is refused at Confirm, naming the ordinal | **owed**: drop the check, and the tuple names a card the box no longer reports |
-| a drive not mounted and a state drive under 10 GiB hold Confirm, and a models drive's free space under the need is a warning | **owed**: drop each hold, and Confirm stands; hold on the models drive's free space, and Confirm holds |
-| a refused report is shown by its stage, arrival and cause, never its verbatim text, and holds what it would feed | **owed**: draw the verbatim text, and the page carries it; read a refused report's cards, and the placement page offers them |
+| a drive not mounted and a state drive whose filesystem is under 9 GiB hold Confirm, and a models drive's free space under the need is a warning | **owed**: drop each hold, and Confirm stands; move the figure by one byte, and a filesystem of exactly 9 GiB holds or one a byte under it stands; judge at 10 GiB, and a 10 GiB disk's ext4 size of about 9.75 GiB holds; hold on the models drive's free space, and Confirm holds |
+| a refused report is shown by its stage, arrival and cause, never its verbatim text or the refusal's detail, and holds what it would feed | **owed**: draw the verbatim text or the detail, and the page carries it; read a refused report's cards, and the placement page offers them |
 | the base's identity is BLAKE3 over the parts in split order | perturbation in `src/hugging_face/base_identity.rs`'s tests: hash in the listing's order, or part 1 alone, and the digest differs from BLAKE3 over part 1's bytes, then part 2's (each measured) |
 | the base's identity is computed at a start that finds it owed, and once the puller verifies a decoder's pull, and is "not read" until then | perturbation in `src/setup_models_tests.rs`, `the_base_identity_is_owed_until_a_start_hashes_it` and `a_verified_pull_wakes_the_hasher`, each waiting ten seconds against the hasher's idle recheck of fifteen: let the hasher wait before its first read, and a start with no word pending leaves the identity owed; drop the puller's word at a verified pull, and the running hasher misses it; show the identity read while it is owed, and the first test names it (each measured). `a_git_kept_decoder_part_is_hashed_from_its_blob`: hash the pull's rows as read, so a part kept in git is opened under its computed SHA-256, and the identity stays owed (measured) |
 | a choice is offered only where every part stands, and its header's split count agrees with its names | perturbation in `src/hugging_face/choice.rs`'s tests and `src/setup_models_tests.rs`, `the_header_is_read_by_range_and_one_past_the_bound_is_not_read`: offer a choice with a part missing, or group parts by their stem alone, and the grouping's test fails; never see a split count the names contradict, and that choice offers a pick (each measured) |
@@ -7983,8 +8002,10 @@ a `web-` assertion beside `weaver-admin`'s.
   (section 8.3). The operator's rulings of 2026-11-16 (setup pages) state every size in
   the flow in one unit, GiB, require the state mount at a minimum of 10 GiB, and have
   the appliance's setup script warn "about 10 GiB recommended" where no drive is
-  attached. A smaller state drive holds Confirm, on the operator's rulings of 2026-11-17
-  (the survey's reading).
+  attached. A state drive whose filesystem is under 9 GiB holds Confirm, on the
+  operator's rulings of 2026-11-17 (the survey's reading), and the figure is the
+  operator's ruling of the same day (the state drive's figure), since a filesystem
+  reports less than its disk.
 - **Abandoning an open setup, opened 2026-11-16** (section 6.2). One open setup holds
   a name, and no route drops one, so a setup begun by mistake holds its name until it is
   confirmed. Open: whether an admin abandons an open setup, and what an abandoned one

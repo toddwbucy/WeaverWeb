@@ -1,5 +1,6 @@
 //! conforms: web-a-client-config-is-handed-over-once-and-kept-nowhere
 //! conforms: web-a-pages-way-forward-stands-where-its-condition-holds
+//! conforms: web-an-admin-write-runs-from-its-first-record-to-its-outcome-in-a-task-the-request-cannot-cancel
 //!
 //! **The register of agents through the server** (Spec 2.12, 2.13 and 8;
 //! act 11, PR 5c): the page that lists the register's rows, and
@@ -48,7 +49,7 @@ use crate::store::audit::Target;
 use crate::store::identity::{bearer, hex, is_agent_id};
 use crate::store::{AgentId, Store};
 use crate::surfaces::admin::{
-    NOT_AN_ADMIN, admin_session, fault, first_of, refused, settled, writer,
+    NOT_AN_ADMIN, admin_session, fault, first_of, refused, settled, step_four, writer,
 };
 use crate::surfaces::gate::{Policy, Session};
 
@@ -140,6 +141,20 @@ impl Handover {
         let mut table = self.table.lock().unwrap();
         table.prune();
         table.held.len()
+    }
+
+    /// How many configs wait for the session `session_id`, expired ones
+    /// dropped. Read only by `agents_tests`, which need the `passkeys`
+    /// feature.
+    #[cfg(all(test, feature = "passkeys"))]
+    pub(crate) fn held_for(&self, session_id: i64) -> usize {
+        let mut table = self.table.lock().unwrap();
+        table.prune();
+        table
+            .held
+            .values()
+            .filter(|h| h.session_id == session_id)
+            .count()
     }
 
     /// How many configs wait or are reserved, the count the bound holds.
@@ -488,71 +503,76 @@ async fn register(store: Store, seams: &Seams, headers: HeaderMap, ask: Register
     let Some(reservation) = seams.handover.reserve(2) else {
         return refused(&Refusal::HandoverFull);
     };
-    let first = match first_of(&store, &session, Target::Agent(minted.as_str()), ACTION).await {
-        Ok(first) => first,
-        Err(answer) => return answer,
-    };
-    let write = async {
-        let mut lock = store.authority_lock().await?;
-        if let Err(refusal) = authority_stands(seams) {
-            return Ok(Err(refusal));
-        }
-        // **Minted inside the register's transaction, once the admin's
-        // re-check has passed.**
-        let mut pair = None;
-        let landed = Store::register_agent_by_admin_on(
-            lock.connection(),
-            AdminWrite {
-                session_id: session.session_id,
-                person: &session.person_id,
-                first: &first,
-                store: &store,
-            },
-            &minted,
-            &ask.r#box,
-            &ask.name,
-            &seams.authority.fingerprint(),
-            || {
-                let (gate, admin) = mint_pair(&ask.name, &seams.authority)?;
-                let fingerprints = (gate.fingerprint.clone(), admin.fingerprint.clone());
-                pair = Some((gate, admin));
-                Ok(fingerprints)
-            },
-        )
-        .await;
-        match (landed, pair) {
-            (Ok((id, _)), Some((gate, admin))) => Ok(Ok((id, gate, admin))),
-            (Ok(_), None) => anyhow::bail!("a register landed with no credentials minted"),
-            (Err(e), _) if e.is::<AuthorityGone>() => Ok(Err(Refusal::AuthorityGone)),
-            // A lost commit answer was read back by the act's own outcome
-            // record in the store (`store::commit`): an error here did not
-            // land.
-            (Err(e), _) => Err(e),
-        }
-    };
-    let written = write.await;
-    settled(&store, &first, &written).await;
-    match written {
-        Ok(Ok((id, gate, admin))) => {
-            hand_over(
-                &store,
-                seams,
-                reservation,
-                session,
-                "registered",
-                Minted {
-                    agent_id: id.as_str().to_owned(),
-                    r#box: ask.r#box,
-                    name: ask.name,
-                    gate,
-                    admin,
+    let (policy, seams) = (seams.policy.clone(), seams.clone());
+    step_four(&policy, async move {
+        let seams = &seams;
+        let first = match first_of(&store, &session, Target::Agent(minted.as_str()), ACTION).await {
+            Ok(first) => first,
+            Err(answer) => return answer,
+        };
+        let write = async {
+            let mut lock = store.authority_lock().await?;
+            if let Err(refusal) = authority_stands(seams) {
+                return Ok(Err(refusal));
+            }
+            // **Minted inside the register's transaction, once the admin's
+            // re-check has passed.**
+            let mut pair = None;
+            let landed = Store::register_agent_by_admin_on(
+                lock.connection(),
+                AdminWrite {
+                    session_id: session.session_id,
+                    person: &session.person_id,
+                    first: &first,
+                    store: &store,
+                },
+                &minted,
+                &ask.r#box,
+                &ask.name,
+                &seams.authority.fingerprint(),
+                || {
+                    let (gate, admin) = mint_pair(&ask.name, &seams.authority)?;
+                    let fingerprints = (gate.fingerprint.clone(), admin.fingerprint.clone());
+                    pair = Some((gate, admin));
+                    Ok(fingerprints)
                 },
             )
-            .await
+            .await;
+            match (landed, pair) {
+                (Ok((id, _)), Some((gate, admin))) => Ok(Ok((id, gate, admin))),
+                (Ok(_), None) => anyhow::bail!("a register landed with no credentials minted"),
+                (Err(e), _) if e.is::<AuthorityGone>() => Ok(Err(Refusal::AuthorityGone)),
+                // A lost commit answer was read back by the act's own outcome
+                // record in the store (`store::commit`): an error here did not
+                // land.
+                (Err(e), _) => Err(e),
+            }
+        };
+        let written = write.await;
+        settled(&store, &first, &written).await;
+        match written {
+            Ok(Ok((id, gate, admin))) => {
+                hand_over(
+                    &store,
+                    seams,
+                    reservation,
+                    session,
+                    "registered",
+                    Minted {
+                        agent_id: id.as_str().to_owned(),
+                        r#box: ask.r#box,
+                        name: ask.name,
+                        gate,
+                        admin,
+                    },
+                )
+                .await
+            }
+            Ok(Err(refusal)) => refused(&refusal),
+            Err(e) => fault(e),
         }
-        Ok(Err(refusal)) => refused(&refusal),
-        Err(e) => fault(e),
-    }
+    })
+    .await
 }
 
 #[derive(Deserialize)]
@@ -602,69 +622,74 @@ async fn rotate(store: Store, seams: &Seams, headers: HeaderMap, ask: RotateAsk)
     let Some(reservation) = seams.handover.reserve(2) else {
         return refused(&Refusal::HandoverFull);
     };
-    let first = match first_of(&store, &session, Target::Agent(&ask.agent), ACTION).await {
-        Ok(first) => first,
-        Err(answer) => return answer,
-    };
-    let write = async {
-        let mut lock = store.authority_lock().await?;
-        if let Err(refusal) = authority_stands(seams) {
-            return Ok(Err(refusal));
-        }
-        // **The row step three resolved is re-checked inside the
-        // rotation's transaction**, under its lock, and the credentials are
-        // minted only after: a row retired meanwhile is refused, never made
-        // live again.
-        let mut pair = None;
-        let landed = Store::rotate_credentials_by_admin_on(
-            lock.connection(),
-            AdminWrite {
-                session_id: session.session_id,
-                person: &session.person_id,
-                first: &first,
-                store: &store,
-            },
-            &agent,
-            &seams.authority.fingerprint(),
-            || {
-                let (gate, admin) = mint_pair(&agent.name, &seams.authority)?;
-                let fingerprints = (gate.fingerprint.clone(), admin.fingerprint.clone());
-                pair = Some((gate, admin));
-                Ok(fingerprints)
-            },
-        )
-        .await;
-        match (landed, pair) {
-            (Ok(_), Some((gate, admin))) => Ok(Ok((gate, admin))),
-            (Ok(_), None) => anyhow::bail!("a rotation landed with no credentials minted"),
-            (Err(e), _) if e.is::<AuthorityGone>() => Ok(Err(Refusal::AuthorityGone)),
-            (Err(e), _) if e.is::<Retired>() => Ok(Err(Refusal::Retired)),
-            (Err(e), _) => Err(e),
-        }
-    };
-    let written = write.await;
-    settled(&store, &first, &written).await;
-    match written {
-        Ok(Ok((gate, admin))) => {
-            hand_over(
-                &store,
-                seams,
-                reservation,
-                session,
-                "rotated",
-                Minted {
-                    agent_id: agent.agent_id.as_str().to_owned(),
-                    r#box: agent.r#box,
-                    name: agent.name,
-                    gate,
-                    admin,
+    let (policy, seams) = (seams.policy.clone(), seams.clone());
+    step_four(&policy, async move {
+        let seams = &seams;
+        let first = match first_of(&store, &session, Target::Agent(&ask.agent), ACTION).await {
+            Ok(first) => first,
+            Err(answer) => return answer,
+        };
+        let write = async {
+            let mut lock = store.authority_lock().await?;
+            if let Err(refusal) = authority_stands(seams) {
+                return Ok(Err(refusal));
+            }
+            // **The row step three resolved is re-checked inside the
+            // rotation's transaction**, under its lock, and the credentials are
+            // minted only after: a row retired meanwhile is refused, never made
+            // live again.
+            let mut pair = None;
+            let landed = Store::rotate_credentials_by_admin_on(
+                lock.connection(),
+                AdminWrite {
+                    session_id: session.session_id,
+                    person: &session.person_id,
+                    first: &first,
+                    store: &store,
+                },
+                &agent,
+                &seams.authority.fingerprint(),
+                || {
+                    let (gate, admin) = mint_pair(&agent.name, &seams.authority)?;
+                    let fingerprints = (gate.fingerprint.clone(), admin.fingerprint.clone());
+                    pair = Some((gate, admin));
+                    Ok(fingerprints)
                 },
             )
-            .await
+            .await;
+            match (landed, pair) {
+                (Ok(_), Some((gate, admin))) => Ok(Ok((gate, admin))),
+                (Ok(_), None) => anyhow::bail!("a rotation landed with no credentials minted"),
+                (Err(e), _) if e.is::<AuthorityGone>() => Ok(Err(Refusal::AuthorityGone)),
+                (Err(e), _) if e.is::<Retired>() => Ok(Err(Refusal::Retired)),
+                (Err(e), _) => Err(e),
+            }
+        };
+        let written = write.await;
+        settled(&store, &first, &written).await;
+        match written {
+            Ok(Ok((gate, admin))) => {
+                hand_over(
+                    &store,
+                    seams,
+                    reservation,
+                    session,
+                    "rotated",
+                    Minted {
+                        agent_id: agent.agent_id.as_str().to_owned(),
+                        r#box: agent.r#box,
+                        name: agent.name,
+                        gate,
+                        admin,
+                    },
+                )
+                .await
+            }
+            Ok(Err(refusal)) => refused(&refusal),
+            Err(e) => fault(e),
         }
-        Ok(Err(refusal)) => refused(&refusal),
-        Err(e) => fault(e),
-    }
+    })
+    .await
 }
 
 #[derive(Deserialize)]
@@ -749,9 +774,26 @@ async fn resolve_revocation(
     Ok((session, id))
 }
 
-/// **Step four of a revocation or a retirement**: the audited write, the
-/// row re-read inside its transaction under the shared identity hold.
+/// **Step four of a revocation or a retirement**, in a task a dropped
+/// request cannot cut (`admin::step_four`).
 async fn revoked(
+    store: Store,
+    policy: &Policy,
+    session: Session,
+    id: AgentId,
+    plane: Option<Plane>,
+    action: &'static str,
+) -> Response {
+    step_four(policy, async move {
+        revoked_in_its_task(&store, &session, &id, plane, action).await
+    })
+    .await
+}
+
+/// **Step four of a revocation or a retirement, in the task [`revoked`]
+/// spawns**: the audited write, the row re-read inside its transaction
+/// under the shared identity hold.
+async fn revoked_in_its_task(
     store: &Store,
     session: &Session,
     id: &AgentId,
@@ -796,7 +838,7 @@ async fn revoke(store: Store, seams: &Seams, headers: HeaderMap, ask: RevokeAsk)
         return (StatusCode::BAD_REQUEST, "the plane is gate or admin").into_response();
     };
     match resolve_revocation(&store, seams, &headers, &ask.agent, Some(plane), ACTION).await {
-        Ok((session, id)) => revoked(&store, &session, &id, Some(plane), ACTION).await,
+        Ok((session, id)) => revoked(store, &seams.policy, session, id, Some(plane), ACTION).await,
         Err(answer) => answer,
     }
 }
@@ -807,7 +849,7 @@ async fn revoke(store: Store, seams: &Seams, headers: HeaderMap, ask: RevokeAsk)
 async fn retire(store: Store, seams: &Seams, headers: HeaderMap, ask: RotateAsk) -> Response {
     const ACTION: &str = "retire";
     match resolve_revocation(&store, seams, &headers, &ask.agent, None, ACTION).await {
-        Ok((session, id)) => revoked(&store, &session, &id, None, ACTION).await,
+        Ok((session, id)) => revoked(store, &seams.policy, session, id, None, ACTION).await,
         Err(answer) => answer,
     }
 }

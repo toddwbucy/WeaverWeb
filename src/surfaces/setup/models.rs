@@ -1,6 +1,7 @@
 //! conforms: web-the-models-roster-is-the-first-agents
 //! conforms: web-a-pick-asks-hugging-face-only-after-the-admin-gate
 //! conforms: web-an-adapters-pick-carries-a-finite-scale
+//! conforms: web-an-admin-write-runs-from-its-first-record-to-its-outcome-in-a-task-the-request-cannot-cancel
 //!
 //! **The models page** (Spec 6.2), a child of the setup pages' module.
 //! `GET /setup/{setup}/models` draws the setup's two roles, the first
@@ -48,7 +49,7 @@ use crate::store::admin::Refusal;
 use crate::store::audit::{PersonMethod, Principal, Target};
 use crate::store::identity::is_setup_id;
 use crate::store::setup::{Pick, SetupModel};
-use crate::surfaces::admin::{NOT_AN_ADMIN, fault, first_of, refused, settled, writer};
+use crate::surfaces::admin::{NOT_AN_ADMIN, fault, first_of, refused, settled, step_four, writer};
 use crate::surfaces::gate::{self, Session};
 use crate::surfaces::hugging_face::bytes;
 
@@ -1013,36 +1014,44 @@ async fn pick(
         Ok(resolved) => resolved,
         Err(answer) => return answer,
     };
-    let first = match first_of(&store, &session, target, ACTION).await {
-        Ok(first) => first,
-        Err(answer) => return answer,
-    };
-    let pick = Pick {
-        role: ask.role.as_str(),
-        repository: &ask.repository,
-        commit: &ask.commit,
-        choice: &ask.choice,
-        scale: ask.scale,
-        header: &resolved.header,
-        pull_id: &pull_id,
-        account: through.account(),
-        parts: &resolved.choice.parts,
-    };
-    let written = seams
-        .puller
-        .ask_with(&ask.commit, &resolved.choice.parts, || {
-            store.setup_pick(
-                &session.person_id,
-                session.session_id,
-                &first,
-                setup_id,
-                ask.version,
-                &pick,
-            )
-        })
-        .await;
-    settled(&store, &first, &written).await;
-    landed(written, setup_id, Page::Models)
+    let (setup_id, puller) = (setup_id.to_owned(), seams.puller.clone());
+    // **The account's name alone goes into step four**, as the pick's
+    // attribution: the token stays here and is dropped with `through`,
+    // since nothing past the resolve reads it.
+    let account = through.account().map(str::to_owned);
+    drop(through);
+    step_four(&seams.policy, async move {
+        let first = match first_of(&store, &session, Target::Setup(&setup_id), ACTION).await {
+            Ok(first) => first,
+            Err(answer) => return answer,
+        };
+        let pick = Pick {
+            role: ask.role.as_str(),
+            repository: &ask.repository,
+            commit: &ask.commit,
+            choice: &ask.choice,
+            scale: ask.scale,
+            header: &resolved.header,
+            pull_id: &pull_id,
+            account: account.as_deref(),
+            parts: &resolved.choice.parts,
+        };
+        let written = puller
+            .ask_with(&ask.commit, &resolved.choice.parts, || {
+                store.setup_pick(
+                    &session.person_id,
+                    session.session_id,
+                    &first,
+                    &setup_id,
+                    ask.version,
+                    &pick,
+                )
+            })
+            .await;
+        settled(&store, &first, &written).await;
+        landed(written, &setup_id, Page::Models)
+    })
+    .await
 }
 
 #[cfg(test)]

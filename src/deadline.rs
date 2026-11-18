@@ -48,6 +48,59 @@ pub(crate) async fn before<T>(
     .await
 }
 
+tokio::task_local! {
+    /// Whether the COMMIT of the step [`until_commit`] bounds has gone out,
+    /// set by [`commit_sent`] in the poll that sends it.
+    static SENT: std::cell::Cell<bool>;
+}
+
+/// **The COMMIT of the step [`until_commit`] bounds is going out**, called
+/// by `store::commit::commit_with_outcome` just before it sends an act's
+/// COMMIT, in the poll that sends it. A no-op outside such a step.
+///
+/// The mark precedes the COMMIT's write, never follows it, so the step is
+/// never cut once the COMMIT may have reached the store. sqlx 0.9.0 writes
+/// and flushes the COMMIT in the first poll of `tx.commit()`: the act's
+/// last statement has answered, so the connection's write buffer is empty
+/// and no ReadyForQuery is pending. That poll is the one that sets the mark,
+/// entered before the deadline. The write waits only where the socket's
+/// write yields, which after a completed round trip comes from tokio's
+/// cooperative budget and delays the COMMIT one turn of the scheduler, a
+/// residual inside section 10's statement flight (Spec 2.13).
+pub(crate) fn commit_sent() {
+    let _ = SENT.try_with(|sent| sent.set(true));
+}
+
+/// **`step`, bounded by `deadline` until its COMMIT is sent** (Spec 2.13):
+/// the deadline is read before the step is polled, as [`before`] reads it,
+/// while the COMMIT has not gone out, so a step still short of its COMMIT
+/// at the deadline is dropped there and its transaction never commits.
+/// Once [`commit_sent`] has marked the COMMIT sent, the deadline is read no
+/// more and the step runs to its end: the COMMIT's answer, the read-back
+/// of a lost one, and what the step does after its commit, so a write that
+/// may have landed is never answered as not made. A COMMIT whose answer
+/// never comes on a connection that never fails holds the step, the one
+/// statement's flight that section 10 holds open.
+pub(crate) async fn until_commit<T>(
+    step: impl Future<Output = T>,
+    deadline: Instant,
+) -> Result<T, Passed> {
+    SENT.scope(std::cell::Cell::new(false), async move {
+        let mut step = std::pin::pin!(step);
+        let mut timer = std::pin::pin!(tokio::time::sleep_until(deadline));
+        std::future::poll_fn(|cx| {
+            if !SENT.with(|sent| sent.get())
+                && (Instant::now() >= deadline || timer.as_mut().poll(cx).is_ready())
+            {
+                return Poll::Ready(Err(Passed));
+            }
+            step.as_mut().poll(cx).map(Ok)
+        })
+        .await
+    })
+    .await
+}
+
 /// **A test's hold on a bounded write**, at the one place its failure
 /// shows: just before the statement that commits it.
 ///
@@ -106,7 +159,19 @@ pub(crate) mod hold {
         Apply,
         /// `Store::inbox_failed`, a row's back-off: its one statement.
         InboxFailed,
+        /// `Store::admit`, a hello's admission: its transaction's commit.
+        Admit,
+        /// `commit_with_outcome`, an admin write's step four: its
+        /// transaction's commit.
+        AdminWrite,
+        /// `commit_with_outcome`, an admin write's step four: just after its
+        /// COMMIT answered, held past the deadline, as an answer that comes
+        /// late or a step slow after its commit would be.
+        AdminWriteAnswered,
     }
+
+    /// How far past its deadline [`answered`] holds a step.
+    const PAST: std::time::Duration = std::time::Duration::from_millis(250);
 
     #[derive(Debug, Default)]
     struct Held {
@@ -228,6 +293,15 @@ pub(crate) mod hold {
     pub(crate) async fn commit(point: Point) {
         if let Some(deadline) = take(point) {
             until(point, deadline).await;
+        }
+    }
+
+    /// **The store's half, after a transaction's COMMIT answered**: where
+    /// the hold is armed and bound, wait until a moment past the deadline,
+    /// so the bound's wake comes while the step is held after its commit.
+    pub(crate) async fn answered(point: Point) {
+        if let Some(deadline) = take(point) {
+            until(point, deadline + PAST).await;
         }
     }
 
@@ -358,5 +432,51 @@ mod tests {
     async fn a_write_with_time_left_is_polled_and_its_answer_taken() {
         let deadline = Instant::now() + Duration::from_secs(60);
         assert_eq!(before(async { 7 }, deadline).await, Ok(7));
+    }
+
+    /// **A step whose COMMIT went out before its deadline runs to its end
+    /// past it** under [`until_commit`]: the COMMIT marked sent, its answer
+    /// comes after the deadline, and the step's answer is the bound's.
+    ///
+    /// The clock starts paused, so the first poll marks the COMMIT before
+    /// any time passes, however late the thread is scheduled.
+    ///
+    /// Perturbation: read the deadline whether or not the COMMIT was sent,
+    /// and the step is dropped at the deadline after its COMMIT went out.
+    #[tokio::test(start_paused = true)]
+    async fn a_step_whose_commit_went_out_runs_past_its_deadline() {
+        let deadline = Instant::now() + Duration::from_millis(20);
+        let step = async move {
+            commit_sent();
+            tokio::time::sleep_until(deadline + Duration::from_millis(30)).await;
+            7
+        };
+        assert_eq!(until_commit(step, deadline).await, Ok(7));
+    }
+
+    /// **A step short of its COMMIT at its deadline is never sent** under
+    /// [`until_commit`], as under [`before`]: the step's wait ends at the
+    /// deadline, the deadline is read first, and the step is dropped there.
+    ///
+    /// Perturbation: poll the step before reading the deadline, and its
+    /// statement goes out at the wake.
+    #[tokio::test]
+    async fn a_step_short_of_its_commit_at_its_deadline_is_never_sent() {
+        let deadline = Instant::now() + Duration::from_millis(20);
+        let (sent, write) = sent_at(deadline);
+        assert_eq!(until_commit(write, deadline).await, Err(Passed));
+        assert!(!sent.load(Ordering::Relaxed));
+    }
+
+    /// **A mark outside a bounded step is no mark**: [`commit_sent`] where
+    /// no [`until_commit`] scopes it does nothing, and a step bounded later
+    /// starts unmarked.
+    #[tokio::test]
+    async fn a_mark_outside_a_bounded_step_is_no_mark() {
+        commit_sent();
+        let deadline = Instant::now() + Duration::from_millis(20);
+        let (sent, write) = sent_at(deadline);
+        assert_eq!(until_commit(write, deadline).await, Err(Passed));
+        assert!(!sent.load(Ordering::Relaxed));
     }
 }

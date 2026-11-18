@@ -226,7 +226,7 @@ impl Fake {
 
     /// Whether the server closed the connection: end of stream or an
     /// error within the bound, as against a connection merely silent.
-    async fn closed(&mut self) -> bool {
+    pub(super) async fn closed(&mut self) -> bool {
         let mut line = String::new();
         match tokio::time::timeout(SOON, self.reader.read_line(&mut line)).await {
             Ok(Ok(0)) | Ok(Err(_)) => true,
@@ -235,15 +235,21 @@ impl Fake {
         }
     }
 
+    /// The refusal `reason`, then the connection's close: an end of stream
+    /// or an error, never a connection left open and silent, which `recv`
+    /// would also read as nothing.
     pub(super) async fn expect_refusal(&mut self, reason: Refusal) {
+        self.expect_refusal_frame(reason).await;
+        assert!(self.closed().await, "the connection closes after a refusal");
+    }
+
+    /// The refusal `reason` alone, for a test that times its arrival before
+    /// it checks the close.
+    pub(super) async fn expect_refusal_frame(&mut self, reason: Refusal) {
         match self.recv().await {
             Some(ToClient::Refusal { reason: got }) => assert_eq!(got, reason),
             other => panic!("expected the refusal {reason}, got {other:?}"),
         }
-        assert!(
-            self.recv().await.is_none(),
-            "the connection closes after a refusal"
-        );
     }
 }
 
@@ -364,7 +370,7 @@ impl Lab {
     /// Connect, say hello with a tail at 100, take the hello answer and,
     /// on the admin plane, the `show` ask that follows it, then say the
     /// replay is caught up (nothing to replay).
-    async fn admit(&self, agent: &Registered, plane: Plane) -> Fake {
+    pub(super) async fn admit(&self, agent: &Registered, plane: Plane) -> Fake {
         self.admit_with(agent, plane, true).await
     }
 
@@ -2599,9 +2605,14 @@ async fn a_commit_whose_answer_was_lost_is_read_back_and_published() {
     );
 }
 
-/// **An admission whose commit's answer was lost is reconciled**: the row
-/// was left connected under an incarnation with no socket, and the deferred
-/// teardown writes it disconnected once the store answers.
+/// **An admission whose commit's answer was lost is refused and
+/// reconciled**: the hello is refused `store_unavailable`, as one past its
+/// deadline is, with no entry left for the credential. The row was left
+/// connected under an incarnation with no socket, and the deferred teardown
+/// writes it disconnected once the store answers.
+///
+/// Perturbation: close without the refusal, as the arm did before, and the
+/// connector reads a close where it waited for a typed answer.
 #[tokio::test]
 async fn an_admission_whose_answer_was_lost_is_reconciled() {
     let Some(lab) = Lab::open().await else { return };
@@ -2617,10 +2628,7 @@ async fn an_admission_whose_answer_was_lost_is_reconciled() {
         capabilities: None,
     })
     .await;
-    assert!(
-        fake.closed().await,
-        "the admission that lost its answer closes"
-    );
+    fake.expect_refusal(Refusal::StoreUnavailable).await;
     assert!(!lab.listener.connected(&karl.id, Plane::Gate));
     lab.wait_for(&karl.id, "gate reconciled to disconnected", |a| {
         !a.gate.connected

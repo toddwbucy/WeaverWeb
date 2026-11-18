@@ -1,8 +1,11 @@
 //! Act 9a: the sudo invoker against a fake `sudo` generated at test time in
-//! a temporary directory and placed first on the child's `PATH`, never
+//! a temporary directory, the child's `PATH` that directory alone, never
 //! tracked, so the repository's privilege scan never meets it. A test build
-//! of the invoker refuses to run without that `PATH`, and every test checks
-//! the fake's own record that each line ran through it: no real program is
+//! of the invoker refuses, before any spawn, a `PATH` that is not exactly
+//! that one directory holding an executable regular file named `sudo`, so
+//! a fake that cannot run never falls through to a real `sudo`. Every test
+//! checks the fake's own record that each line ran through it, and the
+//! suite runs under the kernel's no-new-privileges flag. No real program is
 //! reached and no agent is either.
 
 use super::admin_con::Invoker;
@@ -35,6 +38,8 @@ const PLANTED: &str = "planted-principal-name";
 fn script(dir: &Path) -> String {
     format!(
         r#"#!/bin/sh
+PATH={tools}
+export PATH
 dir='{dir}'
 line="argv"
 for a in "$0" "$@"; do line="$line	$a"; done
@@ -60,8 +65,17 @@ code=0
 if [ -f "$dir/exit.$verb" ]; then code=$(cat "$dir/exit.$verb"); fi
 exit "$code"
 "#,
+        tools = tools(),
         dir = dir.display()
     )
+}
+
+/// **The fake's own `PATH` for its tools**, taken from the test's
+/// environment when the fake is generated and quoted for the shell, since
+/// the child the invoker starts gets the fake's directory alone.
+fn tools() -> String {
+    let inherited = std::env::var("PATH").unwrap_or_default();
+    format!("'{}'", inherited.replace('\'', "'\\''"))
 }
 
 /// The generated fake and its record.
@@ -87,19 +101,10 @@ impl FakeSudo {
         self.dir.path().join("sudo")
     }
 
-    /// The child's `PATH`: the fake's directory first, then the test's own.
+    /// The child's `PATH`: the fake's directory alone, so `sudo` is found
+    /// there or not at all.
     fn path(&self) -> OsString {
-        let inherited = std::env::var_os("PATH").unwrap_or_default();
-        let path = std::env::join_paths(
-            std::iter::once(self.dir.path().to_owned()).chain(std::env::split_paths(&inherited)),
-        )
-        .unwrap();
-        assert_eq!(
-            std::env::split_paths(&path).next().as_deref(),
-            Some(self.dir.path()),
-            "the fake's directory is first on the child's PATH"
-        );
-        path
+        self.dir.path().as_os_str().to_owned()
     }
 
     fn invoker(&self) -> SudoInvoker {
@@ -359,6 +364,90 @@ fn a_relative_weaver_admin_is_refused() {
             "{relative:?}"
         );
     }
+}
+
+/// A recording stand-in for a `sudo` later on a `PATH`, in a directory of
+/// its own: it records that it ran and exits, so a test can see a fall
+/// through without any real program being reachable.
+struct Sentinel(tempfile::TempDir);
+
+impl Sentinel {
+    fn new() -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let program = dir.path().join("sudo");
+        std::fs::write(
+            &program,
+            format!(
+                "#!/bin/sh\nprintf 'ran\\n' >> '{}/ran'\nexit 0\n",
+                dir.path().display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        Self(dir)
+    }
+
+    fn ran(&self) -> bool {
+        self.0.path().join("ran").exists()
+    }
+}
+
+/// **A test's invoker refuses a `PATH` beyond the fake's directory, and
+/// spawns nothing**: the fake cannot be executed and a recording sentinel
+/// stands in a second directory, where `execvp` would reach it. The run and
+/// the listing each fail before any spawn, naming the guard, and neither
+/// the fake nor the sentinel ran.
+///
+/// Perturbation: drop the guard (`fake_only` answering the `PATH` as
+/// given), and the sentinel records a run.
+#[tokio::test]
+async fn a_test_invoker_refuses_a_path_beyond_the_fakes_directory_and_spawns_nothing() {
+    let fake = FakeSudo::new();
+    std::fs::set_permissions(fake.program(), std::fs::Permissions::from_mode(0o644)).unwrap();
+    let sentinel = Sentinel::new();
+    let mut invoker = fake.invoker();
+    invoker.path = Some(std::env::join_paths([fake.dir.path(), sentinel.0.path()]).unwrap());
+    let fault = invoker.run(AGENT, "show", &person()).await.unwrap_err();
+    assert!(
+        fault.message.contains("not exactly one directory"),
+        "{}",
+        fault.message
+    );
+    let listed = invoker.grants().await.unwrap_err();
+    assert!(
+        format!("{listed:#}").contains("not exactly one directory"),
+        "{listed:#}"
+    );
+    assert!(!sentinel.ran(), "nothing fell through to a later sudo");
+    assert!(fake.log().is_empty(), "the fake never ran");
+}
+
+/// **A test's invoker refuses a fake it cannot execute, and spawns
+/// nothing**: the `PATH` is the fake's directory alone and the fake is not
+/// executable. The run and the listing each fail before any spawn, naming
+/// the guard, and the fake never ran.
+///
+/// Perturbation: drop the guard, and each fails at the spawn instead, its
+/// error naming no guard.
+#[tokio::test]
+async fn a_test_invoker_refuses_a_fake_it_cannot_execute_and_spawns_nothing() {
+    let fake = FakeSudo::new();
+    std::fs::set_permissions(fake.program(), std::fs::Permissions::from_mode(0o644)).unwrap();
+    let invoker = fake.invoker();
+    let fault = invoker.run(AGENT, "show", &person()).await.unwrap_err();
+    assert!(
+        fault
+            .message
+            .contains("no executable regular file named sudo"),
+        "{}",
+        fault.message
+    );
+    let listed = invoker.grants().await.unwrap_err();
+    assert!(
+        format!("{listed:#}").contains("no executable regular file named sudo"),
+        "{listed:#}"
+    );
+    assert!(fake.log().is_empty(), "the fake never ran");
 }
 
 /// **Exit 0 with one object is an answer**, its standard error kept for

@@ -43,6 +43,8 @@ pub mod verbs;
 
 #[cfg(test)]
 mod admin_con_tests;
+#[cfg(all(test, feature = "passkeys"))]
+mod admission_tests;
 #[cfg(test)]
 mod client_tests;
 #[cfg(all(test, feature = "passkeys"))]

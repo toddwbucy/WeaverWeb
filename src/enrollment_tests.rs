@@ -80,6 +80,7 @@ async fn rig() -> Option<Rig> {
         origin: Some(ORIGIN.to_owned()),
         idle: Duration::from_secs(3600),
         absolute: Duration::from_secs(12 * 3600),
+        write_bound: Duration::from_secs(60),
     };
     let client = crate::hugging_face::Client::with_base("http://127.0.0.1:9/").unwrap();
     let puller = crate::hugging_face::pull::Puller::start(

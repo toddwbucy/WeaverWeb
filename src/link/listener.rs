@@ -9,6 +9,7 @@
 //! conforms: web-the-servers-asks-are-audited
 //! conforms: web-verb-refused-before-an-ask-unless-granted
 //! conforms: web-a-bounded-write-is-never-sent-once-its-deadline-has-come
+//! conforms: web-a-hellos-admission-is-bounded-from-its-connections-accept-and-leaves-no-live-entry-past-its-deadline
 //!
 //! The listener (Spec section 8): the mutual-TLS accept loop, admission
 //! under the row's lock, the heartbeat, the incarnations that bind every
@@ -23,6 +24,10 @@
 //! store that cannot be reached at all, where the lock cannot be taken and
 //! the entry is removed without it and the exception logged, so a
 //! credential is not stranded as connected in memory by a database outage.
+//! A hello's admission that has not committed by its deadline is that
+//! case: the store did not answer within the bound, so the entry its
+//! install put in comes out at once and logged, and the refusal does not
+//! wait on the lock of a store that has just failed to answer (#151).
 //!
 //! **A store failure while landing anything on a connection closes it**
 //! with a typed refusal, through the normal teardown, the acknowledged
@@ -92,6 +97,25 @@ pub const SETUP_ANSWER_MARGIN_SECS: u64 = 10;
 const _: () = assert!(
     SETUP_ANSWER_SECS + SETUP_ANSWER_MARGIN_SECS <= crate::link::client::ASK_SECS,
     "a setup ask's answer leaves the box its margin within its own bound"
+);
+
+/// **The bound on a hello's admission from the connection's accept** (Spec
+/// 8). A connector gives its hello up at `client::HELLO_SECS` from its dial,
+/// its handshake and its hello inside that bound, so the listener answers
+/// within this of the accept, the handshake, the register's lookup and the
+/// admission's commit all inside it, and the connector keeps
+/// `HELLO_ANSWER_MARGIN_SECS` of its own bound for its dial and its read of
+/// the answer. An admission not committed by then is refused
+/// `store_unavailable`, and the connector reconnects on its backoff.
+pub const HELLO_ANSWER_SECS: u64 = 7;
+
+/// What a connector keeps of its own hello bound outside the listener's:
+/// its dial before the accept and its read of the answer.
+pub const HELLO_ANSWER_MARGIN_SECS: u64 = 3;
+
+const _: () = assert!(
+    HELLO_ANSWER_SECS + HELLO_ANSWER_MARGIN_SECS <= crate::link::client::HELLO_SECS,
+    "a hello's answer leaves the connector its margin within its own bound"
 );
 
 /// **One listener per store, held at the store** (Spec 8): the key of the
@@ -808,6 +832,14 @@ struct Inner {
     /// `SETUP_ANSWER_SECS`, none where 0.
     #[cfg(test)]
     setup_answer_ms: AtomicU64,
+    /// A test's hello answer bound in milliseconds in place of
+    /// `HELLO_ANSWER_SECS`, none where 0.
+    #[cfg(test)]
+    hello_answer_ms: AtomicU64,
+    /// A lever on a connection's task: the next one starts this many
+    /// milliseconds after its accept, none where 0.
+    #[cfg(test)]
+    start_late_ms: AtomicU64,
     /// And on a verb's outcome: the next one waits this long first.
     #[cfg(test)]
     delay_next_outcome: Mutex<Option<Duration>>,
@@ -977,6 +1009,10 @@ impl Listener {
                 #[cfg(test)]
                 setup_answer_ms: AtomicU64::new(0),
                 #[cfg(test)]
+                hello_answer_ms: AtomicU64::new(0),
+                #[cfg(test)]
+                start_late_ms: AtomicU64::new(0),
+                #[cfg(test)]
                 delay_next_outcome: Mutex::new(None),
                 #[cfg(test)]
                 pauses: Mutex::new(Vec::new()),
@@ -988,8 +1024,18 @@ impl Listener {
         let weak = Arc::downgrade(&listener.inner);
         let accept = tokio::spawn(async move {
             loop {
-                let (stream, peer) = match tcp.accept().await {
-                    Ok(x) => x,
+                let (stream, accepted) = match tcp.accept().await {
+                    // **The accept's instant is taken here**, not where the
+                    // connection's task starts (Spec 8, 8.3): both deadlines
+                    // run from it.
+                    Ok((stream, peer)) => (
+                        stream,
+                        Accepted {
+                            peer,
+                            at: tokio::time::Instant::now(),
+                            dialed: std::time::Instant::now(),
+                        },
+                    ),
                     Err(e) => {
                         tracing::error!("link accept failed: {e}");
                         tokio::time::sleep(Duration::from_secs(1)).await;
@@ -999,12 +1045,15 @@ impl Listener {
                 let Some(inner) = weak.upgrade() else { return };
                 let mut set = inner.connections.lock().unwrap();
                 if inner.closed.load(Ordering::Acquire) {
-                    tracing::info!("link from {peer}: the listener is closing, refused");
+                    tracing::info!(
+                        "link from {}: the listener is closing, refused",
+                        accepted.peer
+                    );
                     drop(stream);
                     continue;
                 }
                 while set.try_join_next().is_some() {}
-                set.spawn(serve_connection(inner.clone(), stream, peer));
+                set.spawn(serve_connection(inner.clone(), stream, accepted));
             }
         });
 
@@ -1321,6 +1370,24 @@ impl Listener {
     pub fn set_setup_answer_bound(&self, bound: Duration) {
         self.inner
             .setup_answer_ms
+            .store(bound.as_millis() as u64, Ordering::Relaxed);
+    }
+
+    /// A test's lever: the next connection's task starts `late` after its
+    /// accept, as a busy runtime would start it.
+    #[cfg(test)]
+    pub fn start_next_late(&self, late: Duration) {
+        self.inner
+            .start_late_ms
+            .store(late.as_millis() as u64, Ordering::Relaxed);
+    }
+
+    /// A test's lever: the hello answer bound, shortened from
+    /// `HELLO_ANSWER_SECS`.
+    #[cfg(test)]
+    pub fn set_hello_answer_bound(&self, bound: Duration) {
+        self.inner
+            .hello_answer_ms
             .store(bound.as_millis() as u64, Ordering::Relaxed);
     }
 
@@ -3399,6 +3466,20 @@ fn setup_bound(inner: &Inner) -> Duration {
     inner.silence.min(answer)
 }
 
+/// **A hello's admission's bound** from the connection's accept:
+/// `HELLO_ANSWER_SECS`, within the connector's own `HELLO_SECS`.
+fn hello_bound(inner: &Inner) -> Duration {
+    let answer = Duration::from_secs(HELLO_ANSWER_SECS);
+    #[cfg(test)]
+    let answer = match inner.hello_answer_ms.load(Ordering::Relaxed) {
+        0 => answer,
+        ms => Duration::from_millis(ms),
+    };
+    #[cfg(not(test))]
+    let _ = inner;
+    answer
+}
+
 /// A setup connection's first frame, as it came.
 struct SetupAsked {
     name: String,
@@ -3581,9 +3662,27 @@ async fn serve_setup(
     }
 }
 
-async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr) {
-    let dialed = std::time::Instant::now();
-    let accepted = tokio::time::Instant::now();
+/// **A connection as the accept loop took it**: its peer and the instants
+/// of its accept, from which its deadlines run.
+struct Accepted {
+    peer: SocketAddr,
+    at: tokio::time::Instant,
+    dialed: std::time::Instant,
+}
+
+async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, accepted: Accepted) {
+    let Accepted {
+        peer,
+        at: accepted,
+        dialed,
+    } = accepted;
+    #[cfg(test)]
+    {
+        let late = inner.start_late_ms.swap(0, Ordering::Relaxed);
+        if late > 0 {
+            tokio::time::sleep(Duration::from_millis(late)).await;
+        }
+    }
     let handshake_by = accepted + Duration::from_secs(HANDSHAKE_SECS);
     // **A setup ask's one deadline is made at the accept** (Spec 8.3): the
     // box writes its frame once its handshake completes, so the handshake
@@ -3591,6 +3690,10 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
     // the deadline.
     let bound = setup_bound(&inner);
     let answer_by = accepted + bound;
+    // **A hello's admission's deadline is made at the accept too** (Spec 8,
+    // #151): the connector's `HELLO_SECS` runs from its dial.
+    let hello_within = hello_bound(&inner);
+    let hello_by = accepted + hello_within;
     let mut halting = inner.halting.subscribe();
     if *halting.borrow() {
         return;
@@ -3888,9 +3991,15 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
     let pending = Arc::new(Mutex::new(HashMap::new()));
     let asks: Asks = Arc::new(Mutex::new(HashMap::new()));
     let key = (agent.agent_id.clone(), plane);
-    let admitted = inner
-        .store
-        .admit(
+    // **The admission is a committing write bounded by the hello's deadline**
+    // (Spec 8, #151): never polled past it, so a commit not sent by then is
+    // never sent. Whether the install ran says whether an entry is left to
+    // take out past it.
+    let installed = std::sync::atomic::AtomicBool::new(false);
+    #[cfg(test)]
+    hold::bound(Point::Admit, hello_by);
+    let admitted = deadline::before(
+        inner.store.admit(
             &agent.agent_id,
             plane,
             &fp,
@@ -3936,10 +4045,40 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
                         heard: heard.clone(),
                     },
                 );
+                installed.store(true, Ordering::Relaxed);
                 Ok(())
             },
-        )
-        .await;
+        ),
+        hello_by,
+    )
+    .await;
+    let admitted = match admitted {
+        Ok(admitted) => admitted,
+        Err(Passed) => {
+            tracing::error!(
+                "link from {peer}: {} ({plane}) admission not committed within {hello_within:?} of the accept, refused",
+                agent.agent_id
+            );
+            // **Past the deadline the entry comes out at once** (the module
+            // header's exception): the store did not answer within the
+            // bound, so the refusal does not wait on the row's lock. A
+            // commit sent before the deadline may land after it, leaving
+            // the row connected under this incarnation with no socket, so
+            // the incarnation-bound teardown is deferred to the
+            // reconciliation, as the admission's error arm defers it.
+            if installed.load(Ordering::Relaxed) {
+                if inner.remove_if_mine(&key, incarnation) {
+                    tracing::error!(
+                        "{} ({plane}): the admission's entry removed without the row's lock, its deadline passed",
+                        agent.agent_id
+                    );
+                }
+                inner.defer_teardown(agent.agent_id.clone(), plane, incarnation);
+            }
+            refuse(tx, writer, Refusal::StoreUnavailable).await;
+            return;
+        }
+    };
     match admitted {
         Ok(Ok(())) => {}
         Ok(Err(refusal)) => {
@@ -3951,20 +4090,26 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
             return;
         }
         Err(e) => {
-            // The install closure may have run before the write failed:
-            // the entry comes out under the lock, so the map agrees with
-            // the row that rolled back.
             tracing::error!("link from {peer}: admission could not be written: {e:#}");
-            // Never admitted, so no contact was had to lose.
-            inner.remove_after_error(&key, incarnation, &|| {}).await;
-            // The commit may have landed before its answer was lost, leaving
-            // the row connected under this incarnation with no socket: an
-            // incarnation-bound teardown is deferred to the reconciliation,
-            // which writes disconnected where the row names this incarnation
-            // and drops the entry where it does not.
+            // **A failed admission is refused as one past its deadline is**
+            // (Spec 8): the install may have run before the write failed, and
+            // its entry comes out at once, without the row's lock, since the
+            // store has just failed to answer and the lock could hold the
+            // refusal past the connector's bound. Never admitted, so no
+            // contact was had to lose. The commit may have landed before its
+            // answer was lost, leaving the row connected under this
+            // incarnation with no socket: an incarnation-bound teardown is
+            // deferred to the reconciliation, which writes disconnected where
+            // the row names this incarnation and drops the entry where it
+            // does not.
+            if installed.load(Ordering::Relaxed) && inner.remove_if_mine(&key, incarnation) {
+                tracing::error!(
+                    "{} ({plane}): the admission's entry removed without the row's lock, its write failed",
+                    agent.agent_id
+                );
+            }
             inner.defer_teardown(agent.agent_id.clone(), plane, incarnation);
-            drop(tx);
-            drain_writer(writer).await;
+            refuse(tx, writer, Refusal::StoreUnavailable).await;
             return;
         }
     }

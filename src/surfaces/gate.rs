@@ -54,6 +54,9 @@ pub struct Policy {
     pub origin: Option<String>,
     pub idle: Duration,
     pub absolute: Duration,
+    /// **An admin write's bound** from its place until its COMMIT is sent
+    /// (Spec 2.13): the silence bound.
+    pub write_bound: Duration,
 }
 
 impl Policy {
@@ -62,6 +65,7 @@ impl Policy {
             origin: cfg.origin.clone(),
             idle: Duration::from_secs(cfg.session_idle_secs),
             absolute: Duration::from_secs(cfg.session_absolute_secs),
+            write_bound: Duration::from_secs(cfg.silence_bound_secs),
         }
     }
 }

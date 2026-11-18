@@ -86,6 +86,15 @@ pub(crate) async fn commit_with_outcome(
         .await?;
     Store::audit_outcome_in(&mut tx, first).await?;
     #[cfg(test)]
+    crate::deadline::hold::commit(crate::deadline::hold::Point::AdminWrite).await;
+    // **The COMMIT is going out**, in this poll: an admin write's step four
+    // reads its deadline no more (`deadline::until_commit`), so the answer,
+    // its read-back and what the step does after its commit are never cut.
+    // sqlx writes the COMMIT in the first poll of `tx.commit()` below, the
+    // same poll, or one scheduler turn later where the socket's write
+    // yields (`deadline::commit_sent`).
+    crate::deadline::commit_sent();
+    #[cfg(test)]
     let committed = match give_up_on_the_commit(kind) {
         Some(after) => match tokio::time::timeout(after, tx.commit()).await {
             Ok(committed) => committed.map_err(anyhow::Error::from),
@@ -98,6 +107,8 @@ pub(crate) async fn commit_with_outcome(
     #[cfg(test)]
     let committed = committed.and_then(|()| crate::link::register::fail_after_commit(kind));
     let Err(lost) = committed else {
+        #[cfg(test)]
+        crate::deadline::hold::answered(crate::deadline::hold::Point::AdminWriteAnswered).await;
         return Ok(());
     };
     #[cfg(test)]

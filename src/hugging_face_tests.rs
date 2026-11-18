@@ -212,6 +212,7 @@ async fn rig() -> Option<Rig> {
         origin: Some(ORIGIN.to_owned()),
         idle: Duration::from_secs(3600),
         absolute: Duration::from_secs(12 * 3600),
+        write_bound: Duration::from_secs(60),
     };
     let surface = gate::guard(
         crate::surfaces::script_policy(routes(Seams {
@@ -844,4 +845,84 @@ async fn authority_seal_key_waits_for_the_authority_lock() {
     let answer = writing.await.unwrap();
     assert!(answer.ok, "{}", answer.value);
     assert!(SealKey::load(&cfg.authority_dir).unwrap().is_some());
+}
+
+/// **Each write to the account runs from its first record to its outcome
+/// in a task the request cannot cancel** (Spec 2.13, #150): a connect, a
+/// check and a disconnect, each request dropped while its first record is
+/// held, still land, each first record answered by its `ok` outcome, and
+/// the page then reads the account as it stands. A cancel's own test is in
+/// `model_pull_tests`.
+///
+/// Perturbation: run step four in the request's own future
+/// (`admin::step_four` awaiting it in place), and the first write's
+/// outcome never comes.
+#[tokio::test]
+async fn each_write_to_the_account_dropped_at_its_first_record_still_lands() {
+    use crate::admin_tests::{dropped_at_the_hold, outcome_of};
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (person, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+
+    dropped_at_the_hold(
+        &rig.app,
+        &person,
+        &ada,
+        "/admin/hugging-face/connect",
+        form(&[("token", READ), ("version", "0")]),
+    )
+    .await;
+    assert_eq!(outcome_of(s, &person, "hugging-face connect").await, "ok");
+    let row = s
+        .hugging_face_account()
+        .await
+        .unwrap()
+        .expect("the connect landed");
+    assert_eq!(row.version, 1);
+    let (status, body) = page(&rig, &ada).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body.contains(r#"<tr><th>Account</th><td class="mono">ada-hf</td></tr>"#),
+        "the page shows the connected account: {body}"
+    );
+    assert!(!body.contains("No account is connected"), "{body}");
+
+    rig.fake.refuse(READ);
+    dropped_at_the_hold(
+        &rig.app,
+        &person,
+        &ada,
+        "/admin/hugging-face/check",
+        form(&[("version", "1")]),
+    )
+    .await;
+    assert_eq!(outcome_of(s, &person, "hugging-face check").await, "ok");
+    assert!(
+        s.hugging_face_account()
+            .await
+            .unwrap()
+            .unwrap()
+            .refused_at
+            .is_some()
+    );
+    let (status, body) = page(&rig, &ada).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains("Hugging Face refused this token"), "{body}");
+
+    dropped_at_the_hold(
+        &rig.app,
+        &person,
+        &ada,
+        "/admin/hugging-face/disconnect",
+        form(&[("version", "2")]),
+    )
+    .await;
+    assert_eq!(
+        outcome_of(s, &person, "hugging-face disconnect").await,
+        "ok"
+    );
+    assert!(s.hugging_face_account().await.unwrap().is_none());
+    let (status, body) = page(&rig, &ada).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains("No account is connected"), "{body}");
 }

@@ -57,6 +57,23 @@ async fn role_version(s: &Store, role: &str) -> String {
     s.role(role).await.unwrap().unwrap().version.to_string()
 }
 
+/// The grants page as the admin's next view draws it.
+async fn grants_page(app: &axum::Router, session: &str) -> String {
+    let (status, _, page) = send_as(app, "GET", "/admin/grants", None, session).await;
+    assert_eq!(status, StatusCode::OK, "the grants page is served");
+    page
+}
+
+/// The `<tr>` of `page` holding `needle`.
+fn row_holding(page: &str, needle: &str) -> String {
+    let at = page
+        .find(needle)
+        .unwrap_or_else(|| panic!("the page holds {needle}"));
+    let start = page[..at].rfind("<tr>").unwrap();
+    let end = at + page[at..].find("</tr>").unwrap();
+    page[start..end].to_owned()
+}
+
 async fn live(s: &Store, grant: &str) -> bool {
     sqlx::query_scalar("SELECT revoked_at IS NULL FROM role_grant WHERE grant_id = $1")
         .bind(grant)
@@ -964,5 +981,178 @@ async fn a_grant_write_whose_commits_answer_is_lost_reads_back_its_outcome() {
     assert_eq!(
         rows(s, "SELECT count(*) FROM audit WHERE outcome = 'failed'").await,
         0
+    );
+}
+
+/// **Each write to a grant or a role runs from its first record to its
+/// outcome in a task the request cannot cancel** (Spec 2.13, #150): each
+/// of the three writes' requests is dropped while its first record is
+/// held, and the write still lands, its first record answered by its `ok`
+/// outcome and the grants page's next view reading the state it left.
+///
+/// Perturbation: run step four in the request's own future
+/// (`admin::step_four` awaiting it in place), and the first write's
+/// outcome never comes.
+#[tokio::test]
+async fn each_write_to_a_grant_or_role_dropped_at_its_first_record_still_lands() {
+    use crate::admin_tests::{dropped_at_the_hold, outcome_of};
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let app = app(s, Some(passkeys()));
+    let (ada, session) = admin(&app, s, &mut authenticator(), "ada").await;
+    let (bea, _) = person_with_token(s, "bea").await;
+    let k = agent(s, "karl").await;
+
+    dropped_at_the_hold(
+        &app,
+        &ada,
+        &session,
+        "/admin/grants/grant",
+        form(&[("person", &bea), ("role", "observer"), ("agent", &k)]),
+    )
+    .await;
+    assert_eq!(outcome_of(s, &ada, "grant add").await, "ok");
+    let (granted, _) = s
+        .live_grant(&bea, "observer", Some(&k))
+        .await
+        .unwrap()
+        .expect("the grant landed");
+    assert_eq!(
+        audited(s, &ada, "grant", &granted, "grant add").await,
+        (1, 1, 0)
+    );
+    let row = row_holding(
+        &grants_page(&app, &session).await,
+        &format!("name=\"grant\" value=\"{granted}\""),
+    );
+    assert!(row.contains("<td>bea</td>"), "{row}");
+    assert!(row.contains("<td>observer</td>"), "{row}");
+
+    let v = grant_version(s, &granted).await;
+    dropped_at_the_hold(
+        &app,
+        &ada,
+        &session,
+        "/admin/grants/revoke",
+        form(&[("grant", &granted), ("version", &v)]),
+    )
+    .await;
+    assert_eq!(outcome_of(s, &ada, "grant remove").await, "ok");
+    assert!(!live(s, &granted).await, "the revocation landed");
+    let page = grants_page(&app, &session).await;
+    assert!(
+        !page.contains(&format!("value=\"{granted}\"")),
+        "the revoked grant is not listed"
+    );
+
+    let r = role_version(s, "operator").await;
+    dropped_at_the_hold(
+        &app,
+        &ada,
+        &session,
+        "/admin/roles/set",
+        form(&[("role", "operator"), ("version", &r), ("verbs", "show")]),
+    )
+    .await;
+    assert_eq!(outcome_of(s, &ada, "role set").await, "ok");
+    assert_eq!(
+        s.role("operator").await.unwrap().unwrap().verbs,
+        vec!["show".to_owned()],
+        "the role's edit landed"
+    );
+    let row = row_holding(
+        &grants_page(&app, &session).await,
+        "name=\"role\" value=\"operator\"",
+    );
+    let after = role_version(s, "operator").await;
+    assert_ne!(after, r, "the role's version moved");
+    assert!(
+        row.contains(&format!("name=\"version\" value=\"{after}\"")),
+        "{row}"
+    );
+    assert!(row.contains("value=\"show\" checked"), "{row}");
+}
+
+/// **A grant add dropped and stalled past its bound never lands after its
+/// retry** (Spec 2.13): ada's grant of observer on karl to bea is dropped
+/// while held before its first record, as a write waiting on the store
+/// waits. Ada adds the grant again, the retry lands, and ada removes it,
+/// both before the first's deadline as step four recorded it. Step four
+/// then reports the first dropped at its deadline, its hold is let go, and
+/// it writes nothing: the removal stands, bea holding no live grant and the
+/// audit one add's first record, the retry's.
+///
+/// Perturbation: await step four with no bound, and the first is never
+/// reported dropped, so the test fails at that wait. Let go regardless, it
+/// grants bea observer again after its removal.
+#[tokio::test]
+async fn a_dropped_grant_add_never_lands_after_its_retry_and_a_removal() {
+    use crate::admin_tests::dropped_and_held;
+    use crate::surfaces::admin::WRITE_BOUND_FOR_TEST;
+    const BOUND: Duration = Duration::from_secs(3);
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let app = app(s, Some(passkeys()));
+    let (ada, session) = admin(&app, s, &mut authenticator(), "ada").await;
+    let (bea, _) = person_with_token(s, "bea").await;
+    let k = agent(s, "karl").await;
+    let ask = form(&[("person", &bea), ("role", "observer"), ("agent", &k)]);
+    WRITE_BOUND_FOR_TEST.with(|b| b.set(Some(BOUND)));
+
+    let watched = crate::surfaces::admin::watch();
+    let release = dropped_and_held(&app, &ada, &session, "/admin/grants/grant", ask.clone()).await;
+    let deadline = watched
+        .deadline
+        .get()
+        .expect("the first's step four was placed");
+    let (status, _, page) = send_as(&app, "POST", "/admin/grants/grant", Some(ask), &session).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "the retry lands: {page}");
+    let (granted, _) = s
+        .live_grant(&bea, "observer", Some(&k))
+        .await
+        .unwrap()
+        .expect("the retry's grant");
+    let v = grant_version(s, &granted).await;
+    let (status, _, page) = send_as(
+        &app,
+        "POST",
+        "/admin/grants/revoke",
+        Some(form(&[("grant", &granted), ("version", &v)])),
+        &session,
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "the removal lands: {page}");
+    assert!(
+        tokio::time::Instant::now() < deadline,
+        "the retry and the removal came before the first's deadline"
+    );
+
+    tokio::time::timeout(Duration::from_secs(10), watched.passed.notified())
+        .await
+        .expect("the first was dropped at its deadline");
+    release.notify_one();
+    assert!(
+        s.live_grant(&bea, "observer", Some(&k))
+            .await
+            .unwrap()
+            .is_none(),
+        "the removal stands"
+    );
+    let firsts: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit WHERE principal = 'person' AND person_id = $1 \
+         AND action = 'grant add' AND answers IS NULL AND refusal IS NULL",
+    )
+    .bind(&ada)
+    .fetch_one(&s.pool)
+    .await
+    .unwrap();
+    assert_eq!(firsts, 1, "one add's first record by ada, the retry's");
+    assert_eq!(
+        rows(s, "SELECT count(*) FROM role_grant WHERE role = 'observer'").await,
+        1
     );
 }

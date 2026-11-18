@@ -1,4 +1,5 @@
 //! conforms: web-an-ssh-keys-line-is-checked-for-its-form
+//! conforms: web-an-admin-write-runs-from-its-first-record-to-its-outcome-in-a-task-the-request-cannot-cancel
 //!
 //! **The operator's SSH public keys** (Spec 6.2): a console setting, for a
 //! session whose person holds a live admin grant, among IAM's sub-tabs.
@@ -32,7 +33,7 @@ use crate::store::admin::Refusal;
 use crate::store::audit::Target;
 use crate::store::identity::is_ssh_key_id;
 use crate::surfaces::admin::{
-    NOT_AN_ADMIN, admin_session, fault, first_of, landed, refused, settled, writer,
+    NOT_AN_ADMIN, admin_session, fault, first_of, landed, refused, settled, step_four, writer,
 };
 use crate::surfaces::gate::Policy;
 
@@ -226,22 +227,25 @@ async fn add(store: Store, policy: &Policy, headers: HeaderMap, ask: AddAsk) -> 
         Ok(session) => session,
         Err(answer) => return answer,
     };
-    let first = match first_of(&store, &session, target, ACTION).await {
-        Ok(first) => first,
-        Err(answer) => return answer,
-    };
-    let written = store
-        .add_ssh_key(
-            &session.person_id,
-            session.session_id,
-            &first,
-            &key_id,
-            &key.line,
-            &key.fingerprint,
-        )
-        .await;
-    settled(&store, &first, &written).await;
-    landed(written, PAGE)
+    step_four(policy, async move {
+        let first = match first_of(&store, &session, Target::SshKey(&key_id), ACTION).await {
+            Ok(first) => first,
+            Err(answer) => return answer,
+        };
+        let written = store
+            .add_ssh_key(
+                &session.person_id,
+                session.session_id,
+                &first,
+                &key_id,
+                &key.line,
+                &key.fingerprint,
+            )
+            .await;
+        settled(&store, &first, &written).await;
+        landed(written, PAGE)
+    })
+    .await
 }
 
 async fn remove(store: Store, policy: &Policy, headers: HeaderMap, key_id: &str) -> Response {
@@ -263,15 +267,19 @@ async fn remove(store: Store, policy: &Policy, headers: HeaderMap, key_id: &str)
         Ok(false) => return refused(&Refusal::NoSuchKey),
         Err(e) => return fault(e),
     }
-    let first = match first_of(&store, &session, target, ACTION).await {
-        Ok(first) => first,
-        Err(answer) => return answer,
-    };
-    let written = store
-        .remove_ssh_key(&session.person_id, session.session_id, &first, key_id)
-        .await;
-    settled(&store, &first, &written).await;
-    landed(written, PAGE)
+    let key_id = key_id.to_owned();
+    step_four(policy, async move {
+        let first = match first_of(&store, &session, Target::SshKey(&key_id), ACTION).await {
+            Ok(first) => first,
+            Err(answer) => return answer,
+        };
+        let written = store
+            .remove_ssh_key(&session.person_id, session.session_id, &first, &key_id)
+            .await;
+        settled(&store, &first, &written).await;
+        landed(written, PAGE)
+    })
+    .await
 }
 
 #[cfg(test)]

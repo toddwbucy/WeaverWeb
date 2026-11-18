@@ -76,9 +76,9 @@ pub struct SudoInvoker {
     /// waits on it rather than starting another, so reconnection attempts
     /// cannot pile up listings.
     listing: Arc<tokio::sync::Mutex<()>>,
-    /// A test's `PATH` for the child, so the generated fake sudo is found
-    /// first; a test build runs nothing without it. Absent from a service
-    /// build, where the child inherits admin-con's.
+    /// A test's `PATH` for the child, the generated fake's directory alone.
+    /// A test build runs nothing without it (`fake_only`). Absent from a
+    /// service build, where the child inherits admin-con's.
     #[cfg(test)]
     pub(super) path: Option<OsString>,
 }
@@ -118,7 +118,7 @@ impl SudoInvoker {
         Some(argv)
     }
 
-    fn command(&self, argv: &[OsString]) -> tokio::process::Command {
+    fn command(&self, argv: &[OsString]) -> std::io::Result<tokio::process::Command> {
         let mut command = tokio::process::Command::new(SUDO);
         command
             .args(argv)
@@ -126,15 +126,11 @@ impl SudoInvoker {
             // The child is never killed: dropping its handle leaves it
             // running, and the task that owns it reaps it.
             .kill_on_drop(false);
-        // **A test never runs the real program**: a test build refuses an
-        // invoker without the generated fake's `PATH`.
+        // **A test never runs the real program**: a test build refuses,
+        // before any spawn, an invoker whose `PATH` is not the generated
+        // fake's directory alone (`fake_only`).
         #[cfg(test)]
-        command.env(
-            "PATH",
-            self.path
-                .as_ref()
-                .expect("a test's invoker runs the generated fake sudo"),
-        );
+        command.env("PATH", fake_only(self.path.as_ref())?);
         // SAFETY: `setsid` is async-signal-safe and touches nothing of the
         // parent's; it only moves the child into a session of its own, so
         // a signal sent to admin-con's process group never reaches it.
@@ -146,7 +142,7 @@ impl SudoInvoker {
                 Ok(())
             });
         }
-        command
+        Ok(command)
     }
 
     /// Whether the rule grants this exact line, asking without running it.
@@ -157,7 +153,7 @@ impl SudoInvoker {
         let Some(argv) = self.argv(verb, true) else {
             return Ok(false);
         };
-        let mut command = self.command(&argv);
+        let mut command = self.command(&argv)?;
         command.stdout(Stdio::null()).stderr(Stdio::null());
         let held = self.listing.clone().lock_owned().await;
         let listing = tokio::spawn(async move {
@@ -166,6 +162,40 @@ impl SudoInvoker {
             status
         });
         Ok(listing.await??.success())
+    }
+}
+
+/// **A test build runs the generated fake alone**: the child's `PATH` must
+/// be exactly one absolute directory holding an executable regular file
+/// named `sudo`, checked before any spawn. A fake that cannot run then
+/// fails the spawn, and never falls through to a real `sudo` later on the
+/// `PATH`, which `execvp` would reach after a fake it cannot execute. The
+/// suite also runs under the kernel's no-new-privileges flag, an
+/// independent layer: neither replaces the other.
+#[cfg(test)]
+fn fake_only(path: Option<&OsString>) -> std::io::Result<&OsString> {
+    use std::os::unix::fs::PermissionsExt;
+    let refuse = |why: &str| {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            format!("a test's invoker runs the generated fake sudo alone, and {why}"),
+        ))
+    };
+    let Some(path) = path else {
+        return refuse("no PATH was given");
+    };
+    let mut dirs = std::env::split_paths(path);
+    let (Some(dir), None) = (dirs.next(), dirs.next()) else {
+        return refuse("its PATH is not exactly one directory");
+    };
+    if !dir.is_absolute() {
+        return refuse("its PATH's one directory is not absolute");
+    }
+    match std::fs::symlink_metadata(dir.join(SUDO)) {
+        Ok(meta) if meta.file_type().is_file() && meta.permissions().mode() & 0o111 != 0 => {
+            Ok(path)
+        }
+        _ => refuse("its PATH holds no executable regular file named sudo"),
     }
 }
 
@@ -237,6 +267,7 @@ impl Invoker for SudoInvoker {
         };
         let mut child = self
             .command(&argv)
+            .map_err(|e| fault(format!("the invocation of {verb} did not start: {e}")))?
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()

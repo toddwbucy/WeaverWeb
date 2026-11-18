@@ -1,6 +1,7 @@
 //! conforms: web-a-context-length-above-the-headers-maximum-is-refused
 //! conforms: web-the-turn-context-is-required-and-never-defaulted
 //! conforms: web-the-devices-are-a-non-empty-set-of-the-surveys-cards-by-ordinal
+//! conforms: web-an-admin-write-runs-from-its-first-record-to-its-outcome-in-a-task-the-request-cannot-cancel
 //!
 //! **The placement page** (Spec 6.2), a child of the setup pages' module.
 //! `GET /setup/{setup}/placement` draws five things:
@@ -43,7 +44,7 @@ use crate::store::admin::Refusal;
 use crate::store::audit::Target;
 use crate::store::identity::is_setup_id;
 use crate::store::setup::{MAX_TOKENS_PER_TURN, Placement, SetupModel};
-use crate::surfaces::admin::{fault, first_of, refused, settled, writer};
+use crate::surfaces::admin::{fault, first_of, refused, settled, step_four, writer};
 use crate::survey::Stage;
 
 /// The save's action, as its audit records name it.
@@ -529,27 +530,31 @@ async fn save(
     if let Err(why) = held_to_sources(&ask, maximum(&rows), survey.as_deref()) {
         return refused(&Refusal::Unplaceable(why));
     }
-    let first = match first_of(&store, &session, target, ACTION).await {
-        Ok(first) => first,
-        Err(answer) => return answer,
-    };
-    let placement = Placement {
-        context_length: ask.context_length,
-        turn_context: ask.turn_context,
-        devices: (!ask.devices.is_empty()).then_some(ask.devices.as_slice()),
-    };
-    let written = store
-        .setup_placement(
-            &session.person_id,
-            session.session_id,
-            &first,
-            setup_id,
-            ask.version,
-            &placement,
-        )
-        .await;
-    settled(&store, &first, &written).await;
-    landed(written, setup_id, Page::Placement)
+    let setup_id = setup_id.to_owned();
+    step_four(&seams.policy, async move {
+        let first = match first_of(&store, &session, Target::Setup(&setup_id), ACTION).await {
+            Ok(first) => first,
+            Err(answer) => return answer,
+        };
+        let placement = Placement {
+            context_length: ask.context_length,
+            turn_context: ask.turn_context,
+            devices: (!ask.devices.is_empty()).then_some(ask.devices.as_slice()),
+        };
+        let written = store
+            .setup_placement(
+                &session.person_id,
+                session.session_id,
+                &first,
+                &setup_id,
+                ask.version,
+                &placement,
+            )
+            .await;
+        settled(&store, &first, &written).await;
+        landed(written, &setup_id, Page::Placement)
+    })
+    .await
 }
 
 #[cfg(test)]

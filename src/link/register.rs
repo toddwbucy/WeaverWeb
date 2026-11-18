@@ -1186,6 +1186,8 @@ impl Store {
             .execute(&mut *tx)
             .await?;
         }
+        #[cfg(test)]
+        crate::deadline::hold::commit(crate::deadline::hold::Point::Admit).await;
         tx.commit().await?;
         #[cfg(test)]
         fail_after_commit("admit")?;

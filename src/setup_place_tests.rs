@@ -1246,3 +1246,80 @@ async fn a_store_that_fails_to_answer_is_a_fault_never_an_absent_report() {
     .await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
 }
+
+/// **A placement and a Confirm run from their first records to their
+/// outcomes in a task the request cannot cancel** (Spec 2.13, #150): with
+/// the decoder and the adapter picked and verified, each request dropped
+/// while its first record is held, the write still lands, its first record
+/// answered by its `ok` outcome: the placement page then reads the kept
+/// context length, and the confirm page the confirmed setup, with no form.
+///
+/// Perturbation: run step four in the request's own future
+/// (`admin::step_four` awaiting it in place), and the first write's
+/// outcome never comes.
+#[tokio::test]
+async fn a_placement_and_a_confirm_dropped_at_their_first_records_still_land() {
+    use crate::admin_tests::{dropped_at_the_hold, outcome_of, person_named};
+    let reported = Arc::new(Reported::default());
+    *reported.pairing.lock().unwrap() = Some(pairing_report());
+    let Some((rig, _fake, _, _cache)) = rig_boxed(true, reported.clone()).await else {
+        return;
+    };
+    let s = rig.store();
+    let _identities = BaseIdentities::start(
+        s.clone(),
+        rig.puller.cache().cloned(),
+        rig.puller.verified(),
+    );
+    let (ada, setup) = setup_of(&rig, "karl").await;
+    let person = person_named(s, "ada").await;
+    decoder_picked(&rig, &ada, &setup, "1").await;
+    assert_eq!(
+        ended(s, &pull_of(s, &setup, "decoder").await).await,
+        "verified"
+    );
+    let (status, body) = post_pick(
+        &rig,
+        &ada,
+        &setup,
+        pick("2", "adapter", "org/adapter", "adapter.gguf", Some("0.5")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    assert_eq!(
+        ended(s, &pull_of(s, &setup, "adapter").await).await,
+        "verified"
+    );
+
+    let placement = format!("/setup/{setup}/placement");
+    dropped_at_the_hold(
+        &rig.app,
+        &person,
+        &ada,
+        &placement,
+        form(&[
+            ("version", "3"),
+            ("context_length", "4096"),
+            ("turn_context", "independent"),
+            ("device", "1"),
+            ("device", "0"),
+        ]),
+    )
+    .await;
+    assert_eq!(outcome_of(s, &person, "setup placement").await, "ok");
+    assert_eq!(s.setup(&setup).await.unwrap().unwrap().version, 4);
+    let placed = read(&rig.app, &placement, &ada).await;
+    assert!(placed.contains("value=\"4096\""), "{placed}");
+    identity_kept(s).await;
+
+    *reported.drives.lock().unwrap() = Some(drives_report());
+    let confirm = format!("/setup/{setup}/confirm");
+    let action = format!(r#"<form method="post" action="{confirm}">"#);
+    assert!(read(&rig.app, &confirm, &ada).await.contains(&action));
+    dropped_at_the_hold(&rig.app, &person, &ada, &confirm, form(&[("version", "4")])).await;
+    assert_eq!(outcome_of(s, &person, "setup confirm").await, "ok");
+    assert_eq!(count(s, "deployment_tuple").await, 1);
+    assert_eq!(s.setup(&setup).await.unwrap().unwrap().state, "confirmed");
+    let confirmed = read(&rig.app, &confirm, &ada).await;
+    assert!(!confirmed.contains(&action), "{confirmed}");
+}

@@ -1,5 +1,6 @@
 //! conforms: web-a-person-without-an-admin-grant-causes-no-request-to-hugging-face
 //! conforms: web-the-hugging-face-token-is-held-sealed
+//! conforms: web-an-admin-write-runs-from-its-first-record-to-its-outcome-in-a-task-the-request-cannot-cancel
 //!
 //! **The Hugging Face account** (Spec 2.15): a console setting, for a
 //! session whose person holds a live admin grant. `GET /admin/hugging-face`
@@ -47,7 +48,7 @@ use crate::store::audit::{PersonMethod, Principal, Target};
 use crate::store::hugging_face::Checked;
 use crate::store::model_pull::Pull;
 use crate::surfaces::admin::{
-    NOT_AN_ADMIN, admin_session, fault, first_of, landed, refused, settled, writer,
+    NOT_AN_ADMIN, admin_session, fault, first_of, landed, refused, settled, step_four, writer,
 };
 use crate::surfaces::gate::{self, Policy, Session};
 
@@ -409,23 +410,26 @@ async fn connect(store: Store, seams: &Seams, headers: HeaderMap, ask: ConnectAs
         Ok(Whoami::Refused) => return refusal(&store, &session, ACTION).await,
         Err(answer) => return answer,
     };
-    let first = match first_of(&store, &session, Target::HuggingFace, ACTION).await {
-        Ok(first) => first,
-        Err(answer) => return answer,
-    };
-    let sealed = key.seal(&token);
-    let written = store
-        .hugging_face_connect(
-            &session.person_id,
-            session.session_id,
-            &first,
-            &account,
-            &sealed,
-            ask.version,
-        )
-        .await;
-    settled(&store, &first, &written).await;
-    landed(written, PAGE)
+    step_four(async move {
+        let first = match first_of(&store, &session, Target::HuggingFace, ACTION).await {
+            Ok(first) => first,
+            Err(answer) => return answer,
+        };
+        let sealed = key.seal(&token);
+        let written = store
+            .hugging_face_connect(
+                &session.person_id,
+                session.session_id,
+                &first,
+                &account,
+                &sealed,
+                ask.version,
+            )
+            .await;
+        settled(&store, &first, &written).await;
+        landed(written, PAGE)
+    })
+    .await
 }
 
 /// **Hugging Face's refusal of a token, as one record**, the admin gate's
@@ -482,21 +486,24 @@ async fn check(store: Store, seams: &Seams, headers: HeaderMap, ask: VersionAsk)
         Err(answer) => return answer,
     };
     drop(token);
-    let first = match first_of(&store, &session, Target::HuggingFace, ACTION).await {
-        Ok(first) => first,
-        Err(answer) => return answer,
-    };
-    let written = store
-        .hugging_face_checked(
-            &session.person_id,
-            session.session_id,
-            &first,
-            &checked,
-            ask.version,
-        )
-        .await;
-    settled(&store, &first, &written).await;
-    landed(written, PAGE)
+    step_four(async move {
+        let first = match first_of(&store, &session, Target::HuggingFace, ACTION).await {
+            Ok(first) => first,
+            Err(answer) => return answer,
+        };
+        let written = store
+            .hugging_face_checked(
+                &session.person_id,
+                session.session_id,
+                &first,
+                &checked,
+                ask.version,
+            )
+            .await;
+        settled(&store, &first, &written).await;
+        landed(written, PAGE)
+    })
+    .await
 }
 
 /// **An admin's cancel of a running pull**, in the admin writes' order: the
@@ -524,21 +531,25 @@ async fn cancel(store: Store, seams: &Seams, headers: HeaderMap, pull_id: &str) 
         Ok(None) => return (StatusCode::NOT_FOUND, "no such pull").into_response(),
         Err(e) => return fault(e),
     }
-    let first = match first_of(&store, &session, target, ACTION).await {
-        Ok(first) => first,
-        Err(answer) => return answer,
-    };
-    let written = store
-        .cancel_pull(&session.person_id, session.session_id, &first, pull_id)
-        .await;
-    settled(&store, &first, &written).await;
-    // Only a definite refusal goes unsignalled: a cancel whose answer was
-    // lost may have landed, and a signal for a pull the store still runs
-    // makes the puller take it again from its partial.
-    if !matches!(written, Ok(Err(_))) {
-        seams.puller.cancel(pull_id);
-    }
-    landed(written, PAGE)
+    let (pull_id, puller) = (pull_id.to_owned(), seams.puller.clone());
+    step_four(async move {
+        let first = match first_of(&store, &session, Target::ModelPull(&pull_id), ACTION).await {
+            Ok(first) => first,
+            Err(answer) => return answer,
+        };
+        let written = store
+            .cancel_pull(&session.person_id, session.session_id, &first, &pull_id)
+            .await;
+        settled(&store, &first, &written).await;
+        // Only a definite refusal goes unsignalled: a cancel whose answer was
+        // lost may have landed, and a signal for a pull the store still runs
+        // makes the puller take it again from its partial.
+        if !matches!(written, Ok(Err(_))) {
+            puller.cancel(&pull_id);
+        }
+        landed(written, PAGE)
+    })
+    .await
 }
 
 async fn disconnect(store: Store, seams: &Seams, headers: HeaderMap, ask: VersionAsk) -> Response {
@@ -552,13 +563,16 @@ async fn disconnect(store: Store, seams: &Seams, headers: HeaderMap, ask: Versio
         Ok(None) => return refused(&Refusal::NotConnected),
         Err(e) => return fault(e),
     }
-    let first = match first_of(&store, &session, Target::HuggingFace, ACTION).await {
-        Ok(first) => first,
-        Err(answer) => return answer,
-    };
-    let written = store
-        .hugging_face_disconnect(&session.person_id, session.session_id, &first, ask.version)
-        .await;
-    settled(&store, &first, &written).await;
-    landed(written, PAGE)
+    step_four(async move {
+        let first = match first_of(&store, &session, Target::HuggingFace, ACTION).await {
+            Ok(first) => first,
+            Err(answer) => return answer,
+        };
+        let written = store
+            .hugging_face_disconnect(&session.person_id, session.session_id, &first, ask.version)
+            .await;
+        settled(&store, &first, &written).await;
+        landed(written, PAGE)
+    })
+    .await
 }

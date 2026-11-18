@@ -264,3 +264,50 @@ async fn a_removal_takes_the_key_and_an_unknown_key_is_not_found() {
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert_eq!(audited(s, "ssh-key remove").await, (1, 1, 0, 0));
 }
+
+/// **An add and a removal run from their first records to their outcomes
+/// in a task the request cannot cancel** (Spec 2.13, #150): each request
+/// dropped while its first record is held, the write still lands, its
+/// first record answered by its `ok` outcome, and the page then reads the
+/// keys as they stand.
+///
+/// Perturbation: run step four in the request's own future
+/// (`admin::step_four` awaiting it in place), and the first write's
+/// outcome never comes.
+#[tokio::test]
+async fn an_add_and_a_removal_dropped_at_their_first_records_still_land() {
+    use crate::admin_tests::{dropped_at_the_hold, outcome_of};
+    let Some(rig) = rig().await else {
+        return;
+    };
+    let s = rig.store();
+    let (person, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let given = line("ssh-ed25519", 3);
+
+    dropped_at_the_hold(
+        &rig.app,
+        &person,
+        &ada,
+        "/admin/ssh-key",
+        form(&[("line", &given)]),
+    )
+    .await;
+    assert_eq!(outcome_of(s, &person, "ssh-key add").await, "ok");
+    assert_eq!(keys(s).await, 1);
+    let shown = page(&rig.app, "/admin/ssh-key", &ada).await;
+    assert!(shown.contains(&fingerprint(&given)), "{shown}");
+
+    let key_id = s.ssh_keys().await.unwrap()[0].key_id.clone();
+    dropped_at_the_hold(
+        &rig.app,
+        &person,
+        &ada,
+        &format!("/admin/ssh-key/{key_id}/remove"),
+        String::new(),
+    )
+    .await;
+    assert_eq!(outcome_of(s, &person, "ssh-key remove").await, "ok");
+    assert_eq!(keys(s).await, 0);
+    let shown = page(&rig.app, "/admin/ssh-key", &ada).await;
+    assert!(!shown.contains(&fingerprint(&given)), "{shown}");
+}

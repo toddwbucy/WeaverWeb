@@ -966,3 +966,72 @@ async fn a_grant_write_whose_commits_answer_is_lost_reads_back_its_outcome() {
         0
     );
 }
+
+/// **Each write to a grant or a role runs from its first record to its
+/// outcome in a task the request cannot cancel** (Spec 2.13, #150): each
+/// of the three writes' requests is dropped while its first record is
+/// held, and the write still lands, its first record answered by its `ok`
+/// outcome.
+///
+/// Perturbation: run step four in the request's own future
+/// (`admin::step_four` awaiting it in place), and the first write's
+/// outcome never comes.
+#[tokio::test]
+async fn each_write_to_a_grant_or_role_dropped_at_its_first_record_still_lands() {
+    use crate::admin_tests::{dropped_at_the_hold, outcome_of};
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let app = app(s, Some(passkeys()));
+    let (ada, session) = admin(&app, s, &mut authenticator(), "ada").await;
+    let (bea, _) = person_with_token(s, "bea").await;
+    let k = agent(s, "karl").await;
+
+    dropped_at_the_hold(
+        &app,
+        &ada,
+        &session,
+        "/admin/grants/grant",
+        form(&[("person", &bea), ("role", "observer"), ("agent", &k)]),
+    )
+    .await;
+    assert_eq!(outcome_of(s, &ada, "grant add").await, "ok");
+    let (granted, _) = s
+        .live_grant(&bea, "observer", Some(&k))
+        .await
+        .unwrap()
+        .expect("the grant landed");
+    assert_eq!(
+        audited(s, &ada, "grant", &granted, "grant add").await,
+        (1, 1, 0)
+    );
+
+    let v = grant_version(s, &granted).await;
+    dropped_at_the_hold(
+        &app,
+        &ada,
+        &session,
+        "/admin/grants/revoke",
+        form(&[("grant", &granted), ("version", &v)]),
+    )
+    .await;
+    assert_eq!(outcome_of(s, &ada, "grant remove").await, "ok");
+    assert!(!live(s, &granted).await, "the revocation landed");
+
+    let r = role_version(s, "operator").await;
+    dropped_at_the_hold(
+        &app,
+        &ada,
+        &session,
+        "/admin/roles/set",
+        form(&[("role", "operator"), ("version", &r), ("verbs", "show")]),
+    )
+    .await;
+    assert_eq!(outcome_of(s, &ada, "role set").await, "ok");
+    assert_eq!(
+        s.role("operator").await.unwrap().unwrap().verbs,
+        vec!["show".to_owned()],
+        "the role's edit landed"
+    );
+}

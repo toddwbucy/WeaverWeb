@@ -1012,3 +1012,59 @@ async fn the_start_page_draws_new_agent_once_an_agent_stands() {
         "{opened}"
     );
 }
+
+/// **A begin and the pairing page's write run from their first records to
+/// their outcomes in a task the request cannot cancel** (Spec 2.13, #150):
+/// each request dropped while its first record is held, the write still
+/// lands, its first record answered by its `ok` outcome, the start page
+/// links the setup the dropped begin opened, and the pairing page then
+/// reads the setup as it stands.
+///
+/// Perturbation: run step four in the request's own future
+/// (`admin::step_four` awaiting it in place), and the first write's
+/// outcome never comes.
+#[tokio::test]
+async fn a_begin_and_a_pairing_dropped_at_their_first_records_still_land() {
+    use crate::admin_tests::{dropped_at_the_hold, outcome_of};
+    let Some(rig) = rig().await else {
+        return;
+    };
+    let s = rig.store();
+    let (person, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+
+    dropped_at_the_hold(&rig.app, &person, &ada, "/setup", form(&[("name", "karl")])).await;
+    assert_eq!(outcome_of(s, &person, "setup begin").await, "ok");
+    let setup: String = sqlx::query_scalar("SELECT setup_id FROM agent_setup WHERE name = 'karl'")
+        .fetch_one(&s.pool)
+        .await
+        .expect("the begin landed");
+    let uri = format!("/setup/{setup}/pairing");
+    let start = page(&rig.app, "/setup", &ada).await;
+    assert!(
+        start.contains(&uri),
+        "the start page links the setup the dropped begin opened: {start}"
+    );
+    let shown = page(&rig.app, &uri, &ada).await;
+    assert!(
+        !shown.contains(" checked> The box is a virtual machine"),
+        "{shown}"
+    );
+
+    dropped_at_the_hold(
+        &rig.app,
+        &person,
+        &ada,
+        &uri,
+        form(&[("version", "1"), ("virtual_machine", "on")]),
+    )
+    .await;
+    assert_eq!(outcome_of(s, &person, "setup pairing").await, "ok");
+    let kept = s.setup(&setup).await.unwrap().unwrap();
+    assert!(kept.virtual_machine, "the pairing's write landed");
+    assert_eq!(kept.version, 2);
+    let shown = page(&rig.app, &uri, &ada).await;
+    assert!(
+        shown.contains(" checked> The box is a virtual machine"),
+        "{shown}"
+    );
+}

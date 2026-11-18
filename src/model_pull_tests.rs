@@ -1811,3 +1811,53 @@ async fn a_pull_carries_its_token_into_no_log_line_page_or_error() {
     assert!(!audit.contains(TOKEN), "the audit holds the token");
     puller.stop();
 }
+
+/// **A cancel runs from its first record to its outcome in a task the
+/// request cannot cancel** (Spec 2.13, #150): the cancel's request is
+/// dropped while its first record is held, and the cancel still lands, its
+/// first record answered by its `ok` outcome, and the puller is still
+/// told: the pull held on its headers ends, the next ask runs and verifies
+/// at once rather than waiting out the stall, and the section reads the
+/// pull cancelled.
+///
+/// Perturbation: run step four in the request's own future
+/// (`admin::step_four` awaiting it in place), and the first write's
+/// outcome never comes.
+#[tokio::test]
+async fn a_cancel_dropped_at_its_first_record_still_lands_and_tells_the_puller() {
+    use crate::admin_tests::{dropped_at_the_hold, outcome_of};
+    let Some(rig) = rig().await else { return };
+    rig.fakes.modes.lock().unwrap().push_back(Mode::Held);
+    let puller = rig.puller(Settings {
+        stall: Duration::from_secs(60),
+        ..quick()
+    });
+    let (pull_id, _) = rig.ask(&puller, &[model_file()]).await;
+    cdn_asked(&rig, 1).await;
+    let web = rig.surface(&puller);
+    dropped_at_the_hold(
+        &web,
+        &rig.admin,
+        &rig.cookie,
+        &format!("/admin/hugging-face/pulls/{pull_id}/cancel"),
+        String::new(),
+    )
+    .await;
+    assert_eq!(
+        outcome_of(rig.store(), &rig.admin, "model pull cancel").await,
+        "ok"
+    );
+    assert_eq!(rig.ended(&pull_id).await, ("cancelled".into(), None));
+
+    let (again, asked) = rig.ask(&puller, &[model_file()]).await;
+    assert!(asked.is_ok(), "{asked:?}");
+    assert_eq!(
+        rig.ended(&again).await,
+        ("verified".into(), None),
+        "the puller was told, so the next pull ran at once"
+    );
+    let (_, _, body) = send_as(&web, "GET", "/admin/hugging-face/pulls", None, &rig.cookie).await;
+    assert!(body.contains("cancelled by ada"), "{body}");
+    rig.fakes.release.notify_one();
+    puller.stop();
+}

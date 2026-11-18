@@ -1,4 +1,5 @@
 //! conforms: web-an-admins-write-to-a-role-or-grant-keeps-the-self-change-rules
+//! conforms: web-an-admin-write-runs-from-its-first-record-to-its-outcome-in-a-task-the-request-cannot-cancel
 //!
 //! **An admin's writes to roles and grants** (Spec 2.13; act 11, PR 5b):
 //! the page that lists every live grant, every role and the register's
@@ -35,7 +36,7 @@ use crate::store::grants::{ListedGrant, in_scope, verbs_within_vocabulary};
 use crate::store::identity::{VOCABULARY, is_agent_id, is_grant_id, is_person_id};
 use crate::store::key::AgentId;
 use crate::surfaces::admin::{
-    NOT_AN_ADMIN, admin_session, fault, first_of, landed, refused, settled, writer,
+    NOT_AN_ADMIN, admin_session, fault, first_of, landed, refused, settled, step_four, writer,
 };
 use crate::surfaces::gate::Policy;
 
@@ -286,10 +287,11 @@ async fn grant(store: Store, policy: &Policy, headers: HeaderMap, ask: GrantAsk)
     if ask.person == session.person_id {
         return refused(&Refusal::OwnGrant);
     }
-    match async {
+    let agent = agent.map(str::to_owned);
+    step_four(async move {
         let first = match first_of(&store, &session, Target::Grant(&grant_id), ACTION).await {
             Ok(first) => first,
-            Err(answer) => return Err(answer),
+            Err(answer) => return answer,
         };
         let written = store
             .admin_grant(
@@ -299,17 +301,13 @@ async fn grant(store: Store, policy: &Policy, headers: HeaderMap, ask: GrantAsk)
                 &grant_id,
                 &ask.person,
                 &ask.role,
-                agent,
+                agent.as_deref(),
             )
             .await;
         settled(&store, &first, &written).await;
-        Ok(written)
-    }
+        landed(written, PAGE)
+    })
     .await
-    {
-        Ok(written) => landed(written, PAGE),
-        Err(answer) => answer,
-    }
 }
 
 #[derive(Deserialize)]
@@ -337,10 +335,10 @@ async fn revoke(store: Store, policy: &Policy, headers: HeaderMap, ask: RevokeAs
         Ok(None) => return refused(&Refusal::NoSuchGrant),
         Err(e) => return fault(e),
     }
-    match async {
+    step_four(async move {
         let first = match first_of(&store, &session, Target::Grant(&ask.grant), ACTION).await {
             Ok(first) => first,
-            Err(answer) => return Err(answer),
+            Err(answer) => return answer,
         };
         let written = store
             .admin_revoke(
@@ -352,13 +350,9 @@ async fn revoke(store: Store, policy: &Policy, headers: HeaderMap, ask: RevokeAs
             )
             .await;
         settled(&store, &first, &written).await;
-        Ok(written)
-    }
+        landed(written, PAGE)
+    })
     .await
-    {
-        Ok(written) => landed(written, PAGE),
-        Err(answer) => answer,
-    }
 }
 
 /// **A role's verbs set**, from a form whose `verbs` field repeats, one
@@ -408,10 +402,10 @@ async fn set_role(store: Store, policy: &Policy, headers: HeaderMap, body: Strin
         Ok(false) => {}
         Err(e) => return fault(e),
     }
-    match async {
+    step_four(async move {
         let first = match first_of(&store, &session, Target::Role(&role), ACTION).await {
             Ok(first) => first,
-            Err(answer) => return Err(answer),
+            Err(answer) => return answer,
         };
         let written = store
             .admin_set_role(
@@ -424,11 +418,7 @@ async fn set_role(store: Store, policy: &Policy, headers: HeaderMap, body: Strin
             )
             .await;
         settled(&store, &first, &written).await;
-        Ok(written)
-    }
+        landed(written, PAGE)
+    })
     .await
-    {
-        Ok(written) => landed(written, PAGE),
-        Err(answer) => answer,
-    }
 }

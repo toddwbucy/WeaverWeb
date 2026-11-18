@@ -4792,9 +4792,9 @@ set rather than default to a device. The checked ordinals in ascending order are
 shard order, the first card holding the first layers, and another order is drawn
 unbuilt. Until a report brings the cards, the field is held with that reason, and a
 report that carries no card says the box reported none, a reading and not a fault. **A
-kept device that a later report lacks** is named on the placement page and refused at
-Confirm, naming the ordinal, so the tuple never names a card the box no longer reports
-(this document's election of 2026-11-17).
+kept device that a later report lacks** is named on the placement page, status fail, and
+refused at Confirm, naming the ordinal, so the tuple never names a card the box no
+longer reports (this document's election of 2026-11-17).
 
 **The placement's save writes the three fields together**, each held to its source, and
 a field the page holds is written none. The form is parsed to its shape before the admin
@@ -4813,8 +4813,10 @@ version answers 409 after the first record, as every admin write's does.
 the cards and the box's members, read from the reports the setup keeps by the survey's
 reader (`src/survey.rs`, section 8.3). The setup pages' tests supply a report through
 the same seam. A store that fails to answer is a fault, never an absent report. Each
-pane a report feeds carries its status, healthy included: read, refused, or waiting on
-the report.
+pane a report feeds carries its status, healthy included: read, refused, misfiled, or
+waiting on the report. The placement page's devices name the report that brings the
+cards, and each report ahead of it that does not read. Every value a report chose is
+drawn through the templates' escaping, and none is drawn raw.
 
 **Which report feeds what**, this document's election of 2026-11-17:
 
@@ -7127,6 +7129,12 @@ printable ASCII and the backslash written `\xNN` as the box's printer writes a r
 and the value's length is named where it was cut. A value reaching a log or a terminal
 then moves no cursor and carries no more of the report than finds it.
 
+**A refused report is logged once, at its arrival**, this document's election of
+2026-11-17: one warning naming the setup, the stage, the cause's number and the detail.
+The reader runs on the report after its write commits, so neither the reading nor the
+line can change the write or its answer. A report the reader reads logs nothing, and a
+page's read of the kept reports logs nothing.
+
 **The image download.** Where images are published for the console to find, and where
 their published hashes come from, are section 10's.
 
@@ -7446,11 +7454,14 @@ two connectors report.
 | an integer is judged by its written form | perturbation in `src/survey_tests.rs`, `refusal_6_an_integer_negative_fractional_with_an_exponent_or_past_2_53_less_1`: read a whole number the parser gives as a float as an integer, and `1.0` and `1e3` read; drop the 2^53 - 1 bound, and 2^53 is refused as past the family's bound, not as an integer (each measured) |
 | the cards the placement page offers are the `drives` stage's report's where it reads, else the `pairing` stage's | perturbation in `src/box_report_tests.rs`, `the_cards_are_the_drives_reports_where_it_reads_else_the_pairing_reports`: prefer the `pairing` report, and the `drives` report's second card is not offered (measured); end to end in `src/enrollment_tests.rs`, `the_reports_a_box_sends_feed_placement_and_confirm`, the pairing report's one card offered, then the drives report's two |
 | Confirm's box members are the `drives` stage's report's, typed as section 6.2 lists them, and Confirm holds naming the report while it is absent, refused or misfiled | perturbation in `src/box_report_tests.rs`, `the_box_members_are_the_drives_reports_typed_as_ruled` and `confirm_holds_naming_the_drives_report_while_it_is_absent_refused_or_misfiled`: take the members from the `pairing` report, and both fail; read a misfiled report as its stage's, and a `pairing` report kept as the `drives` stage's gives the members (each measured); end to end in `src/enrollment_tests.rs`, `the_reports_a_box_sends_feed_placement_and_confirm`, the tuple written with the members |
-| a kept device that a later report lacks is refused at Confirm, naming the ordinal | perturbation end to end in `src/enrollment_tests.rs`, `the_reports_a_box_sends_feed_placement_and_confirm`: drop the check, and Confirm stands after a report carrying one card with card 1 kept (measured) |
+| a kept device that a later report lacks is named on the placement page, status fail, and refused at Confirm, naming the ordinal | perturbation end to end in `src/enrollment_tests.rs`, `the_reports_a_box_sends_feed_placement_and_confirm`: drop the check, and Confirm stands after a report carrying one card with card 1 kept (measured); on the placement page, perturbation in `src/setup_panes_tests.rs`, `the_placement_page_names_a_kept_device_a_later_report_lacks`, and end to end in `src/enrollment_tests.rs`, `the_reports_a_box_sends_feed_placement_and_confirm`: drop the note, and card 1 kept and lacking goes unnamed (each measured) |
 | a store that fails to answer the box's reports is a fault, never an absent report | perturbation in `src/setup_place_tests.rs`, `a_store_that_fails_to_answer_is_a_fault_never_an_absent_report`: read a store's error as no report, and the placement page draws its devices held (measured); end to end, the kept source made to read nothing, and the end-to-end test fails (measured) |
 | a drive not mounted and a state drive whose filesystem is under 9 GiB hold Confirm | perturbation in `src/box_report_tests.rs`, `confirm_holds_for_a_drive_not_mounted_naming_it` and `the_state_drive_holds_confirm_under_9_gib_of_filesystem_and_not_at_it`, and end to end in `src/enrollment_tests.rs`, `the_reports_a_box_sends_feed_placement_and_confirm`: drop the unmounted drive's hold, and Confirm stands with the models drive not mounted; hold at the figure, and a filesystem of exactly 9 GiB holds; move the figure a byte lower, and one a byte under it stands; judge at 10 GiB, and a 10 GiB disk's ext4 size of 10464022528 bytes holds (each measured) |
-| a models drive's free space under the need is a warning, not a hold | **owed**: hold on the models drive's free space, and Confirm holds |
-| a refused report is shown by its stage, arrival and cause, never its verbatim text or the refusal's detail, and holds what it would feed | **owed**: draw the verbatim text or the detail, and the page carries it; read a refused report's cards, and the placement page offers them |
+| a models drive's free space under the need is a warning, not a hold | perturbation in `src/setup_panes_tests.rs`, `the_drives_page_draws_the_drives_as_mounted_with_their_three_judgments`, and end to end in `src/enrollment_tests.rs`, `the_reports_a_box_sends_feed_placement_and_confirm`: drop the warning, and a models drive with 1 byte free under the picks' need is drawn with none; hold Confirm on a models drive's free space under 1 GiB, and the end-to-end Confirm with 1 byte free holds (each measured) |
+| a refused report is shown by its stage, arrival and cause, never its verbatim text or the refusal's detail, and holds what it would feed | perturbation in `src/setup_panes_tests.rs`, `the_pairing_pages_report_is_served_waiting_refused_misfiled_and_read`: draw the detail in place of the cause's words, and the page carries the refused format (measured); end to end in `src/enrollment_tests.rs`, `the_panes_are_served_in_each_status_as_the_box_reports`, a refused pairing report drawn by its cause and a refused drives report holding Confirm; a refused report carries no survey (`box_report::Report::Refused`), so no page reads its cards |
+| each pane a report feeds carries the report's status, read, refused, misfiled or waiting, and the drives page shows each drive's judgment on it | perturbation in `src/setup_panes_tests.rs`, `the_pairing_pages_report_is_served_waiting_refused_misfiled_and_read`, `the_drives_page_draws_the_drives_as_mounted_with_their_three_judgments` and `the_placement_page_names_a_kept_device_a_later_report_lacks`, and end to end in `src/enrollment_tests.rs`, `the_panes_are_served_in_each_status_as_the_box_reports` and `src/enrollment_tests.rs`, `the_reports_a_box_sends_feed_placement_and_confirm`: draw a waiting report healthy, and the pairing page and the end-to-end panes fail; draw the devices refused as waiting, and the placement page fails; drop the unmounted drive's judgment, or judge the state drive under at the figure, and the drives page fails (each measured) |
+| a value a report chose is drawn through the templates' escaping | perturbation in `src/setup_panes_tests.rs`, `a_value_a_report_chose_is_drawn_escaped`, and end to end in `src/enrollment_tests.rs`, `the_panes_are_served_in_each_status_as_the_box_reports`: draw the machine's product through askama's `safe` filter, and a script element stands on the page (each measured) |
+| a refused report is logged once, at its arrival, with its detail, and its log can change neither the write nor its answer | perturbation in `src/enrollment_tests.rs`, `a_refused_reports_arrival_is_logged_once_with_its_detail_escaped`: drop the line, and none is logged; log the detail in its debug form, and the escape is doubled; log at each page's read as well, and two views add lines; refuse the write where the reader refuses, and the box's report is not accepted (each measured) |
 | the base's identity is BLAKE3 over the parts in split order | perturbation in `src/hugging_face/base_identity.rs`'s tests: hash in the listing's order, or part 1 alone, and the digest differs from BLAKE3 over part 1's bytes, then part 2's (each measured) |
 | the base's identity is computed at a start that finds it owed, and once the puller verifies a decoder's pull, and is "not read" until then | perturbation in `src/setup_models_tests.rs`, `the_base_identity_is_owed_until_a_start_hashes_it` and `a_verified_pull_wakes_the_hasher`, each waiting ten seconds against the hasher's idle recheck of fifteen: let the hasher wait before its first read, and a start with no word pending leaves the identity owed; drop the puller's word at a verified pull, and the running hasher misses it; show the identity read while it is owed, and the first test names it (each measured). `a_git_kept_decoder_part_is_hashed_from_its_blob`: hash the pull's rows as read, so a part kept in git is opened under its computed SHA-256, and the identity stays owed (measured) |
 | a choice is offered only where every part stands, and its header's split count agrees with its names | perturbation in `src/hugging_face/choice.rs`'s tests and `src/setup_models_tests.rs`, `the_header_is_read_by_range_and_one_past_the_bound_is_not_read`: offer a choice with a part missing, or group parts by their stem alone, and the grouping's test fails; never see a split count the names contradict, and that choice offers a pick (each measured) |

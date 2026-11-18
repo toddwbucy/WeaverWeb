@@ -78,7 +78,10 @@ deposits first (a trace plus its state store, as a replay), then build live view
 - **No credential, box path, or security posture enters the repository.** Credentials are
   minted on the server at registration and dropped into a client's config file by an install
   script; the server keeps fingerprints and never keys. The connectors authenticate; the gate
-  and admin authorize.
+  and admin authorize. A product constant that a merged profile or format in the suite
+  repository states is not a box path (operator's ruling of 2026-11-17): the appliance
+  profile's two fixed mount points, which `weaver-survey/1` names, may stand in the code
+  and its fixtures. A real machine's paths, names and readings stay out.
 - **One privileged invocation in this repository, admin-con's sudo invoker, and nothing
   else** (operator's ruling of 2026-10-03, revising the 2026-10-02 rule of no sudo at all;
   #14, Spec 7.2). The box's strict per-agent sudo rule grants admin-con's own service user

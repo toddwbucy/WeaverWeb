@@ -106,6 +106,8 @@ pub(crate) mod hold {
         Apply,
         /// `Store::inbox_failed`, a row's back-off: its one statement.
         InboxFailed,
+        /// `Store::admit`, a hello's admission: its transaction's commit.
+        Admit,
     }
 
     #[derive(Debug, Default)]

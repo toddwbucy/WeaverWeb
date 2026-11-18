@@ -1,9 +1,10 @@
 {% extends "setup_frame.html" %}
 {% block panes %}
 {#- The drives page (Spec 6.2): the appliance's form drawn with what it
-    will show, the host's form drawn unbuilt, and the SSH keys that go down
-    by their fingerprints. The command and the drives as mounted are held,
-    each saying what it waits on, holding no input. -#}
+    will show, the drives as mounted from the drives stage's report with
+    their judgments, the host's form drawn unbuilt, and the SSH keys that go
+    down by their fingerprints. The command is held, saying what it waits
+    on, holding no input. -#}
 <section class="pane">
   <header><span class="stage"><b>1</b> Declare</span><h2>On an appliance</h2><span class="backing built">built</span><span class="status ok">ok</span><span class="source">what the drive setup lays</span></header>
   <div class="body">
@@ -34,11 +35,37 @@
   <footer>Waits on the image's setup script, which names the command.</footer>
 </section>
 <section class="pane">
-  <header><span class="stage"><b>1</b> Declare</span><h2>The drives as mounted</h2><span class="backing unbuilt">unbuilt</span><span class="status hold">hold</span></header>
+  <header><span class="stage"><b>1</b> Declare</span><h2>The drives as mounted</h2><span class="backing built">built</span><span class="status {{ drives.class() }}">{{ drives.word() }}</span><span class="source">the box's survey at the drives stage</span></header>
   <div class="body">
-  <p>The state drive and the models drive, as the box mounted them.</p>
+  {%- match drives %}
+  {%- when report::Shown::Waiting %}
+  <p>No report has arrived at the drives stage.</p>
+  {%- when report::Shown::Refused with { arrived, number, words } %}
+  <p>Arrived {{ arrived }}. Refused for cause {{ number }}: {{ words }}.</p>
+  {%- when report::Shown::Misfiled with { arrived, names } %}
+  <p>Arrived {{ arrived }}. The report kept as the drives stage's names its stage {{ names }}.</p>
+  {%- when report::Shown::Read with { arrived, body } %}
+  <p>Arrived {{ arrived }}, taken {{ body.taken }}.</p>
+  <table>
+    <thead><tr><th>Role</th><th>Mount point</th><th>Label</th><th>Filesystem</th><th>Size</th><th>Free</th><th>Project quota</th><th>Judgment</th></tr></thead>
+    <tbody>
+    {%- for drive in body.drives %}
+    <tr><td>{{ drive.role }}</td><td class="mono">{{ drive.mount_point }}</td>{% match drive.mounted %}{% when Some with (m) %}<td class="mono">{{ m.label }}</td><td>{{ m.filesystem }}</td><td>{{ m.size }}</td><td>{{ m.free }}</td><td>{{ m.project_quota }}</td>{% when None %}<td colspan="5"><span class="absent">absent</span></td>{% endmatch %}<td>{% for j in drive.judgments %}<span class="status {{ j.class }}">{{ j.word }}</span>{% if !j.words.is_empty() %} {{ j.words }}{% endif %}{% endfor %}</td></tr>
+    {%- endfor %}
+    </tbody>
+  </table>
+  {%- endmatch %}
   </div>
-  <footer>Waits on the box's report of its drives and its frame.</footer>
+  {%- match drives %}
+  {%- when report::Shown::Waiting %}
+  <footer>Waits on the box's report at the drives stage.</footer>
+  {%- when report::Shown::Refused with { arrived: _, number: _, words: _ } %}
+  <footer>Confirm holds, naming the refusal. Neither the report's text nor the refusal's detail is drawn, the detail being in the console's log.</footer>
+  {%- when report::Shown::Misfiled with { arrived: _, names: _ } %}
+  <footer>Confirm holds, naming the stage the report names.</footer>
+  {%- when report::Shown::Read with { arrived: _, body: _ } %}
+  <footer>A drive not mounted, or a state drive under 9 GiB of filesystem, holds Confirm. A models drive short of the picks' need is a warning, since the box's pull is an act of its own.</footer>
+  {%- endmatch %}
 </section>
 <section class="pane">
   <header><span class="stage"><b>1</b> Declare</span><h2>On a host</h2><span class="backing unbuilt">unbuilt</span><span class="status hold">hold</span><span class="source">the console's <code>model_cache</code></span></header>

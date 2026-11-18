@@ -205,7 +205,11 @@ impl Store {
     /// read, `not_live` where the asking credential no longer is, `no_setup`
     /// where no pairing links the row, and `setup_closed` for a confirmed
     /// setup, which never changes. The setup's row is held shared, so a
-    /// Confirm lands wholly before the report or wholly after it.
+    /// Confirm lands wholly before the report or wholly after it. **A
+    /// report the survey's reader refuses is logged once, at its arrival**,
+    /// by the setup, the stage, the cause's number and the refusal's detail
+    /// (Spec 8.3). The reader runs after the commit, so neither its result
+    /// nor the line can change the write or its answer.
     pub async fn land_report(
         &self,
         agent_id: &AgentId,
@@ -245,6 +249,15 @@ impl Store {
         .execute(&mut *tx)
         .await?;
         tx.commit().await?;
+        if let Err(refused) = crate::survey::read(report.as_bytes()) {
+            tracing::warn!(
+                setup = %setup.get::<String, _>("setup_id"),
+                stage = stage.as_str(),
+                cause = refused.cause.number(),
+                detail = %refused.detail,
+                "the survey's reader refused a setup report"
+            );
+        }
         Ok(Ok(()))
     }
 

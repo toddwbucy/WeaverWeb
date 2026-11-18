@@ -259,7 +259,7 @@ pub(crate) fn panes(page: &str) -> Vec<&str> {
 }
 
 /// The text between `open` and `close` in `s`, the first such.
-fn between<'a>(s: &'a str, open: &str, close: &str) -> Option<&'a str> {
+pub(crate) fn between<'a>(s: &'a str, open: &str, close: &str) -> Option<&'a str> {
     let start = s.find(open)? + open.len();
     Some(&s[start..start + s[start..].find(close)?])
 }

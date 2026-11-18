@@ -658,6 +658,10 @@ mod entry {
             Ok(pair) => pair,
             Err(e) => return fault(e),
         };
+        let report = match super::super::pairing_report(store, seams, setup_id).await {
+            Ok(report) => report,
+            Err(e) => return fault(e),
+        };
         let page = pairing_page(
             seams,
             session.name.clone(),
@@ -665,6 +669,7 @@ mod entry {
             frame(&setup, Page::Pairing),
             &setup,
             pair,
+            report,
         );
         match askama::Template::render(&page) {
             Ok(html) => (status, Html(html)).into_response(),

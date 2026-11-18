@@ -141,14 +141,16 @@ pub struct DriveMember {
     pub project_quota: bool,
 }
 
-fn stage_name(stage: Stage) -> &'static str {
+/// A stage by the name the format gives it.
+pub fn stage_name(stage: Stage) -> &'static str {
     match stage {
         Stage::Pairing => "pairing",
         Stage::Drives => "drives",
     }
 }
 
-fn role_name(role: Role) -> &'static str {
+/// A drive's role by the name the format gives it.
+pub fn role_name(role: Role) -> &'static str {
     match role {
         Role::State => "state",
         Role::Models => "models",
@@ -179,10 +181,21 @@ impl Report {
         }
     }
 
-    fn survey(&self) -> Option<&Survey> {
+    /// The survey, where the report is read under its own stage.
+    pub fn survey(&self) -> Option<&Survey> {
         match self {
             Report::Read { survey, .. } => Some(survey.as_ref()),
             _ => None,
+        }
+    }
+
+    /// When the report arrived, where one has.
+    pub fn arrived_at(&self) -> Option<DateTime<Utc>> {
+        match self {
+            Report::Waiting => None,
+            Report::Refused { arrived_at, .. }
+            | Report::Misfiled { arrived_at, .. }
+            | Report::Read { arrived_at, .. } => Some(*arrived_at),
         }
     }
 }
@@ -210,8 +223,19 @@ impl Reports {
     /// report's where it reads, else the `pairing` stage's, and none where
     /// neither reads.
     pub fn cards(&self) -> Option<Vec<Card>> {
-        let survey = self.drives.survey().or_else(|| self.pairing.survey())?;
-        Some(
+        self.cards_from().map(|(_, cards)| cards)
+    }
+
+    /// The cards the placement page offers, with the stage whose report
+    /// brings them.
+    pub fn cards_from(&self) -> Option<(Stage, Vec<Card>)> {
+        let (stage, survey) = match (self.drives.survey(), self.pairing.survey()) {
+            (Some(survey), _) => (Stage::Drives, survey),
+            (None, Some(survey)) => (Stage::Pairing, survey),
+            (None, None) => return None,
+        };
+        Some((
+            stage,
             survey
                 .cards
                 .iter()
@@ -222,7 +246,7 @@ impl Reports {
                     })
                 })
                 .collect(),
-        )
+        ))
     }
 
     /// **The box's members Confirm reads**, from the `drives` stage's
@@ -267,8 +291,8 @@ impl Reports {
                 } => {
                     if drive.role == Role::State && *bytes < STATE_DRIVE_FLOOR {
                         holds.push(format!(
-                            "the state drive's filesystem is {}, under 9 GiB",
-                            gib(*bytes)
+                            "the state drive's filesystem is {bytes} bytes, under 9 GiB \
+                             ({STATE_DRIVE_FLOOR} bytes)"
                         ));
                     }
                     drives.push(DriveMember {

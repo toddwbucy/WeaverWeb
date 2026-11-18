@@ -39,9 +39,9 @@ use crate::survey::{MODELS_MOUNT, STATE_MOUNT};
 
 /// What the test's box reports, each stage's report set as each test goes.
 #[derive(Default)]
-struct Reported {
-    pairing: Mutex<Option<String>>,
-    drives: Mutex<Option<String>>,
+pub(crate) struct Reported {
+    pub(crate) pairing: Mutex<Option<String>>,
+    pub(crate) drives: Mutex<Option<String>>,
 }
 
 impl BoxReports for Reported {
@@ -65,7 +65,7 @@ const EXAMPLE: &str = include_str!("../tests/fixtures/weaver-survey-1-worked-exa
 /// The format's worked example at `stage`, its cards', CPU's and machine's
 /// names made up: as written at the drives stage, and both drives not
 /// mounted at the pairing stage.
-fn report(stage: &str) -> String {
+pub(crate) fn report(stage: &str) -> String {
     let mut v: serde_json::Value = serde_json::from_str(EXAMPLE).unwrap();
     v["stage"] = serde_json::json!(stage);
     v["cards"][0]["name"] = serde_json::json!("card-a");

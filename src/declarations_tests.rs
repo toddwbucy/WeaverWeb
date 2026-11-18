@@ -3295,3 +3295,32 @@ async fn a_row_saved_with_placement_reopens_without_it_and_its_child_records_it_
     assert!(row.body.get("placement").is_none(), "{}", row.body);
     assert_eq!(row.body, base());
 }
+
+/// **A save runs from its first record to its outcome in a task the request
+/// cannot cancel** (Spec 2.13, #150): the save's request dropped while its
+/// first record is held, the save still lands, its first record answered
+/// by its `ok` outcome, and the list then names the saved row.
+///
+/// Perturbation: run step four in the request's own future
+/// (`admin::step_four` awaiting it in place), and the first write's
+/// outcome never comes.
+#[tokio::test]
+async fn a_save_dropped_at_its_first_record_still_lands() {
+    use crate::admin_tests::{dropped_at_the_hold, outcome_of};
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let app = app(s, Some(passkeys()));
+    let (person, session) = admin(&app, s, &mut authenticator(), "ada").await;
+    dropped_at_the_hold(&app, &person, &session, "/declarations", posted(&[], &[])).await;
+    assert_eq!(outcome_of(s, &person, "declaration save").await, "ok");
+    assert_eq!(count(s, "declaration").await, 1);
+    let de: String = sqlx::query_scalar("SELECT declaration_ref FROM declaration")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    let (status, _, listed) = send_as(&app, "GET", "/declarations", None, &session).await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    assert!(listed.contains(&de), "{listed}");
+}

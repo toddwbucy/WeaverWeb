@@ -1082,3 +1082,150 @@ async fn past_the_read_backs_bound_the_outcome_is_left_unwritten() {
     );
     assert!(!enabled(s, &bea).await);
 }
+
+/// **An admin's write whose request is dropped while its first record is
+/// held** (`READ_HOLD`, at `first_of`): the request is sent, held, dropped
+/// there, and the hold let go. What follows runs only where the write's
+/// step four runs apart from its request (Spec 2.13).
+pub(crate) async fn dropped_at_the_hold(
+    app: &axum::Router,
+    admin: &str,
+    session: &str,
+    uri: &str,
+    body: String,
+) {
+    let (read, release) = hold(&READ_HOLD, admin);
+    let request = tokio::spawn({
+        let (app, session, uri) = (app.clone(), session.to_owned(), uri.to_owned());
+        async move { send_as(&app, "POST", &uri, Some(body), &session).await }
+    });
+    read.notified().await;
+    request.abort();
+    let dropped = request
+        .await
+        .expect_err("the request was held, not answered");
+    assert!(
+        dropped.is_cancelled(),
+        "the request was dropped at the hold"
+    );
+    release.notify_one();
+}
+
+/// A person's identity, by their name.
+pub(crate) async fn person_named(s: &Store, name: &str) -> String {
+    sqlx::query_scalar("SELECT person_id FROM person WHERE name = $1")
+        .bind(name)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap()
+}
+
+/// **The outcome the admin's write of `action` recorded**, waited for up
+/// to ten seconds, since the write runs on past its dropped request.
+pub(crate) async fn outcome_of(s: &Store, admin: &str, action: &str) -> String {
+    let until = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let outcome: Option<String> = sqlx::query_scalar(
+            "SELECT outcome FROM audit WHERE principal = 'person' AND person_id = $1 \
+             AND action = $2 AND outcome IS NOT NULL",
+        )
+        .bind(admin)
+        .bind(action)
+        .fetch_optional(&s.pool)
+        .await
+        .unwrap();
+        if let Some(outcome) = outcome {
+            return outcome;
+        }
+        assert!(
+            tokio::time::Instant::now() < until,
+            "no outcome of {action} within ten seconds: the write went with its request"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/// **Each write to a person runs from its first record to its outcome in a
+/// task the request cannot cancel** (Spec 2.13, #150): each of the five
+/// writes' requests is dropped while its first record is held, and the
+/// write still lands, its first record answered by its `ok` outcome.
+///
+/// Perturbation: run step four in the request's own future
+/// (`admin::step_four` awaiting it in place), and the first write's
+/// outcome never comes.
+#[tokio::test]
+async fn each_write_to_a_person_dropped_at_its_first_record_still_lands() {
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let app = app(s, Some(passkeys()));
+    let (ada, session) = admin(&app, s, &mut authenticator(), "ada").await;
+
+    dropped_at_the_hold(
+        &app,
+        &ada,
+        &session,
+        "/admin/persons/enroll",
+        form(&[("name", "bea")]),
+    )
+    .await;
+    assert_eq!(outcome_of(s, &ada, "person enroll").await, "ok");
+    let bea: String = sqlx::query_scalar("SELECT person_id FROM person WHERE name = 'bea'")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    assert_eq!(audited(s, &ada, &bea, "person enroll").await, (1, 1, 0));
+
+    dropped_at_the_hold(
+        &app,
+        &ada,
+        &session,
+        "/admin/persons/token",
+        form(&[("person", &bea)]),
+    )
+    .await;
+    assert_eq!(outcome_of(s, &ada, "person token").await, "ok");
+    assert_eq!(audited(s, &ada, &bea, "person token").await, (1, 1, 0));
+
+    let v = version(s, &bea).await;
+    dropped_at_the_hold(
+        &app,
+        &ada,
+        &session,
+        "/admin/persons/disable",
+        form(&[("person", &bea), ("version", &v)]),
+    )
+    .await;
+    assert_eq!(outcome_of(s, &ada, "person disable").await, "ok");
+    assert!(!enabled(s, &bea).await, "the disable landed");
+
+    let v = version(s, &bea).await;
+    dropped_at_the_hold(
+        &app,
+        &ada,
+        &session,
+        "/admin/persons/enable",
+        form(&[("person", &bea), ("version", &v)]),
+    )
+    .await;
+    assert_eq!(outcome_of(s, &ada, "person enable").await, "ok");
+    assert!(enabled(s, &bea).await, "the enable landed");
+
+    let v = version(s, &bea).await;
+    dropped_at_the_hold(
+        &app,
+        &ada,
+        &session,
+        "/admin/persons/rename",
+        form(&[("person", &bea), ("version", &v), ("name", "beatrix")]),
+    )
+    .await;
+    assert_eq!(outcome_of(s, &ada, "person rename").await, "ok");
+    let name: String = sqlx::query_scalar("SELECT name FROM person WHERE person_id = $1")
+        .bind(&bea)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    assert_eq!(name, "beatrix", "the rename landed");
+}

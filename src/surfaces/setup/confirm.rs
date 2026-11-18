@@ -1,5 +1,6 @@
 //! conforms: web-the-deployment-tuple-refuses-any-update-or-delete-and-a-setup-is-confirmed-once
 //! conforms: web-the-members-the-box-is-laid-from-are-the-confirmed-tuples-and-none-stand-before-confirm
+//! conforms: web-an-admin-write-runs-from-its-first-record-to-its-outcome-in-a-task-the-request-cannot-cancel
 //!
 //! **The confirm page and Confirm** (Spec 6.2), a child of the setup pages'
 //! module. `GET /setup/{setup}/confirm` draws every member of the
@@ -35,7 +36,7 @@ use crate::store::admin::Refusal;
 use crate::store::audit::Target;
 use crate::store::identity::is_setup_id;
 use crate::store::tuple::{Members, Model};
-use crate::surfaces::admin::{fault, first_of, refused, settled, writer};
+use crate::surfaces::admin::{fault, first_of, refused, settled, step_four, writer};
 
 /// Confirm's action, as its audit records name it.
 const ACTION: &str = "setup confirm";
@@ -446,23 +447,27 @@ async fn confirm(
         }
         Err(e) => return fault(e),
     }
-    let first = match first_of(&store, &session, target, ACTION).await {
-        Ok(first) => first,
-        Err(answer) => return answer,
-    };
-    let written = store
-        .confirm(
-            &session.person_id,
-            session.session_id,
-            &first,
-            setup_id,
-            version,
-            &tuple_id,
-            seams.boxes.as_ref(),
-        )
-        .await;
-    settled(&store, &first, &written).await;
-    landed(written, setup_id, Page::Build)
+    let (setup_id, boxes) = (setup_id.to_owned(), seams.boxes.clone());
+    step_four(async move {
+        let first = match first_of(&store, &session, Target::Setup(&setup_id), ACTION).await {
+            Ok(first) => first,
+            Err(answer) => return answer,
+        };
+        let written = store
+            .confirm(
+                &session.person_id,
+                session.session_id,
+                &first,
+                &setup_id,
+                version,
+                &tuple_id,
+                boxes.as_ref(),
+            )
+            .await;
+        settled(&store, &first, &written).await;
+        landed(written, &setup_id, Page::Build)
+    })
+    .await
 }
 
 #[cfg(test)]

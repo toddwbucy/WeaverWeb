@@ -1343,3 +1343,43 @@ async fn at_most_four_header_reads_run_at_once() {
     let most = fake.most_in_flight.load(Ordering::SeqCst);
     assert!((2..=4).contains(&most), "{most} in flight at once");
 }
+
+/// **A pick runs from its first record to its outcome in a task the request
+/// cannot cancel** (Spec 2.13, #150): the pick's request dropped while its
+/// first record is held, the pick still lands, its first record answered
+/// by its `ok` outcome, the pull it asks runs to verified, and the page
+/// then shows the pick's record.
+///
+/// Perturbation: run step four in the request's own future
+/// (`admin::step_four` awaiting it in place), and the first write's
+/// outcome never comes.
+#[tokio::test]
+async fn a_pick_dropped_at_its_first_record_still_asks_its_pull() {
+    use crate::admin_tests::{dropped_at_the_hold, outcome_of, person_named};
+    let Some((rig, _fake, _, _cache)) = rig(true).await else {
+        return;
+    };
+    let s = rig.store();
+    let (ada, setup) = setup_of(&rig, "karl").await;
+    let person = person_named(s, "ada").await;
+    dropped_at_the_hold(
+        &rig.app,
+        &person,
+        &ada,
+        &format!("/setup/{setup}/models"),
+        pick("1", "decoder", "org/split", "m-00001-of-00002.gguf", None),
+    )
+    .await;
+    assert_eq!(outcome_of(s, &person, "setup pick").await, "ok");
+    let pull_id = pull_of(s, &setup, "decoder").await;
+    assert_eq!(ended(s, &pull_id).await, "verified", "the pick's pull ran");
+    assert_eq!(s.setup(&setup).await.unwrap().unwrap().version, 2);
+    let shown = shows(
+        &rig,
+        &format!("/setup/{setup}/models"),
+        &ada,
+        "m-00001-of-00002.gguf",
+    )
+    .await;
+    assert!(shown.contains("m-00001-of-00002.gguf"), "{shown}");
+}

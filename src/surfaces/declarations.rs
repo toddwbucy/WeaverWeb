@@ -2,6 +2,7 @@
 //! conforms: web-the-declaration-screen-reaches-no-agent-and-no-host
 //! conforms: web-a-pages-way-forward-stands-where-its-condition-holds
 //! conforms: web-a-row-saved-with-the-withdrawn-placement-reads-without-it
+//! conforms: web-an-admin-write-runs-from-its-first-record-to-its-outcome-in-a-task-the-request-cannot-cancel
 //!
 //! **The declaration screen** (Spec 6.1): the first of the two screens
 //! Declare becomes. A signed-in admin declares an agent's components, saves
@@ -49,7 +50,7 @@ use crate::store::audit::Target;
 use crate::store::declarations::{is_declaration_id, saveable};
 use crate::store::identity::Author;
 use crate::surfaces::admin::{
-    NOT_AN_ADMIN, admin_session, fault, first_of, refused, settled, writer,
+    NOT_AN_ADMIN, admin_session, fault, first_of, refused, settled, step_four, writer,
 };
 use crate::surfaces::gate::{Policy, Session};
 
@@ -486,31 +487,34 @@ async fn save(
         Ok(Err(refusal)) => return refused(&refusal),
         Err(e) => return fault(e),
     }
-    // (4) The audited write.
-    let first = match first_of(&store, &session, Target::Declaration(&de), ACTION).await {
-        Ok(first) => first,
-        Err(answer) => return answer,
-    };
-    let written = store
-        .save_declaration(
-            &session.person_id,
-            session.session_id,
-            &first,
-            &de,
-            from.as_deref(),
-            &document,
-        )
-        .await;
-    settled(&store, &first, &written).await;
-    match written {
-        Ok(Ok(())) => (
-            StatusCode::SEE_OTHER,
-            [(header::LOCATION, format!("/declarations/{de}"))],
-        )
-            .into_response(),
-        Ok(Err(refusal)) => refused(&refusal),
-        Err(e) => fault(e),
-    }
+    step_four(async move {
+        // (4) The audited write.
+        let first = match first_of(&store, &session, Target::Declaration(&de), ACTION).await {
+            Ok(first) => first,
+            Err(answer) => return answer,
+        };
+        let written = store
+            .save_declaration(
+                &session.person_id,
+                session.session_id,
+                &first,
+                &de,
+                from.as_deref(),
+                &document,
+            )
+            .await;
+        settled(&store, &first, &written).await;
+        match written {
+            Ok(Ok(())) => (
+                StatusCode::SEE_OTHER,
+                [(header::LOCATION, format!("/declarations/{de}"))],
+            )
+                .into_response(),
+            Ok(Err(refusal)) => refused(&refusal),
+            Err(e) => fault(e),
+        }
+    })
+    .await
 }
 
 /// **A document the form refused**, recorded nowhere: the screen again with

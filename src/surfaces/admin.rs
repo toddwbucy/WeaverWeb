@@ -1,4 +1,5 @@
 //! conforms: web-an-admins-write-to-a-person-is-checked-in-its-transaction
+//! conforms: web-an-admin-write-runs-from-its-first-record-to-its-outcome-in-a-task-the-request-cannot-cancel
 //!
 //! **An admin's writes to persons** (Spec 2.13; act 11, PR 5a): the page
 //! that lists every person, and enrolling, issuing a token, disabling,
@@ -254,6 +255,24 @@ pub(crate) async fn settled<T>(
     }
 }
 
+/// **Step four of an admin's write, in a task a dropped request cannot
+/// cut** (Spec 2.13, #150): its first record, the write and its outcome,
+/// for a register or a rotation the hand-over, and for a pull's cancel the
+/// puller's signal, as an entry's continuation runs (Spec 8.2). The request
+/// awaits what the task answers. The refusals of steps one to three stay in
+/// the request's own future, where a dropped request loses at most one
+/// refusal record and no act. A person's own writes, through `audit_first`,
+/// are not run so (#159).
+pub(crate) async fn step_four<F>(step: F) -> Response
+where
+    F: std::future::Future<Output = Response> + Send + 'static,
+{
+    match tokio::spawn(step).await {
+        Ok(answer) => answer,
+        Err(e) => fault(anyhow::Error::new(e)),
+    }
+}
+
 /// Back to the page, the write landed.
 pub(crate) fn landed<T>(
     written: anyhow::Result<Result<T, Refusal>>,
@@ -388,10 +407,11 @@ async fn enroll(store: Store, seams: &Seams, headers: HeaderMap, ask: EnrollAsk)
         Ok(session) => session,
         Err(answer) => return answer,
     };
-    let written = match async {
+    let token_hours = seams.token_hours;
+    step_four(async move {
         let first = match first_of(&store, &session, Target::Person(&person), ACTION).await {
             Ok(first) => first,
-            Err(answer) => return Err(answer),
+            Err(answer) => return answer,
         };
         let written = store
             .admin_enroll(
@@ -400,22 +420,17 @@ async fn enroll(store: Store, seams: &Seams, headers: HeaderMap, ask: EnrollAsk)
                 &first,
                 &person,
                 &ask.name,
-                seams.token_hours,
+                token_hours,
             )
             .await;
         settled(&store, &first, &written).await;
-        Ok(written)
-    }
+        match written {
+            Ok(Ok(issued)) => shown_once(&store, session, ask.name.trim().to_owned(), issued).await,
+            Ok(Err(refusal)) => refused(&refusal),
+            Err(e) => fault(e),
+        }
+    })
     .await
-    {
-        Ok(written) => written,
-        Err(answer) => return answer,
-    };
-    match written {
-        Ok(Ok(issued)) => shown_once(&store, session, ask.name.trim().to_owned(), issued).await,
-        Ok(Err(refusal)) => refused(&refusal),
-        Err(e) => fault(e),
-    }
 }
 
 #[derive(Deserialize)]
@@ -447,10 +462,11 @@ async fn token(store: Store, seams: &Seams, headers: HeaderMap, ask: PersonAsk) 
     if ask.person == session.person_id {
         return (StatusCode::FORBIDDEN, OWN_ROW).into_response();
     }
-    let written = match async {
+    let token_hours = seams.token_hours;
+    step_four(async move {
         let first = match first_of(&store, &session, Target::Person(&ask.person), ACTION).await {
             Ok(first) => first,
-            Err(answer) => return Err(answer),
+            Err(answer) => return answer,
         };
         let written = store
             .admin_issue_token(
@@ -458,22 +474,17 @@ async fn token(store: Store, seams: &Seams, headers: HeaderMap, ask: PersonAsk) 
                 session.session_id,
                 &first,
                 &ask.person,
-                seams.token_hours,
+                token_hours,
             )
             .await;
         settled(&store, &first, &written).await;
-        Ok(written)
-    }
+        match written {
+            Ok(Ok((issued, name))) => shown_once(&store, session, name, issued).await,
+            Ok(Err(refusal)) => refused(&refusal),
+            Err(e) => fault(e),
+        }
+    })
     .await
-    {
-        Ok(written) => written,
-        Err(answer) => return answer,
-    };
-    match written {
-        Ok(Ok((issued, name))) => shown_once(&store, session, name, issued).await,
-        Ok(Err(refusal)) => refused(&refusal),
-        Err(e) => fault(e),
-    }
 }
 
 #[derive(Deserialize)]
@@ -507,10 +518,10 @@ async fn disable(store: Store, seams: &Seams, headers: HeaderMap, ask: VersionAs
     if ask.person == session.person_id {
         return (StatusCode::FORBIDDEN, OWN_ROW).into_response();
     }
-    match async {
+    step_four(async move {
         let first = match first_of(&store, &session, Target::Person(&ask.person), ACTION).await {
             Ok(first) => first,
-            Err(answer) => return Err(answer),
+            Err(answer) => return answer,
         };
         let written = store
             .admin_disable(
@@ -522,13 +533,9 @@ async fn disable(store: Store, seams: &Seams, headers: HeaderMap, ask: VersionAs
             )
             .await;
         settled(&store, &first, &written).await;
-        Ok(written)
-    }
+        landed(written, "/admin/persons")
+    })
     .await
-    {
-        Ok(written) => landed(written, "/admin/persons"),
-        Err(answer) => answer,
-    }
 }
 
 /// **A disabled person enabled again.**
@@ -555,10 +562,10 @@ async fn enable(store: Store, seams: &Seams, headers: HeaderMap, ask: VersionAsk
     if ask.person == session.person_id {
         return (StatusCode::FORBIDDEN, OWN_ROW).into_response();
     }
-    match async {
+    step_four(async move {
         let first = match first_of(&store, &session, Target::Person(&ask.person), ACTION).await {
             Ok(first) => first,
-            Err(answer) => return Err(answer),
+            Err(answer) => return answer,
         };
         let written = store
             .admin_enable(
@@ -570,13 +577,9 @@ async fn enable(store: Store, seams: &Seams, headers: HeaderMap, ask: VersionAsk
             )
             .await;
         settled(&store, &first, &written).await;
-        Ok(written)
-    }
+        landed(written, "/admin/persons")
+    })
     .await
-    {
-        Ok(written) => landed(written, "/admin/persons"),
-        Err(answer) => answer,
-    }
 }
 
 #[derive(Deserialize)]
@@ -611,10 +614,10 @@ async fn rename(store: Store, seams: &Seams, headers: HeaderMap, ask: RenameAsk)
     if ask.person == session.person_id {
         return (StatusCode::FORBIDDEN, OWN_ROW).into_response();
     }
-    match async {
+    step_four(async move {
         let first = match first_of(&store, &session, Target::Person(&ask.person), ACTION).await {
             Ok(first) => first,
-            Err(answer) => return Err(answer),
+            Err(answer) => return answer,
         };
         let written = store
             .admin_rename(
@@ -627,13 +630,9 @@ async fn rename(store: Store, seams: &Seams, headers: HeaderMap, ask: RenameAsk)
             )
             .await;
         settled(&store, &first, &written).await;
-        Ok(written)
-    }
+        landed(written, "/admin/persons")
+    })
     .await
-    {
-        Ok(written) => landed(written, "/admin/persons"),
-        Err(answer) => answer,
-    }
 }
 
 /// A hold in a write after the surface read its admin, before the write's

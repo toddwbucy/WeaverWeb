@@ -2,6 +2,7 @@
 //! conforms: web-the-start-page-refuses-every-name-the-box-refuses
 //! conforms: web-the-pairing-page-warns-where-the-box-cannot-dial-the-link
 //! conforms: web-a-pages-way-forward-stands-where-its-condition-holds
+//! conforms: web-an-admin-write-runs-from-its-first-record-to-its-outcome-in-a-task-the-request-cannot-cancel
 //!
 //! **Declare's path: the start page and the setup pages** (Spec 6.2), an
 //! admin's, the server-wide admin grant, since a setup comes before
@@ -49,7 +50,7 @@ use crate::store::audit::Target;
 use crate::store::identity::is_setup_id;
 use crate::store::setup::{Setup, agent_name};
 use crate::surfaces::admin::{
-    NOT_AN_ADMIN, admin_session, fault, first_of, refused, settled, writer,
+    NOT_AN_ADMIN, admin_session, fault, first_of, refused, settled, step_four, writer,
 };
 use crate::surfaces::gate::{Policy, Session};
 
@@ -402,21 +403,25 @@ async fn begin(store: Store, seams: &Seams, headers: HeaderMap, ask: BeginAsk) -
         Ok(session) => session,
         Err(answer) => return answer,
     };
-    let first = match first_of(&store, &session, target, ACTION).await {
-        Ok(first) => first,
-        Err(answer) => return answer,
-    };
-    let written = store
-        .begin_setup(
-            &session.person_id,
-            session.session_id,
-            &first,
-            &setup_id,
-            name,
-        )
-        .await;
-    settled(&store, &first, &written).await;
-    landed(written, &setup_id, Page::Pairing)
+    let name = name.to_owned();
+    step_four(async move {
+        let first = match first_of(&store, &session, Target::Setup(&setup_id), ACTION).await {
+            Ok(first) => first,
+            Err(answer) => return answer,
+        };
+        let written = store
+            .begin_setup(
+                &session.person_id,
+                session.session_id,
+                &first,
+                &setup_id,
+                &name,
+            )
+            .await;
+        settled(&store, &first, &written).await;
+        landed(written, &setup_id, Page::Pairing)
+    })
+    .await
 }
 
 /// Back to the setup's page, the write landed.
@@ -481,22 +486,26 @@ async fn pairing(
         Ok(None) => return refused(&Refusal::NoSuchSetup),
         Err(e) => return fault(e),
     }
-    let first = match first_of(&store, &session, target, ACTION).await {
-        Ok(first) => first,
-        Err(answer) => return answer,
-    };
-    let written = store
-        .setup_machine(
-            &session.person_id,
-            session.session_id,
-            &first,
-            setup_id,
-            virtual_machine,
-            ask.version,
-        )
-        .await;
-    settled(&store, &first, &written).await;
-    landed(written, setup_id, Page::Pairing)
+    let setup_id = setup_id.to_owned();
+    step_four(async move {
+        let first = match first_of(&store, &session, Target::Setup(&setup_id), ACTION).await {
+            Ok(first) => first,
+            Err(answer) => return answer,
+        };
+        let written = store
+            .setup_machine(
+                &session.person_id,
+                session.session_id,
+                &first,
+                &setup_id,
+                virtual_machine,
+                ask.version,
+            )
+            .await;
+        settled(&store, &first, &written).await;
+        landed(written, &setup_id, Page::Pairing)
+    })
+    .await
 }
 
 #[derive(Template)]

@@ -1681,3 +1681,87 @@ async fn agent_version(s: &Store, id: &str) -> i64 {
         .await
         .unwrap()
 }
+
+/// **Each write to the register runs from its first record to its outcome
+/// in a task the request cannot cancel** (Spec 2.13, #150): each of the
+/// four writes' requests is dropped while its first record is held, and
+/// the write still lands, its first record answered by its `ok` outcome;
+/// a register's and a rotation's two client configs are held for the
+/// session that minted them, as the hand-over holds any.
+///
+/// Perturbation: run step four in the request's own future
+/// (`admin::step_four` awaiting it in place), and the first write's
+/// outcome never comes.
+#[tokio::test]
+async fn each_write_to_the_register_dropped_at_its_first_record_still_lands() {
+    use crate::admin_tests::{dropped_at_the_hold, outcome_of};
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (ada, session) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let handover = &rig.handover;
+    let held = |n: usize| async move {
+        let until = tokio::time::Instant::now() + Duration::from_secs(10);
+        while handover.held() != n {
+            assert!(
+                tokio::time::Instant::now() < until,
+                "{n} configs are not held: {} are",
+                handover.held()
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    };
+
+    dropped_at_the_hold(
+        &rig.app,
+        &ada,
+        &session,
+        "/admin/agents/register",
+        form(&[("box", "box-a"), ("name", "karl")]),
+    )
+    .await;
+    assert_eq!(outcome_of(s, &ada, "register").await, "ok");
+    held(2).await;
+    let id: String = sqlx::query_scalar(
+        "SELECT agent_id FROM agent WHERE box = 'box-a' AND name = 'karl' AND gate_state = 'live'",
+    )
+    .fetch_one(&s.pool)
+    .await
+    .expect("the register landed");
+
+    dropped_at_the_hold(
+        &rig.app,
+        &ada,
+        &session,
+        "/admin/agents/rotate",
+        form(&[("agent", &id)]),
+    )
+    .await;
+    assert_eq!(outcome_of(s, &ada, "rotate").await, "ok");
+    held(4).await;
+
+    dropped_at_the_hold(
+        &rig.app,
+        &ada,
+        &session,
+        "/admin/agents/revoke",
+        form(&[("agent", &id), ("plane", "gate")]),
+    )
+    .await;
+    assert_eq!(outcome_of(s, &ada, "revoke").await, "ok");
+    assert_eq!(states(s, &id).await.0, "revoked", "the revocation landed");
+
+    dropped_at_the_hold(
+        &rig.app,
+        &ada,
+        &session,
+        "/admin/agents/retire",
+        form(&[("agent", &id)]),
+    )
+    .await;
+    assert_eq!(outcome_of(s, &ada, "retire").await, "ok");
+    assert_eq!(
+        states(s, &id).await,
+        ("revoked".to_owned(), "revoked".to_owned()),
+        "the retirement landed"
+    );
+}

@@ -4146,9 +4146,9 @@ rows untouched, reached from the build page's stub for the fields no setup page 
 - Two tunable values. The placement page chooses the context length against the model's
   maximum, read from the file's header, and the six sampling values live in the prompt
   tuple, where this screen requires all eight at save.
-- The roster offered. The models page offers what the first agent needs, one decoder and
-  the one adapter on it, and extra models, adapter roles beyond the one decoder adapter
-  and a classifier-only agent are drawn and marked unbuilt.
+- The roster offered. The models page offers one decoder and at most one adapter on it,
+  and extra models, adapter roles beyond the one decoder adapter and a classifier-only
+  agent are drawn and marked unbuilt.
 
 **The store stays open.** The state mount is required for every agent (section 8.3), and
 whether the store `none` this screen offers stays is not ruled (section 10).
@@ -4714,20 +4714,21 @@ there.
 | --- | --- | --- |
 | Start | the name, refused by the start page's rule or where an open setup holds it; the open setups; New agent once an agent stands | nothing |
 | Pairing | the checkbox, virtual machine or host; the console's link address and port (`link_address`, else `link_listen`), which the box's setup asks for, and that the box must reach them; the warning where that address is a loopback address and the checkbox says virtual machine, and where it is an unspecified address, `0.0.0.0` or `::`, for a host and a virtual machine alike, since a listener binds it for every interface and it names no machine to dial (RFC 1122 admits `0.0.0.0` as a source alone, and RFC 4291 refuses `::` as a destination); the waiting boxes, each by the name it claims, its peer address and its wait, the console's fingerprint, the fingerprint's confirmation and the code's field, where the console's build serves the enrollment (section 8.2); the survey's report at the `pairing` stage, read or refused by section 8.3's reader and shown as below | nothing on the console's side; a box that dials and reports: the image's setup script |
-| Models | the repository and its revision, resolved to a commit; each choice with its size and its header's facts; a gated repository with its accept link and a check again; the pick, which asks a pull (section 2.15), an adapter's carrying its scale; the adapter's pane, `ok` with none picked, saying the agent then loads its base alone, and a picked adapter's Drop; the pulls' progress and record; the base's identity, computed from the cache; the roster beyond the first agent drawn and marked unbuilt | nothing on the console's side; the box's pull from the cache: the act of the box's pull (section 10) |
+| Models | the repository and its revision, resolved to a commit; each choice with its size and its header's facts; a gated repository with its accept link and a check again; the pick, which asks a pull (section 2.15), an adapter's carrying its scale; the adapter's pane, `ok` with none picked, saying the agent then loads its base alone, and a picked adapter's Drop; the pulls' progress and record; the base's identity, computed from the cache; the roster beyond one decoder and its one adapter drawn and marked unbuilt | nothing on the console's side; the box's pull from the cache: the act of the box's pull (section 10) |
 | Drives | the appliance's form drawn with what it will show; the models drive's need, the bytes of the picks' distinct blobs; the drives as mounted, from the `drives` stage's report, with the judgments below; the host's form drawn and marked unbuilt, its models directory prefilled from `model_cache` where set; the SSH key that goes down, by its fingerprint, with a link to change it | the command that starts the drive setup: the image's setup script names it |
 | Placement | the context length, bounded below by the box's max-tokens-per-turn and above by the header's maximum; the turn context; the block count and the parts in shard order, from the header; the devices, a set of the reported cards by ordinal, held until a report brings them | the fit, drawn "planned, from the box's room plan": the room plan's answer over TLS, an ask on WeaverAgent |
 | Confirm | every member of the tuple with its source, read or held, the box's members from the `drives` stage's report; where no adapter is picked, "none picked: the agent loads its base alone" in the adapter's place, and no scale row | nothing on the console's side; Confirm stands only once every member is read, the box's members once the box reports its drives |
 | Build | one pane, marked unbuilt, saying the box lays the agent from the tuple once Confirm stands, and linking the declaration screen as built for the fields no setup page asks | the board and the prompt tuple panel, held by the rulings |
 
-**The models page's roster is the first agent's**: one decoder and one adapter on it.
-Extra models, adapter roles beyond the one decoder adapter, a classifier-only agent and
-placement on the CPU are drawn and marked unbuilt, never live, and a post that names
-any of them is refused, saving nothing. A pick for a role the setup holds replaces that
-role's row, and the files the earlier pick pulled stay in the cache. **An adapter's pick
-carries its scale**, a finite number with no default, as the adapter binding's ADP-1 at
-WeaverAgent's `6b91747e` admits it: a pick without one, or with one that is not finite,
-is refused, saving nothing.
+**The models page's roster is one decoder and at most one adapter on it**, the adapter
+optional, on the operator's ruling of 2026-11-18. Extra models, adapter roles beyond the
+one decoder adapter, a classifier-only agent and placement on the CPU are drawn and
+marked unbuilt, never live, and a post that names any of them is refused, saving
+nothing. A pick for a role the setup holds replaces that role's row, and the files the
+earlier pick pulled stay in the cache. **An adapter's pick carries its scale**, a finite
+number with no default, as the adapter binding's ADP-1 at WeaverAgent's `6b91747e`
+admits it: a pick without one, or with one that is not finite, is refused, saving
+nothing.
 
 **The adapter is optional**, on the operator's ruling of 2026-11-18, within the scope of
 the ruling of 2026-11-16: at most one adapter, from Hugging Face alone. A setup with no
@@ -7555,7 +7556,7 @@ two connectors report.
 | every pane of every setup page carries a stage, a backing and a status word, and a held pane names what it waits on with no input holding a value | test in `src/setup_tests.rs`, `every_pane_carries_its_stage_backing_and_status`, walking every page's rendered panes in each state it draws, and `src/setup_place_tests.rs` walking the placement and confirm pages in each of theirs: drop a pane's status mark from a template, or fill a held pane's input, and the walk names the pane (both measured); judge a pane's text areas together, and an empty one masks another that holds a value (measured); the walk's own perturbations run on every build in `the_walk_names_a_pane_without_a_status_or_with_a_filled_input` |
 | the start page refuses every name admin's name rule or the box's agent-creation rule refuses | perturbation in `src/setup_tests.rs`, one case per clause, each refused and opening no setup: an uppercase letter, a `-`, a `_`, a leading digit, one character, seventeen characters, and each of the two names `weaver-admin-Spec` section 4 reserves whole, which the character rule admits; a name of sixteen characters opens one. Drop a clause from the page's rule and its case meets the store's CHECK, which holds the same rule, and answers as a fault rather than a refusal; drop it from the CHECK too and its case opens a setup (each clause measured from the page, the reserved names from both). A name ending in one of section 4's reserved suffixes carries a `-`, so the character rule refuses it |
 | the pairing page warns where the console's link address is a loopback address and the checkbox says virtual machine, and where it is an unspecified address, for a host and a virtual machine alike | perturbation in `src/setup_tests.rs`, `the_loopback_warning_shows_for_a_virtual_machine_alone` and `the_unspecified_warning_shows_for_a_host_and_a_virtual_machine`, and in `src/surfaces/setup.rs`'s tests, `the_link_address_is_read_for_its_port_its_loopback_and_unspecified`: draw the loopback warning for a host too, and the host's page warns; drop the unspecified check, or drop its paragraph from the template, and `link_listen` at `0.0.0.0` with no `link_address` draws no warning; draw it for a virtual machine alone, and the host's page draws none; read `link_listen` over `link_address`, and a `link_address` the box reaches beside it warns; take IPv4's unspecified address alone, and `::` draws none (each measured) |
-| a crafted post naming a second model, a second adapter role or the CPU is refused, saving nothing | perturbation in `src/setup_models_tests.rs`, `a_crafted_pick_is_refused_saving_nothing`, against a fake Hugging Face that counts every request, and in `src/surfaces/setup/models.rs`'s tests: take a field the pick does not take, or a field given twice, and a crafted pick is no longer refused by its shape (each measured) |
+| a crafted post naming a second model, a second adapter role or the CPU is refused, saving nothing | perturbation in `src/setup_models_tests.rs`, `a_crafted_pick_is_refused_saving_nothing`, against a fake Hugging Face that counts every request, and in `src/surfaces/setup/models.rs`'s tests: take a field the pick does not take, or a field given twice, and a crafted pick is no longer refused by its shape (each measured). The same test holds a role beyond the roster and a field the pick does not take to their refusals' words, which name the roster as one decoder and at most one adapter on it and no one agent's |
 | a pick asks Hugging Face only after the admin gate | perturbation in `src/setup_models_tests.rs`, `a_pick_asks_hugging_face_only_after_the_admin_gate`, against the fake: read the listing before the gate, and the fake counts a request from a person holding no admin grant (measured) |
 | the GGUF reader refuses a length or a count past its buffer, a header cut short and a header past its bound, without a panic or an unbounded allocation, keeps no fact past its bounds, and refuses a named fact of the wrong kind | perturbation in `src/gguf.rs`'s tests: allocate a string's claimed length before checking it against the bytes held, and the test process aborts on an allocation of 2^63 - 1 bytes; drop an array's room check, and the hostile header's test fails; let an array of arrays nest deeper, and the nesting test fails; drop the kept string's bound or the kept list's, or keep a fact under any prefix, and `a_kept_fact_past_its_bound_is_refused` fails; drop a named fact of the wrong kind as absent, and `a_named_fact_of_the_wrong_kind_is_refused` and `src/setup_models_tests.rs`'s `a_named_fact_of_the_wrong_kind_refuses_the_pick` fail (each measured) |
 | a context length above the header's maximum is refused | perturbation in `src/setup_place_tests.rs`, `a_context_length_above_the_headers_maximum_is_refused_and_one_at_it_kept`: drop the bound, and a context length past the maximum is kept (measured) |
@@ -8181,7 +8182,7 @@ a `web-` assertion beside `weaver-admin`'s.
   identity the console computes pins a box's files to the console's pull and does not
   show that the adapter was converted against that base. An adapter's repository that
   declared the identity it was converted against could be compared with it at the pick,
-  and no repository the first agent uses declares one. Open: whether and where an
+  and no repository met so far declares one. Open: whether and where an
   adapter declares it. Settled by the operator.
 - **The laying's three members, opened 2026-11-16** (section 6.2). The box's
   agent-creation tool at WeaverAgent's `6b91747e` takes the artifact, the adapter's four

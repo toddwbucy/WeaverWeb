@@ -60,6 +60,8 @@ mod reading_tests;
 #[cfg(all(test, feature = "passkeys"))]
 mod setup_models_tests;
 #[cfg(all(test, feature = "passkeys"))]
+mod setup_panes_tests;
+#[cfg(all(test, feature = "passkeys"))]
 mod setup_place_tests;
 #[cfg(all(test, feature = "passkeys"))]
 mod setup_tests;

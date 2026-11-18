@@ -57,6 +57,7 @@ mod confirm;
 mod models;
 mod pair;
 mod placement;
+mod report;
 
 pub use pair::Enrollment;
 
@@ -517,9 +518,22 @@ struct PairingPage {
     unspecified_warning: bool,
     /// The waiting box's pane, the enrollment's parts (Spec 8.2).
     pair: pair::PairPane,
+    /// The `pairing` stage's report (Spec 6.2).
+    report: report::Shown<report::PairingBody>,
 }
 
-/// The pairing page as drawn, the waiting box's pane given.
+/// **The `pairing` stage's report as its pane draws it** (Spec 6.2), read
+/// through the `boxes` seam. A store that fails to answer is an error.
+async fn pairing_report(
+    store: &Store,
+    seams: &Seams,
+    setup_id: &str,
+) -> anyhow::Result<report::Shown<report::PairingBody>> {
+    let reports = store.reports(seams.boxes.as_ref(), setup_id).await?;
+    Ok(report::Shown::of(&reports.pairing, report::PairingBody::of))
+}
+
+/// The pairing page as drawn, the waiting box's pane and the report given.
 fn pairing_page(
     seams: &Seams,
     who: String,
@@ -527,6 +541,7 @@ fn pairing_page(
     frame: Frame,
     setup: &Setup,
     pair: pair::PairPane,
+    report: report::Shown<report::PairingBody>,
 ) -> PairingPage {
     let link = link_of(seams.cfg.link_address());
     PairingPage {
@@ -541,6 +556,7 @@ fn pairing_page(
         unspecified_warning: link.unspecified,
         link,
         pair,
+        report,
     }
 }
 
@@ -557,12 +573,18 @@ struct DrivesPage {
     model_cache: Option<String>,
     /// The models drive's need, where a model is picked.
     need: Option<Need>,
+    /// The drives as mounted, from the `drives` stage's report, judged
+    /// (Spec 6.2).
+    drives: report::Shown<report::DrivesBody>,
 }
 
 /// **The models drive's need** (Spec 6.2): the bytes of every pick's
 /// distinct blobs, a blob two paths share counted once.
 struct Need {
+    /// The bytes, as a person reads them.
     bytes: String,
+    /// The bytes, counted.
+    total: u64,
     blobs: usize,
     picks: usize,
 }
@@ -597,6 +619,7 @@ async fn need(store: &Store, setup_id: &str) -> anyhow::Result<Option<Need>> {
     let (bytes, blobs) = distinct_blobs(files.iter().map(|(r, f)| (r.as_str(), f)));
     Ok(Some(Need {
         bytes: crate::surfaces::hugging_face::bytes(bytes),
+        total: bytes,
         blobs,
         picks: rows.len(),
     }))
@@ -636,13 +659,18 @@ async fn page(
                 Ok(pair) => pair,
                 Err(e) => return fault(e),
             };
-            pairing_page(seams, who, chrome, frame, &setup, pair).render()
+            let report = match pairing_report(&store, seams, setup_id).await {
+                Ok(report) => report,
+                Err(e) => return fault(e),
+            };
+            pairing_page(seams, who, chrome, frame, &setup, pair, report).render()
         }
         Page::Drives => {
-            let (keys, need) = match async {
+            let (keys, need, reports) = match async {
                 Ok::<_, anyhow::Error>((
                     crate::surfaces::ssh_key::held(&store).await?,
                     need(&store, setup_id).await?,
+                    store.reports(seams.boxes.as_ref(), setup_id).await?,
                 ))
             }
             .await
@@ -650,6 +678,15 @@ async fn page(
                 Ok(read) => read,
                 Err(e) => return fault(e),
             };
+            let drives = report::Shown::of(&reports.drives, |survey| {
+                report::DrivesBody::of(
+                    survey,
+                    need.as_ref().map(|need| report::NeedOf {
+                        bytes: need.total,
+                        shown: &need.bytes,
+                    }),
+                )
+            });
             DrivesPage {
                 here: "declarations",
                 who,
@@ -663,6 +700,7 @@ async fn page(
                     .as_ref()
                     .map(|p| p.display().to_string()),
                 need,
+                drives,
             }
             .render()
         }

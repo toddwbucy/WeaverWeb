@@ -36,6 +36,7 @@ use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
 
 use super::{Frame, MALFORMED_SETUP, Page, Seams, admin_read, frame, landed};
+use crate::box_report::{Report, Reports, stage_name};
 use crate::gguf::Header;
 use crate::store::Store;
 use crate::store::admin::Refusal;
@@ -43,6 +44,7 @@ use crate::store::audit::Target;
 use crate::store::identity::is_setup_id;
 use crate::store::setup::{MAX_TOKENS_PER_TURN, Placement, SetupModel};
 use crate::surfaces::admin::{fault, first_of, refused, settled, writer};
+use crate::survey::Stage;
 
 /// The save's action, as its audit records name it.
 const ACTION: &str = "setup placement";
@@ -123,6 +125,91 @@ struct CardView {
     checked: bool,
 }
 
+/// **The devices pane's status** (Spec 6.2): read from the report that
+/// brings the cards, else refused, misfiled or waiting; each report ahead of
+/// it that does not read, named; and each kept device the cards lack.
+struct DevicesView {
+    class: &'static str,
+    word: &'static str,
+    source: &'static str,
+    notes: Vec<String>,
+    lacking: Vec<i32>,
+}
+
+/// A stage's report that does not read, as the devices pane names it.
+fn unread(stage: Stage, report: &Report) -> Option<String> {
+    let stage = stage_name(stage);
+    match report {
+        Report::Refused { refused, .. } => Some(format!(
+            "The {stage} stage's report is refused for cause {}: {}.",
+            refused.cause.number(),
+            refused.cause.words()
+        )),
+        Report::Misfiled { names, .. } => Some(format!(
+            "The report kept as the {stage} stage's names its stage {}.",
+            stage_name(*names)
+        )),
+        Report::Waiting | Report::Read { .. } => None,
+    }
+}
+
+impl DevicesView {
+    /// The devices pane's status from `reports`, the cards from the stage
+    /// `from`, and the devices `kept`.
+    fn of(reports: &Reports, from: Option<(Stage, &[i32])>, kept: &[i32]) -> DevicesView {
+        match from {
+            Some((stage, ordinals)) => DevicesView {
+                class: "ok",
+                word: "read",
+                source: match stage {
+                    Stage::Drives => "the drives stage's report",
+                    Stage::Pairing => "the pairing stage's report",
+                },
+                notes: match stage {
+                    Stage::Drives => Vec::new(),
+                    Stage::Pairing => unread(Stage::Drives, &reports.drives)
+                        .map(|note| format!("{note} The cards are the pairing stage's."))
+                        .into_iter()
+                        .collect(),
+                },
+                lacking: kept
+                    .iter()
+                    .copied()
+                    .filter(|n| !ordinals.contains(n))
+                    .collect(),
+            },
+            None => {
+                let refused = [&reports.drives, &reports.pairing]
+                    .iter()
+                    .any(|r| matches!(r, Report::Refused { .. }));
+                let misfiled = [&reports.drives, &reports.pairing]
+                    .iter()
+                    .any(|r| matches!(r, Report::Misfiled { .. }));
+                let (class, word) = if refused {
+                    ("fail", "refused")
+                } else if misfiled {
+                    ("fail", "misfiled")
+                } else {
+                    ("hold", "waiting")
+                };
+                DevicesView {
+                    class,
+                    word,
+                    source: "the box's reports",
+                    notes: [
+                        unread(Stage::Drives, &reports.drives),
+                        unread(Stage::Pairing, &reports.pairing),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .collect(),
+                    lacking: Vec::new(),
+                }
+            }
+        }
+    }
+}
+
 /// The model's layers, from the decoder's header and pick.
 struct LayersView {
     blocks: String,
@@ -145,6 +232,7 @@ struct PlacementPage {
     turn_contexts: [&'static str; 2],
     /// The survey's cards, where the survey has reported.
     cards: Option<Vec<CardView>>,
+    devices: DevicesView,
     layers: Option<LayersView>,
 }
 
@@ -228,7 +316,18 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, setup_id: &str) -
         Ok(reports) => reports,
         Err(e) => return fault(e),
     };
-    let cards = reports.cards().map(|cards| {
+    let from = reports.cards_from();
+    let ordinals: Option<Vec<i32>> = from
+        .as_ref()
+        .map(|(_, cards)| cards.iter().map(|c| c.ordinal).collect());
+    let devices = DevicesView::of(
+        &reports,
+        from.as_ref()
+            .zip(ordinals.as_deref())
+            .map(|((stage, _), ordinals)| (*stage, ordinals)),
+        &kept,
+    );
+    let cards = from.map(|(_, cards)| {
         cards
             .into_iter()
             .map(|c| CardView {
@@ -250,6 +349,7 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, setup_id: &str) -
         turn: setup.turn_context.clone().unwrap_or_default(),
         turn_contexts: TURN_CONTEXTS,
         cards,
+        devices,
         layers,
     }
     .render();

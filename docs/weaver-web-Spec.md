@@ -7297,15 +7297,15 @@ server's own asks are `show` alone (section 2.13), and `load` is asked only for 
 whose grant carries it, through the page, so nothing in this crate starts an agent at an
 admission. How an appliance's connector instances come to be enabled after its
 enrollment, since the image enables none (section 8.1), is section 10's. **State is
-transferable, and an upgrade moves state and model**, on the same ruling. **The first
-production agent declares a store and keeps the system prompt**, on the operator's
-rulings of 2026-11-16 (setup pages), which supersede the ruling of 2026-11-15 that put
-state and save points on an appliance out of scope: it keeps the save point the unload
-writes, on the state disk, by the existing save point path, and operator-managed save
-points stay out of scope. Reproducibility is claimed within one version on one hardware
-set. Nothing is claimed about it across versions. How the console shows an upgrade as a
-change of the deployment tuple, and what lets the operator tell a stopped service from a
-machine that is down, are section 10's.
+transferable, and an upgrade moves state and model**, on the same ruling. **State is in
+scope on an appliance**, on the operator's rulings of 2026-11-16 (setup pages), which
+supersede the ruling of 2026-11-15 that put state and save points on an appliance out of
+scope. An agent may declare a store, and one that does keeps the save point the unload
+writes, on the state disk, which every agent mounts, by the existing save point path.
+Operator-managed save points stay out of scope. Reproducibility is claimed within one
+version on one hardware set. Nothing is claimed about it across versions. How the
+console shows an upgrade as a change of the deployment tuple, and what lets the operator
+tell a stopped service from a machine that is down, are section 10's.
 
 **The trace's destination.** The charter's requirement is a field of the declaration
 screen, set when the agent is created, naming where the agent hands its trace: a file,
@@ -8081,10 +8081,10 @@ a `web-` assertion beside `weaver-admin`'s.
   shipped. The record of an upgrade is WeaverAgent's, an ask upstream, held. Open: how
   the console shows it. Settled by the act that reads WeaverAgent's member once it is
   written. State and save points on an appliance were later, on the operator's ruling of
-  2026-11-15. The operator's rulings of 2026-11-16 (setup pages) supersede it: the first
-  production agent declares a store and keeps the system prompt, and it keeps the save
-  point the unload writes, on the state disk. Whether the record of an upgrade is taken
-  up with it is not ruled.
+  2026-11-15. The operator's rulings of 2026-11-16 (setup pages) supersede it: state is
+  in scope on an appliance, and an agent that declares a store keeps the save point the
+  unload writes, on the state disk, which every agent mounts. Whether the record of an
+  upgrade is taken up with it is not ruled.
 - **A stopped service against a machine that is down, opened 2026-11-15** (section 8.3).
   Open: what the appliance exposes so that the operator can tell the two apart, an ask
   upstream (`weaver-web-PRD` section 8), and how the console shows it. Settled when the

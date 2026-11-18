@@ -4740,8 +4740,12 @@ recording nothing. The write deletes the adapter's row under the version check, 
 version answering 409 after the first record, as every admin write's does, and its step
 four runs in the task, and under the bound, that every admin write's runs in (section
 2.13). A confirmed setup's model rows refuse the delete at the store too, by the trigger
-below. The files the dropped pick pulled stay in the cache, as a replaced pick's do, and
-a pull of them still running runs on, shown with its cancel on the account's page
+below. A pull of the dropped pick's files still running runs on, shown with its cancel
+on the account's page (section 2.15). The dropped pick's files stay in the console's
+cache as every pulled file does, a replaced pick's too, nothing removing them, and are
+laid nowhere, since the laying reads the tuple and `describe`'s `models` the setup's
+picks. A later pick of the same adapter asks a pull that finds each blob standing,
+records it found and fetches nothing, and resumes a cancelled pull's partial by range
 (section 2.15). Only the adapter's pick is dropped, since every tuple holds a decoder.
 
 **A choice is a model, not a file.** Files named `<stem>-NNNNN-of-MMMMM.gguf` with one

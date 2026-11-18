@@ -72,6 +72,9 @@ pub mod stage;
 mod stage_tests;
 pub mod store;
 pub mod surfaces;
+pub mod survey;
+#[cfg(test)]
+mod survey_tests;
 #[cfg(test)]
 mod timeouts_tests;
 pub mod traceview;

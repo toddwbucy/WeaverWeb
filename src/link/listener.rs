@@ -836,6 +836,10 @@ struct Inner {
     /// `HELLO_ANSWER_SECS`, none where 0.
     #[cfg(test)]
     hello_answer_ms: AtomicU64,
+    /// A lever on a connection's task: the next one starts this many
+    /// milliseconds after its accept, none where 0.
+    #[cfg(test)]
+    start_late_ms: AtomicU64,
     /// And on a verb's outcome: the next one waits this long first.
     #[cfg(test)]
     delay_next_outcome: Mutex<Option<Duration>>,
@@ -1007,6 +1011,8 @@ impl Listener {
                 #[cfg(test)]
                 hello_answer_ms: AtomicU64::new(0),
                 #[cfg(test)]
+                start_late_ms: AtomicU64::new(0),
+                #[cfg(test)]
                 delay_next_outcome: Mutex::new(None),
                 #[cfg(test)]
                 pauses: Mutex::new(Vec::new()),
@@ -1018,8 +1024,18 @@ impl Listener {
         let weak = Arc::downgrade(&listener.inner);
         let accept = tokio::spawn(async move {
             loop {
-                let (stream, peer) = match tcp.accept().await {
-                    Ok(x) => x,
+                let (stream, accepted) = match tcp.accept().await {
+                    // **The accept's instant is taken here**, not where the
+                    // connection's task starts (Spec 8, 8.3): both deadlines
+                    // run from it.
+                    Ok((stream, peer)) => (
+                        stream,
+                        Accepted {
+                            peer,
+                            at: tokio::time::Instant::now(),
+                            dialed: std::time::Instant::now(),
+                        },
+                    ),
                     Err(e) => {
                         tracing::error!("link accept failed: {e}");
                         tokio::time::sleep(Duration::from_secs(1)).await;
@@ -1029,12 +1045,15 @@ impl Listener {
                 let Some(inner) = weak.upgrade() else { return };
                 let mut set = inner.connections.lock().unwrap();
                 if inner.closed.load(Ordering::Acquire) {
-                    tracing::info!("link from {peer}: the listener is closing, refused");
+                    tracing::info!(
+                        "link from {}: the listener is closing, refused",
+                        accepted.peer
+                    );
                     drop(stream);
                     continue;
                 }
                 while set.try_join_next().is_some() {}
-                set.spawn(serve_connection(inner.clone(), stream, peer));
+                set.spawn(serve_connection(inner.clone(), stream, accepted));
             }
         });
 
@@ -1352,6 +1371,15 @@ impl Listener {
         self.inner
             .setup_answer_ms
             .store(bound.as_millis() as u64, Ordering::Relaxed);
+    }
+
+    /// A test's lever: the next connection's task starts `late` after its
+    /// accept, as a busy runtime would start it.
+    #[cfg(test)]
+    pub fn start_next_late(&self, late: Duration) {
+        self.inner
+            .start_late_ms
+            .store(late.as_millis() as u64, Ordering::Relaxed);
     }
 
     /// A test's lever: the hello answer bound, shortened from
@@ -3634,9 +3662,27 @@ async fn serve_setup(
     }
 }
 
-async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr) {
-    let dialed = std::time::Instant::now();
-    let accepted = tokio::time::Instant::now();
+/// **A connection as the accept loop took it**: its peer and the instants
+/// of its accept, from which its deadlines run.
+struct Accepted {
+    peer: SocketAddr,
+    at: tokio::time::Instant,
+    dialed: std::time::Instant,
+}
+
+async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, accepted: Accepted) {
+    let Accepted {
+        peer,
+        at: accepted,
+        dialed,
+    } = accepted;
+    #[cfg(test)]
+    {
+        let late = inner.start_late_ms.swap(0, Ordering::Relaxed);
+        if late > 0 {
+            tokio::time::sleep(Duration::from_millis(late)).await;
+        }
+    }
     let handshake_by = accepted + Duration::from_secs(HANDSHAKE_SECS);
     // **A setup ask's one deadline is made at the accept** (Spec 8.3): the
     // box writes its frame once its handshake completes, so the handshake
@@ -4044,20 +4090,26 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, peer: SocketAddr
             return;
         }
         Err(e) => {
-            // The install closure may have run before the write failed:
-            // the entry comes out under the lock, so the map agrees with
-            // the row that rolled back.
             tracing::error!("link from {peer}: admission could not be written: {e:#}");
-            // Never admitted, so no contact was had to lose.
-            inner.remove_after_error(&key, incarnation, &|| {}).await;
-            // The commit may have landed before its answer was lost, leaving
-            // the row connected under this incarnation with no socket: an
-            // incarnation-bound teardown is deferred to the reconciliation,
-            // which writes disconnected where the row names this incarnation
-            // and drops the entry where it does not.
+            // **A failed admission is refused as one past its deadline is**
+            // (Spec 8): the install may have run before the write failed, and
+            // its entry comes out at once, without the row's lock, since the
+            // store has just failed to answer and the lock could hold the
+            // refusal past the connector's bound. Never admitted, so no
+            // contact was had to lose. The commit may have landed before its
+            // answer was lost, leaving the row connected under this
+            // incarnation with no socket: an incarnation-bound teardown is
+            // deferred to the reconciliation, which writes disconnected where
+            // the row names this incarnation and drops the entry where it
+            // does not.
+            if installed.load(Ordering::Relaxed) && inner.remove_if_mine(&key, incarnation) {
+                tracing::error!(
+                    "{} ({plane}): the admission's entry removed without the row's lock, its write failed",
+                    agent.agent_id
+                );
+            }
             inner.defer_teardown(agent.agent_id.clone(), plane, incarnation);
-            drop(tx);
-            drain_writer(writer).await;
+            refuse(tx, writer, Refusal::StoreUnavailable).await;
             return;
         }
     }

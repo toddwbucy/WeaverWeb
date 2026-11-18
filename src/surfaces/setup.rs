@@ -404,7 +404,7 @@ async fn begin(store: Store, seams: &Seams, headers: HeaderMap, ask: BeginAsk) -
         Err(answer) => return answer,
     };
     let name = name.to_owned();
-    step_four(async move {
+    step_four(&seams.policy, async move {
         let first = match first_of(&store, &session, Target::Setup(&setup_id), ACTION).await {
             Ok(first) => first,
             Err(answer) => return answer,
@@ -487,7 +487,7 @@ async fn pairing(
         Err(e) => return fault(e),
     }
     let setup_id = setup_id.to_owned();
-    step_four(async move {
+    step_four(&seams.policy, async move {
         let first = match first_of(&store, &session, Target::Setup(&setup_id), ACTION).await {
             Ok(first) => first,
             Err(answer) => return answer,

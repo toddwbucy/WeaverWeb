@@ -2599,9 +2599,14 @@ async fn a_commit_whose_answer_was_lost_is_read_back_and_published() {
     );
 }
 
-/// **An admission whose commit's answer was lost is reconciled**: the row
-/// was left connected under an incarnation with no socket, and the deferred
-/// teardown writes it disconnected once the store answers.
+/// **An admission whose commit's answer was lost is refused and
+/// reconciled**: the hello is refused `store_unavailable`, as one past its
+/// deadline is, with no entry left for the credential. The row was left
+/// connected under an incarnation with no socket, and the deferred teardown
+/// writes it disconnected once the store answers.
+///
+/// Perturbation: close without the refusal, as the arm did before, and the
+/// connector reads a close where it waited for a typed answer.
 #[tokio::test]
 async fn an_admission_whose_answer_was_lost_is_reconciled() {
     let Some(lab) = Lab::open().await else { return };
@@ -2617,10 +2622,7 @@ async fn an_admission_whose_answer_was_lost_is_reconciled() {
         capabilities: None,
     })
     .await;
-    assert!(
-        fake.closed().await,
-        "the admission that lost its answer closes"
-    );
+    fake.expect_refusal(Refusal::StoreUnavailable).await;
     assert!(!lab.listener.connected(&karl.id, Plane::Gate));
     lab.wait_for(&karl.id, "gate reconciled to disconnected", |a| {
         !a.gate.connected

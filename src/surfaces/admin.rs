@@ -1,5 +1,6 @@
 //! conforms: web-an-admins-write-to-a-person-is-checked-in-its-transaction
 //! conforms: web-an-admin-write-runs-from-its-first-record-to-its-outcome-in-a-task-the-request-cannot-cancel
+//! conforms: web-an-admin-writes-step-four-is-bounded-from-its-place-to-its-commit-and-never-commits-past-it
 //!
 //! **An admin's writes to persons** (Spec 2.13; act 11, PR 5a): the page
 //! that lists every person, and enrolling, issuing a token, disabling,
@@ -263,14 +264,59 @@ pub(crate) async fn settled<T>(
 /// the request's own future, where a dropped request loses at most one
 /// refusal record and no act. A person's own writes, through `audit_first`,
 /// are not run so (#159).
-pub(crate) async fn step_four<F>(step: F) -> Response
+///
+/// **Step four is bounded from its place to its commit** by the policy's
+/// `write_bound`, the silence bound, under [`crate::deadline::before`], which
+/// never polls the write at or past its deadline: a step still waiting
+/// there is dropped where it stands, its transaction never committed and
+/// its connection back in the pool, and the request is answered that the
+/// write was not made. A dropped request's write can then land at most
+/// one bound after its place, never after a retry made later than that.
+/// No outcome is written past the deadline, so its first record stands
+/// with none, as a crash leaves one.
+pub(crate) async fn step_four<F>(policy: &Policy, step: F) -> Response
 where
     F: std::future::Future<Output = Response> + Send + 'static,
 {
-    match tokio::spawn(step).await {
+    let deadline = tokio::time::Instant::now() + write_bound(policy);
+    let bounded = async move {
+        #[cfg(test)]
+        crate::deadline::hold::bound(crate::deadline::hold::Point::AdminWrite, deadline);
+        match crate::deadline::before(step, deadline).await {
+            Ok(answer) => answer,
+            Err(crate::deadline::Passed) => {
+                tracing::error!(
+                    "an admin's write did not commit within its bound and was dropped unsent"
+                );
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "the store did not answer within the write's bound, so the write was not made; try again",
+                )
+                    .into_response()
+            }
+        }
+    };
+    match tokio::spawn(bounded).await {
         Ok(answer) => answer,
         Err(e) => fault(anyhow::Error::new(e)),
     }
+}
+
+/// The bound step four is placed under: the policy's, or a test's shorter
+/// one set on its thread.
+fn write_bound(policy: &Policy) -> std::time::Duration {
+    #[cfg(test)]
+    if let Some(bound) = WRITE_BOUND_FOR_TEST.with(|b| b.get()) {
+        return bound;
+    }
+    policy.write_bound
+}
+
+#[cfg(test)]
+thread_local! {
+    /// A test's shorter step-four bound, read where step four is placed.
+    pub(crate) static WRITE_BOUND_FOR_TEST: std::cell::Cell<Option<std::time::Duration>> =
+        const { std::cell::Cell::new(None) };
 }
 
 /// Back to the page, the write landed.
@@ -408,7 +454,7 @@ async fn enroll(store: Store, seams: &Seams, headers: HeaderMap, ask: EnrollAsk)
         Err(answer) => return answer,
     };
     let token_hours = seams.token_hours;
-    step_four(async move {
+    step_four(&seams.policy, async move {
         let first = match first_of(&store, &session, Target::Person(&person), ACTION).await {
             Ok(first) => first,
             Err(answer) => return answer,
@@ -463,7 +509,7 @@ async fn token(store: Store, seams: &Seams, headers: HeaderMap, ask: PersonAsk) 
         return (StatusCode::FORBIDDEN, OWN_ROW).into_response();
     }
     let token_hours = seams.token_hours;
-    step_four(async move {
+    step_four(&seams.policy, async move {
         let first = match first_of(&store, &session, Target::Person(&ask.person), ACTION).await {
             Ok(first) => first,
             Err(answer) => return answer,
@@ -518,7 +564,7 @@ async fn disable(store: Store, seams: &Seams, headers: HeaderMap, ask: VersionAs
     if ask.person == session.person_id {
         return (StatusCode::FORBIDDEN, OWN_ROW).into_response();
     }
-    step_four(async move {
+    step_four(&seams.policy, async move {
         let first = match first_of(&store, &session, Target::Person(&ask.person), ACTION).await {
             Ok(first) => first,
             Err(answer) => return answer,
@@ -562,7 +608,7 @@ async fn enable(store: Store, seams: &Seams, headers: HeaderMap, ask: VersionAsk
     if ask.person == session.person_id {
         return (StatusCode::FORBIDDEN, OWN_ROW).into_response();
     }
-    step_four(async move {
+    step_four(&seams.policy, async move {
         let first = match first_of(&store, &session, Target::Person(&ask.person), ACTION).await {
             Ok(first) => first,
             Err(answer) => return answer,
@@ -614,7 +660,7 @@ async fn rename(store: Store, seams: &Seams, headers: HeaderMap, ask: RenameAsk)
     if ask.person == session.person_id {
         return (StatusCode::FORBIDDEN, OWN_ROW).into_response();
     }
-    step_four(async move {
+    step_four(&seams.policy, async move {
         let first = match first_of(&store, &session, Target::Person(&ask.person), ACTION).await {
             Ok(first) => first,
             Err(answer) => return answer,

@@ -150,6 +150,7 @@ pub(crate) async fn rig_full_with(
         origin: Some(ORIGIN.to_owned()),
         idle: Duration::from_secs(3600),
         absolute: Duration::from_secs(12 * 3600),
+        write_bound: Duration::from_secs(60),
     };
     let surface = gate::guard(
         crate::surfaces::script_policy(routes(Seams {

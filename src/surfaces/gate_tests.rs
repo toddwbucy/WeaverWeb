@@ -21,6 +21,7 @@ pub(crate) fn policy() -> Policy {
         origin: Some("https://weaver.test".to_owned()),
         idle: Duration::from_secs(3600),
         absolute: Duration::from_secs(12 * 3600),
+        write_bound: Duration::from_secs(60),
     }
 }
 

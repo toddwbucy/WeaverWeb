@@ -1015,7 +1015,12 @@ async fn pick(
         Err(answer) => return answer,
     };
     let (setup_id, puller) = (setup_id.to_owned(), seams.puller.clone());
-    step_four(async move {
+    // **The account's name alone goes into step four**, as the pick's
+    // attribution: the token stays here and is dropped with `through`,
+    // since nothing past the resolve reads it.
+    let account = through.account().map(str::to_owned);
+    drop(through);
+    step_four(&seams.policy, async move {
         let first = match first_of(&store, &session, Target::Setup(&setup_id), ACTION).await {
             Ok(first) => first,
             Err(answer) => return answer,
@@ -1028,7 +1033,7 @@ async fn pick(
             scale: ask.scale,
             header: &resolved.header,
             pull_id: &pull_id,
-            account: through.account(),
+            account: account.as_deref(),
             parts: &resolved.choice.parts,
         };
         let written = puller

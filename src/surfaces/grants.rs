@@ -288,7 +288,7 @@ async fn grant(store: Store, policy: &Policy, headers: HeaderMap, ask: GrantAsk)
         return refused(&Refusal::OwnGrant);
     }
     let agent = agent.map(str::to_owned);
-    step_four(async move {
+    step_four(policy, async move {
         let first = match first_of(&store, &session, Target::Grant(&grant_id), ACTION).await {
             Ok(first) => first,
             Err(answer) => return answer,
@@ -335,7 +335,7 @@ async fn revoke(store: Store, policy: &Policy, headers: HeaderMap, ask: RevokeAs
         Ok(None) => return refused(&Refusal::NoSuchGrant),
         Err(e) => return fault(e),
     }
-    step_four(async move {
+    step_four(policy, async move {
         let first = match first_of(&store, &session, Target::Grant(&ask.grant), ACTION).await {
             Ok(first) => first,
             Err(answer) => return answer,
@@ -402,7 +402,7 @@ async fn set_role(store: Store, policy: &Policy, headers: HeaderMap, body: Strin
         Ok(false) => {}
         Err(e) => return fault(e),
     }
-    step_four(async move {
+    step_four(policy, async move {
         let first = match first_of(&store, &session, Target::Role(&role), ACTION).await {
             Ok(first) => first,
             Err(answer) => return answer,

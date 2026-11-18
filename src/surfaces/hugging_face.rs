@@ -410,7 +410,7 @@ async fn connect(store: Store, seams: &Seams, headers: HeaderMap, ask: ConnectAs
         Ok(Whoami::Refused) => return refusal(&store, &session, ACTION).await,
         Err(answer) => return answer,
     };
-    step_four(async move {
+    step_four(&seams.policy, async move {
         let first = match first_of(&store, &session, Target::HuggingFace, ACTION).await {
             Ok(first) => first,
             Err(answer) => return answer,
@@ -486,7 +486,7 @@ async fn check(store: Store, seams: &Seams, headers: HeaderMap, ask: VersionAsk)
         Err(answer) => return answer,
     };
     drop(token);
-    step_four(async move {
+    step_four(&seams.policy, async move {
         let first = match first_of(&store, &session, Target::HuggingFace, ACTION).await {
             Ok(first) => first,
             Err(answer) => return answer,
@@ -532,7 +532,7 @@ async fn cancel(store: Store, seams: &Seams, headers: HeaderMap, pull_id: &str) 
         Err(e) => return fault(e),
     }
     let (pull_id, puller) = (pull_id.to_owned(), seams.puller.clone());
-    step_four(async move {
+    step_four(&seams.policy, async move {
         let first = match first_of(&store, &session, Target::ModelPull(&pull_id), ACTION).await {
             Ok(first) => first,
             Err(answer) => return answer,
@@ -563,7 +563,7 @@ async fn disconnect(store: Store, seams: &Seams, headers: HeaderMap, ask: Versio
         Ok(None) => return refused(&Refusal::NotConnected),
         Err(e) => return fault(e),
     }
-    step_four(async move {
+    step_four(&seams.policy, async move {
         let first = match first_of(&store, &session, Target::HuggingFace, ACTION).await {
             Ok(first) => first,
             Err(answer) => return answer,

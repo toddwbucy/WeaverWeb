@@ -227,7 +227,7 @@ async fn add(store: Store, policy: &Policy, headers: HeaderMap, ask: AddAsk) -> 
         Ok(session) => session,
         Err(answer) => return answer,
     };
-    step_four(async move {
+    step_four(policy, async move {
         let first = match first_of(&store, &session, Target::SshKey(&key_id), ACTION).await {
             Ok(first) => first,
             Err(answer) => return answer,
@@ -268,7 +268,7 @@ async fn remove(store: Store, policy: &Policy, headers: HeaderMap, key_id: &str)
         Err(e) => return fault(e),
     }
     let key_id = key_id.to_owned();
-    step_four(async move {
+    step_four(policy, async move {
         let first = match first_of(&store, &session, Target::SshKey(&key_id), ACTION).await {
             Ok(first) => first,
             Err(answer) => return answer,

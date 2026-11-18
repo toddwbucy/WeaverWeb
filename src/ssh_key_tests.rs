@@ -311,3 +311,67 @@ async fn an_add_and_a_removal_dropped_at_their_first_records_still_land() {
     let shown = page(&rig.app, "/admin/ssh-key", &ada).await;
     assert!(!shown.contains(&fingerprint(&given)), "{shown}");
 }
+
+/// **A key add dropped and stalled past its bound never lands after its
+/// retry** (Spec 2.13): ada's add of a key is dropped while held before its
+/// first record, as a write waiting on the store waits. She adds the key
+/// again, the retry lands, and she removes it. The first's bound passes and
+/// its hold is let go: it was dropped at its deadline, so it writes
+/// nothing, and the removal stands, no key held and the audit one add's
+/// first record, the retry's.
+///
+/// Perturbation: await step four with no bound, and the held write, let
+/// go, adds the key again after its removal.
+#[tokio::test]
+async fn a_dropped_key_add_never_lands_after_its_retry_and_a_removal() {
+    use crate::admin_tests::dropped_and_held;
+    use crate::surfaces::admin::WRITE_BOUND_FOR_TEST;
+    const BOUND: std::time::Duration = std::time::Duration::from_secs(3);
+    let Some(rig) = rig().await else {
+        return;
+    };
+    let s = rig.store();
+    let (person, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let given = line("ssh-ed25519", 3);
+    WRITE_BOUND_FOR_TEST.with(|b| b.set(Some(BOUND)));
+
+    let release = dropped_and_held(
+        &rig.app,
+        &person,
+        &ada,
+        "/admin/ssh-key",
+        form(&[("line", &given)]),
+    )
+    .await;
+    // The first was placed before its hold was reached, so its deadline is
+    // before this instant and the bound.
+    let placed_by = tokio::time::Instant::now();
+    let (status, body) = add(&rig.app, &ada, &given).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "the retry lands: {body}");
+    assert_eq!(keys(s).await, 1);
+    let key_id = s.ssh_keys().await.unwrap()[0].key_id.clone();
+    let (status, _, body) = send_as(
+        &rig.app,
+        "POST",
+        &format!("/admin/ssh-key/{key_id}/remove"),
+        Some(String::new()),
+        &ada,
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "the removal lands: {body}");
+    assert_eq!(keys(s).await, 0);
+    assert!(
+        placed_by.elapsed() < BOUND,
+        "the retry and the removal came within the first's bound"
+    );
+
+    tokio::time::sleep_until(placed_by + BOUND + std::time::Duration::from_millis(250)).await;
+    release.notify_one();
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    assert_eq!(keys(s).await, 0, "the removal stands");
+    assert_eq!(
+        audited(s, "ssh-key add").await,
+        (1, 1, 0, 0),
+        "one add's first record, the retry's"
+    );
+}

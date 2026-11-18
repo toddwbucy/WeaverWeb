@@ -86,6 +86,8 @@ pub(crate) async fn commit_with_outcome(
         .await?;
     Store::audit_outcome_in(&mut tx, first).await?;
     #[cfg(test)]
+    crate::deadline::hold::commit(crate::deadline::hold::Point::AdminWrite).await;
+    #[cfg(test)]
     let committed = match give_up_on_the_commit(kind) {
         Some(after) => match tokio::time::timeout(after, tx.commit()).await {
             Ok(committed) => committed.map_err(anyhow::Error::from),

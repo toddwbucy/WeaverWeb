@@ -487,7 +487,7 @@ async fn save(
         Ok(Err(refusal)) => return refused(&refusal),
         Err(e) => return fault(e),
     }
-    step_four(async move {
+    step_four(policy, async move {
         // (4) The audited write.
         let first = match first_of(&store, &session, Target::Declaration(&de), ACTION).await {
             Ok(first) => first,

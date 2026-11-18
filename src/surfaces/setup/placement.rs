@@ -531,7 +531,7 @@ async fn save(
         return refused(&Refusal::Unplaceable(why));
     }
     let setup_id = setup_id.to_owned();
-    step_four(async move {
+    step_four(&seams.policy, async move {
         let first = match first_of(&store, &session, Target::Setup(&setup_id), ACTION).await {
             Ok(first) => first,
             Err(answer) => return answer,

@@ -212,6 +212,7 @@ async fn rig() -> Option<Rig> {
         origin: Some(ORIGIN.to_owned()),
         idle: Duration::from_secs(3600),
         absolute: Duration::from_secs(12 * 3600),
+        write_bound: Duration::from_secs(60),
     };
     let surface = gate::guard(
         crate::surfaces::script_policy(routes(Seams {
@@ -878,7 +879,12 @@ async fn each_write_to_the_account_dropped_at_its_first_record_still_lands() {
         .unwrap()
         .expect("the connect landed");
     assert_eq!(row.version, 1);
-    let (_, body) = page(&rig, &ada).await;
+    let (status, body) = page(&rig, &ada).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body.contains(r#"<tr><th>Account</th><td class="mono">ada-hf</td></tr>"#),
+        "the page shows the connected account: {body}"
+    );
     assert!(!body.contains("No account is connected"), "{body}");
 
     rig.fake.refuse(READ);
@@ -899,7 +905,8 @@ async fn each_write_to_the_account_dropped_at_its_first_record_still_lands() {
             .refused_at
             .is_some()
     );
-    let (_, body) = page(&rig, &ada).await;
+    let (status, body) = page(&rig, &ada).await;
+    assert_eq!(status, StatusCode::OK);
     assert!(body.contains("Hugging Face refused this token"), "{body}");
 
     dropped_at_the_hold(
@@ -915,6 +922,7 @@ async fn each_write_to_the_account_dropped_at_its_first_record_still_lands() {
         "ok"
     );
     assert!(s.hugging_face_account().await.unwrap().is_none());
-    let (_, body) = page(&rig, &ada).await;
+    let (status, body) = page(&rig, &ada).await;
+    assert_eq!(status, StatusCode::OK);
     assert!(body.contains("No account is connected"), "{body}");
 }

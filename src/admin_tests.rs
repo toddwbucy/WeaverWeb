@@ -1083,6 +1083,11 @@ async fn past_the_read_backs_bound_the_outcome_is_left_unwritten() {
     assert!(!enabled(s, &bea).await);
 }
 
+/// How long a dropped request's test waits for the request to reach its
+/// hold before it fails, rather than hanging, where the write was answered
+/// or stalled before its first record.
+const TO_THE_HOLD: Duration = Duration::from_secs(10);
+
 /// **An admin's write whose request is dropped while its first record is
 /// held** (`READ_HOLD`, at `first_of`): the request is sent, held, dropped
 /// there, and the hold let go. What follows runs only where the write's
@@ -1094,12 +1099,47 @@ pub(crate) async fn dropped_at_the_hold(
     uri: &str,
     body: String,
 ) {
+    dropped_and_held(app, admin, session, uri, body)
+        .await
+        .notify_one();
+}
+
+/// **As [`dropped_at_the_hold`], the hold kept**: its release is answered,
+/// for the test to let go when it chooses, or never. A request answered
+/// before it reaches the hold, or not reaching it within `TO_THE_HOLD`,
+/// fails the test naming why, its hold taken out of the list.
+pub(crate) async fn dropped_and_held(
+    app: &axum::Router,
+    admin: &str,
+    session: &str,
+    uri: &str,
+    body: String,
+) -> Arc<tokio::sync::Notify> {
     let (read, release) = hold(&READ_HOLD, admin);
-    let request = tokio::spawn({
+    let mut request = tokio::spawn({
         let (app, session, uri) = (app.clone(), session.to_owned(), uri.to_owned());
         async move { send_as(&app, "POST", &uri, Some(body), &session).await }
     });
-    read.notified().await;
+    let unhold = |release: &Arc<tokio::sync::Notify>| {
+        READ_HOLD
+            .lock()
+            .unwrap()
+            .retain(|(_, _, held)| !Arc::ptr_eq(held, release));
+    };
+    tokio::select! {
+        () = read.notified() => {}
+        answered = &mut request => {
+            unhold(&release);
+            let (status, _, page) = answered.expect("the request ran to its answer");
+            panic!("{uri} was answered {status} before it reached its first record: {page}");
+        }
+        () = tokio::time::sleep(TO_THE_HOLD) => {
+            request.abort();
+            let _ = request.await;
+            unhold(&release);
+            panic!("{uri} did not reach its first record within {TO_THE_HOLD:?}");
+        }
+    }
     request.abort();
     let dropped = request
         .await
@@ -1108,7 +1148,31 @@ pub(crate) async fn dropped_at_the_hold(
         dropped.is_cancelled(),
         "the request was dropped at the hold"
     );
-    release.notify_one();
+    release
+}
+
+/// **The persons page's row of `person`**, as the admin's next view draws
+/// it.
+async fn persons_row(app: &axum::Router, session: &str, person: &str) -> String {
+    let (status, _, page) = send_as(app, "GET", "/admin/persons", None, session).await;
+    assert_eq!(status, StatusCode::OK, "the persons page is served");
+    let at = page
+        .find(&format!("<td>{person}</td>"))
+        .unwrap_or_else(|| panic!("the persons page lists {person}"));
+    let start = page[..at].rfind("<tr>").unwrap();
+    let end = at + page[at..].find("</tr>").unwrap();
+    page[start..end].to_owned()
+}
+
+/// A person's tokens that have not ended, by their digests.
+async fn unended_tokens(s: &Store, person: &str) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT token_digest FROM enrollment_token WHERE person_id = $1 AND ended_at IS NULL",
+    )
+    .bind(person)
+    .fetch_all(&s.pool)
+    .await
+    .unwrap()
 }
 
 /// A person's identity, by their name.
@@ -1123,32 +1187,40 @@ pub(crate) async fn person_named(s: &Store, name: &str) -> String {
 /// **The outcome the admin's write of `action` recorded**, waited for up
 /// to ten seconds, since the write runs on past its dropped request.
 pub(crate) async fn outcome_of(s: &Store, admin: &str, action: &str) -> String {
-    let until = tokio::time::Instant::now() + Duration::from_secs(10);
-    loop {
-        let outcome: Option<String> = sqlx::query_scalar(
-            "SELECT outcome FROM audit WHERE principal = 'person' AND person_id = $1 \
-             AND action = $2 AND outcome IS NOT NULL",
-        )
-        .bind(admin)
-        .bind(action)
-        .fetch_optional(&s.pool)
-        .await
-        .unwrap();
-        if let Some(outcome) = outcome {
-            return outcome;
+    let polled = async {
+        loop {
+            let outcome: Option<String> = sqlx::query_scalar(
+                "SELECT outcome FROM audit WHERE principal = 'person' AND person_id = $1 \
+                 AND action = $2 AND outcome IS NOT NULL",
+            )
+            .bind(admin)
+            .bind(action)
+            .fetch_optional(&s.pool)
+            .await
+            .unwrap();
+            if let Some(outcome) = outcome {
+                return outcome;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
         }
-        assert!(
-            tokio::time::Instant::now() < until,
-            "no outcome of {action} within ten seconds: the write went with its request"
-        );
-        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    // **The ten seconds bound the whole poll**, a connection's wait and a
+    // query's included, so a stalled store fails the test rather than
+    // holding it.
+    match tokio::time::timeout(Duration::from_secs(10), polled).await {
+        Ok(outcome) => outcome,
+        Err(_) => {
+            panic!("no outcome of {action} within ten seconds: the write went with its request")
+        }
     }
 }
 
 /// **Each write to a person runs from its first record to its outcome in a
 /// task the request cannot cancel** (Spec 2.13, #150): each of the five
 /// writes' requests is dropped while its first record is held, and the
-/// write still lands, its first record answered by its `ok` outcome.
+/// write still lands, its first record answered by its `ok` outcome and
+/// the persons page's next view reading the state it left. The token's
+/// write supersedes the enrollment's token, leaving one other outstanding.
 ///
 /// Perturbation: run step four in the request's own future
 /// (`admin::step_four` awaiting it in place), and the first write's
@@ -1176,7 +1248,13 @@ async fn each_write_to_a_person_dropped_at_its_first_record_still_lands() {
         .await
         .unwrap();
     assert_eq!(audited(s, &ada, &bea, "person enroll").await, (1, 1, 0));
+    let row = persons_row(&app, &session, &bea).await;
+    assert!(row.contains("<td>bea</td>"), "{row}");
+    assert!(row.contains("<td>enabled</td>"), "{row}");
+    assert!(row.contains("<td>outstanding</td>"), "{row}");
 
+    let enrolled = unended_tokens(s, &bea).await;
+    assert_eq!(enrolled.len(), 1, "the enrollment's one token");
     dropped_at_the_hold(
         &app,
         &ada,
@@ -1187,6 +1265,22 @@ async fn each_write_to_a_person_dropped_at_its_first_record_still_lands() {
     .await;
     assert_eq!(outcome_of(s, &ada, "person token").await, "ok");
     assert_eq!(audited(s, &ada, &bea, "person token").await, (1, 1, 0));
+    let ended: Option<String> =
+        sqlx::query_scalar("SELECT ended FROM enrollment_token WHERE token_digest = $1")
+            .bind(&enrolled[0])
+            .fetch_one(&s.pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        ended.as_deref(),
+        Some("superseded"),
+        "the enrollment's token"
+    );
+    let issued = unended_tokens(s, &bea).await;
+    assert_eq!(issued.len(), 1, "one token outstanding");
+    assert_ne!(issued[0], enrolled[0], "and it is the new one");
+    let row = persons_row(&app, &session, &bea).await;
+    assert!(row.contains("<td>outstanding</td>"), "{row}");
 
     let v = version(s, &bea).await;
     dropped_at_the_hold(
@@ -1199,6 +1293,9 @@ async fn each_write_to_a_person_dropped_at_its_first_record_still_lands() {
     .await;
     assert_eq!(outcome_of(s, &ada, "person disable").await, "ok");
     assert!(!enabled(s, &bea).await, "the disable landed");
+    let row = persons_row(&app, &session, &bea).await;
+    assert!(row.contains("<td>disabled</td>"), "{row}");
+    assert!(row.contains("/admin/persons/enable"), "{row}");
 
     let v = version(s, &bea).await;
     dropped_at_the_hold(
@@ -1211,6 +1308,9 @@ async fn each_write_to_a_person_dropped_at_its_first_record_still_lands() {
     .await;
     assert_eq!(outcome_of(s, &ada, "person enable").await, "ok");
     assert!(enabled(s, &bea).await, "the enable landed");
+    let row = persons_row(&app, &session, &bea).await;
+    assert!(row.contains("<td>enabled</td>"), "{row}");
+    assert!(row.contains("/admin/persons/disable"), "{row}");
 
     let v = version(s, &bea).await;
     dropped_at_the_hold(
@@ -1228,4 +1328,130 @@ async fn each_write_to_a_person_dropped_at_its_first_record_still_lands() {
         .await
         .unwrap();
     assert_eq!(name, "beatrix", "the rename landed");
+    let row = persons_row(&app, &session, &bea).await;
+    assert!(row.contains("<td>beatrix</td>"), "{row}");
+    assert!(!row.contains("<td>bea</td>"), "{row}");
+}
+
+/// **Every connection the pool lent is back and idle**, and no backend of
+/// this database sits in an open transaction, within five seconds: a write
+/// dropped where it stood left nothing held.
+pub(crate) async fn pool_settled(s: &Store) {
+    // The pool is read before each query, since the query's own
+    // connection goes back to the pool in a task of its own after it
+    // answers.
+    let lent = || s.pool.size() as usize - s.pool.num_idle();
+    let polled = async {
+        loop {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            if lent() > 0 {
+                continue;
+            }
+            let open: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() \
+                 AND state LIKE 'idle in transaction%'",
+            )
+            .fetch_one(&s.pool)
+            .await
+            .unwrap();
+            if open == 0 {
+                return;
+            }
+        }
+    };
+    if tokio::time::timeout(Duration::from_secs(5), polled)
+        .await
+        .is_err()
+    {
+        panic!(
+            "a connection is still lent ({} of {}) or a transaction is still open",
+            lent(),
+            s.pool.size()
+        );
+    }
+}
+
+/// A person's name.
+async fn name_of(s: &Store, person: &str) -> String {
+    sqlx::query_scalar("SELECT name FROM person WHERE person_id = $1")
+        .bind(person)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap()
+}
+
+/// **A step four stalled past its bound never commits** (Spec 2.13): bea's
+/// rename is held just before its commit until the very deadline step four
+/// was placed under, its first record committed and its `ok` outcome
+/// written in the act's transaction. The request is answered 503 at the
+/// bound, and the hold was not let go, so the commit was never sent: the
+/// name stands, the first record reads with no outcome, as 2.13 allows, and
+/// the connection the write held is back in the pool with no transaction
+/// left open. A retry then lands.
+///
+/// Perturbations: await step four with no bound, and the held commit goes
+/// out at the deadline, the rename landing. Bound it with tokio's
+/// `timeout_at` at the same deadline, and the commit goes out at the
+/// deadline's wake, the hold let go and the rename landing.
+#[tokio::test]
+async fn an_admin_write_stalled_past_its_bound_never_commits() {
+    use crate::deadline::hold::{self, Point};
+    use crate::surfaces::admin::WRITE_BOUND_FOR_TEST;
+    const BOUND: Duration = Duration::from_millis(1500);
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let app = app(s, Some(passkeys()));
+    let (ada, session) = admin(&app, s, &mut authenticator(), "ada").await;
+    let (bea, _) = person_with_token(s, "bea").await;
+    let v = version(s, &bea).await;
+    let rename = form(&[("person", &bea), ("version", &v), ("name", "beatrix")]);
+    WRITE_BOUND_FOR_TEST.with(|b| b.set(Some(BOUND)));
+
+    let held = hold::arm(Point::AdminWrite);
+    let asked = tokio::time::Instant::now();
+    let (status, _, page) = send_as(
+        &app,
+        "POST",
+        "/admin/persons/rename",
+        Some(rename.clone()),
+        &session,
+    )
+    .await;
+    let took = asked.elapsed();
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{page}");
+    assert!(page.contains("the write was not made"), "{page}");
+    assert!(
+        took >= BOUND && took < BOUND + Duration::from_millis(750),
+        "answered at the bound: {took:?}"
+    );
+    assert!(
+        !held.let_go(),
+        "the commit was never sent: the hold was not let go at the deadline"
+    );
+    let name = held
+        .settled(|| name_of(s, &bea), |name| name == "beatrix")
+        .await;
+    assert_eq!(name, "bea", "the rename never committed");
+    drop(held);
+    assert_eq!(
+        audited(s, &ada, &bea, "person rename").await,
+        (1, 0, 0),
+        "its first record stands with no outcome"
+    );
+    pool_settled(s).await;
+
+    WRITE_BOUND_FOR_TEST.with(|b| b.set(None));
+    let (status, _, page) = send_as(
+        &app,
+        "POST",
+        "/admin/persons/rename",
+        Some(rename),
+        &session,
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "the retry lands: {page}");
+    assert_eq!(name_of(s, &bea).await, "beatrix");
+    assert_eq!(audited(s, &ada, &bea, "person rename").await, (2, 1, 0));
 }

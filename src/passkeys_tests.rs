@@ -44,6 +44,7 @@ pub(crate) fn app(s: &Store, passkeys: Option<Passkeys>) -> axum::Router {
         origin: Some(ORIGIN.to_owned()),
         idle: Duration::from_secs(3600),
         absolute: Duration::from_secs(12 * 3600),
+        write_bound: Duration::from_secs(60),
     };
     gate::guard(
         crate::surfaces::routes(policy.clone())

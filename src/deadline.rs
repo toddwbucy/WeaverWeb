@@ -108,6 +108,9 @@ pub(crate) mod hold {
         InboxFailed,
         /// `Store::admit`, a hello's admission: its transaction's commit.
         Admit,
+        /// `commit_with_outcome`, an admin write's step four: its
+        /// transaction's commit.
+        AdminWrite,
     }
 
     #[derive(Debug, Default)]

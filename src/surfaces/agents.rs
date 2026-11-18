@@ -143,6 +143,20 @@ impl Handover {
         table.held.len()
     }
 
+    /// How many configs wait for the session `session_id`, expired ones
+    /// dropped. Read only by `agents_tests`, which need the `passkeys`
+    /// feature.
+    #[cfg(all(test, feature = "passkeys"))]
+    pub(crate) fn held_for(&self, session_id: i64) -> usize {
+        let mut table = self.table.lock().unwrap();
+        table.prune();
+        table
+            .held
+            .values()
+            .filter(|h| h.session_id == session_id)
+            .count()
+    }
+
     /// How many configs wait or are reserved, the count the bound holds.
     pub fn occupied(&self) -> usize {
         let mut table = self.table.lock().unwrap();
@@ -489,8 +503,8 @@ async fn register(store: Store, seams: &Seams, headers: HeaderMap, ask: Register
     let Some(reservation) = seams.handover.reserve(2) else {
         return refused(&Refusal::HandoverFull);
     };
-    let seams = seams.clone();
-    step_four(async move {
+    let (policy, seams) = (seams.policy.clone(), seams.clone());
+    step_four(&policy, async move {
         let seams = &seams;
         let first = match first_of(&store, &session, Target::Agent(minted.as_str()), ACTION).await {
             Ok(first) => first,
@@ -608,8 +622,8 @@ async fn rotate(store: Store, seams: &Seams, headers: HeaderMap, ask: RotateAsk)
     let Some(reservation) = seams.handover.reserve(2) else {
         return refused(&Refusal::HandoverFull);
     };
-    let seams = seams.clone();
-    step_four(async move {
+    let (policy, seams) = (seams.policy.clone(), seams.clone());
+    step_four(&policy, async move {
         let seams = &seams;
         let first = match first_of(&store, &session, Target::Agent(&ask.agent), ACTION).await {
             Ok(first) => first,
@@ -764,12 +778,16 @@ async fn resolve_revocation(
 /// request cannot cut (`admin::step_four`).
 async fn revoked(
     store: Store,
+    policy: &Policy,
     session: Session,
     id: AgentId,
     plane: Option<Plane>,
     action: &'static str,
 ) -> Response {
-    step_four(async move { revoked_in_its_task(&store, &session, &id, plane, action).await }).await
+    step_four(policy, async move {
+        revoked_in_its_task(&store, &session, &id, plane, action).await
+    })
+    .await
 }
 
 /// **Step four of a revocation or a retirement, in the task [`revoked`]
@@ -820,7 +838,7 @@ async fn revoke(store: Store, seams: &Seams, headers: HeaderMap, ask: RevokeAsk)
         return (StatusCode::BAD_REQUEST, "the plane is gate or admin").into_response();
     };
     match resolve_revocation(&store, seams, &headers, &ask.agent, Some(plane), ACTION).await {
-        Ok((session, id)) => revoked(store, session, id, Some(plane), ACTION).await,
+        Ok((session, id)) => revoked(store, &seams.policy, session, id, Some(plane), ACTION).await,
         Err(answer) => answer,
     }
 }
@@ -831,7 +849,7 @@ async fn revoke(store: Store, seams: &Seams, headers: HeaderMap, ask: RevokeAsk)
 async fn retire(store: Store, seams: &Seams, headers: HeaderMap, ask: RotateAsk) -> Response {
     const ACTION: &str = "retire";
     match resolve_revocation(&store, seams, &headers, &ask.agent, None, ACTION).await {
-        Ok((session, id)) => revoked(store, session, id, None, ACTION).await,
+        Ok((session, id)) => revoked(store, &seams.policy, session, id, None, ACTION).await,
         Err(answer) => answer,
     }
 }

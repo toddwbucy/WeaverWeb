@@ -108,6 +108,7 @@ async fn rig_of(handover: Handover, silence: Duration) -> Option<Rig> {
         origin: Some(ORIGIN.to_owned()),
         idle: Duration::from_secs(3600),
         absolute: Duration::from_secs(12 * 3600),
+        write_bound: Duration::from_secs(60),
     };
     let agents = gate::guard(
         crate::surfaces::script_policy(routes(Seams {
@@ -1685,9 +1686,10 @@ async fn agent_version(s: &Store, id: &str) -> i64 {
 /// **Each write to the register runs from its first record to its outcome
 /// in a task the request cannot cancel** (Spec 2.13, #150): each of the
 /// four writes' requests is dropped while its first record is held, and
-/// the write still lands, its first record answered by its `ok` outcome;
-/// a register's and a rotation's two client configs are held for the
-/// session that minted them, as the hand-over holds any.
+/// the write still lands, its first record answered by its `ok` outcome
+/// and the register's page reading the state it left; a register's and a
+/// rotation's two client configs are held for the session that minted
+/// them, as the hand-over holds any.
 ///
 /// Perturbation: run step four in the request's own future
 /// (`admin::step_four` awaiting it in place), and the first write's
@@ -1699,15 +1701,36 @@ async fn each_write_to_the_register_dropped_at_its_first_record_still_lands() {
     let s = rig.store();
     let (ada, session) = admin(&rig.app, s, &mut authenticator(), "ada").await;
     let handover = &rig.handover;
+    let minted_by: i64 =
+        sqlx::query_scalar("SELECT session_id FROM session WHERE bearer_digest = $1")
+            .bind(gate::digest(&session))
+            .fetch_one(&s.pool)
+            .await
+            .unwrap();
     let held = |n: usize| async move {
         let until = tokio::time::Instant::now() + Duration::from_secs(10);
-        while handover.held() != n {
+        while handover.held_for(minted_by) != n {
             assert!(
                 tokio::time::Instant::now() < until,
-                "{n} configs are not held: {} are",
+                "{n} configs are not held for the minting session: {} are, of {}",
+                handover.held_for(minted_by),
                 handover.held()
             );
             tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert_eq!(handover.held(), n, "and none for another session");
+    };
+    let row = |id: String| {
+        let (app, session) = (rig.app.clone(), session.clone());
+        async move {
+            let (status, _, page) = send_as(&app, "GET", "/admin/agents", None, &session).await;
+            assert_eq!(status, StatusCode::OK, "the register's page is served");
+            let at = page
+                .find(&format!("<td>{id}</td>"))
+                .unwrap_or_else(|| panic!("the register's page lists {id}"));
+            let start = page[..at].rfind("<tr>").unwrap();
+            let end = at + page[at..].find("</tr>").unwrap();
+            page[start..end].to_owned()
         }
     };
 
@@ -1727,6 +1750,12 @@ async fn each_write_to_the_register_dropped_at_its_first_record_still_lands() {
     .fetch_one(&s.pool)
     .await
     .expect("the register landed");
+    let page = row(id.clone()).await;
+    assert!(page.contains("<td>box-a/karl</td>"), "{page}");
+    assert!(
+        page.contains("<td>live</td>\n      <td>live</td>"),
+        "{page}"
+    );
 
     dropped_at_the_hold(
         &rig.app,
@@ -1738,6 +1767,12 @@ async fn each_write_to_the_register_dropped_at_its_first_record_still_lands() {
     .await;
     assert_eq!(outcome_of(s, &ada, "rotate").await, "ok");
     held(4).await;
+    let page = row(id.clone()).await;
+    assert!(
+        page.contains("<td>live</td>\n      <td>live</td>"),
+        "{page}"
+    );
+    assert!(page.contains("/admin/agents/rotate"), "{page}");
 
     dropped_at_the_hold(
         &rig.app,
@@ -1749,6 +1784,13 @@ async fn each_write_to_the_register_dropped_at_its_first_record_still_lands() {
     .await;
     assert_eq!(outcome_of(s, &ada, "revoke").await, "ok");
     assert_eq!(states(s, &id).await.0, "revoked", "the revocation landed");
+    let page = row(id.clone()).await;
+    assert!(
+        page.contains("<td>revoked</td>\n      <td>live</td>"),
+        "{page}"
+    );
+    assert!(!page.contains("Revoke gate"), "{page}");
+    assert!(page.contains("Revoke admin"), "{page}");
 
     dropped_at_the_hold(
         &rig.app,
@@ -1764,4 +1806,10 @@ async fn each_write_to_the_register_dropped_at_its_first_record_still_lands() {
         ("revoked".to_owned(), "revoked".to_owned()),
         "the retirement landed"
     );
+    let page = row(id.clone()).await;
+    assert!(
+        page.contains("<td>revoked</td>\n      <td>revoked</td>"),
+        "{page}"
+    );
+    assert!(page.contains("retired; register it again"), "{page}");
 }

@@ -1374,12 +1374,41 @@ async fn a_pick_dropped_at_its_first_record_still_asks_its_pull() {
     let pull_id = pull_of(s, &setup, "decoder").await;
     assert_eq!(ended(s, &pull_id).await, "verified", "the pick's pull ran");
     assert_eq!(s.setup(&setup).await.unwrap().unwrap().version, 2);
-    let shown = shows(
-        &rig,
+    let (repository, choice): (String, String) = sqlx::query_as(
+        "SELECT repository, choice FROM agent_setup_model WHERE setup_id = $1 AND role = 'decoder'",
+    )
+    .bind(&setup)
+    .fetch_one(&s.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        (repository.as_str(), choice.as_str()),
+        ("org/split", "m-00001-of-00002.gguf"),
+        "the pick saved the choice asked"
+    );
+    let (status, _, shown) = send_as(
+        &rig.app,
+        "GET",
         &format!("/setup/{setup}/models"),
+        None,
         &ada,
-        "m-00001-of-00002.gguf",
     )
     .await;
-    assert!(shown.contains("m-00001-of-00002.gguf"), "{shown}");
+    assert_eq!(status, StatusCode::OK);
+    let at = shown
+        .find("<h2>The decoder</h2>")
+        .unwrap_or_else(|| panic!("the decoder's pane: {shown}"));
+    let pane = &shown[at..at + shown[at..].find("</section>").unwrap()];
+    assert!(
+        pane.contains(r#"<span class="status ok">ok</span>"#),
+        "{pane}"
+    );
+    assert!(
+        pane.contains(r#"<tr><th>Repository</th><td class="mono">org/split</td></tr>"#),
+        "{pane}"
+    );
+    assert!(
+        pane.contains(r#"<tr><th>Choice</th><td class="mono">m-00001-of-00002.gguf</td></tr>"#),
+        "{pane}"
+    );
 }

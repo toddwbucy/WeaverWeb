@@ -658,7 +658,7 @@ async fn the_header_is_read_by_range_and_one_past_the_bound_is_not_read() {
         "{adapter}"
     );
     assert!(
-        adapter.contains(r#"<input name="scale" inputmode="decimal" required>"#),
+        adapter.contains(r#"<input type="text" name="scale" inputmode="decimal" required>"#),
         "{adapter}"
     );
     assert!(

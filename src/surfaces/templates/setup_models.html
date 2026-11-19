@@ -69,8 +69,8 @@
   <header><span class="stage"><b>1</b> Declare</span><h2>A repository</h2><span class="backing built">built</span><span class="status ok">ok</span><span class="source">Hugging Face's listing</span></header>
   <div class="body">
   <form method="get" action="/setup/{{ frame.setup_id }}/models" class="field">
-    <label>Repository <input name="repository" placeholder="owner/name" required{% if let Some(l) = listing %} value="{{ l.repository }}"{% endif %}></label>
-    <label>Revision <input name="revision" placeholder="a branch, a tag or a commit" required{% if let Some(l) = listing %} value="{{ l.revision }}"{% endif %}></label>
+    <label>Repository <input type="text" name="repository" placeholder="owner/name" required{% if let Some(l) = listing %} value="{{ l.repository }}"{% endif %}></label>
+    <label>Revision <input type="text" name="revision" placeholder="a branch, a tag or a commit" required{% if let Some(l) = listing %} value="{{ l.revision }}"{% endif %}></label>
     <button type="submit">List its choices</button>
   </form>
   {%- if let Some(why) = no_pick %}

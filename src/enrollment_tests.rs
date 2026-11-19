@@ -2195,6 +2195,20 @@ async fn the_reports_a_box_sends_feed_placement_and_confirm() {
     assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
     let pull = crate::setup_models_tests::pull_of(s, &setup, "adapter").await;
     assert_eq!(crate::setup_models_tests::ended(s, &pull).await, "verified");
+    // The pages as served carry every input on the stylesheet's field rule
+    // (the operator's walk of 2026-11-19).
+    let models = read(format!("/setup/{setup}/models")).await;
+    crate::surfaces::assert_inputs_drawn(&models);
+    assert!(
+        models.contains(r#"<input type="text" name="repository""#),
+        "{models}"
+    );
+    let offered = read(placement.clone()).await;
+    crate::surfaces::assert_inputs_drawn(&offered);
+    assert!(
+        offered.contains(r#"<input name="context_length" type="text" inputmode="numeric""#),
+        "{offered}"
+    );
     let (status, body, _) = crate::setup_place_tests::post(
         &rig,
         &ada,
@@ -2618,6 +2632,7 @@ async fn the_panes_are_served_in_each_status_as_the_box_reports() {
         ("placement", devices),
     ] {
         let shown = page_of(page).await;
+        crate::surfaces::assert_inputs_drawn(&shown);
         assert_eq!(
             status(pane(&shown, heading)),
             mark("hold", "waiting"),
@@ -2629,11 +2644,13 @@ async fn the_panes_are_served_in_each_status_as_the_box_reports() {
     let refused = r#"{"format":"weaver-survey/2"}"#;
     sent(&config, Stage::Pairing, refused).await;
     let shown = page_of("pairing").await;
+    crate::surfaces::assert_inputs_drawn(&shown);
     let report = pane(&shown, pairing);
     assert_eq!(status(report), mark("fail", "refused"));
     assert!(report.contains("Refused for cause 4: "), "{report}");
     assert!(!shown.contains("weaver-survey/2"), "{shown}");
     let shown = page_of("placement").await;
+    crate::surfaces::assert_inputs_drawn(&shown);
     let held = pane(&shown, devices);
     assert_eq!(status(held), mark("fail", "refused"));
     assert!(
@@ -2646,6 +2663,7 @@ async fn the_panes_are_served_in_each_status_as_the_box_reports() {
     });
     sent(&config, Stage::Pairing, &script).await;
     let shown = page_of("pairing").await;
+    crate::surfaces::assert_inputs_drawn(&shown);
     let report = pane(&shown, pairing);
     assert_eq!(status(report), mark("ok", "read"));
     assert!(
@@ -2657,6 +2675,7 @@ async fn the_panes_are_served_in_each_status_as_the_box_reports() {
     assert!(!shown.contains("<script>alert"), "{shown}");
     assert!(crate::setup_tests::walk(&shown).is_empty());
     let shown = page_of("placement").await;
+    crate::surfaces::assert_inputs_drawn(&shown);
     let offered = pane(&shown, devices);
     assert_eq!(status(offered), mark("ok", "read"));
     assert!(
@@ -2671,10 +2690,12 @@ async fn the_panes_are_served_in_each_status_as_the_box_reports() {
     )
     .await;
     let shown = page_of("drives").await;
+    crate::surfaces::assert_inputs_drawn(&shown);
     let report = pane(&shown, drives);
     assert_eq!(status(report), mark("fail", "refused"));
     assert!(report.contains("Refused for cause 4: "), "{report}");
     let confirm = page_of("confirm").await;
+    crate::surfaces::assert_inputs_drawn(&confirm);
     assert!(
         confirm.contains("the drives stage's report is refused for cause 4"),
         "{confirm}"
@@ -2687,6 +2708,7 @@ async fn the_panes_are_served_in_each_status_as_the_box_reports() {
     )
     .await;
     let shown = page_of("drives").await;
+    crate::surfaces::assert_inputs_drawn(&shown);
     let report = pane(&shown, drives);
     assert_eq!(status(report), mark("ok", "read"));
     assert!(

@@ -1,7 +1,7 @@
 {% extends "setup_frame.html" %}
 {% block panes %}
 {#- The models page (Spec 6.2): the roster's two roles, the rest of
-    the roster drawn unbuilt, a repository asked at a revision with its
+    the roster drawn unbuilt, a repository asked at a branch with its
     choices, each complete one's header its own fragment with the pick's
     form, and the setup's pulls with the base's identity, a fragment the
     page re-fetches every 15 s. No inline script. -#}
@@ -69,15 +69,16 @@
   <header><span class="stage"><b>1</b> Declare</span><h2>A repository</h2><span class="backing built">built</span><span class="status ok">ok</span><span class="source">Hugging Face's listing</span></header>
   <div class="body">
   <form method="get" action="/setup/{{ frame.setup_id }}/models" class="field">
-    <label>Repository <input name="repository" placeholder="owner/name" required{% if let Some(l) = listing %} value="{{ l.repository }}"{% endif %}></label>
-    <label>Revision <input name="revision" placeholder="a branch, a tag or a commit" required{% if let Some(l) = listing %} value="{{ l.revision }}"{% endif %}></label>
+    <label>Repository <input type="text" name="repository" placeholder="owner/name" required{% if let Some(l) = listing %} value="{{ l.repository }}"{% endif %}></label>
+    <label>Branch <input type="text" name="revision" placeholder="main" required{% if let Some(l) = listing %} value="{{ l.revision }}"{% endif %}></label>
     <button type="submit">List its choices</button>
   </form>
+  <p>A tag or a 40-hex commit is taken in the branch's place too.</p>
   {%- if let Some(why) = no_pick %}
   <p><span class="status fail">no pick</span> {{ why }}</p>
   {%- endif %}
   </div>
-  <footer>The revision is resolved to its commit, and the pick and its pull name the commit.</footer>
+  <footer>The branch, tag or commit is resolved to its commit, and the pick and its pull name the commit.</footer>
 </section>
 {%- if let Some(l) = listing %}
 <section class="pane">

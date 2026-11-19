@@ -190,9 +190,8 @@ async fn a_context_length_above_the_headers_maximum_is_refused_and_one_at_it_kep
     decoder_picked(&rig, &ada, &setup, "1").await;
     let picked = read(&rig.app, &uri, &ada).await;
     assert!(
-        picked.contains(
-            r#"<input name="context_length" type="number" min="4096" max="131072" required>"#
-        ),
+        picked
+            .contains(r#"<input name="context_length" type="text" inputmode="numeric" required>"#),
         "{picked}"
     );
     assert!(walk(&picked).is_empty(), "{:?}", walk(&picked));
@@ -263,7 +262,10 @@ async fn a_context_length_above_the_headers_maximum_is_refused_and_one_at_it_kep
     );
     assert_eq!(audited(s, "setup placement").await, (1, 1, 0, 0));
     let shown = read(&rig.app, &uri, &ada).await;
-    assert!(shown.contains(r#"max="131072" value="131072""#), "{shown}");
+    assert!(
+        shown.contains(r#"inputmode="numeric" value="131072""#),
+        "{shown}"
+    );
     assert!(walk(&shown).is_empty(), "{:?}", walk(&shown));
 }
 
@@ -288,7 +290,13 @@ async fn a_context_length_below_the_boxs_max_tokens_per_turn_is_refused() {
     decoder_picked(&rig, &ada, &setup, "1").await;
     let uri = format!("/setup/{setup}/placement");
     let picked = read(&rig.app, &uri, &ada).await;
-    assert!(picked.contains(r#"min="4096" max="131072""#), "{picked}");
+    assert!(
+        picked.contains(
+            "A whole number from 4096, the box's max-tokens-per-turn, to the decoder's maximum of \
+             131072"
+        ),
+        "{picked}"
+    );
     assert!(picked.contains("the box's max-tokens-per-turn"), "{picked}");
     let at = |n: &'static str| {
         vec![

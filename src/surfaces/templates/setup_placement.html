@@ -10,7 +10,7 @@
   <header><span class="stage"><b>1</b> Declare</span><h2>The context length</h2><span class="backing built">built</span><span class="status {{ context.status }}">{{ context.status }}</span><span class="source">the setup, bounded by the box's max-tokens-per-turn and the decoder's header</span></header>
   <div class="body">
   {%- if let Some(max) = context.max %}
-  <label>Context length <input name="context_length" type="number" min="{{ context.min }}" max="{{ max }}"{% if let Some(kept) = context.kept %} value="{{ kept }}"{% endif %} required></label>
+  <label>Context length <input name="context_length" type="text" inputmode="numeric"{% if let Some(kept) = context.kept %} value="{{ kept }}"{% endif %} required></label>
   <p>A whole number from {{ context.min }}, the box's max-tokens-per-turn, to the decoder's maximum of {{ max }}, read from its header. It is the declaration's <code>context-capacity</code>, and one under the per-turn ceiling would let a turn exceed the whole context.</p>
   {%- if context.above %}
   <p><span class="status fail">above</span> The context length kept is above this decoder's maximum, since the decoder was picked again. Keep another.</p>

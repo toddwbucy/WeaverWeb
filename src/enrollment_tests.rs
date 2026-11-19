@@ -2195,6 +2195,30 @@ async fn the_reports_a_box_sends_feed_placement_and_confirm() {
     assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
     let pull = crate::setup_models_tests::pull_of(s, &setup, "adapter").await;
     assert_eq!(crate::setup_models_tests::ended(s, &pull).await, "verified");
+    // The pages as served carry every input on the stylesheet's field rule
+    // (the operator's walk of 2026-11-19).
+    let models = read(format!("/setup/{setup}/models")).await;
+    crate::surfaces::assert_inputs_drawn(&models);
+    assert!(
+        models.contains(r#"<input type="text" name="repository""#),
+        "{models}"
+    );
+    // The field the operator calls a branch is named so, its posted name
+    // unchanged, with the note that a tag or a commit is taken too.
+    assert!(
+        models.contains(r#"<label>Branch <input type="text" name="revision" placeholder="main""#),
+        "{models}"
+    );
+    assert!(
+        models.contains("<p>A tag or a 40-hex commit is taken in the branch's place too.</p>"),
+        "{models}"
+    );
+    let offered = read(placement.clone()).await;
+    crate::surfaces::assert_inputs_drawn(&offered);
+    assert!(
+        offered.contains(r#"<input name="context_length" type="text" inputmode="numeric""#),
+        "{offered}"
+    );
     let (status, body, _) = crate::setup_place_tests::post(
         &rig,
         &ada,
@@ -2289,6 +2313,15 @@ async fn the_reports_a_box_sends_feed_placement_and_confirm() {
     let ready = read(confirm.clone()).await;
     assert!(ready.contains(&action), "{ready}");
     assert!(ready.contains("card-b, 0000:07:00.0, 23.99 GiB"), "{ready}");
+    // The Build pane waits on Confirm until it stands, and then says so and
+    // names what it still waits on (the operator's walk of 2026-11-19).
+    let build = format!("/setup/{setup}/build");
+    let waiting = read(build.clone()).await;
+    assert!(
+        waiting.contains("<footer>Waits on Confirm. The board and the prompt tuple panel are held by the rulings.</footer>"),
+        "{waiting}"
+    );
+    assert!(crate::setup_tests::walk(&waiting).is_empty());
     let (status, body, _) = crate::setup_place_tests::post(
         &rig,
         &ada,
@@ -2298,6 +2331,17 @@ async fn the_reports_a_box_sends_feed_placement_and_confirm() {
     )
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let built = read(build).await;
+    assert!(
+        built.contains("<footer>Confirm stands. Waits on the rulings that hold the board and the prompt tuple panel.</footer>"),
+        "{built}"
+    );
+    assert!(!built.contains("Waits on Confirm"), "{built}");
+    assert!(
+        crate::setup_tests::walk(&built).is_empty(),
+        "{:?}",
+        crate::setup_tests::walk(&built)
+    );
     let confirmed = s.deployment_tuple(&setup).await.unwrap().unwrap();
     let members = &confirmed.tuple.box_members;
     assert_eq!(members.report.stage, "drives");
@@ -2618,6 +2662,7 @@ async fn the_panes_are_served_in_each_status_as_the_box_reports() {
         ("placement", devices),
     ] {
         let shown = page_of(page).await;
+        crate::surfaces::assert_inputs_drawn(&shown);
         assert_eq!(
             status(pane(&shown, heading)),
             mark("hold", "waiting"),
@@ -2626,14 +2671,27 @@ async fn the_panes_are_served_in_each_status_as_the_box_reports() {
         assert!(crate::setup_tests::walk(&shown).is_empty(), "{page}");
     }
 
+    // Weaver Web's own address, stated as information for the box to dial
+    // (the operator's walk of 2026-11-19), its data the same table.
+    let shown = page_of("pairing").await;
+    let address = pane(&shown, "Weaver Web's address");
+    assert!(
+        address.contains("<p>This is Weaver Web's own address, for the box to dial. It is never the box's address, and nothing here is filled in.</p>"),
+        "{address}"
+    );
+    assert!(address.contains("<tr><th>Address</th>"), "{address}");
+    assert!(!shown.contains("The console's link"), "{shown}");
+
     let refused = r#"{"format":"weaver-survey/2"}"#;
     sent(&config, Stage::Pairing, refused).await;
     let shown = page_of("pairing").await;
+    crate::surfaces::assert_inputs_drawn(&shown);
     let report = pane(&shown, pairing);
     assert_eq!(status(report), mark("fail", "refused"));
     assert!(report.contains("Refused for cause 4: "), "{report}");
     assert!(!shown.contains("weaver-survey/2"), "{shown}");
     let shown = page_of("placement").await;
+    crate::surfaces::assert_inputs_drawn(&shown);
     let held = pane(&shown, devices);
     assert_eq!(status(held), mark("fail", "refused"));
     assert!(
@@ -2646,6 +2704,7 @@ async fn the_panes_are_served_in_each_status_as_the_box_reports() {
     });
     sent(&config, Stage::Pairing, &script).await;
     let shown = page_of("pairing").await;
+    crate::surfaces::assert_inputs_drawn(&shown);
     let report = pane(&shown, pairing);
     assert_eq!(status(report), mark("ok", "read"));
     assert!(
@@ -2657,6 +2716,7 @@ async fn the_panes_are_served_in_each_status_as_the_box_reports() {
     assert!(!shown.contains("<script>alert"), "{shown}");
     assert!(crate::setup_tests::walk(&shown).is_empty());
     let shown = page_of("placement").await;
+    crate::surfaces::assert_inputs_drawn(&shown);
     let offered = pane(&shown, devices);
     assert_eq!(status(offered), mark("ok", "read"));
     assert!(
@@ -2671,10 +2731,12 @@ async fn the_panes_are_served_in_each_status_as_the_box_reports() {
     )
     .await;
     let shown = page_of("drives").await;
+    crate::surfaces::assert_inputs_drawn(&shown);
     let report = pane(&shown, drives);
     assert_eq!(status(report), mark("fail", "refused"));
     assert!(report.contains("Refused for cause 4: "), "{report}");
     let confirm = page_of("confirm").await;
+    crate::surfaces::assert_inputs_drawn(&confirm);
     assert!(
         confirm.contains("the drives stage's report is refused for cause 4"),
         "{confirm}"
@@ -2687,6 +2749,7 @@ async fn the_panes_are_served_in_each_status_as_the_box_reports() {
     )
     .await;
     let shown = page_of("drives").await;
+    crate::surfaces::assert_inputs_drawn(&shown);
     let report = pane(&shown, drives);
     assert_eq!(status(report), mark("ok", "read"));
     assert!(
@@ -2697,6 +2760,14 @@ async fn the_panes_are_served_in_each_status_as_the_box_reports() {
     assert!(
         report.contains("No model is picked, so its free space is not judged."),
         "{report}"
+    );
+    // The SSH key page opens in a new tab, so the setup stays open (the
+    // operator's walk of 2026-11-19).
+    assert!(
+        shown.contains(
+            r#"<a href="/admin/ssh-key" target="_blank" rel="noopener">Change the keys</a>, in a new tab, so this setup stays open here."#
+        ),
+        "{shown}"
     );
     assert!(crate::setup_tests::walk(&shown).is_empty());
 }

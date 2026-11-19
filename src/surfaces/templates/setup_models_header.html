@@ -26,7 +26,7 @@
   <input type="hidden" name="commit" value="{{ commit }}">
   <input type="hidden" name="choice" value="{{ choice }}">
   {%- if adapter %}
-  <label>Scale <input name="scale" inputmode="decimal" required></label>
+  <label>Scale <input type="text" name="scale" inputmode="decimal" required></label>
   {%- endif %}
   <button type="submit">Pick as the {{ role }}</button>
 </form>

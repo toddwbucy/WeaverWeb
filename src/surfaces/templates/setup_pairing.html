@@ -18,8 +18,9 @@
   <footer>Checked, the box is a virtual machine. Unchecked, it is a host.</footer>
 </section>
 <section class="pane">
-  <header><span class="stage"><b>1</b> Declare</span><h2>The console's link</h2><span class="backing built">built</span>{% if loopback_warning || unspecified_warning %}<span class="status fail">fail</span>{% else %}<span class="status ok">ok</span>{% endif %}<span class="source">the console's config: <code>link_address</code>, else <code>link_listen</code></span></header>
+  <header><span class="stage"><b>1</b> Declare</span><h2>Weaver Web's address</h2><span class="backing built">built</span>{% if loopback_warning || unspecified_warning %}<span class="status fail">fail</span>{% else %}<span class="status ok">ok</span>{% endif %}<span class="source">the console's config: <code>link_address</code>, else <code>link_listen</code></span></header>
   <div class="body">
+  <p>This is Weaver Web's own address, for the box to dial. It is never the box's address, and nothing here is filled in.</p>
   <table>
     <tbody>
     <tr><th>Address</th><td class="mono">{{ link.address }}</td></tr>
@@ -33,7 +34,7 @@
   <p><span class="status fail">unspecified</span> This is an unspecified address, which a listener binds for every interface and which names no machine to dial. Set <code>link_address</code> in the console's config to an address the box reaches.</p>
   {%- endif %}
   </div>
-  <footer>The box's setup asks for this address and port, and the box must reach them.</footer>
+  <footer>Read from Weaver Web's own config. The box's setup asks for this address and port, and the box must reach them.</footer>
 </section>
 {%- if pair.live %}
 <section class="pane">

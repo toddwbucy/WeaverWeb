@@ -688,7 +688,10 @@ async fn every_pane_carries_its_stage_backing_and_status() {
 }
 
 /// **The pairing page shows the console's link address and its port**:
-/// `link_address` where it is set, else `link_listen`'s.
+/// `link_address` where it is set, else `link_listen`'s, in the pane titled
+/// Weaver Web's address, which states that the address is Weaver Web's own,
+/// for the box to dial, and never the box's (the operator's walk of
+/// 2026-11-19).
 #[tokio::test]
 async fn the_pairing_page_shows_link_address_and_its_port_else_link_listens() {
     for (link_listen, link_address, address, port, not) in [
@@ -732,6 +735,18 @@ async fn the_pairing_page_shows_link_address_and_its_port_else_link_listens() {
             "{pairing}"
         );
         assert!(!pairing.contains(not), "{not}: {pairing}");
+        assert!(
+            pairing.contains("<h2>Weaver Web's address</h2>"),
+            "{pairing}"
+        );
+        assert!(
+            pairing.contains("This is Weaver Web's own address, for the box to dial. It is never the box's address"),
+            "{pairing}"
+        );
+        assert!(
+            pairing.contains("<footer>Read from Weaver Web's own config. The box's setup asks for this address and port, and the box must reach them.</footer>"),
+            "{pairing}"
+        );
     }
 }
 

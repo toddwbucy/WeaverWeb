@@ -7,6 +7,6 @@
   <div class="body">
   <p>The box lays the agent from the deployment tuple once Confirm stands. The fields no setup page asks are on <a href="/declarations">the declaration screen</a>, as built.</p>
   </div>
-  <footer>Waits on Confirm. The board and the prompt tuple panel are held by the rulings.</footer>
+  <footer>{% if frame.state == "confirmed" %}Confirm stands. Waits on the rulings that hold the board and the prompt tuple panel.{% else %}Waits on Confirm. The board and the prompt tuple panel are held by the rulings.{% endif %}</footer>
 </section>
 {% endblock %}

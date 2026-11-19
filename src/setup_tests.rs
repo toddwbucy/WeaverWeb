@@ -676,7 +676,9 @@ async fn every_pane_carries_its_stage_backing_and_status() {
         drives.contains(&cache.path().display().to_string()),
         "{drives}"
     );
-    assert!(drives.contains(r#"<a href="/admin/ssh-key">Change the keys</a>"#));
+    assert!(drives.contains(
+        r#"<a href="/admin/ssh-key" target="_blank" rel="noopener">Change the keys</a>, in a new tab"#
+    ));
     // The build page links the declaration screen as built.
     assert!(
         walked[7]

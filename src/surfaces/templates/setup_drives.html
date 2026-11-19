@@ -92,7 +92,7 @@
     </tbody>
   </table>
   {%- endif %}
-  <p><a href="/admin/ssh-key">Change the keys</a></p>
+  <p><a href="/admin/ssh-key" target="_blank" rel="noopener">Change the keys</a>, in a new tab, so this setup stays open here. Reload this page to see a key you add.</p>
   </div>
   <footer>{% if keys.is_empty() %}Waits on an SSH public key, added on the SSH keys page. {% endif %}The drive setup fetches the keys over the paired link and writes them, so a changed key reaches a box when the setup command runs there again.</footer>
 </section>

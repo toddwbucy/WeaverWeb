@@ -60,7 +60,7 @@ Each sub-act leaves draft only when it is shown through the real listener and st
 the pages fetched with the new types and words, and the tests red under their
 perturbations and green after. The gates:
 
-- `cargo fmt`, the build and both clippys, each `--locked`.
+- `cargo fmt`, then the build and both clippys with `--locked`.
 - The suite under `setpriv --no-new-privs`, with `NoNewPrivs: 1` logged from inside it.
 - The journal: every `sudo` line in the suite's window fails the gate. The body's gate
   line names the window and the count.

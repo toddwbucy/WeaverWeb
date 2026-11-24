@@ -100,6 +100,24 @@ pub struct ServerConfig {
     /// tightens.
     #[serde(default = "default_sign_in")]
     pub sign_in: Vec<SignInMethod>,
+    /// **No sign-in, for development** (the operator's ruling of
+    /// 2026-11-21). Named, every browser request is served as this person,
+    /// through a standing session the server opens for them by the sign-in
+    /// token's own path (`surfaces::gate::Standing`), so the grant checks,
+    /// the authors and the audit stand as they are and only the asking for
+    /// a credential is gone. A config naming an empty name, or naming one
+    /// while `sign_in` does not name `token`, is refused at load. The person
+    /// must stand and be enabled (`person bootstrap`), or the server refuses
+    /// to start (`surfaces::gate::Standing::ready`). Each opening of the
+    /// standing session ends the person's live enrollment token and any
+    /// sign-in token the host printed for them, as every sign-in token's
+    /// issue does. Unset, the default, sign-in is required as before.
+    /// **Anyone who reaches the listener is that person**, so the listener's
+    /// exposure is the box's to hold. Sign-in procedures are taken up closer
+    /// to release, and what becomes of this member is ruled then (the
+    /// operator's ruling of 2026-11-24).
+    #[serde(default)]
+    pub no_sign_in_as: Option<String>,
 }
 
 /// **A sign-in method the server's config may admit** (Spec 2.13).
@@ -224,6 +242,20 @@ impl ServerConfig {
         for (at, method) in cfg.sign_in.iter().enumerate() {
             if cfg.sign_in[..at].contains(method) {
                 anyhow::bail!("sign_in names {method:?} twice");
+            }
+        }
+        // The standing session is opened by the sign-in token's own path, so
+        // a config naming a standing person names the token too.
+        if let Some(name) = cfg.no_sign_in_as.as_deref() {
+            if name.trim().is_empty() {
+                anyhow::bail!(
+                    "no_sign_in_as is empty; name the person every request is served as, or leave it out"
+                );
+            }
+            if !cfg.signs_in_by(SignInMethod::Token) {
+                anyhow::bail!(
+                    "no_sign_in_as is named but sign_in does not name token: the standing session is opened by the sign-in token's path"
+                );
             }
         }
         if cfg.session_idle_secs > cfg.session_absolute_secs {
@@ -358,5 +390,36 @@ mod tests {
                 .unwrap()
                 .signs_in_by(SignInMethod::Token)
         );
+    }
+
+    /// **No sign-in is named with the token's method or not at all** (the
+    /// operator's ruling of 2026-11-21): unset by default, loaded where
+    /// `sign_in` names `token`, and refused where it does not or where the
+    /// name is empty.
+    #[test]
+    fn no_sign_in_names_a_person_and_needs_the_token() {
+        let dir = crate::test_dir::tempdir().unwrap();
+        let path = dir.path().join("server.toml");
+        let base =
+            "listen = \"127.0.0.1:0\"\ndatabase = \"postgres:///x\"\nauthority_dir = \"/a\"\n";
+        std::fs::write(&path, base).unwrap();
+        assert_eq!(ServerConfig::load(&path).unwrap().no_sign_in_as, None);
+        for (rest, ok) in [
+            ("sign_in = [\"token\"]\nno_sign_in_as = \"admin\"\n", true),
+            (
+                "sign_in = [\"passkey\", \"token\"]\nno_sign_in_as = \"admin\"\n",
+                true,
+            ),
+            ("no_sign_in_as = \"admin\"\n", false),
+            (
+                "sign_in = [\"passkey\"]\nno_sign_in_as = \"admin\"\n",
+                false,
+            ),
+            ("sign_in = [\"token\"]\nno_sign_in_as = \" \"\n", false),
+        ] {
+            std::fs::write(&path, format!("{base}{rest}")).unwrap();
+            let loaded = ServerConfig::load(&path);
+            assert_eq!(loaded.is_ok(), ok, "{rest}: {:?}", loaded.err());
+        }
     }
 }

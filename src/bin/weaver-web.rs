@@ -474,7 +474,17 @@ async fn serve(cfg: Arc<ServerConfig>) -> anyhow::Result<()> {
     // Spec section 6: a surface that renders what is kept reads the store
     // and nothing else. A surface that needs a seam takes it as its own
     // argument, keeping record reads independent of the link.
+    // **No sign-in, for development** (the config's `no_sign_in_as`): the
+    // policy carries the standing person, and every browser request it
+    // gates is served as them.
     let policy = weaver_web::surfaces::gate::Policy::from_config(&cfg);
+    if let Some(standing) = &policy.standing {
+        standing.ready(&store).await?;
+        tracing::warn!(
+            "sign-in is off (no_sign_in_as): every browser request is served as {}",
+            standing.name()
+        );
+    }
     // **Enrollment by token** where passkeys are on (design section 7): the
     // relying party from `rp_id` and `origin`, checked above.
     let passkeys = weaver_web::passkeys::Passkeys::from_config(&cfg)?;

@@ -73,6 +73,7 @@ pub(crate) fn server_config(
         session_absolute_secs: 43200,
         operations_log: None,
         model_cache: None,
+        no_sign_in_as: None,
         sign_in: vec![crate::config::SignInMethod::Passkey],
     }
 }
@@ -110,6 +111,7 @@ async fn rig_of(handover: Handover, silence: Duration) -> Option<Rig> {
         idle: Duration::from_secs(3600),
         absolute: Duration::from_secs(12 * 3600),
         write_bound: Duration::from_secs(60),
+        standing: None,
     };
     let agents = gate::guard(
         crate::surfaces::script_policy(routes(Seams {

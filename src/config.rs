@@ -108,8 +108,10 @@ pub struct ServerConfig {
     /// a credential is gone. A config naming an empty name, or naming one
     /// while `sign_in` does not name `token`, is refused at load. The person
     /// must stand and be enabled (`person bootstrap`), or the server refuses
-    /// to start (`surfaces::gate::Standing::ready`). Unset, the default,
-    /// sign-in is required as before.
+    /// to start (`surfaces::gate::Standing::ready`). Each opening of the
+    /// standing session ends the person's live enrollment token and any
+    /// sign-in token the host printed for them, as every sign-in token's
+    /// issue does. Unset, the default, sign-in is required as before.
     /// **Anyone who reaches the listener is that person**, so the listener's
     /// exposure is the box's to hold, and release removes this member.
     #[serde(default)]

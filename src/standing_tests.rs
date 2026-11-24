@@ -290,3 +290,55 @@ async fn a_person_named_by_identity_is_served() {
         .expect("served by identity");
     assert_eq!(served.person_id, ada);
 }
+
+/// **An opening ends the person's other tokens**, as the doc says: a live
+/// enrollment token the host issued ends `revoked`, and a sign-in token the
+/// host printed ends `superseded`. A pin of the stated behaviour: it fails
+/// where the standing session opens by any path but the host's issue.
+#[tokio::test]
+async fn an_opening_ends_the_persons_other_tokens() {
+    let Some(fresh) = crate::store::read::tests::fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let ada = person(s, "ada").await;
+    let printed = host::sign_in_token(s, &cfg(TOKEN), &ada, None, Some("lab")).await;
+    assert!(printed.ok, "{}", printed.value);
+    let enrollment = host::token(s, &cfg(TOKEN), &ada, None, Some("lab")).await;
+    assert!(enrollment.ok, "{}", enrollment.value);
+    let digest = |token: &serde_json::Value| {
+        crate::store::identity::digest(token["token"].as_str().unwrap())
+    };
+    let (printed, enrollment) = (digest(&printed.value), digest(&enrollment.value));
+    assert_eq!(
+        ended(s, "enrollment_token", &enrollment).await,
+        None,
+        "live before the opening"
+    );
+
+    let policy = standing_policy("ada");
+    let standing = policy.standing.clone().unwrap();
+    standing
+        .session(s, &policy, true)
+        .await
+        .unwrap()
+        .expect("served");
+    assert_eq!(
+        ended(s, "enrollment_token", &enrollment).await.as_deref(),
+        Some("revoked")
+    );
+    assert_eq!(
+        ended(s, "sign_in_token", &printed).await.as_deref(),
+        Some("superseded")
+    );
+}
+
+/// How a token ended, by its digest, or `None` while it is live.
+async fn ended(s: &Store, table: &str, digest: &str) -> Option<String> {
+    let query = format!("SELECT ended FROM {table} WHERE token_digest = $1");
+    sqlx::query_scalar(sqlx::AssertSqlSafe(query))
+        .bind(digest)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap()
+}

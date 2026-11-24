@@ -129,3 +129,22 @@ pushed without the Planner's word naming the head.
 
 Not in this act: the model's way onto the appliance, sign-in or a sign-in page, any change
 to the survey's format, and anything on the appliance's side.
+
+## Addendum, 2026-11-24: a small fix picked up as child 4
+
+CodeRabbit's review of #195 (2026-11-24) found that the last loop of
+`link::client_tests::turns_past_the_in_flight_bound_wait_in_arrival_order` awaits each
+close with no deadline. A stalled reply would hang the suite and fail nothing.
+
+| Child | Branch | What |
+|---|---|---|
+| 4 | `act/the-pairing-page-and-the-directories-4-close-deadline` | The test's final close waits get a deadline, in `src/link/client_tests.rs` alone |
+
+Child 4 branches from the base.
+
+Acceptance:
+
+- The per-request text assertions and the bound's assertion stay as they are.
+- With the last two permits withheld in the worktree, the test fails within its deadline
+  and does not hang. The report says how long it took.
+- The test passes 20 of 20 alone, and the suite passes at 8 threads.

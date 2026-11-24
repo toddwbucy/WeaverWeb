@@ -770,8 +770,15 @@ async fn every_pane_carries_its_stage_backing_and_status() {
     // Confirm's way forward stands only once Confirm does.
     assert!(!walked[4].1.contains("Next:"), "{}", walked[4].1);
     // The Pair page offers no way on to the declaration before its box is
-    // paired.
-    assert!(!provision[1].1.contains("Next:"), "{}", provision[1].1);
+    // paired: the page read under its own URI, before `paired`, selected by
+    // that URI so that the list's order cannot move the read.
+    let unpaired: Vec<&String> = provision
+        .iter()
+        .filter(|(uri, _)| *uri == pairing)
+        .map(|(_, page)| page)
+        .collect();
+    assert_eq!(unpaired.len(), 1, "the unpaired Pair page is read once");
+    assert!(!unpaired[0].contains("Next:"), "{pairing}: {}", unpaired[0]);
     // The directories page names the model cache where it is set, and the key
     // by its fingerprint, with the way to change it.
     let drives = &walked[walked.len() - 1].1;

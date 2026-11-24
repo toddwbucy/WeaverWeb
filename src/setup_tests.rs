@@ -1256,8 +1256,12 @@ async fn an_unknown_setup_is_not_found_and_a_malformed_one_refused() {
 /// agent is named from it alone** (Spec 8.2, the operator's ruling of
 /// 2026-11-24: "'Create new agent' opens a requirements page first"): Pair
 /// a box holds Create new agent and no name's field; the requirements page
-/// states, in order, the VM, the operator's part, the two disks with the
-/// 10 GB margin as guidance, Weaver Web's address and the note, then ends
+/// states, in order, the VM, the operator's part, the two disks (the
+/// appliance coming with none, the operator adding both sized to their
+/// need, laying them before pairing, the setup script asking whether to
+/// keep or erase a disk that holds data, and the 10 GB margin as guidance;
+/// the operator's rulings of 2026-11-23 and 2026-11-24), Weaver Web's
+/// address and the note, then ends
 /// in the name's field and Begin, its one form, posting to `POST /pair`.
 /// It names no CPU requirement and offers no host install. No other page
 /// links it or holds the name's form, each read in three states: the setup
@@ -1269,6 +1273,8 @@ async fn an_unknown_setup_is_not_found_and_a_malformed_one_refused() {
 /// agent; draw it on the unpaired Pair page alone; link the requirements
 /// page from `/setup` while no declaration is open, before any row
 /// stands. Each is an agent named, or the page reached, from another page.
+/// And drop the two disks' sentence that the appliance comes with no disk,
+/// and the page no longer says what the operator ruled.
 #[tokio::test]
 async fn the_requirements_page_is_reached_from_create_new_agent_alone() {
     let Some(rig) = crate::agents_tests::rig().await else {
@@ -1310,12 +1316,34 @@ async fn the_requirements_page_is_reached_from_create_new_agent_alone() {
         "An agent runs in a VM made from the appliance. This version covers VMs only.",
         "One agent per VM is the recommendation.",
         "The operator holds the hypervisor, the cards, the disks and the network between VMs.",
-        "a models disk at least 10 GB larger than the model, and a state disk",
-        "The 10 GB margin is guidance. No page judges it.",
         "The VM must reach Weaver Web's address and port.",
         "GB10 Spark-class devices are hardware we want to deploy to and do not have yet.",
     ] {
         assert!(new.contains(said), "{said}: {new}");
+    }
+    // The two disks, in the operator's rulings of 2026-11-23 and 2026-11-24,
+    // in this order within their pane.
+    let disks = panes(&new)[2];
+    assert!(
+        disks.contains("the operator's rulings of 2026-11-23 and 2026-11-24</span>"),
+        "{disks}"
+    );
+    let mut from = 0;
+    for said in [
+        "The appliance comes with no state disk and no models disk. It comes with itself.",
+        "The operator adds both in the hypervisor, sized to their need: a models disk at \
+         least 10 GB larger than the model, and a state disk of at least 10 GiB.",
+        "The operator lays the disks before pairing, with our help: a models disk at least \
+         10 GB larger than the model, and a state disk, mounted at our default paths unless \
+         they choose others.",
+        "Where a disk already holds data, the appliance's setup script asks at the console \
+         whether to keep it or erase it.",
+        "The 10 GB margin is guidance. No page judges it.",
+    ] {
+        let at = disks[from..]
+            .find(said)
+            .unwrap_or_else(|| panic!("{said}, in order: {disks}"));
+        from += at + said.len();
     }
     let forms: usize = panes(&new)
         .iter()

@@ -479,6 +479,7 @@ async fn serve(cfg: Arc<ServerConfig>) -> anyhow::Result<()> {
     // gates is served as them.
     let policy = weaver_web::surfaces::gate::Policy::from_config(&cfg);
     if let Some(standing) = &policy.standing {
+        standing.ready(&store).await?;
         tracing::warn!(
             "sign-in is off (no_sign_in_as): every browser request is served as {}",
             standing.name()

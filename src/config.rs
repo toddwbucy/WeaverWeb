@@ -105,9 +105,11 @@ pub struct ServerConfig {
     /// through a standing session the server opens for them by the sign-in
     /// token's own path (`surfaces::gate::Standing`), so the grant checks,
     /// the authors and the audit stand as they are and only the asking for
-    /// a credential is gone. The person must stand and be enabled (`person
-    /// bootstrap`), and `sign_in` must name `token`; refused at load
-    /// otherwise. Unset, the default, sign-in is required as before.
+    /// a credential is gone. A config naming an empty name, or naming one
+    /// while `sign_in` does not name `token`, is refused at load. The person
+    /// must stand and be enabled (`person bootstrap`), or the server refuses
+    /// to start (`surfaces::gate::Standing::ready`). Unset, the default,
+    /// sign-in is required as before.
     /// **Anyone who reaches the listener is that person**, so the listener's
     /// exposure is the box's to hold, and release removes this member.
     #[serde(default)]

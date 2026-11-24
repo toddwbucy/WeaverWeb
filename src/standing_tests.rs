@@ -202,3 +202,29 @@ async fn the_background_read_serves_the_standing_person() {
         None
     );
 }
+
+/// **The start refuses a person who cannot stand**: a name no person
+/// holds, and a disabled person, each refused with the remedy named; an
+/// enabled person holding no grant passes.
+#[tokio::test]
+async fn the_start_refuses_a_person_who_cannot_stand() {
+    let Some(fresh) = crate::store::read::tests::fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let unknown = standing_policy("nobody").standing.unwrap();
+    let refused = unknown.ready(s).await.unwrap_err().to_string();
+    assert!(refused.contains("no person holds that name"), "{refused}");
+
+    let ada = person(s, "ada").await;
+    let standing = standing_policy("ada").standing.unwrap();
+    standing.ready(s).await.expect("an enabled person stands");
+
+    sqlx::query("UPDATE person SET enabled = false WHERE person_id = $1")
+        .bind(&ada)
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    let refused = standing.ready(s).await.unwrap_err().to_string();
+    assert!(refused.contains("who is disabled"), "{refused}");
+}

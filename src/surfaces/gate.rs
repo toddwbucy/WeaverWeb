@@ -152,6 +152,25 @@ impl Standing {
         &self.name
     }
 
+    /// **The start's check**: the person the config names stands and is
+    /// enabled, or the server does not start. A name no person holds, or a
+    /// disabled person, would serve no one at every request, so it is
+    /// refused here, where the store is first open, with the remedy named.
+    /// A person holding no grant passes: they are served and see nothing.
+    pub async fn ready(&self, store: &Store) -> anyhow::Result<()> {
+        match store.person(&self.name).await? {
+            None => anyhow::bail!(
+                "no_sign_in_as names {}, and no person holds that name: make them with `person bootstrap`, or leave no_sign_in_as out",
+                self.name
+            ),
+            Some(person) if !person.enabled => anyhow::bail!(
+                "no_sign_in_as names {}, who is disabled: enable them, or name another person",
+                self.name
+            ),
+            Some(_) => Ok(()),
+        }
+    }
+
     /// **The standing session, at this use**: the one held where it still
     /// serves, and a fresh one opened where none is held or the held one has
     /// ended (closed, idle, expired, its person disabled). `None` where no

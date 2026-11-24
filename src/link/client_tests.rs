@@ -1299,6 +1299,14 @@ async fn a_reinstalled_config_for_another_agent_is_refused() {
 /// **An ask past the waiting bound is answered `busy` at once**, gate-con's
 /// own back-pressure: one turn in flight and two waiting, so of five held
 /// asks three answer and two are refused `busy` without reaching the gate.
+/// Each ask is enqueued only once the one before it is, as in
+/// `turns_past_the_in_flight_bound_wait_in_arrival_order`: `ask_as_person`
+/// returns after its frame is in the connection's channel, so the link
+/// carries the five in ask order by construction, and no delay has to
+/// outlast an ask's database work. The fake gate answers a `wait:` exchange
+/// only when the test frees one, so no turn ends and no slot frees before
+/// two asks have been answered at the bound. Each asker is made before the
+/// first ask.
 #[tokio::test]
 async fn asks_past_the_waiting_bound_are_answered_busy() {
     let Some(lab) = Lab::open().await else { return };
@@ -1312,19 +1320,51 @@ async fn asks_past_the_waiting_bound_are_answered_busy() {
     first_turn(&lab, &id, "warm").await.unwrap();
     gate.seen.started.lock().unwrap().clear();
 
-    let mut asks = Vec::new();
-    for i in 0..5 {
-        let text = format!("hold:400:{i}");
-        let listener = lab.listener.clone();
-        let asked = id.clone();
-        asks.push(tokio::spawn(
-            async move { turn(&listener, &asked, &text).await },
-        ));
-        tokio::time::sleep(Duration::from_millis(30)).await;
+    let mut askers = Vec::new();
+    for _ in 0..5 {
+        askers.push(operator(lab.listener.store(), &id).await);
     }
+    let mut closes = Vec::new();
+    for (i, asker) in askers.iter().enumerate() {
+        let admission = lab
+            .listener
+            .admit_ask(&asker.person_id)
+            .expect("admitted, under every bound");
+        let enqueued = lab
+            .listener
+            .ask_as_person(
+                admission,
+                asker,
+                &id,
+                Act::Turn(TurnText::new(format!("wait:{i}"))),
+            )
+            .await
+            .expect("enqueued");
+        closes.push(tokio::spawn(enqueued.close()));
+    }
+    // No slot frees until two asks have met the bound and been answered:
+    // the gate holds every `wait:` exchange, so the one in flight and the
+    // two waiting cannot end first.
+    let met = tokio::time::Instant::now() + SOON;
+    while closes.iter().filter(|c| c.is_finished()).count() < 2 {
+        assert!(
+            tokio::time::Instant::now() < met,
+            "two asks answered at the bound, the gate seeing {:?}",
+            gate.seen.started.lock().unwrap()
+        );
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    gate.seen.answers.add_permits(3);
+    // One deadline over every close: a reply that stalls fails the test
+    // rather than holding the suite.
+    let until = tokio::time::Instant::now() + SOON;
     let mut kinds = Vec::new();
-    for ask in asks {
-        kinds.push(match ask.await.unwrap() {
+    for (i, close) in closes.into_iter().enumerate() {
+        let closed = tokio::time::timeout_at(until, close)
+            .await
+            .unwrap_or_else(|_| panic!("ask {i} did not close within {SOON:?}"))
+            .unwrap();
+        kinds.push(match closed {
             Ok(_) => "answered".to_owned(),
             Err(TurnError::Gate(f)) => f.kind,
             Err(e) => panic!("{e}"),
@@ -1335,7 +1375,11 @@ async fn asks_past_the_waiting_bound_are_answered_busy() {
         ["answered", "answered", "answered", "busy", "busy"],
         "one in flight, two waiting, the rest busy"
     );
-    assert_eq!(gate.seen.started.lock().unwrap().len(), 3);
+    assert_eq!(
+        *gate.seen.started.lock().unwrap(),
+        ["wait:0", "wait:1", "wait:2"],
+        "the three admitted reached the gate in ask order"
+    );
     con.stop().await;
 }
 

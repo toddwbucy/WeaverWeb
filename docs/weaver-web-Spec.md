@@ -1132,40 +1132,44 @@ set. **The session it opens is an ordinary session** in every other way:
 the `Origin` check, the cookie, both limits, the grants and the audit of
 everything done in it hold as for one a passkey opened.
 
-**No sign-in, before release**, as built on 2026-11-24 (the config's
-`no_sign_in_as`, on the operator's ruling of 2026-11-21; section 2.13 has
-its reasons). **[PLACEHOLDER 1, the operator's to rule, not drafted: the sentence that states the switch, whether sign-in is off or on by default before release, and what release does with it.]**
-Where the config names a person, by name or by `pe-` identity, **every
-browser request is served as that person through one standing session**,
-and no cookie is read or set. The server opens it by the sign-in token's
-own path: the host's `person sign-in-token` for that person, one minute
-long, issued under the author `no_sign_in_as` and audited as the host's
-command is, then redeemed and audited as the sign-in by token above
-redeems one, the session naming the method `sign-in token` and no passkey.
-Its bearer is held in the server's memory alone, so a restart drops it.
-Each use checks it as every session is checked, and where it has ended
-(closed, its person disabled, past the absolute limit, or idle) the next
-use opens another. Everything past the gate stands as it is: the grants,
-the authors, the audit of what is done, and the session a write is held
-to. **The config names `token` in `sign_in`**, or is refused at load, as
-is an empty name. **The start refuses a person who cannot stand**: a name
-no person holds, or a disabled person, is refused where the store is first
-open, with the remedy named; a person holding no grant passes, and is
-served and sees nothing. **A refusal while the server runs is held by a
-read**: each opening first reads the person, with no record, and runs no
-issue for a name no one holds or a disabled person, so a person disabled
-while the server runs adds nothing to the audit at each use and is served
-at the first use after an enable, the log carrying one line per change of
-reason; a disable that lands between that read and the issue's transaction
-writes the issue's one refused pair, once. **An opening ends the person's
-other tokens**, by section 2.13's rules for the sign-in token: their live
-enrollment token ends `revoked` and a sign-in token the host printed for
-them ends `superseded`, and from the first opening an admin's enrollment
-token is refused for them, so a passkey for the standing person takes the
-host's `person token`, redeemed before the next opening. **The lock
-covers the opening alone**: a use the held session serves waits on no
-other, and two uses that find none serving open one session between them.
-**[PLACEHOLDER 2, the operator's to rule, not drafted: what sign-out and the sign-in page do while the switch is on.]**
+**Before release, development runs with sign-in off.** The operator ruled on
+2026-11-21, and again on 2026-11-24, that sign-in gets in the way while
+Weaver Web itself is still being built. Where the config names a person in
+`no_sign_in_as`, the server serves every browser request as that person, and
+anyone who reaches the listener is that person. The member is unset by
+default. Sign-in procedures are taken up closer to release, and what becomes
+of this member is ruled then. **As built on 2026-11-24** (section 2.13 has
+the reasons), the person is named by name or by `pe-` identity, and **every
+browser request is served through one standing session**, with no cookie
+read or set. The server opens it by the sign-in token's own path: the host's
+`person sign-in-token` for that person, one minute long, issued under the
+author `no_sign_in_as` and audited as the host's command is, then redeemed
+and audited as the sign-in by token above redeems one, the session naming
+the method `sign-in token` and no passkey. Its bearer is held in the
+server's memory alone, so a restart drops it. Each use checks it as every
+session is checked, and where it has ended (closed, its person disabled,
+past the absolute limit, or idle) the next use opens another. Everything
+past the gate stands as it is: the grants, the authors, the audit of what is
+done, and the session a write is held to. **The config names `token` in
+`sign_in`**, or is refused at load, as is an empty name. **The start refuses
+a person who cannot stand**: a name no person holds, or a disabled person,
+is refused where the store is first open, with the remedy named; a person
+holding no grant passes, and is served and sees nothing. **A refusal while
+the server runs is held by a read**: each opening first reads the person,
+with no record, and runs no issue for a name no one holds or a disabled
+person, so a person disabled while the server runs adds nothing to the audit
+at each use and is served at the first use after an enable, the log carrying
+one line per change of reason; a disable that lands between that read and
+the issue's transaction writes the issue's one refused pair, once. **An
+opening ends the person's other tokens**, by section 2.13's rules for the
+sign-in token: their live enrollment token ends `revoked` and a sign-in
+token the host printed for them ends `superseded`, and from the first
+opening an admin's enrollment token is refused for them, so a passkey for
+the standing person takes the host's `person token`, redeemed before the
+next opening. **The lock covers the opening alone**: a use the held session
+serves waits on no other, and two uses that find none serving open one
+session between them. Sign-out and the sign-in page stand as they are while
+the switch is on, and this act does not treat them.
 
 **A session is not an authored row and takes no version.** Section 3.2's
 ordering rule answers two engineers editing one declaration, and nobody edits
@@ -1988,23 +1992,30 @@ it decides are stated here and in section 2.8, and the reasons are there.
   of what it trusts. **Release tightens it**: before release the operator
   decides whether the method stays, and under what config, with the
   passkey's own path settled beside it.
-- **No sign-in before release, by the operator's ruling of 2026-11-21.**
-  **[PLACEHOLDER 1, the operator's to rule, not drafted: the sentence that states the switch, whether sign-in is off or on by default before release, and what release does with it.]** In the operator's words: "Take down the user authentication. Just
-  come to an empty page. No sign in right now. When we have everything
-  built out and we're ready to do a release, then we can look at a sign in
-  page and add all that authentication security." **What it is**: the
-  config's `no_sign_in_as`, naming one person every browser request is
-  served as, through section 2.8's standing session. It needs `sign_in` to
-  name `token`, since the standing session opens by that method's path, and
-  it moves nothing else in this section: the grants, the admin's writes,
-  the host's commands and the identity exclusion hold as they are.
-  **Audited**: each opening's issue as the host's command, under the author
-  `no_sign_in_as`, and its redemption as the session's opening by `sign-in
-  token`; what is done after is done by `session`, as in any session.
-  **What it gives up**, stated so nobody reads more into it: nobody proves
-  who they are, and anyone who reaches the browser's listener is that
-  person, so the listener's exposure is the box's to hold. **At release**,
-  placeholder 1 above stands for what is done with it.
+- **Before release, development runs with sign-in off.** The operator ruled on
+  2026-11-21, and again on 2026-11-24, that sign-in gets in the way while
+  Weaver Web itself is still being built. Where the config names a person in
+  `no_sign_in_as`, the server serves every browser request as that person, and
+  anyone who reaches the listener is that person. The member is unset by
+  default. Sign-in procedures are taken up closer to release, and what becomes
+  of this member is ruled then. In the operator's words, 2026-11-21: "Take
+  down the user authentication. Just come to an empty page. No sign in right
+  now. When we have everything built out and we're ready to do a release, then
+  we can look at a sign in page and add all that authentication security." And
+  on 2026-11-24: "the removal of the sign-in method is a development
+  requirement. it gets in our way. we will introduce log in procedures when we
+  get closer to release." **What it is**: the config's `no_sign_in_as`, naming
+  one person every browser request is served as, through section 2.8's
+  standing session. It needs `sign_in` to name `token`, since the standing
+  session opens by that method's path, and it moves nothing else in this
+  section: the grants, the admin's writes, the host's commands and the
+  identity exclusion hold as they are. **Audited**: each opening's issue as
+  the host's command, under the author `no_sign_in_as`, and its redemption as
+  the session's opening by `sign-in token`; what is done after is done by
+  `session`, as in any session. **What it gives up**, stated so nobody reads
+  more into it: nobody proves who they are, and anyone who reaches the
+  browser's listener is that person, so the listener's exposure is the box's
+  to hold.
 - **The server, one of the two principals that are not a person**, for the
   asks the server makes itself, of which the admission's `show` of section 7.2 is the
   one today. It may ask `show` only, the one observation verb, and never a

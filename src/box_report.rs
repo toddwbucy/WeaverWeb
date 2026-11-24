@@ -35,14 +35,6 @@ use crate::survey::{self, Mount, Refused, Role, Stage, Survey};
 /// its defaults reports about 9.75 GiB.
 pub const STATE_DRIVE_FLOOR: u64 = 9 * GIB;
 
-/// **The models disk's margin** (the operator's ruling of 2026-11-23: "a
-/// models disk at least 10 GB larger than the model"): a models directory
-/// whose filesystem is under the picks' need and this margin is a warning
-/// on the models and directories pages, and nothing is refused for the
-/// margin alone. Taken in GiB, as the state disk's 10 is. A placeholder of
-/// the Spec until the operator rules how the margin is held.
-pub const MODELS_MARGIN: u64 = 10 * GIB;
-
 const GIB: u64 = 1024 * 1024 * 1024;
 
 /// A card the placement page offers: its ordinal in PCI bus order, the

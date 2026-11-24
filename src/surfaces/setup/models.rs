@@ -349,7 +349,7 @@ struct ModelsPage {
     pulls: PullsView,
     /// **The models directory's need** (Spec 6.2), where a model is picked,
     /// and the models directory as the latest report of either stage shows
-    /// it, judged against the need and the 10 GiB margin.
+    /// it, judged against the need.
     need: Option<super::Need>,
     /// The models directory, or why none is judged: which of no report, the
     /// latest refused or misfiled, or a latest naming none.

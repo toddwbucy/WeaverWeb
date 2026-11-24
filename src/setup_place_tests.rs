@@ -928,7 +928,8 @@ async fn confirm_stands_only_where_every_member_is_read_and_writes_one_tuple() {
             tuple.turn_context.as_str(),
             tuple.virtual_machine
         ),
-        (4096, "independent", false)
+        // The checkbox as a new setup starts, checked.
+        (4096, "independent", true)
     );
     assert_eq!(tuple.devices, vec![0, 1]);
     assert_eq!(tuple.max_tokens_per_turn, MAX_TOKENS_PER_TURN);

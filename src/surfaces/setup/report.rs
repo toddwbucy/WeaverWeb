@@ -1,3 +1,5 @@
+//! conforms: web-no-page-judges-the-models-disks-margin
+//!
 //! **The panes a box's report feeds** (Spec 6.2): the pairing stage's report
 //! and the directories page's directories as mounted, each a report as the
 //! source reads it (`crate::box_report`), and the status each carries:
@@ -6,7 +8,7 @@
 //! its text or the refusal's detail, which is the console's log's (Spec
 //! 8.3). Every value is drawn through the templates' escaping.
 
-use crate::box_report::{MODELS_MARGIN, Report, STATE_DRIVE_FLOOR, gib, role_name, stage_name};
+use crate::box_report::{Report, STATE_DRIVE_FLOOR, gib, role_name, stage_name};
 use crate::survey::{Mount, Role, Survey};
 
 use super::when;
@@ -199,12 +201,13 @@ pub(crate) struct NeedOf<'a> {
 
 impl DrivesBody {
     /// **The directories as mounted, judged** (Spec 6.2, the operator's
-    /// rulings of 2026-11-17 and 2026-11-23): one not mounted holds
-    /// Confirm; a state directory whose filesystem is under 9 GiB holds
-    /// Confirm by its exact size; a models directory whose free space is
-    /// under the picks' need, or whose filesystem is under the need and the
-    /// 10 GiB margin, is a warning and not a hold, and one with room says
-    /// so.
+    /// rulings of 2026-11-17, 2026-11-23 and 2026-11-24): one not mounted
+    /// holds Confirm; a state directory whose filesystem is under 9 GiB
+    /// holds Confirm by its exact size; a models directory whose free space
+    /// is under the picks' need is a warning and not a hold, and one with
+    /// room says so. No judgment names the models disk's margin, which the
+    /// requirements page states as guidance (the operator's ruling of
+    /// 2026-11-24: "No page warns").
     pub(crate) fn of(survey: &Survey, need: Option<NeedOf<'_>>) -> DrivesBody {
         let drives = survey
             .drives
@@ -252,28 +255,11 @@ impl DrivesBody {
                                         need.shown
                                     ),
                                 ),
-                                Some(need) if *bytes < need.bytes.saturating_add(MODELS_MARGIN) => {
-                                    Judgment::of(
-                                        "hold",
-                                        "margin",
-                                        format!(
-                                            "Its filesystem is {}, and the picks' need is {}, \
-                                             so the room beside them falls {} short of the \
-                                             10 GiB margin: a warning and not a hold.",
-                                            gib(*bytes),
-                                            need.shown,
-                                            crate::surfaces::hugging_face::bytes(
-                                                need.bytes.saturating_add(MODELS_MARGIN) - *bytes
-                                            )
-                                        ),
-                                    )
-                                }
                                 Some(need) => Judgment::of(
                                     "ok",
                                     "room",
                                     format!(
-                                        "Its free space holds the picks' need of {}, and \
-                                         its filesystem the 10 GiB margin beside it.",
+                                        "Its free space holds the picks' need of {}.",
                                         need.shown
                                     ),
                                 ),

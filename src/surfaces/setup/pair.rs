@@ -227,7 +227,7 @@ mod entry {
     use crate::surfaces::admin::{fault, first_of, refused, settled, writer};
     use crate::surfaces::gate::Session;
 
-    use super::super::{MALFORMED_SETUP, Seams, pair_href, pairing_page};
+    use super::super::{MALFORMED_SETUP, Seams, pair_href, pairing_page, pairing_report};
 
     /// What an entry posts: the code as typed, the confirmation that the
     /// fingerprints were compared, and, for a setup whose name a live row
@@ -672,7 +672,11 @@ mod entry {
             Ok(pair) => pair,
             Err(e) => return fault(e),
         };
-        let page = pairing_page(seams, session.name.clone(), chrome, &setup, pair);
+        let report = match pairing_report(store, seams, &setup).await {
+            Ok(report) => report,
+            Err(e) => return fault(e),
+        };
+        let page = pairing_page(seams, session.name.clone(), chrome, &setup, pair, report);
         match askama::Template::render(&page) {
             Ok(html) => (status, Html(html)).into_response(),
             Err(e) => fault(e),

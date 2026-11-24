@@ -35,6 +35,11 @@ fn edited(stage: &str, edit: impl FnOnce(&mut Value)) -> String {
     value.to_string()
 }
 
+/// The walk of a Provision page: the Pair page's panes carry `2 Provision`.
+fn provisioned(page: &str) -> Vec<String> {
+    crate::setup_tests::walk_staged(page, crate::setup_tests::PROVISION)
+}
+
 /// The pane of `page` headed `heading`, whole.
 pub(crate) fn pane<'a>(page: &'a str, heading: &str) -> &'a str {
     panes(page)
@@ -53,15 +58,23 @@ pub(crate) fn status(pane: &str) -> String {
     rest[..rest.find("</span>").unwrap() + "</span>".len()].to_owned()
 }
 
-/// **The pairing stage's report is served in each status** (Spec 6.2), on
-/// the directories page since the report left the pairing: with
-/// no report the pane waits on it; a refused report is drawn by its stage,
+/// **The pairing stage's report is served in each status on the agent's
+/// Pair page, read only, once the box is paired** (Spec 6.2, 8.2; the
+/// operator's ruling of 2026-11-24: "After a pairing succeeds, the Pair
+/// page shows the hardware report, read only"): an unpaired setup's Pair
+/// page draws no report pane, and the directories page none of its own;
+/// with no report the pane waits on it, saying what sends it; a refused report is drawn by its stage,
 /// arrival and cause by number and words, with neither its text nor the
 /// refusal's detail; a report kept as the pairing stage's that names the
 /// drives stage is misfiled; and a read report is drawn by its arrival and
 /// `taken`, then its members grouped, the CPU's flags as a count with the
 /// list folded, and each card by its ordinal, model, PCI address and memory.
-/// A box with no card says so as a reading. Every status passes the walk.
+/// A box with no card says so as a reading. Every status passes the walk,
+/// and no state of the pane holds a form.
+///
+/// Perturbations: draw the pane whether or not the box is paired, and the
+/// unpaired setup's Pair page draws it; read no report for the Pair page,
+/// and the paired one draws none.
 #[tokio::test]
 async fn the_pairing_pages_report_is_served_waiting_refused_misfiled_and_read() {
     let reported = Arc::new(Reported::default());
@@ -69,7 +82,14 @@ async fn the_pairing_pages_report_is_served_waiting_refused_misfiled_and_read() 
         return;
     };
     let (ada, setup) = setup_of(&rig, "karl").await;
-    let uri = format!("/setup/{setup}/directories");
+    let uri = format!("/pair/{setup}");
+    let (_, _, unpaired) = crate::setup_tests::begin(&rig.app, &ada, "otto").await;
+    *reported.pairing.lock().unwrap() = Some(report("pairing"));
+    let page = read(&rig.app, &format!("/pair/{}", unpaired.unwrap()), &ada).await;
+    assert!(!page.contains(PAIRING_PANE), "unpaired: {page}");
+    let page = read(&rig.app, &format!("/setup/{setup}/directories"), &ada).await;
+    assert!(!page.contains(PAIRING_PANE), "the directories page: {page}");
+    *reported.pairing.lock().unwrap() = None;
 
     let page = read(&rig.app, &uri, &ada).await;
     let waiting = pane(&page, PAIRING_PANE);
@@ -78,10 +98,15 @@ async fn the_pairing_pages_report_is_served_waiting_refused_misfiled_and_read() 
         r#"<span class="status hold">waiting</span>"#
     );
     assert!(
+        waiting.contains("No report has arrived at the pairing stage. The appliance's setup script runs the survey and sends its report once the pairing has succeeded."),
+        "{waiting}"
+    );
+    assert!(
         waiting.contains("Waits on the box's report at the pairing stage"),
         "{waiting}"
     );
-    assert!(walk(&page).is_empty(), "{:?}", walk(&page));
+    assert!(!waiting.contains("<form"), "{waiting}");
+    assert!(provisioned(&page).is_empty(), "{:?}", provisioned(&page));
 
     *reported.pairing.lock().unwrap() = Some(REFUSED.to_owned());
     let page = read(&rig.app, &uri, &ada).await;
@@ -97,7 +122,7 @@ async fn the_pairing_pages_report_is_served_waiting_refused_misfiled_and_read() 
         !page.contains("weaver-survey/2"),
         "neither the text nor the detail quoting it is drawn: {page}"
     );
-    assert!(walk(&page).is_empty(), "{:?}", walk(&page));
+    assert!(provisioned(&page).is_empty(), "{:?}", provisioned(&page));
 
     *reported.pairing.lock().unwrap() = Some(report("drives"));
     let page = read(&rig.app, &uri, &ada).await;
@@ -110,12 +135,13 @@ async fn the_pairing_pages_report_is_served_waiting_refused_misfiled_and_read() 
         misfiled.contains("The report kept as the pairing stage's names its stage drives."),
         "{misfiled}"
     );
-    assert!(walk(&page).is_empty(), "{:?}", walk(&page));
+    assert!(provisioned(&page).is_empty(), "{:?}", provisioned(&page));
 
     *reported.pairing.lock().unwrap() = Some(report("pairing"));
     let page = read(&rig.app, &uri, &ada).await;
     let shown = pane(&page, PAIRING_PANE);
     assert_eq!(status(shown), r#"<span class="status ok">read</span>"#);
+    assert!(!shown.contains("<form"), "read only: {shown}");
     // The survey's `image` members are the appliance's, as on Confirm.
     assert!(
         shown.contains("<caption>The appliance</caption>"),
@@ -159,7 +185,7 @@ async fn the_pairing_pages_report_is_served_waiting_refused_misfiled_and_read() 
         assert!(shown.contains(&row), "{row}: {shown}");
     }
     assert!(shown.contains("Arrived "), "{shown}");
-    assert!(walk(&page).is_empty(), "{:?}", walk(&page));
+    assert!(provisioned(&page).is_empty(), "{:?}", provisioned(&page));
 
     *reported.pairing.lock().unwrap() = Some(edited("pairing", |v| {
         v["cards"] = json!([]);
@@ -197,7 +223,7 @@ async fn a_value_a_report_chose_is_drawn_escaped() {
         v["cards"][0]["name"] = json!(script);
     }));
     for uri in [
-        format!("/setup/{setup}/directories"),
+        format!("/pair/{setup}"),
         format!("/setup/{setup}/placement"),
     ] {
         let page = read(&rig.app, &uri, &ada).await;
@@ -210,7 +236,7 @@ async fn a_value_a_report_chose_is_drawn_escaped() {
 
     *reported.pairing.lock().unwrap() =
         Some(r#"{"format":"<script>alert(1)</script>"}"#.to_owned());
-    let page = read(&rig.app, &format!("/setup/{setup}/directories"), &ada).await;
+    let page = read(&rig.app, &format!("/pair/{setup}"), &ada).await;
     let refused = pane(&page, PAIRING_PANE);
     assert!(refused.contains("Refused for cause 4: "), "{refused}");
     assert!(!page.contains("<script>alert"), "{page}");
@@ -228,9 +254,13 @@ async fn a_value_a_report_chose_is_drawn_escaped() {
 /// quota. One not mounted holds Confirm, naming it; a state directory one
 /// byte under 9 GiB of filesystem holds Confirm by its exact size, and one
 /// at the figure stands; a models directory whose free space is under the
-/// picks' need, or whose filesystem is under the need and the 10 GiB
-/// margin, is a warning, not a hold, on this page and the models page, and
-/// one with room says so.
+/// picks' need is a warning, not a hold, on this page and the models page,
+/// and one with room says so. A models directory whose filesystem is short
+/// of the 10 GB margin and holds the need draws no warning, and neither
+/// page names the margin (the operator's ruling of 2026-11-24: "No page
+/// warns").
+///
+/// Perturbation: judge the margin again, and the short filesystem warns.
 #[tokio::test]
 async fn the_directories_page_draws_the_directories_as_mounted_with_their_judgments() {
     let reported = Arc::new(Reported::default());
@@ -351,11 +381,9 @@ async fn the_directories_page_draws_the_directories_as_mounted_with_their_judgme
     }
     for (bytes, free, judged_as) in [
         (135_089_524_736u64, 1u64, "warning"),
-        (
-            margin + need_bytes - MIB,
-            margin + need_bytes - MIB,
-            "margin",
-        ),
+        // Short of the margin, and holding the need: no page warns (the
+        // operator's ruling of 2026-11-24).
+        (margin + need_bytes - MIB, margin + need_bytes - MIB, "room"),
         (135_089_524_736, 72_464_760_832, "room"),
     ] {
         *reported.drives.lock().unwrap() = Some(edited("drives", |v| {
@@ -365,12 +393,8 @@ async fn the_directories_page_draws_the_directories_as_mounted_with_their_judgme
         let warning = format!(
             r#"<span class="status hold">warning</span> Its free space is under the picks' need of {need}: a warning and not a hold, since the box's pull is an act of its own."#
         );
-        let short = format!(
-            r#"<span class="status hold">margin</span> Its filesystem is {}, and the picks' need is {need}, so the room beside them falls 1.00 MiB short of the 10 GiB margin: a warning and not a hold."#,
-            gib(margin + need_bytes - MIB)
-        );
         let room = format!(
-            r#"<span class="status ok">room</span> Its free space holds the picks' need of {need}, and its filesystem the 10 GiB margin beside it."#
+            r#"<span class="status ok">room</span> Its free space holds the picks' need of {need}."#
         );
         for (uri, heading) in [
             (&uri, DRIVES_PANE),
@@ -378,12 +402,16 @@ async fn the_directories_page_draws_the_directories_as_mounted_with_their_judgme
         ] {
             let page = read(&rig.app, uri, &ada).await;
             let judged = pane(&page, heading);
-            for (said, word) in [(&warning, "warning"), (&short, "margin"), (&room, "room")] {
+            for (said, word) in [(&warning, "warning"), (&room, "room")] {
                 assert_eq!(
                     judged.contains(said.as_str()),
                     word == judged_as,
                     "{uri}, {bytes} and {free}, {word}: {judged}"
                 );
+            }
+            let lowered = page.to_lowercase();
+            for never in ["margin", "10 gib", "10 gb"] {
+                assert!(!lowered.contains(never), "{uri}, {bytes}: {never}: {page}");
             }
             assert!(walk(&page).is_empty(), "{:?}", walk(&page));
         }

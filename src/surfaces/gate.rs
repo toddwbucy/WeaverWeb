@@ -47,8 +47,9 @@ pub const COOKIE: &str = "__Host-weaver_session";
 const ATTRIBUTES: &str = "Secure; HttpOnly; SameSite=Strict; Path=/";
 
 /// **What a session is held to**: how long it may sit unused and how long
-/// it may stand at all, and the origin a request that changes state must
-/// come from. The surfaces take it as their own argument.
+/// it may stand at all, the origin a request that changes state must come
+/// from, and the standing person where sign-in is off. The surfaces take it
+/// as their own argument.
 #[derive(Debug, Clone)]
 pub struct Policy {
     /// The configured origin; with none, nothing that changes state is
@@ -59,6 +60,13 @@ pub struct Policy {
     /// **An admin write's bound** from its place until its COMMIT is sent
     /// (Spec 2.13): the silence bound.
     pub write_bound: Duration,
+    /// **The standing person, where sign-in is off** (the config's
+    /// `no_sign_in_as`): every use is served as them and no cookie is read.
+    /// `None`, the default, and a session is a signed-in person's as before.
+    /// Carried here rather than in a process-wide cell, so a surface's test
+    /// drives the path with no cookie in process and no other test is
+    /// served under it.
+    pub standing: Option<std::sync::Arc<Standing>>,
 }
 
 impl Policy {
@@ -68,6 +76,7 @@ impl Policy {
             idle: Duration::from_secs(cfg.session_idle_secs),
             absolute: Duration::from_secs(cfg.session_absolute_secs),
             write_bound: Duration::from_secs(cfg.silence_bound_secs),
+            standing: Standing::from_config(cfg).map(std::sync::Arc::new),
         }
     }
 }
@@ -116,9 +125,15 @@ pub struct Standing {
 /// the standing session's token to itself.
 const STANDING_AUTHOR: &str = "no_sign_in_as";
 
-/// The standing person of this process, set once at start by the server
-/// and by nothing else, so a test never serves under it by accident.
-static STANDING: std::sync::OnceLock<Standing> = std::sync::OnceLock::new();
+/// The person's name alone: the held bearer is a credential and never
+/// enters a log line.
+impl std::fmt::Debug for Standing {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Standing")
+            .field("name", &self.name)
+            .finish_non_exhaustive()
+    }
+}
 
 impl Standing {
     /// The standing person the config names, or `None` where it names none
@@ -135,12 +150,6 @@ impl Standing {
     /// The person's name, as the config gives it.
     pub fn name(&self) -> &str {
         &self.name
-    }
-
-    /// **Serve every request of this process as the standing person**, from
-    /// here on; the first to stand stays.
-    pub fn stand(self) {
-        let _ = STANDING.set(self);
     }
 
     /// **The standing session, at this use**: the one held where it still
@@ -277,7 +286,7 @@ pub async fn session(
     policy: &Policy,
     headers: &HeaderMap,
 ) -> anyhow::Result<Option<Session>> {
-    if let Some(standing) = STANDING.get() {
+    if let Some(standing) = &policy.standing {
         return standing.session(store, policy, true).await;
     }
     let Some(bearer) = bearer(headers) else {
@@ -295,7 +304,7 @@ pub async fn session_in_background(
     policy: &Policy,
     headers: &HeaderMap,
 ) -> anyhow::Result<Option<Session>> {
-    if let Some(standing) = STANDING.get() {
+    if let Some(standing) = &policy.standing {
         return standing.session(store, policy, false).await;
     }
     let Some(bearer) = bearer(headers) else {

@@ -26,12 +26,13 @@ const PASSKEY: &[SignInMethod] = &[SignInMethod::Passkey];
 /// The one answer every token that cannot sign in gets.
 const NO_TOKEN: &str = "no sign-in by token is open for that name and token";
 
-fn policy() -> gate::Policy {
+pub(crate) fn policy() -> gate::Policy {
     gate::Policy {
         origin: Some(ORIGIN.to_owned()),
         idle: Duration::from_secs(3600),
         absolute: Duration::from_secs(12 * 3600),
         write_bound: Duration::from_secs(60),
+        standing: None,
     }
 }
 
@@ -56,7 +57,7 @@ fn app(s: &Store, sign_in: &[SignInMethod]) -> axum::Router {
     )
 }
 
-fn cfg(sign_in: &[SignInMethod]) -> ServerConfig {
+pub(crate) fn cfg(sign_in: &[SignInMethod]) -> ServerConfig {
     ServerConfig {
         listen: "127.0.0.1:0".into(),
         link_listen: "127.0.0.1:0".into(),
@@ -80,7 +81,7 @@ fn cfg(sign_in: &[SignInMethod]) -> ServerConfig {
 }
 
 /// A person, enabled and holding nothing.
-async fn person(s: &Store, name: &str) -> String {
+pub(crate) async fn person(s: &Store, name: &str) -> String {
     sqlx::query_scalar("INSERT INTO person (name, name_key) VALUES ($1, $2) RETURNING person_id")
         .bind(name)
         .bind(identity::name_key(name))

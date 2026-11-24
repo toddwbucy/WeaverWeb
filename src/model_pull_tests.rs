@@ -428,6 +428,7 @@ impl Rig {
             idle: Duration::from_secs(3600),
             absolute: Duration::from_secs(12 * 3600),
             write_bound: Duration::from_secs(60),
+            standing: None,
         };
         let surface = gate::guard(
             crate::surfaces::script_policy(crate::surfaces::hugging_face::routes(

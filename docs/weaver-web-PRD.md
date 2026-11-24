@@ -1024,10 +1024,11 @@ this crate designs around the gap until it closes.
   one command starts at the appliance's first console login, run with root's authority,
   which walks the operator through finishing setup, the disks included, asks the
   console's address and port, starts the connectors' pairing and shows the short
-  one-time code and the console's fingerprint, ending in pairing. A new
-  image for an agent that stands mounts and checks the state drive it carries and never
-  formats it, and refuses it as the models drive, formatting nothing, which the image's
-  script tests (`weaver-web-Spec` section 8.2). Beside it,
+  one-time code and the console's fingerprint, ending in pairing. The
+  appliance comes with no disks: the operator adds the state disk and the models disk,
+  and where a disk already holds data the script asks at the console whether to keep it
+  or erase it, with no replacement case (the operator's ruling of 2026-11-24,
+  `weaver-web-Spec` section 8.2). Beside it,
   the survey the image ships, run locally, with its report sent over TLS, the connectors
   started on every boot, and the box's two asks of the console over TLS, the chosen
   model's size and the model pulled from the cache, and the box taking the operator's
@@ -1300,10 +1301,10 @@ on the operator's rulings of 2026-11-16 (setup pages), so admin's grant does not
 The operator lays the disks before pairing, with the setup script's help, on the
 operator's rulings of 2026-11-23: the script walks the operator through finishing setup,
 the disks included, and ends in pairing, and the console shows no command and formats
-nothing (section 10.4). A new image for an agent that stands mounts the state
-drive it carries, checks it and never formats it, and stops and tells the operator where
-the check fails or the operator picks it as the models drive (`weaver-web-Spec` section
-8.2). Laying the disks is the appliance's script's
+nothing (section 10.4). The appliance comes with no state disk and no models disk: the
+operator adds both, sized to their need, and what happens to a disk that already holds
+data is the person at the console's to decide, keep or erase, with no replacement case
+(the operator's ruling of 2026-11-24, `weaver-web-Spec` section 8.2). Laying the disks is the appliance's script's
 alone, and a host's own script is later, and named as later. A host install points at a state
 directory and a models directory and attaches and formats nothing (section 10.4). On a
 virtual machine the first setup cannot forgo the hypervisor, in the operator's words of
@@ -1447,9 +1448,10 @@ least 10 GB larger than the model, mounted at the default paths, with the applia
 setup script, which a setup prompt's one command starts at the first console login and
 which walks the operator through it, on the operator's rulings of 2026-11-23, which take
 up those of 2026-11-16 (setup pages) and supersede the ruling of 2026-11-15 that the
-operator mounts them over SSH. Weaver Web lists and formats no disk. A new image for an agent that stands mounts the
-state drive it carries, never formats it and never takes it as the models drive
-(`weaver-web-Spec` section 8.2). A host
+operator mounts them over SSH. Weaver Web lists and formats no disk, and tells the appliance nothing about its disks:
+the operator adds them, and the script keeps or erases a disk that holds data as the
+person at the console chooses (the operator's ruling of 2026-11-24, `weaver-web-Spec`
+section 8.2). A host
 install points at a state directory and a
 models directory, and attaches and formats nothing, on the addendum to the same rulings,
 and the directories page shows the directories the operator named with free space

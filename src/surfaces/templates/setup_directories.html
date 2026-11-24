@@ -1,54 +1,35 @@
 {% extends "setup_frame.html" %}
 {% block panes %}
-{#- The drives page (Spec 6.2): the appliance's form drawn with what it
-    will show, the drives as mounted from the drives stage's report with
-    their judgments, the box's report at the pairing stage, which left the
-    pairing, the host's form drawn unbuilt, and the SSH keys that go down
-    by their fingerprints. The command is held, saying what it waits
-    on, holding no input. -#}
+{#- The directories page, the declaration's first (Spec 6.2; the operator's
+    rulings of 2026-11-23: "The declaration starts at directories, not
+    drives", and the operator lays the disks before pairing): the two
+    directories as the appliance lays them, the directories as mounted from
+    the latest report of either stage with their judgments, the box's
+    report at the pairing stage, the host's form drawn unbuilt, and the SSH
+    keys that go down by their fingerprints. Weaver Web lists and formats
+    no disk. -#}
 <section class="pane">
-  <header><span class="stage"><b>1</b> Declare</span><h2>On an appliance</h2><span class="backing built">built</span><span class="status ok">ok</span><span class="source">what the drive setup lays</span></header>
+  <header><span class="stage"><b>1</b> Declare</span><h2>The two directories</h2><span class="backing built">built</span><span class="status ok">ok</span><span class="source">what the operator lays before pairing</span></header>
   <div class="body">
-  <p>The drive setup lays two drives. The state drive, at least 10 GiB, holds each agent's directory of its own under the state mount, named for the agent, with the agent's folder and its home side by side inside it. The models drive holds the models in Hugging Face's layout, sized from the picks.</p>
+  <p>The operator lays the disks before pairing, and the appliance's setup script walks through it: a state disk, and a models disk at least 10 GiB larger than the model, each mounted at its default path. Weaver Web lists and formats no disk.</p>
+  <p>The state directory holds each agent's directory of its own, named for the agent, with the agent's folder and its home side by side inside it. The models directory holds the models in Hugging Face's layout.</p>
   </div>
-  <footer>The box shows the command, and the drives once it has mounted them, in the two panes below.</footer>
+  <footer>The box reports the two directories at their default paths, and the next pane judges them.</footer>
 </section>
 <section class="pane">
-  <header><span class="stage"><b>1</b> Declare</span><h2>The models drive's need</h2><span class="backing built">built</span>{% if need.is_some() %}<span class="status ok">ok</span>{% else %}<span class="status hold">hold</span>{% endif %}<span class="source">the picks, from Hugging Face's listing</span></header>
+  <header><span class="stage"><b>1</b> Declare</span><h2>The directories as mounted</h2><span class="backing built">built</span><span class="status {{ directories.class() }}">{{ directories.word() }}</span><span class="source">the box's latest survey, of either stage</span></header>
   <div class="body">
-  {%- if let Some(need) = need %}
-  <p>{{ need.bytes }}: the {{ need.blobs }} distinct blob{% if need.blobs != 1 %}s{% endif %} of the setup's {{ need.picks }} pick{% if need.picks != 1 %}s{% endif %}, a blob two paths share counted once.</p>
-  {%- else %}
-  <p>No model is picked.</p>
-  {%- endif %}
-  </div>
-  {%- if need.is_none() %}
-  <footer>Waits on a pick on the models page.</footer>
-  {%- else %}
-  <footer>The models drive holds at least this, in Hugging Face's layout.</footer>
-  {%- endif %}
-</section>
-<section class="pane">
-  <header><span class="stage"><b>1</b> Declare</span><h2>The setup command</h2><span class="backing unbuilt">unbuilt</span><span class="status hold">hold</span></header>
-  <div class="body">
-  <p>The command run at the appliance's console to start the drive setup.</p>
-  </div>
-  <footer>Waits on the image's setup script, which names the command.</footer>
-</section>
-<section class="pane">
-  <header><span class="stage"><b>1</b> Declare</span><h2>The drives as mounted</h2><span class="backing built">built</span><span class="status {{ drives.class() }}">{{ drives.word() }}</span><span class="source">the box's survey at the drives stage</span></header>
-  <div class="body">
-  {%- match drives %}
+  {%- match directories %}
   {%- when report::Shown::Waiting %}
-  <p>No report has arrived at the drives stage.</p>
+  <p>No report has arrived at either stage.</p>
   {%- when report::Shown::Refused with { arrived, number, words } %}
-  <p>Arrived {{ arrived }}. Refused for cause {{ number }}: {{ words }}.</p>
+  <p>The {{ stage }} stage's report, arrived {{ arrived }}. Refused for cause {{ number }}: {{ words }}.</p>
   {%- when report::Shown::Misfiled with { arrived, names } %}
-  <p>Arrived {{ arrived }}. The report kept as the drives stage's names its stage {{ names }}.</p>
+  <p>Arrived {{ arrived }}. The report kept as the {{ stage }} stage's names its stage {{ names }}.</p>
   {%- when report::Shown::Read with { arrived, body } %}
-  <p>Arrived {{ arrived }}, taken {{ body.taken }}.</p>
+  <p>The {{ stage }} stage's report, arrived {{ arrived }}, taken {{ body.taken }}.</p>
   <table>
-    <thead><tr><th>Role</th><th>Mount point</th><th>Label</th><th>Filesystem</th><th>Size</th><th>Free</th><th>Project quota</th><th>Judgment</th></tr></thead>
+    <thead><tr><th>Role</th><th>Directory</th><th>Label</th><th>Filesystem</th><th>Size</th><th>Free</th><th>Project quota</th><th>Judgment</th></tr></thead>
     <tbody>
     {%- for drive in body.drives %}
     <tr><td>{{ drive.role }}</td><td class="mono">{{ drive.mount_point }}</td>{% match drive.mounted %}{% when Some with (m) %}<td class="mono">{{ m.label }}</td><td>{{ m.filesystem }}</td><td>{{ m.size }}</td><td>{{ m.free }}</td><td>{{ m.project_quota }}</td>{% when None %}<td colspan="5"><span class="absent">absent</span></td>{% endmatch %}<td>{% for j in drive.judgments %}<span class="status {{ j.class }}">{{ j.word }}</span>{% if !j.words.is_empty() %} {{ j.words }}{% endif %}{% endfor %}</td></tr>
@@ -57,15 +38,15 @@
   </table>
   {%- endmatch %}
   </div>
-  {%- match drives %}
+  {%- match directories %}
   {%- when report::Shown::Waiting %}
-  <footer>Waits on the box's report at the drives stage.</footer>
+  <footer>Waits on the box's report at either stage.</footer>
   {%- when report::Shown::Refused with { arrived: _, number: _, words: _ } %}
   <footer>Confirm holds, naming the refusal. Neither the report's text nor the refusal's detail is drawn, the detail being in the console's log.</footer>
   {%- when report::Shown::Misfiled with { arrived: _, names: _ } %}
   <footer>Confirm holds, naming the stage the report names.</footer>
   {%- when report::Shown::Read with { arrived: _, body: _ } %}
-  <footer>A drive not mounted, or a state drive under 9 GiB of filesystem, holds Confirm. A models drive short of the picks' need is a warning, since the box's pull is an act of its own.</footer>
+  <footer>Read from the latest report of either stage. A directory not mounted, or a state directory under 9 GiB of filesystem, holds Confirm. A models directory short of the picks' need, or of the 10 GiB margin beside it, is a warning, since the box's pull is an act of its own.</footer>
   {%- endmatch %}
 </section>
 <section class="pane">
@@ -154,7 +135,7 @@
   {%- when report::Shown::Misfiled with { arrived: _, names: _ } %}
   <footer>Waits on a report at the pairing stage that names its own stage.</footer>
   {%- when report::Shown::Read with { arrived: _, body: _ } %}
-  <footer>The box's survey of itself at the pairing stage, read whole. Its drives are judged in the drives pane, from the drives stage's report.</footer>
+  <footer>The box's survey of itself at the pairing stage, read whole. Its directories are judged in the pane above, from the latest report of either stage.</footer>
   {%- endmatch %}
 </section>
 <section class="pane">
@@ -166,7 +147,7 @@
     </tbody>
   </table>
   </div>
-  <footer>Waits on a host's drive setup, which is not built.</footer>
+  <footer>Waits on a host's setup, which is not built.</footer>
 </section>
 <section class="pane">
   <header><span class="stage"><b>1</b> Declare</span><h2>The SSH keys that go down</h2><span class="backing built">built</span>{% if keys.is_empty() %}<span class="status hold">hold</span>{% else %}<span class="status ok">ok</span>{% endif %}<span class="source">the console's SSH keys</span></header>
@@ -184,6 +165,6 @@
   {%- endif %}
   <p><a href="/admin/ssh-key" target="_blank" rel="noopener">Change the keys</a>, in a new tab, so this setup stays open here. Reload this page to see a key you add.</p>
   </div>
-  <footer>{% if keys.is_empty() %}Waits on an SSH public key, added on the SSH keys page. {% endif %}The drive setup fetches the keys over the paired link and writes them, so a changed key reaches a box when the setup command runs there again.</footer>
+  <footer>{% if keys.is_empty() %}Waits on an SSH public key, added on the SSH keys page. {% endif %}The appliance's setup script fetches the keys over the paired link and writes them, so a changed key reaches a box when the script runs there again.</footer>
 </section>
 {% endblock %}

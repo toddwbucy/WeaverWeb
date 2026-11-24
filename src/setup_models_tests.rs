@@ -1326,15 +1326,15 @@ async fn a_git_kept_decoder_part_is_hashed_from_its_blob() {
     drop(hashing);
 }
 
-/// **The models drive's need counts a blob two paths share once**: two
-/// parts with the same bytes are one blob.
+/// **The models directory's need counts a blob two paths share once**,
+/// on the models page: two parts with the same bytes are one blob.
 #[tokio::test]
 async fn the_models_drives_need_counts_a_shared_blob_once() {
     let Some((rig, _fake, _, _cache)) = rig(true).await else {
         return;
     };
     let (ada, setup) = setup_of(&rig, "karl").await;
-    let drives = format!("/setup/{setup}/drives");
+    let drives = format!("/setup/{setup}/models");
     let before = page(&rig.app, &drives, &ada).await;
     assert!(before.contains("No model is picked."), "{before}");
     assert!(walk(&before).is_empty(), "{:?}", walk(&before));

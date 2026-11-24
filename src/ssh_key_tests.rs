@@ -3,7 +3,7 @@
 //! The operator's SSH public keys (Spec 6.2, `src/surfaces/ssh_key.rs`,
 //! `src/store/ssh_key.rs`). A line whose type, base64 or inner type name
 //! does not hold is refused, saving nothing and recorded nowhere. A stored
-//! key renders by its fingerprint, on its page and on the drives page, and
+//! key renders by its fingerprint, on its page and on the directories page, and
 //! its line enters no audit row. A person without an admin grant is refused
 //! with one record. A key is held once, and sixteen at most. A removal
 //! takes the key. Each test runs on a store of its own. No key is a real
@@ -135,7 +135,7 @@ async fn a_line_whose_form_does_not_hold_is_refused_saving_nothing() {
 }
 
 /// **A stored key renders by its fingerprint and its line enters no audit
-/// row**: the page and the drives page show the fingerprint OpenSSH gives
+/// row**: the page and the directories page show the fingerprint OpenSSH gives
 /// it, neither shows the key's base64, and no audit row holds it.
 #[tokio::test]
 async fn a_stored_key_renders_by_its_fingerprint_and_its_line_enters_no_audit_row() {
@@ -156,7 +156,12 @@ async fn a_stored_key_renders_by_its_fingerprint_and_its_line_enters_no_audit_ro
 
     let keys_page = page(&rig.app, "/admin/ssh-key", &ada).await;
     let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
-    let drives = page(&rig.app, &format!("/setup/{}/drives", setup.unwrap()), &ada).await;
+    let drives = page(
+        &rig.app,
+        &format!("/setup/{}/directories", setup.unwrap()),
+        &ada,
+    )
+    .await;
     for shown in [&keys_page, &drives] {
         assert!(shown.contains(&fingerprint(&given)), "{shown}");
         assert!(!shown.contains(&encoded), "the line is not shown: {shown}");

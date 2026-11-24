@@ -10,7 +10,7 @@
   <header><h2>The keys held</h2><span class="backing built">built</span><span class="source">the store's keys, by fingerprint</span></header>
   <div class="body">
   {% if keys.is_empty() %}
-  <p>No key is held. The drive setup writes no key to a box until one is added here.</p>
+  <p>No key is held. The appliance's setup script writes no key to a box until one is added here.</p>
   {% else %}
   <table>
     <thead><tr><th>Fingerprint</th><th>Type</th><th>Comment</th><th>Added</th><th></th></tr></thead>
@@ -28,7 +28,7 @@
   </table>
   {% endif %}
   </div>
-  <footer>The setup script's drive-setup run fetches these keys over the paired link and writes them on the box, so a changed key reaches a box when the setup command runs there again.</footer>
+  <footer>The appliance's setup script fetches these keys over the paired link and writes them on the box, so a changed key reaches a box when the script runs there again.</footer>
 </section>
 <section class="pane">
   <header><h2>Add a key</h2><span class="backing built">built</span><span class="source">its form checked, at most {{ most }} held</span></header>

@@ -124,8 +124,8 @@ fn model_rows(model: &Model) -> Vec<(String, String)> {
 }
 
 /// The box's machine as the tuple keeps it (Spec 6.2): the report read, the
-/// image, the driver and CUDA runtime, each card, the guest CPU and the
-/// machine.
+/// appliance's version (the survey's `image` members), the driver and CUDA
+/// runtime, each card, the guest CPU and the machine.
 fn machine_rows(b: &BoxMembers) -> Vec<(String, String)> {
     let mut rows = vec![
         (
@@ -136,9 +136,12 @@ fn machine_rows(b: &BoxMembers) -> Vec<(String, String)> {
                 b.report.taken.format("%Y-%m-%dT%H:%M:%SZ")
             ),
         ),
-        ("Image version".to_owned(), b.image.version.clone()),
         (
-            "Image manifest SHA-256".to_owned(),
+            "The appliance's version".to_owned(),
+            b.image.version.clone(),
+        ),
+        (
+            "The appliance's manifest SHA-256".to_owned(),
             b.image.manifest_sha256.clone(),
         ),
         ("Driver".to_owned(), b.driver_version.clone()),
@@ -236,7 +239,7 @@ fn adapter_view(m: &Members) -> Vec<MemberView> {
 /// **Every member of the tuple as a pane**, in the Spec's order.
 fn members_view(m: &Members) -> Vec<MemberView> {
     let one = |label: &str, value: String| vec![(label.to_owned(), value)];
-    let box_waits = "the box's members, from the drives stage's report";
+    let box_waits = "the box's members, from the latest report of either stage";
     let mut views = vec![member(
         "The decoder",
         "the pull's record, verified",
@@ -289,14 +292,14 @@ fn members_view(m: &Members) -> Vec<MemberView> {
         ),
         member(
             "The box's machine",
-            "the drives stage's report",
+            "the box's latest report, of either stage",
             box_waits,
             &m.box_members,
             machine_rows,
         ),
         member(
             "The drives",
-            "the drives stage's report",
+            "the box's latest report, of either stage",
             box_waits,
             &m.box_members,
             |b| {

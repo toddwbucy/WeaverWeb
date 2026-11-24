@@ -1,5 +1,5 @@
-//! **The panes a box's report feeds** (Spec 6.2): the pairing page's report,
-//! the drives page's drives as mounted with their three judgments, and the
+//! **The panes a box's report feeds** (Spec 6.2): the pairing stage's report,
+//! the directories page's directories as mounted with their judgments, and the
 //! placement page's devices, each served read, refused, misfiled and waiting,
 //! with a box whose reports each test sets through the `boxes` seam. A
 //! refused report is drawn by its stage, arrival and cause, and never its
@@ -18,7 +18,7 @@ use crate::setup_tests::{between, panes, walk};
 use crate::survey::{Cause, MODELS_MOUNT};
 
 const PAIRING_PANE: &str = "The box's report at the pairing stage";
-const DRIVES_PANE: &str = "The drives as mounted";
+const DRIVES_PANE: &str = "The directories as mounted";
 const DEVICES_PANE: &str = "The devices";
 
 /// A refused report: a format the reader does not know, cause 4.
@@ -50,7 +50,7 @@ pub(crate) fn status(pane: &str) -> String {
 }
 
 /// **The pairing stage's report is served in each status** (Spec 6.2), on
-/// the drives page since the report left the pairing: with
+/// the directories page since the report left the pairing: with
 /// no report the pane waits on it; a refused report is drawn by its stage,
 /// arrival and cause by number and words, with neither its text nor the
 /// refusal's detail; a report kept as the pairing stage's that names the
@@ -65,7 +65,7 @@ async fn the_pairing_pages_report_is_served_waiting_refused_misfiled_and_read() 
         return;
     };
     let (ada, setup) = setup_of(&rig, "karl").await;
-    let uri = format!("/setup/{setup}/drives");
+    let uri = format!("/setup/{setup}/directories");
 
     let page = read(&rig.app, &uri, &ada).await;
     let waiting = pane(&page, PAIRING_PANE);
@@ -187,7 +187,7 @@ async fn a_value_a_report_chose_is_drawn_escaped() {
         v["cards"][0]["name"] = json!(script);
     }));
     for uri in [
-        format!("/setup/{setup}/drives"),
+        format!("/setup/{setup}/directories"),
         format!("/setup/{setup}/placement"),
     ] {
         let page = read(&rig.app, &uri, &ada).await;
@@ -200,7 +200,7 @@ async fn a_value_a_report_chose_is_drawn_escaped() {
 
     *reported.pairing.lock().unwrap() =
         Some(r#"{"format":"<script>alert(1)</script>"}"#.to_owned());
-    let page = read(&rig.app, &format!("/setup/{setup}/drives"), &ada).await;
+    let page = read(&rig.app, &format!("/setup/{setup}/directories"), &ada).await;
     let refused = pane(&page, PAIRING_PANE);
     assert!(refused.contains("Refused for cause 4: "), "{refused}");
     assert!(!page.contains("<script>alert"), "{page}");
@@ -209,22 +209,26 @@ async fn a_value_a_report_chose_is_drawn_escaped() {
     }
 }
 
-/// **The drives page draws the drives as mounted, each with its judgments**
-/// (Spec 6.2): waiting on the drives stage's report, refused by its cause,
-/// and read, each drive with its role, mount point, label, filesystem, size,
-/// free space and project quota. A drive not mounted holds Confirm, naming
-/// it; a state drive one byte under 9 GiB of filesystem holds Confirm by its
-/// exact size, and one at the figure stands; a models drive whose free space
-/// is under the picks' need is a warning, not a hold, and one with room says
-/// so.
+/// **The directories page draws the directories as mounted, each with its
+/// judgments** (Spec 6.2), from the latest report of either stage: waiting
+/// where neither has arrived, read from a pairing-stage report alone (the
+/// operator lays the disks before pairing), a drives-stage report arriving
+/// later read in its place, refused by its cause, and read, each directory
+/// with its role, path, label, filesystem, size, free space and project
+/// quota. One not mounted holds Confirm, naming it; a state directory one
+/// byte under 9 GiB of filesystem holds Confirm by its exact size, and one
+/// at the figure stands; a models directory whose free space is under the
+/// picks' need, or whose filesystem is under the need and the 10 GiB
+/// margin, is a warning, not a hold, on this page and the models page, and
+/// one with room says so.
 #[tokio::test]
-async fn the_drives_page_draws_the_drives_as_mounted_with_their_three_judgments() {
+async fn the_directories_page_draws_the_directories_as_mounted_with_their_judgments() {
     let reported = Arc::new(Reported::default());
     let Some((rig, _fake, _, _cache)) = rig_boxed(true, reported.clone()).await else {
         return;
     };
     let (ada, setup) = setup_of(&rig, "karl").await;
-    let uri = format!("/setup/{setup}/drives");
+    let uri = format!("/setup/{setup}/directories");
 
     let page = read(&rig.app, &uri, &ada).await;
     let waiting = pane(&page, DRIVES_PANE);
@@ -233,9 +237,23 @@ async fn the_drives_page_draws_the_drives_as_mounted_with_their_three_judgments(
         r#"<span class="status hold">waiting</span>"#
     );
     assert!(
-        waiting.contains("Waits on the box's report at the drives stage"),
+        waiting.contains("Waits on the box's report at either stage"),
         "{waiting}"
     );
+    assert!(walk(&page).is_empty(), "{:?}", walk(&page));
+
+    // A pairing-stage report alone, the disks laid before pairing, is read.
+    *reported.pairing.lock().unwrap() = Some(edited("drives", |v| {
+        v["stage"] = json!("pairing");
+    }));
+    let page = read(&rig.app, &uri, &ada).await;
+    let laid = pane(&page, DRIVES_PANE);
+    assert_eq!(status(laid), r#"<span class="status ok">read</span>"#);
+    assert!(
+        laid.contains("<p>The pairing stage's report, arrived "),
+        "{laid}"
+    );
+    assert!(laid.contains("weaver-models"), "{laid}");
     assert!(walk(&page).is_empty(), "{:?}", walk(&page));
 
     *reported.drives.lock().unwrap() = Some(REFUSED.replace("pairing", "drives"));
@@ -254,6 +272,10 @@ async fn the_drives_page_draws_the_drives_as_mounted_with_their_three_judgments(
     let page = read(&rig.app, &uri, &ada).await;
     let shown = pane(&page, DRIVES_PANE);
     assert_eq!(status(shown), r#"<span class="status ok">read</span>"#);
+    assert!(
+        shown.contains("<p>The drives stage's report, arrived "),
+        "{shown}"
+    );
     let state = format!(
         "<tr><td>state</td><td class=\"mono\">/mnt/weaver/state</td><td class=\"mono\">weaver-state</td><td>ext4</td><td>{}</td><td>{}</td><td>on</td>",
         gib(25_191_575_552),
@@ -307,28 +329,49 @@ async fn the_drives_page_draws_the_drives_as_mounted_with_their_three_judgments(
     }
 
     decoder_picked(&rig, &ada, &setup, "1").await;
-    let need = need_shown(&read(&rig.app, &uri, &ada).await);
-    for (free, warned) in [(1u64, true), (72_464_760_832, false)] {
+    let models_page = format!("/setup/{setup}/models");
+    let need = need_shown(&read(&rig.app, &models_page, &ada).await);
+    let margin = 10 * 1024 * 1024 * 1024u64;
+    for (bytes, free, judged_as) in [
+        (135_089_524_736u64, 1u64, "warning"),
+        (margin - 1, margin - 1, "margin"),
+        (135_089_524_736, 72_464_760_832, "room"),
+    ] {
         *reported.drives.lock().unwrap() = Some(edited("drives", |v| {
+            v["drives"][1]["bytes"] = json!(bytes);
             v["drives"][1]["free_bytes"] = json!(free);
         }));
-        let page = read(&rig.app, &uri, &ada).await;
-        let judged = pane(&page, DRIVES_PANE);
         let warning = format!(
             r#"<span class="status hold">warning</span> Its free space is under the picks' need of {need}: a warning and not a hold, since the box's pull is an act of its own."#
         );
-        let room = format!(
-            r#"<span class="status ok">room</span> Its free space holds the picks' need of {need}."#
+        let short = format!(
+            r#"<span class="status hold">margin</span> Its filesystem is {}, under the picks' need of {need} and the 10 GiB margin: a warning and not a hold, since the margin guides how the disk is laid."#,
+            gib(margin - 1)
         );
-        assert_eq!(judged.contains(&warning), warned, "{free}: {judged}");
-        assert_eq!(judged.contains(&room), !warned, "{free}: {judged}");
-        assert!(walk(&page).is_empty(), "{:?}", walk(&page));
+        let room = format!(
+            r#"<span class="status ok">room</span> Its free space holds the picks' need of {need}, and its filesystem the 10 GiB margin beside it."#
+        );
+        for (uri, heading) in [
+            (&uri, DRIVES_PANE),
+            (&models_page, "The models directory's need"),
+        ] {
+            let page = read(&rig.app, uri, &ada).await;
+            let judged = pane(&page, heading);
+            for (said, word) in [(&warning, "warning"), (&short, "margin"), (&room, "room")] {
+                assert_eq!(
+                    judged.contains(said.as_str()),
+                    word == judged_as,
+                    "{uri}, {bytes} and {free}, {word}: {judged}"
+                );
+            }
+            assert!(walk(&page).is_empty(), "{:?}", walk(&page));
+        }
     }
 }
 
-/// The need as the drives page's need pane states it.
+/// The need as the models page's need pane states it.
 fn need_shown(page: &str) -> String {
-    let need = pane(page, "The models drive's need");
+    let need = pane(page, "The models directory's need");
     let body = between(need, "<p>", ":").expect("the need is stated");
     body.to_owned()
 }

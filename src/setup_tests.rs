@@ -482,13 +482,13 @@ async fn a_person_without_an_admin_grant_is_refused_before_any_setup_is_looked_u
         "/pair".to_owned(),
         format!("/pair/{setup}"),
         format!("/setup/{setup}/models"),
-        format!("/setup/{setup}/drives"),
+        format!("/setup/{setup}/directories"),
         format!("/setup/{setup}/placement"),
         format!("/setup/{setup}/confirm"),
         format!("/setup/{setup}/build"),
         format!("/pair/{unknown}"),
         format!("/setup/{unknown}/models"),
-        format!("/setup/{unknown}/drives"),
+        format!("/setup/{unknown}/directories"),
         format!("/setup/{unknown}/placement"),
         format!("/setup/{unknown}/confirm"),
     ] {
@@ -572,11 +572,14 @@ async fn a_second_open_setup_of_one_name_is_refused() {
 /// a value, over every page this tree serves in each state it draws: the
 /// start page and Pair a box, the Pair page with the box a host and a
 /// virtual machine at a loopback address and with the console at an
-/// unspecified one, the drives page with no key and then with one, the
+/// unspecified one, the directories page with no key and then with one, the
 /// placement and confirm pages with nothing read, and the build page. Pair
 /// a box's panes carry `2 Provision`, the setup's `1 Declare`. **No page of
 /// the setup names a Pairing step**: its rail holds the five pages of the
-/// declaration, and the old pairing page answers as no route does.
+/// declaration, Directories first, and the old pairing and drives pages
+/// answer as no route does. **No page waits on the image's setup script**:
+/// none holds "the image's setup script", "first boot" or the held setup
+/// command's pane.
 #[tokio::test]
 async fn every_pane_carries_its_stage_backing_and_status() {
     let cache = crate::test_dir::tempdir().unwrap();
@@ -591,7 +594,7 @@ async fn every_pane_carries_its_stage_backing_and_status() {
     let setup = setup.unwrap();
     let pairing = format!("/pair/{setup}");
     provision.push((pairing.clone(), page(&rig.app, &pairing, &ada).await));
-    for p in ["models", "drives", "placement", "confirm", "build"] {
+    for p in ["directories", "models", "placement", "confirm", "build"] {
         let uri = format!("/setup/{setup}/{p}");
         walked.push((uri.clone(), page(&rig.app, &uri, &ada).await));
     }
@@ -626,8 +629,8 @@ async fn every_pane_carries_its_stage_backing_and_status() {
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
     walked.push((
-        "the drives page, a key held".to_owned(),
-        page(&rig.app, &format!("/setup/{setup}/drives"), &ada).await,
+        "the directories page, a key held".to_owned(),
+        page(&rig.app, &format!("/setup/{setup}/directories"), &ada).await,
     ));
 
     for (uri, page) in &walked {
@@ -644,9 +647,9 @@ async fn every_pane_carries_its_stage_backing_and_status() {
     }
     // Every page of a setup carries the rail of its five pages in order,
     // the current one marked, each served, and none of them Pairing.
-    let models = &walked[1].1;
-    let rail = between(models, r#"<nav class="rail""#, "</nav>").unwrap();
-    let order: Vec<usize> = ["Models", "Drives", "Placement", "Confirm", "Build"]
+    let directories = &walked[1].1;
+    let rail = between(directories, r#"<nav class="rail""#, "</nav>").unwrap();
+    let order: Vec<usize> = ["Directories", "Models", "Placement", "Confirm", "Build"]
         .iter()
         .map(|t| {
             rail.find(&format!("</span> {t}"))
@@ -657,7 +660,7 @@ async fn every_pane_carries_its_stage_backing_and_status() {
     assert_eq!(rail.matches(r#"<a class="step"#).count(), 5, "{rail}");
     assert!(
         rail.contains(&format!(
-            r#"<a class="step here" href="/setup/{setup}/models">"#
+            r#"<a class="step here" href="/setup/{setup}/directories">"#
         )),
         "{rail}"
     );
@@ -665,26 +668,35 @@ async fn every_pane_carries_its_stage_backing_and_status() {
         assert!(!page.contains("Pairing"), "{uri}: {page}");
         assert!(!page.contains(&format!("/setup/{setup}/pairing")), "{uri}");
     }
-    let (status, _, _) = send_as(
-        &rig.app,
-        "GET",
-        &format!("/setup/{setup}/pairing"),
-        None,
-        &ada,
-    )
-    .await;
-    assert_eq!(
-        status,
-        StatusCode::NOT_FOUND,
-        "the old pairing page is gone"
-    );
+    for gone in ["pairing", "drives"] {
+        let (status, _, _) = send_as(
+            &rig.app,
+            "GET",
+            &format!("/setup/{setup}/{gone}"),
+            None,
+            &ada,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "the old {gone} page is gone");
+    }
+    for (uri, page) in walked.iter().chain(&provision) {
+        let page = page.to_lowercase();
+        for never in [
+            "the image's setup script",
+            "the image&#39;s setup script",
+            "first boot",
+            "<h2>the setup command</h2>",
+        ] {
+            assert!(!page.contains(never), "{uri}: {never}");
+        }
+    }
     assert_eq!(
         rail.matches(r#"<span class="backing unbuilt">"#).count(),
         0,
         "{rail}"
     );
     for (at, next) in [
-        (1, "drives\">Drives"),
+        (1, "models\">Models"),
         (2, "placement\">Placement"),
         (3, "confirm\">Confirm"),
     ] {
@@ -702,7 +714,7 @@ async fn every_pane_carries_its_stage_backing_and_status() {
     // The Pair page offers no way on to the declaration before its box is
     // paired.
     assert!(!provision[1].1.contains("Next:"), "{}", provision[1].1);
-    // The drives page names the model cache where it is set, and the key
+    // The directories page names the model cache where it is set, and the key
     // by its fingerprint, with the way to change it.
     let drives = &walked[walked.len() - 1].1;
     assert!(
@@ -1002,7 +1014,7 @@ async fn an_unknown_setup_is_not_found_and_a_malformed_one_refused() {
     for (method, uri, want) in [
         ("GET", "/pair/st-0123456789abcdef", StatusCode::NOT_FOUND),
         ("GET", "/pair/st-0123", StatusCode::BAD_REQUEST),
-        ("GET", "/setup/karl/drives", StatusCode::BAD_REQUEST),
+        ("GET", "/setup/karl/directories", StatusCode::BAD_REQUEST),
         ("POST", "/pair/st-0123456789abcdef", StatusCode::NOT_FOUND),
         ("POST", "/pair/st-0123", StatusCode::BAD_REQUEST),
         (

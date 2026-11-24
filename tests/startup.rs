@@ -29,19 +29,50 @@ impl Server {
     /// against `init_with`: the one database the two differ on is the
     /// unreachable one, where the server's own failure is what is checked.
     fn spawn_with(database: &str, init_with: &str) -> Self {
-        Self::spawn_full(database, init_with, None)
+        Self::spawn_full(database, init_with, None, &[])
+    }
+
+    /// A server on `database` with sign-in off, every browser request served
+    /// as `person` (the config's `no_sign_in_as`, which needs `sign_in` to
+    /// name `token`).
+    fn spawn_standing(database: &str, person: &str) -> Self {
+        let sign_in = toml::Value::Array(vec!["token".into()]);
+        Self::spawn_full(
+            database,
+            database,
+            None,
+            &[("sign_in", sign_in), ("no_sign_in_as", person.into())],
+        )
+    }
+
+    /// The server's exit status, waited for up to 15 s, where it is to
+    /// refuse to start.
+    fn refused_start(&mut self) -> std::process::ExitStatus {
+        let until = Instant::now() + Duration::from_secs(15);
+        loop {
+            if let Some(status) = self.child.try_wait().unwrap() {
+                return status;
+            }
+            assert!(
+                Instant::now() < until,
+                "the server did not refuse to start within 15s\n{}",
+                self.logs()
+            );
+            std::thread::sleep(Duration::from_millis(25));
+        }
     }
 
     /// A server on `database` whose browser listener serves TLS with the
     /// certificate and key given, under the origin `https://localhost:<port>`.
     fn spawn_tls(database: &str, certificate: &std::path::Path, key: &std::path::Path) -> Self {
-        Self::spawn_full(database, database, Some((certificate, key)))
+        Self::spawn_full(database, database, Some((certificate, key)), &[])
     }
 
     fn spawn_full(
         database: &str,
         init_with: &str,
         tls: Option<(&std::path::Path, &std::path::Path)>,
+        extra: &[(&str, toml::Value)],
     ) -> Self {
         let http = TcpListener::bind("127.0.0.1:0").unwrap();
         let link = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -57,6 +88,9 @@ impl Server {
             link.local_addr().unwrap().to_string().into(),
         );
         values.insert("database".into(), init_with.into());
+        for (member, value) in extra {
+            values.insert((*member).into(), value.clone());
+        }
         if let Some((certificate, key)) = tls {
             values.insert(
                 "tls_certificate".into(),
@@ -305,6 +339,42 @@ async fn real_server_starts_on_current_schema() {
     restarted.wait_for_listen();
     assert_eq!(restarted.get("/record", Some(&token)).0, 200);
     drop(restarted);
+
+    // **No sign-in** (the config's `no_sign_in_as`, the operator's ruling
+    // of 2026-11-21): the person the store already holds is served with no
+    // cookie at all, and the start refuses a name no one holds and a
+    // disabled person, each naming why.
+    let mut standing = Server::spawn_standing(&database, "startup-check");
+    standing.wait_for_listen();
+    let (status, body) = standing.get("/record", None);
+    assert_eq!(status, 200, "{}", standing.logs());
+    assert!(
+        body.contains(r#"<span class="who">startup-check</span>"#),
+        "The Record serves the standing person with no cookie: {body}"
+    );
+    drop(standing);
+    let mut unknown = Server::spawn_standing(&database, "startup-nobody");
+    assert!(!unknown.refused_start().success());
+    assert!(
+        unknown.logs().contains("no person holds that name"),
+        "{}",
+        unknown.logs()
+    );
+    drop(unknown);
+    sqlx::query(
+        "INSERT INTO person (name, name_key, enabled) VALUES ('startup-off', 'startup-off', false)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let mut disabled = Server::spawn_standing(&database, "startup-off");
+    assert!(!disabled.refused_start().success());
+    assert!(
+        disabled.logs().contains("who is disabled"),
+        "{}",
+        disabled.logs()
+    );
+    drop(disabled);
 
     // **A TLS start** (act 11, PR 3): a certificate minted here for
     // localhost, never written outside this run's temporary directory; the

@@ -1253,10 +1253,15 @@ async fn an_unknown_setup_is_not_found_and_a_malformed_one_refused() {
 /// 10 GB margin as guidance, Weaver Web's address and the note, then ends
 /// in the name's field and Begin, its one form, posting to `POST /pair`.
 /// It names no CPU requirement and offers no host install. No other page
-/// links it or holds the name's form, a register row standing or not.
+/// links it or holds the name's form, each read in three states: the setup
+/// begun and its box not paired, no register row standing; paired, whose
+/// write leaves the setup's own row the one row; and a second row
+/// registered through the register's page.
 ///
-/// Perturbation: draw the name's form on Pair a box beside Create new
-/// agent, and an agent is named from another page.
+/// Perturbations: draw the name's form on Pair a box beside Create new
+/// agent; draw it on the unpaired Pair page alone; link the requirements
+/// page from `/setup` while no declaration is open, before any row
+/// stands. Each is an agent named, or the page reached, from another page.
 #[tokio::test]
 async fn the_requirements_page_is_reached_from_create_new_agent_alone() {
     let Some(rig) = crate::agents_tests::rig().await else {
@@ -1321,16 +1326,46 @@ async fn the_requirements_page_is_reached_from_create_new_agent_alone() {
         assert!(!lowered.contains(never), "{never}: {new}");
     }
 
-    // No other page links it or names an agent, before and after a
-    // register row stands.
+    // No other page links it or names an agent, each read in each state.
+    async fn none_reach_it(app: &axum::Router, session: &str, others: &[String], state: &str) {
+        for uri in others {
+            let other = page(app, uri, session).await;
+            assert!(!other.contains("/pair/new"), "{state}, {uri}: {other}");
+            assert!(
+                !other.contains(r#"<form method="post" action="/pair">"#),
+                "{state}, {uri}: {other}"
+            );
+        }
+        let pair = page(app, "/pair", session).await;
+        assert_eq!(
+            pair.matches(r#"<a href="/pair/new">Create new agent</a>"#)
+                .count(),
+            1,
+            "{state}: {pair}"
+        );
+        assert!(
+            !pair.contains(r#"<form method="post" action="/pair">"#),
+            "{state}: {pair}"
+        );
+    }
     let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
     let setup = setup.unwrap();
-    let mut others = vec!["/setup".to_owned(), format!("/pair/{setup}")];
+    let mut others = vec![
+        "/setup".to_owned(),
+        format!("/pair/{setup}"),
+        "/admin/agents".to_owned(),
+    ];
+    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM agent")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0, "no register row stands before the pairing");
+    none_reach_it(&rig.app, &ada, &others, "unpaired, no row").await;
     paired(s, &setup).await;
     for p in ["directories", "models", "placement", "confirm", "build"] {
         others.push(format!("/setup/{setup}/{p}"));
     }
-    others.push(format!("/pair/{setup}"));
+    none_reach_it(&rig.app, &ada, &others, "paired, its own row alone").await;
     let (status, _, handover) = send_as(
         &rig.app,
         "POST",
@@ -1340,15 +1375,7 @@ async fn the_requirements_page_is_reached_from_create_new_agent_alone() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{handover}");
-    others.push("/admin/agents".to_owned());
-    for uri in &others {
-        let other = page(&rig.app, uri, &ada).await;
-        assert!(!other.contains("/pair/new"), "{uri}: {other}");
-        assert!(!other.contains(form_of_name), "{uri}: {other}");
-    }
-    let pair = page(&rig.app, "/pair", &ada).await;
-    assert_eq!(pair.matches(entry).count(), 1, "{pair}");
-    assert!(!pair.contains(form_of_name), "{pair}");
+    none_reach_it(&rig.app, &ada, &others, "a second row registered").await;
 }
 
 /// **A begin and the Pair page's write run from their first records to

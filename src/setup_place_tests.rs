@@ -47,6 +47,9 @@ use crate::survey::{MODELS_MOUNT, STATE_MOUNT};
 pub(crate) struct Reported {
     pub(crate) pairing: Mutex<Option<String>>,
     pub(crate) drives: Mutex<Option<String>>,
+    /// The pairing stage's report stamped after the drives stage's, where
+    /// set; before it otherwise.
+    pub(crate) pairing_last: std::sync::atomic::AtomicBool,
 }
 
 impl BoxReports for Reported {
@@ -56,7 +59,11 @@ impl BoxReports for Reported {
         _setup_id: &'a str,
     ) -> futures::future::BoxFuture<'a, anyhow::Result<Reports>> {
         let mut rows = Vec::new();
-        for (stage, report) in [("pairing", &self.pairing), ("drives", &self.drives)] {
+        let mut stages = [("pairing", &self.pairing), ("drives", &self.drives)];
+        if self.pairing_last.load(std::sync::atomic::Ordering::SeqCst) {
+            stages.reverse();
+        }
+        for (stage, report) in stages {
             if let Some(report) = report.lock().unwrap().clone() {
                 rows.push((stage.to_owned(), report, chrono::Utc::now()));
             }
@@ -348,6 +355,7 @@ async fn a_context_length_below_the_boxs_max_tokens_per_turn_is_refused() {
     assert_eq!(ended(s, &pull).await, "verified");
     let (_, _, short) = begin(&rig.app, &ada, "otto").await;
     let short = short.expect("a second setup");
+    crate::setup_tests::paired(s, &short).await;
     let (status, body) = post_pick(
         &rig,
         &ada,
@@ -741,6 +749,23 @@ async fn confirm_stands_only_where_every_member_is_read_and_writes_one_tuple() {
         "{ready}"
     );
     assert!(!ready.contains("Image version"), "{ready}");
+    // A pairing report that arrives after the drives report is read in its
+    // place, and the drives report again once it is the later.
+    reported
+        .pairing_last
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let later = read(&rig.app, &confirm, &ada).await;
+    assert!(later.contains("the pairing stage's, taken"), "{later}");
+    reported
+        .pairing_last
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    // The machine's kind is changed from here, one step to the Pair page.
+    assert!(
+        ready.contains(&format!(
+            r#"<p><a href="/pair/{setup}">Change it on the Pair page</a>, where the box was paired.</p>"#
+        )),
+        "{ready}"
+    );
     assert!(!ready.contains("Next:"), "{ready}");
     assert_eq!(
         s.laying(&setup).await.unwrap(),
@@ -858,6 +883,10 @@ async fn confirm_stands_only_where_every_member_is_read_and_writes_one_tuple() {
     // Drawn from the tuple's row after Confirm, whatever the box reports.
     *reported.drives.lock().unwrap() = None;
     let shown = read(&rig.app, &confirm, &ada).await;
+    assert!(
+        !shown.contains("Change it on the Pair page"),
+        "a confirmed setup never changes: {shown}"
+    );
     assert!(walk(&shown).is_empty(), "{:?}", walk(&shown));
     assert!(shown.contains(&confirmed.tuple_id), "{shown}");
     assert!(shown.contains("card-b, 0000:07:00.0"), "{shown}");
@@ -956,10 +985,24 @@ pub(crate) async fn confirmed(
     name: &str,
     adapter: bool,
 ) -> String {
+    confirmed_on(rig, reported, ada, name, adapter, true).await
+}
+
+/// A setup confirmed as `confirmed` does, the drives report sent before
+/// Confirm where `drives`, and otherwise on the reports already standing.
+async fn confirmed_on(
+    rig: &Rig,
+    reported: &Reported,
+    ada: &str,
+    name: &str,
+    adapter: bool,
+    drives: bool,
+) -> String {
     let s = rig.store();
     let (status, body, setup) = begin(&rig.app, ada, name).await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
     let (ada, setup) = (ada.to_owned(), setup.unwrap());
+    crate::setup_tests::paired(s, &setup).await;
     decoder_picked(rig, &ada, &setup, "1").await;
     assert_eq!(
         ended(s, &pull_of(s, &setup, "decoder").await).await,
@@ -996,7 +1039,9 @@ pub(crate) async fn confirmed(
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
     identity_kept(s).await;
-    *reported.drives.lock().unwrap() = Some(drives_report());
+    if drives {
+        *reported.drives.lock().unwrap() = Some(drives_report());
+    }
     let (status, body, _) = post(
         rig,
         &ada,
@@ -1007,6 +1052,46 @@ pub(crate) async fn confirmed(
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
     setup
+}
+
+/// **Confirm's post on a pairing-stage report alone writes the tuple**
+/// (the Planner's ruling of 2026-11-24 on the plan): the disks laid before
+/// pairing, no drives-stage report is ever sent, and the tuple's box
+/// members, and the cards its devices were checked against, are the
+/// pairing stage's report's.
+#[tokio::test]
+async fn confirm_on_a_pairing_stage_report_alone_writes_its_tuple() {
+    let reported = Arc::new(Reported::default());
+    *reported.pairing.lock().unwrap() = Some(laid_pairing_report());
+    let Some((rig, _fake, _, _cache)) = rig_boxed(true, reported.clone()).await else {
+        return;
+    };
+    let s = rig.store();
+    let _identities = BaseIdentities::start(
+        s.clone(),
+        rig.puller.cache().cloned(),
+        rig.puller.verified(),
+    );
+    let (ada, _) = setup_of(&rig, "bob").await;
+    let setup = confirmed_on(&rig, &reported, &ada, "karl", false, false).await;
+    assert!(
+        reported.drives.lock().unwrap().is_none(),
+        "no drives report was sent"
+    );
+    let confirmed = s
+        .deployment_tuple(&setup)
+        .await
+        .unwrap()
+        .expect("the tuple stands");
+    let members = &confirmed.tuple.box_members;
+    assert_eq!(members.report.stage, "pairing");
+    assert_eq!(members.cards.len(), 2);
+    assert_eq!(confirmed.tuple.devices, vec![0]);
+    assert_eq!(
+        members.drives.len(),
+        2,
+        "both directories, laid before pairing"
+    );
 }
 
 /// The six members of a tuple's adapter (migration `0029`).

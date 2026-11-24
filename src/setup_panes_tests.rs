@@ -7,6 +7,7 @@
 //! templates' escaping.
 
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use axum::http::StatusCode;
 use serde_json::{Value, json};
@@ -112,6 +113,12 @@ async fn the_pairing_pages_report_is_served_waiting_refused_misfiled_and_read() 
     let page = read(&rig.app, &uri, &ada).await;
     let shown = pane(&page, PAIRING_PANE);
     assert_eq!(status(shown), r#"<span class="status ok">read</span>"#);
+    // The survey's `image` members are the appliance's, as on Confirm.
+    assert!(
+        shown.contains("<caption>The appliance</caption>"),
+        "{shown}"
+    );
+    assert!(!shown.contains("<caption>The image</caption>"), "{shown}");
     for row in [
         "taken 2026-11-17 09:00:00 UTC",
         "<tr><th>Version</th><td class=\"mono\">2.0</td></tr>",
@@ -332,6 +339,13 @@ async fn the_directories_page_draws_the_directories_as_mounted_with_their_judgme
     let models_page = format!("/setup/{setup}/models");
     let need = need_shown(&read(&rig.app, &models_page, &ada).await);
     let margin = 10 * 1024 * 1024 * 1024u64;
+    // The need in bytes, as the pages count it: the pick's one part here.
+    let mut need_bytes = 0u64;
+    for row in rig.store().setup_models(&setup).await.unwrap() {
+        for file in rig.store().pull_files(&row.pull_id).await.unwrap() {
+            need_bytes += file.file.size;
+        }
+    }
     for (bytes, free, judged_as) in [
         (135_089_524_736u64, 1u64, "warning"),
         (margin - 1, margin - 1, "margin"),
@@ -345,8 +359,9 @@ async fn the_directories_page_draws_the_directories_as_mounted_with_their_judgme
             r#"<span class="status hold">warning</span> Its free space is under the picks' need of {need}: a warning and not a hold, since the box's pull is an act of its own."#
         );
         let short = format!(
-            r#"<span class="status hold">margin</span> Its filesystem is {}, under the picks' need of {need} and the 10 GiB margin: a warning and not a hold, since the margin guides how the disk is laid."#,
-            gib(margin - 1)
+            r#"<span class="status hold">margin</span> Its filesystem is {}, and the picks' need is {need}, which leaves {} beside them, under the 10 GiB margin: a warning and not a hold."#,
+            gib(margin - 1),
+            gib(margin - 1 - need_bytes)
         );
         let room = format!(
             r#"<span class="status ok">room</span> Its free space holds the picks' need of {need}, and its filesystem the 10 GiB margin beside it."#
@@ -367,6 +382,51 @@ async fn the_directories_page_draws_the_directories_as_mounted_with_their_judgme
             assert!(walk(&page).is_empty(), "{:?}", walk(&page));
         }
     }
+
+    // **A pairing report that arrives after the drives report is the one
+    // both pages read**: its models directory short of the need, so both
+    // warn where the drives report left room, and the directories pane
+    // names the pairing stage's report.
+    *reported.pairing.lock().unwrap() = Some(edited("drives", |v| {
+        v["stage"] = json!("pairing");
+        v["drives"][1]["free_bytes"] = json!(1);
+    }));
+    reported.pairing_last.store(true, Ordering::SeqCst);
+    let page = read(&rig.app, &uri, &ada).await;
+    let later = pane(&page, DRIVES_PANE);
+    assert!(
+        later.contains("<p>The pairing stage's report, arrived "),
+        "{later}"
+    );
+    assert!(
+        later.contains(r#"<span class="status hold">warning</span>"#),
+        "{later}"
+    );
+    let models = read(&rig.app, &models_page, &ada).await;
+    let need_pane = pane(&models, "The models directory's need");
+    assert!(
+        need_pane.contains(r#"<span class="status hold">warning</span>"#),
+        "{need_pane}"
+    );
+
+    // **Where the latest does not read, the models page says which**: a
+    // refused latest by its stage and cause, a misfiled one by the stage it
+    // names.
+    *reported.pairing.lock().unwrap() = Some(REFUSED.to_owned());
+    let models = read(&rig.app, &models_page, &ada).await;
+    let need_pane = pane(&models, "The models directory's need");
+    assert!(
+        need_pane.contains("<p>The pairing stage's report, the latest, is refused for cause 4: ")
+            && need_pane.contains(", so the need is not judged against the models directory.</p>"),
+        "{need_pane}"
+    );
+    *reported.pairing.lock().unwrap() = Some(report("drives"));
+    let models = read(&rig.app, &models_page, &ada).await;
+    let need_pane = pane(&models, "The models directory's need");
+    assert!(
+        need_pane.contains("<p>The report kept as the pairing stage's, the latest, names its stage drives, so the need is not judged against the models directory.</p>"),
+        "{need_pane}"
+    );
 }
 
 /// The need as the models page's need pane states it.
@@ -414,7 +474,23 @@ async fn the_placement_page_names_a_kept_device_a_later_report_lacks() {
     assert!(!refused.contains("name=\"device\""), "{refused}");
     assert!(walk(&page).is_empty(), "{:?}", walk(&page));
 
+    // **The cards are the latest report's**: an earlier pairing report that
+    // reads does not mask a refused drives report sent after it.
     *reported.pairing.lock().unwrap() = Some(report("pairing"));
+    let page = read(&rig.app, &uri, &ada).await;
+    let masked = pane(&page, DEVICES_PANE);
+    assert_eq!(
+        status(masked),
+        r#"<span class="status fail">refused</span>"#
+    );
+    assert!(
+        masked.contains("The drives stage's report is refused for cause 4: ")
+            && masked.contains("It is the latest, so no card is offered."),
+        "{masked}"
+    );
+    assert!(!masked.contains("name=\"device\""), "{masked}");
+    // A pairing report that arrives after the drives report is read.
+    reported.pairing_last.store(true, Ordering::SeqCst);
     let page = read(&rig.app, &uri, &ada).await;
     let from_pairing = pane(&page, DEVICES_PANE);
     assert_eq!(
@@ -440,9 +516,11 @@ async fn the_placement_page_names_a_kept_device_a_later_report_lacks() {
     .await;
     assert_eq!(status_code, StatusCode::SEE_OTHER, "{body}");
 
+    // A drives report that arrives later still is read in its place.
     *reported.drives.lock().unwrap() = Some(edited("drives", |v| {
         v["cards"] = json!([v["cards"][0].clone()]);
     }));
+    reported.pairing_last.store(false, Ordering::SeqCst);
     let page = read(&rig.app, &uri, &ada).await;
     let lacking = pane(&page, DEVICES_PANE);
     assert!(

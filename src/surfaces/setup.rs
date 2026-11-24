@@ -334,6 +334,41 @@ async fn admin_read(
     }
 }
 
+/// **A declaration page's read** (Spec 6.2): `admin_read`, and **a setup
+/// whose box is not paired leads to its Pair page**, since a declaration
+/// opens once its box is paired (the Planner's ruling of 2026-11-24 on the
+/// review). A pairing is never undone, so a setup read paired stays so.
+async fn declaration_read(
+    store: &Store,
+    seams: &Seams,
+    headers: &HeaderMap,
+    setup_id: &str,
+) -> Result<(Session, Setup), Response> {
+    let (session, setup) = admin_read(store, seams, headers, setup_id).await?;
+    if setup.paired.is_none() {
+        return Err((
+            StatusCode::SEE_OTHER,
+            [(header::LOCATION, pair_href(&setup.setup_id))],
+        )
+            .into_response());
+    }
+    Ok((session, setup))
+}
+
+/// **A declaration write's state** (Spec 6.2): refused where the setup is
+/// confirmed, which never changes, or its box is not paired, whose
+/// declaration is not open, each as the wrong-state writes are, with no
+/// record and before step four.
+fn declaration_state(setup: &Setup) -> Result<(), Refusal> {
+    if setup.state != "open" {
+        Err(Refusal::SetupConfirmed)
+    } else if setup.paired.is_none() {
+        Err(Refusal::SetupUnpaired)
+    } else {
+        Ok(())
+    }
+}
+
 struct OpenView {
     name: String,
     begun_by: String,
@@ -782,7 +817,7 @@ async fn page(
     setup_id: &str,
     at: Page,
 ) -> Response {
-    let (session, setup) = match admin_read(&store, seams, &headers, setup_id).await {
+    let (session, setup) = match declaration_read(&store, seams, &headers, setup_id).await {
         Ok(read) => read,
         Err(answer) => return answer,
     };

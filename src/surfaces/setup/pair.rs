@@ -628,7 +628,7 @@ mod entry {
             Outcome::Busy => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 "fail",
-                "another register write held the console past the box's ten minutes, so the box was refused busy and nothing was written: pair the box again".to_owned(),
+                "another register write held Weaver Web past the box's ten minutes, so the box was refused busy and nothing was written: pair the box again".to_owned(),
             ),
             Outcome::LostWord => (
                 StatusCode::CONFLICT,

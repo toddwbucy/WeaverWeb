@@ -62,7 +62,7 @@
   {%- when report::Shown::Read with { arrived, body } %}
   <p>Arrived {{ arrived }}, taken {{ body.taken }}.</p>
   <table>
-    <caption>The image</caption>
+    <caption>The appliance</caption>
     <tbody>
     <tr><th>Version</th><td class="mono">{{ body.image_version }}</td></tr>
     <tr><th>Manifest SHA-256</th><td class="mono">{{ body.manifest_sha256 }}</td></tr>

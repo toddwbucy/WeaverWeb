@@ -131,15 +131,15 @@
   {%- if let Some(need) = need %}
   <p>{{ need.bytes }}: the {{ need.blobs }} distinct blob{% if need.blobs != 1 %}s{% endif %} of the setup's {{ need.picks }} pick{% if need.picks != 1 %}s{% endif %}, a blob two paths share counted once.</p>
   {%- match models_directory %}
-  {%- when Some with (drive) %}
+  {%- when Ok with (drive) %}
   <table>
     <thead><tr><th>Directory</th><th>Size</th><th>Free</th><th>Judgment</th></tr></thead>
     <tbody>
     <tr><td class="mono">{{ drive.mount_point }}</td>{% match drive.mounted %}{% when Some with (m) %}<td>{{ m.size }}</td><td>{{ m.free }}</td>{% when None %}<td colspan="2"><span class="absent">absent</span></td>{% endmatch %}<td>{% for j in drive.judgments %}<span class="status {{ j.class }}">{{ j.word }}</span>{% if !j.words.is_empty() %} {{ j.words }}{% endif %}{% endfor %}</td></tr>
     </tbody>
   </table>
-  {%- when None %}
-  <p>The box has reported no models directory yet, so the need is not judged against it.</p>
+  {%- when Err with (why) %}
+  <p>{{ why }}</p>
   {%- endmatch %}
   {%- else %}
   <p>No model is picked.</p>

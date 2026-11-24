@@ -32,7 +32,9 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
 
-use super::{Frame, MALFORMED_SETUP, Page, Seams, admin_read, frame, landed, when};
+use super::{
+    Frame, MALFORMED_SETUP, Page, Seams, declaration_read, declaration_state, frame, landed, when,
+};
 use crate::box_report::{BoxMembers, gib};
 use crate::store::Store;
 use crate::store::admin::Refusal;
@@ -77,7 +79,14 @@ struct MemberView {
     rows: Vec<(String, String)>,
     why: Option<String>,
     waits: &'static str,
+    /// Where the member is changed, where the page offers it: the machine's
+    /// kind, on the Pair page, while the setup is open.
+    change: Option<String>,
 }
+
+/// The title of the machine's kind's member, which the Pair page's
+/// checkbox writes.
+const MACHINE_KIND: &str = "Virtual machine or host";
 
 fn member<T>(
     title: &'static str,
@@ -93,6 +102,7 @@ fn member<T>(
             rows: rows(value),
             why: None,
             waits,
+            change: None,
         },
         Err(why) => MemberView {
             title,
@@ -100,6 +110,7 @@ fn member<T>(
             rows: Vec::new(),
             why: Some(why.clone()),
             waits,
+            change: None,
         },
     }
 }
@@ -207,6 +218,7 @@ fn adapter_view(m: &Members) -> Vec<MemberView> {
             rows: vec![("Adapter".to_owned(), NO_ADAPTER.to_owned())],
             why: None,
             waits: "an adapter's pick on the models page, where one is wanted",
+            change: None,
         }];
     }
     let none_picked = || "no adapter is picked".to_owned();
@@ -279,7 +291,7 @@ fn members_view(m: &Members) -> Vec<MemberView> {
             |t| one("Turn context", t.clone()),
         ),
         member(
-            "Virtual machine or host",
+            MACHINE_KIND,
             "the setup's checkbox",
             "",
             &Ok::<_, String>(m.virtual_machine),
@@ -362,7 +374,7 @@ struct ConfirmPage {
 }
 
 async fn page(store: Store, seams: &Seams, headers: HeaderMap, setup_id: &str) -> Response {
-    let (session, setup) = match admin_read(&store, seams, &headers, setup_id).await {
+    let (session, setup) = match declaration_read(&store, seams, &headers, setup_id).await {
         Ok(read) => read,
         Err(answer) => return answer,
     };
@@ -412,6 +424,15 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, setup_id: &str) -
         Ok(_) => Vec::new(),
         Err(unread) => unread,
     };
+    let mut members_shown = members_view(&members);
+    // **The machine's kind is changed from here, after pairing** (the
+    // Planner's ruling of 2026-11-24 on the review): one step to the Pair
+    // page, whose checkbox writes it and whose loopback warnings read it.
+    if setup.state == "open" {
+        for m in members_shown.iter_mut().filter(|m| m.title == MACHINE_KIND) {
+            m.change = Some(format!("/pair/{}", setup.setup_id));
+        }
+    }
     let rendered = ConfirmPage {
         here: "declarations",
         who: session.name.clone(),
@@ -419,7 +440,7 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, setup_id: &str) -
         chrome,
         frame: frame(&setup, Page::Confirm),
         version: setup.version,
-        members: members_view(&members),
+        members: members_shown,
         confirmed,
         unread,
     }
@@ -472,8 +493,10 @@ async fn confirm(
         Err(answer) => return answer,
     };
     let setup = match store.setup(setup_id).await {
-        Ok(Some(setup)) if setup.state == "open" => setup,
-        Ok(Some(_)) => return refused(&Refusal::SetupConfirmed),
+        Ok(Some(setup)) => match declaration_state(&setup) {
+            Ok(()) => setup,
+            Err(refusal) => return refused(&refusal),
+        },
         Ok(None) => return refused(&Refusal::NoSuchSetup),
         Err(e) => return fault(e),
     };

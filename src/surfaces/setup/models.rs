@@ -38,7 +38,9 @@ use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use serde::Deserialize;
 
-use super::{Frame, MALFORMED_SETUP, Page, Seams, admin_read, frame, landed, when};
+use super::{
+    Frame, MALFORMED_SETUP, Page, Seams, admin_read, declaration_state, frame, landed, when,
+};
 use crate::gguf::{self, Header, KvHeads};
 use crate::hugging_face::choice::{self, Choice, part_of};
 use crate::hugging_face::seal::SealKey;
@@ -349,21 +351,43 @@ struct ModelsPage {
     /// and the models directory as the latest report of either stage shows
     /// it, judged against the need and the 10 GiB margin.
     need: Option<super::Need>,
-    models_directory: Option<super::report::DriveRow>,
+    /// The models directory, or why none is judged: which of no report, the
+    /// latest refused or misfiled, or a latest naming none.
+    models_directory: Result<super::report::DriveRow, String>,
 }
 
 /// The models directory as `reports`' latest shows it, judged against
-/// `need`, where that report reads and names one.
+/// `need`, where that report reads and names one, else why none is.
 fn models_directory(
     reports: &crate::box_report::Reports,
     need: Option<&super::Need>,
-) -> Option<super::report::DriveRow> {
-    match super::directories(reports, need).0 {
-        super::report::Shown::Read { body, .. } => {
-            body.drives.into_iter().find(|d| d.role == "models")
+) -> Result<super::report::DriveRow, String> {
+    use crate::box_report::{Report, stage_name};
+    let (stage, latest) = reports.latest();
+    let stage = stage_name(stage);
+    let why = match latest {
+        Report::Waiting => "No report has arrived at either stage".to_owned(),
+        Report::Refused { refused, .. } => format!(
+            "The {stage} stage's report, the latest, is refused for cause {}: {}",
+            refused.cause.number(),
+            refused.cause.words()
+        ),
+        Report::Misfiled { names, .. } => format!(
+            "The report kept as the {stage} stage's, the latest, names its stage {}",
+            stage_name(*names)
+        ),
+        Report::Read { .. } => {
+            if let super::report::Shown::Read { body, .. } = super::directories(reports, need).0
+                && let Some(row) = body.drives.into_iter().find(|d| d.role == "models")
+            {
+                return Ok(row);
+            }
+            format!("The {stage} stage's report, the latest, names no models directory")
         }
-        _ => None,
-    }
+    };
+    Err(format!(
+        "{why}, so the need is not judged against the models directory."
+    ))
 }
 
 fn role_view(role: Role, rows: &[SetupModel], setup: &Setup) -> RoleView {
@@ -411,7 +435,7 @@ async fn page(
     look: Look,
 ) -> Response {
     let wanted = wanted(&look);
-    let (session, setup) = match admin_read(&store, seams, &headers, setup_id).await {
+    let (session, setup) = match super::declaration_read(&store, seams, &headers, setup_id).await {
         Ok(read) => read,
         Err(answer) => return answer,
     };
@@ -1044,7 +1068,11 @@ async fn pick(
         Ok(session) => session,
         Err(answer) => return answer,
     };
+    // **A pick on a setup whose box is not paired is refused**, as the
+    // other declaration writes are; a confirmed setup's pick stays the
+    // store's stale refusal, as before.
     match store.setup(setup_id).await {
+        Ok(Some(setup)) if setup.paired.is_none() => return refused(&Refusal::SetupUnpaired),
         Ok(Some(_)) => {}
         Ok(None) => return refused(&Refusal::NoSuchSetup),
         Err(e) => return fault(e),
@@ -1145,8 +1173,11 @@ async fn drop_adapter(
         Err(answer) => return answer,
     };
     match store.setup(setup_id).await {
-        Ok(Some(setup)) if setup.state == "open" => {}
-        Ok(Some(_)) => return refused(&Refusal::SetupConfirmed),
+        Ok(Some(setup)) => {
+            if let Err(refusal) = declaration_state(&setup) {
+                return refused(&refusal);
+            }
+        }
         Ok(None) => return refused(&Refusal::NoSuchSetup),
         Err(e) => return fault(e),
     }

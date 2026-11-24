@@ -200,6 +200,43 @@ pub(crate) async fn begin(
     (status, body, setup_of(&headers))
 }
 
+/// **The setup's box paired**, as a pairing's write leaves it, with no box
+/// dialing: a register row of the setup's name and the setup's link to it
+/// (migration `0030`), so its declaration opens. The pairing itself is
+/// `enrollment_tests`'.
+pub(crate) async fn paired(s: &Store, setup: &str) {
+    let name: String = sqlx::query_scalar("SELECT name FROM agent_setup WHERE setup_id = $1")
+        .bind(setup)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    let id: crate::store::key::AgentId = s.mint_key("ag").await.unwrap().parse().unwrap();
+    let mut conn = s.pool.acquire().await.unwrap();
+    // Fingerprints of the setup's own, so no other row in a test holds them.
+    let hex = &setup["st-".len()..];
+    Store::register_agent_on(
+        &mut conn,
+        &id,
+        &format!("box-{name}"),
+        &name,
+        None,
+        &format!("a{hex:0>63}"),
+        &format!("b{hex:0>63}"),
+        &format!("c{hex:0>63}"),
+    )
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE agent_setup SET agent_id = $1, paired_as = 'pair', paired_at = now() \
+         WHERE setup_id = $2",
+    )
+    .bind(id.as_str())
+    .bind(setup)
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+}
+
 /// The setup a begin's redirect names: its pairing, on Pair a box.
 fn setup_of(headers: &HeaderMap) -> Option<String> {
     let location = headers.get(header::LOCATION)?.to_str().ok()?;
@@ -594,6 +631,7 @@ async fn every_pane_carries_its_stage_backing_and_status() {
     let setup = setup.unwrap();
     let pairing = format!("/pair/{setup}");
     provision.push((pairing.clone(), page(&rig.app, &pairing, &ada).await));
+    paired(s, &setup).await;
     for p in ["directories", "models", "placement", "confirm", "build"] {
         let uri = format!("/setup/{setup}/{p}");
         walked.push((uri.clone(), page(&rig.app, &uri, &ada).await));
@@ -730,6 +768,74 @@ async fn every_pane_carries_its_stage_backing_and_status() {
             .1
             .contains(r#"<a href="/declarations">the declaration screen</a>"#)
     );
+}
+
+/// **A declaration opens once its box is paired** (the Planner's ruling
+/// of 2026-11-24 on the review): every declaration page of a setup whose
+/// box is not paired leads to its Pair page, and each declaration write,
+/// a pick, the adapter's drop, the placement and Confirm, is refused 409
+/// naming the pairing, as a confirmed setup's writes are, with no record
+/// and nothing written. Once its box is paired, the pages serve.
+#[tokio::test]
+async fn a_declaration_opens_once_its_box_is_paired() {
+    let Some(rig) = rig().await else {
+        return;
+    };
+    let s = rig.store();
+    let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
+    let setup = setup.unwrap();
+    for p in ["directories", "models", "placement", "confirm", "build"] {
+        let uri = format!("/setup/{setup}/{p}");
+        let (status, headers, body) = send_as(&rig.app, "GET", &uri, None, &ada).await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{uri}: {body}");
+        assert_eq!(headers[header::LOCATION], format!("/pair/{setup}"), "{uri}");
+    }
+    let unpaired = crate::store::admin::Refusal::SetupUnpaired.to_string();
+    for (page, body, action) in [
+        (
+            "models",
+            crate::setup_models_tests::pick(
+                "1",
+                "decoder",
+                "org/split",
+                "m-00001-of-00002.gguf",
+                None,
+            ),
+            "setup pick",
+        ),
+        ("models/drop", form(&[("version", "1")]), "setup drop"),
+        (
+            "placement",
+            form(&[("version", "1"), ("turn_context", "continuous")]),
+            "setup placement",
+        ),
+        ("confirm", form(&[("version", "1")]), "setup confirm"),
+    ] {
+        let (status, _, answer) = send_as(
+            &rig.app,
+            "POST",
+            &format!("/setup/{setup}/{page}"),
+            Some(body),
+            &ada,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{page}: {answer}");
+        assert_eq!(answer, unpaired, "{page}");
+        assert_eq!(
+            audited(s, action).await,
+            (0, 0, 0, 0),
+            "{page} records nothing"
+        );
+    }
+    let kept = s.setup(&setup).await.unwrap().unwrap();
+    assert_eq!(
+        (kept.version, kept.turn_context),
+        (1, None),
+        "nothing written"
+    );
+    paired(s, &setup).await;
+    page(&rig.app, &format!("/setup/{setup}/directories"), &ada).await;
 }
 
 /// **The Pair page says what to do at the appliance** (the operator's

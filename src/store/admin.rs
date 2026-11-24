@@ -123,6 +123,9 @@ pub enum Refusal {
     /// The setup holds no adapter's pick, so there is none to drop (Spec
     /// 6.2).
     NoAdapterPicked,
+    /// The setup's box is not paired, and a declaration opens once its box
+    /// is (the Planner's ruling of 2026-11-24 on the review).
+    SetupUnpaired,
 }
 
 impl std::fmt::Display for Refusal {
@@ -253,6 +256,10 @@ impl std::fmt::Display for Refusal {
             Refusal::Unconfirmable(why) => write!(
                 f,
                 "Confirm stands only where every member is read, and it waits on these: {why}. Nothing was written"
+            ),
+            Refusal::SetupUnpaired => write!(
+                f,
+                "the setup's box is not paired, and its declaration opens once it is: pair it on Pair a box"
             ),
             Refusal::NoAdapterPicked => write!(
                 f,

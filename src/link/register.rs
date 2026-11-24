@@ -1707,7 +1707,7 @@ impl Store {
         Ok(Ok(revoked))
     }
 
-    /// **The live rows holding a name**, for the pairing page (Spec 8.2):
+    /// **The live rows holding a name**, for the Pair page (Spec 8.2):
     /// each row's box and its live credentials, as the register keeps them,
     /// which is what a pairing's write made whether its answer was lost or
     /// not.

@@ -325,7 +325,7 @@ async fn rows_named(s: &Store, name: &str) -> i64 {
         .unwrap()
 }
 
-/// **The Pair page shows the console's fingerprint in four rows of four
+/// **The Pair page shows Weaver Web's fingerprint in four rows of four
 /// groups**, as the appliance's setup script shows it, so the two are
 /// compared row by row: the sixteen groups the box's `waiting` line
 /// carries, four to a row, in order.
@@ -342,12 +342,49 @@ async fn the_pair_page_shows_the_fingerprint_in_four_rows_of_four_groups() {
     let rows: Vec<String> = groups.chunks(4).map(|row| row.join(" ")).collect();
     assert!(
         pairing.contains(&format!(
-            r#"<tr><th>The console's fingerprint</th><td class="mono">{}</td></tr>"#,
+            r#"<tr><th>Weaver Web's fingerprint</th><td class="mono">{}</td></tr>"#,
             rows.join("<br>")
         )),
         "{pairing}"
     );
     assert!(!pairing.contains(&grouped), "not one line: {pairing}");
+}
+
+/// **The Pair page lists the waiting box as it claims**: with none
+/// waiting, it says so and draws no table; with a box dialed, a row of the
+/// name the box claims, its peer address and its wait, under the table's
+/// three headings, and the code's field beside it.
+#[tokio::test]
+async fn the_pair_page_lists_the_waiting_box_as_it_claims() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
+    let uri = format!("/pair/{}", setup.unwrap());
+    let none = page(&rig.app, &uri, &ada).await;
+    assert!(
+        none.contains("<p>No box is waiting. The appliance's setup script dials Weaver Web's address, above, and shows a short code and Weaver Web's fingerprint.</p>"),
+        "{none}"
+    );
+    assert!(!none.contains("<th>Peer address</th>"), "{none}");
+    let keys = box_keys("box-a");
+    let dialed = dial(&rig, &keys.claim).await;
+    let waiting = page(&rig.app, &uri, &ada).await;
+    assert!(
+        waiting.contains(
+            "<thead><tr><th>Box, as it claims</th><th>Peer address</th><th>Waited</th></tr></thead>"
+        ),
+        "{waiting}"
+    );
+    assert!(
+        waiting.contains(
+            r#"<tr><td class="mono">box-a</td><td class="mono">127.0.0.1</td><td>0 min "#
+        ),
+        "{waiting}"
+    );
+    assert!(!waiting.contains("No box is waiting"), "{waiting}");
+    assert!(waiting.contains(r#"name="code""#), "{waiting}");
+    drop(dialed);
 }
 
 /// **A pairing writes the row with both certificates live**, signed over
@@ -2180,7 +2217,7 @@ async fn the_reports_a_box_sends_feed_placement_and_confirm() {
         rig.puller.cache().cloned(),
         rig.puller.verified(),
     );
-    let (ada, setup) = crate::setup_models_tests::setup_of(&rig, "karl").await;
+    let (ada, setup) = crate::setup_models_tests::setup_unpaired_of(&rig, "karl").await;
     let on_box = crate::test_dir::tempdir().unwrap();
     enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a", None).await;
     let admin_config = on_box.path().join("admin-con.toml");
@@ -2465,7 +2502,7 @@ async fn a_setup_with_no_adapter_confirms_a_tuple_with_none() {
         rig.puller.cache().cloned(),
         rig.puller.verified(),
     );
-    let (ada, setup) = crate::setup_models_tests::setup_of(&rig, "karl").await;
+    let (ada, setup) = crate::setup_models_tests::setup_unpaired_of(&rig, "karl").await;
     let on_box = crate::test_dir::tempdir().unwrap();
     enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a", None).await;
     let admin_config = on_box.path().join("admin-con.toml");

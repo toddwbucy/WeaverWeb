@@ -257,11 +257,12 @@ impl DrivesBody {
                                         "hold",
                                         "margin",
                                         format!(
-                                            "Its filesystem is {}, under the picks' need of {} \
-                                             and the 10 GiB margin: a warning and not a hold, \
-                                             since the margin guides how the disk is laid.",
+                                            "Its filesystem is {}, and the picks' need is {}, \
+                                             which leaves {} beside them, under the 10 GiB \
+                                             margin: a warning and not a hold.",
                                             gib(*bytes),
-                                            need.shown
+                                            need.shown,
+                                            gib(bytes.saturating_sub(need.bytes))
                                         ),
                                     )
                                 }

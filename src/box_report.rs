@@ -4,10 +4,10 @@
 //! setup keeps (`agent_setup_report`, each stage's latest, verbatim), read
 //! by the survey's reader (`crate::survey`, Spec 8.3).
 //!
-//! **Which report feeds what** is 6.2's: the cards from the `drives`
-//! stage's report where it reads, else the `pairing` stage's, and every box
-//! member, and the directories page's directories, from the latest report
-//! of either stage (the Planner's ruling of 2026-11-24 on the plan: the
+//! **Which report feeds what** is 6.2's: the cards, every box member, and
+//! the directories page's directories, from the latest report of either
+//! stage, so one tuple stands on one report (the Planner's rulings of
+//! 2026-11-24 on the plan and on its review: the
 //! operator lays the disks before pairing, so a drives-stage report may
 //! never come, and one that is sent is still read). A report absent,
 //! refused, or kept under one stage while naming the other feeds nothing,
@@ -230,21 +230,18 @@ impl Reports {
         reports
     }
 
-    /// **The cards the placement page offers**: the `drives` stage's
-    /// report's where it reads, else the `pairing` stage's, and none where
-    /// neither reads.
+    /// **The cards the placement page offers and Confirm checks**: the
+    /// latest report's of either stage, and none where the latest does not
+    /// read, so the devices and the box's members stand on one report.
     pub fn cards(&self) -> Option<Vec<Card>> {
         self.cards_from().map(|(_, cards)| cards)
     }
 
     /// The cards the placement page offers, with the stage whose report
-    /// brings them.
+    /// brings them: the latest report's, where it reads.
     pub fn cards_from(&self) -> Option<(Stage, Vec<Card>)> {
-        let (stage, survey) = match (self.drives.survey(), self.pairing.survey()) {
-            (Some(survey), _) => (Stage::Drives, survey),
-            (None, Some(survey)) => (Stage::Pairing, survey),
-            (None, None) => return None,
-        };
+        let (stage, latest) = self.latest();
+        let survey = latest.survey()?;
         Some((
             stage,
             survey

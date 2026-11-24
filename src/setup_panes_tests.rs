@@ -23,6 +23,9 @@ const DRIVES_PANE: &str = "The directories as mounted";
 const DEVICES_PANE: &str = "The devices";
 
 /// A refused report: a format the reader does not know, cause 4.
+/// A mebibyte, the margin case's shortfall.
+const MIB: u64 = 1024 * 1024;
+
 const REFUSED: &str = r#"{"format":"weaver-survey/2","stage":"pairing"}"#;
 
 /// The test's report at `stage` with one edit made.
@@ -348,7 +351,11 @@ async fn the_directories_page_draws_the_directories_as_mounted_with_their_judgme
     }
     for (bytes, free, judged_as) in [
         (135_089_524_736u64, 1u64, "warning"),
-        (margin - 1, margin - 1, "margin"),
+        (
+            margin + need_bytes - MIB,
+            margin + need_bytes - MIB,
+            "margin",
+        ),
         (135_089_524_736, 72_464_760_832, "room"),
     ] {
         *reported.drives.lock().unwrap() = Some(edited("drives", |v| {
@@ -359,9 +366,8 @@ async fn the_directories_page_draws_the_directories_as_mounted_with_their_judgme
             r#"<span class="status hold">warning</span> Its free space is under the picks' need of {need}: a warning and not a hold, since the box's pull is an act of its own."#
         );
         let short = format!(
-            r#"<span class="status hold">margin</span> Its filesystem is {}, and the picks' need is {need}, which leaves {} beside them, under the 10 GiB margin: a warning and not a hold."#,
-            gib(margin - 1),
-            gib(margin - 1 - need_bytes)
+            r#"<span class="status hold">margin</span> Its filesystem is {}, and the picks' need is {need}, so the room beside them falls 1.00 MiB short of the 10 GiB margin: a warning and not a hold."#,
+            gib(margin + need_bytes - MIB)
         );
         let room = format!(
             r#"<span class="status ok">room</span> Its free space holds the picks' need of {need}, and its filesystem the 10 GiB margin beside it."#
@@ -540,6 +546,47 @@ async fn the_placement_page_names_a_kept_device_a_later_report_lacks() {
     let confirm = read(&rig.app, &format!("/setup/{setup}/confirm"), &ada).await;
     assert!(
         confirm.contains("card 1 is not among the survey's cards"),
+        "{confirm}"
+    );
+
+    // **A placement saved while the latest report does not read keeps the
+    // devices stored before it**: a refused drives report arrives last, no
+    // card is offered, the pane says the kept devices stand, and a save of
+    // the turn context leaves them. Confirm's devices line names the
+    // latest report's state.
+    *reported.drives.lock().unwrap() = Some(REFUSED.replace("pairing", "drives"));
+    let page = read(&rig.app, &uri, &ada).await;
+    let none_offered = pane(&page, DEVICES_PANE);
+    assert!(!none_offered.contains("name=\"device\""), "{none_offered}");
+    assert!(
+        none_offered.contains("The kept devices, cards 0, 1, stand as stored, and a save here leaves them; Confirm checks them once a report reads."),
+        "{none_offered}"
+    );
+    let version = rig.store().setup(&setup).await.unwrap().unwrap().version;
+    let (status_code, body, _) = post(
+        &rig,
+        &ada,
+        &setup,
+        "placement",
+        &[
+            ("version", &version.to_string()),
+            ("turn_context", "independent"),
+        ],
+    )
+    .await;
+    assert_eq!(status_code, StatusCode::SEE_OTHER, "{body}");
+    let kept = rig.store().setup(&setup).await.unwrap().unwrap();
+    assert_eq!(kept.turn_context.as_deref(), Some("independent"));
+    assert_eq!(kept.devices, Some(vec![0, 1]), "the kept devices stand");
+    let confirm = read(&rig.app, &format!("/setup/{setup}/confirm"), &ada).await;
+    assert!(
+        confirm.contains("the drives stage&#39;s report, the latest, is refused for cause 4")
+            || confirm.contains("the drives stage's report, the latest, is refused for cause 4"),
+        "{confirm}"
+    );
+    assert!(confirm.contains("so no card is read"), "{confirm}");
+    assert!(
+        !confirm.contains("the survey has reported no cards"),
         "{confirm}"
     );
 }

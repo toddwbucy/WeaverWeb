@@ -186,6 +186,13 @@ impl DevicesView {
                     Report::Misfiled { .. } => ("fail", "misfiled"),
                     Report::Waiting | Report::Read { .. } => ("hold", "waiting"),
                 };
+                let kept_stand = (!kept.is_empty()).then(|| {
+                    format!(
+                        "The kept devices, card{} {}, stand as stored, and a save here leaves them; Confirm checks them once a report reads.",
+                        if kept.len() == 1 { "" } else { "s" },
+                        kept.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(", ")
+                    )
+                });
                 DevicesView {
                     class,
                     word,
@@ -193,6 +200,7 @@ impl DevicesView {
                     notes: unread(stage, latest)
                         .map(|note| format!("{note} It is the latest, so no card is offered."))
                         .into_iter()
+                        .chain(kept_stand)
                         .collect(),
                     lacking: Vec::new(),
                 }
@@ -503,15 +511,16 @@ async fn save(
         Ok(session) => session,
         Err(answer) => return answer,
     };
-    match store.setup(setup_id).await {
+    let stored = match store.setup(setup_id).await {
         Ok(Some(setup)) => {
             if let Err(refusal) = declaration_state(&setup) {
                 return refused(&refusal);
             }
+            setup.devices
         }
         Ok(None) => return refused(&Refusal::NoSuchSetup),
         Err(e) => return fault(e),
-    }
+    };
     let rows = match store.setup_models(setup_id).await {
         Ok(rows) => rows,
         Err(e) => return fault(e),
@@ -529,10 +538,19 @@ async fn save(
             Ok(first) => first,
             Err(answer) => return answer,
         };
+        // **Where the page offers no card, the save leaves the kept
+        // devices as stored** (the Planner's ruling of 2026-11-24 on the
+        // second review): a latest report that does not read offers none,
+        // and the form then posts no device. The version check refuses the
+        // write where the row changed since `stored` was read.
+        let devices = match &survey {
+            Some(_) => (!ask.devices.is_empty()).then_some(ask.devices.as_slice()),
+            None => stored.as_deref(),
+        };
         let placement = Placement {
             context_length: ask.context_length,
             turn_context: ask.turn_context,
-            devices: (!ask.devices.is_empty()).then_some(ask.devices.as_slice()),
+            devices,
         };
         let written = store
             .setup_placement(

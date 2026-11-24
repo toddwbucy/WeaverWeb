@@ -258,11 +258,13 @@ impl DrivesBody {
                                         "margin",
                                         format!(
                                             "Its filesystem is {}, and the picks' need is {}, \
-                                             which leaves {} beside them, under the 10 GiB \
-                                             margin: a warning and not a hold.",
+                                             so the room beside them falls {} short of the \
+                                             10 GiB margin: a warning and not a hold.",
                                             gib(*bytes),
                                             need.shown,
-                                            gib(bytes.saturating_sub(need.bytes))
+                                            crate::surfaces::hugging_face::bytes(
+                                                need.bytes.saturating_add(MODELS_MARGIN) - *bytes
+                                            )
                                         ),
                                     )
                                 }

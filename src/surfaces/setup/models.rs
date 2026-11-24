@@ -382,7 +382,11 @@ fn models_directory(
             {
                 return Ok(row);
             }
-            format!("The {stage} stage's report, the latest, names no models directory")
+            // Unreachable: the survey's reader refuses a report whose
+            // drives are not state then models at their mount points
+            // (`survey::read`), so a read report always names the models
+            // directory. The type of `drives` cannot say so.
+            format!("The {stage} stage's report, the latest, is read")
         }
     };
     Err(format!(
@@ -641,6 +645,12 @@ async fn header(
         Ok(read) => read,
         Err(answer) => return answer,
     };
+    // **A fragment of an unpaired setup's declaration is refused as its
+    // writes are**, before Hugging Face is asked (the Planner's ruling of
+    // 2026-11-24 on the second review).
+    if setup.paired.is_none() {
+        return refused(&Refusal::SetupUnpaired);
+    }
     let through = match through(&store, seams).await {
         Ok(through) => through,
         Err(e) => return fault(e),
@@ -808,6 +818,7 @@ async fn pulls(store: Store, seams: &Seams, headers: HeaderMap, setup_id: &str) 
         Err(e) => return fault(e),
     }
     match store.setup(setup_id).await {
+        Ok(Some(setup)) if setup.paired.is_none() => return refused(&Refusal::SetupUnpaired),
         Ok(Some(_)) => {}
         Ok(None) => return refused(&Refusal::NoSuchSetup),
         Err(e) => return fault(e),

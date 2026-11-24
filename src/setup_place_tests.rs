@@ -756,6 +756,40 @@ async fn confirm_stands_only_where_every_member_is_read_and_writes_one_tuple() {
         .store(true, std::sync::atomic::Ordering::SeqCst);
     let later = read(&rig.app, &confirm, &ada).await;
     assert!(later.contains("the pairing stage's, taken"), "{later}");
+    // **Two reports that both read and differ in cards, the pairing one the
+    // later**: Placement offers the later report's one card and names the
+    // kept card 1 it lacks, and Confirm's post is refused naming it, the
+    // tuple's devices checked against the report its members come from.
+    *reported.pairing.lock().unwrap() = Some({
+        let mut v: serde_json::Value = serde_json::from_str(&laid_pairing_report()).unwrap();
+        v["cards"] = serde_json::json!([v["cards"][0].clone()]);
+        v.to_string()
+    });
+    let placement = read(&rig.app, &format!("/setup/{setup}/placement"), &ada).await;
+    assert!(
+        placement.contains(r#"<span class="source">the pairing stage's report</span>"#),
+        "{placement}"
+    );
+    assert!(
+        placement.contains(r#"name="device" value="0""#),
+        "{placement}"
+    );
+    assert!(
+        !placement.contains(r#"name="device" value="1""#),
+        "{placement}"
+    );
+    assert!(
+        placement.contains("Card 1 is kept, and the pairing stage's report lacks it"),
+        "{placement}"
+    );
+    let (status, body, _) = post(&rig, &ada, &setup, "confirm", &[("version", "4")]).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(
+        body.contains("card 1 is not among the survey's cards"),
+        "{body}"
+    );
+    assert_eq!(count(s, "deployment_tuple").await, 0);
+    *reported.pairing.lock().unwrap() = Some(laid_pairing_report());
     reported
         .pairing_last
         .store(false, std::sync::atomic::Ordering::SeqCst);
@@ -790,6 +824,45 @@ async fn confirm_stands_only_where_every_member_is_read_and_writes_one_tuple() {
     assert_eq!(audited(s, "setup confirm").await, (1, 1, 0, 0));
     assert_eq!(count(s, "deployment_tuple").await, 1);
     assert_eq!(s.setup(&setup).await.unwrap().unwrap().state, "confirmed");
+
+    // **A confirmed setup's Pair page shows the machine's kind as text**,
+    // with no form, and a post of it is refused as a confirmed setup's
+    // other writes are, with no record.
+    let pair_page = read(&rig.app, &format!("/pair/{setup}"), &ada).await;
+    assert!(
+        pair_page.contains("<p>The box is a virtual machine.</p>")
+            || pair_page.contains("<p>The box is a host.</p>"),
+        "{pair_page}"
+    );
+    assert!(
+        !pair_page.contains(r#"name="virtual_machine""#),
+        "{pair_page}"
+    );
+    assert!(
+        pair_page.contains(
+            "<footer>The setup is confirmed, and a confirmed setup never changes.</footer>"
+        ),
+        "{pair_page}"
+    );
+    let before = audited(s, "setup pairing").await;
+    let version = s.setup(&setup).await.unwrap().unwrap().version.to_string();
+    let (status, _, body) = crate::admin_tests::send_as(
+        &rig.app,
+        "POST",
+        &format!("/pair/{setup}"),
+        Some(crate::admin_tests::form(&[
+            ("version", &version),
+            ("virtual_machine", "on"),
+        ])),
+        &ada,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(
+        body,
+        crate::store::admin::Refusal::SetupConfirmed.to_string()
+    );
+    assert_eq!(audited(s, "setup pairing").await, before, "no record");
 
     // Each member is its source's: the pulls' records in split order, the
     // base's identity row, the placement, the checkbox and the box. Every

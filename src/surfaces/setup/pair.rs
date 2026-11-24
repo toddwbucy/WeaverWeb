@@ -305,7 +305,7 @@ mod entry {
         if ask.compared.as_deref() != Some("on") {
             return (
                 StatusCode::BAD_REQUEST,
-                "compare the fingerprint the box shows with the console's, group for group, and confirm it before the code",
+                "compare the fingerprint the box shows with Weaver Web's, row by row and group for group, and confirm it before the code",
             )
                 .into_response();
         }
@@ -340,7 +340,7 @@ mod entry {
         let Some(enrollment) = seams.enrollment.clone() else {
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
-                "this console serves no pairing",
+                "this build of Weaver Web serves no pairing",
             )
                 .into_response();
         };

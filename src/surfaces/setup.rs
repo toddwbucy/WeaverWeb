@@ -604,7 +604,11 @@ async fn pairing(
         Ok(session) => session,
         Err(answer) => return answer,
     };
+    // **A confirmed setup's checkbox is refused as its other writes are**,
+    // with no record (the Planner's ruling of 2026-11-24 on the second
+    // review).
     match store.setup(setup_id).await {
+        Ok(Some(setup)) if setup.state != "open" => return refused(&Refusal::SetupConfirmed),
         Ok(Some(_)) => {}
         Ok(None) => return refused(&Refusal::NoSuchSetup),
         Err(e) => return fault(e),
@@ -642,6 +646,8 @@ struct PairingPage {
     name: String,
     begun_by: String,
     begun_at: String,
+    /// The setup is confirmed, so the machine's kind is drawn as text.
+    confirmed: bool,
     version: i64,
     virtual_machine: bool,
     link: Link,
@@ -675,6 +681,7 @@ fn pairing_page(
         name: setup.name.clone(),
         begun_by: setup.begun_by.clone(),
         begun_at: when(setup.begun_at),
+        confirmed: setup.state != "open",
         version: setup.version,
         virtual_machine: setup.virtual_machine,
         loopback_warning: link.loopback && setup.virtual_machine,

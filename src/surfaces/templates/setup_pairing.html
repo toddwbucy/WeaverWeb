@@ -46,13 +46,21 @@
 <section class="pane">
   <header><span class="stage"><b>2</b> Provision</span><h2>Virtual machine or host</h2><span class="backing built">built</span><span class="status ok">ok</span><span class="source">the setup</span></header>
   <div class="body">
+  {%- if confirmed %}
+  <p>The box is {% if virtual_machine %}a virtual machine{% else %}a host{% endif %}.</p>
+  {%- else %}
   <form method="post" action="/pair/{{ setup_id }}">
     <input type="hidden" name="version" value="{{ version }}">
     <label><input type="checkbox" name="virtual_machine" value="on"{% if virtual_machine %} checked{% endif %}> The box is a virtual machine</label>
     <button type="submit">Save</button>
   </form>
+  {%- endif %}
   </div>
+  {%- if confirmed %}
+  <footer>The setup is confirmed, and a confirmed setup never changes.</footer>
+  {%- else %}
   <footer>Checked, the box is a virtual machine. Unchecked, it is a host.</footer>
+  {%- endif %}
 </section>
 {%- if pair.live %}
 <section class="pane">

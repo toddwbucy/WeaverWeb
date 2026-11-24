@@ -237,6 +237,30 @@ impl Reports {
         self.cards_from().map(|(_, cards)| cards)
     }
 
+    /// **The cards Confirm checks the kept devices against**, or why none
+    /// is read, by the latest report's stage and state.
+    pub fn cards_or_why(&self) -> Result<Vec<Card>, String> {
+        if let Some((_, cards)) = self.cards_from() {
+            return Ok(cards);
+        }
+        let (stage, latest) = self.latest();
+        let stage = stage_name(stage);
+        Err(match latest {
+            Report::Refused { refused, .. } => format!(
+                "the {stage} stage's report, the latest, is refused for cause {}: {}, so no card is read",
+                refused.cause.number(),
+                refused.cause.words()
+            ),
+            Report::Misfiled { names, .. } => format!(
+                "the report kept as the {stage} stage's, the latest, names its stage {}, so no card is read",
+                stage_name(*names)
+            ),
+            Report::Waiting | Report::Read { .. } => {
+                "no report of either stage has arrived, so no card is read".to_owned()
+            }
+        })
+    }
+
     /// The cards the placement page offers, with the stage whose report
     /// brings them: the latest report's, where it reads.
     pub fn cards_from(&self) -> Option<(Stage, Vec<Card>)> {

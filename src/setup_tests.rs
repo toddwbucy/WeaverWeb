@@ -496,7 +496,7 @@ async fn a_console_serving_no_pairing_says_so_past_the_admin_gate() {
     assert_eq!(body, crate::surfaces::admin::NOT_AN_ADMIN);
     let (status, _, body) = send_as(&rig.app, "POST", &uri, Some(entry), &ada).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
-    assert_eq!(body, "this console serves no pairing");
+    assert_eq!(body, "this build of Weaver Web serves no pairing");
 }
 
 /// **A person without an admin grant is refused before any setup is looked
@@ -827,6 +827,19 @@ async fn a_declaration_opens_once_its_box_is_paired() {
             (0, 0, 0, 0),
             "{page} records nothing"
         );
+    }
+    // The two fragments are refused as the writes are, before Hugging Face
+    // is asked: the rig's Hugging Face is a port nothing answers on.
+    for fragment in [
+        format!(
+            "/setup/{setup}/models/header?repository=org/split&commit={}&choice=m-00001-of-00002.gguf",
+            crate::setup_models_tests::COMMIT
+        ),
+        format!("/setup/{setup}/models/pull"),
+    ] {
+        let (status, _, answer) = send_as(&rig.app, "GET", &fragment, None, &ada).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{fragment}: {answer}");
+        assert_eq!(answer, unpaired, "{fragment}");
     }
     let kept = s.setup(&setup).await.unwrap().unwrap();
     assert_eq!(

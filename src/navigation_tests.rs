@@ -336,6 +336,7 @@ async fn every_page_declares_its_tab_and_sub_tab() {
     assert!(granted.ok, "{}", granted.value);
     let (_, _, setup) = crate::setup_tests::begin(&rig.app, &ada, "otto").await;
     let setup = setup.expect("a setup opens");
+    crate::setup_tests::paired(s, &setup).await;
 
     let mut pages = Vec::new();
     for uri in [
@@ -353,6 +354,7 @@ async fn every_page_declares_its_tab_and_sub_tab() {
         "/passkeys",
         "/setup",
         "/pair",
+        "/pair/new",
         &format!("/pair/{setup}"),
         &format!("/setup/{setup}/models"),
         &format!("/setup/{setup}/directories"),
@@ -378,6 +380,7 @@ async fn every_page_declares_its_tab_and_sub_tab() {
         ("IAM", Some("SSH keys")),
         ("IAM", Some("Passkeys")),
         ("Agents", Some("1 Declare Declarations")),
+        ("Agents", Some("2 Provision Pair a box")),
         ("Agents", Some("2 Provision Pair a box")),
         ("Agents", Some("2 Provision Pair a box")),
         ("Agents", Some("1 Declare Declarations")),

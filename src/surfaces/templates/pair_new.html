@@ -1,0 +1,60 @@
+{% extends "instrument.html" %}
+{% block title %}Create new agent - weaver-web{% endblock %}
+{% block body %}
+{#- The requirements page, Pair a box's Create new agent (Spec 8.2; the
+    operator's ruling of 2026-11-24: "'Create new agent' opens a
+    requirements page first. It covers VMs only at this stage. No host
+    install is offered."). It states only what a ruling or the Spec states,
+    and ends in the agent's name, the one form, which leads to the agent's
+    Pair page. -#}
+<h1>Create new agent</h1>
+<div class="stack">
+<section class="pane">
+  <header><span class="stage"><b>2</b> Provision</span><h2>The VM</h2><span class="backing built">built</span><span class="status ok">ok</span><span class="source">the operator's rulings</span></header>
+  <div class="body">
+  <p>An agent runs in a VM made from the appliance. This version covers VMs only.</p>
+  <p>One agent per VM is the recommendation.</p>
+  </div>
+  <footer>The operator's rulings of 2026-11-23 and 2026-11-24.</footer>
+</section>
+<section class="pane">
+  <header><span class="stage"><b>2</b> Provision</span><h2>The operator's part</h2><span class="backing built">built</span><span class="status ok">ok</span><span class="source">the operator's ruling</span></header>
+  <div class="body">
+  <p>The operator holds the hypervisor, the cards, the disks and the network between VMs.</p>
+  </div>
+  <footer>The operator's ruling of 2026-11-23.</footer>
+</section>
+<section class="pane">
+  <header><span class="stage"><b>2</b> Provision</span><h2>The two disks</h2><span class="backing built">built</span><span class="status ok">ok</span><span class="source">the operator's rulings</span></header>
+  <div class="body">
+  <p>The operator lays the disks before pairing, with our help: a models disk at least 10 GB larger than the model, and a state disk, mounted at our default paths unless they choose others.</p>
+  <p>The 10 GB margin is guidance. No page judges it.</p>
+  </div>
+  <footer>The operator's rulings of 2026-11-23 and 2026-11-24. The declaration's first page shows the two directories as the appliance reports them.</footer>
+</section>
+<section class="pane">
+  <header><span class="stage"><b>2</b> Provision</span><h2>Weaver Web's address</h2><span class="backing built">built</span><span class="status ok">ok</span><span class="source">the Spec</span></header>
+  <div class="body">
+  <p>The VM must reach Weaver Web's address and port. The agent's Pair page shows them once the agent is named.</p>
+  </div>
+  <footer>The appliance's setup script asks for the address and port, and dials them to pair.</footer>
+</section>
+<section class="pane">
+  <header><span class="stage"><b>2</b> Provision</span><h2>A note</h2><span class="backing built">built</span><span class="status ok">ok</span><span class="source">the operator's ruling</span></header>
+  <div class="body">
+  <p>GB10 Spark-class devices are hardware we want to deploy to and do not have yet.</p>
+  </div>
+  <footer>The operator's ruling of 2026-11-24.</footer>
+</section>
+<section class="pane">
+  <header><span class="stage"><b>2</b> Provision</span><h2>Name the agent</h2><span class="backing built">built</span><span class="status ok">ok</span><span class="source">the start page's rule</span></header>
+  <div class="body">
+  <form method="post" action="/pair">
+    <label>Name <input type="text" name="name" autocomplete="off" spellcheck="false" maxlength="{{ name_most }}" pattern="[a-z][a-z0-9]{1,15}" required></label>
+    <button type="submit" class="primary">Begin</button>
+  </form>
+  </div>
+  <footer>A lowercase letter, then lowercase letters and digits, 2 to {{ name_most }} characters in all. The appliance names the agent's accounts, its directories and its admin entry after it, so the name is one it can take. Begin opens the agent's Pair page.</footer>
+</section>
+</div>
+{% endblock %}

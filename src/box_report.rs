@@ -4,10 +4,10 @@
 //! setup keeps (`agent_setup_report`, each stage's latest, verbatim), read
 //! by the survey's reader (`crate::survey`, Spec 8.3).
 //!
-//! **Which report feeds what** is 6.2's: the cards from the `drives`
-//! stage's report where it reads, else the `pairing` stage's, and every box
-//! member, and the directories page's directories, from the latest report
-//! of either stage (the Planner's ruling of 2026-11-24 on the plan: the
+//! **Which report feeds what** is 6.2's: the cards, every box member, and
+//! the directories page's directories, from the latest report of either
+//! stage, so one tuple stands on one report (the Planner's rulings of
+//! 2026-11-24 on the plan and on its review: the
 //! operator lays the disks before pairing, so a drives-stage report may
 //! never come, and one that is sent is still read). A report absent,
 //! refused, or kept under one stage while naming the other feeds nothing,
@@ -34,14 +34,6 @@ use crate::survey::{self, Mount, Refused, Role, Stage, Survey};
 /// filesystem reports less than its disk: a 10 GiB disk formatted ext4 with
 /// its defaults reports about 9.75 GiB.
 pub const STATE_DRIVE_FLOOR: u64 = 9 * GIB;
-
-/// **The models disk's margin** (the operator's ruling of 2026-11-23: "a
-/// models disk at least 10 GB larger than the model"): a models directory
-/// whose filesystem is under the picks' need and this margin is a warning
-/// on the models and directories pages, and nothing is refused for the
-/// margin alone. Taken in GiB, as the state disk's 10 is. A placeholder of
-/// the Spec until the operator rules how the margin is held.
-pub const MODELS_MARGIN: u64 = 10 * GIB;
 
 const GIB: u64 = 1024 * 1024 * 1024;
 
@@ -230,21 +222,42 @@ impl Reports {
         reports
     }
 
-    /// **The cards the placement page offers**: the `drives` stage's
-    /// report's where it reads, else the `pairing` stage's, and none where
-    /// neither reads.
+    /// **The cards the placement page offers and Confirm checks**: the
+    /// latest report's of either stage, and none where the latest does not
+    /// read, so the devices and the box's members stand on one report.
     pub fn cards(&self) -> Option<Vec<Card>> {
         self.cards_from().map(|(_, cards)| cards)
     }
 
+    /// **The cards Confirm checks the kept devices against**, or why none
+    /// is read, by the latest report's stage and state.
+    pub fn cards_or_why(&self) -> Result<Vec<Card>, String> {
+        if let Some((_, cards)) = self.cards_from() {
+            return Ok(cards);
+        }
+        let (stage, latest) = self.latest();
+        let stage = stage_name(stage);
+        Err(match latest {
+            Report::Refused { refused, .. } => format!(
+                "the {stage} stage's report, the latest, is refused for cause {}: {}, so no card is read",
+                refused.cause.number(),
+                refused.cause.words()
+            ),
+            Report::Misfiled { names, .. } => format!(
+                "the report kept as the {stage} stage's, the latest, names its stage {}, so no card is read",
+                stage_name(*names)
+            ),
+            Report::Waiting | Report::Read { .. } => {
+                "no report of either stage has arrived, so no card is read".to_owned()
+            }
+        })
+    }
+
     /// The cards the placement page offers, with the stage whose report
-    /// brings them.
+    /// brings them: the latest report's, where it reads.
     pub fn cards_from(&self) -> Option<(Stage, Vec<Card>)> {
-        let (stage, survey) = match (self.drives.survey(), self.pairing.survey()) {
-            (Some(survey), _) => (Stage::Drives, survey),
-            (None, Some(survey)) => (Stage::Pairing, survey),
-            (None, None) => return None,
-        };
+        let (stage, latest) = self.latest();
+        let survey = latest.survey()?;
         Some((
             stage,
             survey

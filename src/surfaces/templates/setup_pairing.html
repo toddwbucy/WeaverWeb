@@ -4,8 +4,9 @@
 {#- An agent's pairing, Pair a box's page (Spec 8.2; the operator's rulings
     of 2026-11-23): what to do at the appliance, Weaver Web's address, the
     checkbox and, where the enrollment is served, the waiting box. The
-    agent was named on Pair a box. Once the box is paired, the way on is
-    the declaration's first page. -#}
+    agent was named on Pair a box. Once the box is paired, the pairing
+    stage's report, read only, and the way on, the declaration's first page
+    (the operator's rulings of 2026-11-24). -#}
 <h1>Pair {{ name }}</h1>
 <p>Named by {{ begun_by }} at {{ begun_at }}, {{ setup_id }}.</p>
 <div class="stack">
@@ -19,7 +20,7 @@
     <li>Log in at the appliance's console. At its first console login it shows the setup prompt, and the prompt's one command starts the appliance's setup script.</li>
     <li>The script walks you through finishing setup, the disks included, and ends in pairing with Weaver Web.</li>
     <li>When the script asks for Weaver Web's address and port, give it the two in the next pane.</li>
-    <li>The script then shows a short code and the console's fingerprint, in four rows of four groups. Compare the fingerprint with the one in the waiting box's pane, row by row, then enter the code there.</li>
+    <li>The script then shows a short code and Weaver Web's fingerprint, in four rows of four groups. Compare the fingerprint with the one in the waiting box's pane, row by row, then enter the code there.</li>
   </ol>
   </div>
   <footer>The setup prompt at the appliance's first console login names the command. The agent's name, {{ name }}, is the one the box takes.</footer>
@@ -35,10 +36,10 @@
     </tbody>
   </table>
   {%- if loopback_warning %}
-  <p><span class="status fail">loopback</span> This is a loopback address, which a virtual machine cannot reach on the console's host. Set <code>link_address</code> in the console's config to an address the box reaches.</p>
+  <p><span class="status fail">loopback</span> This is a loopback address, which a virtual machine cannot reach on Weaver Web's host. Set <code>link_address</code> in Weaver Web's config to an address the box reaches.</p>
   {%- endif %}
   {%- if unspecified_warning %}
-  <p><span class="status fail">unspecified</span> This is an unspecified address, which a listener binds for every interface and which names no machine to dial. Set <code>link_address</code> in the console's config to an address the box reaches.</p>
+  <p><span class="status fail">unspecified</span> This is an unspecified address, which a listener binds for every interface and which names no machine to dial. Set <code>link_address</code> in Weaver Web's config to an address the box reaches.</p>
   {%- endif %}
   </div>
   <footer>Read from Weaver Web's own config. The box's setup asks for this address and port, and the box must reach them.</footer>
@@ -46,13 +47,21 @@
 <section class="pane">
   <header><span class="stage"><b>2</b> Provision</span><h2>Virtual machine or host</h2><span class="backing built">built</span><span class="status ok">ok</span><span class="source">the setup</span></header>
   <div class="body">
+  {%- if confirmed %}
+  <p>The box is {% if virtual_machine %}a virtual machine{% else %}a host{% endif %}.</p>
+  {%- else %}
   <form method="post" action="/pair/{{ setup_id }}">
     <input type="hidden" name="version" value="{{ version }}">
     <label><input type="checkbox" name="virtual_machine" value="on"{% if virtual_machine %} checked{% endif %}> The box is a virtual machine</label>
     <button type="submit">Save</button>
   </form>
+  {%- endif %}
   </div>
+  {%- if confirmed %}
+  <footer>The setup is confirmed, and a confirmed setup never changes.</footer>
+  {%- else %}
   <footer>Checked, the box is a virtual machine. Unchecked, it is a host.</footer>
+  {%- endif %}
 </section>
 {%- if pair.live %}
 <section class="pane">
@@ -60,11 +69,11 @@
   <div class="body">
   <table>
     <tbody>
-    <tr><th>The console's fingerprint</th><td class="mono">{% for row in pair.fingerprint %}{% if !loop.first %}<br>{% endif %}{{ row }}{% endfor %}</td></tr>
+    <tr><th>Weaver Web's fingerprint</th><td class="mono">{% for row in pair.fingerprint %}{% if !loop.first %}<br>{% endif %}{{ row }}{% endfor %}</td></tr>
     </tbody>
   </table>
   {%- if pair.waiting.is_empty() %}
-  <p>No box is waiting. The appliance's setup script dials Weaver Web's address, above, and shows a short code and the console's fingerprint.</p>
+  <p>No box is waiting. The appliance's setup script dials Weaver Web's address, above, and shows a short code and Weaver Web's fingerprint.</p>
   {%- else %}
   <table>
     <thead><tr><th>Box, as it claims</th><th>Peer address</th><th>Waited</th></tr></thead>
@@ -75,7 +84,7 @@
     </tbody>
   </table>
   {%- for w in pair.waiting %}{% if w.loopback %}
-  <p><span class="status fail">loopback</span> The box claiming {{ w.claim }} dialed from a loopback address, the console's own machine, and the checkbox says virtual machine.</p>
+  <p><span class="status fail">loopback</span> The box claiming {{ w.claim }} dialed from a loopback address, Weaver Web's own machine, and the checkbox says virtual machine.</p>
   {%- endif %}{% endfor %}
   {%- endif %}
   {%- match pair.paired %}{% when Some with (paired) %}
@@ -86,7 +95,7 @@
   <p><span class="status hold">closed</span> Five misses closed the code field until {{ until }}.</p>
   {%- when None %}
   <form method="post" action="/pair/{{ setup_id }}/code">
-    <label><input type="checkbox" name="compared" value="on"> The fingerprint the box shows is the console's, above, row by row and group for group</label>
+    <label><input type="checkbox" name="compared" value="on"> The fingerprint the box shows is Weaver Web's, above, row by row and group for group</label>
     <label>Code <input type="text" name="code" autocomplete="off" spellcheck="false" maxlength="16"></label>
     {%- if !pair.rows.is_empty() %}
     <fieldset>
@@ -119,9 +128,100 @@
 <section class="pane">
   <header><span class="stage"><b>2</b> Provision</span><h2>The waiting box</h2><span class="backing unbuilt">unbuilt</span><span class="status hold">hold</span></header>
   <div class="body">
-  <p>The appliance's setup script shows a short code and a fingerprint. The fingerprint is compared with the console's own, and the code is entered here.</p>
+  <p>The appliance's setup script shows a short code and a fingerprint. The fingerprint is compared with Weaver Web's own, and the code is entered here.</p>
   </div>
-  <footer>Waits on the enrollment, which this build of the console does not serve.</footer>
+  <footer>Waits on the enrollment, which this build of Weaver Web does not serve.</footer>
+</section>
+{%- endif %}
+{%- if let Some(report) = report %}
+<section class="pane">
+  <header><span class="stage"><b>2</b> Provision</span><h2>The box's report at the pairing stage</h2><span class="backing built">built</span><span class="status {{ report.class() }}">{{ report.word() }}</span><span class="source">the box's survey, read as <code>weaver-survey/1</code></span></header>
+  <div class="body">
+  {%- match report %}
+  {%- when report::Shown::Waiting %}
+  <p>No report has arrived at the pairing stage. The appliance's setup script runs the survey and sends its report once the pairing has succeeded.</p>
+  {%- when report::Shown::Refused with { arrived, number, words } %}
+  <p>Arrived {{ arrived }}. Refused for cause {{ number }}: {{ words }}.</p>
+  {%- when report::Shown::Misfiled with { arrived, names } %}
+  <p>Arrived {{ arrived }}. The report kept as the pairing stage's names its stage {{ names }}.</p>
+  {%- when report::Shown::Read with { arrived, body } %}
+  <p>Arrived {{ arrived }}, taken {{ body.taken }}.</p>
+  <table>
+    <caption>The appliance</caption>
+    <tbody>
+    <tr><th>Version</th><td class="mono">{{ body.image_version }}</td></tr>
+    <tr><th>Manifest SHA-256</th><td class="mono">{{ body.manifest_sha256 }}</td></tr>
+    </tbody>
+  </table>
+  <table>
+    <caption>The kernel</caption>
+    <tbody>
+    <tr><th>Release</th><td class="mono">{{ body.kernel_release }}</td></tr>
+    </tbody>
+  </table>
+  <table>
+    <caption>The machine</caption>
+    <tbody>
+    <tr><th>Virtualization</th><td>{{ body.virtualization }}</td></tr>
+    <tr><th>Vendor</th><td>{{ body.machine_vendor }}</td></tr>
+    <tr><th>Product</th><td>{{ body.machine_product }}</td></tr>
+    <tr><th>Version</th><td>{{ body.machine_version }}</td></tr>
+    </tbody>
+  </table>
+  <table>
+    <caption>The CPU</caption>
+    <tbody>
+    <tr><th>Vendor</th><td>{{ body.cpu_vendor }}</td></tr>
+    <tr><th>Model name</th><td>{{ body.cpu_model_name }}</td></tr>
+    <tr><th>Family, model, stepping</th><td>{{ body.cpu_family_model_stepping }}</td></tr>
+    <tr><th>Logical CPUs</th><td>{{ body.logical_cpus }}</td></tr>
+    <tr><th>Flags</th><td><details><summary>{{ body.flag_count }} flag{% if body.flag_count != 1 %}s{% endif %}</summary><span class="mono">{{ body.flags }}</span></details></td></tr>
+    </tbody>
+  </table>
+  <table>
+    <caption>The memory</caption>
+    <tbody>
+    <tr><th>Total</th><td>{{ body.memory }}</td></tr>
+    </tbody>
+  </table>
+  <table>
+    <caption>The driver</caption>
+    <tbody>
+    <tr><th>Version</th><td class="mono">{{ body.driver_version }}</td></tr>
+    <tr><th>Loaded</th><td>{% if body.driver_loaded %}loaded{% else %}not loaded{% endif %}</td></tr>
+    </tbody>
+  </table>
+  <table>
+    <caption>The CUDA runtime</caption>
+    <tbody>
+    <tr><th>Version</th><td class="mono">{{ body.cuda_runtime_version }}</td></tr>
+    </tbody>
+  </table>
+  {%- if body.cards.is_empty() %}
+  <p>The box reported no card: a reading, not a fault.</p>
+  {%- else %}
+  <table>
+    <caption>The cards</caption>
+    <thead><tr><th>Ordinal</th><th>Model</th><th>PCI address</th><th>Memory</th></tr></thead>
+    <tbody>
+    {%- for card in body.cards %}
+    <tr><td>{{ card.ordinal }}</td><td>{{ card.model }}</td><td class="mono">{{ card.pci_address }}</td><td>{{ card.memory }}</td></tr>
+    {%- endfor %}
+    </tbody>
+  </table>
+  {%- endif %}
+  {%- endmatch %}
+  </div>
+  {%- match report %}
+  {%- when report::Shown::Waiting %}
+  <footer>Waits on the box's report at the pairing stage, which the appliance's setup script sends.</footer>
+  {%- when report::Shown::Refused with { arrived: _, number: _, words: _ } %}
+  <footer>Neither the report's text nor the refusal's detail is drawn, the detail being in the console's log. Waits on a report at the pairing stage that the reader reads.</footer>
+  {%- when report::Shown::Misfiled with { arrived: _, names: _ } %}
+  <footer>Waits on a report at the pairing stage that names its own stage.</footer>
+  {%- when report::Shown::Read with { arrived: _, body: _ } %}
+  <footer>The box's survey of itself at the pairing stage, read whole and read only. The declaration's first page judges its directories, from the latest report of either stage.</footer>
+  {%- endmatch %}
 </section>
 {%- endif %}
 </div>

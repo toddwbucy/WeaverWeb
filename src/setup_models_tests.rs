@@ -433,11 +433,21 @@ pub(crate) async fn rig_boxed(
     Some((rig, fake, base, cache))
 }
 
-/// An admin and a setup begun by them.
-pub(crate) async fn setup_of(rig: &Rig, name: &str) -> (String, String) {
+/// An admin and a setup begun by them, its box not paired.
+pub(crate) async fn setup_unpaired_of(rig: &Rig, name: &str) -> (String, String) {
     let (_, ada) = admin(&rig.app, rig.store(), &mut authenticator(), "ada").await;
     let (_, _, setup) = begin(&rig.app, &ada, name).await;
     (ada, setup.unwrap())
+}
+
+/// An admin and a setup begun by them, its box paired, so its declaration
+/// is open.
+pub(crate) async fn setup_of(rig: &Rig, name: &str) -> (String, String) {
+    let (_, ada) = admin(&rig.app, rig.store(), &mut authenticator(), "ada").await;
+    let (_, _, setup) = begin(&rig.app, &ada, name).await;
+    let setup = setup.unwrap();
+    crate::setup_tests::paired(rig.store(), &setup).await;
+    (ada, setup)
 }
 
 fn models(setup: &str, repository: &str) -> String {
@@ -1347,6 +1357,10 @@ async fn the_models_drives_need_counts_a_shared_blob_once() {
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
     let after = page(&rig.app, &drives, &ada).await;
+    assert!(
+        after.contains("<p>No report has arrived at either stage, so the need is not judged against the models directory.</p>"),
+        "{after}"
+    );
     let one = twin_part().len() as u64;
     assert!(
         after.contains(&format!(

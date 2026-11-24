@@ -62,7 +62,7 @@ impl Default for Bounds {
     }
 }
 
-/// A waiting box as the pairing page lists it: what the box claims, its
+/// A waiting box as the Pair page lists it: what the box claims, its
 /// peer address and how long it has waited. Never its code.
 #[derive(Debug, Clone)]
 pub struct WaitingBox {

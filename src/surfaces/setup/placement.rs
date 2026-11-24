@@ -36,7 +36,9 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
 
-use super::{Frame, MALFORMED_SETUP, Page, Seams, admin_read, frame, landed};
+use super::{
+    Frame, MALFORMED_SETUP, Page, Seams, declaration_read, declaration_state, frame, landed,
+};
 use crate::box_report::{Report, Reports, stage_name};
 use crate::gguf::Header;
 use crate::store::Store;
@@ -126,9 +128,10 @@ struct CardView {
     checked: bool,
 }
 
-/// **The devices pane's status** (Spec 6.2): read from the report that
-/// brings the cards, else refused, misfiled or waiting; each report ahead of
-/// it that does not read, named; and each kept device the cards lack.
+/// **The devices pane's status** (Spec 6.2): read from the latest report
+/// of either stage, which brings the cards, else refused, misfiled or
+/// waiting, the latest named where it does not read; and each kept device
+/// the cards lack.
 struct DevicesView {
     class: &'static str,
     word: &'static str,
@@ -156,7 +159,10 @@ fn unread(stage: Stage, report: &Report) -> Option<String> {
 
 impl DevicesView {
     /// The devices pane's status from `reports`, the cards from the stage
-    /// `from`, and the devices `kept`.
+    /// `from`, and the devices `kept`. The cards are the latest report's of
+    /// either stage, as the box's members are, so where the latest does not
+    /// read no card is offered and the pane names why, even where an earlier
+    /// report reads (the Planner's ruling of 2026-11-24 on the review).
     fn of(reports: &Reports, from: Option<(Stage, &[i32])>, kept: &[i32]) -> DevicesView {
         match from {
             Some((stage, ordinals)) => DevicesView {
@@ -166,13 +172,7 @@ impl DevicesView {
                     Stage::Drives => "the drives stage's report",
                     Stage::Pairing => "the pairing stage's report",
                 },
-                notes: match stage {
-                    Stage::Drives => Vec::new(),
-                    Stage::Pairing => unread(Stage::Drives, &reports.drives)
-                        .map(|note| format!("{note} The cards are the pairing stage's."))
-                        .into_iter()
-                        .collect(),
-                },
+                notes: Vec::new(),
                 lacking: kept
                     .iter()
                     .copied()
@@ -180,30 +180,28 @@ impl DevicesView {
                     .collect(),
             },
             None => {
-                let refused = [&reports.drives, &reports.pairing]
-                    .iter()
-                    .any(|r| matches!(r, Report::Refused { .. }));
-                let misfiled = [&reports.drives, &reports.pairing]
-                    .iter()
-                    .any(|r| matches!(r, Report::Misfiled { .. }));
-                let (class, word) = if refused {
-                    ("fail", "refused")
-                } else if misfiled {
-                    ("fail", "misfiled")
-                } else {
-                    ("hold", "waiting")
+                let (stage, latest) = reports.latest();
+                let (class, word) = match latest {
+                    Report::Refused { .. } => ("fail", "refused"),
+                    Report::Misfiled { .. } => ("fail", "misfiled"),
+                    Report::Waiting | Report::Read { .. } => ("hold", "waiting"),
                 };
+                let kept_stand = (!kept.is_empty()).then(|| {
+                    format!(
+                        "The kept devices, card{} {}, stand as stored, and a save here leaves them; Confirm checks them once a report reads.",
+                        if kept.len() == 1 { "" } else { "s" },
+                        kept.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(", ")
+                    )
+                });
                 DevicesView {
                     class,
                     word,
-                    source: "the box's reports",
-                    notes: [
-                        unread(Stage::Drives, &reports.drives),
-                        unread(Stage::Pairing, &reports.pairing),
-                    ]
-                    .into_iter()
-                    .flatten()
-                    .collect(),
+                    source: "the box's latest report, of either stage",
+                    notes: unread(stage, latest)
+                        .map(|note| format!("{note} It is the latest, so no card is offered."))
+                        .into_iter()
+                        .chain(kept_stand)
+                        .collect(),
                     lacking: Vec::new(),
                 }
             }
@@ -238,7 +236,7 @@ struct PlacementPage {
 }
 
 async fn page(store: Store, seams: &Seams, headers: HeaderMap, setup_id: &str) -> Response {
-    let (session, setup) = match admin_read(&store, seams, &headers, setup_id).await {
+    let (session, setup) = match declaration_read(&store, seams, &headers, setup_id).await {
         Ok(read) => read,
         Err(answer) => return answer,
     };
@@ -513,12 +511,16 @@ async fn save(
         Ok(session) => session,
         Err(answer) => return answer,
     };
-    match store.setup(setup_id).await {
-        Ok(Some(setup)) if setup.state == "open" => {}
-        Ok(Some(_)) => return refused(&Refusal::SetupConfirmed),
+    let stored = match store.setup(setup_id).await {
+        Ok(Some(setup)) => {
+            if let Err(refusal) = declaration_state(&setup) {
+                return refused(&refusal);
+            }
+            setup.devices
+        }
         Ok(None) => return refused(&Refusal::NoSuchSetup),
         Err(e) => return fault(e),
-    }
+    };
     let rows = match store.setup_models(setup_id).await {
         Ok(rows) => rows,
         Err(e) => return fault(e),
@@ -536,10 +538,19 @@ async fn save(
             Ok(first) => first,
             Err(answer) => return answer,
         };
+        // **Where the page offers no card, the save leaves the kept
+        // devices as stored** (the Planner's ruling of 2026-11-24 on the
+        // second review): a latest report that does not read offers none,
+        // and the form then posts no device. The version check refuses the
+        // write where the row changed since `stored` was read.
+        let devices = match &survey {
+            Some(_) => (!ask.devices.is_empty()).then_some(ask.devices.as_slice()),
+            None => stored.as_deref(),
+        };
         let placement = Placement {
             context_length: ask.context_length,
             turn_context: ask.turn_context,
-            devices: (!ask.devices.is_empty()).then_some(ask.devices.as_slice()),
+            devices,
         };
         let written = store
             .setup_placement(

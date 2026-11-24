@@ -56,16 +56,31 @@ fn ordinals(cards: &[Card]) -> Vec<i32> {
     cards.iter().map(|c| c.ordinal).collect()
 }
 
+/// **The cards are the latest report's of either stage**, as the box's
+/// members are, so one tuple stands on one report (the Planner's ruling of
+/// 2026-11-24 on the review): the drives report's where it arrived last or
+/// on a tie, the pairing report's where that arrived after it, and none
+/// where the latest does not read, an earlier report that reads masking
+/// nothing.
 #[test]
-fn the_cards_are_the_drives_reports_where_it_reads_else_the_pairing_reports() {
+fn the_cards_are_the_latest_reports_of_either_stage() {
+    let (early, late) = (arrived(), arrived() + chrono::Duration::minutes(5));
     let both = kept(Some(pairing()), Some(EXAMPLE.to_owned()));
     let cards = both.cards().unwrap();
     assert_eq!(ordinals(&cards), vec![0, 1]);
     assert_eq!(cards[1].model, "NVIDIA RTX A5000");
+    let pairing_after = kept_at(&[
+        ("drives", EXAMPLE.to_owned(), early),
+        ("pairing", pairing(), late),
+    ]);
+    assert_eq!(ordinals(&pairing_after.cards().unwrap()), vec![0]);
     let pairing_alone = kept(Some(pairing()), None);
     assert_eq!(ordinals(&pairing_alone.cards().unwrap()), vec![0]);
-    let refused_drives = kept(Some(pairing()), Some("{}".to_owned()));
-    assert_eq!(ordinals(&refused_drives.cards().unwrap()), vec![0]);
+    let refused_drives_after = kept_at(&[
+        ("pairing", pairing(), early),
+        ("drives", "{}".to_owned(), late),
+    ]);
+    assert_eq!(refused_drives_after.cards(), None);
     assert_eq!(kept(None, None).cards(), None);
     assert_eq!(kept(Some("not json".to_owned()), None).cards(), None);
 }

@@ -325,7 +325,7 @@ async fn rows_named(s: &Store, name: &str) -> i64 {
         .unwrap()
 }
 
-/// **The Pair page shows the console's fingerprint in four rows of four
+/// **The Pair page shows Weaver Web's fingerprint in four rows of four
 /// groups**, as the appliance's setup script shows it, so the two are
 /// compared row by row: the sixteen groups the box's `waiting` line
 /// carries, four to a row, in order.
@@ -342,12 +342,49 @@ async fn the_pair_page_shows_the_fingerprint_in_four_rows_of_four_groups() {
     let rows: Vec<String> = groups.chunks(4).map(|row| row.join(" ")).collect();
     assert!(
         pairing.contains(&format!(
-            r#"<tr><th>The console's fingerprint</th><td class="mono">{}</td></tr>"#,
+            r#"<tr><th>Weaver Web's fingerprint</th><td class="mono">{}</td></tr>"#,
             rows.join("<br>")
         )),
         "{pairing}"
     );
     assert!(!pairing.contains(&grouped), "not one line: {pairing}");
+}
+
+/// **The Pair page lists the waiting box as it claims**: with none
+/// waiting, it says so and draws no table; with a box dialed, a row of the
+/// name the box claims, its peer address and its wait, under the table's
+/// three headings, and the code's field beside it.
+#[tokio::test]
+async fn the_pair_page_lists_the_waiting_box_as_it_claims() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
+    let uri = format!("/pair/{}", setup.unwrap());
+    let none = page(&rig.app, &uri, &ada).await;
+    assert!(
+        none.contains("<p>No box is waiting. The appliance's setup script dials Weaver Web's address, above, and shows a short code and Weaver Web's fingerprint.</p>"),
+        "{none}"
+    );
+    assert!(!none.contains("<th>Peer address</th>"), "{none}");
+    let keys = box_keys("box-a");
+    let dialed = dial(&rig, &keys.claim).await;
+    let waiting = page(&rig.app, &uri, &ada).await;
+    assert!(
+        waiting.contains(
+            "<thead><tr><th>Box, as it claims</th><th>Peer address</th><th>Waited</th></tr></thead>"
+        ),
+        "{waiting}"
+    );
+    assert!(
+        waiting.contains(
+            r#"<tr><td class="mono">box-a</td><td class="mono">127.0.0.1</td><td>0 min "#
+        ),
+        "{waiting}"
+    );
+    assert!(!waiting.contains("No box is waiting"), "{waiting}");
+    assert!(waiting.contains(r#"name="code""#), "{waiting}");
+    drop(dialed);
 }
 
 /// **A pairing writes the row with both certificates live**, signed over
@@ -2180,7 +2217,7 @@ async fn the_reports_a_box_sends_feed_placement_and_confirm() {
         rig.puller.cache().cloned(),
         rig.puller.verified(),
     );
-    let (ada, setup) = crate::setup_models_tests::setup_of(&rig, "karl").await;
+    let (ada, setup) = crate::setup_models_tests::setup_unpaired_of(&rig, "karl").await;
     let on_box = crate::test_dir::tempdir().unwrap();
     enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a", None).await;
     let admin_config = on_box.path().join("admin-con.toml");
@@ -2465,7 +2502,7 @@ async fn a_setup_with_no_adapter_confirms_a_tuple_with_none() {
         rig.puller.cache().cloned(),
         rig.puller.verified(),
     );
-    let (ada, setup) = crate::setup_models_tests::setup_of(&rig, "karl").await;
+    let (ada, setup) = crate::setup_models_tests::setup_unpaired_of(&rig, "karl").await;
     let on_box = crate::test_dir::tempdir().unwrap();
     enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a", None).await;
     let admin_config = on_box.path().join("admin-con.toml");
@@ -2667,9 +2704,11 @@ async fn a_refused_reports_arrival_is_logged_once_with_its_detail_escaped() {
 /// **The panes a box's reports feed are served in each status, end to end**
 /// (Spec 6.2): a box enrolled against the real listener sends `setup report`
 /// through it, and the pages read the kept reports. Before any report the
-/// pairing stage's report and the directories on the directories page, and the
-/// placement page's devices, each wait. The Pair page draws no report. A refused pairing report is drawn refused by its
-/// cause, and the devices are refused naming it. A pairing report whose
+/// pairing stage's report on the Pair page, read only, the directories on
+/// the directories page, and the placement page's devices, each wait; the
+/// directories page draws no report of its own (the operator's ruling of
+/// 2026-11-24). A refused pairing report is drawn refused by its cause on
+/// the Pair page, and the devices are refused naming it. A pairing report whose
 /// machine's product holds a script element is drawn read, the value
 /// escaped, and the devices are read from it. A refused drives report is
 /// drawn refused, and Confirm holds naming it. A drives report that reads
@@ -2688,7 +2727,11 @@ async fn the_panes_are_served_in_each_status_as_the_box_reports() {
         let (app, ada, uri) = (
             rig.app.clone(),
             ada.clone(),
-            format!("/setup/{setup}/{name}"),
+            if name == "pair" {
+                format!("/pair/{setup}")
+            } else {
+                format!("/setup/{setup}/{name}")
+            },
         );
         async move { crate::setup_place_tests::read(&app, &uri, &ada).await }
     };
@@ -2698,7 +2741,7 @@ async fn the_panes_are_served_in_each_status_as_the_box_reports() {
     let devices = "The devices";
 
     for (page, heading) in [
-        ("directories", pairing),
+        ("pair", pairing),
         ("directories", drives),
         ("placement", devices),
     ] {
@@ -2709,15 +2752,29 @@ async fn the_panes_are_served_in_each_status_as_the_box_reports() {
             mark("hold", "waiting"),
             "{page}"
         );
-        assert!(crate::setup_tests::walk(&shown).is_empty(), "{page}");
+        let stage = if page == "pair" {
+            crate::setup_tests::PROVISION
+        } else {
+            crate::setup_tests::DECLARE
+        };
+        assert!(
+            crate::setup_tests::walk_staged(&shown, stage).is_empty(),
+            "{page}"
+        );
     }
 
     // Weaver Web's own address, stated as information for the box to dial
     // (the operator's walk of 2026-11-19), its data the same table.
-    let shown = crate::setup_place_tests::read(&rig.app, &format!("/pair/{setup}"), &ada).await;
+    let shown = page_of("pair").await;
     assert!(
-        !shown.contains(pairing),
-        "the Pair page draws no report: {shown}"
+        pane(&shown, pairing).contains(
+            "No report has arrived at the pairing stage. The appliance's setup script runs the survey and sends its report once the pairing has succeeded."
+        ),
+        "{shown}"
+    );
+    assert!(
+        !page_of("directories").await.contains(pairing),
+        "the directories page draws no report of its own"
     );
     let address = pane(&shown, "Weaver Web's address");
     assert!(
@@ -2729,7 +2786,7 @@ async fn the_panes_are_served_in_each_status_as_the_box_reports() {
 
     let refused = r#"{"format":"weaver-survey/2"}"#;
     sent(&config, Stage::Pairing, refused).await;
-    let shown = page_of("directories").await;
+    let shown = page_of("pair").await;
     crate::surfaces::assert_inputs_drawn(&shown);
     let report = pane(&shown, pairing);
     assert_eq!(status(report), mark("fail", "refused"));
@@ -2748,7 +2805,7 @@ async fn the_panes_are_served_in_each_status_as_the_box_reports() {
         v["machine"]["product"] = serde_json::json!("<script>alert(1)</script>");
     });
     sent(&config, Stage::Pairing, &script).await;
-    let shown = page_of("directories").await;
+    let shown = page_of("pair").await;
     crate::surfaces::assert_inputs_drawn(&shown);
     let report = pane(&shown, pairing);
     assert_eq!(status(report), mark("ok", "read"));
@@ -2759,7 +2816,7 @@ async fn the_panes_are_served_in_each_status_as_the_box_reports() {
         "{report}"
     );
     assert!(!shown.contains("<script>alert"), "{shown}");
-    assert!(crate::setup_tests::walk(&shown).is_empty());
+    assert!(crate::setup_tests::walk_staged(&shown, crate::setup_tests::PROVISION).is_empty());
     let shown = page_of("placement").await;
     crate::surfaces::assert_inputs_drawn(&shown);
     let offered = pane(&shown, devices);

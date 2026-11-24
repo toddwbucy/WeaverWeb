@@ -227,7 +227,7 @@ mod entry {
     use crate::surfaces::admin::{fault, first_of, refused, settled, writer};
     use crate::surfaces::gate::Session;
 
-    use super::super::{MALFORMED_SETUP, Seams, pair_href, pairing_page};
+    use super::super::{MALFORMED_SETUP, Seams, pair_href, pairing_page, pairing_report};
 
     /// What an entry posts: the code as typed, the confirmation that the
     /// fingerprints were compared, and, for a setup whose name a live row
@@ -305,7 +305,7 @@ mod entry {
         if ask.compared.as_deref() != Some("on") {
             return (
                 StatusCode::BAD_REQUEST,
-                "compare the fingerprint the box shows with the console's, group for group, and confirm it before the code",
+                "compare the fingerprint the box shows with Weaver Web's, row by row and group for group, and confirm it before the code",
             )
                 .into_response();
         }
@@ -340,7 +340,7 @@ mod entry {
         let Some(enrollment) = seams.enrollment.clone() else {
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
-                "this console serves no pairing",
+                "this build of Weaver Web serves no pairing",
             )
                 .into_response();
         };
@@ -628,7 +628,7 @@ mod entry {
             Outcome::Busy => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 "fail",
-                "another register write held the console past the box's ten minutes, so the box was refused busy and nothing was written: pair the box again".to_owned(),
+                "another register write held Weaver Web past the box's ten minutes, so the box was refused busy and nothing was written: pair the box again".to_owned(),
             ),
             Outcome::LostWord => (
                 StatusCode::CONFLICT,
@@ -672,7 +672,11 @@ mod entry {
             Ok(pair) => pair,
             Err(e) => return fault(e),
         };
-        let page = pairing_page(seams, session.name.clone(), chrome, &setup, pair);
+        let report = match pairing_report(store, seams, &setup).await {
+            Ok(report) => report,
+            Err(e) => return fault(e),
+        };
+        let page = pairing_page(seams, session.name.clone(), chrome, &setup, pair, report);
         match askama::Template::render(&page) {
             Ok(html) => (status, Html(html)).into_response(),
             Err(e) => fault(e),

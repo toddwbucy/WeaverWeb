@@ -3,16 +3,19 @@
 //! conforms: web-the-pairing-page-warns-where-the-box-cannot-dial-the-link
 //! conforms: web-a-pages-way-forward-stands-where-its-condition-holds
 //! conforms: web-an-admin-write-runs-from-its-first-record-to-its-outcome-in-a-task-the-request-cannot-cancel
+//! conforms: web-the-pair-page-shows-the-pairing-stages-report-read-only-once-paired
+//! conforms: web-the-requirements-page-is-reached-from-create-new-agent-alone-and-an-agent-is-named-from-it-alone
 //!
 //! **Pair a box, and Declare's path** (Spec 6.2, 8.2), an admin's, the
 //! server-wide admin grant. **Pair a box is Provision's** (the operator's
 //! rulings of 2026-11-23: "Pairing is its own page", and "the agent is
-//! named at pairing"): `GET /pair` names the agent and lists the named
-//! agents whose box is not yet paired, New agent standing in the field's
-//! place once an agent stands in the register; `POST /pair` begins a setup
-//! of the name; `GET /pair/{setup}` is that agent's pairing, which says
-//! what to do at the appliance, and `POST /pair/{setup}` keeps its
-//! checkbox. **The declaration is Declare's**: `GET /setup` lists the
+//! named at pairing"): `GET /pair` offers Create new agent and lists the
+//! named agents whose box is not yet paired; `GET /pair/new` is the
+//! requirements page (the operator's ruling of 2026-11-24), which ends in
+//! the agent's name; `POST /pair` begins a setup of the name; `GET
+//! /pair/{setup}` is that agent's pairing, which says what to do at the
+//! appliance and, once the box is paired, shows the pairing stage's
+//! report, and `POST /pair/{setup}` keeps its checkbox. **The declaration is Declare's**: `GET /setup` lists the
 //! paired agents whose declaration is open, and `GET /setup/{setup}/{page}`
 //! draws one page of the setup. The models page and its fragments are the child
 //! module `models` (`setup/models.rs`), the placement page and its post
@@ -146,6 +149,7 @@ pub fn routes(seams: Seams) -> Router<Store> {
     }
     let start_seams = seams.clone();
     let pair_start_seams = seams.clone();
+    let requirements_seams = seams.clone();
     let begin_seams = seams.clone();
     let pair_seams = seams.clone();
     let pairing_seams = seams.clone();
@@ -169,6 +173,13 @@ pub fn routes(seams: Seams) -> Router<Store> {
                     async move { begin(store, &seams, headers, ask).await }
                 },
             ),
+        )
+        .route(
+            "/pair/new",
+            get(move |State(store): State<Store>, headers: HeaderMap| {
+                let seams = requirements_seams.clone();
+                async move { requirements(store, &seams, headers).await }
+            }),
         )
         .route(
             "/pair/{setup}",
@@ -334,6 +345,41 @@ async fn admin_read(
     }
 }
 
+/// **A declaration page's read** (Spec 6.2): `admin_read`, and **a setup
+/// whose box is not paired leads to its Pair page**, since a declaration
+/// opens once its box is paired (the Planner's ruling of 2026-11-24 on the
+/// review). A pairing is never undone, so a setup read paired stays so.
+async fn declaration_read(
+    store: &Store,
+    seams: &Seams,
+    headers: &HeaderMap,
+    setup_id: &str,
+) -> Result<(Session, Setup), Response> {
+    let (session, setup) = admin_read(store, seams, headers, setup_id).await?;
+    if setup.paired.is_none() {
+        return Err((
+            StatusCode::SEE_OTHER,
+            [(header::LOCATION, pair_href(&setup.setup_id))],
+        )
+            .into_response());
+    }
+    Ok((session, setup))
+}
+
+/// **A declaration write's state** (Spec 6.2): refused where the setup is
+/// confirmed, which never changes, or its box is not paired, whose
+/// declaration is not open, each as the wrong-state writes are, with no
+/// record and before step four.
+fn declaration_state(setup: &Setup) -> Result<(), Refusal> {
+    if setup.state != "open" {
+        Err(Refusal::SetupConfirmed)
+    } else if setup.paired.is_none() {
+        Err(Refusal::SetupUnpaired)
+    } else {
+        Ok(())
+    }
+}
+
 struct OpenView {
     name: String,
     begun_by: String,
@@ -365,13 +411,13 @@ fn declare_next(setup_id: &str) -> Next {
     }
 }
 
-/// The open setups, the admin's session, the chrome and whether an agent
-/// stands, for the start page and Pair a box, or the answer.
+/// The open setups, the admin's session and the chrome, for the start page
+/// and Pair a box, or the answer.
 async fn open_read(
     store: &Store,
     seams: &Seams,
     headers: &HeaderMap,
-) -> Result<(Session, super::Chrome, Vec<Setup>, bool), Response> {
+) -> Result<(Session, super::Chrome, Vec<Setup>), Response> {
     let session = match admin_session(store, &seams.policy, headers).await {
         Ok(Ok(session)) => session,
         Ok(Err(_)) => return Err((StatusCode::FORBIDDEN, NOT_AN_ADMIN).into_response()),
@@ -381,12 +427,11 @@ async fn open_read(
         Ok::<_, anyhow::Error>((
             super::Chrome::of(store, &session.person_id).await?,
             store.open_setups().await?,
-            store.an_agent_stands().await?,
         ))
     }
     .await
     {
-        Ok((chrome, open, agent_stands)) => Ok((session, chrome, open, agent_stands)),
+        Ok((chrome, open)) => Ok((session, chrome, open)),
         Err(e) => Err(fault(e)),
     }
 }
@@ -405,7 +450,7 @@ struct StartPage {
 /// open, each a link to the declaration's first page. An agent is named
 /// where its box is paired, on Pair a box.
 async fn start(store: Store, seams: &Seams, headers: HeaderMap) -> Response {
-    let (session, chrome, open, _) = match open_read(&store, seams, &headers).await {
+    let (session, chrome, open) = match open_read(&store, seams, &headers).await {
         Ok(read) => read,
         Err(answer) => return answer,
     };
@@ -436,15 +481,14 @@ struct PairStartPage {
     who: String,
     admin: bool,
     chrome: super::Chrome,
-    agent_stands: bool,
     waiting: Vec<OpenView>,
-    name_most: usize,
 }
 
-/// **Pair a box**: the agent's name, and the named agents whose box is not
-/// yet paired, each a link to its pairing.
+/// **Pair a box**: Create new agent, which opens the requirements page, and
+/// the named agents whose box is not yet paired, each a link to its
+/// pairing.
 async fn pair_start(store: Store, seams: &Seams, headers: HeaderMap) -> Response {
-    let (session, chrome, open, agent_stands) = match open_read(&store, seams, &headers).await {
+    let (session, chrome, open) = match open_read(&store, seams, &headers).await {
         Ok(read) => read,
         Err(answer) => return answer,
     };
@@ -453,7 +497,6 @@ async fn pair_start(store: Store, seams: &Seams, headers: HeaderMap) -> Response
         who: session.name.clone(),
         admin: true,
         chrome,
-        agent_stands,
         waiting: open
             .into_iter()
             .filter(Setup::in_pairing_step)
@@ -462,6 +505,41 @@ async fn pair_start(store: Store, seams: &Seams, headers: HeaderMap) -> Response
                 OpenView::of(s, href)
             })
             .collect(),
+    };
+    match page.render() {
+        Ok(html) => Html(html).into_response(),
+        Err(e) => fault(e),
+    }
+}
+
+#[derive(Template)]
+#[template(path = "pair_new.html")]
+struct RequirementsPage {
+    here: &'static str,
+    who: String,
+    admin: bool,
+    chrome: super::Chrome,
+    name_most: usize,
+}
+
+/// **The requirements page**, Create new agent's (Spec 8.2, the operator's
+/// ruling of 2026-11-24): what an agent needs, read by Pair a box's grant,
+/// ending in the agent's name, its one form, which posts to `POST /pair`.
+async fn requirements(store: Store, seams: &Seams, headers: HeaderMap) -> Response {
+    let session = match admin_session(&store, &seams.policy, &headers).await {
+        Ok(Ok(session)) => session,
+        Ok(Err(_)) => return (StatusCode::FORBIDDEN, NOT_AN_ADMIN).into_response(),
+        Err(answer) => return answer,
+    };
+    let chrome = match super::Chrome::of(&store, &session.person_id).await {
+        Ok(chrome) => chrome,
+        Err(e) => return fault(e),
+    };
+    let page = RequirementsPage {
+        here: "pair",
+        who: session.name.clone(),
+        admin: true,
+        chrome,
         name_most: crate::store::setup::NAME_MOST,
     };
     match page.render() {
@@ -569,7 +647,11 @@ async fn pairing(
         Ok(session) => session,
         Err(answer) => return answer,
     };
+    // **A confirmed setup's checkbox is refused as its other writes are**,
+    // with no record (the Planner's ruling of 2026-11-24 on the second
+    // review).
     match store.setup(setup_id).await {
+        Ok(Some(setup)) if setup.state != "open" => return refused(&Refusal::SetupConfirmed),
         Ok(Some(_)) => {}
         Ok(None) => return refused(&Refusal::NoSuchSetup),
         Err(e) => return fault(e),
@@ -607,6 +689,8 @@ struct PairingPage {
     name: String,
     begun_by: String,
     begun_at: String,
+    /// The setup is confirmed, so the machine's kind is drawn as text.
+    confirmed: bool,
     version: i64,
     virtual_machine: bool,
     link: Link,
@@ -618,8 +702,28 @@ struct PairingPage {
     unspecified_warning: bool,
     /// The waiting box's pane, the enrollment's parts (Spec 8.2).
     pair: pair::PairPane,
+    /// **The pairing stage's report, read only, once the box is paired**
+    /// (Spec 8.2, the operator's ruling of 2026-11-24): none before.
+    report: Option<report::Shown<report::PairingBody>>,
     /// The way on once the box is paired: the declaration's first page.
     declare: Option<Next>,
+}
+
+/// **The pairing stage's report for the Pair page**: read once the setup's
+/// box is paired, and none before, since no report arrives before it.
+async fn pairing_report(
+    store: &Store,
+    seams: &Seams,
+    setup: &Setup,
+) -> anyhow::Result<Option<report::Shown<report::PairingBody>>> {
+    if setup.paired.is_none() {
+        return Ok(None);
+    }
+    let reports = store.reports(seams.boxes.as_ref(), &setup.setup_id).await?;
+    Ok(Some(report::Shown::of(
+        &reports.pairing,
+        report::PairingBody::of,
+    )))
 }
 
 /// The Pair page as drawn, the waiting box's pane given.
@@ -629,6 +733,7 @@ fn pairing_page(
     chrome: super::Chrome,
     setup: &Setup,
     pair: pair::PairPane,
+    report: Option<report::Shown<report::PairingBody>>,
 ) -> PairingPage {
     let link = link_of(seams.cfg.link_address());
     PairingPage {
@@ -640,12 +745,14 @@ fn pairing_page(
         name: setup.name.clone(),
         begun_by: setup.begun_by.clone(),
         begun_at: when(setup.begun_at),
+        confirmed: setup.state != "open",
         version: setup.version,
         virtual_machine: setup.virtual_machine,
         loopback_warning: link.loopback && setup.virtual_machine,
         unspecified_warning: link.unspecified,
         link,
         pair,
+        report,
         declare: setup
             .paired
             .is_some()
@@ -660,10 +767,11 @@ async fn pair_box(store: Store, seams: &Seams, headers: HeaderMap, setup_id: &st
         Ok(read) => read,
         Err(answer) => return answer,
     };
-    let (chrome, pair) = match async {
+    let (chrome, pair, report) = match async {
         Ok::<_, anyhow::Error>((
             super::Chrome::of(&store, &session.person_id).await?,
             pair::pane(&store, seams, &setup, None).await?,
+            pairing_report(&store, seams, &setup).await?,
         ))
     }
     .await
@@ -671,7 +779,7 @@ async fn pair_box(store: Store, seams: &Seams, headers: HeaderMap, setup_id: &st
         Ok(read) => read,
         Err(e) => return fault(e),
     };
-    match pairing_page(seams, session.name.clone(), chrome, &setup, pair).render() {
+    match pairing_page(seams, session.name.clone(), chrome, &setup, pair, report).render() {
         Ok(html) => Html(html).into_response(),
         Err(e) => fault(e),
     }
@@ -693,9 +801,6 @@ struct DirectoriesPage {
     directories: report::Shown<report::DrivesBody>,
     /// The stage of the latest report, which the directories are read from.
     stage: &'static str,
-    /// The `pairing` stage's report (Spec 6.2), shown here since it left
-    /// the pairing (#181, to the lean).
-    report: report::Shown<report::PairingBody>,
 }
 
 /// **The directories as mounted**, from the latest report of either stage,
@@ -782,7 +887,7 @@ async fn page(
     setup_id: &str,
     at: Page,
 ) -> Response {
-    let (session, setup) = match admin_read(&store, seams, &headers, setup_id).await {
+    let (session, setup) = match declaration_read(&store, seams, &headers, setup_id).await {
         Ok(read) => read,
         Err(answer) => return answer,
     };
@@ -821,7 +926,6 @@ async fn page(
                     .map(|p| p.display().to_string()),
                 directories,
                 stage,
-                report: report::Shown::of(&reports.pairing, report::PairingBody::of),
             }
             .render()
         }

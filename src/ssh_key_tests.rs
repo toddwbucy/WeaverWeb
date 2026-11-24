@@ -156,12 +156,9 @@ async fn a_stored_key_renders_by_its_fingerprint_and_its_line_enters_no_audit_ro
 
     let keys_page = page(&rig.app, "/admin/ssh-key", &ada).await;
     let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
-    let drives = page(
-        &rig.app,
-        &format!("/setup/{}/directories", setup.unwrap()),
-        &ada,
-    )
-    .await;
+    let setup = setup.unwrap();
+    crate::setup_tests::paired(rig.store(), &setup).await;
+    let drives = page(&rig.app, &format!("/setup/{setup}/directories"), &ada).await;
     for shown in [&keys_page, &drives] {
         assert!(shown.contains(&fingerprint(&given)), "{shown}");
         assert!(!shown.contains(&encoded), "the line is not shown: {shown}");

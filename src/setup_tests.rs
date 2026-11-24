@@ -200,6 +200,43 @@ pub(crate) async fn begin(
     (status, body, setup_of(&headers))
 }
 
+/// **The setup's box paired**, as a pairing's write leaves it, with no box
+/// dialing: a register row of the setup's name and the setup's link to it
+/// (migration `0030`), so its declaration opens. The pairing itself is
+/// `enrollment_tests`'.
+pub(crate) async fn paired(s: &Store, setup: &str) {
+    let name: String = sqlx::query_scalar("SELECT name FROM agent_setup WHERE setup_id = $1")
+        .bind(setup)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    let id: crate::store::key::AgentId = s.mint_key("ag").await.unwrap().parse().unwrap();
+    let mut conn = s.pool.acquire().await.unwrap();
+    // Fingerprints of the setup's own, so no other row in a test holds them.
+    let hex = &setup["st-".len()..];
+    Store::register_agent_on(
+        &mut conn,
+        &id,
+        &format!("box-{name}"),
+        &name,
+        None,
+        &format!("a{hex:0>63}"),
+        &format!("b{hex:0>63}"),
+        &format!("c{hex:0>63}"),
+    )
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE agent_setup SET agent_id = $1, paired_as = 'pair', paired_at = now() \
+         WHERE setup_id = $2",
+    )
+    .bind(id.as_str())
+    .bind(setup)
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+}
+
 /// The setup a begin's redirect names: its pairing, on Pair a box.
 fn setup_of(headers: &HeaderMap) -> Option<String> {
     let location = headers.get(header::LOCATION)?.to_str().ok()?;
@@ -392,7 +429,11 @@ fn the_walk_names_a_pane_without_a_status_or_with_a_filled_input() {
 /// before any record: an uppercase letter, a
 /// `-`, a `_`, a leading digit, one character, seventeen characters, and
 /// each name `weaver-admin-Spec` section 4 reserves whole. A name of
-/// sixteen characters opens one.
+/// sixteen characters opens one, its checkbox checked (the operator's
+/// ruling of 2026-11-24).
+///
+/// Perturbation: begin a setup with the column's default, and its checkbox
+/// starts unchecked.
 #[tokio::test]
 async fn a_name_outside_the_rule_is_refused_opening_no_setup() {
     let Some(rig) = rig().await else {
@@ -432,7 +473,10 @@ async fn a_name_outside_the_rule_is_refused_opening_no_setup() {
         (landed.name.as_str(), landed.state.as_str(), landed.version),
         ("abcdefghijklmnop", "open", 1)
     );
-    assert!(!landed.virtual_machine, "an unchecked box says host");
+    assert!(
+        landed.virtual_machine,
+        "a new setup's checkbox starts checked"
+    );
 }
 
 /// **A console that serves no pairing says so past the admin gate** (Spec
@@ -459,7 +503,7 @@ async fn a_console_serving_no_pairing_says_so_past_the_admin_gate() {
     assert_eq!(body, crate::surfaces::admin::NOT_AN_ADMIN);
     let (status, _, body) = send_as(&rig.app, "POST", &uri, Some(entry), &ada).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
-    assert_eq!(body, "this console serves no pairing");
+    assert_eq!(body, "this build of Weaver Web serves no pairing");
 }
 
 /// **A person without an admin grant is refused before any setup is looked
@@ -480,6 +524,7 @@ async fn a_person_without_an_admin_grant_is_refused_before_any_setup_is_looked_u
     for uri in [
         "/setup".to_owned(),
         "/pair".to_owned(),
+        "/pair/new".to_owned(),
         format!("/pair/{setup}"),
         format!("/setup/{setup}/models"),
         format!("/setup/{setup}/directories"),
@@ -498,7 +543,7 @@ async fn a_person_without_an_admin_grant_is_refused_before_any_setup_is_looked_u
     }
     for target in [setup.as_str(), unknown] {
         for (page, fields) in [
-            ("pairing", vec![("version", "1"), ("virtual_machine", "on")]),
+            ("pairing", vec![("version", "1")]),
             (
                 "placement",
                 vec![("version", "1"), ("turn_context", "continuous")],
@@ -527,8 +572,8 @@ async fn a_person_without_an_admin_grant_is_refused_before_any_setup_is_looked_u
     assert_eq!(setups(s).await, 1, "bea's begin opens no setup");
     let kept = s.setup(&setup).await.unwrap().unwrap();
     assert!(
-        !kept.virtual_machine && kept.version == 1,
-        "nothing written"
+        kept.virtual_machine && kept.version == 1,
+        "nothing written: the checkbox as it started"
     );
 }
 
@@ -570,9 +615,9 @@ async fn a_second_open_setup_of_one_name_is_refused() {
 /// **Every pane of every page carries its stage, its backing and its
 /// status**, and a held pane names what it waits on with no input holding
 /// a value, over every page this tree serves in each state it draws: the
-/// start page and Pair a box, the Pair page with the box a host and a
-/// virtual machine at a loopback address and with the console at an
-/// unspecified one, the directories page with no key and then with one, the
+/// start page, Pair a box and the requirements page, the Pair page before
+/// and after its box is paired, as a virtual machine at a loopback address
+/// and with the console at an unspecified one, the directories page with no key and then with one, the
 /// placement and confirm pages with nothing read, and the build page. Pair
 /// a box's panes carry `2 Provision`, the setup's `1 Declare`. **No page of
 /// the setup names a Pairing step**: its rail holds the five pages of the
@@ -589,11 +634,24 @@ async fn every_pane_carries_its_stage_backing_and_status() {
     let s = rig.store();
     let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
     let mut walked = vec![("/setup".to_owned(), page(&rig.app, "/setup", &ada).await)];
-    let mut provision = vec![("/pair".to_owned(), page(&rig.app, "/pair", &ada).await)];
+    let mut provision = vec![
+        ("/pair".to_owned(), page(&rig.app, "/pair", &ada).await),
+        (
+            "/pair/new".to_owned(),
+            page(&rig.app, "/pair/new", &ada).await,
+        ),
+    ];
     let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
     let setup = setup.unwrap();
     let pairing = format!("/pair/{setup}");
     provision.push((pairing.clone(), page(&rig.app, &pairing, &ada).await));
+    paired(s, &setup).await;
+    let shown = page(&rig.app, &pairing, &ada).await;
+    assert!(
+        shown.contains("<h2>The box's report at the pairing stage</h2>"),
+        "{shown}"
+    );
+    provision.push(("the Pair page, paired".to_owned(), shown));
     for p in ["directories", "models", "placement", "confirm", "build"] {
         let uri = format!("/setup/{setup}/{p}");
         walked.push((uri.clone(), page(&rig.app, &uri, &ada).await));
@@ -732,6 +790,87 @@ async fn every_pane_carries_its_stage_backing_and_status() {
     );
 }
 
+/// **A declaration opens once its box is paired** (the Planner's ruling
+/// of 2026-11-24 on the review): every declaration page of a setup whose
+/// box is not paired leads to its Pair page, and each declaration write,
+/// a pick, the adapter's drop, the placement and Confirm, is refused 409
+/// naming the pairing, as a confirmed setup's writes are, with no record
+/// and nothing written. Once its box is paired, the pages serve.
+#[tokio::test]
+async fn a_declaration_opens_once_its_box_is_paired() {
+    let Some(rig) = rig().await else {
+        return;
+    };
+    let s = rig.store();
+    let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
+    let setup = setup.unwrap();
+    for p in ["directories", "models", "placement", "confirm", "build"] {
+        let uri = format!("/setup/{setup}/{p}");
+        let (status, headers, body) = send_as(&rig.app, "GET", &uri, None, &ada).await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{uri}: {body}");
+        assert_eq!(headers[header::LOCATION], format!("/pair/{setup}"), "{uri}");
+    }
+    let unpaired = crate::store::admin::Refusal::SetupUnpaired.to_string();
+    for (page, body, action) in [
+        (
+            "models",
+            crate::setup_models_tests::pick(
+                "1",
+                "decoder",
+                "org/split",
+                "m-00001-of-00002.gguf",
+                None,
+            ),
+            "setup pick",
+        ),
+        ("models/drop", form(&[("version", "1")]), "setup drop"),
+        (
+            "placement",
+            form(&[("version", "1"), ("turn_context", "continuous")]),
+            "setup placement",
+        ),
+        ("confirm", form(&[("version", "1")]), "setup confirm"),
+    ] {
+        let (status, _, answer) = send_as(
+            &rig.app,
+            "POST",
+            &format!("/setup/{setup}/{page}"),
+            Some(body),
+            &ada,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{page}: {answer}");
+        assert_eq!(answer, unpaired, "{page}");
+        assert_eq!(
+            audited(s, action).await,
+            (0, 0, 0, 0),
+            "{page} records nothing"
+        );
+    }
+    // The two fragments are refused as the writes are, before Hugging Face
+    // is asked: the rig's Hugging Face is a port nothing answers on.
+    for fragment in [
+        format!(
+            "/setup/{setup}/models/header?repository=org/split&commit={}&choice=m-00001-of-00002.gguf",
+            crate::setup_models_tests::COMMIT
+        ),
+        format!("/setup/{setup}/models/pull"),
+    ] {
+        let (status, _, answer) = send_as(&rig.app, "GET", &fragment, None, &ada).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{fragment}: {answer}");
+        assert_eq!(answer, unpaired, "{fragment}");
+    }
+    let kept = s.setup(&setup).await.unwrap().unwrap();
+    assert_eq!(
+        (kept.version, kept.turn_context),
+        (1, None),
+        "nothing written"
+    );
+    paired(s, &setup).await;
+    page(&rig.app, &format!("/setup/{setup}/directories"), &ada).await;
+}
+
 /// **The Pair page says what to do at the appliance** (the operator's
 /// rulings of 2026-11-23): log in at its console, where the setup prompt at
 /// the first console login starts the appliance's setup script; the script
@@ -840,7 +979,8 @@ async fn the_pairing_page_shows_link_address_and_its_port_else_link_listens() {
 /// **The loopback warning shows where the console's link address is a
 /// loopback address and the checkbox says virtual machine**, and not
 /// otherwise: not for a host at loopback, and not for a virtual machine at
-/// an address it reaches.
+/// an address it reaches. A new setup's checkbox is drawn checked, and one
+/// saved unchecked stays unchecked (the operator's ruling of 2026-11-24).
 #[tokio::test]
 async fn the_loopback_warning_shows_for_a_virtual_machine_alone() {
     for (link_address, loopback) in [
@@ -857,47 +997,54 @@ async fn the_loopback_warning_shows_for_a_virtual_machine_alone() {
         let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
         let setup = setup.unwrap();
         let uri = format!("/pair/{setup}");
-        let host = page(&rig.app, &uri, &ada).await;
-        assert!(
-            !host.contains("a loopback address"),
-            "{link_address}, host: {host}"
-        );
-        assert!(
-            !host.contains(" checked"),
-            "a new setup's box is drawn unchecked"
-        );
-        let (status, _, _) = send_as(
-            &rig.app,
-            "POST",
-            &uri,
-            Some(form(&[("version", "1"), ("virtual_machine", "on")])),
-            &ada,
-        )
-        .await;
-        assert_eq!(status, StatusCode::SEE_OTHER);
+        // **A new setup's checkbox starts checked** (the operator's ruling
+        // of 2026-11-24), so the warning stands at once.
         let vm = page(&rig.app, &uri, &ada).await;
-        assert!(vm.contains(r#"value="on" checked"#), "{vm}");
+        assert!(
+            vm.contains(r#"value="on" checked"#),
+            "a new setup's box is drawn checked: {vm}"
+        );
         assert_eq!(
             vm.contains("a loopback address"),
             loopback,
             "{link_address}, virtual machine: {vm}"
         );
-        // Unchecked again, the box is a host and the warning goes.
+        // Saved unchecked, the box is a host, the warning goes, and the
+        // checkbox stays unchecked when the page is read again.
         let (status, _, _) = send_as(
             &rig.app,
             "POST",
             &uri,
-            Some(form(&[("version", "2")])),
+            Some(form(&[("version", "1")])),
+            &ada,
+        )
+        .await;
+        assert_eq!(status, StatusCode::SEE_OTHER);
+        for _ in 0..2 {
+            let host = page(&rig.app, &uri, &ada).await;
+            assert!(
+                !host.contains("a loopback address"),
+                "{link_address}, host: {host}"
+            );
+            assert!(!host.contains(" checked"), "saved unchecked: {host}");
+        }
+        assert!(!s.setup(&setup).await.unwrap().unwrap().virtual_machine);
+        // Checked again, the warning returns.
+        let (status, _, _) = send_as(
+            &rig.app,
+            "POST",
+            &uri,
+            Some(form(&[("version", "2"), ("virtual_machine", "on")])),
             &ada,
         )
         .await;
         assert_eq!(status, StatusCode::SEE_OTHER);
         let again = page(&rig.app, &uri, &ada).await;
-        assert!(
-            !again.contains("a loopback address"),
+        assert_eq!(
+            again.contains("a loopback address"),
+            loopback,
             "{link_address}: {again}"
         );
-        assert!(!s.setup(&setup).await.unwrap().unwrap().virtual_machine);
     }
 }
 
@@ -1098,40 +1245,137 @@ async fn an_unknown_setup_is_not_found_and_a_malformed_one_refused() {
     assert_eq!(audited(s, "setup drop").await, (0, 0, 0, 0));
 }
 
-/// **Pair a box draws New agent once an agent stands in the register**,
-/// the name's field opened from it, and the field itself before.
+/// **The requirements page is reached from Create new agent alone, and an
+/// agent is named from it alone** (Spec 8.2, the operator's ruling of
+/// 2026-11-24: "'Create new agent' opens a requirements page first"): Pair
+/// a box holds Create new agent and no name's field; the requirements page
+/// states, in order, the VM, the operator's part, the two disks with the
+/// 10 GB margin as guidance, Weaver Web's address and the note, then ends
+/// in the name's field and Begin, its one form, posting to `POST /pair`.
+/// It names no CPU requirement and offers no host install. No other page
+/// links it or holds the name's form, each read in three states: the setup
+/// begun and its box not paired, no register row standing; paired, whose
+/// write leaves the setup's own row the one row; and a second row
+/// registered through the register's page.
+///
+/// Perturbations: draw the name's form on Pair a box beside Create new
+/// agent; draw it on the unpaired Pair page alone; link the requirements
+/// page from `/setup` while no declaration is open, before any row
+/// stands. Each is an agent named, or the page reached, from another page.
 #[tokio::test]
-async fn pair_a_box_draws_new_agent_once_an_agent_stands() {
+async fn the_requirements_page_is_reached_from_create_new_agent_alone() {
     let Some(rig) = crate::agents_tests::rig().await else {
         return;
     };
     let s = rig.store();
     let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
-    let before = page(&rig.app, "/pair", &ada).await;
-    assert!(!before.contains("<summary>New agent</summary>"), "{before}");
+    let entry = r#"<a href="/pair/new">Create new agent</a>"#;
+    let field = r#"<input type="text" name="name""#;
+    let form_of_name = r#"<form method="post" action="/pair">"#;
+    let pair = page(&rig.app, "/pair", &ada).await;
+    assert_eq!(pair.matches(entry).count(), 1, "{pair}");
+    assert!(!pair.contains(field), "{pair}");
+    assert!(!pair.contains(form_of_name), "{pair}");
+    assert!(!pair.contains("New agent</summary>"), "{pair}");
+
+    let new = page(&rig.app, "/pair/new", &ada).await;
     assert!(
-        before.contains(r#"<input type="text" name="name""#),
-        "{before}"
+        walk_staged(&new, PROVISION).is_empty(),
+        "{:?}",
+        walk_staged(&new, PROVISION)
     );
+    let headings: Vec<&str> = panes(&new)
+        .into_iter()
+        .map(|p| between(p, "<h2>", "</h2>").unwrap())
+        .collect();
+    assert_eq!(
+        headings,
+        [
+            "The VM",
+            "The operator's part",
+            "The two disks",
+            "Weaver Web's address",
+            "A note",
+            "Name the agent",
+        ]
+    );
+    for said in [
+        "An agent runs in a VM made from the appliance. This version covers VMs only.",
+        "One agent per VM is the recommendation.",
+        "The operator holds the hypervisor, the cards, the disks and the network between VMs.",
+        "a models disk at least 10 GB larger than the model, and a state disk",
+        "The 10 GB margin is guidance. No page judges it.",
+        "The VM must reach Weaver Web's address and port.",
+        "GB10 Spark-class devices are hardware we want to deploy to and do not have yet.",
+    ] {
+        assert!(new.contains(said), "{said}: {new}");
+    }
+    let forms: usize = panes(&new)
+        .iter()
+        .map(|p| p.matches("<form ").count())
+        .sum();
+    assert_eq!(forms, 1, "one form among the panes: {new}");
+    assert_eq!(new.matches(form_of_name).count(), 1, "{new}");
+    let last = *panes(&new).last().unwrap();
+    assert!(
+        last.contains(field) && last.contains(form_of_name),
+        "{last}"
+    );
+    let lowered = new.to_lowercase();
+    for never in ["cpu", "install on a host", "host install"] {
+        assert!(!lowered.contains(never), "{never}: {new}");
+    }
+
+    // No other page links it or names an agent, each read in each state.
+    async fn none_reach_it(app: &axum::Router, session: &str, others: &[String], state: &str) {
+        for uri in others {
+            let other = page(app, uri, session).await;
+            assert!(!other.contains("/pair/new"), "{state}, {uri}: {other}");
+            assert!(
+                !other.contains(r#"<form method="post" action="/pair">"#),
+                "{state}, {uri}: {other}"
+            );
+        }
+        let pair = page(app, "/pair", session).await;
+        assert_eq!(
+            pair.matches(r#"<a href="/pair/new">Create new agent</a>"#)
+                .count(),
+            1,
+            "{state}: {pair}"
+        );
+        assert!(
+            !pair.contains(r#"<form method="post" action="/pair">"#),
+            "{state}: {pair}"
+        );
+    }
+    let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
+    let setup = setup.unwrap();
+    let mut others = vec![
+        "/setup".to_owned(),
+        format!("/pair/{setup}"),
+        "/admin/agents".to_owned(),
+    ];
+    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM agent")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0, "no register row stands before the pairing");
+    none_reach_it(&rig.app, &ada, &others, "unpaired, no row").await;
+    paired(s, &setup).await;
+    for p in ["directories", "models", "placement", "confirm", "build"] {
+        others.push(format!("/setup/{setup}/{p}"));
+    }
+    none_reach_it(&rig.app, &ada, &others, "paired, its own row alone").await;
     let (status, _, handover) = send_as(
         &rig.app,
         "POST",
         "/admin/agents/register",
-        Some(form(&[("box", "box-a"), ("name", "karl")])),
+        Some(form(&[("box", "box-a"), ("name", "otto")])),
         &ada,
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{handover}");
-    let after = page(&rig.app, "/pair", &ada).await;
-    let opened = between(&after, "<details>", "</details>").expect("New agent stands");
-    assert!(
-        opened.starts_with("\n  <summary>New agent</summary>"),
-        "{opened}"
-    );
-    assert!(
-        opened.contains(r#"<input type="text" name="name""#),
-        "{opened}"
-    );
+    none_reach_it(&rig.app, &ada, &others, "a second row registered").await;
 }
 
 /// **A begin and the Pair page's write run from their first records to
@@ -1167,25 +1411,18 @@ async fn a_begin_and_a_pairing_dropped_at_their_first_records_still_land() {
     );
     let shown = page(&rig.app, &uri, &ada).await;
     assert!(
-        !shown.contains(" checked> The box is a virtual machine"),
-        "{shown}"
+        shown.contains(" checked> The box is a virtual machine"),
+        "a new setup's checkbox starts checked: {shown}"
     );
 
-    dropped_at_the_hold(
-        &rig.app,
-        &person,
-        &ada,
-        &uri,
-        form(&[("version", "1"), ("virtual_machine", "on")]),
-    )
-    .await;
+    dropped_at_the_hold(&rig.app, &person, &ada, &uri, form(&[("version", "1")])).await;
     assert_eq!(outcome_of(s, &person, "setup pairing").await, "ok");
     let kept = s.setup(&setup).await.unwrap().unwrap();
-    assert!(kept.virtual_machine, "the pairing's write landed");
+    assert!(!kept.virtual_machine, "the pairing's write landed");
     assert_eq!(kept.version, 2);
     let shown = page(&rig.app, &uri, &ada).await;
     assert!(
-        shown.contains(" checked> The box is a virtual machine"),
+        !shown.contains(" checked> The box is a virtual machine"),
         "{shown}"
     );
 }

@@ -125,9 +125,15 @@ impl Session {
 pub struct Standing {
     cfg: ServerConfig,
     name: String,
-    /// The standing session's bearer, held in memory alone. The lock is kept
-    /// across a use, so two requests at once never open two sessions.
-    bearer: tokio::sync::Mutex<Option<String>>,
+    /// The standing session's bearer, held in memory alone. Its lock is
+    /// taken only to copy the bearer out or put a new one in, never across
+    /// an await, so uses served by the held session run side by side.
+    bearer: std::sync::Mutex<Option<String>>,
+    /// **Held across an opening, and nothing else**: a use that finds no
+    /// session serving takes it, looks again under it, and opens only where
+    /// no other use opened one meanwhile, so two first uses open one
+    /// session between them and a served use waits on no opening.
+    opening: tokio::sync::Mutex<()>,
     /// Why the last opening served no one, held so the log carries one line
     /// per change of reason and not one per request.
     refused: std::sync::Mutex<Option<String>>,
@@ -155,7 +161,8 @@ impl Standing {
         Some(Self {
             cfg: cfg.clone(),
             name,
-            bearer: tokio::sync::Mutex::new(None),
+            bearer: std::sync::Mutex::new(None),
+            opening: tokio::sync::Mutex::new(()),
             refused: std::sync::Mutex::new(None),
         })
     }
@@ -195,17 +202,42 @@ impl Standing {
         policy: &Policy,
         used: bool,
     ) -> anyhow::Result<Option<Session>> {
-        let mut held = self.bearer.lock().await;
-        if let Some(bearer) = held.as_deref()
+        let seen = self.held();
+        if let Some(bearer) = seen.as_deref()
             && let Ok(session) = checked(store, policy, bearer, used).await?
         {
             return Ok(Some(session));
         }
-        *held = self.open(store).await?;
-        match held.as_deref() {
+        let _opening = self.opening.lock().await;
+        // **A second look under the lock**: another use that found none
+        // serving may have opened one while this one waited.
+        let now = self.held();
+        if now != seen
+            && let Some(bearer) = now.as_deref()
+            && let Ok(session) = checked(store, policy, bearer, used).await?
+        {
+            return Ok(Some(session));
+        }
+        let opened = self.open(store).await?;
+        *self.bearer.lock().unwrap_or_else(|e| e.into_inner()) = opened.clone();
+        match opened.as_deref() {
             Some(bearer) => Ok(checked(store, policy, bearer, used).await?.ok()),
             None => Ok(None),
         }
+    }
+
+    /// The held bearer, copied out under its lock for a moment.
+    fn held(&self) -> Option<String> {
+        self.bearer
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    /// The opening lock, held by a test to stand for an opening in flight.
+    #[cfg(all(test, feature = "passkeys"))]
+    pub(crate) async fn hold_opening(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.opening.lock().await
     }
 
     /// A session opened for the standing person: the host's sign-in token,

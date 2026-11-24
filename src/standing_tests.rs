@@ -342,3 +342,56 @@ async fn ended(s: &Store, table: &str, digest: &str) -> Option<String> {
         .await
         .unwrap()
 }
+
+/// **A served use waits on no opening**: with a session held, a use
+/// answers while an opening holds the opening lock.
+#[tokio::test]
+async fn a_served_use_does_not_wait_on_an_opening() {
+    let Some(fresh) = crate::store::read::tests::fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let ada = person(s, "ada").await;
+    let policy = standing_policy("ada");
+    let standing = policy.standing.clone().unwrap();
+    standing
+        .session(s, &policy, true)
+        .await
+        .unwrap()
+        .expect("the first use opens the session");
+    let _opening = standing.hold_opening().await;
+    let served = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        standing.session(s, &policy, true),
+    )
+    .await
+    .expect("a served use does not wait on the opening lock")
+    .unwrap()
+    .expect("served");
+    assert_eq!(served.person_id, ada);
+}
+
+/// **Eight first uses at once open one session**: each that finds none
+/// serving waits on the opening lock, and every one after the first finds
+/// the session the first opened.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn eight_first_uses_open_one_session() {
+    let Some(fresh) = crate::store::read::tests::fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let ada = person(s, "ada").await;
+    let policy = standing_policy("ada");
+    let standing = policy.standing.clone().unwrap();
+    let uses: Vec<_> = (0..8)
+        .map(|_| {
+            let (store, policy, standing) = (s.clone(), policy.clone(), standing.clone());
+            tokio::spawn(async move { standing.session(&store, &policy, true).await })
+        })
+        .collect();
+    for used in uses {
+        let served = used.await.unwrap().unwrap().expect("served");
+        assert_eq!(served.person_id, ada);
+    }
+    assert_eq!(rows(s, "SELECT count(*) FROM session").await, 1);
+}

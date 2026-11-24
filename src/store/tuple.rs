@@ -258,7 +258,7 @@ async fn model_of(
 /// `conn`: the role rows and their pulls' records, the base's identity, the
 /// setup's fields, and what the box reports (Spec 6.2): the cards, the
 /// drives stage's report's or the pairing stage's, and the box's members,
-/// the drives stage's report's or why Confirm holds.
+/// the latest report's of either stage, or why Confirm holds.
 async fn members_on(
     conn: &mut PgConnection,
     setup_id: &str,

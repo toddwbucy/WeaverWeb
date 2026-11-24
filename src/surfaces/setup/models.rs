@@ -345,6 +345,25 @@ struct ModelsPage {
     /// Why no pick is offered on this page, where none is.
     no_pick: Option<String>,
     pulls: PullsView,
+    /// **The models directory's need** (Spec 6.2), where a model is picked,
+    /// and the models directory as the latest report of either stage shows
+    /// it, judged against the need and the 10 GiB margin.
+    need: Option<super::Need>,
+    models_directory: Option<super::report::DriveRow>,
+}
+
+/// The models directory as `reports`' latest shows it, judged against
+/// `need`, where that report reads and names one.
+fn models_directory(
+    reports: &crate::box_report::Reports,
+    need: Option<&super::Need>,
+) -> Option<super::report::DriveRow> {
+    match super::directories(reports, need).0 {
+        super::report::Shown::Read { body, .. } => {
+            body.drives.into_iter().find(|d| d.role == "models")
+        }
+        _ => None,
+    }
 }
 
 fn role_view(role: Role, rows: &[SetupModel], setup: &Setup) -> RoleView {
@@ -396,12 +415,14 @@ async fn page(
         Ok(read) => read,
         Err(answer) => return answer,
     };
-    let (chrome, rows, through, pulls) = match async {
+    let (chrome, rows, through, pulls, need, reports) = match async {
         Ok::<_, anyhow::Error>((
             crate::surfaces::Chrome::of(&store, &session.person_id).await?,
             store.setup_models(setup_id).await?,
             through(&store, seams).await?,
             pulls_view(&store, setup_id).await?,
+            super::need(&store, setup_id).await?,
+            store.reports(seams.boxes.as_ref(), setup_id).await?,
         ))
     }
     .await
@@ -437,6 +458,8 @@ async fn page(
         listing,
         no_pick,
         pulls,
+        models_directory: models_directory(&reports, need.as_ref()),
+        need,
     }
     .render();
     match rendered {

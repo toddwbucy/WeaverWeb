@@ -412,13 +412,13 @@ async fn a_pairing_writes_the_row_and_the_box_hears_paired() {
     );
     assert!(
         pairing.contains(&format!(
-            r#"<p class="next">Next: <a href="/setup/{setup}/models">Models</a></p>"#
+            r#"<p class="next">Next: <a href="/setup/{setup}/directories">Directories</a></p>"#
         )),
         "{pairing}"
     );
     let declarations = page(&rig.app, "/setup", &ada).await;
     assert!(
-        declarations.contains(&format!(r#"<a href="/setup/{setup}/models">karl</a>"#)),
+        declarations.contains(&format!(r#"<a href="/setup/{setup}/directories">karl</a>"#)),
         "{declarations}"
     );
     let pair = page(&rig.app, "/pair", &ada).await;
@@ -1402,7 +1402,7 @@ async fn a_setup_ask_beside_a_standing_connection_is_refused_and_counts_for_noth
 /// linked `no_setup`.
 ///
 /// Perturbation: keep one report per setup, and the pairing report run
-/// again replaces the drives page's.
+/// again replaces the drives stage's.
 #[tokio::test]
 async fn the_setup_keeps_the_latest_report_of_each_stage_verbatim() {
     let Some(rig) = rig().await else { return };
@@ -2154,9 +2154,9 @@ async fn version_of(s: &Store, setup: &str) -> String {
 /// card, then the drives report's two. Confirm holds for a drive not
 /// mounted, for a state drive one byte under 9 GiB of filesystem, and for a
 /// kept device a later report lacks, naming each, and its post writes
-/// nothing; the drives page draws the first two on the drive, and the
+/// nothing; the directories page draws the first two on the drive, and the
 /// placement page names the lacking card. Once the drives report stands,
-/// its models drive short of the picks' need a warning on the drives page
+/// its models drive short of the picks' need a warning on the directories page
 /// and no hold, Confirm writes the tuple with the box's members typed as
 /// ruled, and the box's `setup describe` reads the laying back with the
 /// adapter's members.
@@ -2302,7 +2302,7 @@ async fn the_reports_a_box_sends_feed_placement_and_confirm() {
         }
     };
     held_for("the models drive at /mnt/weaver/models is not mounted").await;
-    let drives = read(format!("/setup/{setup}/drives")).await;
+    let drives = read(format!("/setup/{setup}/directories")).await;
     assert!(
         drives.contains(
             r#"<span class="status fail">not mounted</span> Confirm holds until the box mounts it."#
@@ -2316,7 +2316,7 @@ async fn the_reports_a_box_sends_feed_placement_and_confirm() {
     });
     sent(&admin_config, Stage::Drives, &small_state).await;
     held_for("under 9 GiB").await;
-    let drives = read(format!("/setup/{setup}/drives")).await;
+    let drives = read(format!("/setup/{setup}/directories")).await;
     assert!(
         drives.contains(&format!(
             r#"<span class="status fail">under 9 GiB</span> Its filesystem is {} bytes"#,
@@ -2344,7 +2344,7 @@ async fn the_reports_a_box_sends_feed_placement_and_confirm() {
         v["drives"][1]["free_bytes"] = serde_json::json!(1);
     });
     sent(&admin_config, Stage::Drives, &short).await;
-    let drives = read(format!("/setup/{setup}/drives")).await;
+    let drives = read(format!("/setup/{setup}/directories")).await;
     assert!(
         drives.contains(
             r#"<span class="status hold">warning</span> Its free space is under the picks' need"#
@@ -2641,7 +2641,8 @@ async fn a_refused_reports_arrival_is_logged_once_with_its_detail_escaped() {
 
     for _ in 0..2 {
         let page =
-            crate::setup_place_tests::read(&rig.app, &format!("/setup/{setup}/drives"), &ada).await;
+            crate::setup_place_tests::read(&rig.app, &format!("/setup/{setup}/directories"), &ada)
+                .await;
         assert!(page.contains("Refused for cause 4: "), "{page}");
     }
     assert_eq!(
@@ -2666,7 +2667,7 @@ async fn a_refused_reports_arrival_is_logged_once_with_its_detail_escaped() {
 /// **The panes a box's reports feed are served in each status, end to end**
 /// (Spec 6.2): a box enrolled against the real listener sends `setup report`
 /// through it, and the pages read the kept reports. Before any report the
-/// pairing stage's report and the drives on the drives page, and the
+/// pairing stage's report and the directories on the directories page, and the
 /// placement page's devices, each wait. The Pair page draws no report. A refused pairing report is drawn refused by its
 /// cause, and the devices are refused naming it. A pairing report whose
 /// machine's product holds a script element is drawn read, the value
@@ -2693,12 +2694,12 @@ async fn the_panes_are_served_in_each_status_as_the_box_reports() {
     };
     let mark = |class: &str, word: &str| format!(r#"<span class="status {class}">{word}</span>"#);
     let pairing = "The box's report at the pairing stage";
-    let drives = "The drives as mounted";
+    let drives = "The directories as mounted";
     let devices = "The devices";
 
     for (page, heading) in [
-        ("drives", pairing),
-        ("drives", drives),
+        ("directories", pairing),
+        ("directories", drives),
         ("placement", devices),
     ] {
         let shown = page_of(page).await;
@@ -2728,7 +2729,7 @@ async fn the_panes_are_served_in_each_status_as_the_box_reports() {
 
     let refused = r#"{"format":"weaver-survey/2"}"#;
     sent(&config, Stage::Pairing, refused).await;
-    let shown = page_of("drives").await;
+    let shown = page_of("directories").await;
     crate::surfaces::assert_inputs_drawn(&shown);
     let report = pane(&shown, pairing);
     assert_eq!(status(report), mark("fail", "refused"));
@@ -2747,7 +2748,7 @@ async fn the_panes_are_served_in_each_status_as_the_box_reports() {
         v["machine"]["product"] = serde_json::json!("<script>alert(1)</script>");
     });
     sent(&config, Stage::Pairing, &script).await;
-    let shown = page_of("drives").await;
+    let shown = page_of("directories").await;
     crate::surfaces::assert_inputs_drawn(&shown);
     let report = pane(&shown, pairing);
     assert_eq!(status(report), mark("ok", "read"));
@@ -2774,7 +2775,7 @@ async fn the_panes_are_served_in_each_status_as_the_box_reports() {
         &refused.replace("}", r#","stage":"drives"}"#),
     )
     .await;
-    let shown = page_of("drives").await;
+    let shown = page_of("directories").await;
     crate::surfaces::assert_inputs_drawn(&shown);
     let report = pane(&shown, drives);
     assert_eq!(status(report), mark("fail", "refused"));
@@ -2782,7 +2783,7 @@ async fn the_panes_are_served_in_each_status_as_the_box_reports() {
     let confirm = page_of("confirm").await;
     crate::surfaces::assert_inputs_drawn(&confirm);
     assert!(
-        confirm.contains("the drives stage's report is refused for cause 4"),
+        confirm.contains("the drives stage's report, the latest, is refused for cause 4"),
         "{confirm}"
     );
 
@@ -2792,7 +2793,7 @@ async fn the_panes_are_served_in_each_status_as_the_box_reports() {
         &crate::setup_place_tests::drives_report(),
     )
     .await;
-    let shown = page_of("drives").await;
+    let shown = page_of("directories").await;
     crate::surfaces::assert_inputs_drawn(&shown);
     let report = pane(&shown, drives);
     assert_eq!(status(report), mark("ok", "read"));

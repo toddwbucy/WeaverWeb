@@ -355,7 +355,7 @@ async fn every_page_declares_its_tab_and_sub_tab() {
         "/pair",
         &format!("/pair/{setup}"),
         &format!("/setup/{setup}/models"),
-        &format!("/setup/{setup}/drives"),
+        &format!("/setup/{setup}/directories"),
         &format!("/setup/{setup}/placement"),
         &format!("/setup/{setup}/confirm"),
         &format!("/setup/{setup}/build"),

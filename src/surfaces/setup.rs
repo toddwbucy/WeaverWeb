@@ -91,10 +91,12 @@ const MALFORMED_SETUP: &str = "a setup's identity is st- and sixteen lowercase h
 
 /// **The setup's pages, in the path's order** (Spec 6.2). Pairing is no
 /// page of the setup: it is Provision's Pair a box, before the declaration.
+/// **The declaration starts at directories** (the operator's ruling of
+/// 2026-11-23: "The declaration starts at directories, not drives").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Page {
+    Directories,
     Models,
-    Drives,
     Placement,
     Confirm,
     Build,
@@ -102,8 +104,8 @@ enum Page {
 
 impl Page {
     const ALL: [Page; 5] = [
+        Page::Directories,
         Page::Models,
-        Page::Drives,
         Page::Placement,
         Page::Confirm,
         Page::Build,
@@ -112,7 +114,7 @@ impl Page {
     fn slug(self) -> &'static str {
         match self {
             Page::Models => "models",
-            Page::Drives => "drives",
+            Page::Directories => "directories",
             Page::Placement => "placement",
             Page::Confirm => "confirm",
             Page::Build => "build",
@@ -122,7 +124,7 @@ impl Page {
     fn title(self) -> &'static str {
         match self {
             Page::Models => "Models",
-            Page::Drives => "Drives",
+            Page::Directories => "Directories",
             Page::Placement => "Placement",
             Page::Confirm => "Confirm",
             Page::Build => "Build",
@@ -192,7 +194,7 @@ pub fn routes(seams: Seams) -> Router<Store> {
         router = router.route("/pair/{setup}/code", pair::route(seams.clone()));
     }
     // The pages drawn here alone. The rest are their child modules'.
-    for p in [Page::Drives, Page::Build] {
+    for p in [Page::Directories, Page::Build] {
         router = router.route(&format!("/setup/{{setup}}/{}", p.slug()), read!(p));
     }
     router
@@ -676,8 +678,8 @@ async fn pair_box(store: Store, seams: &Seams, headers: HeaderMap, setup_id: &st
 }
 
 #[derive(Template)]
-#[template(path = "setup_drives.html")]
-struct DrivesPage {
+#[template(path = "setup_directories.html")]
+struct DirectoriesPage {
     here: &'static str,
     who: String,
     admin: bool,
@@ -686,16 +688,36 @@ struct DrivesPage {
     keys: Vec<crate::surfaces::ssh_key::KeyView>,
     /// The console's `model_cache`, where set.
     model_cache: Option<String>,
-    /// The models drive's need, where a model is picked.
-    need: Option<Need>,
-    /// The drives as mounted, from the `drives` stage's report, judged
-    /// (Spec 6.2).
-    drives: report::Shown<report::DrivesBody>,
-    /// The `pairing` stage's report (Spec 6.2), no longer the pairing's.
+    /// The directories as mounted, from the latest report of either stage,
+    /// judged (Spec 6.2).
+    directories: report::Shown<report::DrivesBody>,
+    /// The stage of the latest report, which the directories are read from.
+    stage: &'static str,
+    /// The `pairing` stage's report (Spec 6.2), shown here since it left
+    /// the pairing (#181, to the lean).
     report: report::Shown<report::PairingBody>,
 }
 
-/// **The models drive's need** (Spec 6.2): the bytes of every pick's
+/// **The directories as mounted**, from the latest report of either stage,
+/// judged against `need`, and that report's stage.
+fn directories(
+    reports: &crate::box_report::Reports,
+    need: Option<&Need>,
+) -> (report::Shown<report::DrivesBody>, &'static str) {
+    let (stage, latest) = reports.latest();
+    let shown = report::Shown::of(latest, |survey| {
+        report::DrivesBody::of(
+            survey,
+            need.map(|need| report::NeedOf {
+                bytes: need.total,
+                shown: &need.bytes,
+            }),
+        )
+    });
+    (shown, crate::box_report::stage_name(stage))
+}
+
+/// **The models directory's need** (Spec 6.2): the bytes of every pick's
 /// distinct blobs, a blob two paths share counted once.
 struct Need {
     /// The bytes, as a person reads them.
@@ -771,7 +793,7 @@ async fn page(
     let frame = frame(&setup, at);
     let who = session.name.clone();
     let rendered = match at {
-        Page::Drives => {
+        Page::Directories => {
             let (keys, need, reports) = match async {
                 Ok::<_, anyhow::Error>((
                     crate::surfaces::ssh_key::held(&store).await?,
@@ -784,16 +806,8 @@ async fn page(
                 Ok(read) => read,
                 Err(e) => return fault(e),
             };
-            let drives = report::Shown::of(&reports.drives, |survey| {
-                report::DrivesBody::of(
-                    survey,
-                    need.as_ref().map(|need| report::NeedOf {
-                        bytes: need.total,
-                        shown: &need.bytes,
-                    }),
-                )
-            });
-            DrivesPage {
+            let (directories, stage) = directories(&reports, need.as_ref());
+            DirectoriesPage {
                 here: "declarations",
                 who,
                 admin: true,
@@ -805,8 +819,8 @@ async fn page(
                     .model_cache
                     .as_ref()
                     .map(|p| p.display().to_string()),
-                need,
-                drives,
+                directories,
+                stage,
                 report: report::Shown::of(&reports.pairing, report::PairingBody::of),
             }
             .render()

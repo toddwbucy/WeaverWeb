@@ -1,12 +1,12 @@
 //! **The panes a box's report feeds** (Spec 6.2): the pairing stage's report
-//! and the drives page's drives as mounted, each a stage's report as the
+//! and the directories page's directories as mounted, each a report as the
 //! source reads it (`crate::box_report`), and the status each carries:
 //! read, refused, misfiled or waiting. A refused report is drawn by its
 //! arrival and its cause, by number and in the format's words, and never by
 //! its text or the refusal's detail, which is the console's log's (Spec
 //! 8.3). Every value is drawn through the templates' escaping.
 
-use crate::box_report::{Report, STATE_DRIVE_FLOOR, gib, role_name, stage_name};
+use crate::box_report::{MODELS_MARGIN, Report, STATE_DRIVE_FLOOR, gib, role_name, stage_name};
 use crate::survey::{Mount, Role, Survey};
 
 use super::when;
@@ -147,8 +147,8 @@ impl PairingBody {
     }
 }
 
-/// **The drives stage's report, read** (Spec 6.2): its `taken` and each
-/// drive as mounted, with its judgments.
+/// **The latest report of either stage, read** (Spec 6.2): its `taken` and
+/// each directory as mounted, with its judgments.
 pub(crate) struct DrivesBody {
     pub(crate) taken: String,
     pub(crate) drives: Vec<DriveRow>,
@@ -190,7 +190,7 @@ impl Judgment {
     }
 }
 
-/// The models drive's need as the drives page judges a drive by it: its
+/// The models directory's need as the pages judge a directory by it: its
 /// bytes, and as the page states it.
 pub(crate) struct NeedOf<'a> {
     pub(crate) bytes: u64,
@@ -198,11 +198,13 @@ pub(crate) struct NeedOf<'a> {
 }
 
 impl DrivesBody {
-    /// **The drives as mounted, judged** (Spec 6.2, the operator's rulings
-    /// of 2026-11-17): a drive not mounted holds Confirm; a state drive
-    /// whose filesystem is under 9 GiB holds Confirm by its exact size; a
-    /// models drive whose free space is under the picks' need is a warning
-    /// and not a hold, and one with room says so.
+    /// **The directories as mounted, judged** (Spec 6.2, the operator's
+    /// rulings of 2026-11-17 and 2026-11-23): one not mounted holds
+    /// Confirm; a state directory whose filesystem is under 9 GiB holds
+    /// Confirm by its exact size; a models directory whose free space is
+    /// under the picks' need, or whose filesystem is under the need and the
+    /// 10 GiB margin, is a warning and not a hold, and one with room says
+    /// so.
     pub(crate) fn of(survey: &Survey, need: Option<NeedOf<'_>>) -> DrivesBody {
         let drives = survey
             .drives
@@ -250,11 +252,25 @@ impl DrivesBody {
                                         need.shown
                                     ),
                                 ),
+                                Some(need) if *bytes < need.bytes.saturating_add(MODELS_MARGIN) => {
+                                    Judgment::of(
+                                        "hold",
+                                        "margin",
+                                        format!(
+                                            "Its filesystem is {}, under the picks' need of {} \
+                                             and the 10 GiB margin: a warning and not a hold, \
+                                             since the margin guides how the disk is laid.",
+                                            gib(*bytes),
+                                            need.shown
+                                        ),
+                                    )
+                                }
                                 Some(need) => Judgment::of(
                                     "ok",
                                     "room",
                                     format!(
-                                        "Its free space holds the picks' need of {}.",
+                                        "Its free space holds the picks' need of {}, and \
+                                         its filesystem the 10 GiB margin beside it.",
                                         need.shown
                                     ),
                                 ),

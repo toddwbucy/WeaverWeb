@@ -6,10 +6,13 @@
 //!
 //! **Which report feeds what** is 6.2's: the cards from the `drives`
 //! stage's report where it reads, else the `pairing` stage's, and every box
-//! member from the `drives` stage's report alone. A report absent, refused,
-//! or kept under one stage while naming the other feeds nothing, and what
-//! it would feed holds, naming it. A store that fails to answer is a fault,
-//! never an absent report.
+//! member, and the directories page's directories, from the latest report
+//! of either stage (the Planner's ruling of 2026-11-24 on the plan: the
+//! operator lays the disks before pairing, so a drives-stage report may
+//! never come, and one that is sent is still read). A report absent,
+//! refused, or kept under one stage while naming the other feeds nothing,
+//! and what it would feed holds, naming it. A store that fails to answer is
+//! a fault, never an absent report.
 //!
 //! **The seam** (`BoxReports`) is how the setup pages' tests supply a
 //! report. It reads on the connection it is handed, so Confirm reads the
@@ -31,6 +34,14 @@ use crate::survey::{self, Mount, Refused, Role, Stage, Survey};
 /// filesystem reports less than its disk: a 10 GiB disk formatted ext4 with
 /// its defaults reports about 9.75 GiB.
 pub const STATE_DRIVE_FLOOR: u64 = 9 * GIB;
+
+/// **The models disk's margin** (the operator's ruling of 2026-11-23: "a
+/// models disk at least 10 GB larger than the model"): a models directory
+/// whose filesystem is under the picks' need and this margin is a warning
+/// on the models and directories pages, and nothing is refused for the
+/// margin alone. Taken in GiB, as the state disk's 10 is. A placeholder of
+/// the Spec until the operator rules how the margin is held.
+pub const MODELS_MARGIN: u64 = 10 * GIB;
 
 const GIB: u64 = 1024 * 1024 * 1024;
 
@@ -74,7 +85,7 @@ pub struct Reports {
 }
 
 /// **The box's members of the deployment tuple** (Spec 6.2, the operator's
-/// rulings of 2026-11-17), from the `drives` stage's report: the machine's
+/// rulings of 2026-11-17), from the latest report of either stage: the machine's
 /// facts and none of the moment's, so no drive's free space and not
 /// whether the driver is loaded.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -249,25 +260,38 @@ impl Reports {
         ))
     }
 
-    /// **The box's members Confirm reads**, from the `drives` stage's
-    /// report alone, or why Confirm holds: the report absent, refused or
-    /// misfiled, a drive not mounted, or the state drive's filesystem under
-    /// the figure, each named.
+    /// **The latest report of either stage**, by its arrival, and its
+    /// stage: the drives stage's on a tie, and the drives stage's waiting
+    /// where neither has arrived.
+    pub fn latest(&self) -> (Stage, &Report) {
+        match (self.pairing.arrived_at(), self.drives.arrived_at()) {
+            (Some(pairing), Some(drives)) if pairing > drives => (Stage::Pairing, &self.pairing),
+            (Some(_), None) => (Stage::Pairing, &self.pairing),
+            _ => (Stage::Drives, &self.drives),
+        }
+    }
+
+    /// **The box's members Confirm reads**, from the latest report of
+    /// either stage, or why Confirm holds: no report arrived, the latest
+    /// refused or misfiled, a drive not mounted, or the state drive's
+    /// filesystem under the figure, each named.
     pub fn members(&self) -> Result<BoxMembers, String> {
-        let survey = match &self.drives {
+        let (stage, latest) = self.latest();
+        let stage = stage_name(stage);
+        let survey = match latest {
             Report::Waiting => {
-                return Err("the drives stage's report has not arrived".to_owned());
+                return Err("no report of either stage has arrived".to_owned());
             }
             Report::Refused { refused, .. } => {
                 return Err(format!(
-                    "the drives stage's report is refused for cause {}: {}",
+                    "the {stage} stage's report, the latest, is refused for cause {}: {}",
                     refused.cause.number(),
                     refused.cause.words()
                 ));
             }
             Report::Misfiled { names, .. } => {
                 return Err(format!(
-                    "the report kept as the drives stage's names its stage {}",
+                    "the report kept as the {stage} stage's, the latest, names its stage {}",
                     stage_name(*names)
                 ));
             }

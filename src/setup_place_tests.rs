@@ -96,6 +96,15 @@ pub(crate) fn drives_report() -> String {
     report("drives")
 }
 
+/// The pairing stage's report of a box whose disks were laid before
+/// pairing (the operator's ruling of 2026-11-23): both drives mounted, as
+/// at the drives stage.
+pub(crate) fn laid_pairing_report() -> String {
+    let mut v: serde_json::Value = serde_json::from_str(&report("drives")).unwrap();
+    v["stage"] = serde_json::json!("pairing");
+    v.to_string()
+}
+
 /// The box's members the drives report gives.
 fn box_members() -> BoxMembers {
     Reports::of(&[("drives".into(), drives_report(), chrono::Utc::now())])
@@ -619,9 +628,12 @@ pub(crate) async fn identity_kept(s: &crate::store::Store) -> String {
 /// **Confirm stands only where every member is read, and writes one
 /// tuple, its members their sources'** (Spec 6.2). With nothing read the
 /// page holds Confirm and offers no way forward. With every member read
-/// but the box's report, Confirm still holds, naming it, and a post is
-/// refused writing nothing, and no laying member stands. Once the box
-/// reports, Confirm stands, and its post writes one tuple whose members are the
+/// but the box's, its pairing-stage report's drives not mounted, Confirm
+/// still holds, naming them, and a post is refused writing nothing, and no
+/// laying member stands. A pairing-stage report of disks laid before
+/// pairing stands alone, the box's members read from it; a drives-stage
+/// report arriving later is read in its place. Once the box reports,
+/// Confirm stands, and its post writes one tuple whose members are the
 /// pulls' records, the base's identity row, the placement and the box's
 /// report, and the laying members are the tuple's own. The tuple is drawn
 /// from its row after, whatever the box reports. A second Confirm and any
@@ -699,17 +711,36 @@ async fn confirm_stands_only_where_every_member_is_read_and_writes_one_tuple() {
     assert!(waiting.contains("Waits on the box's members"), "{waiting}");
     let (status, body, _) = post(&rig, &ada, &setup, "confirm", &[("version", "4")]).await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
-    assert!(body.contains("the drives stage's report"), "{body}");
+    assert!(body.contains("is not mounted"), "{body}");
     assert_eq!(count(s, "deployment_tuple").await, 0);
     let open = s.setup(&setup).await.unwrap().unwrap();
     assert_eq!((open.state.as_str(), open.version), ("open", 4));
     assert_eq!(audited(s, "setup confirm").await, (0, 0, 0, 0));
     assert_eq!(s.laying(&setup).await.unwrap(), None);
 
+    // A pairing-stage report alone stands, the disks laid before pairing.
+    *reported.pairing.lock().unwrap() = Some(laid_pairing_report());
+    let laid = read(&rig.app, &confirm, &ada).await;
+    assert!(walk(&laid).is_empty(), "{:?}", walk(&laid));
+    assert!(laid.contains(&action), "{laid}");
+    assert!(laid.contains("the pairing stage's, taken"), "{laid}");
+    assert!(
+        laid.contains("Read from the box's latest report, of either stage."),
+        "{laid}"
+    );
+    // A drives-stage report that arrives later is read in its place.
     *reported.drives.lock().unwrap() = Some(drives_report());
     let ready = read(&rig.app, &confirm, &ada).await;
     assert!(walk(&ready).is_empty(), "{:?}", walk(&ready));
     assert!(ready.contains(&action), "{ready}");
+    assert!(ready.contains("the drives stage's, taken"), "{ready}");
+    // The survey's `image` members are the appliance's version.
+    assert!(
+        ready.contains("<tr><th>The appliance&#39;s version</th>")
+            || ready.contains("<tr><th>The appliance's version</th>"),
+        "{ready}"
+    );
+    assert!(!ready.contains("Image version"), "{ready}");
     assert!(!ready.contains("Next:"), "{ready}");
     assert_eq!(
         s.laying(&setup).await.unwrap(),

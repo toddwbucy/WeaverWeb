@@ -224,7 +224,7 @@ async fn enter(
     send_as(
         rig.app(),
         "POST",
-        &format!("/setup/{setup}/pair"),
+        &format!("/pair/{setup}/code"),
         Some(form(&fields)),
         session,
     )
@@ -325,11 +325,38 @@ async fn rows_named(s: &Store, name: &str) -> i64 {
         .unwrap()
 }
 
+/// **The Pair page shows the console's fingerprint in four rows of four
+/// groups**, as the appliance's setup script shows it, so the two are
+/// compared row by row: the sixteen groups the box's `waiting` line
+/// carries, four to a row, in order.
+#[tokio::test]
+async fn the_pair_page_shows_the_fingerprint_in_four_rows_of_four_groups() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
+    let pairing = page(&rig.app, &format!("/pair/{}", setup.unwrap()), &ada).await;
+    let grouped = grouped(&rig.authority.fingerprint());
+    let groups: Vec<&str> = grouped.split(' ').collect();
+    assert_eq!(groups.len(), 16);
+    let rows: Vec<String> = groups.chunks(4).map(|row| row.join(" ")).collect();
+    assert!(
+        pairing.contains(&format!(
+            r#"<tr><th>The console's fingerprint</th><td class="mono">{}</td></tr>"#,
+            rows.join("<br>")
+        )),
+        "{pairing}"
+    );
+    assert!(!pairing.contains(&grouped), "not one line: {pairing}");
+}
+
 /// **A pairing writes the row with both certificates live**, signed over
 /// the box's own keys, its author the admin who entered the code, the
 /// setup linked, and the label "paired, setup running" until a connector
 /// is first admitted; the box hears its answer, the console's authority
-/// among it, and then `paired`.
+/// among it, and then `paired`. **The Pair page leads into the
+/// declaration**: once paired, its way on is the declaration's first page,
+/// Declarations lists the agent and Pair a box no longer does.
 #[tokio::test]
 async fn a_pairing_writes_the_row_and_the_box_hears_paired() {
     let Some(rig) = rig().await else { return };
@@ -343,7 +370,7 @@ async fn a_pairing_writes_the_row_and_the_box_hears_paired() {
     let the_box = tokio::spawn(the_box(dialed, Box::Whole));
     let (status, headers, body) = enter(&rig, &ada, &setup, &code, None).await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
-    assert_eq!(headers[header::LOCATION], format!("/setup/{setup}"));
+    assert_eq!(headers[header::LOCATION], format!("/pair/{setup}"));
     let (heard, last) = the_box.await.unwrap();
     assert_eq!(last, Some(LastWord::Paired));
     let answer = answer_of(&heard);
@@ -377,12 +404,25 @@ async fn a_pairing_writes_the_row_and_the_box_hears_paired() {
         Some((id.as_str().to_owned(), "pair".to_owned()))
     );
     assert_eq!(pair_audit(s, "pair").await, (1, 1, 0));
-    let pairing = page(&rig.app, &format!("/setup/{setup}"), &ada).await;
+    let pairing = page(&rig.app, &format!("/pair/{setup}"), &ada).await;
     assert!(pairing.contains("paired, setup running"), "{pairing}");
     assert!(
         pairing.contains(&grouped(&row.gate.fingerprint)),
         "{pairing}"
     );
+    assert!(
+        pairing.contains(&format!(
+            r#"<p class="next">Next: <a href="/setup/{setup}/models">Models</a></p>"#
+        )),
+        "{pairing}"
+    );
+    let declarations = page(&rig.app, "/setup", &ada).await;
+    assert!(
+        declarations.contains(&format!(r#"<a href="/setup/{setup}/models">karl</a>"#)),
+        "{declarations}"
+    );
+    let pair = page(&rig.app, "/pair", &ada).await;
+    assert!(!pair.contains(&setup), "{pair}");
     let register = page(&rig.app, "/admin/agents", &ada).await;
     assert!(register.contains("paired, setup running"), "{register}");
 
@@ -460,7 +500,7 @@ async fn a_malformed_entry_is_no_miss_and_five_misses_close_the_field() {
     let (status, _, _) = send_as(
         &rig.app,
         "POST",
-        &format!("/setup/{setup}/pair"),
+        &format!("/pair/{setup}/code"),
         Some(form(&[("code", "HWX5R 0F74A")])),
         &ada,
     )
@@ -502,7 +542,7 @@ async fn a_malformed_entry_is_no_miss_and_five_misses_close_the_field() {
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     assert!(body.contains("five misses"), "{body}");
     assert_eq!(rows_named(s, "karl").await, 0);
-    let pairing = page(&rig.app, &format!("/setup/{setup}"), &ada).await;
+    let pairing = page(&rig.app, &format!("/pair/{setup}"), &ada).await;
     assert!(
         pairing.contains("Five misses closed the code field"),
         "{pairing}"
@@ -595,7 +635,7 @@ async fn entries_at_once_count_five_misses_and_compare_none_past_them() {
             send_as(
                 &app,
                 "POST",
-                &format!("/setup/{setup}/pair"),
+                &format!("/pair/{setup}/code"),
                 Some(form(&[("compared", "on"), ("code", wrong)])),
                 &ada,
             )
@@ -980,7 +1020,7 @@ async fn on_unknown_the_pairing_page_shows_what_the_write_made() {
     assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
     let (heard, _) = the_box.await.unwrap();
     let answer = answer_of(&heard);
-    let pairing = page(&rig.app, &format!("/setup/{setup}"), &ada).await;
+    let pairing = page(&rig.app, &format!("/pair/{setup}"), &ada).await;
     assert!(
         pairing.contains(&grouped(&fingerprint_of(&answer.gate))),
         "{pairing}"
@@ -1009,7 +1049,7 @@ async fn a_replacement_keeps_the_box_the_row_held() {
     let karl = registered(s, "box-old", "karl", &rig.authority).await;
     let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
     let setup = setup.unwrap();
-    let pairing = page(&rig.app, &format!("/setup/{setup}"), &ada).await;
+    let pairing = page(&rig.app, &format!("/pair/{setup}"), &ada).await;
     assert!(
         pairing.contains(&format!(r#"name="replace" value="{}""#, karl.as_str())),
         "the page asks whether to replace the live row's box: {pairing}"
@@ -1816,7 +1856,7 @@ async fn an_entry_dropped_once_its_code_matched_still_pairs_the_box() {
             send_as(
                 &app,
                 "POST",
-                &format!("/setup/{setup}/pair"),
+                &format!("/pair/{setup}/code"),
                 Some(form(&[("compared", "on"), ("code", &code)])),
                 &session,
             )
@@ -2057,7 +2097,7 @@ async fn an_entry_dropped_once_matched_still_logs_what_the_box_was_answered() {
             send_as(
                 &app,
                 "POST",
-                &format!("/setup/{setup}/pair"),
+                &format!("/pair/{setup}/code"),
                 Some(form(&[("compared", "on"), ("code", &code)])),
                 &session,
             )
@@ -2601,8 +2641,7 @@ async fn a_refused_reports_arrival_is_logged_once_with_its_detail_escaped() {
 
     for _ in 0..2 {
         let page =
-            crate::setup_place_tests::read(&rig.app, &format!("/setup/{setup}/pairing"), &ada)
-                .await;
+            crate::setup_place_tests::read(&rig.app, &format!("/setup/{setup}/drives"), &ada).await;
         assert!(page.contains("Refused for cause 4: "), "{page}");
     }
     assert_eq!(
@@ -2627,8 +2666,8 @@ async fn a_refused_reports_arrival_is_logged_once_with_its_detail_escaped() {
 /// **The panes a box's reports feed are served in each status, end to end**
 /// (Spec 6.2): a box enrolled against the real listener sends `setup report`
 /// through it, and the pages read the kept reports. Before any report the
-/// pairing page's report, the drives page's drives and the placement page's
-/// devices each wait. A refused pairing report is drawn refused by its
+/// pairing stage's report and the drives on the drives page, and the
+/// placement page's devices, each wait. The Pair page draws no report. A refused pairing report is drawn refused by its
 /// cause, and the devices are refused naming it. A pairing report whose
 /// machine's product holds a script element is drawn read, the value
 /// escaped, and the devices are read from it. A refused drives report is
@@ -2658,7 +2697,7 @@ async fn the_panes_are_served_in_each_status_as_the_box_reports() {
     let devices = "The devices";
 
     for (page, heading) in [
-        ("pairing", pairing),
+        ("drives", pairing),
         ("drives", drives),
         ("placement", devices),
     ] {
@@ -2674,7 +2713,11 @@ async fn the_panes_are_served_in_each_status_as_the_box_reports() {
 
     // Weaver Web's own address, stated as information for the box to dial
     // (the operator's walk of 2026-11-19), its data the same table.
-    let shown = page_of("pairing").await;
+    let shown = crate::setup_place_tests::read(&rig.app, &format!("/pair/{setup}"), &ada).await;
+    assert!(
+        !shown.contains(pairing),
+        "the Pair page draws no report: {shown}"
+    );
     let address = pane(&shown, "Weaver Web's address");
     assert!(
         address.contains("<p>This is Weaver Web's own address, for the box to dial. It is never the box's address, and nothing here is filled in.</p>"),
@@ -2685,7 +2728,7 @@ async fn the_panes_are_served_in_each_status_as_the_box_reports() {
 
     let refused = r#"{"format":"weaver-survey/2"}"#;
     sent(&config, Stage::Pairing, refused).await;
-    let shown = page_of("pairing").await;
+    let shown = page_of("drives").await;
     crate::surfaces::assert_inputs_drawn(&shown);
     let report = pane(&shown, pairing);
     assert_eq!(status(report), mark("fail", "refused"));
@@ -2704,7 +2747,7 @@ async fn the_panes_are_served_in_each_status_as_the_box_reports() {
         v["machine"]["product"] = serde_json::json!("<script>alert(1)</script>");
     });
     sent(&config, Stage::Pairing, &script).await;
-    let shown = page_of("pairing").await;
+    let shown = page_of("drives").await;
     crate::surfaces::assert_inputs_drawn(&shown);
     let report = pane(&shown, pairing);
     assert_eq!(status(report), mark("ok", "read"));

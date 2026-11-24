@@ -50,6 +50,7 @@
   <nav class="masthead tabs" aria-label="Agents">
     {%- if admin %}
     <a href="/setup"{% if here == "declarations" %} class="here"{% endif %}><span class="stage"><b>1</b> Declare</span> Declarations</a>
+    <a href="/pair"{% if here == "pair" %} class="here"{% endif %}><span class="stage"><b>2</b> Provision</span> Pair a box</a>
     <a href="/admin/agents"{% if here == "register" %} class="here"{% endif %}><span class="stage"><b>2</b> Provision</span> Register</a>
     {%- endif %}
     <a href="/agents"{% if here == "agents" %} class="here"{% endif %}><span class="stage"><b>3</b> Run</span> <span class="stage"><b>4</b> Observe</span> Your agents</a>

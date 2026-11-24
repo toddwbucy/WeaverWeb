@@ -49,7 +49,8 @@ pub(crate) fn status(pane: &str) -> String {
     rest[..rest.find("</span>").unwrap() + "</span>".len()].to_owned()
 }
 
-/// **The pairing page's report is served in each status** (Spec 6.2): with
+/// **The pairing stage's report is served in each status** (Spec 6.2), on
+/// the drives page since the report left the pairing: with
 /// no report the pane waits on it; a refused report is drawn by its stage,
 /// arrival and cause by number and words, with neither its text nor the
 /// refusal's detail; a report kept as the pairing stage's that names the
@@ -64,7 +65,7 @@ async fn the_pairing_pages_report_is_served_waiting_refused_misfiled_and_read() 
         return;
     };
     let (ada, setup) = setup_of(&rig, "karl").await;
-    let uri = format!("/setup/{setup}/pairing");
+    let uri = format!("/setup/{setup}/drives");
 
     let page = read(&rig.app, &uri, &ada).await;
     let waiting = pane(&page, PAIRING_PANE);
@@ -186,7 +187,7 @@ async fn a_value_a_report_chose_is_drawn_escaped() {
         v["cards"][0]["name"] = json!(script);
     }));
     for uri in [
-        format!("/setup/{setup}/pairing"),
+        format!("/setup/{setup}/drives"),
         format!("/setup/{setup}/placement"),
     ] {
         let page = read(&rig.app, &uri, &ada).await;
@@ -199,7 +200,7 @@ async fn a_value_a_report_chose_is_drawn_escaped() {
 
     *reported.pairing.lock().unwrap() =
         Some(r#"{"format":"<script>alert(1)</script>"}"#.to_owned());
-    let page = read(&rig.app, &format!("/setup/{setup}/pairing"), &ada).await;
+    let page = read(&rig.app, &format!("/setup/{setup}/drives"), &ada).await;
     let refused = pane(&page, PAIRING_PANE);
     assert!(refused.contains("Refused for cause 4: "), "{refused}");
     assert!(!page.contains("<script>alert"), "{page}");

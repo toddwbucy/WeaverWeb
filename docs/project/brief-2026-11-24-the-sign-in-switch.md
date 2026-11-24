@@ -100,3 +100,19 @@ child 2.
 
 About 25 files. Draft pull requests only. Nothing is pushed without the Planner's word
 naming the head.
+
+## Added 2026-11-24: the operator's ruling on the two sentences
+
+The operator, 2026-11-24: "the removal of the sign-in method is a development requirement.
+it gets in our way. we will introduce log in procedures when we get closer to release."
+He also ruled that details such as the sign-in page are out of scope while Weaver Web
+itself is still being built.
+
+Both placeholders are settled by that ruling.
+
+1. The switch is as built: a config member, unset by default. What becomes of it is
+   ruled closer to release. The Spec states it in the Planner's wording of the ruling.
+2. Sign-out and the sign-in page are not this act's. Neither changes, and the Spec says
+   so in one sentence.
+
+No placeholder holds the stack in draft.

@@ -4715,8 +4715,24 @@ replace-box write of section 8.2 stays as it is, since "One agent per VM is the
 recommendation" (the same rulings). The directories page shows what the box reports at
 the two default paths alone, since another path needs a new survey format in the suite
 repository, which is outside this act (the Planner's ruling of 2026-11-24 on the plan).
-The pairing stage's report leaves the pairing (#181), and the steps after `paired` are
-the appliance's setup script's (section 8.2).
+The steps after `paired` are the appliance's setup script's (section 8.2).
+
+**The operator's rulings of 2026-11-24**, in the operator's words: on where the report
+shows (#181), "After a pairing succeeds, the Pair page shows the hardware report, read
+only. The next page carries it into the declaration. This replaces my ruling of
+2026-11-20."; on how the declaration begins, "A. The Pair page leads straight into the
+next page for that agent."; on the margin, "C. The 10 GB margin is guidance only, stated
+on the requirements page. No page warns."; on Confirm's image version reading "the
+appliance's version", "Yes."; on the fingerprint in four rows of four groups, "Yes."; on
+the Pair page's checkbox, "A. The checkbox starts checked."; and "'Create new agent'
+opens a requirements page first. It covers VMs only at this stage. No host install is
+offered. One note: GB10 Spark-class devices are hardware we want to deploy to and do not
+have yet." **The directories page keeps the directories as mounted** and no longer shows
+the report in full, which is the Planner's reading of "The next page carries it into the
+declaration", put to the operator. Where the entry stands, that the name's field sits at
+the requirements page's end, and what that page leaves out are the Planner's readings
+too, put to the operator, and the pages are built to them meanwhile (the brief's
+addendum 4).
 
 **The pages are an admin's**, the server-wide admin grant, as the declaration screen's
 (section 6.1): a setup comes before the register row its pairing writes, so no agent row
@@ -4727,12 +4743,15 @@ admin as principal by `session`. Reads are not audited.
 
 **The routes:**
 
-- `GET /pair`, Pair a box: the agent's name, one field, and the named agents whose box
-  is not yet paired, each a link to its pairing. Once an agent stands in the register,
-  a retired one included, a New agent button stands in the field's place and opens it.
+- `GET /pair`, Pair a box: Create new agent, which opens the requirements page, and the
+  named agents whose box is not yet paired, each a link to its pairing
+- `GET /pair/new`, the requirements page: what an agent needs, ending in the agent's
+  name, one field, and Begin, its one form. It is reached from Create new agent alone,
+  and no other page names an agent.
 - `POST /pair`: a new setup of the name, landing on its pairing
 - `GET /pair/{su}`, the Pair page: the agent's pairing, what to do at the appliance,
-  Weaver Web's address, the checkbox and the waiting box
+  Weaver Web's address, the checkbox and the waiting box, and once the box is paired the
+  pairing stage's report, read only
 - `POST /pair/{su}`: the checkbox
 - `POST /pair/{su}/code`: a code's entry (section 8.2), where the console's build serves
   the enrollment
@@ -4771,10 +4790,10 @@ same ruling). It is recorded in the tuple and read by those warnings alone; the 
 `setup describe` answers carries no such member, and the survey's `machine`
 `virtualization` reports the machine's kind as the box detects it.
 
-**Placeholder, the operator's to rule (2026-11-24): how the declaration begins after a
-pairing.** It is built to the lean: the Pair page's success leads into the directories
-page for that agent, and Declarations, the start page, lists the paired agents whose
-declaration is open.
+**How the declaration begins after a pairing**, on the operator's ruling of 2026-11-24:
+"A. The Pair page leads straight into the next page for that agent." The Pair page's
+success leads into the directories page for that agent, and Declarations, the start
+page, lists the paired agents whose declaration is open.
 
 **The name Pair a box takes is the name admin derives the agent's identities from.** On
 the operator's rulings of 2026-11-16 (setup pages) the appliance names its directories
@@ -4824,8 +4843,10 @@ document's election of 2026-11-17).
 
 **The identity's prefix is `st-` and not `su-`**, since the repository's privilege scan
 (section 7.2) reads `su` standing as a word as the name of a privilege-escalating
-program. **A new setup's checkbox is drawn unchecked**, which says host: a checkbox has
-two states, and each is an answer the operator sees on the Pair page and changes
+program. **A new setup's checkbox starts checked**, which says virtual machine (the
+operator's ruling of 2026-11-24): the setup's insert names it, so migration `0026`'s
+default stays as merged and no migration is added. A setup saved unchecked stays
+unchecked, since each state is an answer the operator sees on the Pair page and changes
 there. **A confirmed setup's Pair page shows the machine's kind as text**, with no
 form, and a post of it is refused as a confirmed setup's other writes are, with no
 record (the Planner's ruling of 2026-11-24 on the second review).
@@ -4834,10 +4855,11 @@ record (the Planner's ruling of 2026-11-24 on the second review).
 
 | page | live | held, and on what |
 | --- | --- | --- |
-| Pair a box | the name, refused by the start page's rule or where an open setup holds it; the named agents whose box is not yet paired; New agent once an agent stands | nothing |
-| Pair | what to do at the appliance: log in at its console, where the setup prompt at the first console login starts the appliance's setup script, which ends in pairing, give the script Weaver Web's address and port, and compare the fingerprint row by row before entering the code, naming no command until the script is merged; the checkbox, virtual machine or host; the console's link address and port (`link_address`, else `link_listen`), which the box's setup asks for, and that the box must reach them; the warning where that address is a loopback address and the checkbox says virtual machine, and where it is an unspecified address, `0.0.0.0` or `::`, for a host and a virtual machine alike, since a listener binds it for every interface and it names no machine to dial (RFC 1122 admits `0.0.0.0` as a source alone, and RFC 4291 refuses `::` as a destination); the waiting boxes, each by the name it claims, its peer address and its wait, the console's fingerprint in four rows of four groups, the fingerprint's confirmation and the code's field, where the console's build serves the enrollment (section 8.2); once the box is paired, the way on to the directories page | nothing on the console's side; a box that dials: the appliance's setup script |
+| Pair a box | Create new agent, which opens the requirements page; the named agents whose box is not yet paired | nothing |
+| Requirements | in order: an agent runs in a VM made from the appliance, and this version covers VMs only; "One agent per VM is the recommendation."; the operator's part, "The operator holds the hypervisor, the cards, the disks and the network between VMs." (the operator's words of 2026-11-23); the two disks in the words of the ruling of 2026-11-23, the 10 GB margin stated as guidance and never judged; that the VM must reach Weaver Web's address and port, which the agent's Pair page shows; the note, "GB10 Spark-class devices are hardware we want to deploy to and do not have yet."; then the name, refused by the start page's rule or where an open setup holds it, and Begin. It names no CPU requirement and offers no host install, and no page offers one. It is read by Pair a box's grant and holds no form but the name's | nothing |
+| Pair | what to do at the appliance: log in at its console, where the setup prompt at the first console login starts the appliance's setup script, which ends in pairing, give the script Weaver Web's address and port, and compare the fingerprint row by row before entering the code, naming no command until the script is merged; the checkbox, virtual machine or host, starting checked; the console's link address and port (`link_address`, else `link_listen`), which the box's setup asks for, and that the box must reach them; the warning where that address is a loopback address and the checkbox says virtual machine, and where it is an unspecified address, `0.0.0.0` or `::`, for a host and a virtual machine alike, since a listener binds it for every interface and it names no machine to dial (RFC 1122 admits `0.0.0.0` as a source alone, and RFC 4291 refuses `::` as a destination); the waiting boxes, each by the name it claims, its peer address and its wait, the console's fingerprint in four rows of four groups, the fingerprint's confirmation and the code's field, where the console's build serves the enrollment (section 8.2); once the box is paired, the survey's report at the `pairing` stage in a pane that holds no form, read or refused by section 8.3's reader and shown as below, saying before it arrives that none has and that the appliance's setup script sends it, and the way on to the directories page; before the box is paired, no report pane | nothing on the console's side; a box that dials: the appliance's setup script |
 | Start | the paired agents whose declaration is open, each a link to its directories page | nothing |
-| Directories | the two directories as the operator lays them before pairing; the directories as mounted, from the latest report of either stage, its stage named, with the judgments below; the survey's report at the `pairing` stage, read or refused by section 8.3's reader and shown as below; the host's form drawn and marked unbuilt, its models directory prefilled from `model_cache` where set; the SSH key that goes down, by its fingerprint, with a link to change it | nothing on the console's side: Weaver Web lists and formats no disk, and the box reports its directories |
+| Directories | the two directories as the operator lays them before pairing; the directories as mounted, from the latest report of either stage, its stage named, with the judgments below; the host's form drawn and marked unbuilt, its models directory prefilled from `model_cache` where set; the SSH key that goes down, by its fingerprint, with a link to change it | nothing on the console's side: Weaver Web lists and formats no disk, and the box reports its directories |
 | Models | the repository and its branch, where a tag or a 40-hex commit is taken too, resolved to a commit; each choice with its size and its header's facts; a gated repository with its accept link and a check again; the pick, which asks a pull (section 2.15), an adapter's carrying its scale; the adapter's pane, `ok` with none picked, saying the agent then loads its base alone, and a picked adapter's Drop; the pulls' progress and record; the base's identity, computed from the cache; the models directory's need, the bytes of the picks' distinct blobs, judged against the models directory as the latest report of either stage shows it; the roster beyond one decoder and its one adapter drawn and marked unbuilt | nothing on the console's side; the box's pull from the cache: the act of the box's pull (section 10) |
 | Placement | the context length, bounded below by the box's max-tokens-per-turn and above by the header's maximum; the turn context; the block count and the parts in shard order, from the header; the devices, a set of the reported cards by ordinal, held until a report brings them | the fit, drawn "planned, from the box's room plan": the room plan's answer over TLS, an ask on WeaverAgent |
 | Confirm | every member of the tuple with its source, read or held, the box's members from the latest report of either stage; the survey's `image` members named the appliance's version; where no adapter is picked, "none picked: the agent loads its base alone" in the adapter's place, and no scale row | nothing on the console's side; Confirm stands only once every member is read, the box's members once the box reports its directories mounted |
@@ -5052,13 +5074,17 @@ Planner's rulings of 2026-11-24 on the plan and on its review:
   document's election of 2026-11-17. It feeds nothing, and what it would feed is held,
   naming the stage it names, so a tuple never records a report as the other stage's.
 
-**Placeholder, the operator's to rule (2026-11-24): where the pairing stage's report
-shows**, once it left the pairing (#181). It is built to the lean: on the directories
-page, the declaration's first, since that report now carries the directories the
-declaration starts from. The Pair page draws no report.
+**Where the pairing stage's report shows** (#181), on the operator's ruling of
+2026-11-24: "After a pairing succeeds, the Pair page shows the hardware report, read
+only. The next page carries it into the declaration. This replaces my ruling of
+2026-11-20." Once the box is paired, the agent's Pair page shows the report in a pane
+that holds no form, and before a report arrives the pane says that none has and that
+the appliance's setup script sends it. An unpaired setup's Pair page shows no report
+pane, since no report arrives before the pairing. The directories page keeps the
+directories as mounted, below, and does not show the report in full.
 
-**The pairing stage's report**, this document's election of 2026-11-17, on the
-directories page: the report's
+**The pairing stage's report**, this document's election of 2026-11-17, on the Pair
+page: the report's
 arrival and `taken`, then its members grouped: the image, the kernel, the machine, the
 CPU (its flags as a count, the list folded), the memory, the driver and whether it is
 loaded, the CUDA runtime, and the cards, each with its ordinal, model, PCI address and
@@ -5068,7 +5094,7 @@ whose drives are both not mounted is a valid report, read whole.
 **The directories as mounted**, on the operator's rulings of 2026-11-17 (the survey's
 reading) and 2026-11-23: each drive of the latest report of either stage, the report's
 stage named, with its role, its directory (the mount point), label, filesystem, size,
-free space and project quota. Four judgments, each shown on the directory:
+free space and project quota. Three judgments, each shown on the directory:
 
 - A drive not mounted holds Confirm, naming it.
 - A state drive whose filesystem's size is under 9 GiB (9663676416 bytes) holds Confirm,
@@ -5079,23 +5105,15 @@ free space and project quota. Four judgments, each shown on the directory:
   9.75 GiB, which clears the figure.
 - A models directory whose free space is under the models directory's need is a warning
   and not a hold, since the box's pull is an act of its own (section 10).
-- A models directory whose filesystem is under the need and the 10 GiB margin
-  (`box_report::MODELS_MARGIN`) is a warning, "margin", and not a hold. **The warning
-  states what was measured**: the filesystem's size, the picks' need and how far the
-  room beside them falls short of the margin, the shortfall in a unit that shows it,
-  and never that the disk is too small (the Planner's rulings of 2026-11-24 on the
-  review and the second review). The models page shows the models directory's judgment
+- **No page judges the models disk's margin**, on the operator's ruling of 2026-11-24:
+  "C. The 10 GB margin is guidance only, stated on the requirements page. No page
+  warns." No judgment, warning, footer or held state names it, and a models directory
+  whose filesystem is short of the margin and holds the need is judged by its free
+  space alone. The models page shows the models directory's judgment
   beside its need too, and where none is judged it says which: no report of either
   stage, or the latest refused or misfiled. A report that reads always names the models
   directory, since section 8.3's reader refuses one whose drives are not state then
   models at their mount points.
-
-**Placeholder, the operator's to rule (2026-11-24): the models disk's margin.** The
-operator's ruling of 2026-11-23 asks "a models disk at least 10 GB larger than the
-model". It is built to the lean: the models and directories pages warn where the margin
-is short, and nothing is refused for the margin alone. The margin is taken as 10 GiB,
-as the state disk's 10 is (above), and judged on the filesystem's size, which reads
-less than its disk, so the warning errs toward showing.
 
 **A refused report**, this document's election of 2026-11-17: its pane names the stage,
 the arrival and the cause by its number and in the format's words, with the status
@@ -5139,9 +5157,9 @@ so not a drive's free space, which moves with use, and not whether the driver is
 loaded, which the cards imply. The memory total and the kernel release are kept, since
 they describe what the agent ran on.
 
-**Placeholder, the operator's to rule (2026-11-24): Confirm's image version.** It is
-built to the lean: the confirm page names the survey's `image` members "the appliance's
-version" and "the appliance's manifest SHA-256", read from the report as before, and the
+**Confirm's image version**, on the operator's ruling of 2026-11-24 ("Yes."): the
+confirm page names the survey's `image` members "the appliance's version" and "the
+appliance's manifest SHA-256", read from the report as before, and the
 tuple's member keeps its name, `image`, since the appliance is an image the suite
 ships.
 
@@ -6985,9 +7003,9 @@ below). The box learns `server_name` from the answer at step 4 and checks it on 
 plane connection after, as section 8 does. The Pair page shows the console's own, read
 from the authority it loaded, its sixteen groups in four rows of four.
 
-**Placeholder, the operator's to rule (2026-11-24): how the Pair page shows the
-console's fingerprint.** It is built to the lean: four rows of four groups, as the
-appliance's setup script shows it, so that the two are compared row by row. `pair`'s
+**How the Pair page shows the console's fingerprint**, on the operator's ruling of
+2026-11-24 ("Yes."): four rows of four groups, as the appliance's setup script shows
+it, so that the two are compared row by row. `pair`'s
 `waiting` line carries the fingerprint in its sixteen groups as before.
 
 The authority's certificate
@@ -7754,7 +7772,7 @@ two connectors report.
 | a FIFO at a blob's name or at the seal key's is refused and never waited on | perturbation in `src/model_pull_tests.rs`, `a_fifo_at_a_blobs_name_is_refused_and_never_waited_on`, and in `src/hugging_face/seal.rs`'s tests: open the blob or the key waiting, and the puller, or the key's read, waits on the FIFO until a writer opens it |
 | the Hugging Face client reads no proxy from the environment | perturbation in `tests/hugging_face_proxy.rs`, a test binary of its own: drop `.no_proxy()`, and with the proxy variables naming a port where nothing listens, a request to the fake fails to connect |
 | a snapshot's link never replaces a file the repository holds | perturbation in `src/hugging_face/cache.rs`'s tests: stage the link under a fixed name beside its place, and a repository file of that name loses its link |
-| every pane of every setup page and of Pair a box carries its stage, a backing and a status word, and a held pane names what it waits on with no input holding a value; no page of the setup names a Pairing step, its pages stand in the order Directories, Models, Placement, Confirm, Build, and no page holds "the image's setup script", "first boot" or the held setup command's pane | test in `src/setup_tests.rs`, `every_pane_carries_its_stage_backing_and_status`, walking every page's rendered panes in each state it draws, and `src/setup_place_tests.rs` walking the placement and confirm pages in each of theirs: drop a pane's status mark from a template, or fill a held pane's input, and the walk names the pane (both measured); judge a pane's text areas together, and an empty one masks another that holds a value (measured); the walk's own perturbations run on every build in `the_walk_names_a_pane_without_a_status_or_with_a_filled_input`; Pair a box's pages are walked for the stage mark `2 Provision` (`walk_staged`): stage the Pair page's first pane `1 Declare`, and the walk names it; put a Pairing step back on the setup's rail, Models before Directories, the held setup command's pane back, or the image's setup script in a pane's text, and `every_pane_carries_its_stage_backing_and_status` fails (each measured 2026-11-24) |
+| every pane of every setup page and of Pair a box carries its stage, a backing and a status word, and a held pane names what it waits on with no input holding a value; no page of the setup names a Pairing step, its pages stand in the order Directories, Models, Placement, Confirm, Build, and no page holds "the image's setup script", "first boot" or the held setup command's pane | test in `src/setup_tests.rs`, `every_pane_carries_its_stage_backing_and_status`, walking every page's rendered panes in each state it draws, and `src/setup_place_tests.rs` walking the placement and confirm pages in each of theirs: drop a pane's status mark from a template, or fill a held pane's input, and the walk names the pane (both measured); judge a pane's text areas together, and an empty one masks another that holds a value (measured); the walk's own perturbations run on every build in `the_walk_names_a_pane_without_a_status_or_with_a_filled_input`; Pair a box's pages, the requirements page and the Pair page before and after its box is paired among them, are walked for the stage mark `2 Provision` (`walk_staged`): stage the Pair page's first pane `1 Declare`, and the walk names it; put a Pairing step back on the setup's rail, Models before Directories, the held setup command's pane back, or the image's setup script in a pane's text, and `every_pane_carries_its_stage_backing_and_status` fails (each measured 2026-11-24) |
 | Pair a box, by the start page's rule, refuses every name admin's name rule or the box's agent-creation rule refuses | perturbation in `src/setup_tests.rs`, one case per clause, each refused and opening no setup: an uppercase letter, a `-`, a `_`, a leading digit, one character, seventeen characters, and each of the two names `weaver-admin-Spec` section 4 reserves whole, which the character rule admits; a name of sixteen characters opens one. Drop a clause from the page's rule and its case meets the store's CHECK, which holds the same rule, and answers as a fault rather than a refusal; drop it from the CHECK too and its case opens a setup (each clause measured from the page, the reserved names from both). A name ending in one of section 4's reserved suffixes carries a `-`, so the character rule refuses it. Skip the rule at Pair a box, and an uppercase name meets only the store's CHECK, answered as a fault (measured 2026-11-24) |
 | the Pair page says what to do at the appliance, lists the waiting box as it claims, shows Weaver Web's fingerprint in four rows of four groups, and warns where the console's link address is a loopback address and the checkbox says virtual machine, and where it is an unspecified address, for a host and a virtual machine alike | perturbation in `src/setup_tests.rs`, `the_loopback_warning_shows_for_a_virtual_machine_alone` and `the_unspecified_warning_shows_for_a_host_and_a_virtual_machine`, and in `src/surfaces/setup.rs`'s tests, `the_link_address_is_read_for_its_port_its_loopback_and_unspecified`: draw the loopback warning for a host too, and the host's page warns; drop the unspecified check, or drop its paragraph from the template, and `link_listen` at `0.0.0.0` with no `link_address` draws no warning; draw it for a virtual machine alone, and the host's page draws none; read `link_listen` over `link_address`, and a `link_address` the box reaches beside it warns; take IPv4's unspecified address alone, and `::` draws none (each measured); in `src/setup_tests.rs`, `the_pair_page_says_what_to_do_at_the_appliance`: drop the step giving the script Weaver Web's address and port, and it fails; in `src/enrollment_tests.rs`, `the_pair_page_shows_the_fingerprint_in_four_rows_of_four_groups`: draw the sixteen groups in one row, or name the row the console's fingerprint, and it fails; in `src/enrollment_tests.rs`, `the_pair_page_lists_the_waiting_box_as_it_claims`, no box waiting said so and a dialed box's row by its claim, peer address and wait: drop the row, and it fails; in `src/setup_tests.rs`, `a_console_serving_no_pairing_says_so_past_the_admin_gate`, the 503 naming Weaver Web: call the server the console, and it fails (each measured 2026-11-24) |
 | a crafted post naming a second model, a second adapter role or the CPU is refused, saving nothing | perturbation in `src/setup_models_tests.rs`, `a_crafted_pick_is_refused_saving_nothing`, against a fake Hugging Face that counts every request, and in `src/surfaces/setup/models.rs`'s tests: take a field the pick does not take, or a field given twice, and a crafted pick is no longer refused by its shape (each measured). The same test holds a role beyond the roster and a field the pick does not take to their refusals' words, which name the roster as one decoder and at most one adapter on it and no one agent's |
@@ -7777,9 +7795,13 @@ two connectors report.
 | a kept device that a later report lacks is named on the placement page, status fail, and refused at Confirm, naming the ordinal | perturbation end to end in `src/enrollment_tests.rs`, `the_reports_a_box_sends_feed_placement_and_confirm`: drop the check, and Confirm stands after a report carrying one card with card 1 kept (measured); on the placement page, perturbation in `src/setup_panes_tests.rs`, `the_placement_page_names_a_kept_device_a_later_report_lacks`, and end to end in `src/enrollment_tests.rs`, `the_reports_a_box_sends_feed_placement_and_confirm`: drop the note, and card 1 kept and lacking goes unnamed (each measured) |
 | a store that fails to answer the box's reports is a fault, never an absent report | perturbation in `src/setup_place_tests.rs`, `a_store_that_fails_to_answer_is_a_fault_never_an_absent_report`: read a store's error as no report, and the placement page draws its devices held (measured); end to end, the kept source made to read nothing, and the end-to-end test fails (measured) |
 | a drive not mounted and a state drive whose filesystem is under 9 GiB hold Confirm | perturbation in `src/box_report_tests.rs`, `confirm_holds_for_a_drive_not_mounted_naming_it` and `the_state_drive_holds_confirm_under_9_gib_of_filesystem_and_not_at_it`, and end to end in `src/enrollment_tests.rs`, `the_reports_a_box_sends_feed_placement_and_confirm`: drop the unmounted drive's hold, and Confirm stands with the models drive not mounted; hold at the figure, and a filesystem of exactly 9 GiB holds; move the figure a byte lower, and one a byte under it stands; judge at 10 GiB, and a 10 GiB disk's ext4 size of 10464022528 bytes holds (each measured) |
-| a models directory's free space under the need, or its filesystem under the need and the 10 GiB margin, is a warning, not a hold, on the directories page and the models page | perturbation in `src/setup_panes_tests.rs`, `the_directories_page_draws_the_directories_as_mounted_with_their_judgments`, and end to end in `src/enrollment_tests.rs`, `the_reports_a_box_sends_feed_placement_and_confirm`: drop the warning, and a models drive with 1 byte free under the picks' need is drawn with none; hold Confirm on a models drive's free space under 1 GiB, and the end-to-end Confirm with 1 byte free holds (each measured); drop the margin's judgment, and a models directory of 10 GiB less a byte is not drawn short of the margin on either page; print the room left in place of the shortfall, and both pages fail (each measured 2026-11-24). The same test reads a pairing report arriving after the drives report on both pages, and the models page naming a refused or misfiled latest: name every such case as no report, and it fails (measured 2026-11-24) |
-| a refused report is shown by its stage, arrival and cause, never its verbatim text or the refusal's detail, and holds what it would feed | perturbation in `src/setup_panes_tests.rs`, `the_pairing_pages_report_is_served_waiting_refused_misfiled_and_read`: draw the detail in place of the cause's words, and the page carries the refused format (measured); end to end in `src/enrollment_tests.rs`, `the_panes_are_served_in_each_status_as_the_box_reports`, a refused pairing report drawn by its cause and a refused drives report holding Confirm; a refused report carries no survey (`box_report::Report::Refused`), so no page reads its cards; the Pair page draws no report: draw the pairing stage's report's pane on it, and `the_panes_are_served_in_each_status_as_the_box_reports` fails (measured 2026-11-24) |
-| each pane a report feeds carries the report's status, read, refused, misfiled or waiting, and the directories page shows each directory's judgment on it, read from the latest report of either stage | perturbation in `src/setup_panes_tests.rs`, `the_pairing_pages_report_is_served_waiting_refused_misfiled_and_read`, `the_directories_page_draws_the_directories_as_mounted_with_their_judgments` and `the_placement_page_names_a_kept_device_a_later_report_lacks`, and end to end in `src/enrollment_tests.rs`, `the_panes_are_served_in_each_status_as_the_box_reports` and `src/enrollment_tests.rs`, `the_reports_a_box_sends_feed_placement_and_confirm`: draw a waiting report healthy, and the pairing stage's report's pane and the end-to-end panes fail; draw the devices refused as waiting, and the placement page fails; drop the unmounted drive's judgment, or judge the state drive under at the figure, and the directories page fails (each measured); read the directories from the `drives` stage's report alone, and a `pairing` report alone is drawn waiting; drop the pairing stage's report from the directories page, and `the_pairing_pages_report_is_served_waiting_refused_misfiled_and_read` and `the_panes_are_served_in_each_status_as_the_box_reports` fail (each measured 2026-11-24) |
+| a models directory's free space under the need is a warning, not a hold, on the directories page and the models page | perturbation in `src/setup_panes_tests.rs`, `the_directories_page_draws_the_directories_as_mounted_with_their_judgments`, and end to end in `src/enrollment_tests.rs`, `the_reports_a_box_sends_feed_placement_and_confirm`: drop the warning, and a models drive with 1 byte free under the picks' need is drawn with none; hold Confirm on a models drive's free space under 1 GiB, and the end-to-end Confirm with 1 byte free holds (each measured). The same test reads a pairing report arriving after the drives report on both pages, and the models page naming a refused or misfiled latest: name every such case as no report, and it fails (measured 2026-11-24) |
+| no page judges the models disk's margin | perturbation in `src/setup_panes_tests.rs`, `the_directories_page_draws_the_directories_as_mounted_with_their_judgments`: a models directory whose filesystem is short of the 10 GB margin and holds the picks' need is judged `room` on the directories page and the models page, and neither page holds "margin", "10 GiB" or "10 GB"; judge the margin again, and the short filesystem warns (measured 2026-11-24) |
+| a refused report is shown by its stage, arrival and cause, never its verbatim text or the refusal's detail, and holds what it would feed | perturbation in `src/setup_panes_tests.rs`, `the_pairing_pages_report_is_served_waiting_refused_misfiled_and_read`: draw the detail in place of the cause's words, and the page carries the refused format (measured); end to end in `src/enrollment_tests.rs`, `the_panes_are_served_in_each_status_as_the_box_reports`, a refused pairing report drawn by its cause and a refused drives report holding Confirm; a refused report carries no survey (`box_report::Report::Refused`), so no page reads its cards (measured 2026-11-24) |
+| each pane a report feeds carries the report's status, read, refused, misfiled or waiting, and the directories page shows each directory's judgment on it, read from the latest report of either stage | perturbation in `src/setup_panes_tests.rs`, `the_pairing_pages_report_is_served_waiting_refused_misfiled_and_read`, `the_directories_page_draws_the_directories_as_mounted_with_their_judgments` and `the_placement_page_names_a_kept_device_a_later_report_lacks`, and end to end in `src/enrollment_tests.rs`, `the_panes_are_served_in_each_status_as_the_box_reports` and `src/enrollment_tests.rs`, `the_reports_a_box_sends_feed_placement_and_confirm`: draw a waiting report healthy, and the pairing stage's report's pane and the end-to-end panes fail; draw the devices refused as waiting, and the placement page fails; drop the unmounted drive's judgment, or judge the state drive under at the figure, and the directories page fails (each measured); read the directories from the `drives` stage's report alone, and a `pairing` report alone is drawn waiting (measured 2026-11-24) |
+| once the box is paired, the Pair page shows the pairing stage's report in a pane that holds no form, saying before it arrives what sends it; an unpaired setup's Pair page shows none, and the directories page does not show it | perturbation in `src/setup_panes_tests.rs`, `the_pairing_pages_report_is_served_waiting_refused_misfiled_and_read`, and end to end in `src/enrollment_tests.rs`, `the_panes_are_served_in_each_status_as_the_box_reports`: draw the pane whether or not the box is paired, and the unpaired setup's Pair page draws it; read no report for the Pair page, and the paired one draws none (each measured 2026-11-24) |
+| a new setup's checkbox starts checked, and a setup saved unchecked stays unchecked | perturbation in `src/setup_tests.rs`, `a_name_outside_the_rule_is_refused_opening_no_setup` and `the_loopback_warning_shows_for_a_virtual_machine_alone`: begin a setup with the column's default, and its checkbox starts unchecked (measured 2026-11-24) |
+| the requirements page is reached from Create new agent alone, and an agent is named from it alone | perturbation in `src/setup_tests.rs`, `the_requirements_page_is_reached_from_create_new_agent_alone`: Pair a box holds Create new agent and no name's field, the requirements page states its panes in order and ends in the name's form, its one, naming no CPU requirement and offering no host install, and no other page links it or holds the name's form; draw the name's form on Pair a box beside Create new agent, and it fails (measured 2026-11-24) |
 | a value a report chose is drawn through the templates' escaping | perturbation in `src/setup_panes_tests.rs`, `a_value_a_report_chose_is_drawn_escaped`, and end to end in `src/enrollment_tests.rs`, `the_panes_are_served_in_each_status_as_the_box_reports`: draw the machine's product through askama's `safe` filter, and a script element stands on the page (each measured) |
 | a refused report is logged once, at its arrival, with its detail, and its log can change neither the write nor its answer | perturbation in `src/enrollment_tests.rs`, `a_refused_reports_arrival_is_logged_once_with_its_detail_escaped`: drop the line, and none is logged; log the detail in its debug form, and the escape is doubled; log at each page's read as well, and two views add lines; refuse the write where the reader refuses, and the box's report is not accepted (each measured) |
 | the base's identity is BLAKE3 over the parts in split order | perturbation in `src/hugging_face/base_identity.rs`'s tests: hash in the listing's order, or part 1 alone, and the digest differs from BLAKE3 over part 1's bytes, then part 2's (each measured) |

@@ -1258,7 +1258,8 @@ async fn an_unknown_setup_is_not_found_and_a_malformed_one_refused() {
 /// a box holds Create new agent and no name's field; the requirements page
 /// states, in order, the VM, the operator's part, the two disks (the
 /// appliance coming with none, the operator adding both sized to their
-/// need, laying them before pairing, the setup script asking whether to
+/// need, laying them before pairing each at its default path, and no
+/// other until the console reads others, the setup script asking whether to
 /// keep or erase a disk that holds data, and the 10 GB margin as guidance;
 /// the operator's rulings of 2026-11-23 and 2026-11-24), Weaver Web's
 /// address and the note, then ends
@@ -1274,7 +1275,8 @@ async fn an_unknown_setup_is_not_found_and_a_malformed_one_refused() {
 /// page from `/setup` while no declaration is open, before any row
 /// stands. Each is an agent named, or the page reached, from another page.
 /// And drop the two disks' sentence that the appliance comes with no disk,
-/// and the page no longer says what the operator ruled.
+/// or put "unless they choose others" back, and the page no longer says
+/// what the operator ruled.
 #[tokio::test]
 async fn the_requirements_page_is_reached_from_create_new_agent_alone() {
     let Some(rig) = crate::agents_tests::rig().await else {
@@ -1333,9 +1335,8 @@ async fn the_requirements_page_is_reached_from_create_new_agent_alone() {
         "The appliance comes with no state disk and no models disk. It comes with itself.",
         "The operator adds both in the hypervisor, sized to their need: a models disk at \
          least 10 GB larger than the model, and a state disk of at least 10 GiB.",
-        "The operator lays the disks before pairing, with our help: a models disk at least \
-         10 GB larger than the model, and a state disk, mounted at our default paths unless \
-         they choose others.",
+        "The operator lays the disks before pairing, with our help. Each is mounted at its \
+         default path.",
         "Where a disk already holds data, the appliance's setup script asks at the console \
          whether to keep it or erase it.",
         "The 10 GB margin is guidance. No page judges it.",
@@ -1345,6 +1346,10 @@ async fn the_requirements_page_is_reached_from_create_new_agent_alone() {
             .unwrap_or_else(|| panic!("{said}, in order: {disks}"));
         from += at + said.len();
     }
+    // The default paths alone, until the console reads others (the
+    // operator's ruling of 2026-11-24): the survey's reader takes the two
+    // default mount points and no other.
+    assert!(!disks.contains("choose others"), "{disks}");
     let forms: usize = panes(&new)
         .iter()
         .map(|p| p.matches("<form ").count())

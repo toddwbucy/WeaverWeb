@@ -121,7 +121,7 @@ impl Session {
 /// token is refused for them. A passkey for the standing person therefore
 /// takes the host's `person token`, redeemed before the next opening, which
 /// comes when the held session ends: at the idle or absolute limit, a
-/// sign-out of it, a disable, or a restart.
+/// disable, or a restart.
 pub struct Standing {
     cfg: ServerConfig,
     name: String,

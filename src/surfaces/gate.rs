@@ -111,8 +111,14 @@ impl Session {
 /// each is audited as it always is and everything past the gate (the grant
 /// checks, the authors, the session a write is held to) is unchanged. No
 /// cookie is read and none is set. **Anyone who reaches the listener is that
-/// person**, so the listener's exposure is the box's to hold, and release
-/// removes this.
+/// person**, so the listener's exposure is the box's to hold.
+///
+/// **Two sentences are the operator's to rule, held open in Spec 2.8 and
+/// 2.13 as placeholders 1 and 2**: what the switch is, its default before
+/// release and what release does with it; and what sign-out and the
+/// sign-in page do while it is on. Nothing here settles either: the code
+/// serves the standing person only where the config names one, and leaves
+/// sign-out and the sign-in page as they are.
 ///
 /// **An opening ends the person's other tokens**, by the sign-in token's
 /// own rules (Spec 2.13): the host's issue ends the person's live

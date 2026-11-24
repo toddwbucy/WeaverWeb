@@ -116,3 +116,18 @@ Both placeholders are settled by that ruling.
    so in one sentence.
 
 No placeholder holds the stack in draft.
+
+## Added 2026-11-24: the arrival-order test joins the stack as child 4
+
+The Executor measured the test on 2026-11-24. The order is held by construction once a
+frame is on the link. The test loses it earlier, in the database work each ask does in
+its own task, so it fails under database load and passes alone.
+
+The Planner's ruling: its fix rides here as child 4,
+`act/the-sign-in-switch-4-arrival-order`, in `src/link/client_tests.rs` alone, so that
+the suite gates this stack and what follows it. The line above that rules out changes
+under `src/link/` gives way for that one file.
+
+Acceptance for child 4: the test asserts the order in which turns past the in-flight
+bound are promoted, it fails when that order is broken, and it passes under the database
+load that failed it before.

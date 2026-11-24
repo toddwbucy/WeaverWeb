@@ -148,3 +148,33 @@ Acceptance:
 - With the last two permits withheld in the worktree, the test fails within its deadline
   and does not hang. The report says how long it took.
 - The test passes 20 of 20 alone, and the suite passes at 8 threads.
+
+## Addendum 2, 2026-11-24: the review round
+
+The Planner's review of children 1 and 2 found seven points, and the Executor's report
+four more. They land as three more children and a second commit on child 0.
+
+| Child | Branch | What |
+|---|---|---|
+| 5 | `act/the-pairing-page-and-the-directories-5-review` | On child 2: one report for the whole tuple, the machine's kind reachable after pairing, the margin's warning in measured words, the declaration closed until its box is paired, and the tests the review found missing |
+| 6 | `act/the-pairing-page-and-the-directories-6-waiting-bound` | On the base: the waiting-bound test enqueues in sequence, in `src/link/client_tests.rs` alone |
+| 7 | `act/the-pairing-page-and-the-directories-7-prd` | On the base: the PRD's lines follow the Pair page and the directories |
+
+Planner rulings:
+
+- The cards Placement offers and Confirm checks come from the latest report of either
+  stage, as the box's members do.
+- After pairing, the operator sees and changes "virtual machine or host" from the
+  declaration.
+- The margin's warning states the directory's size, the picks' need and the room left.
+- A declaration page of an unpaired setup leads to its Pair page, and a write is refused.
+- In the Pair page's visible text the server is "Weaver Web", and "console" is the
+  appliance's alone.
+
+Acceptance:
+
+- A pairing-stage report that arrives after a drives-stage report is the one Directories,
+  Models, Placement and Confirm read, each shown by a test.
+- Confirm's post on a pairing-stage report alone writes a tuple, and a test reads it.
+- A test reads the waiting-box table on the Pair page.
+- `git diff main` stays empty over the five box-command files at every head.

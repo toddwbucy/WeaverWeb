@@ -113,8 +113,9 @@ pub struct ServerConfig {
     /// sign-in token the host printed for them, as every sign-in token's
     /// issue does. Unset, the default, sign-in is required as before.
     /// **Anyone who reaches the listener is that person**, so the listener's
-    /// exposure is the box's to hold. What release does with this member is
-    /// the operator's to rule (Spec 2.8 and 2.13, placeholder 1).
+    /// exposure is the box's to hold. Sign-in procedures are taken up closer
+    /// to release, and what becomes of this member is ruled then (the
+    /// operator's ruling of 2026-11-24).
     #[serde(default)]
     pub no_sign_in_as: Option<String>,
 }

@@ -113,12 +113,11 @@ impl Session {
 /// cookie is read and none is set. **Anyone who reaches the listener is that
 /// person**, so the listener's exposure is the box's to hold.
 ///
-/// **Two sentences are the operator's to rule, held open in Spec 2.8 and
-/// 2.13 as placeholders 1 and 2**: what the switch is, its default before
-/// release and what release does with it; and what sign-out and the
-/// sign-in page do while it is on. Nothing here settles either: the code
-/// serves the standing person only where the config names one, and leaves
-/// sign-out and the sign-in page as they are.
+/// **Before release, development runs with sign-in off** (the operator's
+/// rulings of 2026-11-21 and 2026-11-24; Spec 2.8 and 2.13). The member is
+/// unset by default. Sign-in procedures are taken up closer to release, and
+/// what becomes of this member is ruled then. Sign-out and the sign-in page
+/// stand as they are while it is on.
 ///
 /// **An opening ends the person's other tokens**, by the sign-in token's
 /// own rules (Spec 2.13): the host's issue ends the person's live

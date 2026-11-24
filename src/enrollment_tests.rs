@@ -3,7 +3,7 @@
 //! conforms: web-a-lost-word-writes-no-row
 //! conforms: web-on-unknown-the-pairing-page-shows-what-the-write-made
 //! conforms: web-a-rows-box-changes-only-through-the-replace-box-write
-//! conforms: web-a-replacements-drive-setup-mounts-the-state-drive-it-carries-and-never-formats-it
+//! conforms: web-setup-describe-answers-replacement-true-after-a-replace-box-write-alone
 //! conforms: web-a-setup-ask-is-refused-while-its-credentials-connection-stands-and-counts-for-nothing-in-presence
 //! conforms: web-the-setup-keeps-the-latest-report-of-each-stage-verbatim
 //! conforms: web-an-adopted-pair-connects
@@ -1343,13 +1343,13 @@ async fn an_adopted_pair_connects() {
     }
 }
 
-/// **A replacement's drive setup mounts the state drive it carries** (Spec
-/// 8.3): `setup describe` answers `replacement` false after a `pair` and
-/// true after a `replace box`, under the replacement's own credential,
-/// and the replaced box's credential is refused.
+/// **`setup describe` answers `replacement` true after a replace-box
+/// write alone** (Spec 8.3): false after a `pair` and true after a
+/// `replace box`, under the replacement's own credential, and the replaced
+/// box's credential is refused. The drive setup reads no `replacement`
+/// (the operator's ruling of 2026-11-24).
 ///
-/// Perturbation: answer false after a replacement, and the carried drive
-/// would go to the format.
+/// Perturbation: answer false after a replacement, and the test fails.
 #[tokio::test]
 async fn setup_describe_answers_replacement_after_replace_box_alone() {
     let Some(rig) = rig().await else { return };

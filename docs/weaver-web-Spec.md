@@ -4856,7 +4856,7 @@ record (the Planner's ruling of 2026-11-24 on the second review).
 | page | live | held, and on what |
 | --- | --- | --- |
 | Pair a box | Create new agent, which opens the requirements page; the named agents whose box is not yet paired | nothing |
-| Requirements | in order: an agent runs in a VM made from the appliance, and this version covers VMs only; "One agent per VM is the recommendation."; the operator's part, "The operator holds the hypervisor, the cards, the disks and the network between VMs." (the operator's words of 2026-11-23); the two disks in the words of the ruling of 2026-11-23, the 10 GB margin stated as guidance and never judged; that the VM must reach Weaver Web's address and port, which the agent's Pair page shows; the note, "GB10 Spark-class devices are hardware we want to deploy to and do not have yet."; then the name, refused by the start page's rule or where an open setup holds it, and Begin. It names no CPU requirement and offers no host install, and no page offers one. It is read by Pair a box's grant and holds no form but the name's | nothing |
+| Requirements | in order: an agent runs in a VM made from the appliance, and this version covers VMs only; "One agent per VM is the recommendation."; the operator's part, "The operator holds the hypervisor, the cards, the disks and the network between VMs." (the operator's words of 2026-11-23); the two disks, on the operator's rulings of 2026-11-23 and 2026-11-24: the appliance comes with no state disk and no models disk, "It comes with itself."; the operator adds both in the hypervisor, sized to their need, a models disk at least 10 GB larger than the model and a state disk of at least 10 GiB; the ruling of 2026-11-23 in its words; where a disk already holds data, the appliance's setup script asks at the console whether to keep it or erase it; and the 10 GB margin stated as guidance and never judged; that the VM must reach Weaver Web's address and port, which the agent's Pair page shows; the note, "GB10 Spark-class devices are hardware we want to deploy to and do not have yet."; then the name, refused by the start page's rule or where an open setup holds it, and Begin. It names no CPU requirement and offers no host install, and no page offers one. It is read by Pair a box's grant and holds no form but the name's | nothing |
 | Pair | what to do at the appliance: log in at its console, where the setup prompt at the first console login starts the appliance's setup script, which ends in pairing, give the script Weaver Web's address and port, and compare the fingerprint row by row before entering the code, naming no command until the script is merged; the checkbox, virtual machine or host, starting checked; the console's link address and port (`link_address`, else `link_listen`), which the box's setup asks for, and that the box must reach them; the warning where that address is a loopback address and the checkbox says virtual machine, and where it is an unspecified address, `0.0.0.0` or `::`, for a host and a virtual machine alike, since a listener binds it for every interface and it names no machine to dial (RFC 1122 admits `0.0.0.0` as a source alone, and RFC 4291 refuses `::` as a destination); the waiting boxes, each by the name it claims, its peer address and its wait, the console's fingerprint in four rows of four groups, the fingerprint's confirmation and the code's field, where the console's build serves the enrollment (section 8.2); once the box is paired, the survey's report at the `pairing` stage in a pane that holds no form, read or refused by section 8.3's reader and shown as below, saying before it arrives that none has and that the appliance's setup script sends it, and the way on to the directories page; before the box is paired, no report pane | nothing on the console's side; a box that dials: the appliance's setup script |
 | Start | the paired agents whose declaration is open, each a link to its directories page | nothing |
 | Directories | the two directories as the operator lays them before pairing; the directories as mounted, from the latest report of either stage, its stage named, with the judgments below; the host's form drawn and marked unbuilt, its models directory prefilled from `model_cache` where set; the SSH key that goes down, by its fingerprint, with a link to change it | nothing on the console's side: Weaver Web lists and formats no disk, and the box reports its directories |
@@ -7260,28 +7260,32 @@ keys cross the paired link to the box, since the operator's SSH door takes them,
 setup script's first question sets root's password. The console holds the keys as a
 console setting, public halves and no secret, and the appliance's setup script fetches
 them with `admin-con setup describe` (sections 6.2 and 8.3). **The operator lays the
-disks before pairing, with the setup script's help**, on the operator's ruling of
-2026-11-23: a state disk, and a models disk at least 10 GB larger than the model, each
-mounted at its default path. The script lists the drives the machine sees, and formats
-and mounts the state drive and then the models drive, each after the operator confirms
-the disk. The console shows no command for it, and lists and formats no disk (section
-6.2). **A replacement's drive setup never formats the state drive**, since the state
-drive is what a new image carries: the operator's rulings of 2026-11-16 (setup pages)
-require the state mount for every agent and put the save point the unload writes on it,
-their addendum puts the agent's home on the state drive, where the agent's directory
-under the state mount holds its folder and its home side by side (section 8.3), so
-nothing the agent keeps stands on the root disk, and on the operator's ruling of
-2026-11-15 the keys and certificates live on the root disk and a new image is a new
-enrollment. The script learns which case it runs from `setup describe`'s `replacement`
-(section 8.3). On a replacement it mounts the existing state drive and checks that the
-agent's directory under the state mount is there and holds the agent's folder, whose
-save points carry over with it. The check asks no save point, since an agent never
-unloaded holds none. Where the check fails the script stops and tells the operator, and
-never falls back to formatting. Formatting the state drive is a new box's alone, after
-the operator confirms the disk, and the models drive is set up as a new box's is, except
-that **a replacement's models drive is never the disk it carries as its state drive**:
-the script refuses that pick and formats nothing. The
-box reads the models drive's need from `setup describe`, and it pulls the
+disks before pairing, with the setup script's help**, on the operator's rulings of
+2026-11-23 and 2026-11-24. The appliance comes with no state disk and no models disk,
+"it just comes with itself" (the operator's words of 2026-11-24): the operator adds both
+in the hypervisor, sized to their need, a state disk of at least 10 GiB and a models
+disk at least 10 GB larger than the model, each mounted at its default path. The console
+shows no command for it, lists and formats no disk, and tells the appliance nothing
+about its disks (section 6.2). **The drive setup has no replacement case**, on the
+operator's ruling of 2026-11-24: what happens to a disk that already holds data is
+decided by the person at the console, and a state disk kept from another agent makes a
+new agent with that agent's state disk. **The setup script as built on 2026-11-24**
+lists the disks before pairing and asks for the state disk first, then the models disk.
+For a disk that holds a filesystem or partitions it says what the disk holds and asks
+"Type erase to erase it, keep to keep what it holds, or back to choose again:". It takes
+keep only for a disk that holds ext4 or XFS, and as the state disk only where the disk
+holds an agent's folder ("This disk holds no agent's folder, so it cannot be kept as the
+state disk."). Before an erase it names the agent whose folder the disk holds ("This
+disk holds the folder of the agent <name>." and "Erasing removes everything that agent
+keeps on it."), then asks for the disk's name, and another name changes nothing ("That
+is not this disk's name, so nothing was changed."). It formats an empty disk after the
+same entry of its name. It refuses the state disk as the models disk, for every
+appliance ("That disk is already the state disk."), and a state disk under 10 GiB. After
+pairing it reads `setup describe` for the agent's name and the SSH keys, and nothing in
+the drive setup reads `replacement`. It does not refuse to erase a disk whose filesystem
+it cannot read, where it names no agent and the erase still takes the word erase and the
+disk's name, and it does not check after pairing that a kept state disk's folder is the
+paired agent's. `setup describe` answers the models drive's need, and the box pulls the
 model from the console's cache over TLS when the background download finishes (section
 8.3). The connectors dial the console on every boot and redial a dropped link, and load
 and unload do not drop them. Every root act runs on the machine at a screen the operator
@@ -7385,9 +7389,8 @@ a `setup` frame after a hello is refused as malformed. It makes two asks:
   with these members:
   - `agent` and `agent_id`, the register row's name and identity
   - `replacement`, `true` where the setup's pairing was the replace-box write (section
-    8.2) and `false` where it wrote a new row, so the drive setup knows whether the
-    state drive it mounts is carried or new, and refuses a carried one as the models
-    drive
+    8.2) and `false` where it wrote a new row. The drive setup does not read it, since it
+    has no replacement case (the operator's ruling of 2026-11-24, section 8.2)
   - `models`, absent until the models page's first pick, then one entry per role the
     setup holds, `decoder` and, where one is picked, `adapter`, each with `repository`,
     `commit`, `artifact` (the path of the choice's first part, or of the adapter's one
@@ -7476,42 +7479,40 @@ is not one**, the state mount being required for every agent at a minimum of 10 
 the operator's rulings of 2026-11-16 (setup pages), which supersede the ruling of
 2026-11-15 that required it only where the declaration elects state (`weaver-web-PRD`
 section 10.4). The appliance's setup script, started at the setup prompt of the
-appliance's first console login, lists, formats and mounts the drives, each after the
-operator confirms the disk, except a replacement's state drive, which it mounts and
-checks, never formats and refuses as the models drive (section 8.2). The operator lays
-the disks so before pairing (the operator's ruling of 2026-11-23).
-The console attaches and mounts nothing. The directories page shows the directories as
-the box mounted them, from the latest report of either stage (`setup report`, above),
-with section 6.2's judgments. A host
-install points at a state directory and a models directory and attaches and formats
-nothing, on the addendum to the same rulings, and the directories page's host form,
-marked unbuilt, shows the directories the operator named with free space against the
-need. A host's models directory defaults
-to that user's default Hugging Face cache, so models already pulled there are found, and
-the host form shows the command granting the console's account read-write there and a
-models group read. A host's load check, on the operator's word of 2026-11-16, asks that
-both directories exist, the state directory be writable with at least 10 GiB free and
-the models directory be readable, and asks no separate disk. On the addendum to the
-operator's rulings of 2026-11-16 (setup pages) the agent is a real account on the box,
-its home on the state drive. **The agent's accounts take its name**, on the operator's
-word of 2026-11-16: the box's agent-creation tool lays them at setup, named from
-`weaver-<name>`, and the image carries no fixed account for the agent (section 6.2). On
-the state drive each agent has a directory of its own under the state mount, named for
-it, which holds the agent's folder and its home side by side, and a host lays the same
-under its state directory. **The trace is never written to the agent's state or anywhere
-the agent can reach**, on the operator's word of 2026-11-17: it goes to Weaver Web,
-which stores it outside the agent's reach, so nothing on the state drive holds it beside
-the agent's state or save points (section 10). Every account's name and every path are
-the image's and WeaverAgent's, this section repeating section 6.2's naming without
-owning it, and none enters this repository (`weaver-web-PRD` section 10.4). The refusal
-is admin's, since load is admin's verb, so the representation this document holds is
-admin's answer to `load`, which renders as it came, as every refusal does (section 7.2).
-The report of the sizes reaches the console through admin-con, the console's one reach
-into an appliance, so its carrier at the box's seam is
-`weaver-admin-operator-contract`'s, and this document builds against the contract once
-it is merged. The form of the report, which carrier it takes at that seam, and where the
-console says that storage is not sufficient, are section 10's. So are the sizes that
-count as sufficient, which no ruling assigns to a document.
+appliance's first console login, lists the disks the operator added and keeps, erases or
+formats each as the person at the console chooses, and mounts them, with no replacement
+case (section 8.2). The operator lays the disks so before pairing (the operator's
+rulings of 2026-11-23 and 2026-11-24). The console attaches and mounts nothing. The
+directories page shows the directories as the box mounted them, from the latest report
+of either stage (`setup report`, above), with section 6.2's judgments. A host install
+points at a state directory and a models directory and attaches and formats nothing, on
+the addendum to the same rulings, and the directories page's host form, marked unbuilt,
+shows the directories the operator named with free space against the need. A host's
+models directory defaults to that user's default Hugging Face cache, so models already
+pulled there are found, and the host form shows the command granting the console's
+account read-write there and a models group read. A host's load check, on the operator's
+word of 2026-11-16, asks that both directories exist, the state directory be writable
+with at least 10 GiB free and the models directory be readable, and asks no separate
+disk. On the addendum to the operator's rulings of 2026-11-16 (setup pages) the agent is
+a real account on the box, its home on the state drive. **The agent's accounts take its
+name**, on the operator's word of 2026-11-16: the box's agent-creation tool lays them at
+setup, named from `weaver-<name>`, and the image carries no fixed account for the agent
+(section 6.2). On the state drive each agent has a directory of its own under the state
+mount, named for it, which holds the agent's folder and its home side by side, and a
+host lays the same under its state directory. **The trace is never written to the
+agent's state or anywhere the agent can reach**, on the operator's word of 2026-11-17:
+it goes to Weaver Web, which stores it outside the agent's reach, so nothing on the
+state drive holds it beside the agent's state or save points (section 10). Every
+account's name and every path are the image's and WeaverAgent's, this section repeating
+section 6.2's naming without owning it, and none enters this repository
+(`weaver-web-PRD` section 10.4). The refusal is admin's, since load is admin's verb, so
+the representation this document holds is admin's answer to `load`, which renders as it
+came, as every refusal does (section 7.2). The report of the sizes reaches the console
+through admin-con, the console's one reach into an appliance, so its carrier at the
+box's seam is `weaver-admin-operator-contract`'s, and this document builds against the
+contract once it is merged. The form of the report, which carrier it takes at that seam,
+and where the console says that storage is not sufficient, are section 10's. So are the
+sizes that count as sufficient, which no ruling assigns to a document.
 
 **Load and unload.** **Nothing in this framework or in the image autostarts the agent**,
 on the operator's ruling of 2026-11-15, and load and unload need no management of a
@@ -7629,7 +7630,7 @@ two connectors report.
 | a lost word writes no row | perturbation in `src/enrollment_tests.rs`: a box that closes after the answer and before its word leaves no row and no link on the setup, the act's outcome `failed`, and the page answering the entry draws no row for the name. Write the row whether the word came or not, and a row stands for an answer no box adopted |
 | on `unknown` the Pair page shows what the write made, the row's box and its live credentials' fingerprints | perturbation in `src/enrollment_tests.rs`: a `replace box` whose admin's session closes between the answer and the box's word does not commit, the box reads no last word, and the page answering the entry shows the old box and its credentials' fingerprints and not the answer's; a `replace box` that commits, its box gone before the last word, shows the new box and the new certificates' fingerprints on the Pair page; and after a lost word for `pair` the page draws no row. Draw the answer's fingerprints in the rows' place, and the page after the write that did not commit shows them, which would match the box's line whether the write committed or not |
 | a row's box changes only through the replace-box write, and the row keeps the box it held | perturbation in `src/enrollment_tests.rs` and in the schema (migration `0030`): a `replace box` keeps the row's identity, sets its box and its new credentials, and keeps the old box in `agent_box`, and an update moving a row's box outside that write is refused. Write the new box without the history's row, and the schema refuses the write; drop the schema's trigger too, and the old box leaves the record |
-| a replacement's drive setup mounts the state drive it carries and never formats it | perturbation in `src/enrollment_tests.rs`, against the real listener with the box's own commands: `setup describe` answers `replacement` `false` after a `pair` and `true` after a `replace box`, under the replacement's credential, and the replaced box's credential is refused. Answer false after a replacement, and the test fails, which would send the carried drive to the format. `describe`'s other members, the picks, the need and the laying once Confirm stands, are shown in `src/setup_place_tests.rs`. The mount, its check, its refusal and the refusal of the carried disk as the models drive are the image's script's and tested there (`weaver-web-PRD` section 8) |
+| `setup describe` answers `replacement` true after a replace-box write alone | perturbation in `src/enrollment_tests.rs`, against the real listener with the box's own commands: `setup describe` answers `replacement` `false` after a `pair` and `true` after a `replace box`, under the replacement's credential, and the replaced box's credential is refused. Answer false after a replacement, and the test fails. `describe`'s other members, the picks, the need and the laying once Confirm stands, are shown in `src/setup_place_tests.rs`. The drive setup reads no `replacement` (the operator's ruling of 2026-11-24); its keep, erase and format are the appliance's script's and tested there (`weaver-web-PRD` section 8) |
 | a setup ask is refused while its credential's connection stands, and counts for nothing in presence | perturbation in `src/enrollment_tests.rs`, against the real listener with the box's own commands: two setup asks in turn are each answered and leave the row's admin plane unconnected, with no link time, not present and still labelled setup running; beside a standing admin connection, `setup describe` and `setup report` are refused `already_connected` and no report lands. Admit the ask without the live connection's check, and the ask beside it is answered; write the plane's link state at a setup ask, and the row reads the admin plane connected |
 | a setup ask not answered within the silence bound or 20 seconds of its connection's accept, whichever is shorter, its lookup and admission included, is refused `store_unavailable` within the box's own bound and lets its claim go, and a lookup that fails is refused `store_unavailable` | perturbation in `src/enrollment_tests.rs`, against the real listener with the box's own commands. `a_setup_ask_the_store_holds_past_the_bound_is_refused_and_lets_its_claim_go`: a report held behind the setup's row, locked by another transaction, and a describe whose store call stalls are each refused `store_unavailable` within the box's own bound, the held report has landed nothing once the hold goes, and the next ask is answered. Await the report with no bound, and the box reads `unknown`. Await the describe with no bound, and it reads `fault`. Land the report outside its transaction before its checks, and the held report lands once the hold goes. `a_setup_ask_whose_admission_waits_is_refused_within_the_boxs_bound`: a describe whose admission waits on the agent's row, held by another transaction, is refused `store_unavailable` within a box's bound under the silence bound, and the next ask is answered. Run the admission outside the deadline, or bound the ask by the silence bound alone, and the box gives up first, reading `fault`. `a_setup_ask_whose_lookup_waits_is_refused_within_the_boxs_bound`: a describe whose lookup waits for a connection, the store's pool held past the box's bound, is refused `store_unavailable` within it, and the next ask is answered. Make the deadline after the lookup, the lookup unbounded, or run the lookup outside the deadline, and the box gives up first. `a_setup_ask_whose_lookup_and_admission_wait_is_refused_within_the_boxs_bound`: a lookup that waits 0.8 s, then an admission that waits on the agent's row, are refused at the deadline from the accept, within a box's bound of 1.4 s. Make the admission's deadline after the lookup, and the box gives up first. `a_setup_ask_whose_lookup_fails_is_refused_store_unavailable`: a lookup failed by the test's lever is refused `store_unavailable`, and the next ask is answered. End the connection with no refusal, and the box reads `fault` (each measured) |
 | the setup keeps the latest report of each stage, verbatim | perturbation in `src/enrollment_tests.rs`: a pairing report, a drives report and the pairing report run again leave the second pairing report and the drives report, each byte for byte. Keep one report per setup, and the pairing report run again replaces the drives stage's |
@@ -7801,7 +7802,7 @@ two connectors report.
 | each pane a report feeds carries the report's status, read, refused, misfiled or waiting, and the directories page shows each directory's judgment on it, read from the latest report of either stage | perturbation in `src/setup_panes_tests.rs`, `the_pairing_pages_report_is_served_waiting_refused_misfiled_and_read`, `the_directories_page_draws_the_directories_as_mounted_with_their_judgments` and `the_placement_page_names_a_kept_device_a_later_report_lacks`, and end to end in `src/enrollment_tests.rs`, `the_panes_are_served_in_each_status_as_the_box_reports` and `src/enrollment_tests.rs`, `the_reports_a_box_sends_feed_placement_and_confirm`: draw a waiting report healthy, and the pairing stage's report's pane and the end-to-end panes fail; draw the devices refused as waiting, and the placement page fails; drop the unmounted drive's judgment, or judge the state drive under at the figure, and the directories page fails (each measured); read the directories from the `drives` stage's report alone, and a `pairing` report alone is drawn waiting (measured 2026-11-24) |
 | once the box is paired, the Pair page shows the pairing stage's report in a pane that holds no form, saying before it arrives what sends it; an unpaired setup's Pair page shows none, and the directories page does not show it | perturbation in `src/setup_panes_tests.rs`, `the_pairing_pages_report_is_served_waiting_refused_misfiled_and_read`, and end to end in `src/enrollment_tests.rs`, `the_panes_are_served_in_each_status_as_the_box_reports`: draw the pane whether or not the box is paired, and the unpaired setup's Pair page draws it; read no report for the Pair page, and the paired one draws none (each measured 2026-11-24) |
 | a new setup's checkbox starts checked, and a setup saved unchecked stays unchecked | perturbation in `src/setup_tests.rs`, `a_name_outside_the_rule_is_refused_opening_no_setup` and `the_loopback_warning_shows_for_a_virtual_machine_alone`: begin a setup with the column's default, and its checkbox starts unchecked (measured 2026-11-24) |
-| the requirements page is reached from Create new agent alone, and an agent is named from it alone | perturbation in `src/setup_tests.rs`, `the_requirements_page_is_reached_from_create_new_agent_alone`: Pair a box holds Create new agent and no name's field, the requirements page states its panes in order and ends in the name's form, its one, naming no CPU requirement and offering no host install, and no other page links it or holds the name's form, each read with the setup's box not paired and no register row standing, once paired, and once a second row is registered; draw the name's form on Pair a box beside Create new agent, or on the unpaired Pair page alone, or link the requirements page from `/setup` while no declaration is open, and it fails (measured 2026-11-24) |
+| the requirements page is reached from Create new agent alone, and an agent is named from it alone | perturbation in `src/setup_tests.rs`, `the_requirements_page_is_reached_from_create_new_agent_alone`: Pair a box holds Create new agent and no name's field, the requirements page states its panes in order, the two disks' five statements in order, and ends in the name's form, its one, naming no CPU requirement and offering no host install, and no other page links it or holds the name's form, each read with the setup's box not paired and no register row standing, once paired, and once a second row is registered; draw the name's form on Pair a box beside Create new agent, or on the unpaired Pair page alone, or link the requirements page from `/setup` while no declaration is open, or drop the two disks' sentence that the appliance comes with no disk, and it fails (measured 2026-11-24) |
 | a value a report chose is drawn through the templates' escaping | perturbation in `src/setup_panes_tests.rs`, `a_value_a_report_chose_is_drawn_escaped`, and end to end in `src/enrollment_tests.rs`, `the_panes_are_served_in_each_status_as_the_box_reports`: draw the machine's product through askama's `safe` filter, and a script element stands on the page (each measured) |
 | a refused report is logged once, at its arrival, with its detail, and its log can change neither the write nor its answer | perturbation in `src/enrollment_tests.rs`, `a_refused_reports_arrival_is_logged_once_with_its_detail_escaped`: drop the line, and none is logged; log the detail in its debug form, and the escape is doubled; log at each page's read as well, and two views add lines; refuse the write where the reader refuses, and the box's report is not accepted (each measured) |
 | the base's identity is BLAKE3 over the parts in split order | perturbation in `src/hugging_face/base_identity.rs`'s tests: hash in the listing's order, or part 1 alone, and the digest differs from BLAKE3 over part 1's bytes, then part 2's (each measured) |
@@ -8370,7 +8371,7 @@ a `web-` assertion beside `weaver-admin`'s.
   section 8). Settled by those asks, then by the act of the box's pull.
 - **Where the console holds the operator's SSH public key, closed 2026-11-16 by section
   6.2**, opened the same day (section 8.2): a console setting, one or more keys, an
-  admin's write, which the setup script's drive-setup run fetches with `admin-con setup
+  admin's write, which the setup script fetches after pairing with `admin-con setup
   describe` (section 8.3).
 - **The state drive's size, closed 2026-11-17 by section 6.2**, opened 2026-11-16
   (section 8.3). The operator's rulings of 2026-11-16 (setup pages) state every size in

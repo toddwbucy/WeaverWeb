@@ -30,6 +30,8 @@ use sqlx::Row;
 
 use crate::config::ServerConfig;
 use crate::store::Store;
+use crate::store::audit::{PersonMethod, Principal, Target};
+use crate::store::identity;
 
 /// **The session's cookie** (design section 6). The `__Host-` prefix makes
 /// a browser refuse it unless it is `Secure`, has `Path=/` and has no
@@ -90,6 +92,127 @@ impl Session {
     /// be renamed and an author must not move with them.
     pub fn author(&self) -> &str {
         &self.person_id
+    }
+}
+
+/// **No sign-in, for development** (the operator's ruling of 2026-11-21, the
+/// config's `no_sign_in_as`): every browser request is served as one named
+/// person, through a standing session this server opens for them by the
+/// sign-in token's own path, the host's issue and then its redemption, so
+/// each is audited as it always is and everything past the gate (the grant
+/// checks, the authors, the session a write is held to) is unchanged. No
+/// cookie is read and none is set. **Anyone who reaches the listener is that
+/// person**, so the listener's exposure is the box's to hold, and release
+/// removes this.
+pub struct Standing {
+    cfg: ServerConfig,
+    name: String,
+    /// The standing session's bearer, held in memory alone. The lock is kept
+    /// across a use, so two requests at once never open two sessions.
+    bearer: tokio::sync::Mutex<Option<String>>,
+}
+
+/// The author the host's issue is recorded under where the server issues
+/// the standing session's token to itself.
+const STANDING_AUTHOR: &str = "no_sign_in_as";
+
+/// The standing person of this process, set once at start by the server
+/// and by nothing else, so a test never serves under it by accident.
+static STANDING: std::sync::OnceLock<Standing> = std::sync::OnceLock::new();
+
+impl Standing {
+    /// The standing person the config names, or `None` where it names none
+    /// and sign-in is required as before.
+    pub fn from_config(cfg: &ServerConfig) -> Option<Self> {
+        let name = cfg.no_sign_in_as.clone()?;
+        Some(Self {
+            cfg: cfg.clone(),
+            name,
+            bearer: tokio::sync::Mutex::new(None),
+        })
+    }
+
+    /// The person's name, as the config gives it.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// **Serve every request of this process as the standing person**, from
+    /// here on; the first to stand stays.
+    pub fn stand(self) {
+        let _ = STANDING.set(self);
+    }
+
+    /// **The standing session, at this use**: the one held where it still
+    /// serves, and a fresh one opened where none is held or the held one has
+    /// ended (closed, idle, expired, its person disabled). `None` where no
+    /// enabled person holds the name, which the pages answer as any request
+    /// with no session.
+    pub async fn session(
+        &self,
+        store: &Store,
+        policy: &Policy,
+        used: bool,
+    ) -> anyhow::Result<Option<Session>> {
+        let mut held = self.bearer.lock().await;
+        if let Some(bearer) = held.as_deref()
+            && let Ok(session) = checked(store, policy, bearer, used).await?
+        {
+            return Ok(Some(session));
+        }
+        *held = self.open(store).await?;
+        match held.as_deref() {
+            Some(bearer) => Ok(checked(store, policy, bearer, used).await?.ok()),
+            None => Ok(None),
+        }
+    }
+
+    /// A session opened for the standing person: the host's sign-in token,
+    /// one minute long, issued and audited as the host's command is, then
+    /// redeemed and audited as the sign-in page redeems one. The bearer, or
+    /// `None` where the host's issue is refused (no such person, or a
+    /// disabled one) or the token no longer redeems.
+    async fn open(&self, store: &Store) -> anyhow::Result<Option<String>> {
+        let issued = crate::host::sign_in_token(
+            store,
+            &self.cfg,
+            &self.name,
+            Some(1),
+            Some(STANDING_AUTHOR),
+        )
+        .await;
+        if !issued.ok {
+            tracing::error!(
+                "no_sign_in_as names {}, and no session was opened for them: {}",
+                self.name,
+                issued.value
+            );
+            return Ok(None);
+        }
+        let Some(token) = issued.value["token"].as_str() else {
+            anyhow::bail!("the host's sign-in token answer carries no token");
+        };
+        let token_digest = identity::digest(token);
+        let name_key = identity::name_key(&self.name);
+        let Some(person_id) = store.sign_in_token_person(&token_digest, &name_key).await? else {
+            return Ok(None);
+        };
+        let principal = Principal::Person {
+            person_id: &person_id,
+            method: PersonMethod::SignInToken,
+        };
+        let first = store
+            .audit_first(principal, Target::Person(&person_id), "session open")
+            .await?;
+        let opened =
+            open_by_sign_in_token(store, &token_digest, &name_key, &person_id, &first).await;
+        if !matches!(opened, Ok(Some(_)))
+            && !crate::store::commit::outcome_unknown(&opened)
+            && let Err(e) = store.audit_outcome(&first, false).await
+        {
+            tracing::error!("the session's opening outcome record {first} was not written: {e:#}");
+        }
+        opened
     }
 }
 
@@ -154,6 +277,9 @@ pub async fn session(
     policy: &Policy,
     headers: &HeaderMap,
 ) -> anyhow::Result<Option<Session>> {
+    if let Some(standing) = STANDING.get() {
+        return standing.session(store, policy, true).await;
+    }
     let Some(bearer) = bearer(headers) else {
         return Ok(None);
     };
@@ -169,6 +295,9 @@ pub async fn session_in_background(
     policy: &Policy,
     headers: &HeaderMap,
 ) -> anyhow::Result<Option<Session>> {
+    if let Some(standing) = STANDING.get() {
+        return standing.session(store, policy, false).await;
+    }
     let Some(bearer) = bearer(headers) else {
         return Ok(None);
     };

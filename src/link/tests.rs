@@ -2079,6 +2079,7 @@ pub(super) fn lab_config(lab: &Lab) -> crate::config::ServerConfig {
         session_absolute_secs: 43200,
         operations_log: None,
         model_cache: None,
+        no_sign_in_as: None,
         sign_in: vec![crate::config::SignInMethod::Passkey],
     }
 }
@@ -3125,6 +3126,7 @@ fn a_staging_entry_swapped_before_the_publish_is_refused() {
         session_absolute_secs: 43200,
         operations_log: None,
         model_cache: None,
+        no_sign_in_as: None,
         sign_in: vec![crate::config::SignInMethod::Passkey],
     };
     let out = tmp.path().join("out");

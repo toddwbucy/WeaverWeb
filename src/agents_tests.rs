@@ -73,6 +73,7 @@ pub(crate) fn server_config(
         session_absolute_secs: 43200,
         operations_log: None,
         model_cache: None,
+        no_sign_in_as: None,
         sign_in: vec![crate::config::SignInMethod::Passkey],
     }
 }

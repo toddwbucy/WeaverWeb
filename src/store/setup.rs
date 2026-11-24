@@ -136,7 +136,8 @@ const SELECT: &str = "SELECT s.setup_id, s.name, s.virtual_machine, p.name AS be
      FROM agent_setup s JOIN person p ON p.person_id = s.begun_by";
 
 impl Store {
-    /// **The setups left open**, the oldest first, for the start page.
+    /// **The setups left open**, the oldest first, for the start page and
+    /// Pair a box.
     pub async fn open_setups(&self) -> anyhow::Result<Vec<Setup>> {
         let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
             "{SELECT} WHERE s.state = 'open' ORDER BY s.begun_at, s.setup_id"
@@ -157,7 +158,7 @@ impl Store {
         Ok(row.as_ref().map(setup_of))
     }
 
-    /// **Whether an agent stands in the register**, so the start page draws
+    /// **Whether an agent stands in the register**, so Pair a box draws
     /// New agent in the name's place. A retired row still stands there.
     pub async fn an_agent_stands(&self) -> anyhow::Result<bool> {
         Ok(sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM agent)")
@@ -196,7 +197,7 @@ impl Store {
         Ok(Ok(()))
     }
 
-    /// **The pairing page's checkbox**, over the open setup read at
+    /// **The Pair page's checkbox**, over the open setup read at
     /// `version`. Stale where the row is not what the page read.
     pub async fn setup_machine(
         &self,

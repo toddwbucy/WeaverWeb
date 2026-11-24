@@ -228,7 +228,7 @@ impl std::fmt::Display for Refusal {
             ),
             Refusal::SetupNameHeld(name) => write!(
                 f,
-                "an open setup holds the name {name}, and one setup holds a name at a time, so continue it from the start page"
+                "an open setup holds the name {name}, and one setup holds a name at a time, so continue it from Pair a box, or from Declarations once its box is paired"
             ),
             Refusal::NoSuchSetup => write!(f, "no such setup"),
             Refusal::NoSuchKey => write!(f, "no such SSH key"),

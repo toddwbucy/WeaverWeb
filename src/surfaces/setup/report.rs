@@ -1,4 +1,4 @@
-//! **The panes a box's report feeds** (Spec 6.2): the pairing page's report
+//! **The panes a box's report feeds** (Spec 6.2): the pairing stage's report
 //! and the drives page's drives as mounted, each a stage's report as the
 //! source reads it (`crate::box_report`), and the status each carries:
 //! read, refused, misfiled or waiting. A refused report is drawn by its

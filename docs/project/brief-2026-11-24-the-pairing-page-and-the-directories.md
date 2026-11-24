@@ -178,3 +178,25 @@ Acceptance:
 - Confirm's post on a pairing-stage report alone writes a tuple, and a test reads it.
 - A test reads the waiting-box table on the Pair page.
 - `git diff main` stays empty over the five box-command files at every head.
+
+## Addendum 3, 2026-11-24: the second review
+
+The Planner's review of child 5 found eight points. They land as one more commit on
+child 5 and one more on child 0.
+
+Planner rulings:
+
+- Where the placement page offers no card, its save leaves the kept devices as stored.
+- A confirmed setup's Pair page shows the machine's kind as text, and a post of it is
+  refused as a confirmed setup's other writes are.
+- The margin's warning states the shortfall in a unit that shows it.
+- A fragment of an unpaired setup's declaration is refused as its writes are.
+- The answers to the Pair page's forms call the server "Weaver Web".
+
+Acceptance:
+
+- With two reports that both read and differ in cards, the pairing one the later,
+  Placement offers the later report's cards, and Confirm's post is refused naming a kept
+  device the later report lacks.
+- A placement saved while the latest report does not read keeps the devices stored
+  before it.

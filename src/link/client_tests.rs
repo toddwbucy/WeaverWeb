@@ -618,8 +618,17 @@ async fn turns_past_the_in_flight_bound_wait_in_arrival_order() {
         );
     }
     gate.seen.answers.add_permits(2);
-    for (close, text) in closes.into_iter().zip(&texts) {
-        let close = close.await.unwrap().unwrap();
+    // One deadline over every close: a reply that stalls fails the test
+    // rather than holding the suite.
+    let until = tokio::time::Instant::now() + SOON;
+    for (i, (close, text)) in closes.into_iter().zip(&texts).enumerate() {
+        let close = tokio::time::timeout_at(until, close)
+            .await
+            .unwrap_or_else(|_| {
+                panic!("turn {i} did not close within {SOON:?} of the last permits")
+            })
+            .unwrap()
+            .unwrap();
         assert_eq!(close.text.as_deref(), Some(text.as_str()));
     }
     assert_eq!(gate.seen.max.load(Ordering::SeqCst), 2, "the bound held");

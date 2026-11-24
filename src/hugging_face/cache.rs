@@ -262,7 +262,14 @@ impl Cache {
         if unsafe { libc::statvfs(path.as_ptr(), &mut stat) } != 0 {
             return Err(io::Error::last_os_error());
         }
-        Ok(stat.f_bavail as u64 * stat.f_frsize as u64)
+        // The two members are `u64` on x86_64 with glibc, where the casts
+        // change nothing, and narrower on other targets, where they widen.
+        #[allow(
+            clippy::unnecessary_cast,
+            reason = "statvfs's f_bavail and f_frsize are not u64 on every target"
+        )]
+        let free = stat.f_bavail as u64 * stat.f_frsize as u64;
+        Ok(free)
     }
 }
 

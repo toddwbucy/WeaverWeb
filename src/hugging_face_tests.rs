@@ -213,6 +213,7 @@ async fn rig() -> Option<Rig> {
         idle: Duration::from_secs(3600),
         absolute: Duration::from_secs(12 * 3600),
         write_bound: Duration::from_secs(60),
+        standing: None,
     };
     let surface = gate::guard(
         crate::surfaces::script_policy(routes(Seams {
@@ -742,6 +743,7 @@ fn config(dir: &std::path::Path) -> crate::config::ServerConfig {
         session_absolute_secs: 43200,
         operations_log: None,
         model_cache: None,
+        no_sign_in_as: None,
         sign_in: vec![crate::config::SignInMethod::Passkey],
     }
 }

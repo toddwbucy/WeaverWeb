@@ -26,12 +26,13 @@ const PASSKEY: &[SignInMethod] = &[SignInMethod::Passkey];
 /// The one answer every token that cannot sign in gets.
 const NO_TOKEN: &str = "no sign-in by token is open for that name and token";
 
-fn policy() -> gate::Policy {
+pub(crate) fn policy() -> gate::Policy {
     gate::Policy {
         origin: Some(ORIGIN.to_owned()),
         idle: Duration::from_secs(3600),
         absolute: Duration::from_secs(12 * 3600),
         write_bound: Duration::from_secs(60),
+        standing: None,
     }
 }
 
@@ -56,7 +57,7 @@ fn app(s: &Store, sign_in: &[SignInMethod]) -> axum::Router {
     )
 }
 
-fn cfg(sign_in: &[SignInMethod]) -> ServerConfig {
+pub(crate) fn cfg(sign_in: &[SignInMethod]) -> ServerConfig {
     ServerConfig {
         listen: "127.0.0.1:0".into(),
         link_listen: "127.0.0.1:0".into(),
@@ -74,12 +75,13 @@ fn cfg(sign_in: &[SignInMethod]) -> ServerConfig {
         session_absolute_secs: 43200,
         operations_log: None,
         model_cache: None,
+        no_sign_in_as: None,
         sign_in: sign_in.to_vec(),
     }
 }
 
 /// A person, enabled and holding nothing.
-async fn person(s: &Store, name: &str) -> String {
+pub(crate) async fn person(s: &Store, name: &str) -> String {
     sqlx::query_scalar("INSERT INTO person (name, name_key) VALUES ($1, $2) RETURNING person_id")
         .bind(name)
         .bind(identity::name_key(name))
@@ -765,4 +767,94 @@ async fn the_host_reset_revokes_a_sign_in_token_and_leaves_its_session() {
         gate::at_use(s, &policy(), &session).await.unwrap().is_ok(),
         "the reset leaves a token's session standing"
     );
+}
+
+/// **No sign-in, for development** (the operator's ruling of 2026-11-21):
+/// with a standing person named, a use is served as that person through one
+/// standing session, opened by the host's issue and its redemption and
+/// audited as each; a session that ended is replaced at the next use; a name
+/// no enabled person holds serves no one; and a config naming none has no
+/// standing person.
+#[tokio::test]
+async fn a_standing_person_is_served_with_no_sign_in() {
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let ada = person(s, "ada").await;
+    let mut config = cfg(&[SignInMethod::Token]);
+    assert!(gate::Standing::from_config(&config).is_none());
+    config.no_sign_in_as = Some("ada".into());
+    let standing = gate::Standing::from_config(&config).expect("a standing person is named");
+    assert_eq!(standing.name(), "ada");
+
+    let first = standing
+        .session(s, &policy(), true)
+        .await
+        .unwrap()
+        .expect("served as ada");
+    assert_eq!(first.person_id, ada);
+    assert_eq!(first.name, "ada");
+    assert_eq!(first.passkey_id, None);
+    let again = standing
+        .session(s, &policy(), false)
+        .await
+        .unwrap()
+        .expect("served again");
+    assert_eq!(again.session_id, first.session_id, "one standing session");
+    assert_eq!(rows(s, "SELECT count(*) FROM session").await, 1);
+    assert_eq!(
+        rows(
+            s,
+            "SELECT count(*) FROM session WHERE method = 'sign-in token' AND passkey_id IS NULL"
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        rows(
+            s,
+            "SELECT count(*) FROM sign_in_token WHERE ended = 'redeemed'"
+        )
+        .await,
+        1,
+        "the token the server issued itself is spent"
+    );
+    assert!(
+        rows(
+            s,
+            "SELECT count(*) FROM audit WHERE action = 'person sign-in-token'"
+        )
+        .await
+            >= 1,
+        "the issue is audited as the host's"
+    );
+    assert!(
+        rows(
+            s,
+            "SELECT count(*) FROM audit WHERE action = 'session open'"
+        )
+        .await
+            >= 1,
+        "the opening is audited"
+    );
+
+    sqlx::query("UPDATE session SET closed_at = now() WHERE session_id = $1")
+        .bind(first.session_id)
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    let next = standing
+        .session(s, &policy(), true)
+        .await
+        .unwrap()
+        .expect("a fresh session where the held one ended");
+    assert_ne!(next.session_id, first.session_id);
+    assert_eq!(next.person_id, ada);
+    assert_eq!(rows(s, "SELECT count(*) FROM session").await, 2);
+
+    config.no_sign_in_as = Some("nobody".into());
+    let nobody = gate::Standing::from_config(&config).unwrap();
+    assert_eq!(nobody.session(s, &policy(), true).await.unwrap(), None);
+    assert_eq!(rows(s, "SELECT count(*) FROM session").await, 2);
 }

@@ -7,7 +7,7 @@ use super::Authority;
 use super::client::{Backoff, Connect, Incoming, Link, LinkConfig, LinkStatus};
 use super::frames::{FromClient, LineReader, Plane, Refusal, ToClient};
 use super::gate_con::{self, GateConConfig};
-use super::listener::{Listener, TurnError};
+use super::listener::{Act, Listener, TurnError, TurnText};
 use super::tests::{Lab, SILENCE, SOON, lab_config, operator};
 use crate::adapters::gate::{self, CLOSE_BOUND, GateClose, GateError, LINE_BOUND};
 use crate::store::AgentId;
@@ -29,7 +29,6 @@ pub(super) const FAST: Backoff = Backoff {
 };
 
 /// What the fake gate saw.
-#[derive(Default)]
 struct GateSeen {
     /// Exchanges open now, and the most at once.
     now: AtomicUsize,
@@ -38,6 +37,21 @@ struct GateSeen {
     started: Mutex<Vec<String>>,
     /// Held exchanges whose client closed before the answer.
     abandoned: AtomicUsize,
+    /// What a `wait:` exchange waits on: one permit answers one, in the
+    /// order they reached the gate, since the semaphore is fair.
+    answers: tokio::sync::Semaphore,
+}
+
+impl Default for GateSeen {
+    fn default() -> Self {
+        Self {
+            now: AtomicUsize::new(0),
+            max: AtomicUsize::new(0),
+            started: Mutex::new(Vec::new()),
+            abandoned: AtomicUsize::new(0),
+            answers: tokio::sync::Semaphore::new(0),
+        }
+    }
 }
 
 /// A fake gate: one request line in, one close line out, the shape chosen
@@ -117,6 +131,11 @@ impl FakeGate {
                         "hangup" => None,
                         "toolong" => Some(vec![b'x'; CLOSE_BOUND + 16]),
                         "big" => Some(close_line(&"y".repeat(900 * 1024))),
+                        t if t.starts_with("wait:") => {
+                            let permit = state.answers.acquire().await.unwrap();
+                            permit.forget();
+                            Some(close_line(t))
+                        }
                         t if t.starts_with("hold:") => {
                             let ms: u64 = t.split(':').nth(1).unwrap().parse().unwrap();
                             let mut probe = [0u8; 1];
@@ -518,9 +537,17 @@ async fn a_second_gate_con_on_one_credential_is_refused_and_keeps_retrying() {
     first.stop().await;
 }
 
-/// **Turns past the in-flight bound wait in arrival order and all answer.**
-/// Eight held asks against a bound of two: at most two reach the gate at
-/// once, and they reach it in the order they were asked.
+/// **Turns past the in-flight bound are promoted in the order their frames
+/// reached the link, and all answer.** Eight asks against a bound of two,
+/// each enqueued only once the one before it is: `ask_as_person` returns
+/// after its frame is in the connection's channel, which is FIFO to
+/// gate-con, so the link carries them in ask order by construction and no
+/// delay has to outlast an ask's database work. The fake gate answers a
+/// `wait:` exchange only when the test frees one, so one slot frees at a
+/// time and each promotion is seen alone before the next: what is asserted
+/// is gate-con's promotion order, and two promoted turns never race to the
+/// gate. Each asker is made before the first ask, a person holding at most
+/// `PERSON_SHARE` asks.
 #[tokio::test]
 async fn turns_past_the_in_flight_bound_wait_in_arrival_order() {
     let Some(lab) = Lab::open().await else { return };
@@ -533,24 +560,69 @@ async fn turns_past_the_in_flight_bound_wait_in_arrival_order() {
     gate.seen.started.lock().unwrap().clear();
     gate.seen.max.store(0, Ordering::SeqCst);
 
-    let mut asks = Vec::new();
-    let mut texts = Vec::new();
-    for i in 0..8 {
-        let text = format!("hold:250:{i}");
-        texts.push(text.clone());
-        let listener = lab.listener.clone();
-        let asked = id.clone();
-        asks.push(tokio::spawn(
-            async move { turn(&listener, &asked, &text).await },
-        ));
-        tokio::time::sleep(Duration::from_millis(30)).await;
+    let started = |n: usize| {
+        let seen = gate.seen.clone();
+        async move {
+            let until = tokio::time::Instant::now() + SOON;
+            loop {
+                let now = seen.started.lock().unwrap().clone();
+                if now.len() >= n {
+                    return now;
+                }
+                assert!(
+                    tokio::time::Instant::now() < until,
+                    "the gate saw {now:?}, waiting for {n}"
+                );
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        }
+    };
+
+    let mut askers = Vec::new();
+    for _ in 0..8 {
+        askers.push(operator(lab.listener.store(), &id).await);
     }
-    for (ask, text) in asks.into_iter().zip(&texts) {
-        let close = ask.await.unwrap().unwrap();
+    let texts: Vec<String> = (0..8).map(|i| format!("wait:{i}")).collect();
+    let mut closes = Vec::new();
+    for (i, (asker, text)) in askers.iter().zip(&texts).enumerate() {
+        let admission = lab
+            .listener
+            .admit_ask(&asker.person_id)
+            .expect("admitted, under every bound");
+        let enqueued = lab
+            .listener
+            .ask_as_person(
+                admission,
+                asker,
+                &id,
+                Act::Turn(TurnText::new(text.clone())),
+            )
+            .await
+            .expect("enqueued");
+        closes.push(tokio::spawn(enqueued.close()));
+        // The first two go straight to the gate: each is seen there before
+        // the next is asked, so their two exchanges never race either.
+        if i < 2 {
+            started(i + 1).await;
+        }
+    }
+    assert_eq!(*started(2).await, texts[..2], "the first two, in order");
+
+    for n in 3..=8 {
+        gate.seen.answers.add_permits(1);
+        let seen = started(n).await;
+        assert_eq!(
+            seen,
+            texts[..n],
+            "the turn promoted when a slot freed is the earliest waiting"
+        );
+    }
+    gate.seen.answers.add_permits(2);
+    for (close, text) in closes.into_iter().zip(&texts) {
+        let close = close.await.unwrap().unwrap();
         assert_eq!(close.text.as_deref(), Some(text.as_str()));
     }
     assert_eq!(gate.seen.max.load(Ordering::SeqCst), 2, "the bound held");
-    assert_eq!(*gate.seen.started.lock().unwrap(), texts, "arrival order");
     con.stop().await;
 }
 

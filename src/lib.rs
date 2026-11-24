@@ -74,6 +74,8 @@ mod ssh_key_tests;
 pub mod stage;
 #[cfg(test)]
 mod stage_tests;
+#[cfg(all(test, feature = "passkeys"))]
+mod standing_tests;
 pub mod store;
 pub mod surfaces;
 pub mod survey;

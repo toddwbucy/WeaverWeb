@@ -4184,19 +4184,19 @@ one-time code the box shows once the operator has compared the fingerprint, with
 checkbox saying whether the box is a virtual machine or a host and a warning where the
 address is localhost and the checkbox says virtual machine (section 8.2). The start page
 lists the paired agents whose declaration is open. The setup pages follow in this order.
-The directories page shows the two directories as the box reports them mounted, the
-operator having laid the disks before pairing, and the running report of the box's
-survey, and on a host the models directory alone, marked unbuilt (section 6.2), with the
-host form planned beside it: the state directory and the models directory the operator
-named, with free space against the need, the models directory prefilled with that user's
-default Hugging Face cache and a command granting the console's account read-write on
-that cache and a models group read (section 8.3). The models page takes the models from
-Hugging Face and states the models directory's need (section 8.3). The placement page
-places each model on a device with its context length, and the confirm page shows the
-deployment tuple in full, which
-Confirm closes. The build page holds the board and the prompt tuple panel, both held,
-and is a one-pane stub marked unbuilt. **Section 6.2 states the pages as built**, each
-part live or held, and what a held part waits on.
+The directories page shows the two directories as the box reports them mounted, from the
+latest report of either stage, the operator having laid the disks before pairing (the
+pairing stage's report itself shows on the Pair page, section 6.2), and on a host the
+models directory alone, marked unbuilt (section 6.2), with the host form planned beside
+it: the state directory and the models directory the operator named, with free space
+against the need, the models directory prefilled with that user's default Hugging Face
+cache and a command granting the console's account read-write on that cache and a models
+group read (section 8.3). The models page takes the models from Hugging Face and states
+the models directory's need (section 8.3). The placement page places each model on a
+device with its context length, and the confirm page shows the deployment tuple in full,
+which Confirm closes. The build page holds the board and the prompt tuple panel, both
+held, and is a one-pane stub marked unbuilt. **Section 6.2 states the pages as built**,
+each part live or held, and what a held part waits on.
 
 **This section is the declaration screen as built on 2026-11-16**, the first of the two
 screens of the rulings of 2026-11-11. **It stays as built beside the setup pages**, its
@@ -5048,8 +5048,8 @@ drawn through the templates' escaping, and none is drawn raw.
 **Which report feeds what**, this document's election of 2026-11-17, revised on the
 Planner's rulings of 2026-11-24 on the plan and on its review:
 
-- The directories page shows the `pairing` stage's report, and the directories as
-  mounted from the latest report of either stage.
+- The directories page shows the directories as mounted, from the latest report of
+  either stage. The `pairing` stage's report itself shows on the Pair page, below.
 - **One tuple stands on one report**: the cards the placement page offers and Confirm
   checks the kept devices against come from the latest report of either stage, as the
   box's members do (`box_report::Reports::cards`, the Planner's ruling of 2026-11-24 on

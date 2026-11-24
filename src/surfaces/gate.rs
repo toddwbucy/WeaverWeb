@@ -119,6 +119,9 @@ pub struct Standing {
     /// The standing session's bearer, held in memory alone. The lock is kept
     /// across a use, so two requests at once never open two sessions.
     bearer: tokio::sync::Mutex<Option<String>>,
+    /// Why the last opening served no one, held so the log carries one line
+    /// per change of reason and not one per request.
+    refused: std::sync::Mutex<Option<String>>,
 }
 
 /// The author the host's issue is recorded under where the server issues
@@ -144,6 +147,7 @@ impl Standing {
             cfg: cfg.clone(),
             name,
             bearer: tokio::sync::Mutex::new(None),
+            refused: std::sync::Mutex::new(None),
         })
     }
 
@@ -198,30 +202,47 @@ impl Standing {
     /// A session opened for the standing person: the host's sign-in token,
     /// one minute long, issued and audited as the host's command is, then
     /// redeemed and audited as the sign-in page redeems one. The bearer, or
-    /// `None` where the host's issue is refused (no such person, or a
-    /// disabled one) or the token no longer redeems.
+    /// `None` where no enabled person holds the name, the host's issue is
+    /// refused, or the token no longer redeems.
+    ///
+    /// **A read holds a refusal, not a write.** The person is read first,
+    /// with no record: where the name names no one, or a disabled person,
+    /// no host issue runs, so a person disabled while the server runs adds
+    /// nothing to the audit at each use, and a re-enable is served at the
+    /// next use with no timer to wait out. A disable landing between this
+    /// read and the issue's transaction writes the issue's one refused pair,
+    /// once for that race.
     async fn open(&self, store: &Store) -> anyhow::Result<Option<String>> {
+        let person = match store.person(&self.name).await? {
+            None => {
+                self.refused_for(Some(format!("no person holds the name {}", self.name)));
+                return Ok(None);
+            }
+            Some(person) if !person.enabled => {
+                self.refused_for(Some(format!("{} is disabled", person.person_id)));
+                return Ok(None);
+            }
+            Some(person) => person,
+        };
         let issued = crate::host::sign_in_token(
             store,
             &self.cfg,
-            &self.name,
+            &person.person_id,
             Some(1),
             Some(STANDING_AUTHOR),
         )
         .await;
         if !issued.ok {
-            tracing::error!(
-                "no_sign_in_as names {}, and no session was opened for them: {}",
-                self.name,
-                issued.value
-            );
+            self.refused_for(Some(issued.value.to_string()));
             return Ok(None);
         }
         let Some(token) = issued.value["token"].as_str() else {
             anyhow::bail!("the host's sign-in token answer carries no token");
         };
         let token_digest = identity::digest(token);
-        let name_key = identity::name_key(&self.name);
+        // The redemption matches the person's canonical name, so the read's
+        // name serves a config naming the person by `pe-` identity too.
+        let name_key = identity::name_key(&person.name);
         let Some(person_id) = store.sign_in_token_person(&token_digest, &name_key).await? else {
             return Ok(None);
         };
@@ -240,7 +261,28 @@ impl Standing {
         {
             tracing::error!("the session's opening outcome record {first} was not written: {e:#}");
         }
+        if matches!(opened, Ok(Some(_))) {
+            self.refused_for(None);
+        }
         opened
+    }
+
+    /// Note why an opening served no one, or that one served: a line at
+    /// error where the reason changes, one at info where the person is
+    /// served again, and nothing where nothing changed.
+    fn refused_for(&self, reason: Option<String>) {
+        let mut last = self.refused.lock().unwrap_or_else(|e| e.into_inner());
+        if *last == reason {
+            return;
+        }
+        match &reason {
+            Some(why) => tracing::error!(
+                "no_sign_in_as names {}, and no session was opened for them: {why}",
+                self.name
+            ),
+            None => tracing::info!("no_sign_in_as: {} is served again", self.name),
+        }
+        *last = reason;
     }
 }
 

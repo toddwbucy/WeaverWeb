@@ -228,3 +228,65 @@ async fn the_start_refuses_a_person_who_cannot_stand() {
     let refused = standing.ready(s).await.unwrap_err().to_string();
     assert!(refused.contains("who is disabled"), "{refused}");
 }
+
+/// **A disabled person writes no audit at each use**: twenty uses while
+/// the standing person is disabled serve no one and leave the audit's row
+/// count as it was; the next use after the person is enabled is served.
+#[tokio::test]
+async fn a_disabled_person_writes_no_audit_at_each_use() {
+    let Some(fresh) = crate::store::read::tests::fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let ada = person(s, "ada").await;
+    sqlx::query("UPDATE person SET enabled = false WHERE person_id = $1")
+        .bind(&ada)
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    let policy = standing_policy("ada");
+    let standing = policy.standing.clone().unwrap();
+    let before = rows(s, "SELECT count(*) FROM audit").await;
+    for _ in 0..20 {
+        assert_eq!(standing.session(s, &policy, true).await.unwrap(), None);
+    }
+    assert_eq!(
+        rows(s, "SELECT count(*) FROM audit").await,
+        before,
+        "twenty refused uses write nothing"
+    );
+    assert_eq!(rows(s, "SELECT count(*) FROM session").await, 0);
+
+    sqlx::query("UPDATE person SET enabled = true WHERE person_id = $1")
+        .bind(&ada)
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    let served = standing
+        .session(s, &policy, true)
+        .await
+        .unwrap()
+        .expect("served once enabled");
+    assert_eq!(served.person_id, ada);
+}
+
+/// **A person named by identity is served too**: the redemption matches
+/// the person's canonical name, read from the store, not the config's
+/// spelling.
+#[tokio::test]
+async fn a_person_named_by_identity_is_served() {
+    let Some(fresh) = crate::store::read::tests::fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let ada = person(s, "ada").await;
+    let policy = standing_policy(&ada);
+    let standing = policy.standing.clone().unwrap();
+    standing.ready(s).await.expect("ada stands by identity");
+    let served = standing
+        .session(s, &policy, true)
+        .await
+        .unwrap()
+        .expect("served by identity");
+    assert_eq!(served.person_id, ada);
+}

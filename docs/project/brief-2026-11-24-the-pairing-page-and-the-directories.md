@@ -200,3 +200,88 @@ Acceptance:
   device the later report lacks.
 - A placement saved while the latest report does not read keeps the devices stored
   before it.
+
+## Addendum 4, 2026-11-24: the operator's rulings, and the requirements page
+
+The operator ruled on 2026-11-24, in the operator's words:
+
+- On point 1, where the report shows (#181): "After a pairing succeeds, the Pair page
+  shows the hardware report, read only. The next page carries it into the declaration.
+  This replaces my ruling of 2026-11-20."
+- On point 2, how the declaration begins: "A. The Pair page leads straight into the next
+  page for that agent."
+- On point 3, the margin: "C. The 10 GB margin is guidance only, stated on the
+  requirements page. No page warns."
+- On point 4, Confirm's "image version" reading "the appliance's version": "Yes."
+- On point 5, the fingerprint in four rows of four groups: "Yes."
+- On the Pair page's checkbox, raised in the second review: "A. The checkbox starts
+  checked."
+- A new page: "'Create new agent' opens a requirements page first. It covers VMs only at
+  this stage. No host install is offered. One note: GB10 Spark-class devices are hardware
+  we want to deploy to and do not have yet."
+- "Rebuild the layout stack to these. Then it leaves draft."
+
+**No placeholder stands after this addendum.** Each of the Spec's five markers gives way
+to the ruling, cited by its date. The PRD's sentences that call these points leans say
+what was ruled.
+
+What changes:
+
+1. **The report moves to the Pair page.** Once the pairing has succeeded, the agent's
+   Pair page shows the pairing stage's report in a pane that holds no form. Before a
+   report arrives, the pane says that none has arrived and what sends it. A report that
+   is refused shows its cause, as the pane does today.
+2. **The Directories page no longer shows the report in full.** It keeps "The directories
+   as mounted", read from the latest report of either stage as now. This is the Planner's
+   reading of "The next page carries it into the declaration", and the operator is asked.
+3. **No page judges the margin.** No judgment, warning, footer or held state names the
+   10 GB margin, on any page. A models directory short of the picks' need is judged as
+   now. The requirements page states the margin, as guidance.
+4. **The checkbox starts checked** for a new setup. A migration that is on `main` is not
+   edited.
+5. **Points 2, 4 and 5 are built already.** Only their markers go.
+6. **The requirements page is new,** as below.
+
+The requirements page:
+
+- **The entry reads "Create new agent".** It stands on Pair a box, in the place of the
+  name's field and of "New agent". It opens the requirements page.
+- **The page ends in the name's field and Begin,** which lead to the agent's Pair page as
+  now. No other way names an agent.
+- **The page states only what a ruling or the Spec already states.** It invents no
+  number. In this order:
+  - an agent runs in a VM made from the appliance, and this version covers VMs only;
+  - "One agent per VM is the recommendation.";
+  - the operator's part, in the operator's words of 2026-11-23: "The operator holds the
+    hypervisor, the cards, the disks and the network between VMs.";
+  - the two disks, in the words of the ruling quoted in this brief, with the 10 GB margin
+    stated as guidance and never judged;
+  - the VM must reach Weaver Web's address and port, which the agent's Pair page shows;
+  - one note, in the operator's words: "GB10 Spark-class devices are hardware we want to
+    deploy to and do not have yet."
+- **The page names no CPU requirement.** The appliance carries its own VM settings.
+- **The page offers no host install,** and no page offers one.
+- The page is read by the same grant as Pair a box, and it holds no form but the name's.
+
+Where the entry stands, that the name's field sits at the page's end, and what the page
+leaves out are the Planner's readings. The operator is asked, and the page is built to
+them meanwhile.
+
+Not in this addendum:
+
+- The name of the page "Pair a box". The operator is asked, and nothing is built for it.
+- Whether pairing comes before the disks. The operator is asked. The sentences that say
+  the operator lays the disks before pairing stand.
+- The Pair page's checkbox itself. It stays, since the ruling was that it starts checked.
+
+Acceptance:
+
+- A new setup's checkbox reads checked, and a setup saved unchecked stays unchecked.
+- A paired setup's Pair page shows the report pane in each of three states: none yet,
+  read, and refused. An unpaired setup's Pair page shows no report pane.
+- A models directory whose filesystem is short of the margin, and holds the picks' need,
+  draws no warning on any page.
+- The requirements page is reached from "Create new agent" alone, and an agent is named
+  from it alone. A post of a name is refused or taken exactly as before.
+- No command on the appliance's side changes, as ruling 2 of this brief says.
+- Every changed behaviour has a test that was seen red with the change removed.

@@ -22,7 +22,7 @@
 //! whose exchange waits on the authority lock or the store never goes silent.
 
 use crate::link::frames::{
-    Line, LineReader, PAIR_FIRST_FRAME_BOUND, PairFromBox, PairToBox, pair_reason,
+    Line, LineReader, PAIR_FIRST_FRAME_BOUND, PairFromBox, PairReport, PairToBox, pair_reason,
 };
 use crate::link::pair_code::Code;
 use crate::link::verbs::is_box;
@@ -81,6 +81,9 @@ pub(crate) type PairConnection = LineReader<TlsStream<TcpStream>>;
 pub struct Taken {
     pub r#box: String,
     pub admin_request: String,
+    /// The first frame's reports, checked at the frame, written by the
+    /// exchange with the row (Spec 8.2).
+    pub reports: Vec<PairReport>,
     pub peer: IpAddr,
     /// The connection, kept alive by its heartbeats until the exchange
     /// writes to it, which only the exchange carries on, so a build without
@@ -433,6 +436,7 @@ pub(crate) async fn serve(start: StartHandshake<TcpStream>, mut cx: Context<'_>)
     let Ok(PairFromBox::Hello {
         mut r#box,
         mut admin_request,
+        mut reports,
     }) = serde_json::from_str::<PairFromBox>(&line)
     else {
         let refused = PairToBox::Refused {
@@ -442,6 +446,15 @@ pub(crate) async fn serve(start: StartHandshake<TcpStream>, mut cx: Context<'_>)
         return;
     };
     if !is_box(&r#box) || admin_request.is_empty() {
+        return;
+    }
+    // **The reports are checked before the box is listed** (Spec 8.2), so
+    // a box without its receipt hears why at once.
+    if let Some(reason) = crate::link::frames::reports_refused(&reports) {
+        let refused = PairToBox::Refused {
+            reason: reason.to_owned(),
+        };
+        close_with(&mut reader, &refused, cx.write_bound).await;
         return;
     }
 
@@ -491,6 +504,7 @@ pub(crate) async fn serve(start: StartHandshake<TcpStream>, mut cx: Context<'_>)
                 let handed = answer.send(Some(Taken {
                     r#box,
                     admin_request,
+                    reports,
                     peer: cx.peer,
                     #[cfg(feature = "enrollment")]
                     connection: Kept::new(reader, cx.cadence, cx.write_bound),
@@ -508,6 +522,7 @@ pub(crate) async fn serve(start: StartHandshake<TcpStream>, mut cx: Context<'_>)
                 }
                 r#box = back.r#box;
                 admin_request = back.admin_request;
+                reports = back.reports;
                 #[cfg(feature = "enrollment")]
                 match back.connection.resume().await {
                     Some(connection) => reader = connection,

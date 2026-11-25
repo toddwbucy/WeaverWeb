@@ -575,9 +575,44 @@ impl std::fmt::Display for Refusal {
 pub const PAIR_PROTOCOL: &[u8] = b"weaver-pair/1";
 
 /// The pairing's first frame's bound, inclusive, excluding the delimiter
-/// (Spec 8.2): the box's name and admin-con's certificate request fit well
-/// inside.
-pub const PAIR_FIRST_FRAME_BOUND: usize = 16 * 1024;
+/// (Spec 8.2): the box's name, admin-con's certificate request and two
+/// reports of `REPORT_BOUND` each, escaped as JSON strings, fit inside.
+pub const PAIR_FIRST_FRAME_BOUND: usize = 288 * 1024;
+
+/// **One of the first frame's reports** (Spec 8.2): its stage and the text
+/// as the survey wrote it, which the console keeps verbatim.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PairReport {
+    pub stage: Stage,
+    pub report: String,
+}
+
+/// **Whether a text is one JSON object** within `REPORT_BOUND`, the check
+/// the box makes before it dials and the console at the first frame and
+/// at a setup report; nothing more of it is parsed (Spec 8.3).
+pub fn one_report(report: &str) -> bool {
+    report.len() <= REPORT_BOUND
+        && report.trim_start().starts_with('{')
+        && serde_json::from_str::<serde::de::IgnoredAny>(report).is_ok()
+}
+
+/// **The first frame's reports refused, or not** (Spec 8.2): `no_report`
+/// without a `pairing` stage report, `report_refused` where one is not one
+/// JSON object within its bound or a stage is named twice.
+pub fn reports_refused(reports: &[PairReport]) -> Option<&'static str> {
+    if reports.iter().any(|r| !one_report(&r.report)) {
+        return Some(pair_reason::REPORT_REFUSED);
+    }
+    let named = |stage: Stage| reports.iter().filter(|r| r.stage == stage).count();
+    if named(Stage::Pairing) > 1 || named(Stage::Drives) > 1 {
+        return Some(pair_reason::REPORT_REFUSED);
+    }
+    if named(Stage::Pairing) == 0 {
+        return Some(pair_reason::NO_REPORT);
+    }
+    None
+}
 
 /// **A frame the box sends on a pairing connection** (Spec 8.2), apart from
 /// the plane frames: a pairing connection carries no credential and speaks
@@ -593,6 +628,11 @@ pub enum PairFromBox {
     Hello {
         r#box: String,
         admin_request: String,
+        /// **The survey's reports**, the receipt (the operator's ruling of
+        /// 2026-11-25): the `pairing` stage's, and at most one `drives`
+        /// stage's. An absent member reads as none, refused `no_report`.
+        #[serde(default)]
+        reports: Vec<PairReport>,
     },
     /// **The box's word** (Spec 8.2, the exchange's step 5): it wrote the
     /// answer, and the console may write the row.
@@ -651,6 +691,11 @@ pub mod pair_reason {
     /// The first frame is not this console's hello: among others the
     /// earlier hello that carried a gate request too (Spec 8.2).
     pub const FRAME_REFUSED: &str = "frame_refused";
+    /// The first frame carries no `pairing` stage report.
+    pub const NO_REPORT: &str = "no_report";
+    /// A report is not one JSON object within its bound, or a stage is
+    /// named twice.
+    pub const REPORT_REFUSED: &str = "report_refused";
 }
 
 #[cfg(test)]

@@ -16,7 +16,7 @@
 //! 5. the box's word awaited within `HANDSHAKE_SECS`, and **a lost word
 //!    writes nothing**;
 //! 6. the row written, or for `replace box` the row's box set beside the
-//!    box it held, with the setup's link, in one identity transaction that
+//!    box it held, with the setup's link and the first frame's reports, in one identity transaction that
 //!    re-checks the session and the admin grant and commits with the
 //!    audit's outcome (`Store::pairing_write_on`), and then the last word.
 //!
@@ -98,6 +98,7 @@ pub async fn run(lock: &mut AuthorityLock, x: Exchange<'_>, taken: Taken) -> End
     let Taken {
         r#box,
         admin_request,
+        reports,
         connection: kept,
         ..
     } = taken;
@@ -188,6 +189,7 @@ pub async fn run(lock: &mut AuthorityLock, x: Exchange<'_>, taken: Taken) -> End
         &pairing,
         &answered,
         &x.authority.fingerprint(),
+        &reports,
     )
     .await;
     let mut connection = kept.resume().await;

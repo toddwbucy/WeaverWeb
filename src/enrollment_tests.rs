@@ -3128,11 +3128,15 @@ async fn an_appliance_that_dialed_before_its_agent_was_named_is_listed_and_pairs
     let first = page(&rig.app, "/pair", &ada).await;
     assert!(
         first.contains(&format!(
-            r#"<label><input type="radio" name="appliance" value="{handle}"> <span class="mono">box-a</span>, from <span class="mono">127.0.0.1</span>, waiting 0 min "#
+            r#"<label><input type="radio" name="appliance" value="{handle}" required> <span class="mono">box-a</span>, from <span class="mono">127.0.0.1</span>, waiting 0 min "#
         )),
         "{first}"
     );
     assert!(!first.contains(&code), "the page never holds the code");
+    assert!(
+        first.contains(r#"<button type="submit">Finalize the pairing</button>"#),
+        "one appliance waits, the button offered: {first}"
+    );
     assert!(
         crate::setup_tests::walk(&first).is_empty(),
         "{:?}",
@@ -3228,7 +3232,7 @@ async fn a_code_of_another_waiting_appliance_is_a_miss_and_pairs_nothing() {
         "the name is kept: {body}"
     );
     assert!(
-        body.contains(&format!(r#"value="{a}" checked>"#)),
+        body.contains(&format!(r#"value="{a}" required checked>"#)),
         "the choice is kept: {body}"
     );
     assert_eq!(setups_named(s, "karl").await, 0, "a miss writes no setup");
@@ -3303,12 +3307,121 @@ async fn three_misses_close_the_chosen_connection_alone() {
     drop(second);
 }
 
+/// **Misses on one appliance leave another's tries whole** (Spec 8.2; the
+/// fix round of 2026-11-25, point 5): two misses on one appliance, then the
+/// other's first miss still says two tries are left, three records, both
+/// still waiting.
+///
+/// Perturbation: count the misses in one counter shared by every waiting
+/// connection, and the other's first miss closes it (measured 2026-11-25).
+#[tokio::test]
+async fn misses_on_one_appliance_leave_anothers_tries_whole() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let first = dial(&rig, &box_keys("box-a").claim).await;
+    let second = dial(&rig, &box_keys("box-b").claim).await;
+    let (a, b) = (
+        handle_of(&rig, "box-a").await,
+        handle_of(&rig, "box-b").await,
+    );
+    let wrong = neither(&first.code().to_string(), &second.code().to_string());
+    for said in ["2 tries are left on it.", "1 try is left on it."] {
+        let (status, _, body) = finalize(&rig, &ada, "karl", &a, wrong).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert!(body.contains(said), "{said}: {body}");
+    }
+    let (status, _, body) = finalize(&rig, &ada, "karl", &b, wrong).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(
+        body.contains("2 tries are left on it."),
+        "the other's first miss: {body}"
+    );
+    assert_eq!(pair_audit(s, "pair").await, (0, 0, 3));
+    assert_eq!(rig.listener.waiting().len(), 2, "both still wait");
+    drop((first, second));
+}
+
+/// **Every compared miss New agent learns of leaves its record** (Spec 8.2;
+/// the fix round of 2026-11-25, point 1): the chosen connection compares,
+/// misses, and ends as it answers, its place given back before the answer
+/// is sent (`pairing::Lever::EndOnMiss`); the post still says two tries
+/// are left and leaves one refusal record, writing no setup.
+///
+/// Perturbation: count the miss at the entry, on the table's slot, as
+/// before the fix round, and the ended connection's miss is answered as
+/// gone with no record (measured 2026-11-25).
+#[tokio::test]
+async fn a_miss_compared_as_its_connection_ends_still_leaves_its_record() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let dialed = dial(&rig, &box_keys("box-a").claim).await;
+    let code = dialed.code().to_string();
+    let a = handle_of(&rig, "box-a").await;
+    rig.listener
+        .set_pairing_lever(Some(crate::link::pairing::Lever::EndOnMiss));
+    let (status, _, body) = finalize(&rig, &ada, "karl", &a, neither(&code, &code)).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(body.contains("2 tries are left on it."), "{body}");
+    assert_eq!(pair_audit(s, "pair").await, (0, 0, 1), "the miss's record");
+    assert_eq!(setups_named(s, "karl").await, 0);
+    assert!(rig.listener.waiting().is_empty(), "the connection ended");
+    drop(dialed);
+}
+
+/// **A chosen appliance that does not answer is said so, and never called
+/// gone** (Spec 8.2; the fix round of 2026-11-25, point 2): the chosen
+/// connection reads the probe and answers none (`pairing::Lever::Silent`),
+/// so the entry's bound passes; the post answers 503 "The appliance you
+/// chose did not answer in time. Enter the code again.", the name and the
+/// choice kept, with no record, the appliance still listed; its code then
+/// pairs it.
+///
+/// Perturbation: answer a silent appliance as gone, and the post says "no
+/// longer waiting" while the list still shows it (measured 2026-11-25).
+#[tokio::test]
+async fn a_chosen_appliance_that_does_not_answer_is_said_so_and_never_called_gone() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let dialed = dial(&rig, &box_keys("box-a").claim).await;
+    let code = dialed.code().to_string();
+    let a = handle_of(&rig, "box-a").await;
+    rig.listener
+        .set_pairing_lever(Some(crate::link::pairing::Lever::Silent));
+    let (status, _, body) = finalize(&rig, &ada, "karl", &a, &code).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert!(
+        body.contains("The appliance you chose did not answer in time. Enter the code again."),
+        "{body}"
+    );
+    assert!(!body.contains("no longer waiting"), "{body}");
+    assert!(
+        body.contains(r#"name="name" value="karl""#),
+        "the name kept: {body}"
+    );
+    assert!(
+        body.contains(&format!(r#"value="{a}" required checked>"#)),
+        "the choice kept: {body}"
+    );
+    assert_eq!(pair_audit(s, "pair").await, (0, 0, 0), "no record");
+    assert_eq!(setups_named(s, "karl").await, 0);
+    assert_eq!(rig.listener.waiting().len(), 1, "still listed");
+    rig.listener.set_pairing_lever(None);
+    let the_box = tokio::spawn(the_box(dialed, Box::Whole));
+    let (status, _, body) = finalize(&rig, &ada, "karl", &a, &code).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let (_, last) = the_box.await.unwrap();
+    assert_eq!(last, Some(LastWord::Paired));
+}
+
 /// **New agent's entry dropped once its code matched still pairs, and makes
 /// its setup** (Spec 8.2, 2.13): the comparison, the match, the first
 /// record, the exchange and the outcome run in one task a dropped request
 /// cannot cut. The request is dropped while its first record is held, and
 /// the box still hears `paired`, one row and one setup standing for the
-/// name, linked.
+/// name, the setup linked to the row as `pair`.
 ///
 /// Perturbation: run `continue_finalize` in the request's own future, and
 /// the dropped request takes the box's connection with it (measured
@@ -3352,6 +3465,18 @@ async fn new_agents_entry_dropped_once_matched_still_pairs_and_makes_its_setup()
     assert!(matches!(last, Some(LastWord::Paired)), "{last:?}");
     assert_eq!(rows_named(s, "karl").await, 1);
     assert_eq!(setups_named(s, "karl").await, 1);
+    // The link itself: the setup of the name names the row of the name, as
+    // `pair`.
+    let agent: String = sqlx::query_scalar("SELECT agent_id::text FROM agent WHERE name = 'karl'")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    let setup: String = sqlx::query_scalar("SELECT setup_id FROM agent_setup WHERE name = 'karl'")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    let linked = s.setup(&setup).await.unwrap().unwrap();
+    assert_eq!(linked.paired, Some((agent, "pair".to_owned())));
 }
 
 /// **A name an open setup holds is refused before any code is compared**

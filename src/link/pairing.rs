@@ -1,5 +1,8 @@
 //! conforms: web-three-misses-close-the-chosen-connection-alone-the-box-told-code-missed
 //! conforms: web-a-chosen-appliance-whose-wait-ended-is-said-so-apart-from-one-gone-with-no-record
+//! conforms: web-every-compared-miss-new-agent-learns-of-leaves-its-record
+//! conforms: web-a-chosen-appliance-that-does-not-answer-is-said-so-and-never-called-gone
+//! conforms: web-misses-on-one-chosen-connection-leave-anothers-tries-whole
 //!
 //! **The console's half of the pairing** (Spec 8.2): a pairing connection
 //! from its handshake to the moment a code matches it, and the table of
@@ -24,7 +27,11 @@
 //! operating system's random source, the page names the appliance chosen by
 //! it, and `Waiting::take_chosen` asks that connection alone. Its code is
 //! never compared with another's, and `TRIES` misses on it close that
-//! connection alone, the box told `code_missed`.
+//! connection alone, the box told `code_missed`. **The misses are counted
+//! by the connection's own task**, where the code is compared, and the
+//! count rides the answer (the fix round of 2026-11-25): a miss the entry
+//! learns of is never lost to the connection ending before the entry reads
+//! a table, and a miss compared after its entry gave up still counts.
 //!
 //! **A matched box keeps hearing the console** (`Kept`): from the match until
 //! the exchange writes to it, and again while the exchange's write runs, a
@@ -145,10 +152,22 @@ impl std::fmt::Debug for Taken {
 /// An entry's question to one waiting connection.
 struct Probe {
     code: Code,
-    answer: oneshot::Sender<Option<Taken>>,
-    /// The chosen connection's last try: a miss closes it, the box told
-    /// `code_missed`.
-    last: bool,
+    answer: oneshot::Sender<Answer>,
+    /// Asked by New agent, which chose this connection by its handle: a
+    /// miss counts on it, the `TRIES`th closing it, the box told
+    /// `code_missed`. The old code entry, `Waiting::take`, counts none.
+    chosen: bool,
+}
+
+/// **A waiting connection's answer to a probe**, its misses counted by the
+/// connection's own task.
+enum Answer {
+    /// The code is this connection's: taken for the exchange.
+    Taken(Box<Taken>),
+    /// A miss, with the tries left on this connection.
+    Missed { left: u8 },
+    /// A chosen probe's last try missed, and the connection closes.
+    Closed,
 }
 
 /// **What a chosen connection answered** (Spec 8.2).
@@ -159,19 +178,30 @@ pub enum Chosen {
     Missed { left: u8 },
     /// The last try missed, and the connection is closed.
     Closed,
-    /// The connection's ten minutes passed, its wait ended.
-    Expired,
-    /// No listed connection carries the handle, and no wait of it ended
-    /// lately: gone or never listed.
+    /// The connection took no probe or gave no answer within `PROBE_SECS`.
+    /// It is still listed, and whether the code was compared is not known.
+    Silent,
+    /// No listed connection carries the handle, or the connection ended
+    /// without answering: gone, its wait ended, or never listed. New agent
+    /// tells an ended wait apart by `Waiting::wait_ended`.
     Gone,
+}
+
+/// **A test's lever on every waiting connection's task.**
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Lever {
+    /// The connection ends as it answers a miss, its place given back
+    /// before the answer is sent.
+    EndOnMiss,
+    /// The connection reads each probe and answers none, holding it.
+    Silent,
 }
 
 struct Slot {
     peer: IpAddr,
     dialed: Instant,
     handle: String,
-    /// The misses on this connection when chosen by its handle.
-    misses: u8,
     /// Set once the first frame is read: the box's claim and the way to
     /// probe its connection. A slot without it holds a place and is not
     /// listed.
@@ -187,6 +217,8 @@ pub struct Waiting {
     entry: tokio::sync::Mutex<()>,
     /// The latest handles whose wait ended, at most `ENDED_KEPT`.
     ended: Mutex<VecDeque<String>>,
+    #[cfg(test)]
+    lever: Mutex<Option<Lever>>,
 }
 
 /// A held place in the table, given back when dropped.
@@ -222,6 +254,8 @@ impl Default for Waiting {
             next: AtomicU64::new(1),
             entry: tokio::sync::Mutex::new(()),
             ended: Mutex::new(VecDeque::new()),
+            #[cfg(test)]
+            lever: Mutex::new(None),
         }
     }
 }
@@ -234,6 +268,17 @@ impl Waiting {
     #[cfg(test)]
     pub(crate) fn set_bounds(&self, bounds: Bounds) {
         *self.bounds.lock().unwrap() = bounds;
+    }
+
+    // Pulled by `enrollment_tests` alone.
+    #[cfg(all(test, feature = "passkeys", feature = "enrollment"))]
+    pub(crate) fn set_lever(&self, lever: Option<Lever>) {
+        *self.lever.lock().unwrap() = lever;
+    }
+
+    #[cfg(test)]
+    fn lever(&self) -> Option<Lever> {
+        *self.lever.lock().unwrap()
     }
 
     /// A place for one connection, or none past either bound.
@@ -251,7 +296,6 @@ impl Waiting {
                 peer,
                 dialed,
                 handle: handle(),
-                misses: 0,
                 listed: None,
             },
         );
@@ -329,63 +373,53 @@ impl Waiting {
             let asked = probe.try_send(Probe {
                 code: code.clone(),
                 answer,
-                last: false,
+                chosen: false,
             });
             if asked.is_err() {
                 continue;
             }
-            if let Ok(Ok(Some(taken))) =
+            if let Ok(Ok(Answer::Taken(taken))) =
                 tokio::time::timeout(Duration::from_secs(PROBE_SECS), answered).await
             {
-                return Some(taken);
+                return Some(*taken);
             }
         }
         None
     }
 
     /// **The connection `handle` names, asked alone** (Spec 8.2): taken
-    /// where `code` is its own, else a miss counted on it, the `TRIES`th
-    /// closing it. No other connection's code is compared.
+    /// where `code` is its own, else a miss counted on it by its own task,
+    /// the `TRIES`th closing it. No other connection's code is compared.
     pub async fn take_chosen(&self, handle: &str, code: &Code) -> Chosen {
         let _one = self.entry.lock().await;
-        let chosen = self.slots.lock().unwrap().iter().find_map(|(id, slot)| {
+        let probe = self.slots.lock().unwrap().values().find_map(|slot| {
             let (_, probe) = slot.listed.as_ref()?;
-            (slot.handle == handle).then(|| (*id, probe.clone(), slot.misses + 1 >= TRIES))
+            (slot.handle == handle).then(|| probe.clone())
         });
-        let Some((id, probe, last)) = chosen else {
-            return if self.wait_ended(handle) {
-                Chosen::Expired
-            } else {
-                Chosen::Gone
-            };
+        let Some(probe) = probe else {
+            return Chosen::Gone;
         };
         let (answer, answered) = oneshot::channel();
-        if probe
-            .try_send(Probe {
-                code: code.clone(),
-                answer,
-                last,
-            })
-            .is_err()
-        {
-            return Chosen::Gone;
-        }
-        match tokio::time::timeout(Duration::from_secs(PROBE_SECS), answered).await {
-            Ok(Ok(Some(taken))) => Chosen::Matched(Box::new(taken)),
-            Ok(Ok(None)) if last => Chosen::Closed,
-            Ok(Ok(None)) => {
-                let mut slots = self.slots.lock().unwrap();
-                match slots.get_mut(&id) {
-                    Some(slot) => {
-                        slot.misses += 1;
-                        Chosen::Missed {
-                            left: TRIES - slot.misses,
-                        }
-                    }
-                    None => Chosen::Gone,
-                }
-            }
-            _ => Chosen::Gone,
+        // **Room for the probe is waited for within the bound**: a probe an
+        // earlier entry gave up on may still hold the one place, and the
+        // connection's task reads it and passes it over.
+        let asked = async {
+            probe
+                .send(Probe {
+                    code: code.clone(),
+                    answer,
+                    chosen: true,
+                })
+                .await
+                .ok()?;
+            answered.await.ok()
+        };
+        match tokio::time::timeout(Duration::from_secs(PROBE_SECS), asked).await {
+            Ok(Some(Answer::Taken(taken))) => Chosen::Matched(taken),
+            Ok(Some(Answer::Missed { left })) => Chosen::Missed { left },
+            Ok(Some(Answer::Closed)) => Chosen::Closed,
+            Ok(None) => Chosen::Gone,
+            Err(_) => Chosen::Silent,
         }
     }
 
@@ -408,7 +442,7 @@ impl Waiting {
                 .send(Probe {
                     code: code.clone(),
                     answer,
-                    last: false,
+                    chosen: false,
                 })
                 .await;
             let _ = probe.reserve().await;
@@ -607,6 +641,11 @@ pub(crate) async fn serve(start: StartHandshake<TcpStream>, mut cx: Context<'_>)
         return;
     }
     let mut beat = tokio::time::interval_at(tokio::time::Instant::now() + cx.cadence, cx.cadence);
+    // **The misses on this connection**, counted here where the code is
+    // compared, chosen probes alone.
+    let mut misses: u8 = 0;
+    #[cfg(test)]
+    let mut held = Vec::new();
     loop {
         let event = tokio::select! {
             _ = beat.tick() => Event::Beat,
@@ -626,29 +665,49 @@ pub(crate) async fn serve(start: StartHandshake<TcpStream>, mut cx: Context<'_>)
                 close_with(&mut reader, &PairToBox::Expired, cx.write_bound).await;
                 return;
             }
-            Event::Probe(Some(Probe { code, answer, last })) => {
+            Event::Probe(Some(Probe {
+                code,
+                answer,
+                chosen,
+            })) => {
                 // **A probe its entry gave up on spends nothing**: the entry
                 // has gone on without an answer, so the box keeps waiting
                 // for the next.
                 if answer.is_closed() {
                     continue;
                 }
+                #[cfg(test)]
+                if cx.waiting.lever() == Some(Lever::Silent) {
+                    held.push(answer);
+                    continue;
+                }
                 let mine = Code::of(&**reader.get_ref().get_ref().1);
                 if !mine.is_ok_and(|mine| mine.matches(&code)) {
-                    let _ = answer.send(None);
+                    if chosen {
+                        misses += 1;
+                    }
                     // **The last try's miss closes the connection** (Spec
                     // 8.2), the box told why, so it dials anew.
-                    if last {
+                    if chosen && misses >= TRIES {
+                        let _ = answer.send(Answer::Closed);
                         let missed = PairToBox::Refused {
                             reason: pair_reason::CODE_MISSED.to_owned(),
                         };
                         close_with(&mut reader, &missed, cx.write_bound).await;
                         return;
                     }
+                    let left = TRIES - misses;
+                    #[cfg(test)]
+                    if cx.waiting.lever() == Some(Lever::EndOnMiss) {
+                        drop(reservation);
+                        let _ = answer.send(Answer::Missed { left });
+                        return;
+                    }
+                    let _ = answer.send(Answer::Missed { left });
                     continue;
                 }
                 let lifted = reservation.lift();
-                let handed = answer.send(Some(Taken {
+                let handed = answer.send(Answer::Taken(Box::new(Taken {
                     r#box,
                     admin_request,
                     reports,
@@ -657,13 +716,14 @@ pub(crate) async fn serve(start: StartHandshake<TcpStream>, mut cx: Context<'_>)
                     connection: Kept::new(reader, cx.cadence, cx.write_bound),
                     #[cfg(feature = "enrollment")]
                     ends,
-                }));
+                })));
                 // **A hand-over its entry gave up on as it was made is taken
                 // back**: the place, the claim and the connection, its
                 // heartbeats stopped, and the box waits on.
-                let Err(Some(back)) = handed else {
+                let Err(Answer::Taken(back)) = handed else {
                     return;
                 };
+                let back = *back;
                 if let Some(slot) = lifted {
                     reservation.restore(slot);
                 }

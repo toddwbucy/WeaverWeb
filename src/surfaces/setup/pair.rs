@@ -788,6 +788,11 @@ mod entry {
     /// The appliance chosen waited its ten minutes.
     const WAIT_ENDED: &str = "The appliance's wait ended. Run the setup script again to dial anew.";
 
+    /// The chosen appliance took no probe or gave no answer in time: it is
+    /// still listed, so it is never called gone, and whether the code was
+    /// compared is not known (the fix round of 2026-11-25).
+    const SILENT: &str = "The appliance you chose did not answer in time. Enter the code again.";
+
     /// The chosen connection's last try missed (the brief of 2026-11-25
     /// words the count, `pairing::TRIES`).
     const CLOSED: &str = "That code missed three times, so the appliance's connection is closed. Run the setup script again to dial anew.";
@@ -928,6 +933,12 @@ mod entry {
                 ask.appliance.as_str(),
             ),
             Ok(Ok(Finalized::Closed)) => (StatusCode::CONFLICT, CLOSED.to_owned(), false, ""),
+            Ok(Ok(Finalized::Silent)) => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                SILENT.to_owned(),
+                false,
+                ask.appliance.as_str(),
+            ),
             Ok(Ok(Finalized::Gone)) => {
                 let (status, words) = unlisted(&listener, &ask.appliance);
                 (status, words.to_owned(), false, "")
@@ -970,6 +981,7 @@ mod entry {
         Ended(Ended),
         Missed { left: u8 },
         Closed,
+        Silent,
         Gone,
     }
 
@@ -990,7 +1002,8 @@ mod entry {
         } = entry;
         let taken = match enrollment.listener.take_chosen(&appliance, &code).await {
             Chosen::Matched(taken) => *taken,
-            Chosen::Gone | Chosen::Expired => return Ok(Finalized::Gone),
+            Chosen::Gone => return Ok(Finalized::Gone),
+            Chosen::Silent => return Ok(Finalized::Silent),
             Chosen::Missed { left } => {
                 record_refusal(
                     &store,

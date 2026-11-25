@@ -14,7 +14,7 @@
     {% for row in rows %}
     <tr>
       <td><a href="/agents/{{ row.agent_id }}">{{ row.label }}</a></td>
-      <td>{% if row.gate %}connected{% else %}not connected{% endif %}</td>
+      <td>{{ row.gate }}</td>
       <td>{% if row.admin %}connected{% else %}not connected{% endif %}</td>
       <td>{{ row.alerts }}</td>
       <td>{% if row.transition.is_empty() %}<span class="absent">none</span>{% else %}{{ row.transition }}{% endif %}</td>

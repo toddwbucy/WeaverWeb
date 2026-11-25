@@ -134,7 +134,6 @@ async fn rig() -> Option<Rig> {
 
 /// A box's two keys, made inside it, and its claim with their requests.
 struct BoxKeys {
-    gate: KeyPair,
     admin: KeyPair,
     claim: Claim,
 }
@@ -149,14 +148,12 @@ fn request_of(key: &KeyPair) -> String {
 }
 
 fn box_keys(r#box: &str) -> BoxKeys {
-    let gate = KeyPair::generate().unwrap();
     let admin = KeyPair::generate().unwrap();
     let claim = Claim {
         r#box: r#box.into(),
-        gate_request: request_of(&gate),
         admin_request: request_of(&admin),
     };
-    BoxKeys { gate, admin, claim }
+    BoxKeys { admin, claim }
 }
 
 async fn dial(rig: &Rig, claim: &Claim) -> Dialed {
@@ -387,15 +384,22 @@ async fn the_pair_page_lists_the_waiting_box_as_it_claims() {
     drop(dialed);
 }
 
-/// **A pairing writes the row with both certificates live**, signed over
-/// the box's own keys, its author the admin who entered the code, the
-/// setup linked, and the label "paired, setup running" until a connector
-/// is first admitted; the box hears its answer, the console's authority
-/// among it, and then `paired`. **The Pair page leads into the
-/// declaration**: once paired, its way on is the declaration's first page,
-/// Declarations lists the agent and Pair a box no longer does.
+/// **A pairing issues one certificate and leaves the gate not enrolled**
+/// (Spec 2.12, 8.2): the row's admin plane live, signed over the box's own
+/// key, its gate plane `none` with no fingerprint and no authority, its
+/// author the admin who entered the code, the setup linked, and the label
+/// "paired, setup running" until admin-con is first admitted, then "admin
+/// alone" and never present; the box hears its answer, the console's
+/// authority among it and no gate certificate, and then `paired`. **The
+/// Pair page leads into the declaration**: once paired, its way on is the
+/// declaration's first page, Declarations lists the agent and Pair a box
+/// no longer does.
+///
+/// Perturbation: write a gate fingerprint with the row, and its gate plane
+/// reads live; count a gate not enrolled as connected in `Agent::present`,
+/// and the admitted row reads present (each measured 2026-11-25).
 #[tokio::test]
-async fn a_pairing_writes_the_row_and_the_box_hears_paired() {
+async fn a_pairing_issues_one_certificate_and_leaves_the_gate_not_enrolled() {
     let Some(rig) = rig().await else { return };
     let s = rig.store();
     let (ada_id, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
@@ -419,22 +423,33 @@ async fn a_pairing_writes_the_row_and_the_box_hears_paired() {
     let id: AgentId = answer.agent_id.parse().unwrap();
     let row = s.agent(&id).await.unwrap().expect("the row stands");
     assert_eq!((row.name.as_str(), row.r#box.as_str()), ("karl", "box-a"));
-    assert_eq!(row.gate.fingerprint, fingerprint_of(&answer.gate));
-    assert_eq!(row.admin.fingerprint, fingerprint_of(&answer.admin));
-    assert_eq!(row.gate.state, CredentialState::Live);
+    assert_eq!(
+        row.gate.state,
+        CredentialState::None,
+        "the gate is not enrolled"
+    );
+    assert_eq!(
+        (
+            row.gate.fingerprint.as_deref(),
+            row.gate.authority.as_deref()
+        ),
+        (None, None)
+    );
+    assert_eq!(
+        row.admin.fingerprint.as_deref(),
+        Some(fingerprint_of(&answer.admin).as_str())
+    );
     assert_eq!(row.admin.state, CredentialState::Live);
     assert_eq!(row.author.as_deref(), Some(ada_id.as_str()));
     assert!(row.setup_running);
-    // Each certificate is over the box's own key for its plane.
-    for (pem, key) in [(&answer.gate, &keys.gate), (&answer.admin, &keys.admin)] {
-        let mut bytes = pem.as_bytes();
-        let der = rustls_pemfile::certs(&mut bytes).next().unwrap().unwrap();
-        let point = key.public_key_raw();
-        assert!(
-            der.windows(point.len()).any(|w| w == point),
-            "a certificate is not over the box's key"
-        );
-    }
+    // The certificate is over the box's own key.
+    let mut bytes = answer.admin.as_bytes();
+    let der = rustls_pemfile::certs(&mut bytes).next().unwrap().unwrap();
+    let point = keys.admin.public_key_raw();
+    assert!(
+        der.windows(point.len()).any(|w| w == point),
+        "the certificate is not over the box's key"
+    );
     let linked = s.setup(&setup).await.unwrap().unwrap();
     assert_eq!(
         linked.paired,
@@ -444,9 +459,10 @@ async fn a_pairing_writes_the_row_and_the_box_hears_paired() {
     let pairing = page(&rig.app, &format!("/pair/{setup}"), &ada).await;
     assert!(pairing.contains("paired, setup running"), "{pairing}");
     assert!(
-        pairing.contains(&grouped(&row.gate.fingerprint)),
+        pairing.contains(&grouped(row.admin.fingerprint.as_deref().unwrap())),
         "{pairing}"
     );
+    assert!(pairing.contains("not enrolled"), "{pairing}");
     assert!(
         pairing.contains(&format!(
             r#"<p class="next">Next: <a href="/setup/{setup}/directories">Directories</a></p>"#
@@ -463,12 +479,12 @@ async fn a_pairing_writes_the_row_and_the_box_hears_paired() {
     let register = page(&rig.app, "/admin/agents", &ada).await;
     assert!(register.contains("paired, setup running"), "{register}");
 
-    // **The first admission clears the label**: the gate plane's hello
-    // with the answer's certificate and the box's own key.
+    // **The first admission clears the label**: admin-con's hello with the
+    // answer's certificate and the box's own key.
     let tls = client_tls(
         rig.authority.certificate_pem(),
-        &answer.gate,
-        &keys.gate.serialize_pem(),
+        &answer.admin,
+        &keys.admin.serialize_pem(),
     )
     .unwrap();
     let tcp = tokio::net::TcpStream::connect(rig.listener.address())
@@ -480,15 +496,7 @@ async fn a_pairing_writes_the_row_and_the_box_hears_paired() {
         .await
         .unwrap();
     let (read, mut write) = tokio::io::split(stream);
-    let mut hello = serde_json::to_string(&FromClient::Hello {
-        agent: "karl".into(),
-        plane: Plane::Gate,
-        tail: None,
-        door: None,
-        ceiling: None,
-        capabilities: None,
-    })
-    .unwrap();
+    let mut hello = serde_json::to_string(&hello(Plane::Admin)).unwrap();
     hello.push('\n');
     write.write_all(hello.as_bytes()).await.unwrap();
     write.flush().await.unwrap();
@@ -506,7 +514,14 @@ async fn a_pairing_writes_the_row_and_the_box_hears_paired() {
     );
     let row = s.agent(&id).await.unwrap().unwrap();
     assert!(!row.setup_running, "the first admission clears the label");
-    assert!(row.gate.connected);
+    assert!(row.admin.connected);
+    assert!(
+        row.admin_alone() && !row.present(),
+        "admin alone, never present"
+    );
+    let register = page(&rig.app, "/admin/agents", &ada).await;
+    assert!(register.contains("<td>admin alone</td>"), "{register}");
+    assert!(register.contains("<td>not enrolled</td>"), "{register}");
 }
 
 /// **The page reads an entry in Crockford's form, and a malformed entry is
@@ -935,7 +950,7 @@ async fn a_request_of_another_kind_is_refused_at_the_exchange() {
     let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
     let setup = setup.unwrap();
     let mut keys = box_keys("box-a");
-    keys.claim.gate_request =
+    keys.claim.admin_request =
         request_of(&KeyPair::generate_for(&rcgen::PKCS_ECDSA_P384_SHA384).unwrap());
     let dialed = dial(&rig, &keys.claim).await;
     let code = dialed.code().to_string();
@@ -1039,8 +1054,8 @@ async fn on_unknown_the_pairing_page_shows_what_the_write_made() {
     );
     assert!(body.contains("box-old"), "{body}");
     assert!(
-        !body.contains(&grouped(&fingerprint_of(&answer.gate))),
-        "the page shows the answer's fingerprints: {body}"
+        !body.contains(&grouped(&fingerprint_of(&answer.admin))),
+        "the page shows the answer's fingerprint: {body}"
     );
     let row = s.agent(&karl).await.unwrap().unwrap();
     assert_eq!(row.r#box, "box-old");
@@ -1058,10 +1073,6 @@ async fn on_unknown_the_pairing_page_shows_what_the_write_made() {
     let (heard, _) = the_box.await.unwrap();
     let answer = answer_of(&heard);
     let pairing = page(&rig.app, &format!("/pair/{setup}"), &ada).await;
-    assert!(
-        pairing.contains(&grouped(&fingerprint_of(&answer.gate))),
-        "{pairing}"
-    );
     assert!(
         pairing.contains(&grouped(&fingerprint_of(&answer.admin))),
         "{pairing}"
@@ -1104,7 +1115,11 @@ async fn a_replacement_keeps_the_box_the_row_held() {
     assert_eq!(answer.agent_id, karl.as_str(), "the row keeps its identity");
     let row = s.agent(&karl).await.unwrap().unwrap();
     assert_eq!(row.r#box, "box-new");
-    assert_eq!(row.gate.fingerprint, fingerprint_of(&answer.gate));
+    assert_eq!(
+        row.admin.fingerprint.as_deref(),
+        Some(fingerprint_of(&answer.admin).as_str())
+    );
+    assert_eq!(row.gate.state, CredentialState::None);
     assert!(row.setup_running);
     let held = s.boxes_held(&karl).await.unwrap();
     assert_eq!(
@@ -1177,9 +1192,9 @@ fn outcome_of(p: Printer<Vec<u8>, Vec<u8>>) -> (serde_json::Value, String) {
     (line, String::from_utf8(err).unwrap())
 }
 
-/// **The box's three steps**, in `dir`: `request` for each connector, `pair`
+/// **The box's three steps**, in `dir`: `admin-con request`, `pair`
 /// against the rig's listener with its code entered through the page, and
-/// `adopt` for each. Answers the answer `pair` wrote.
+/// `admin-con adopt`. Answers the answer `pair` wrote.
 async fn enrolled_on_box(
     rig: &impl Enrolling,
     session: &str,
@@ -1188,16 +1203,16 @@ async fn enrolled_on_box(
     r#box: &str,
     replace: Option<&AgentId>,
 ) -> AnswerFile {
-    for plane in [Plane::Gate, Plane::Admin] {
-        let mut p = captured();
-        let config = dir.join(format!("{}-con.toml", plane.as_str()));
-        assert_eq!(box_commands::request(&mut p, plane, &config), Status::Done);
-        let (out, _) = p.into_inner();
-        std::fs::write(dir.join(format!("{}.request", plane.as_str())), out).unwrap();
-    }
+    let mut p = captured();
+    let config = dir.join("admin-con.toml");
+    assert_eq!(
+        box_commands::request(&mut p, Plane::Admin, &config),
+        Status::Done
+    );
+    let (out, _) = p.into_inner();
+    std::fs::write(dir.join("admin.request"), out).unwrap();
     let args = PairArgs {
         console: rig.listener().address().to_string(),
-        gate_request: dir.join("gate.request"),
         admin_request: dir.join("admin.request"),
         answer: dir.join("answer.json"),
         r#box: Some(r#box.into()),
@@ -1247,15 +1262,13 @@ async fn enrolled_on_box(
     assert_eq!(mode & 0o7777, 0o644, "the answer holds certificates alone");
     let answer = AnswerFile::read(&dir.join("answer.json")).unwrap();
     assert_eq!(paired["agent_id"].as_str(), Some(answer.agent_id.as_str()));
-    for plane in [Plane::Gate, Plane::Admin] {
-        let mut p = captured();
-        let config = dir.join(format!("{}-con.toml", plane.as_str()));
-        let status = box_commands::adopt(&mut p, plane, &config, &dir.join("answer.json"));
-        let (line, err) = outcome_of(p);
-        assert_eq!(status, Status::Done, "{line} {err}");
-        assert_eq!(line["event"], "adopted");
-        assert_eq!(line["plane"], plane.as_str());
-    }
+    assert_eq!(answer.gate, None, "the answer carries no gate certificate");
+    let mut p = captured();
+    let status = box_commands::adopt(&mut p, Plane::Admin, &config, &dir.join("answer.json"));
+    let (line, err) = outcome_of(p);
+    assert_eq!(status, Status::Done, "{line} {err}");
+    assert_eq!(line["event"], "adopted");
+    assert_eq!(line["plane"], "admin");
     answer
 }
 
@@ -1312,12 +1325,14 @@ async fn confirmed_at_the_schema(s: &Store, setup: &str) {
         .unwrap();
 }
 
-/// **An adopted pair connects** (Spec 8.2): `request` for each connector,
-/// `pair` against the real listener with the code the box's `waiting` line
-/// shows entered through the page, `adopt` for each, and both connectors
-/// are admitted on the one row the pairing wrote, which reads present.
+/// **An adopted admin-con connects, and its row reads admin alone** (Spec
+/// 8, 8.2): `admin-con request`, `pair` against the real listener with the
+/// code the box's `waiting` line shows entered through the page, `admin-con
+/// adopt`, and admin-con is admitted on the row the pairing wrote, which
+/// reads admin alone and never present. `gate-con adopt` of the same answer
+/// is refused as `usage`, since the answer carries no gate certificate.
 #[tokio::test]
-async fn an_adopted_pair_connects() {
+async fn an_adopted_admin_con_connects_and_its_row_reads_admin_alone() {
     let Some(rig) = rig().await else { return };
     let s = rig.store();
     let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
@@ -1326,21 +1341,36 @@ async fn an_adopted_pair_connects() {
     let on_box = crate::test_dir::tempdir().unwrap();
     let answer = enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a", None).await;
     let id: AgentId = answer.agent_id.parse().unwrap();
-    let mut connections = Vec::new();
-    for plane in [Plane::Gate, Plane::Admin] {
-        let link = link_of(&on_box.path().join(format!("{}-con.toml", plane.as_str())));
-        match link.connect(hello(plane)).await {
-            Connect::Admitted(connection) => connections.push(connection),
-            Connect::Refused(r) => panic!("{plane:?} refused: {}", r.as_str()),
-            Connect::Untrusted(why) | Connect::Failed(why) => panic!("{plane:?}: {why}"),
-        }
-    }
+    let link = link_of(&on_box.path().join("admin-con.toml"));
+    let connection = match link.connect(hello(Plane::Admin)).await {
+        Connect::Admitted(connection) => connection,
+        Connect::Refused(r) => panic!("admin-con refused: {}", r.as_str()),
+        Connect::Untrusted(why) | Connect::Failed(why) => panic!("admin-con: {why}"),
+    };
     let row = s.agent(&id).await.unwrap().unwrap();
-    assert!(row.present(), "both connectors on the one row");
+    assert!(row.admin.connected, "admin-con on the row");
+    assert!(
+        row.admin_alone() && !row.present(),
+        "admin alone, never present"
+    );
     assert_eq!(rows_named(s, "karl").await, 1);
-    for connection in connections {
-        connection.close().await;
-    }
+    // gate-con's own steps refuse an answer that carries no gate.
+    let gate_config = on_box.path().join("gate-con.toml");
+    let mut p = captured();
+    assert_eq!(
+        box_commands::request(&mut p, Plane::Gate, &gate_config),
+        Status::Done
+    );
+    let mut p = captured();
+    let status = box_commands::adopt(
+        &mut p,
+        Plane::Gate,
+        &gate_config,
+        &on_box.path().join("answer.json"),
+    );
+    let (line, err) = outcome_of(p);
+    assert_eq!(status, Status::Usage, "{line} {err}");
+    connection.close().await;
 }
 
 /// **`setup describe` answers `replacement` true after a replace-box
@@ -1553,16 +1583,16 @@ async fn the_setup_keeps_the_latest_report_of_each_stage_verbatim() {
 async fn a_pair_whose_waiting_line_is_not_delivered_ends_at_once() {
     let Some(rig) = rig().await else { return };
     let dir = crate::test_dir::tempdir().unwrap();
-    for plane in [Plane::Gate, Plane::Admin] {
-        let mut p = captured();
-        let config = dir.path().join(format!("{}-con.toml", plane.as_str()));
-        assert_eq!(box_commands::request(&mut p, plane, &config), Status::Done);
-        let (out, _) = p.into_inner();
-        std::fs::write(dir.path().join(format!("{}.request", plane.as_str())), out).unwrap();
-    }
+    let mut p = captured();
+    let config = dir.path().join("admin-con.toml");
+    assert_eq!(
+        box_commands::request(&mut p, Plane::Admin, &config),
+        Status::Done
+    );
+    let (out, _) = p.into_inner();
+    std::fs::write(dir.path().join("admin.request"), out).unwrap();
     let args = PairArgs {
         console: rig.listener.address().to_string(),
-        gate_request: dir.path().join("gate.request"),
         admin_request: dir.path().join("admin.request"),
         answer: dir.path().join("answer.json"),
         r#box: Some("box-a".into()),
@@ -2155,12 +2185,12 @@ async fn an_entry_dropped_once_matched_still_logs_what_the_box_was_answered() {
             &[
                 setup.as_str(),
                 "ended with no row confirmed",
-                "the box was answered gate"
+                "the box was answered admin"
             ],
             SOON
         )
         .await,
-        "the answered fingerprints were not logged"
+        "the answered fingerprint was not logged"
     );
     assert_eq!(rows_named(s, "karl").await, 0);
 }

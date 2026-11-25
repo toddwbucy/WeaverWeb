@@ -71,8 +71,6 @@ async fn rig() -> Option<Rig> {
 fn claim(r#box: &str) -> Claim {
     Claim {
         r#box: r#box.into(),
-        gate_request:
-            "-----BEGIN CERTIFICATE REQUEST-----\ngate\n-----END CERTIFICATE REQUEST-----\n".into(),
         admin_request:
             "-----BEGIN CERTIFICATE REQUEST-----\nadmin\n-----END CERTIFICATE REQUEST-----\n".into(),
     }
@@ -184,7 +182,6 @@ async fn a_clienthello_without_the_pairing_protocol_meets_mutual_tls_as_built() 
         Ok(mut tls) => {
             let hello = PairFromBox::Hello {
                 r#box: "box-a".into(),
-                gate_request: "gate".into(),
                 admin_request: "admin".into(),
             };
             let line = serde_json::to_string(&hello).unwrap() + "\n";
@@ -341,7 +338,6 @@ async fn a_party_between_the_box_and_the_console_meets_a_code_that_matches_nothi
         };
         let Ok(PairFromBox::Hello {
             r#box,
-            gate_request,
             admin_request,
         }) = serde_json::from_str(&line)
         else {
@@ -351,7 +347,6 @@ async fn a_party_between_the_box_and_the_console_meets_a_code_that_matches_nothi
             &console,
             &Claim {
                 r#box,
-                gate_request,
                 admin_request,
             },
         )
@@ -417,7 +412,6 @@ async fn a_match_spends_the_connection() {
         .await
         .expect("its own code");
     assert_eq!(taken.r#box, "box-a");
-    assert!(taken.gate_request.contains("gate"));
     assert!(taken.admin_request.contains("admin"));
     assert!(rig.listener.waiting().is_empty());
     assert!(
@@ -700,4 +694,41 @@ async fn a_consoles_line_reaches_no_fault_unchecked() {
         Ok(Heard::Fault(why)) => assert!(printable(&why), "{why:?}"),
         other => panic!("{other:?}"),
     }
+}
+
+/// **A first frame that is not this console's hello is refused
+/// `frame_refused`** (Spec 8.2, section 9): the earlier hello, which
+/// carried a gate request beside admin-con's, hears `refused` with that
+/// reason, so a box built to it prints why, and it is never listed.
+///
+/// Perturbation: close such a frame unanswered, as the console did before,
+/// and the box reads no line.
+#[tokio::test]
+async fn a_first_frame_naming_a_gate_request_is_refused_frame_refused() {
+    let Some(rig) = rig().await else { return };
+    let tcp = TcpStream::connect(rig.listener.address()).await.unwrap();
+    let name = rustls::pki_types::ServerName::try_from("127.0.0.1")
+        .unwrap()
+        .to_owned();
+    let mut tls = TlsConnector::from(crate::link::pair_client::pairing_client_tls())
+        .connect(name, tcp)
+        .await
+        .unwrap();
+    let earlier = r#"{"svc":"hello","box":"box-a","gate_request":"gate","admin_request":"admin"}"#;
+    tls.write_all(format!("{earlier}\n").as_bytes())
+        .await
+        .unwrap();
+    tls.flush().await.unwrap();
+    let mut answer = String::new();
+    let read = tokio::time::timeout(SOON, BufReader::new(tls).read_line(&mut answer))
+        .await
+        .expect("the console answers within its bound");
+    assert!(read.is_ok_and(|n| n > 0), "the box reads no line");
+    assert_eq!(
+        serde_json::from_str::<PairToBox>(answer.trim_end()).unwrap(),
+        PairToBox::Refused {
+            reason: "frame_refused".into()
+        }
+    );
+    assert!(rig.listener.waiting().is_empty(), "the box is never listed");
 }

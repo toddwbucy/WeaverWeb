@@ -939,8 +939,8 @@ async fn inspect_retained(
         Some((row, _))
             if row.r#box == r#box
                 && row.name == name
-                && row.gate.fingerprint == gate_fp
-                && row.admin.fingerprint == admin_fp
+                && row.gate.fingerprint.as_deref() == Some(gate_fp.as_str())
+                && row.admin.fingerprint.as_deref() == Some(admin_fp.as_str())
                 && row.gate.state == CredentialState::Live
                 && row.admin.state == CredentialState::Live =>
         {
@@ -1343,6 +1343,11 @@ pub async fn revoke(store: &Store, spec: &str, plane: Plane, author: Option<&str
         Ok(a) => a,
         Err(e) => return refused("revoke", e),
     };
+    // **A plane not enrolled is never revoked** (Spec 2.12), refused before
+    // any record as an unknown agent is; the store refuses it again.
+    if agent.credential(plane).state == CredentialState::None {
+        return refused("revoke", crate::link::register::NotEnrolled);
+    }
     let target = Target::Agent(agent.agent_id.as_str());
     let first = match first_record(store, "revoke", author, target).await {
         Ok(first) => first,
@@ -1382,6 +1387,11 @@ pub async fn rotate(
         Ok(a) => a,
         Err(e) => return refused("rotate", e),
     };
+    // **A rotation never enrolls a plane** (Spec 2.12): a row whose gate is
+    // not enrolled is refused before any record; the store refuses it again.
+    if agent.gate.state == CredentialState::None {
+        return refused("rotate", crate::link::register::NotEnrolled);
+    }
     if let Err(e) = well_formed(&agent.r#box, &agent.name) {
         return refused("rotate", e);
     }
@@ -1482,10 +1492,10 @@ pub async fn rotate(
                 // rotation landed.
                 match store.agent_by_fingerprint(&gate.fingerprint).await {
                     Ok(Some(_)) => (
-                        vec![
-                            agent.gate.fingerprint.clone(),
-                            agent.admin.fingerprint.clone(),
-                        ],
+                        [agent.gate.fingerprint.clone(), agent.admin.fingerprint.clone()]
+                            .into_iter()
+                            .flatten()
+                            .collect(),
                         Some(format!(
                             "the store's answer was lost after the commit ({e:#}); the row was read back and stands"
                         )),

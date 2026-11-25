@@ -7,9 +7,11 @@
 //! to the last, the box's word among them:
 //! 1. `setup_closed` or `box_and_name_live`, by a register write of the
 //!    exchange's own (`Store::pairing_check_on`), which retires nothing;
-//! 2. each certificate request verified, ECDSA P-256 with SHA-256 alone
-//!    (`link::request`), else `request_refused`;
-//! 3. each public half signed as its plane, as `mint_client` signs;
+//! 2. admin-con's certificate request verified, ECDSA P-256 with SHA-256
+//!    alone (`link::request`), else `request_refused`;
+//! 3. its public half signed as the admin plane, as `mint_client` signs:
+//!    the pairing enrolls admin-con alone (the operator's rulings of
+//!    2026-11-25), and the row's gate plane is not enrolled;
 //! 4. the answer sent;
 //! 5. the box's word awaited within `HANDSHAKE_SECS`, and **a lost word
 //!    writes nothing**;
@@ -47,8 +49,8 @@ pub struct Exchange<'a> {
 /// **How an exchange ended.**
 #[derive(Debug)]
 pub enum Outcome {
-    /// The row stands with the answer's two certificates live, and the
-    /// box was sent the last word. A replacement's old fingerprints are
+    /// The row stands with the answer's certificate live and the gate
+    /// plane not enrolled, and the box was sent the last word. A replacement's old fingerprints are
     /// revoked, their connections closed by the store's notification.
     Paired { agent_id: AgentId },
     /// Refused at step 1 or 6, the box told why.
@@ -73,13 +75,13 @@ pub enum Outcome {
     Unknown(anyhow::Error),
 }
 
-/// **An exchange's end**: how it ended, and the fingerprints of the two
-/// certificates the box was answered, once step 4 sent them, which the box
+/// **An exchange's end**: how it ended, and the fingerprint of the
+/// certificate the box was answered, once step 4 sent it, which the box
 /// prints on `unknown` and the console logs beside any end but `paired`.
 #[derive(Debug)]
 pub struct Ended {
     pub outcome: Outcome,
-    pub answered: Option<[String; 2]>,
+    pub answered: Option<String>,
 }
 
 impl From<Outcome> for Ended {
@@ -95,7 +97,6 @@ impl From<Outcome> for Ended {
 pub async fn run(lock: &mut AuthorityLock, x: Exchange<'_>, taken: Taken) -> Ended {
     let Taken {
         r#box,
-        gate_request,
         admin_request,
         connection: kept,
         ..
@@ -124,10 +125,8 @@ pub async fn run(lock: &mut AuthorityLock, x: Exchange<'_>, taken: Taken) -> End
         Err(error) => return Outcome::Unknown(error).into(),
     }
 
-    // 2. Each request's own signature, ECDSA P-256 with SHA-256 alone.
-    let verified = request::verify(&gate_request)
-        .and_then(|gate| request::verify(&admin_request).map(|admin| (gate, admin)));
-    let (gate_key, admin_key) = match verified {
+    // 2. The request's own signature, ECDSA P-256 with SHA-256 alone.
+    let admin_key = match request::verify(&admin_request) {
         Ok(keys) => keys,
         Err(why) => {
             if let Some(mut connection) = kept.resume().await {
@@ -138,20 +137,12 @@ pub async fn run(lock: &mut AuthorityLock, x: Exchange<'_>, taken: Taken) -> End
         }
     };
 
-    // 3. Each half signed as its plane, the console's own members.
-    let signed = x
-        .authority
-        .sign_client(x.name, Plane::Gate, &gate_key)
-        .and_then(|gate| {
-            x.authority
-                .sign_client(x.name, Plane::Admin, &admin_key)
-                .map(|admin| (gate, admin))
-        });
-    let (gate, admin): (SignedClient, SignedClient) = match signed {
-        Ok(pair) => pair,
+    // 3. The half signed as the admin plane, the console's own members.
+    let admin: SignedClient = match x.authority.sign_client(x.name, Plane::Admin, &admin_key) {
+        Ok(admin) => admin,
         Err(error) => return Outcome::Unknown(error).into(),
     };
-    let answered = [gate.fingerprint.clone(), admin.fingerprint.clone()];
+    let answered = admin.fingerprint.clone();
     let ended = |outcome| Ended {
         outcome,
         answered: Some(answered.clone()),
@@ -167,7 +158,6 @@ pub async fn run(lock: &mut AuthorityLock, x: Exchange<'_>, taken: Taken) -> End
         r#box: r#box.clone(),
         server_name: x.authority.server_name().to_owned(),
         authority: x.authority.certificate_pem().to_owned(),
-        gate: gate.certificate_pem,
         admin: admin.certificate_pem,
     };
     if !crate::link::pairing::send(&mut connection, &answer, write_bound).await {
@@ -196,8 +186,7 @@ pub async fn run(lock: &mut AuthorityLock, x: Exchange<'_>, taken: Taken) -> End
         lock.connection(),
         x.admin,
         &pairing,
-        &answered[0],
-        &answered[1],
+        &answered,
         &x.authority.fingerprint(),
     )
     .await;

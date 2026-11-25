@@ -575,7 +575,8 @@ impl std::fmt::Display for Refusal {
 pub const PAIR_PROTOCOL: &[u8] = b"weaver-pair/1";
 
 /// The pairing's first frame's bound, inclusive, excluding the delimiter
-/// (Spec 8.2): the box's name and two certificate requests fit well inside.
+/// (Spec 8.2): the box's name and admin-con's certificate request fit well
+/// inside.
 pub const PAIR_FIRST_FRAME_BOUND: usize = 16 * 1024;
 
 /// **A frame the box sends on a pairing connection** (Spec 8.2), apart from
@@ -584,12 +585,13 @@ pub const PAIR_FIRST_FRAME_BOUND: usize = 16 * 1024;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "svc", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PairFromBox {
-    /// The first frame: the box's name, as the box claims it, and the two
-    /// certificate requests, PKCS #10 in PEM, the gate's and admin's. It
-    /// carries nothing of the code.
+    /// The first frame: the box's name, as the box claims it, and
+    /// admin-con's certificate request, PKCS #10 in PEM: the pairing enrolls
+    /// admin-con alone (the operator's rulings of 2026-11-25). It carries
+    /// nothing of the code. The earlier hello, which carried a gate request
+    /// too, is not this frame and is refused `frame_refused`.
     Hello {
         r#box: String,
-        gate_request: String,
         admin_request: String,
     },
     /// **The box's word** (Spec 8.2, the exchange's step 5): it wrote the
@@ -619,19 +621,18 @@ pub enum PairToBox {
     /// **The exchange's answer** (Spec 8.2, step 4): the agent's name, the
     /// row's identity, the box as the row will hold it, the name the
     /// server's certificate is verified under, the authority's certificate,
-    /// and the two certificates signed over the box's requests, each in
-    /// PEM. No key: the box made both.
+    /// and admin-con's certificate signed over the box's request, each in
+    /// PEM. No key: the box made it.
     Answer {
         agent: String,
         agent_id: String,
         r#box: String,
         server_name: String,
         authority: String,
-        gate: String,
         admin: String,
     },
     /// **The console's last word** (Spec 8.2, step 6): the row stands with
-    /// the answer's two certificates live. The console closes.
+    /// the answer's certificate live. The console closes.
     Paired,
 }
 
@@ -647,6 +648,9 @@ pub mod pair_reason {
     /// A certificate request is not ECDSA P-256 with SHA-256 whose own
     /// signature verifies.
     pub const REQUEST_REFUSED: &str = "request_refused";
+    /// The first frame is not this console's hello: among others the
+    /// earlier hello that carried a gate request too (Spec 8.2).
+    pub const FRAME_REFUSED: &str = "frame_refused";
 }
 
 #[cfg(test)]

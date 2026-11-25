@@ -40,7 +40,9 @@ use tokio::time::Instant;
 use crate::config::ServerConfig;
 use crate::link::authority::{Authority, ClientCredential};
 use crate::link::frames::Plane;
-use crate::link::register::{AdminWrite, AuthorityGone, CredentialState, PlaneRevoked, Retired};
+use crate::link::register::{
+    AdminWrite, AuthorityGone, CredentialState, NotEnrolled, PlaneRevoked, Retired,
+};
 use crate::link::verbs::{
     authority_still_stands, client_config, mint_pair, name_agrees, well_formed,
 };
@@ -257,9 +259,11 @@ struct AgentRow {
     gate_live: bool,
     admin_live: bool,
     present: bool,
-    /// **"Paired, setup running"** (Spec 2.12), until either connector's
-    /// service is first admitted.
+    /// **"Paired, setup running"** (Spec 2.12), until admin-con's service
+    /// is first admitted.
     setup_running: bool,
+    /// **"Admin alone"** (Spec 8): the gate plane not enrolled.
+    admin_alone: bool,
     registered: String,
     live: bool,
 }
@@ -268,6 +272,7 @@ fn state(state: &CredentialState) -> &'static str {
     match state {
         CredentialState::Live => "live",
         CredentialState::Revoked => "revoked",
+        CredentialState::None => "not enrolled",
     }
 }
 
@@ -317,6 +322,7 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, ask: Prefill) -> 
             admin_live: a.admin.state == CredentialState::Live,
             present: a.present(),
             setup_running: a.setup_running,
+            admin_alone: a.admin_alone(),
             registered: a.registered_at.format("%Y-%m-%d %H:%M UTC").to_string(),
             live: matches!(a.gate.state, CredentialState::Live)
                 || matches!(a.admin.state, CredentialState::Live),
@@ -619,6 +625,11 @@ async fn rotate(store: Store, seams: &Seams, headers: HeaderMap, ask: RotateAsk)
         Ok(None) => return refused(&Refusal::NoSuchAgent),
         Err(e) => return fault(e),
     };
+    // **A rotation never enrolls a plane** (Spec 2.12): refused at step
+    // three, and again inside the rotation's transaction.
+    if agent.gate.state == CredentialState::None {
+        return refused(&Refusal::NotEnrolled);
+    }
     let Some(reservation) = seams.handover.reserve(2) else {
         return refused(&Refusal::HandoverFull);
     };
@@ -662,6 +673,7 @@ async fn rotate(store: Store, seams: &Seams, headers: HeaderMap, ask: RotateAsk)
                 (Ok(_), None) => anyhow::bail!("a rotation landed with no credentials minted"),
                 (Err(e), _) if e.is::<AuthorityGone>() => Ok(Err(Refusal::AuthorityGone)),
                 (Err(e), _) if e.is::<Retired>() => Ok(Err(Refusal::Retired)),
+                (Err(e), _) if e.is::<NotEnrolled>() => Ok(Err(Refusal::NotEnrolled)),
                 (Err(e), _) => Err(e),
             }
         };
@@ -765,6 +777,9 @@ async fn resolve_revocation(
     };
     let live = |p: Plane| row.credential(p).state == CredentialState::Live;
     match plane {
+        Some(p) if row.credential(p).state == CredentialState::None => {
+            return Err(refused(&Refusal::NotEnrolled));
+        }
         Some(p) if !live(p) => return Err(refused(&Refusal::PlaneRevoked)),
         None if !live(Plane::Gate) && !live(Plane::Admin) => {
             return Err(refused(&Refusal::Retired));
@@ -821,6 +836,7 @@ async fn revoked_in_its_task(
             Ok(revoked) => Ok(Ok(revoked)),
             Err(e) if e.is::<AuthorityGone>() => Ok(Err(Refusal::AuthorityGone)),
             Err(e) if e.is::<PlaneRevoked>() => Ok(Err(Refusal::PlaneRevoked)),
+            Err(e) if e.is::<NotEnrolled>() => Ok(Err(Refusal::NotEnrolled)),
             Err(e) if e.is::<Retired>() => Ok(Err(Refusal::Retired)),
             Err(e) => Err(e),
         }

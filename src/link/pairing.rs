@@ -80,7 +80,6 @@ pub(crate) type PairConnection = LineReader<TlsStream<TcpStream>>;
 /// nothing after.
 pub struct Taken {
     pub r#box: String,
-    pub gate_request: String,
     pub admin_request: String,
     pub peer: IpAddr,
     /// The connection, kept alive by its heartbeats until the exchange
@@ -424,19 +423,25 @@ pub(crate) async fn serve(start: StartHandshake<TcpStream>, mut cx: Context<'_>)
         f = tokio::time::timeout(cx.waiting.bounds().first_frame, reader.next()) => f,
         _ = cx.halting.changed() => return,
     };
-    let claim = match first {
-        Ok(Line::Frame(line)) => serde_json::from_str::<PairFromBox>(&line).ok(),
-        _ => None,
+    let line = match first {
+        Ok(Line::Frame(line)) => line,
+        _ => return,
     };
-    let Some(PairFromBox::Hello {
+    // **A first frame that is not this hello is refused `frame_refused`**
+    // (Spec 8.2), so a box built to the earlier hello, which carried a gate
+    // request too, prints why and is never listed.
+    let Ok(PairFromBox::Hello {
         mut r#box,
-        mut gate_request,
         mut admin_request,
-    }) = claim
+    }) = serde_json::from_str::<PairFromBox>(&line)
     else {
+        let refused = PairToBox::Refused {
+            reason: crate::link::frames::pair_reason::FRAME_REFUSED.to_owned(),
+        };
+        close_with(&mut reader, &refused, cx.write_bound).await;
         return;
     };
-    if !is_box(&r#box) || gate_request.is_empty() || admin_request.is_empty() {
+    if !is_box(&r#box) || admin_request.is_empty() {
         return;
     }
 
@@ -485,7 +490,6 @@ pub(crate) async fn serve(start: StartHandshake<TcpStream>, mut cx: Context<'_>)
                 let lifted = reservation.lift();
                 let handed = answer.send(Some(Taken {
                     r#box,
-                    gate_request,
                     admin_request,
                     peer: cx.peer,
                     #[cfg(feature = "enrollment")]
@@ -503,7 +507,6 @@ pub(crate) async fn serve(start: StartHandshake<TcpStream>, mut cx: Context<'_>)
                     reservation.restore(slot);
                 }
                 r#box = back.r#box;
-                gate_request = back.gate_request;
                 admin_request = back.admin_request;
                 #[cfg(feature = "enrollment")]
                 match back.connection.resume().await {

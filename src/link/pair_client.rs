@@ -39,11 +39,10 @@ pub const DIAL_SECS: u64 = 10;
 pub const REASON_BOUND: usize = 64;
 
 /// What the box claims in its first frame: its name, in section 2.12's
-/// grammar, and the two certificate requests, the gate's and admin's.
+/// grammar, and admin-con's certificate request (Spec 8.2).
 #[derive(Debug, Clone)]
 pub struct Claim {
     pub r#box: String,
-    pub gate_request: String,
     pub admin_request: String,
 }
 
@@ -102,14 +101,13 @@ pub struct Answer {
     pub r#box: String,
     pub server_name: String,
     pub authority: String,
-    pub gate: String,
     pub admin: String,
 }
 
 /// **The console's last word**, after the box's (Spec 8.2, step 6).
 #[derive(Debug, PartialEq, Eq)]
 pub enum LastWord {
-    /// The row stands with the answer's two certificates live.
+    /// The row stands with the answer's certificate live.
     Paired,
     /// The console refused, with its reason, checked printable.
     Refused(String),
@@ -172,8 +170,8 @@ impl Dialed {
         if authority != self.authority {
             return Err("the answer's authority is not the one the handshake presented");
         }
-        if one_certificate(&answer.gate).is_none() || one_certificate(&answer.admin).is_none() {
-            return Err("an answer's certificate is not one certificate");
+        if one_certificate(&answer.admin).is_none() {
+            return Err("the answer's certificate is not one certificate");
         }
         Ok(answer)
     }
@@ -243,7 +241,6 @@ impl Dialed {
                     r#box,
                     server_name,
                     authority,
-                    gate,
                     admin,
                 }) => {
                     let answer = Answer {
@@ -252,7 +249,6 @@ impl Dialed {
                         r#box,
                         server_name,
                         authority,
-                        gate,
                         admin,
                     };
                     return match self.checked(answer) {
@@ -386,7 +382,6 @@ pub(crate) async fn over(tcp: TcpStream, host: &str, claim: &Claim) -> Result<Di
     let mut transcript = Vec::new();
     let hello = PairFromBox::Hello {
         r#box: claim.r#box.clone(),
-        gate_request: claim.gate_request.clone(),
         admin_request: claim.admin_request.clone(),
     };
     let mut line = serde_json::to_string(&hello).expect("a frame serializes");

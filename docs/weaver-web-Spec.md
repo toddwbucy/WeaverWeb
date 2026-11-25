@@ -1423,8 +1423,14 @@ never a bare socket's. Each row carries:
 - **the two credentials**, each as the fingerprint of its client certificate
   and never the key, each with its plane, gate or admin, its state, live or
   revoked, and the date the state was set. Registration mints them (section
-  8), and for an appliance its enrollment signs them over public halves made
-  inside it (section 8.2). The posture is section 2.8's
+  8), and for an appliance its enrollment signs the admin plane's over a
+  public half made inside it (section 8.2). **The gate plane of an enrolled
+  appliance is not enrolled** until the loop's install enrolls gate-con
+  (section 8.2): its state reads `none`, it holds no fingerprint and no
+  authority, it is neither live nor revoked, and no verb revokes or rotates
+  it, each refused `not_enrolled`; retiring the row leaves it `none`.
+  Migration `0033` carries the state, since a migration that has run is
+  never edited. The posture is section 2.8's
   digest rule applied to a certificate: a read of this table is not a set of
   credentials anyone can present
 - **each connector's link state**, connected or not, with the date it last
@@ -1437,14 +1443,15 @@ never a bare socket's. Each row carries:
   what no connection holds. Section 8 states the reset, and it binds every
   link-state write to the connection it describes, so a stale teardown
   cannot mark a plane missing after its replacement was admitted. **A row
-  an appliance's pairing wrote reads "paired, setup running" until either
-  connector's service is first admitted**, on this document's election of
-  2026-11-17, so a box in setup never shows as not present: the setup
-  connection counts for nothing in presence and the connectors' services
-  start at the setup's end (section 8.3). It carries its status as every
-  label does, healthy states included (section 6.2): `ok` while the setup
-  runs, and once a service is admitted the row's presence of section 8,
-  with its own healthy and fault forms
+  an appliance's pairing wrote reads "paired, setup running" until
+  admin-con's service is first admitted**, on this document's elections of
+  2026-11-17 and 2026-11-25, so a box in setup never shows as not present:
+  the setup connection counts for nothing in presence and admin-con's
+  service starts once the setup script has adopted its config (section
+  8.2). It carries its status as every label does, healthy states included
+  (section 6.2): `ok` while the setup runs, and once the service is admitted
+  "admin alone" while the gate plane is not enrolled (section 8), then the
+  row's presence of section 8, each with its own healthy and fault forms
 - **the trace door's state**, open or closed, with the date it last
   changed: admin-con's word at admission, in its hello, and at every change
   after, in a frame on the live connection, each write bound to the
@@ -6462,6 +6469,18 @@ and no admin-con has a tuple and a load state nobody has confirmed since
 the link last dropped. The address each connection came from stands in
 section 2.12 as an observation a surface may show, and never as a mark.
 
+**A row whose gate plane is not enrolled reads "admin alone", and never
+present**, on the Planner's ruling of 2026-11-25 on the plan: an appliance
+paired and not yet given its loop holds the admin plane's credential alone
+(section 8.2), and presence keeps its meaning, both planes connected, so an
+appliance with no agent laid never reads as an agent that is present. The
+word carries its status as every label does (section 6.2): `ok` while
+admin-con is connected, and "admin alone, admin-con down" as a fault while
+it is not. No surface counts a plane that is not enrolled as missing, so
+no "turns unavailable" banner (section 2.14) and no gate-con fault is shown
+for it, and the turn form is drawn held, saying that gate-con is created at
+the loop's install.
+
 ```graph
 node: web-agent-present-only-when-both-planes-match-one-row
 kind: assertion
@@ -6911,7 +6930,8 @@ the commands on the box in `link::key_config` and `link::box_commands`.
   Pair page. The exchange answers the rest (below), and the box facts each config
   needs are added on the box by the image's install, as for a registered agent.
 - **What coexists.** Registration and its handover stand as built (section 8.1). Both
-  paths write the same row and the same two credentials. The setup flow serves a host as
+  paths write the same row, registration with its two credentials live and the pairing
+  with admin-con's live and the gate plane not enrolled until the loop's install. The setup flow serves a host as
   it serves a virtual machine, on the operator's rulings of 2026-11-16 (setup pages),
   and on their addendum the pairing belongs with the connectors and serves a host, a
   Spark-class machine or the console's own machine, as it serves an appliance, a host's
@@ -6939,7 +6959,7 @@ Pair a box has named, by entering the code the box shows, the agent being named 
 pairing on the operator's rulings of 2026-11-23 (section 6.2). **As built, a
 pending enrollment cannot be a register row**, because a row holding no live credential
 is retired and never live again (section 2.12), so it stands apart from the register
-until its exchange writes the row with both credentials live. It is an admin's, as the
+until its exchange writes the row with admin-con's credential live. It is an admin's, as the
 setup pages are (section 6.2) and as registration is (section 2.13). **Entering a code
 is an admin write** in section 2.13's order, and a code that matches no waiting
 connection is one refusal record. **An entry runs from the field's lock to its outcome's
@@ -6957,7 +6977,12 @@ its pairing step, and the box dials again.
 
 **The waiting box is held in the server's memory alone**, on this document's election of
 2026-11-17. The pairing connection's first frame carries the box's name, as the box
-claims it, and the two certificate requests. Nothing reaches the store before a code
+claims it, and admin-con's certificate request alone, on the operator's ruling that
+pairing is admin-con's only (2026-11-25). **A first frame that is not this hello**,
+among them the earlier hello that carried a gate request too, is refused
+`frame_refused`, and the box prints `refused` with that reason: the protocol keeps its
+name `weaver-pair/1` (the Planner's ruling of 2026-11-25), since one appliance stood
+built to the earlier frame. Nothing reaches the store before a code
 matches: no row, no audit record and no log line per connection. At most 16 connections
 wait in all and 4 from one peer address, and a connection past either is refused `busy`.
 The first frame arrives within 10 seconds and holds at most 16 KiB. The server sends a
@@ -7087,16 +7112,17 @@ connection, the console takes six steps under the authority lock:
    of the exchange's own**, sharing the register's insert and taken under the row's
    lock, so registration's re-registration, which retires a live row of the same box and
    name (section 2.12), stays registration's alone.
-2. It verifies each certificate request's own signature, the proof that the box holds
+2. It verifies the certificate request's own signature, the proof that the box holds
    the key, and takes ECDSA P-256 with SHA-256 alone, the kind `mint_client` makes, else
    it refuses `request_refused`.
-3. It signs each request's public half as `mint_client` signs a certificate: the subject
-   the agent's name and the plane, client authentication alone, and every member but the
-   key the console's own.
+3. It signs the request's public half as `mint_client` signs a certificate: the subject
+   the agent's name and the admin plane, client authentication alone, and every member
+   but the key the console's own.
 4. It sends the answer: the agent's name, the row's identity, minted here, the box,
-   `server_name`, the authority's certificate and the two certificates.
+   `server_name`, the authority's certificate and admin-con's certificate.
 5. It waits, bounded, for the box's word that it wrote the answer.
-6. It writes the register row of section 2.12 with both fingerprints live and the setup
+6. It writes the register row of section 2.12 with admin-con's fingerprint live and the
+   gate plane not enrolled, and the setup
    row's link to it, in one identity transaction that first re-checks the session and
    the admin grant, with the audit's outcome naming the first record, and then sends its
    last word.
@@ -7110,8 +7136,10 @@ write holds the lock past it the console refuses the box `busy` and writes nothi
 `busy` names a console that cannot take the box, whether at its dial or at its exchange
 (this document's election of 2026-11-17).
 
-**This document elects that one single-use code enrolls the pair**, since both
-connectors must match on one row (the operator's ruling of 2026-10-01, section 8).
+**One single-use code enrolls admin-con alone**, on the operator's rulings of
+2026-11-25: "Pairing is admincon only", and gate-con "is not started, enrolled or tested
+at pairing. It is created at loop install, with its config." The row's gate plane reads
+not enrolled until then (section 2.12), and the row reads "admin alone" (section 8).
 **Nothing crosses in the clear**, since the exchange is TLS from its first byte, so
 section 8's claim holds as written. **The exchange's audit principal is the admin who
 entered the code**, by session, its action `pair` and its target the agent row the
@@ -7124,18 +7152,19 @@ live (section 8), so a failed pairing fails loud. **The recovery is a second pai
 a box that adopted an answer whose word was lost pairs again, and the second pairing's
 configs replace the first's. **On `unknown` the Pair page says what the write made**,
 and not whether the row stands, since a replacement's row stands whether its write
-committed or not. Either write makes the answer's two certificates the row's live
-credentials, `pair` on the row it writes and `replace box` on the row whose box it sets
+committed or not. Either write makes the answer's certificate the row's live admin
+credential, `pair` on the row it writes and `replace box` on the row whose box it sets
 to the new box's claim, so the page shows the row's box and its live credentials by
 their fingerprints, each as the register keeps it (section 2.12) in the authority's
 fingerprint's grouping. Where the write did not commit, the page shows no row or the old
 box's credentials, which match nothing the box holds. `pair`'s `unknown` line carries
-the fingerprints of the answer's two certificates, the setup script shows them and asks
-the operator whether the page shows the same two, and it adopts only where the operator
-confirms both. Otherwise the box pairs again, so `pair` and `replace box` resolve one
+`admin`, the fingerprint of the answer's certificate, the setup script shows it and asks
+the operator whether the page shows the same, and it adopts only where the operator
+confirms it. Otherwise the box pairs again, so `pair` and `replace box` resolve one
 way.
 
-**Each connector's key is made inside the appliance and never leaves it.** The console
+**Each connector's key is made inside the appliance and never leaves it**: admin-con's
+at the pairing, gate-con's at the loop's install. The console
 receives the public half alone, **as a certificate request**, PKCS #10 in PEM, whose own
 signature proves that the box holds the key (this document's election of 2026-11-17), so
 the row's fingerprints are of certificates whose keys the console never held, and
@@ -7169,15 +7198,16 @@ with no escape sequence in it. **One set of exit statuses serves every command:*
 | 5 | `expired` | the pairing alone: no code entered within the window |
 | 6 | `unknown` | the connection ended after the console may have acted, and the Pair page says which |
 
-The pairing takes three steps on the box, so that each connector makes its own key under
-its own account and no command of this repository runs as root to parse what the network
-sent:
-1. **`gate-con request` and `admin-con request`**, each under its own connector's
-   account. In: the path of the connector's config, which must not exist. Out: that file
+The pairing takes three steps on the box, so that admin-con makes its own key under its
+own account and no command of this repository runs as root to parse what the network
+sent. `gate-con request` and `gate-con adopt` stand as built for the loop's install,
+which enrolls gate-con, and the pairing runs neither:
+1. **`admin-con request`**, under admin-con's account. In: the path of the connector's
+   config, which must not exist. Out: that file
    created holding the connector's new key alone, under the trust rule a connector's
    config already takes, and a `request` line carrying the certificate request. No dial.
 2. **`admin-con pair`**, under an unprivileged account the image names. In: the
-   console's address and port, the two requests, the file the answer is written to,
+   console's address and port, admin-con's request, the file the answer is written to,
    which must not exist, and the box's name in section 2.12's grammar. **An appliance
    always passes the box's name**, since every appliance boots with the same host name,
    and the setup script asks it of the operator. The default, the machine's own name,
@@ -7185,20 +7215,22 @@ sent:
    `expires_in_secs`, and no server name, which the box learns only from the answer at
    the exchange's step 4. Out, one line of these:
    - `paired` (0), with `agent`, `agent_id` and `box`, the answer written
-   - `refused` (4), with `reason`: `busy`, `box_and_name_live`, `setup_closed` or
-     `request_refused`
+   - `refused` (4), with `reason`: `busy`, `box_and_name_live`, `setup_closed`,
+     `request_refused` or `frame_refused`
    - `expired` (5), the window past with no code entered
    - `unreachable` (3), with the address it dialed
    - `unknown` (6), the connection ended after the answer was written and before the
-     console's last word, with `gate` and `admin`, the fingerprints of the answer's two
-     certificates, which the setup script shows beside the Pair page's (above)
-3. **`gate-con adopt` and `admin-con adopt`**, each under its own connector's account.
-   In: its config from step 1 and the answer. It checks that the answer's certificate
-   for its plane carries its own key's public half and verifies under the authority the
+     console's last word, with `admin`, the fingerprint of the answer's certificate,
+     which the setup script shows beside the Pair page's (above)
+3. **`admin-con adopt`**, under admin-con's account. In: its config from step 1 and the
+   answer. It checks that the answer's certificate for its plane carries its own key's
+   public half and verifies under the authority the
    answer carries, whose fingerprint is the one `pair` printed, and then writes the
    complete config in place, the members `register` writes, so the connector's unit
    reads it unchanged (section 8.1). Out: `adopted` (0), or `refused` (4) with its
-   reason, `key_mismatch` or `not_signed`, and nothing written. **`adopt` appends and
+   reason, `key_mismatch` or `not_signed`, and nothing written. An answer carries no
+   `gate` member, and `gate-con adopt` given one refuses it as `usage`, since its plane
+   is not in it. **`adopt` appends and
    never rewrites the key**: it finds the key's prefix by parsing the exact bytes
    `request` wrote, never a stored length, refuses as `usage` a file whose prefix is not
    a well-formed key-only config for its plane, and replaces only what follows the
@@ -7206,10 +7238,10 @@ sent:
    file, and a config left with no certificate is refused by the service at its start,
    its `certificate` member missing.
 
-**Each config reaches the agent's directory by a rename**, since a unit reads its config
-under the agent's name and the name arrives only with `paired`. `request` writes each
+**The config reaches the agent's directory by a rename**, since a unit reads its config
+under the agent's name and the name arrives only with `paired`. `request` writes the
 config into the setup script's directory for the run, and after `paired` and before
-`adopt` the script moves the two configs into the agent's directory. Four conditions
+`adopt` the script moves admin-con's config into the agent's directory. Four conditions
 bind the move:
 - **A rename, never a copy.** The two directories are on one filesystem and the move is
   `rename(2)`, which keeps the file's inode, owner and mode. A move that would cross
@@ -7227,14 +7259,14 @@ bind the move:
 
 **The steps after `paired` are the appliance's setup script's**, on the operator's ruling
 of 2026-11-23 that one interactive script finishes setup and ends in pairing: it moves
-the two configs, runs both `adopt`s, and sends the `pairing` stage's report with `setup
+admin-con's config, runs its `adopt`, and sends the `pairing` stage's report with `setup
 report` (section 8.3). It need not send a `drives` stage report, and one it sends is
 read where it is the latest (section 6.2). Weaver Web's pages wait on none of these
 steps, and the box commands keep their arguments and printed lines (the Planner's ruling
 of 2026-11-24 on the plan).
 
-The box facts each connector's config needs are added by the image's install, as for a
-registered agent. **The pairing changes nothing in the units** (section 8.1), since
+The box facts admin-con's config needs are added by the image's install, as for a
+registered agent, and gate-con's by the loop's install. **The pairing changes nothing in the units** (section 8.1), since
 `adopt` writes the config each unit reads.
 
 **A new image for an agent that stands replaces the row's box**, on the operator's
@@ -7245,9 +7277,10 @@ and its save points, carries over, so the new image runs `request` and `pair` as
 box does. Pair a box names the agent that stands, and the Pair page asks whether to
 replace its box, saying that the old box's credentials end. After the fingerprint and
 the code, one audited write in section 2.13's order, its action `replace box`, does what
-`rotate` does as built, with the box changed: the old box's two credentials revoked and
-their connections closed, the new box's two certificates signed for the same `ag-`, and
-the row's box set to the new box's claim. The row is not retired, since a retired row
+`rotate` does as built, with the box changed: the old box's live credentials revoked and
+their connections closed, the new box's admin-con certificate signed for the same `ag-`,
+its gate plane not enrolled until the loop's install, and the row's box set to the new
+box's claim. The row is not retired, since a retired row
 never lives again and the agent stays one agent. The old box's certificates are refused
 from then on at admission, as a revoked credential is. The agent's record and its
 deployment tuples stay one agent's, and the new image's version is recorded as a new
@@ -7627,6 +7660,10 @@ two connectors report.
 | a party between the box and the console meets a code that matches nothing | `src/link/pairing_tests.rs`: an in-process relay terminates the box's TLS under an authority of its own and dials the listener as a box, and the box's half (`src/link/pair_client.rs`, which `pair` runs) dials the relay. The code the box shows matches no waiting connection, the relay's own session code does, and the fingerprint the box shows is the relay's authority. Match any code, and the box's code takes the relay's connection |
 | a certificate is signed only over a request whose own signature verifies, ECDSA P-256 with SHA-256 alone | perturbation in `src/link/request.rs` and `src/enrollment_tests.rs`: a request naming one key's public half and carrying another key's signature is refused, and at the exchange the box hears `request_refused` and nothing is written; a P-384 and an Ed25519 request are refused by kind, and a P-384 one at the exchange too. Take the request's key without its signature's verification, and the request is signed and the box answered. rcgen's parser verifies inside its parse, so the perturbation reads the key from the request's bytes, as a parser that skipped the check would |
 | a pairing naming a live box and name is refused and retires nothing | perturbation in `src/enrollment_tests.rs`: against a live row of the claimed box and the setup's name, the box hears `box_and_name_live`, the live row keeps its live credentials and its version, and no row is added. Write the pairing's row through registration's insert, which retires the live row, and the live row is retired |
+| a pairing signs one certificate, admin-con's, and leaves the gate plane not enrolled | perturbation in `src/enrollment_tests.rs`, `a_pairing_issues_one_certificate_and_leaves_the_gate_not_enrolled`: the answer carries `admin` and no `gate`, the row's gate plane reads `none` with no fingerprint and no authority, and once admin-con is admitted the row reads admin alone and never present. Write a gate fingerprint with the row, and its gate plane reads live; count a gate not enrolled as connected, and the admitted row reads present |
+| a plane that is not enrolled is neither revoked nor rotated, and retiring the row leaves it not enrolled | perturbation in `src/link/verbs_audit_tests.rs`, `a_revoke_or_rotation_of_a_plane_not_enrolled_is_refused_not_enrolled`, and `src/agents_tests.rs`, `the_admins_revoke_and_rotation_of_a_gate_not_enrolled_are_refused_not_enrolled`: the host's `revoke` of the gate plane and `rotate`, and the admin's revoke of it and rotation, on a row whose gate plane is `none`, are each refused `not_enrolled` and leave the row's version; re-registering the box and name, and the admin's retire, leave the gate `none` and the admin plane revoked. Drop the state's checks, and the revocation fails at the schema (migration `0033`) rather than as `not_enrolled`, and a rotation mints a gate certificate for a plane the pairing never enrolled |
+| a row whose gate plane is not enrolled reads admin alone and never present, and raises no turns banner | perturbation in `src/reading_tests.rs`, `an_agent_with_admin_con_alone_reads_admin_alone_and_never_present`: with admin-con connected the agent page reads "admin alone" with `ok` and the turn form held, with it gone "admin alone, admin-con down", never present, and no page carries "turns unavailable". Raise the banner for a gate that is not revoked, and the agent page carries it |
+| a first frame that is not this console's hello is refused `frame_refused` | perturbation in `src/link/pairing_tests.rs`, `a_first_frame_naming_a_gate_request_is_refused_frame_refused`: the earlier hello, which carried a gate request, hears `refused` with `frame_refused` and the box is never listed. Close such a frame unanswered, and the box hears no reason |
 | a lost word writes no row | perturbation in `src/enrollment_tests.rs`: a box that closes after the answer and before its word leaves no row and no link on the setup, the act's outcome `failed`, and the page answering the entry draws no row for the name. Write the row whether the word came or not, and a row stands for an answer no box adopted |
 | on `unknown` the Pair page shows what the write made, the row's box and its live credentials' fingerprints | perturbation in `src/enrollment_tests.rs`: a `replace box` whose admin's session closes between the answer and the box's word does not commit, the box reads no last word, and the page answering the entry shows the old box and its credentials' fingerprints and not the answer's; a `replace box` that commits, its box gone before the last word, shows the new box and the new certificates' fingerprints on the Pair page; and after a lost word for `pair` the page draws no row. Draw the answer's fingerprints in the rows' place, and the page after the write that did not commit shows them, which would match the box's line whether the write committed or not |
 | a row's box changes only through the replace-box write, and the row keeps the box it held | perturbation in `src/enrollment_tests.rs` and in the schema (migration `0030`): a `replace box` keeps the row's identity, sets its box and its new credentials, and keeps the old box in `agent_box`, and an update moving a row's box outside that write is refused. Write the new box without the history's row, and the schema refuses the write; drop the schema's trigger too, and the old box leaves the record |
@@ -7634,7 +7671,7 @@ two connectors report.
 | a setup ask is refused while its credential's connection stands, and counts for nothing in presence | perturbation in `src/enrollment_tests.rs`, against the real listener with the box's own commands: two setup asks in turn are each answered and leave the row's admin plane unconnected, with no link time, not present and still labelled setup running; beside a standing admin connection, `setup describe` and `setup report` are refused `already_connected` and no report lands. Admit the ask without the live connection's check, and the ask beside it is answered; write the plane's link state at a setup ask, and the row reads the admin plane connected |
 | a setup ask not answered within the silence bound or 20 seconds of its connection's accept, whichever is shorter, its lookup and admission included, is refused `store_unavailable` within the box's own bound and lets its claim go, and a lookup that fails is refused `store_unavailable` | perturbation in `src/enrollment_tests.rs`, against the real listener with the box's own commands. `a_setup_ask_the_store_holds_past_the_bound_is_refused_and_lets_its_claim_go`: a report held behind the setup's row, locked by another transaction, and a describe whose store call stalls are each refused `store_unavailable` within the box's own bound, the held report has landed nothing once the hold goes, and the next ask is answered. Await the report with no bound, and the box reads `unknown`. Await the describe with no bound, and it reads `fault`. Land the report outside its transaction before its checks, and the held report lands once the hold goes. `a_setup_ask_whose_admission_waits_is_refused_within_the_boxs_bound`: a describe whose admission waits on the agent's row, held by another transaction, is refused `store_unavailable` within a box's bound under the silence bound, and the next ask is answered. Run the admission outside the deadline, or bound the ask by the silence bound alone, and the box gives up first, reading `fault`. `a_setup_ask_whose_lookup_waits_is_refused_within_the_boxs_bound`: a describe whose lookup waits for a connection, the store's pool held past the box's bound, is refused `store_unavailable` within it, and the next ask is answered. Make the deadline after the lookup, the lookup unbounded, or run the lookup outside the deadline, and the box gives up first. `a_setup_ask_whose_lookup_and_admission_wait_is_refused_within_the_boxs_bound`: a lookup that waits 0.8 s, then an admission that waits on the agent's row, are refused at the deadline from the accept, within a box's bound of 1.4 s. Make the admission's deadline after the lookup, and the box gives up first. `a_setup_ask_whose_lookup_fails_is_refused_store_unavailable`: a lookup failed by the test's lever is refused `store_unavailable`, and the next ask is answered. End the connection with no refusal, and the box reads `fault` (each measured) |
 | the setup keeps the latest report of each stage, verbatim | perturbation in `src/enrollment_tests.rs`: a pairing report, a drives report and the pairing report run again leave the second pairing report and the drives report, each byte for byte. Keep one report per setup, and the pairing report run again replaces the drives stage's |
-| an adopted pair connects | end to end in `src/enrollment_tests.rs`: `request` for each connector, then `pair` against the real listener with the code its `waiting` line shows entered through the page, then `adopt` for each, and both connectors are admitted on the one row, which reads present. `adopt`'s append is shown in `src/link/key_config_tests.rs`: a crash after the open, mid-certificate and before the sync leaves the key byte for byte, the service refuses the config each leaves, and a re-run completes it. Truncate one byte into the key's prefix, and the key's bytes move; accept another plane's header, and the gate's `adopt` takes the admin config |
+| an adopted admin-con connects, and its row reads admin alone | end to end in `src/enrollment_tests.rs`: `admin-con request`, then `pair` against the real listener with the code its `waiting` line shows entered through the page, then `admin-con adopt`, and admin-con is admitted on the row, which reads admin alone and never present. `adopt`'s append is shown in `src/link/key_config_tests.rs`: a crash after the open, mid-certificate and before the sync leaves the key byte for byte, the service refuses the config each leaves, and a re-run completes it. Truncate one byte into the key's prefix, and the key's bytes move; accept another plane's header, and the gate's `adopt` takes the admin config |
 | the connectors' build holds no `x509-parser` | measurement in `tests/connectors_link.rs`: the package's normal graph without the default features holds no `x509-parser`, and the default graph holds it, which the `enrollment` feature brings in. Make the parser a dependency the default features do not gate, and the graph holds it |
 | at the pairing the box takes the console's chain only where the server's certificate chains to the authority presented with it, and the pairing is TLS 1.3 alone | perturbation in `src/link/pairing_tests.rs`: a console that presents its certificate with another authority's completes no handshake with the box, and a client offering the pairing protocol under TLS 1.2 alone completes none with the listener. Let the box's check pass any chain, or build the pairing's configuration on the default versions, and each completes |
 | at most 16 boxes wait in all and 4 from one peer address, the first frame within 10 s and 16 KiB, and ten minutes from the dial the console closes the connection `expired` | perturbation in `src/link/pairing_tests.rs`, each bound alone, the time bounds shortened: the fifth box from one address and the seventeenth in all are refused `busy`, a silent box and a first line past 16 KiB are closed unanswered and give their places back, and a box past its life hears `expired`. Drop any one bound, and its box is held |
@@ -7753,7 +7790,7 @@ two connectors report.
 | the declaration screen reaches no agent and no host | `the_declaration_screen_reaches_no_agent_and_no_host` in `src/declarations_tests.rs`, with a real listener and a fake connector of each plane connected and admitted: every route is exercised, a save, a save from it and two refusals among them, and neither connector is sent a line, the server sending a connector no heartbeat of its own |
 | the bar stands in two rows: Agents, Agent Operations and IAM on top in that order, each opening the first sub-tab the person may open, then who is signed in, the open-alert count as a status and the sign-out at the right; beneath, the sub-tabs of the page's tab in their order, the agents' carrying their stage marks, the current one marked and the row named by its tab; a person sees the sub-tabs they may open, and a page without a session Agent Operations and sign-in alone | perturbation in `src/navigation_tests.rs`, `the_top_row_holds_three_tabs_and_the_status_at_the_right` and `the_second_row_holds_the_sub_tabs_of_the_pages_tab`, on the base template: swap Agents and Agent Operations or put IAM before Agent Operations, and the admin's top row fails on its order; open an admin's Agents at Your agents or IAM at Passkeys, or a person's IAM at Persons, and that person's top row fails; set the open-alert count among the tabs, before who or between Agents and Agent Operations, and it fails on its place; drop Agent Operations from a page without a session, put sign-in before it, or name the tab The Record, and that row fails; give a page of no tab the agents' tab, and the sign-in page fails on its second row; mark Agent Operations on every page, and the second row's test fails on the tab (12 cases); swap Declarations and Register or Persons and Grants, or put Your agents before Register or Passkeys before Persons, and the second row fails on its order; drop any of the four stage marks or number Declare 2, and it fails on the agents' row; move Declarations, Register, Persons or Grants out of the admin's condition, and a person's row names it; leave The Record unmarked or mark Register on Declarations, and it fails on the current sub-tab; name the agents' row Your agents or leave the IAM row unnamed, and it fails on the row's name; name the sub-tab Agents, or head The Record's page Record or Your agents' page Agents, and it fails on the name (20 cases); each caught; under Agents, Pair a box stands with its stage mark 2 Provision between Declarations and Register: drop it from the bar, and both the second row's test and `every_page_declares_its_tab_and_sub_tab` fail (measured 2026-11-24) |
 | every page declares its sub-tab, and one table names each sub-tab's tab | perturbation in `src/navigation_tests.rs`, `every_page_declares_its_tab_and_sub_tab`, over every page an admin opens and a scan of every `here` the surfaces declare: put Register under IAM, Persons under Agents or The Record under Agents, or leave Passkeys of no tab, and a page fails on its tab; have the agent page declare The Record, the hand-over Your agents or the declaration screen Register, and that page fails on its tab and sub-tab; have the passkeys page name no sub-tab, and it fails on the page and the scan (8 cases, each caught); it walks Pair a box and the Pair page, each declaring Pair a box under Agents, in the old pairing page's place |
-| a page's way forward stands where its condition holds and nowhere else | perturbation in `src/navigation_tests.rs`: drop a saved declaration's way forward, or the name its link carries, or plant one on the empty screen, and `a_saved_declaration_leads_on_to_registering_its_name` fails; let the register's form fill any name, or none, or drop the field's value, and it fails on the prefill; invert the hand-over's read of the admin's grant, or fix it either way, drop the box sentence under a grant, or point the Grants link at the agent's page, and `the_hand_over_leads_on_to_the_agents_page_or_says_why_not` fails (11 cases, each caught); in `src/surfaces/agents.rs`, read a failed grant read as none held, and `a_grant_read_is_held_not_held_or_unread` fails; render an unread grant as none held, or drop either of its two links, and `the_hand_over_says_an_unread_grant_is_unread` fails (4 cases, each caught); in `src/setup_place_tests.rs`, `confirm_stands_only_where_every_member_is_read_and_writes_one_tuple`: draw Confirm's form with a member unread, or the confirm page's next page before Confirm, and the held page offers it, `src/setup_tests.rs`'s walk naming the second too; drop Confirm's refusal of a member unread before its first record, and the refused post records one (each measured); in `src/enrollment_tests.rs`, `a_pairing_writes_the_row_and_the_box_hears_paired`, once the box is paired the Pair page's way on is the directories page, the start page lists the agent and Pair a box no longer does: offer no way on once paired, or list paired setups on Pair a box too, and it fails; in `src/setup_tests.rs`, `a_second_open_setup_of_one_name_is_refused`, list unpaired setups on the start page too, and it fails (each measured 2026-11-24); in `src/setup_tests.rs`, `a_declaration_opens_once_its_box_is_paired`, every declaration page of an unpaired setup leading to its Pair page and its pick, drop, placement and Confirm refused 409 with no record: serve the page, or take the placement, drop or Confirm, or the pick, or serve the header or the pull fragment, and it fails (each measured 2026-11-24) |
+| a page's way forward stands where its condition holds and nowhere else | perturbation in `src/navigation_tests.rs`: drop a saved declaration's way forward, or the name its link carries, or plant one on the empty screen, and `a_saved_declaration_leads_on_to_registering_its_name` fails; let the register's form fill any name, or none, or drop the field's value, and it fails on the prefill; invert the hand-over's read of the admin's grant, or fix it either way, drop the box sentence under a grant, or point the Grants link at the agent's page, and `the_hand_over_leads_on_to_the_agents_page_or_says_why_not` fails (11 cases, each caught); in `src/surfaces/agents.rs`, read a failed grant read as none held, and `a_grant_read_is_held_not_held_or_unread` fails; render an unread grant as none held, or drop either of its two links, and `the_hand_over_says_an_unread_grant_is_unread` fails (4 cases, each caught); in `src/setup_place_tests.rs`, `confirm_stands_only_where_every_member_is_read_and_writes_one_tuple`: draw Confirm's form with a member unread, or the confirm page's next page before Confirm, and the held page offers it, `src/setup_tests.rs`'s walk naming the second too; drop Confirm's refusal of a member unread before its first record, and the refused post records one (each measured); in `src/enrollment_tests.rs`, `a_pairing_issues_one_certificate_and_leaves_the_gate_not_enrolled`, once the box is paired the Pair page's way on is the directories page, the start page lists the agent and Pair a box no longer does: offer no way on once paired, or list paired setups on Pair a box too, and it fails; in `src/setup_tests.rs`, `a_second_open_setup_of_one_name_is_refused`, list unpaired setups on the start page too, and it fails (each measured 2026-11-24); in `src/setup_tests.rs`, `a_declaration_opens_once_its_box_is_paired`, every declaration page of an unpaired setup leading to its Pair page and its pick, drop, placement and Confirm refused 409 with no record: serve the page, or take the placement, drop or Confirm, or the pick, or serve the header or the pull fragment, and it fails (each measured 2026-11-24) |
 | the agent page leads every reader on to The Record and an admin alone back to the declaration saved under the agent's name, the rail linking Declare and Provision for an admin alone | perturbation in `src/navigation_tests.rs`, `the_agent_page_leads_on_to_record_and_back_to_its_declaration`: offer the way back to every reader, or to none, and it fails on the person's page or the admin's; drop the way on to The Record or its words that the record is not filtered by the agent, or name it Record, and it fails; name the lineage's root, or a lineage of another name, and it fails on version 2; link no mark, render a linked mark as a span or point Provision at another page, and it fails on the rail; send an agent with no declaration to the list, and it fails on the way back (11 cases, each caught) |
 | the reported members are the agent's as read: each member the Declare pane reads from `show`'s facts or a load event is a field of that shape's struct at the pin, of the type it reads, under the rename it reads, and each it takes as absent is not one | `the_reported_members_are_the_agents_as_read` and `the_reported_members_were_read_at_the_builds_pin` in `src/declaration/reported.rs`, against the dated copy `src/declaration/reported-5ec7ecf8.md`: misname `show`'s state election, read a turn context from `show` or an artifact from a load event, read the load event's election by `show`'s name, or spell either flag as the other shape does, and it fails on the reader's tables; rename `LoadFacts`'s members, name the tee otherwise, give the serving record a turn context, add an engine or a turn context the reader does not read, or make the artifact optional, and it fails on the copy; move the pin without a reread, and the second fails (13 cases, each caught) |
 | each reported member reads equal, differs or not in this report, by the shape its source names, a state election by the first entry for each kind, and an absence is set beside the report as the agent reads it | `each_member_reads_equal_differs_or_not_in_this_report`, `an_absence_is_set_beside_the_report_as_the_agent_reads_it`, `a_kind_named_again_whose_first_entry_is_declared_reads_equal` and `a_kind_named_again_whose_first_entry_is_not_declared_differs` in `src/declaration/reported.rs`: read a state election's kinds in their order or a path named twice twice, compare a state election by its words, or show a difference between two elections that read alike by those words, read a null member as reported, read the tee's election in `show`'s spelling, read any engine or turn context word, or swap a difference's two sides, and the first fails; read an absent turn context as independent, an absent surprisal as true, an absent residual readout as false or an absent state election as the other default, and the second fails; keep every entry of a kind named again, and `a_kind_named_again_whose_first_entry_is_declared_reads_equal` fails; keep its last entry rather than its first, and that test and `a_kind_named_again_whose_first_entry_is_not_declared_differs` fail; drop the words that say the kind was named again, and both fail (16 cases, each caught) |
@@ -8221,8 +8258,9 @@ a `web-` assertion beside `weaver-admin`'s.
   Section 8 says so.
 - **What the exchange answers, closed 2026-11-17 by section 8.2**, opened 2026-11-15
   (section 8.2). The agent's name, the row's identity, the box, `server_name`, the
-  authority's certificate and the two certificates. The operator enters the address and
-  the port at the box, and the image's install adds the box facts.
+  authority's certificate and admin-con's certificate, since the pairing enrolls
+  admin-con alone (2026-11-25). The operator enters the address and the port at the box,
+  and the image's install adds the box facts.
 - **The public half's form, closed 2026-11-17 by section 8.2**, opened 2026-11-15
   (section 8.2). A certificate request, PKCS #10 in PEM, whose own signature proves that
   the box holds the key, ECDSA P-256 with SHA-256 alone.

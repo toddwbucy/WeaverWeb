@@ -54,7 +54,7 @@ impl Bench {
             agent_id: "ag-0123456789abcdef".into(),
             r#box: "box-a".into(),
             authority: by.certificate_pem().to_owned(),
-            gate: sign(Plane::Gate, gate_key),
+            gate: Some(sign(Plane::Gate, gate_key)),
             admin: sign(Plane::Admin, admin_key),
         }
         .write_new(&path)

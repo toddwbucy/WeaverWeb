@@ -2402,7 +2402,8 @@ impl Inner {
             let standing = match self.store.agent(&agent).await {
                 Ok(Some(row)) => {
                     let credential = row.credential(plane);
-                    credential.fingerprint == fp && credential.state == CredentialState::Live
+                    credential.fingerprint.as_deref() == Some(fp.as_str())
+                        && credential.state == CredentialState::Live
                 }
                 Ok(None) => false,
                 Err(e) => {

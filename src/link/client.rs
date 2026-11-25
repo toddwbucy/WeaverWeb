@@ -129,9 +129,9 @@ pub fn parse_config<T: serde::de::DeserializeOwned>(
     if members.contains(&"local_address")
         && let Ok(table) = content.parse::<toml::Table>()
         && let Some(value) = table.get("local_address")
-        && !value
+        && value
             .as_str()
-            .is_some_and(|text| text.parse::<std::net::IpAddr>().is_ok())
+            .is_none_or(|text| text.parse::<std::net::IpAddr>().is_err())
     {
         anyhow::bail!(
             "{}: the config does not parse: the member local_address is not an IP literal",

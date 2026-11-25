@@ -1540,6 +1540,9 @@ pub enum PairingRefusal {
     /// Five misses closed the setup's code field since the match: the
     /// entry's lock is the guard, and this its second (Spec 8.2).
     FieldClosed,
+    /// New agent's pairing names an agent an open setup holds, so the
+    /// setup it would make cannot stand (Spec 8.2).
+    NameHeld,
 }
 
 impl PairingRefusal {
@@ -1549,9 +1552,10 @@ impl PairingRefusal {
     pub fn reason(&self) -> &'static str {
         use crate::link::frames::pair_reason;
         match self {
-            PairingRefusal::SetupClosed | PairingRefusal::Retired | PairingRefusal::FieldClosed => {
-                pair_reason::SETUP_CLOSED
-            }
+            PairingRefusal::SetupClosed
+            | PairingRefusal::Retired
+            | PairingRefusal::FieldClosed
+            | PairingRefusal::NameHeld => pair_reason::SETUP_CLOSED,
             PairingRefusal::BoxAndNameLive => pair_reason::BOX_AND_NAME_LIVE,
         }
     }
@@ -1568,6 +1572,7 @@ impl std::fmt::Display for PairingRefusal {
             PairingRefusal::FieldClosed => {
                 "five misses closed the setup's code field for ten minutes from the fifth"
             }
+            PairingRefusal::NameHeld => "an open setup holds the agent's name",
         })
     }
 }
@@ -1579,6 +1584,12 @@ pub struct Pairing<'a> {
     pub act: &'a PairingAct,
     pub r#box: &'a str,
     pub name: &'a str,
+    /// **New agent's pairing makes its setup** (Spec 8.2, the brief of
+    /// 2026-11-25): the person who named the agent, the setup `setup_id`
+    /// written with the row in step 6's transaction, a virtual machine, and
+    /// nothing written before the code matched. None pairs a setup that
+    /// stands, begun before New agent named agents in one form.
+    pub begun_by: Option<&'a str>,
 }
 
 /// The replaced row as its lock read it: its version, its box and the two
@@ -1597,6 +1608,9 @@ async fn pairing_stands(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     pairing: &Pairing<'_>,
 ) -> anyhow::Result<Result<Option<Replaced>, PairingRefusal>> {
+    if pairing.begun_by.is_some() {
+        return made_stands(tx, pairing).await;
+    }
     let setup = sqlx::query(
         "SELECT name, state, agent_id, COALESCE(code_closed_until > now(), false) AS closed \
          FROM agent_setup WHERE setup_id = $1 FOR UPDATE",
@@ -1656,6 +1670,42 @@ async fn pairing_stands(
         return Ok(Err(PairingRefusal::BoxAndNameLive));
     }
     Ok(Ok(replaced))
+}
+
+/// **New agent's pairing still stands** (Spec 8.2): no setup of its
+/// identity, no open setup holding the name, a new row's act, and no live
+/// row holding the claimed box and the name. The setup's own insert, under
+/// the one-open index, decides a race the read cannot lock.
+async fn made_stands(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    pairing: &Pairing<'_>,
+) -> anyhow::Result<Result<Option<Replaced>, PairingRefusal>> {
+    let PairingAct::Pair(_) = pairing.act else {
+        return Ok(Err(PairingRefusal::SetupClosed));
+    };
+    let held: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM agent_setup WHERE setup_id = $1) \
+         OR EXISTS (SELECT 1 FROM agent_setup WHERE name = $2 AND state = 'open')",
+    )
+    .bind(pairing.setup_id)
+    .bind(pairing.name)
+    .fetch_one(&mut **tx)
+    .await?;
+    if held {
+        return Ok(Err(PairingRefusal::NameHeld));
+    }
+    let live = sqlx::query(
+        "SELECT agent_id FROM agent WHERE box = $1 AND name = $2 \
+         AND (gate_state = 'live' OR admin_state = 'live') FOR UPDATE",
+    )
+    .bind(pairing.r#box)
+    .bind(pairing.name)
+    .fetch_optional(&mut **tx)
+    .await?;
+    if live.is_some() {
+        return Ok(Err(PairingRefusal::BoxAndNameLive));
+    }
+    Ok(Ok(None))
 }
 
 impl Store {
@@ -1754,18 +1804,46 @@ impl Store {
                 }
             }
         }
-        let linked = sqlx::query(
-            "UPDATE agent_setup SET agent_id = $1, paired_as = $2, paired_at = now(), \
-             version = version + 1 WHERE setup_id = $3 AND state = 'open' AND agent_id IS NULL",
-        )
-        .bind(id.as_str())
-        .bind(pairing.act.action())
-        .bind(pairing.setup_id)
-        .execute(&mut *tx)
-        .await?
-        .rows_affected();
-        if linked != 1 {
-            anyhow::bail!("the setup moved under its lock");
+        match pairing.begun_by {
+            // **New agent's setup is made here, paired**, with the row, a
+            // virtual machine (the checkbox's ruled start and the
+            // requirements' "This version covers VMs only"); an open setup
+            // of the name that landed since the read refuses it, writing
+            // nothing.
+            Some(begun_by) => {
+                let made = sqlx::query(
+                    "INSERT INTO agent_setup \
+                       (setup_id, name, begun_by, virtual_machine, agent_id, paired_as, paired_at) \
+                     VALUES ($1, $2, $3, TRUE, $4, $5, now()) \
+                     ON CONFLICT (name) WHERE state = 'open' DO NOTHING",
+                )
+                .bind(pairing.setup_id)
+                .bind(pairing.name)
+                .bind(begun_by)
+                .bind(id.as_str())
+                .bind(pairing.act.action())
+                .execute(&mut *tx)
+                .await?
+                .rows_affected();
+                if made != 1 {
+                    return Ok(Err(PairingRefusal::NameHeld));
+                }
+            }
+            None => {
+                let linked = sqlx::query(
+                    "UPDATE agent_setup SET agent_id = $1, paired_as = $2, paired_at = now(), \
+                     version = version + 1 WHERE setup_id = $3 AND state = 'open' AND agent_id IS NULL",
+                )
+                .bind(id.as_str())
+                .bind(pairing.act.action())
+                .bind(pairing.setup_id)
+                .execute(&mut *tx)
+                .await?
+                .rows_affected();
+                if linked != 1 {
+                    anyhow::bail!("the setup moved under its lock");
+                }
+            }
         }
         // **The reports land with the row** (Spec 8.2), each the latest of
         // its stage, in this one transaction: a page that says paired holds

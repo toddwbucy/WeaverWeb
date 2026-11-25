@@ -128,6 +128,7 @@ const CALLS: &[(&str, &str, Why)] = &[
     ("src/link/pair_client.rs", "over", Socket),
     ("src/link/pair_client.rs", "over", Socket),
     ("src/link/pairing.rs", "take", Channel), // a waiting connection's answer to a probe
+    ("src/link/pairing.rs", "take_chosen", Channel), // the chosen connection's answer to its probe
     ("src/link/pairing.rs", "send", Socket),
     ("src/link/pairing.rs", "close_with", Socket),
     ("src/link/pairing.rs", "serve", Socket),

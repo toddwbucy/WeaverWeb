@@ -44,6 +44,9 @@ pub struct Exchange<'a> {
     pub name: &'a str,
     pub act: &'a PairingAct,
     pub admin: AdminWrite<'a>,
+    /// New agent's pairing: the person who named the agent, whose setup
+    /// step 6 makes with the row (`Pairing::begun_by`).
+    pub begun_by: Option<&'a str>,
 }
 
 /// **How an exchange ended.**
@@ -108,6 +111,7 @@ pub async fn run(lock: &mut AuthorityLock, x: Exchange<'_>, taken: Taken) -> End
         act: x.act,
         r#box: &r#box,
         name: x.name,
+        begun_by: x.begun_by,
     };
     let refuse = |reason: &str| PairToBox::Refused {
         reason: reason.to_owned(),

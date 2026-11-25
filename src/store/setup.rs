@@ -148,6 +148,18 @@ impl Store {
         Ok(rows.iter().map(setup_of).collect())
     }
 
+    /// **An open setup holds `name`**, for New agent's entry (Spec 8.2):
+    /// one setup holds a name at a time, and the exchange's insert decides
+    /// a race past this read.
+    pub async fn open_setup_named(&self, name: &str) -> anyhow::Result<bool> {
+        Ok(sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM agent_setup WHERE name = $1 AND state = 'open')",
+        )
+        .bind(name)
+        .fetch_one(&self.pool)
+        .await?)
+    }
+
     /// The setup `setup_id` names, or `None`.
     pub async fn setup(&self, setup_id: &str) -> anyhow::Result<Option<Setup>> {
         let row = sqlx::query(sqlx::AssertSqlSafe(format!(

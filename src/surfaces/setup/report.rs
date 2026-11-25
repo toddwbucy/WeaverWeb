@@ -206,7 +206,7 @@ impl DrivesBody {
     /// holds Confirm by its exact size; a models directory whose free space
     /// is under the picks' need is a warning and not a hold, and one with
     /// room says so. No judgment names the models disk's margin, which the
-    /// requirements page states as guidance (the operator's ruling of
+    /// New agent states as guidance (the operator's ruling of
     /// 2026-11-24: "No page warns").
     pub(crate) fn of(survey: &Survey, need: Option<NeedOf<'_>>) -> DrivesBody {
         let drives = survey

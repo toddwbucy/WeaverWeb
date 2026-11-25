@@ -697,6 +697,9 @@ pub mod pair_reason {
     pub const FRAME_REFUSED: &str = "frame_refused";
     /// The first frame carries no `pairing` stage report.
     pub const NO_REPORT: &str = "no_report";
+    /// The code entered for this appliance missed `TRIES` times on New
+    /// agent, so its connection is closed (Spec 8.2): the script dials anew.
+    pub const CODE_MISSED: &str = "code_missed";
     /// A report is not one JSON object within its bound, or a stage is
     /// named twice.
     pub const REPORT_REFUSED: &str = "report_refused";

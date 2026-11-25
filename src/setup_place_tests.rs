@@ -353,7 +353,7 @@ async fn a_context_length_below_the_boxs_max_tokens_per_turn_is_refused() {
     // A decoder whose maximum is below the bound: no length fits.
     let pull = pull_of(s, &setup, "decoder").await;
     assert_eq!(ended(s, &pull).await, "verified");
-    let (_, _, short) = begin(&rig.app, &ada, "otto").await;
+    let (_, _, short) = begin(rig.store(), &ada, "otto").await;
     let short = short.expect("a second setup");
     crate::setup_tests::paired(s, &short).await;
     let (status, body) = post_pick(
@@ -1073,7 +1073,7 @@ async fn confirmed_on(
     drives: bool,
 ) -> String {
     let s = rig.store();
-    let (status, body, setup) = begin(&rig.app, ada, name).await;
+    let (status, body, setup) = begin(rig.store(), ada, name).await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
     let (ada, setup) = (ada.to_owned(), setup.unwrap());
     crate::setup_tests::paired(s, &setup).await;

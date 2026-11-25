@@ -264,6 +264,9 @@ struct AgentRow {
     setup_running: bool,
     /// **"Admin alone"** (Spec 8): the gate plane not enrolled.
     admin_alone: bool,
+    /// admin-con connected now: "admin alone" is ok while it is, and
+    /// "admin alone, admin-con down" a fault while it is not (Spec 8).
+    admin_connected: bool,
     registered: String,
     live: bool,
 }
@@ -325,6 +328,7 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, ask: Prefill) -> 
             present: a.present(),
             setup_running: a.setup_running,
             admin_alone: a.admin_alone(),
+            admin_connected: a.admin.connected,
             registered: a.registered_at.format("%Y-%m-%d %H:%M UTC").to_string(),
             live: matches!(a.gate.state, CredentialState::Live)
                 || matches!(a.admin.state, CredentialState::Live),

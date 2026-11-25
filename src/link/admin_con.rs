@@ -250,6 +250,7 @@ const MEMBERS: &[&str] = &[
     "server_certificate",
     "certificate",
     "key",
+    "local_address",
     "trace_socket",
     "weaver_admin",
     "admin_log",
@@ -278,8 +279,27 @@ impl AdminConConfig {
                 cfg.backfill_bytes
             );
         }
-        // **Each box fact binds where it is present** (Spec 7.2): absent,
-        // no agent is laid yet.
+        // **The three box facts stand together** (Spec 7.2): none is an
+        // appliance with no agent laid, all three a laid agent, and some
+        // and not all a half-done install, refused naming what is missing.
+        let facts = [
+            ("trace_socket", &cfg.trace_socket),
+            ("weaver_admin", &cfg.weaver_admin),
+            ("admin_log", &cfg.admin_log),
+        ];
+        let missing: Vec<&str> = facts
+            .iter()
+            .filter(|(_, fact)| fact.is_none())
+            .map(|(member, _)| *member)
+            .collect();
+        if !missing.is_empty() && missing.len() < facts.len() {
+            anyhow::bail!(
+                "{}: the box facts stand together, all three for a laid agent or none before one is laid, and {} {} missing",
+                path.display(),
+                missing.join(" and "),
+                if missing.len() == 1 { "is" } else { "are" }
+            );
+        }
         for (member, fact) in [
             ("weaver_admin", &cfg.weaver_admin),
             ("trace_socket", &cfg.trace_socket),
@@ -299,6 +319,66 @@ impl AdminConConfig {
     }
 }
 
+/// **The box facts of a laid agent** (Spec 7.2), all three, which the
+/// config holds together or not at all.
+#[derive(Debug, Clone, Copy)]
+pub struct Laid<'a> {
+    pub trace_socket: &'a Path,
+    pub weaver_admin: &'a Path,
+    pub admin_log: &'a Path,
+}
+
+impl AdminConConfig {
+    /// The laid agent's box facts, or `None` with no agent laid: the one
+    /// fact the invoker's choice, the relay, the tail and the start line
+    /// each read (Spec 7.2).
+    pub fn laid(&self) -> Option<Laid<'_>> {
+        Some(Laid {
+            trace_socket: self.trace_socket.as_deref()?,
+            weaver_admin: self.weaver_admin.as_deref()?,
+            admin_log: self.admin_log.as_deref()?,
+        })
+    }
+}
+
+/// **The invoker a config chooses** (Spec 7.2): the sudo invoker of the
+/// laid agent's `weaver_admin`, or, with no agent laid, none, so the
+/// ceiling is empty and no `sudo` runs.
+pub enum Invoking {
+    Sudo(crate::link::sudo_invoker::SudoInvoker),
+    NoAgentLaid,
+}
+
+/// The invoker `cfg` chooses, read from `laid` alone.
+pub fn invoking(cfg: &AdminConConfig) -> anyhow::Result<Invoking> {
+    Ok(match cfg.laid() {
+        Some(laid) => Invoking::Sudo(crate::link::sudo_invoker::SudoInvoker::new(
+            laid.weaver_admin,
+            &cfg.link.agent,
+        )?),
+        None => Invoking::NoAgentLaid,
+    })
+}
+
+/// **admin-con as its binary runs it** (Spec 7.2): the invoker `cfg`
+/// chooses, then the connection.
+pub async fn run_as_configured(
+    cfg: AdminConConfig,
+    source: Option<PathBuf>,
+    backoff: Backoff,
+    shutdown: watch::Receiver<bool>,
+    status: &watch::Sender<LinkStatus>,
+) -> anyhow::Result<()> {
+    match invoking(&cfg)? {
+        Invoking::Sudo(invoker) => {
+            run(cfg, Arc::new(invoker), source, backoff, shutdown, status).await
+        }
+        Invoking::NoAgentLaid => {
+            run(cfg, Arc::new(NoVerbs), source, backoff, shutdown, status).await
+        }
+    }
+}
+
 // ---------- the door ----------
 
 /// **Why the door reads closed with no agent laid** (Spec 7.2).
@@ -307,7 +387,7 @@ pub const NO_AGENT_LAID: &str = "no agent is laid: the config names no trace_soc
 /// **The relay's dial, or the door closed with no agent laid** (Spec 7.2):
 /// the empty path stands for a config naming no `trace_socket`, and is
 /// never dialed.
-async fn dial_relay(socket: &Path, from: &Position) -> relay::Dial {
+pub(crate) async fn dial_relay(socket: &Path, from: &Position) -> relay::Dial {
     if socket.as_os_str().is_empty() {
         return relay::Dial::Closed(NO_AGENT_LAID.to_owned());
     }
@@ -1321,9 +1401,10 @@ pub async fn run<I: Invoker>(
     let entries = Entries::new("admin-con");
     // **No `admin_log`, nothing read** (Spec 7.2): with no agent laid the
     // file does not exist yet, and its absence is no failure.
-    let _tail = cfg.admin_log.clone().map(|admin_log| {
+    let laid = cfg.laid();
+    let _tail = laid.map(|laid| {
         admin_log::tail(
-            admin_log,
+            laid.admin_log.to_owned(),
             entries.clone(),
             admin_log::my_uid(),
             shutdown.clone(),
@@ -1332,7 +1413,9 @@ pub async fn run<I: Invoker>(
     // **No `trace_socket`, no relay dialed** (Spec 7.2): the empty path
     // stands for none, and `dial_relay` answers it closed for the reason
     // that no agent is laid without dialing.
-    let trace_socket = cfg.trace_socket.clone().unwrap_or_default();
+    let trace_socket = laid
+        .map(|laid| laid.trace_socket.to_owned())
+        .unwrap_or_default();
     let hello_entries = entries.clone();
     let opts = ServeOptions {
         entries: entries.clone(),

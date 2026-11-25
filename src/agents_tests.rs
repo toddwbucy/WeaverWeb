@@ -1956,7 +1956,10 @@ async fn the_admins_revoke_and_rotation_of_a_gate_not_enrolled_are_refused_not_e
     };
     let before = version().await;
     let (_, _, page) = send_as(&rig.app, "GET", "/admin/agents", None, &session).await;
-    assert!(page.contains("<td>admin alone</td>"), "{page}");
+    assert!(
+        page.contains(r#"<span class="status fail">admin alone, admin-con down</span>"#),
+        "{page}"
+    );
     assert!(page.contains("<td>not enrolled</td>"), "{page}");
     assert!(!page.contains("Revoke gate"), "{page}");
     assert!(!page.contains("/admin/agents/rotate"), "{page}");

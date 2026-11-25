@@ -530,7 +530,10 @@ async fn a_pairing_issues_one_certificate_and_leaves_the_gate_not_enrolled() {
         "admin alone, never present"
     );
     let register = page(&rig.app, "/admin/agents", &ada).await;
-    assert!(register.contains("<td>admin alone</td>"), "{register}");
+    assert!(
+        register.contains(r#"<span class="status ok">admin alone</span>"#),
+        "{register}"
+    );
     assert!(register.contains("<td>not enrolled</td>"), "{register}");
 }
 

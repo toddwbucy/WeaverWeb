@@ -343,7 +343,8 @@ async fn readable(
 struct ListRow {
     agent_id: String,
     label: String,
-    gate: bool,
+    /// The gate plane, said: connected, not connected or not enrolled.
+    gate: &'static str,
     admin: bool,
     /// Its open alerts.
     alerts: i64,
@@ -410,7 +411,13 @@ async fn list(store: Store, seams: &Seams, headers: HeaderMap) -> Response {
         .map(|a| ListRow {
             agent_id: a.agent_id.as_str().to_owned(),
             label: format!("{}/{}", a.r#box, a.name),
-            gate: a.gate.connected,
+            gate: if a.gate.state == CredentialState::None {
+                "not enrolled"
+            } else if a.gate.connected {
+                "connected"
+            } else {
+                "not connected"
+            },
             admin: a.admin.connected,
             alerts: open_on(a.agent_id.as_str()),
             transition: transition_said(&a),
@@ -451,9 +458,13 @@ struct AgentPage {
     label: String,
     roles: String,
     present: bool,
-    /// **"Paired, setup running"** (Spec 2.12), until either connector's
-    /// service is first admitted.
+    /// **"Paired, setup running"** (Spec 2.12), until admin-con's service
+    /// is first admitted.
     setup_running: bool,
+    /// **"Admin alone"** (Spec 8): the gate plane not enrolled; `ok` while
+    /// admin-con is connected, a fault while it is not.
+    admin_alone: bool,
+    admin_connected: bool,
     gate: String,
     admin_plane: String,
     /// The trace door, said, for the live trace's pane.
@@ -718,6 +729,16 @@ fn planes_of(listener: &Listener, row: &Agent) -> Vec<PlaneView> {
     ]
     .into_iter()
     .map(|(plane, credential, connector, down)| {
+        // **A plane not enrolled is no fault** (Spec 8): gate-con is
+        // created at the loop's install, and no "down" is said for it.
+        if credential.state == CredentialState::None {
+            return PlaneView {
+                connector,
+                word: "not enrolled",
+                hue: "ok",
+                detail: format!("{connector} is created at the loop's install"),
+            };
+        }
         let heard = (credential.state == CredentialState::Live)
             .then(|| listener.last_heard(&row.agent_id, plane))
             .flatten();
@@ -920,6 +941,9 @@ fn plane(credential: &crate::link::register::Credential) -> String {
     let state = match credential.state {
         CredentialState::Live => "live",
         CredentialState::Revoked => "revoked",
+        CredentialState::None => {
+            return "not enrolled: gate-con is created at the loop's install".to_owned();
+        }
     };
     let link = if credential.connected {
         "connected"
@@ -1060,6 +1084,8 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, agent: String) ->
         label: format!("{}/{}", row.r#box, row.name),
         roles: roles.join(", "),
         present: row.present(),
+        admin_alone: row.admin_alone(),
+        admin_connected: row.admin.connected,
         setup_running: row.setup_running,
         gate: plane(&row.gate),
         admin_plane: plane(&row.admin),

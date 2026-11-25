@@ -924,7 +924,10 @@ async fn the_client_credential_is_stored_as_a_fingerprint_and_never_the_key() {
         .next()
         .unwrap()
         .unwrap();
-    assert_eq!(row.gate.fingerprint, fingerprint(der.as_ref()));
+    assert_eq!(
+        row.gate.fingerprint.as_deref(),
+        Some(fingerprint(der.as_ref()).as_str())
+    );
 
     let smuggled = sqlx::query(
         "INSERT INTO agent (name, box, author, gate_fingerprint, admin_fingerprint, gate_authority, admin_authority) VALUES ('karl', $1, NULL, $2, $3, $3, $3)",
@@ -1372,7 +1375,10 @@ async fn rotation_closes_both_live_connections_and_admits_the_new_pair() {
                 && !lab.listener.connected(&karl.id, Plane::Admin)
         })
         .await;
-    assert_eq!(row.gate.fingerprint, new_gate.fingerprint);
+    assert_eq!(
+        row.gate.fingerprint.as_deref(),
+        Some(new_gate.fingerprint.as_str())
+    );
     assert!(row.gate.incarnation.is_none() && row.admin.incarnation.is_none());
     // The window is marked for the admin link lost to the rotation, though
     // the row's write answered nothing, the incarnation having been cleared
@@ -2601,8 +2607,8 @@ async fn a_commit_whose_answer_was_lost_is_read_back_and_published() {
     );
     let rotated = lab.agent(&live.agent_id).await;
     assert_eq!(
-        rotated.gate.fingerprint,
-        answer.value["gate_fingerprint"].as_str().unwrap()
+        rotated.gate.fingerprint.as_deref(),
+        answer.value["gate_fingerprint"].as_str()
     );
 }
 
@@ -3543,7 +3549,7 @@ async fn a_retained_staged_pair_is_published_where_the_register_carries_it() {
         .resolve_agent(&format!("{box}/lena", box = r#box))
         .await
         .unwrap();
-    assert_eq!(row.gate.fingerprint, fresh_fp);
+    assert_eq!(row.gate.fingerprint.as_deref(), Some(fresh_fp.as_str()));
     assert!(!lena_dir.join("gate-con.toml.staging").exists());
 
     // Half a pair: discarded, and the registration proceeds.

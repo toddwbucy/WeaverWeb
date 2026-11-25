@@ -84,7 +84,11 @@
       <div class="row"><button type="submit" class="verb primary">Place the turn</button></div>
     </form>
     {% else %}
+    {% if admin_alone %}
+    <p>No turn: gate-con is created at the loop's install.</p>
+    {% else %}
     <p>No turn: your roles do not carry turn on this agent, or gate-con is not connected.</p>
+    {% endif %}
     {% endif %}
     </div>
     <footer>A turn goes to gate-con as your held ask and its answer is drawn below; its text is carried in the frame and kept in no record or log line.</footer>
@@ -107,7 +111,7 @@
     <div id="planes" hx-get="/agents/{{ agent_id }}/availability" hx-trigger="every 15s" hx-swap="innerHTML">{% include "agent_planes.html" %}</div>
     <table>
       <tbody>
-      <tr><th>Present</th><td>{% if setup_running %}paired, setup running{% else if present %}both planes connected{% else %}not present{% endif %}</td></tr>
+      <tr><th>Present</th><td>{% if setup_running %}paired, setup running{% else if admin_alone %}{% if admin_connected %}<span class="status ok">admin alone</span>{% else %}<span class="status fail">admin alone, admin-con down</span>{% endif %}{% else if present %}both planes connected{% else %}not present{% endif %}</td></tr>
       <tr><th>Gate plane</th><td>{{ gate }}</td></tr>
       <tr><th>Admin plane</th><td>{{ admin_plane }}</td></tr>
       </tbody>

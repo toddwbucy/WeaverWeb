@@ -29,6 +29,10 @@ pub const REVOCATION_CHANNEL: &str = "weaver_web_credential";
 pub enum CredentialState {
     Live,
     Revoked,
+    /// **Not enrolled** (Spec 2.12, migration `0033`): the gate plane of an
+    /// appliance its pairing enrolled, until the loop's install enrolls
+    /// gate-con. No fingerprint and no authority; neither live nor revoked.
+    None,
 }
 
 impl CredentialState {
@@ -36,6 +40,7 @@ impl CredentialState {
         match s {
             "live" => Ok(Self::Live),
             "revoked" => Ok(Self::Revoked),
+            "none" => Ok(Self::None),
             other => anyhow::bail!("not a credential state: {other}"),
         }
     }
@@ -44,9 +49,11 @@ impl CredentialState {
 /// One plane's credential and link state as the row carries them.
 #[derive(Debug, Clone, Serialize)]
 pub struct Credential {
-    pub fingerprint: String,
-    /// The fingerprint of the authority that signed it (Spec 8).
-    pub authority: String,
+    /// Absent exactly where the plane is not enrolled (migration `0033`).
+    pub fingerprint: Option<String>,
+    /// The fingerprint of the authority that signed it (Spec 8), absent
+    /// exactly where the plane is not enrolled.
+    pub authority: Option<String>,
     pub state: CredentialState,
     pub state_at: DateTime<Utc>,
     pub connected: bool,
@@ -100,8 +107,8 @@ pub struct Agent {
     /// `constituents`.
     pub in_transition_at: Option<DateTime<Utc>>,
     /// **"Paired, setup running"** (Spec 2.12): the row an appliance's
-    /// pairing wrote, or whose box it set, until either connector's
-    /// service is first admitted.
+    /// pairing wrote, or whose box it set, until admin-con's service is
+    /// first admitted.
     pub setup_running: bool,
 }
 
@@ -110,6 +117,12 @@ impl Agent {
     /// connected, from credentials on this row.
     pub fn present(&self) -> bool {
         self.gate.connected && self.admin.connected
+    }
+
+    /// **"Admin alone"** (Spec 8): the gate plane not enrolled, admin-con's
+    /// credential live. Such a row is never present.
+    pub fn admin_alone(&self) -> bool {
+        self.gate.state == CredentialState::None && self.admin.state == CredentialState::Live
     }
 
     pub fn credential(&self, plane: Plane) -> &Credential {
@@ -121,9 +134,9 @@ impl Agent {
 
     /// Which plane a fingerprint is bound to on this row, if either.
     pub fn plane_of(&self, fingerprint: &str) -> Option<Plane> {
-        if self.gate.fingerprint == fingerprint {
+        if self.gate.fingerprint.as_deref() == Some(fingerprint) {
             Some(Plane::Gate)
-        } else if self.admin.fingerprint == fingerprint {
+        } else if self.admin.fingerprint.as_deref() == Some(fingerprint) {
             Some(Plane::Admin)
         } else {
             None
@@ -229,6 +242,25 @@ impl std::fmt::Display for PlaneRevoked {
 }
 
 impl std::error::Error for PlaneRevoked {}
+
+/// **The plane asked for is not enrolled** (Spec 2.12): a revoke or a
+/// rotation that names a plane in `none`, refused `not_enrolled`. Nothing
+/// was written.
+#[derive(Debug)]
+pub struct NotEnrolled;
+
+impl NotEnrolled {
+    /// The refusal's word, as every answer and record names it.
+    pub const REASON: &'static str = "not_enrolled";
+}
+
+impl std::fmt::Display for NotEnrolled {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "not_enrolled: that plane is not enrolled")
+    }
+}
+
+impl std::error::Error for NotEnrolled {}
 
 impl AdminWrite<'_> {
     /// The identity exclusion taken shared for the rest of the
@@ -595,8 +627,10 @@ impl Store {
             let id: String = row.try_get("agent_id")?;
             let version: i64 = row.try_get("version")?;
             let affected = sqlx::query(
+                // A gate plane not enrolled stays `none` (Spec 2.12).
                 "UPDATE agent SET \
-                   gate_state = 'revoked', gate_state_at = now(), \
+                   gate_state = CASE gate_state WHEN 'none' THEN 'none' ELSE 'revoked' END, \
+                   gate_state_at = CASE gate_state WHEN 'none' THEN gate_state_at ELSE now() END, \
                    admin_state = 'revoked', admin_state_at = now(), \
                    gate_link_at = CASE WHEN gate_connected THEN now() ELSE gate_link_at END, \
                    admin_link_at = CASE WHEN admin_connected THEN now() ELSE admin_link_at END, \
@@ -615,9 +649,10 @@ impl Store {
                 anyhow::bail!("the row {id} moved since it was read at version {version}");
             }
             for col in ["gate_fingerprint", "admin_fingerprint"] {
-                let fp: String = row.try_get(col)?;
-                notify(&mut tx, &fp).await?;
-                retired_fingerprints.push(fp);
+                if let Some(fp) = row.try_get::<Option<String>, _>(col)? {
+                    notify(&mut tx, &fp).await?;
+                    retired_fingerprints.push(fp);
+                }
             }
         }
         let id = insert_row(
@@ -627,7 +662,7 @@ impl Store {
                 name,
                 r#box,
                 author,
-                gate_fingerprint: &gate_fingerprint,
+                gate_fingerprint: Some(&gate_fingerprint),
                 admin_fingerprint: &admin_fingerprint,
                 authority,
                 setup_running: false,
@@ -674,11 +709,13 @@ impl Store {
         .bind(agent_id.as_str())
         .fetch_one(&mut *tx)
         .await?;
-        let live = |p: Plane| -> anyhow::Result<bool> {
-            Ok(row.try_get::<String, _>(format!("{}_state", p.as_str()).as_str())? == "live")
+        let state = |p: Plane| -> anyhow::Result<String> {
+            Ok(row.try_get::<String, _>(format!("{}_state", p.as_str()).as_str())?)
         };
+        let live = |p: Plane| -> anyhow::Result<bool> { Ok(state(p)? == "live") };
         let planes: Vec<Plane> = match plane {
             Some(plane) if live(plane)? => vec![plane],
+            Some(plane) if state(plane)? == "none" => return Err(NotEnrolled.into()),
             Some(_) => return Err(PlaneRevoked.into()),
             None => {
                 let mut planes = Vec::new();
@@ -763,6 +800,11 @@ impl Store {
         author: Option<&str>,
         first: Option<&str>,
     ) -> anyhow::Result<String> {
+        // **A plane not enrolled is never revoked** (Spec 2.12): there is
+        // no credential to end, and `revoked` would claim one.
+        let Some(fingerprint) = agent.credential(plane).fingerprint.clone() else {
+            return Err(NotEnrolled.into());
+        };
         let p = plane_columns(plane);
         let mut tx = self.pool.begin().await?;
         lock_row(&mut tx, &agent.agent_id).await?;
@@ -786,7 +828,6 @@ impl Store {
                 agent.version
             );
         }
-        let fingerprint = agent.credential(plane).fingerprint.clone();
         notify(&mut tx, &fingerprint).await?;
         match first {
             Some(first) => {
@@ -895,6 +936,11 @@ impl Store {
         if !live("gate_state")? && !live("admin_state")? {
             return Err(Retired.into());
         }
+        // **A rotation never enrolls a plane** (Spec 2.12): a row whose gate
+        // is not enrolled gains gate-con at the loop's install alone.
+        if row.try_get::<String, _>("gate_state")? == "none" {
+            return Err(NotEnrolled.into());
+        }
         // The admin's rotation names the version and fingerprints read
         // here; the host's names the version it read before the lock, a
         // stale edit refused as every register verb refuses one.
@@ -902,8 +948,8 @@ impl Store {
             (
                 row.try_get::<i64, _>("version")?,
                 vec![
-                    row.try_get::<String, _>("gate_fingerprint")?,
-                    row.try_get::<String, _>("admin_fingerprint")?,
+                    row.try_get::<Option<String>, _>("gate_fingerprint")?,
+                    row.try_get::<Option<String>, _>("admin_fingerprint")?,
                 ],
             )
         } else {
@@ -915,6 +961,7 @@ impl Store {
                 ],
             )
         };
+        let retired: Vec<String> = retired.into_iter().flatten().collect();
         let (gate_fingerprint, admin_fingerprint) = fingerprints()?;
         let affected = sqlx::query(
             "UPDATE agent SET \
@@ -972,8 +1019,10 @@ impl Store {
     ) -> anyhow::Result<u64> {
         let mut tx = conn.begin().await?;
         let rows = sqlx::query(
+            // A gate plane not enrolled stays `none` (Spec 2.12).
             "UPDATE agent SET \
-               gate_state = 'revoked', gate_state_at = now(), \
+               gate_state = CASE gate_state WHEN 'none' THEN 'none' ELSE 'revoked' END, \
+               gate_state_at = CASE gate_state WHEN 'none' THEN gate_state_at ELSE now() END, \
                admin_state = 'revoked', admin_state_at = now(), \
                gate_link_at = CASE WHEN gate_connected THEN now() ELSE gate_link_at END, \
                admin_link_at = CASE WHEN admin_connected THEN now() ELSE admin_link_at END, \
@@ -988,8 +1037,9 @@ impl Store {
         .await?;
         for row in &rows {
             for col in ["gate_fingerprint", "admin_fingerprint"] {
-                let fp: String = row.try_get(col)?;
-                notify(&mut tx, &fp).await?;
+                if let Some(fp) = row.try_get::<Option<String>, _>(col)? {
+                    notify(&mut tx, &fp).await?;
+                }
             }
         }
         tx.commit().await?;
@@ -1418,7 +1468,10 @@ struct NewRow<'a> {
     name: &'a str,
     r#box: &'a str,
     author: Option<&'a str>,
-    gate_fingerprint: &'a str,
+    /// Absent for an appliance's pairing, whose gate plane is not
+    /// enrolled (Spec 2.12): its state and authority are written `none`
+    /// and absent with it.
+    gate_fingerprint: Option<&'a str>,
     admin_fingerprint: &'a str,
     authority: &'a str,
     setup_running: bool,
@@ -1430,8 +1483,9 @@ async fn insert_row(
 ) -> anyhow::Result<String> {
     Ok(sqlx::query_scalar(
         "INSERT INTO agent (agent_id, name, box, author, gate_fingerprint, admin_fingerprint, \
-         gate_authority, admin_authority, setup_running) \
-         VALUES ($7, $1, $2, $3, $4, $5, $6, $6, $8) RETURNING agent_id",
+         gate_authority, admin_authority, setup_running, gate_state) \
+         VALUES ($7, $1, $2, $3, $4, $5, CASE WHEN $4::text IS NULL THEN NULL ELSE $6 END, $6, $8, \
+           CASE WHEN $4::text IS NULL THEN 'none' ELSE 'live' END) RETURNING agent_id",
     )
     .bind(row.name)
     .bind(row.r#box)
@@ -1529,7 +1583,8 @@ pub struct Pairing<'a> {
 struct Replaced {
     version: i64,
     r#box: String,
-    fingerprints: [String; 2],
+    /// The row's fingerprints that stand, a gate not enrolled holding none.
+    fingerprints: Vec<String>,
 }
 
 /// **The pairing still stands**, read under the setup's lock and the rows'
@@ -1573,7 +1628,13 @@ async fn pairing_stands(
                 Some(row) if row.get::<String, _>("name") == pairing.name => Some(Replaced {
                     version: row.get("version"),
                     r#box: row.get("box"),
-                    fingerprints: [row.get("gate_fingerprint"), row.get("admin_fingerprint")],
+                    fingerprints: [
+                        row.get::<Option<String>, _>("gate_fingerprint"),
+                        row.get::<Option<String>, _>("admin_fingerprint"),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .collect(),
                 }),
                 _ => return Ok(Err(PairingRefusal::Retired)),
             }
@@ -1613,15 +1674,15 @@ impl Store {
     /// **The exchange's step 6** (Spec 8.2), on the authority lock's own
     /// connection, after the box's word: one identity transaction that
     /// re-checks the session and the admin grant, reads the pairing again
-    /// under its locks, writes the row with both fingerprints live, or for
-    /// a replacement keeps the box the row held and sets the new one, links
+    /// under its locks, writes the row with admin-con's fingerprint live
+    /// and the gate plane not enrolled, or for a replacement keeps the box
+    /// the row held and sets the new one, links
     /// the setup, and commits with the audit's outcome. Answers the
     /// fingerprints a replacement revoked, whose connections close.
     pub async fn pairing_write_on(
         conn: &mut sqlx::PgConnection,
         admin: AdminWrite<'_>,
         pairing: &Pairing<'_>,
-        gate_fingerprint: &str,
         admin_fingerprint: &str,
         authority: &str,
     ) -> anyhow::Result<Result<Vec<String>, PairingRefusal>> {
@@ -1642,7 +1703,7 @@ impl Store {
                         name: pairing.name,
                         r#box: pairing.r#box,
                         author: Some(admin.person),
-                        gate_fingerprint,
+                        gate_fingerprint: None,
                         admin_fingerprint,
                         authority,
                         setup_running: true,
@@ -1661,20 +1722,19 @@ impl Store {
                     .await?;
                 let affected = sqlx::query(
                     "UPDATE agent SET box = $3, \
-                       gate_fingerprint = $4, gate_state = 'live', gate_state_at = now(), \
-                       admin_fingerprint = $5, admin_state = 'live', admin_state_at = now(), \
-                       gate_authority = $6, admin_authority = $6, \
+                       gate_fingerprint = NULL, gate_state = 'none', gate_state_at = now(), \
+                       admin_fingerprint = $4, admin_state = 'live', admin_state_at = now(), \
+                       gate_authority = NULL, admin_authority = $5, \
                        gate_link_at = CASE WHEN gate_connected THEN now() ELSE gate_link_at END, \
                        admin_link_at = CASE WHEN admin_connected THEN now() ELSE admin_link_at END, \
                        gate_connected = false, admin_connected = false, \
                        gate_incarnation = NULL, admin_incarnation = NULL, \
-                       setup_running = true, author = $7, version = version + 1 \
+                       setup_running = true, author = $6, version = version + 1 \
                      WHERE agent_id = $1 AND version = $2",
                 )
                 .bind(id.as_str())
                 .bind(replaced.version)
                 .bind(pairing.r#box)
-                .bind(gate_fingerprint)
                 .bind(admin_fingerprint)
                 .bind(authority)
                 .bind(admin.person)

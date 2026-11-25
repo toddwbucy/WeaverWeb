@@ -1905,3 +1905,61 @@ async fn each_write_to_the_register_dropped_at_its_first_record_still_lands() {
     );
     assert!(page.contains("retired; register it again"), "{page}");
 }
+
+/// **The admin's revoke of a gate not enrolled and rotation of its row are
+/// refused `not_enrolled`, and a retire leaves it not enrolled** (Spec
+/// 2.12, section 9): on a row whose gate is `none`, as a pairing writes it,
+/// the register page offers no rotation and no gate revoke, a posted gate
+/// revoke and a posted rotation are each refused 409 naming `not_enrolled`
+/// with the row's version kept, and the retire revokes the admin plane
+/// alone.
+///
+/// Perturbation: drop step three's state check and the store's, and the
+/// revoke fails at the schema rather than as `not_enrolled`; drop the
+/// rotation's, and a gate certificate is minted for a plane the pairing
+/// never enrolled.
+#[tokio::test]
+async fn the_admins_revoke_and_rotation_of_a_gate_not_enrolled_are_refused_not_enrolled() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, session) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (id, _) = rig.register(&session, "box-a", "karl").await;
+    sqlx::query(
+        "UPDATE agent SET gate_fingerprint = NULL, gate_authority = NULL, gate_state = 'none' \
+         WHERE agent_id = $1",
+    )
+    .bind(&id)
+    .execute(&s.pool)
+    .await
+    .unwrap();
+    let version = || async {
+        sqlx::query_scalar::<_, i64>("SELECT version FROM agent WHERE agent_id = $1")
+            .bind(&id)
+            .fetch_one(&s.pool)
+            .await
+            .unwrap()
+    };
+    let before = version().await;
+    let (_, _, page) = send_as(&rig.app, "GET", "/admin/agents", None, &session).await;
+    assert!(page.contains("<td>admin alone</td>"), "{page}");
+    assert!(page.contains("<td>not enrolled</td>"), "{page}");
+    assert!(!page.contains("Revoke gate"), "{page}");
+    assert!(!page.contains("/admin/agents/rotate"), "{page}");
+    for (uri, body) in [
+        (
+            "/admin/agents/revoke",
+            form(&[("agent", &id), ("plane", "gate")]),
+        ),
+        ("/admin/agents/rotate", form(&[("agent", &id)])),
+    ] {
+        let (status, _, answer) = rig.post(uri, body, &session).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{uri}: {answer}");
+        assert!(answer.contains("not_enrolled"), "{uri}: {answer}");
+    }
+    assert_eq!(version().await, before, "nothing was written");
+    let (status, _, answer) = rig
+        .post("/admin/agents/retire", form(&[("agent", &id)]), &session)
+        .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{answer}");
+    assert_eq!(states(s, &id).await, ("none".into(), "revoked".into()));
+}

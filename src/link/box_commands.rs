@@ -64,9 +64,6 @@ pub struct PairArgs {
     /// The console's address and port, the link address.
     #[arg(long)]
     pub console: String,
-    /// What `gate-con request` printed: its `request` line.
-    #[arg(long)]
-    pub gate_request: PathBuf,
     /// What `admin-con request` printed: its `request` line.
     #[arg(long)]
     pub admin_request: PathBuf,
@@ -191,9 +188,10 @@ struct Paired<'a> {
     r#box: &'a str,
 }
 
+/// `unknown`'s fingerprint: the answer's one certificate, admin-con's
+/// (Spec 8.2).
 #[derive(Serialize)]
 struct Fingerprints {
-    gate: String,
     admin: String,
 }
 
@@ -346,10 +344,6 @@ pub fn heard<O: Write, E: Write>(p: &mut Printer<O, E>, heard: &Heard) -> Status
 /// line with the code and the authority's fingerprint, then the answer
 /// written to its file, the box's word, and the console's last word.
 pub async fn pair<O: Write, E: Write>(p: &mut Printer<O, E>, args: &PairArgs) -> Status {
-    let gate_request = match read_request(&args.gate_request) {
-        Ok(request) => request,
-        Err(why) => return p.ended(Status::Usage, &why),
-    };
     let admin_request = match read_request(&args.admin_request) {
         Ok(request) => request,
         Err(why) => return p.ended(Status::Usage, &why),
@@ -380,7 +374,6 @@ pub async fn pair<O: Write, E: Write>(p: &mut Printer<O, E>, args: &PairArgs) ->
     };
     let claim = Claim {
         r#box,
-        gate_request,
         admin_request,
     };
     let mut dialed = match pair_client::dial(&args.console, &claim).await {
@@ -409,7 +402,6 @@ pub async fn pair<O: Write, E: Write>(p: &mut Printer<O, E>, args: &PairArgs) ->
         other => return heard(p, &other),
     };
     let fingerprints = Fingerprints {
-        gate: grouped_fingerprint(&answer.gate),
         admin: grouped_fingerprint(&answer.admin),
     };
     let file = AnswerFile {
@@ -419,7 +411,7 @@ pub async fn pair<O: Write, E: Write>(p: &mut Printer<O, E>, args: &PairArgs) ->
         agent_id: answer.agent_id.clone(),
         r#box: answer.r#box.clone(),
         authority: answer.authority.clone(),
-        gate: answer.gate.clone(),
+        gate: None,
         admin: answer.admin.clone(),
     };
     // **No word before the answer is written**: a box that cannot write it
@@ -428,7 +420,7 @@ pub async fn pair<O: Write, E: Write>(p: &mut Printer<O, E>, args: &PairArgs) ->
         return p.ended(Status::Fault, &format!("{e:#}"));
     }
     if dialed.written().await.is_err() {
-        p.reason("the box's word may not have reached the console: compare the two fingerprints with the pairing page's");
+        p.reason("the box's word may not have reached the console: compare the fingerprint with the pairing page's");
         return p.outcome(Status::Unknown, "unknown", &fingerprints);
     }
     match dialed.last_word().await {
@@ -445,7 +437,7 @@ pub async fn pair<O: Write, E: Write>(p: &mut Printer<O, E>, args: &PairArgs) ->
             p.outcome(Status::Refused, "refused", &ReasonLine { reason: &reason })
         }
         LastWord::Unknown => {
-            p.reason("the connection ended after the answer was written and before the console's last word: compare the two fingerprints with the pairing page's");
+            p.reason("the connection ended after the answer was written and before the console's last word: compare the fingerprint with the pairing page's");
             p.outcome(Status::Unknown, "unknown", &fingerprints)
         }
     }
@@ -797,7 +789,6 @@ mod tests {
             r#box: format!("box{ESC}"),
             server_name: format!("weaver{ESC}"),
             authority: format!("pem{ESC}"),
-            gate: format!("pem{ESC}"),
             admin: format!("pem{ESC}"),
         };
         let heard_variants = [

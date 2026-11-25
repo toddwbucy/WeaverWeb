@@ -443,15 +443,13 @@ async fn a_pairing_issues_one_certificate_and_leaves_the_gate_not_enrolled() {
     assert_eq!(row.author.as_deref(), Some(ada_id.as_str()));
     assert!(row.setup_running);
     // The certificate is over the box's own key.
-    for (pem, key) in [(&answer.admin, &keys.admin)] {
-        let mut bytes = pem.as_bytes();
-        let der = rustls_pemfile::certs(&mut bytes).next().unwrap().unwrap();
-        let point = key.public_key_raw();
-        assert!(
-            der.windows(point.len()).any(|w| w == point),
-            "a certificate is not over the box's key"
-        );
-    }
+    let mut bytes = answer.admin.as_bytes();
+    let der = rustls_pemfile::certs(&mut bytes).next().unwrap().unwrap();
+    let point = keys.admin.public_key_raw();
+    assert!(
+        der.windows(point.len()).any(|w| w == point),
+        "the certificate is not over the box's key"
+    );
     let linked = s.setup(&setup).await.unwrap().unwrap();
     assert_eq!(
         linked.paired,
@@ -1205,13 +1203,14 @@ async fn enrolled_on_box(
     r#box: &str,
     replace: Option<&AgentId>,
 ) -> AnswerFile {
-    for plane in [Plane::Admin] {
-        let mut p = captured();
-        let config = dir.join(format!("{}-con.toml", plane.as_str()));
-        assert_eq!(box_commands::request(&mut p, plane, &config), Status::Done);
-        let (out, _) = p.into_inner();
-        std::fs::write(dir.join(format!("{}.request", plane.as_str())), out).unwrap();
-    }
+    let mut p = captured();
+    let config = dir.join("admin-con.toml");
+    assert_eq!(
+        box_commands::request(&mut p, Plane::Admin, &config),
+        Status::Done
+    );
+    let (out, _) = p.into_inner();
+    std::fs::write(dir.join("admin.request"), out).unwrap();
     let args = PairArgs {
         console: rig.listener().address().to_string(),
         admin_request: dir.join("admin.request"),
@@ -1264,15 +1263,12 @@ async fn enrolled_on_box(
     let answer = AnswerFile::read(&dir.join("answer.json")).unwrap();
     assert_eq!(paired["agent_id"].as_str(), Some(answer.agent_id.as_str()));
     assert_eq!(answer.gate, None, "the answer carries no gate certificate");
-    for plane in [Plane::Admin] {
-        let mut p = captured();
-        let config = dir.join(format!("{}-con.toml", plane.as_str()));
-        let status = box_commands::adopt(&mut p, plane, &config, &dir.join("answer.json"));
-        let (line, err) = outcome_of(p);
-        assert_eq!(status, Status::Done, "{line} {err}");
-        assert_eq!(line["event"], "adopted");
-        assert_eq!(line["plane"], plane.as_str());
-    }
+    let mut p = captured();
+    let status = box_commands::adopt(&mut p, Plane::Admin, &config, &dir.join("answer.json"));
+    let (line, err) = outcome_of(p);
+    assert_eq!(status, Status::Done, "{line} {err}");
+    assert_eq!(line["event"], "adopted");
+    assert_eq!(line["plane"], "admin");
     answer
 }
 
@@ -1345,15 +1341,12 @@ async fn an_adopted_admin_con_connects_and_its_row_reads_admin_alone() {
     let on_box = crate::test_dir::tempdir().unwrap();
     let answer = enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a", None).await;
     let id: AgentId = answer.agent_id.parse().unwrap();
-    let mut connections = Vec::new();
-    for plane in [Plane::Admin] {
-        let link = link_of(&on_box.path().join(format!("{}-con.toml", plane.as_str())));
-        match link.connect(hello(plane)).await {
-            Connect::Admitted(connection) => connections.push(connection),
-            Connect::Refused(r) => panic!("{plane:?} refused: {}", r.as_str()),
-            Connect::Untrusted(why) | Connect::Failed(why) => panic!("{plane:?}: {why}"),
-        }
-    }
+    let link = link_of(&on_box.path().join("admin-con.toml"));
+    let connection = match link.connect(hello(Plane::Admin)).await {
+        Connect::Admitted(connection) => connection,
+        Connect::Refused(r) => panic!("admin-con refused: {}", r.as_str()),
+        Connect::Untrusted(why) | Connect::Failed(why) => panic!("admin-con: {why}"),
+    };
     let row = s.agent(&id).await.unwrap().unwrap();
     assert!(row.admin.connected, "admin-con on the row");
     assert!(
@@ -1377,9 +1370,7 @@ async fn an_adopted_admin_con_connects_and_its_row_reads_admin_alone() {
     );
     let (line, err) = outcome_of(p);
     assert_eq!(status, Status::Usage, "{line} {err}");
-    for connection in connections {
-        connection.close().await;
-    }
+    connection.close().await;
 }
 
 /// **`setup describe` answers `replacement` true after a replace-box
@@ -1592,13 +1583,14 @@ async fn the_setup_keeps_the_latest_report_of_each_stage_verbatim() {
 async fn a_pair_whose_waiting_line_is_not_delivered_ends_at_once() {
     let Some(rig) = rig().await else { return };
     let dir = crate::test_dir::tempdir().unwrap();
-    for plane in [Plane::Admin] {
-        let mut p = captured();
-        let config = dir.path().join(format!("{}-con.toml", plane.as_str()));
-        assert_eq!(box_commands::request(&mut p, plane, &config), Status::Done);
-        let (out, _) = p.into_inner();
-        std::fs::write(dir.path().join(format!("{}.request", plane.as_str())), out).unwrap();
-    }
+    let mut p = captured();
+    let config = dir.path().join("admin-con.toml");
+    assert_eq!(
+        box_commands::request(&mut p, Plane::Admin, &config),
+        Status::Done
+    );
+    let (out, _) = p.into_inner();
+    std::fs::write(dir.path().join("admin.request"), out).unwrap();
     let args = PairArgs {
         console: rig.listener.address().to_string(),
         admin_request: dir.path().join("admin.request"),

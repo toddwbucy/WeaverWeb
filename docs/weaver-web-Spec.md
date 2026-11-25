@@ -5356,14 +5356,16 @@ object), from the absolute path its config names as the box fact
 
 **admin-con holds its connection with no agent laid**, on the Planner's word of
 2026-11-25 accepting the plan, since an appliance pairs before any agent stands on
-it and its loop is installed over admin-con (section 8.2). Its three box facts,
-`trace_socket`, `weaver_admin` and `admin_log`, are optional in its config, and
-each binds as before where it is present, an absolute path. **Where
-`trace_socket` is absent** the door reads closed for the reason that no agent is
-laid, and admin-con dials no relay. **Where `weaver_admin` is absent** the ceiling
-is empty and admin-con runs no `sudo`, so the server asks no verb. **Where
-`admin_log` is absent** nothing is read and no entry is raised, so an appliance
-with no agent shows no alert for files that do not yet exist. A config the
+it and its loop is installed over admin-con (section 8.2). **Its three box facts,
+`trace_socket`, `weaver_admin` and `admin_log`, stand together**, on the Planner's
+word of the same day: none is an appliance with no agent laid, all three a laid
+agent, each an absolute path as before, and some and not all a half-done install,
+refused at load naming what is missing. One fact, the agent laid or not
+(`AdminConConfig::laid`), chooses the invoker and the start line. **With no agent
+laid** the door reads closed for that reason and admin-con dials no relay, the
+ceiling is empty and admin-con runs no `sudo`, so the server asks no verb, and no
+`admin.log` is read and no entry raised, so an appliance with no agent shows no
+alert for files that do not yet exist. A config the
 pairing's `adopt` completes holds none of the three; the act that lays the agent
 adds them and restarts the service, whose next hello declares the ceiling the
 box's rule then grants. The staging tool of section 8.1 still requires the four
@@ -7933,11 +7935,14 @@ two connectors report.
 | an open setup's adapter pick can be dropped, in a task the request cannot cancel, and a confirmed setup's cannot | perturbation in `src/setup_models_tests.rs`: `an_open_setups_adapter_pick_is_dropped_and_a_confirmed_setups_is_not`, the drop's refusals (a field beside the version 400 and no record, a stale version 409 after its first record, no adapter picked 409 and no record), the drop landing (the adapter's row gone, the version moved, the pane `ok` saying the agent loads its base alone and drawing no Drop, the dropped pick's files in the cache), and a confirmed setup's drop refused 409 with no record and its adapter row standing: drop the handler's check that the setup is open, and the confirmed setup's drop writes a first record before the store refuses it as stale; `a_pick_and_a_drop_dropped_at_their_first_records_still_land`: run the drop's step four in the request's own future, and a drop whose request is dropped at the hold leaves its first record without its outcome (each measured 2026-11-18) |
 | `describe`'s laying names an adapter only where the tuple holds one | perturbation through the real listener in `src/enrollment_tests.rs`: `a_setup_with_no_adapter_confirms_a_tuple_with_none`, the box reading a laying with no `adapter` member, and `the_reports_a_box_sends_feed_placement_and_confirm`, the box reading a tuple's adapter back whole (its artifact, SHA-256, base's identity and scale); and `a_setup_with_no_adapter_confirms_a_tuple_and_a_laying_with_none` in `src/setup_place_tests.rs`: answer the laying's `adapter` member always, and the laying of a tuple with no adapter carries the member, null, in both (measured 2026-11-18) |
 | each door refuses the other plane's credential `wrong_door` before the first frame, and admits its own (section 8) | perturbation in `src/link/tests.rs`, `each_door_refuses_the_other_planes_certificate`: drop the door check, and a gate credential at the management door is not refused (measured 2026-11-25) |
-| one door for both planes admits both and says so, at start and on the register page and the agent page (section 8) | perturbation in `src/link/tests.rs`, `a_shared_door_admits_both_planes_and_says_so`: let the shared door admit the admin plane alone, and the gate's admission fails; in `src/agents_tests.rs`, `the_register_page_and_the_agent_page_say_how_many_doors`: drop the line from the register page, and it fails (each measured 2026-11-25) |
+| one door for both planes admits both and says so on the register page and the agent page (section 8) | perturbation in `src/link/tests.rs`, `a_shared_door_admits_both_planes_and_says_so`: let the shared door admit the admin plane alone, and the gate's admission fails; in `src/agents_tests.rs`, `the_register_page_and_the_agent_page_say_how_many_doors`: drop the line from the register page, and it fails (each measured 2026-11-25) |
 | the data door never serves the pairing protocol (section 8) | perturbation in `src/link/pairing_tests.rs`, `the_data_door_never_serves_the_pairing_protocol`: serve the pairing at every door, and a box dialing the data door waits there (measured 2026-11-25) |
 | a connector dials from its `local_address` where one is named (section 8) | perturbation in `src/link/client_tests.rs`, `a_connector_dials_from_its_local_address`: drop the bind, and the server sees the connection from `127.0.0.1` (measured 2026-11-25) |
 | `gate_listen` and `gate_address` parse, default absent, and `gate_address` without `gate_listen` is refused at load; gate-con's config carries the data door's address (section 8) | `src/config.rs`'s tests, `the_data_door_is_optional_and_its_address_needs_it`; perturbation in `src/agents_tests.rs`, `the_register_page_and_the_agent_page_say_how_many_doors`: write the management door's address into gate-con's config, and the two-door case fails (measured 2026-11-25) |
-| admin-con holds its connection with no box fact: the door closed for the reason that no agent is laid, an empty ceiling with no `sudo` run, and no entry raised (section 7.2) | perturbation in `src/link/admin_con_tests.rs`, against the real listener, `admin_con_with_no_box_fact_is_admitted_with_the_door_closed_and_no_alert`: read an absent `admin_log` as a failure, and an alert stands (measured 2026-11-25) |
+| admin-con holds its connection with no box fact: the door closed for the reason that no agent is laid, an empty ceiling with no `sudo` run, and no entry raised (section 7.2) | perturbation in `src/link/admin_con_tests.rs`, against the real listener on a row whose gate is not enrolled, run as the binary runs it, `admin_con_with_no_box_fact_is_admitted_with_the_door_closed_and_no_alert`: read an absent `admin_log` as a failure, and an alert stands; choose the sudo invoker with no agent laid, and admin-con is never admitted (each measured 2026-11-25) |
+| admin-con's three box facts stand together, one fact chooses the invoker, and the door with no agent laid is closed for that reason (section 7.2) | perturbation in `src/link/admin_con_tests.rs`, `the_box_facts_stand_together_and_one_fact_chooses_the_invoker`: drop the refusal of some and not all, and the half-laid config loads; drop the empty path's branch in `dial_relay`, and the door answers the relay's dial error (each measured 2026-11-25) |
+| an admission on a plane a pairing set to not enrolled is refused `not_live`, never as a store failure (section 8) | perturbation in `src/link/tests.rs`, `an_admission_on_a_plane_set_to_none_is_refused_not_live`: read the fingerprint as a string, and the admission fails decoding (measured 2026-11-25) |
+| a mistyped `local_address` is refused naming the member and never its value (section 8) | perturbation in `src/link/admin_con_tests.rs`, `a_mistyped_local_address_is_refused_naming_the_member`: drop the member from admin-con's list, and the refusal names none; drop the check by name in `client::parse_config`, and the refusal names the file's first member, since serde's flatten drops the member's place (each measured 2026-11-25) |
 
 **A watch that cannot fail is not a test.** For each perturbation above, the
 act that lands it states what removal makes it fail and confirms it does.

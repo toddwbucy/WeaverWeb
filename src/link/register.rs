@@ -1187,8 +1187,11 @@ impl Store {
         .fetch_one(&mut *tx)
         .await?;
         let state: String = row.try_get("state")?;
-        let bound: String = row.try_get("fingerprint")?;
-        if state != "live" || bound != fingerprint {
+        // A plane not enrolled holds no fingerprint (migration 0033): a
+        // connection that passed the handshake's lookup on a row a pairing
+        // then set to `none` is refused `not_live` here, as a revoked one is.
+        let bound: Option<String> = row.try_get("fingerprint")?;
+        if state != "live" || bound.as_deref() != Some(fingerprint) {
             tx.rollback().await?;
             return Ok(Err(Refusal::NotLive));
         }

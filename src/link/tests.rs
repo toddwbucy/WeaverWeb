@@ -3689,3 +3689,46 @@ async fn a_shared_door_admits_both_planes_and_says_so() {
     let _admin = lab.admit(&karl, Plane::Admin).await;
     lab.wait_for(&karl.id, "present", |a| a.present()).await;
 }
+
+/// **An admission on a plane a pairing set to `none` is refused
+/// `not_live`** (Spec 8, migration 0033): a gate connection that passed the
+/// handshake's lookup, on a row whose gate plane a replacement pairing then
+/// set to not enrolled, meets a fingerprint that is absent under the row's
+/// lock, and is refused as a revoked one is, never as a store failure.
+///
+/// Perturbation: read the fingerprint as a `String`, and the admission
+/// fails decoding the absent value instead (measured 2026-11-25).
+#[tokio::test]
+async fn an_admission_on_a_plane_set_to_none_is_refused_not_live() {
+    let Some(lab) = Lab::open().await else { return };
+    let karl = lab.register("karl").await;
+    sqlx::query(
+        "UPDATE agent SET gate_fingerprint = NULL, gate_authority = NULL, gate_state = 'none' \
+         WHERE agent_id = $1",
+    )
+    .bind(karl.id.as_str())
+    .execute(&lab.store.pool)
+    .await
+    .unwrap();
+    let installed = std::cell::Cell::new(false);
+    let admitted = lab
+        .store
+        .admit(
+            &karl.id,
+            Plane::Gate,
+            &karl.gate.fingerprint,
+            1,
+            "127.0.0.1:1",
+            None,
+            None,
+            async || Ok(()),
+            || {
+                installed.set(true);
+                Ok(())
+            },
+        )
+        .await
+        .expect("an absent fingerprint is no store failure");
+    assert_eq!(admitted, Err(Refusal::NotLive));
+    assert!(!installed.get());
+}

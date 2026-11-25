@@ -122,6 +122,22 @@ pub fn parse_config<T: serde::de::DeserializeOwned>(
     content: &str,
     members: &[&str],
 ) -> anyhow::Result<T> {
+    // **`local_address` is checked by name first** (Spec 8): it rides the
+    // flattened `LinkConfig`, and serde's flatten drops a member's span, so
+    // a value that is not an IP literal would be blamed on the file's first
+    // line. The value is never quoted.
+    if members.contains(&"local_address")
+        && let Ok(table) = content.parse::<toml::Table>()
+        && let Some(value) = table.get("local_address")
+        && value
+            .as_str()
+            .is_none_or(|text| text.parse::<std::net::IpAddr>().is_err())
+    {
+        anyhow::bail!(
+            "{}: the config does not parse: the member local_address is not an IP literal",
+            path.display()
+        );
+    }
     toml::from_str(content).map_err(|e| unparsed(path, content, &e, members))
 }
 
@@ -163,10 +179,10 @@ fn unparsed(path: &Path, content: &str, e: &toml::de::Error, members: &[&str]) -
 }
 
 /// **Dial `server` from `local`, where one is named** (Spec 8): the socket
-/// binds the card's address, port zero, before it connects, so the
-/// connection leaves by that card whatever the machine's routes; each of
-/// the server's addresses of the card's family is tried in turn. With no
-/// `local`, a plain connect by the routes.
+/// binds that address, port zero, before it connects, so the connection
+/// leaves by that card's address; which card carries it is still the
+/// machine's routes'. Each of the server's addresses of the local address's
+/// family is tried in turn. With no `local`, a plain connect by the routes.
 pub(crate) async fn dial_from(
     server: &str,
     local: Option<std::net::IpAddr>,
@@ -215,8 +231,9 @@ pub struct LinkConfig {
     pub server_certificate: String,
     pub certificate: String,
     pub key: String,
-    /// **The card this connector dials from** (Spec 8): an IP literal bound,
-    /// port zero, before the dial, a box fact appended after each adopt.
+    /// **The card's address this connector dials from** (Spec 8): an IP
+    /// literal bound, port zero, before the dial, a box fact appended after
+    /// each adopt.
     /// Absent, the connector dials by the machine's routes.
     #[serde(default)]
     pub local_address: Option<std::net::IpAddr>,

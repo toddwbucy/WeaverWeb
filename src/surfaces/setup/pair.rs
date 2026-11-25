@@ -656,7 +656,7 @@ mod entry {
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "fail",
                 format!(
-                    "unknown: whether the pairing's write landed cannot be said. The rows below are what the register holds for {name}: compare their fingerprints with the two the box's unknown line shows, and adopt only where both match"
+                    "unknown: whether the pairing's write landed cannot be said. The rows below are what the register holds for {name}: compare their admin fingerprint with the one the box's unknown line shows, and adopt only where it matches"
                 ),
             ),
         };

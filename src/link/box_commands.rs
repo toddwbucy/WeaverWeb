@@ -34,6 +34,7 @@ const LINK_MEMBERS: &[&str] = &[
     "server_certificate",
     "certificate",
     "key",
+    "local_address",
 ];
 
 /// **`request`'s arguments**: the config to create, which must not exist.

@@ -17,15 +17,13 @@
 use clap::Parser;
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::sync::Arc;
 use tokio::sync::watch;
-use weaver_web::link::admin_con::{self, AdminConConfig, NoVerbs};
+use weaver_web::link::admin_con::{self, AdminConConfig};
 use weaver_web::link::box_commands::{
     self, AdoptArgs, PairArgs, RequestArgs, SetupCommand, parse_args, printer,
 };
 use weaver_web::link::client::{Backoff, LinkStatus};
 use weaver_web::link::frames::Plane;
-use weaver_web::link::sudo_invoker::SudoInvoker;
 
 #[derive(Parser)]
 #[command(
@@ -105,18 +103,14 @@ async fn main() -> anyhow::Result<ExitCode> {
     // Refuses to start on a config another party could read or swap, one
     // minted for the gate plane, or one missing a member.
     let cfg = AdminConConfig::load(&config)?;
-    // **No `weaver_admin`, no `sudo`** (Spec 7.2): with no agent laid the
-    // ceiling is empty and nothing is invoked.
-    let invoker = match &cfg.weaver_admin {
-        Some(weaver_admin) => Some(SudoInvoker::new(weaver_admin, &cfg.link.agent)?),
-        None => None,
-    };
-    match &cfg.weaver_admin {
-        Some(weaver_admin) => tracing::info!(
+    // **One fact chooses** (Spec 7.2): the laid agent's box facts, all
+    // three or none, pick the invoker in `admin_con::run_as_configured` and this line.
+    match cfg.laid() {
+        Some(laid) => tracing::info!(
             "admin-con for {} reading its trace through the relay, server {}, verbs through its invoker of {}",
             cfg.link.agent,
             cfg.link.server,
-            weaver_admin.display()
+            laid.weaver_admin.display()
         ),
         None => tracing::info!(
             "admin-con for {}, server {}: no agent is laid, so no relay is dialed and no verb is invoked",
@@ -149,29 +143,6 @@ async fn main() -> anyhow::Result<ExitCode> {
         let _ = stop.send(true);
     });
     let (status, _) = watch::channel(LinkStatus::default());
-    match invoker {
-        Some(invoker) => {
-            admin_con::run(
-                cfg,
-                Arc::new(invoker),
-                Some(config),
-                Backoff::default(),
-                shutdown,
-                &status,
-            )
-            .await?
-        }
-        None => {
-            admin_con::run(
-                cfg,
-                Arc::new(NoVerbs),
-                Some(config),
-                Backoff::default(),
-                shutdown,
-                &status,
-            )
-            .await?
-        }
-    }
+    admin_con::run_as_configured(cfg, Some(config), Backoff::default(), shutdown, &status).await?;
     Ok(ExitCode::SUCCESS)
 }

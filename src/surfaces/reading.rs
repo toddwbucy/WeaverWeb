@@ -451,6 +451,8 @@ pub const RESTORE_RULE_READ_AT: &str = "5ec7ecf8fe9cb37a45e2d65298a02fc395aa4291
 #[derive(Template)]
 #[template(path = "agent_page.html")]
 struct AgentPage {
+    /// One door serves both planes (Spec 8), which the page says.
+    one_door: bool,
     here: &'static str,
     who: String,
     admin: bool,
@@ -1077,6 +1079,7 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, agent: String) ->
         })
         .collect();
     let page = AgentPage {
+        one_door: seams.asker.one_door(),
         here: "agents",
         who: session.name,
         admin,

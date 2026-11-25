@@ -329,20 +329,32 @@ fn host_of(address: &str) -> Option<&str> {
 /// **Dial the console's link port under the pairing protocol**, send the
 /// first frame and read the console's answer: waiting, or why not.
 pub async fn dial(address: &str, claim: &Claim) -> Result<Dialed, DialError> {
+    dial_from(address, None, claim).await
+}
+
+/// **Dial from a card's address** (Spec 8), as `dial` does by the routes:
+/// `admin-con pair --local-address`.
+pub async fn dial_from(
+    address: &str,
+    local: Option<std::net::IpAddr>,
+    claim: &Claim,
+) -> Result<Dialed, DialError> {
     let host = host_of(address)
         .ok_or_else(|| DialError::Fault(format!("{address:?} is not a host and a port")))?;
-    let tcp =
-        match tokio::time::timeout(Duration::from_secs(DIAL_SECS), TcpStream::connect(address))
-            .await
-        {
-            Ok(Ok(tcp)) => tcp,
-            Ok(Err(e)) => return Err(DialError::Unreachable(format!("{address}: {e}"))),
-            Err(_) => {
-                return Err(DialError::Unreachable(format!(
-                    "{address}: no connection within {DIAL_SECS} s"
-                )));
-            }
-        };
+    let tcp = match tokio::time::timeout(
+        Duration::from_secs(DIAL_SECS),
+        crate::link::client::dial_from(address, local),
+    )
+    .await
+    {
+        Ok(Ok(tcp)) => tcp,
+        Ok(Err(e)) => return Err(DialError::Unreachable(format!("{address}: {e}"))),
+        Err(_) => {
+            return Err(DialError::Unreachable(format!(
+                "{address}: no connection within {DIAL_SECS} s"
+            )));
+        }
+    };
     over(tcp, host, claim).await
 }
 

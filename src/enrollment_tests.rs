@@ -1232,6 +1232,7 @@ async fn enrolled_on_box(
         admin_request: dir.join("admin.request"),
         report: dir.join("pairing.json"),
         drives_report: None,
+        local_address: None,
         answer: dir.join("answer.json"),
         r#box: Some(r#box.into()),
     };
@@ -1626,6 +1627,7 @@ async fn a_pair_whose_waiting_line_is_not_delivered_ends_at_once() {
         admin_request: dir.path().join("admin.request"),
         report: dir.path().join("pairing.json"),
         drives_report: None,
+        local_address: None,
         answer: dir.path().join("answer.json"),
         r#box: Some("box-a".into()),
     };

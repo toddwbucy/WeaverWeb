@@ -276,13 +276,30 @@ impl Lab {
     }
 
     pub(super) async fn open_with(silence: Duration) -> Option<Self> {
+        Self::open_on(silence, None).await
+    }
+
+    /// A lab whose listener has two doors on loopback (Spec 8): the
+    /// management door at `address()`, the data door at `data_address()`.
+    pub(super) async fn open_doors() -> Option<Self> {
+        Self::open_on(SILENCE, Some("127.0.0.1:0")).await
+    }
+
+    async fn open_on(silence: Duration, data_door: Option<&str>) -> Option<Self> {
         let serial = serial().lock().await;
         let store = store().await?;
         let dir = crate::test_dir::tempdir().unwrap();
         let authority = Authority::init(&dir.path().join("authority"), "weaver-web", &[]).unwrap();
-        let listener = Listener::start(store.clone(), &authority, "127.0.0.1:0", silence)
-            .await
-            .unwrap();
+        let listener = Listener::start_doors(
+            store.clone(),
+            &authority,
+            "127.0.0.1:0",
+            data_door,
+            silence,
+            None,
+        )
+        .await
+        .unwrap();
         Some(Self {
             _dir: dir,
             authority,
@@ -380,8 +397,22 @@ impl Lab {
         self.admit_with(agent, plane, false).await
     }
 
+    /// The door `plane` dials: the data door where the listener has one
+    /// and the plane is the gate's, else the one or management door.
+    pub(super) fn door_of(&self, plane: Plane) -> SocketAddr {
+        match (plane, self.listener.data_address()) {
+            (Plane::Gate, Some(data)) => data,
+            _ => self.listener.address(),
+        }
+    }
+
     async fn admit_with(&self, agent: &Registered, plane: Plane, caught_up: bool) -> Fake {
-        let mut fake = self.connect(agent.credential(plane)).await;
+        let mut fake = Fake::connect(
+            self.door_of(plane),
+            self.authority.certificate_pem(),
+            agent.credential(plane),
+        )
+        .await;
         fake.send(FromClient::Hello {
             agent: agent.name.clone(),
             plane,
@@ -2075,6 +2106,8 @@ pub(super) fn lab_config(lab: &Lab) -> crate::config::ServerConfig {
         authority_dir: lab.authority.dir().to_owned(),
         silence_bound_secs: 60,
         link_address: None,
+        gate_listen: None,
+        gate_address: None,
         server_name: "weaver-web".into(),
         enrollment_token_hours: 24,
         origin: None,
@@ -3122,6 +3155,8 @@ fn a_staging_entry_swapped_before_the_publish_is_refused() {
         authority_dir: authority.dir().to_owned(),
         silence_bound_secs: 60,
         link_address: None,
+        gate_listen: None,
+        gate_address: None,
         server_name: "weaver-web".into(),
         enrollment_token_hours: 24,
         origin: None,
@@ -3603,4 +3638,54 @@ async fn a_retained_staged_pair_is_published_where_the_register_carries_it() {
     let published = std::fs::read_to_string(karl_dir.join("gate-con.toml")).unwrap();
     assert!(published.contains(&rotated_gate.certificate_pem));
     assert!(!karl_dir.join("gate-con.toml.staging").exists());
+}
+
+/// **Each door refuses the other plane's credential, and admits its own**
+/// (Spec 8): with two doors, a live gate credential at the management door
+/// and a live admin credential at the data door are each refused
+/// `wrong_door` with no frame sent, before any hello is read; each is then
+/// admitted at its own door, and the row reads present.
+///
+/// Perturbation: drop the door check in `serve_connection`, and the gate
+/// credential at the management door is not refused (measured 2026-11-25).
+#[tokio::test]
+async fn each_door_refuses_the_other_planes_certificate() {
+    let Some(lab) = Lab::open_doors().await else {
+        return;
+    };
+    let karl = lab.register("karl").await;
+    let management = lab.listener.address();
+    let data = lab.listener.data_address().expect("two doors");
+    assert_ne!(management, data);
+    assert!(!lab.listener.one_door());
+    for (at, plane) in [(management, Plane::Gate), (data, Plane::Admin)] {
+        let mut fake =
+            Fake::connect(at, lab.authority.certificate_pem(), karl.credential(plane)).await;
+        fake.expect_refusal(Refusal::WrongDoor).await;
+    }
+    let row = lab.store.agent(&karl.id).await.unwrap().unwrap();
+    assert!(!row.gate.connected && !row.admin.connected);
+    let _gate = lab.admit(&karl, Plane::Gate).await;
+    let _admin = lab.admit(&karl, Plane::Admin).await;
+    lab.wait_for(&karl.id, "present", |a| a.present()).await;
+}
+
+/// **One door admits both planes** (Spec 8): a listener started with no data
+/// door has one, and both of an agent's credentials are admitted at its one
+/// address. The register page and the agent page saying so is
+/// `agents_tests::the_register_page_and_the_agent_page_say_how_many_doors`.
+///
+/// Perturbation: refuse the gate plane at the shared door (`Door::Both`
+/// admitting the admin plane alone), and the gate's admission fails
+/// (measured 2026-11-25).
+#[tokio::test]
+async fn a_shared_door_admits_both_planes_and_says_so() {
+    let Some(lab) = Lab::open().await else { return };
+    assert!(lab.listener.one_door());
+    assert_eq!(lab.listener.data_address(), None);
+    let karl = lab.register("karl").await;
+    assert_eq!(lab.door_of(Plane::Gate), lab.door_of(Plane::Admin));
+    let _gate = lab.admit(&karl, Plane::Gate).await;
+    let _admin = lab.admit(&karl, Plane::Admin).await;
+    lab.wait_for(&karl.id, "present", |a| a.present()).await;
 }

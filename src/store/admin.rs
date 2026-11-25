@@ -238,7 +238,7 @@ impl std::fmt::Display for Refusal {
             ),
             Refusal::SetupNameHeld(name) => write!(
                 f,
-                "an open setup holds the name {name}, and one setup holds a name at a time, so continue it from Pair a box, or from Declarations once its box is paired"
+                "an open setup holds the name {name}, and one setup holds a name at a time, so continue it from New agent, or from Declarations once its box is paired"
             ),
             Refusal::NoSuchSetup => write!(f, "no such setup"),
             Refusal::NoSuchKey => write!(f, "no such SSH key"),
@@ -266,7 +266,7 @@ impl std::fmt::Display for Refusal {
             ),
             Refusal::SetupUnpaired => write!(
                 f,
-                "the setup's box is not paired, and its declaration opens once it is: pair it on Pair a box"
+                "the setup's box is not paired, and its declaration opens once it is: pair it under New agent"
             ),
             Refusal::NoAdapterPicked => write!(
                 f,

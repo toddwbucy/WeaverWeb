@@ -402,7 +402,7 @@ async fn the_pair_page_lists_the_waiting_box_as_it_claims() {
 /// alone" and never present; the box hears its answer, the console's
 /// authority among it and no gate certificate, and then `paired`. **The
 /// Pair page leads into the declaration**: once paired, its way on is the
-/// declaration's first page, Declarations lists the agent and Pair a box
+/// declaration's first page, Declarations lists the agent and New agent
 /// no longer does.
 ///
 /// Perturbation: write a gate fingerprint with the row, and its gate plane
@@ -2833,15 +2833,7 @@ async fn the_panes_are_served_in_each_status_as_the_box_reports() {
             mark("hold", "waiting"),
             "{page}"
         );
-        let stage = if page == "pair" {
-            crate::setup_tests::PROVISION
-        } else {
-            crate::setup_tests::DECLARE
-        };
-        assert!(
-            crate::setup_tests::walk_staged(&shown, stage).is_empty(),
-            "{page}"
-        );
+        assert!(crate::setup_tests::walk(&shown).is_empty(), "{page}");
     }
 
     // Weaver Web's own address, stated as information for the box to dial
@@ -2897,7 +2889,7 @@ async fn the_panes_are_served_in_each_status_as_the_box_reports() {
         "{report}"
     );
     assert!(!shown.contains("<script>alert"), "{shown}");
-    assert!(crate::setup_tests::walk_staged(&shown, crate::setup_tests::PROVISION).is_empty());
+    assert!(crate::setup_tests::walk(&shown).is_empty());
     let shown = page_of("placement").await;
     crate::surfaces::assert_inputs_drawn(&shown);
     let offered = pane(&shown, devices);

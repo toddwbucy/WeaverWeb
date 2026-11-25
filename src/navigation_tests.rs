@@ -133,7 +133,7 @@ async fn the_top_row_holds_three_tabs_and_the_status_at_the_right() {
     assert_eq!(
         links(&top),
         pairs(&[
-            ("/setup", "Agents"),
+            ("/pair", "Agents"),
             ("/record", "Agent Operations"),
             ("/admin/persons", "IAM"),
             ("who", ""),
@@ -174,7 +174,7 @@ async fn the_top_row_holds_three_tabs_and_the_status_at_the_right() {
     assert_eq!(
         links(&top),
         pairs(&[
-            ("/setup", "Agents"),
+            ("/pair", "Agents"),
             ("/record", "Agent Operations"),
             ("/admin/persons", "IAM"),
             ("who", ""),
@@ -198,9 +198,10 @@ async fn the_top_row_holds_three_tabs_and_the_status_at_the_right() {
 }
 
 /// **The second row holds the sub-tabs of the page's tab**, the current
-/// one marked and the row named by its tab: under Agents, Declarations,
-/// Pair a box, Register and Your agents in the path's order with their
-/// stage marks;
+/// one marked and the row named by its tab: under Agents, New agent,
+/// Declarations, Register and Your agents in the path's order with their
+/// stage marks, New agent first as the first page of stage 1 (the
+/// operator's ruling of 2026-11-25);
 /// under Agent Operations, The Record alone, nothing being built there yet;
 /// under IAM, Persons, Grants, Hugging Face, SSH keys and Passkeys. A person who is not an admin
 /// sees the sub-tabs they may open: Your agents, The Record and Passkeys.
@@ -213,8 +214,8 @@ async fn the_second_row_holds_the_sub_tabs_of_the_pages_tab() {
     let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
     let (_, bea) = signed_in(&rig.app, s, &mut authenticator(), "bea").await;
     let agents = pairs(&[
+        ("/pair", "1 Declare New agent"),
         ("/setup", "1 Declare Declarations"),
-        ("/pair", "2 Provision Pair a box"),
         ("/admin/agents", "2 Provision Register"),
         ("/agents", "3 Run 4 Observe Your agents"),
     ]);
@@ -276,7 +277,7 @@ async fn the_second_row_holds_the_sub_tabs_of_the_pages_tab() {
             &ada,
             "Agents",
             agents.clone(),
-            "2 Provision Pair a box",
+            "1 Declare New agent",
         ),
         ("/passkeys", &bea, "IAM", vec![iam[4].clone()], "Passkeys"),
     ] {
@@ -295,6 +296,11 @@ async fn the_second_row_holds_the_sub_tabs_of_the_pages_tab() {
         );
     }
     // A page's heading is its sub-tab's name.
+    assert!(
+        page(&rig.app, "/pair", &ada)
+            .await
+            .contains("<h1>New agent</h1>")
+    );
     assert!(
         page(&rig.app, "/record", &bea)
             .await
@@ -380,9 +386,9 @@ async fn every_page_declares_its_tab_and_sub_tab() {
         ("IAM", Some("SSH keys")),
         ("IAM", Some("Passkeys")),
         ("Agents", Some("1 Declare Declarations")),
-        ("Agents", Some("2 Provision Pair a box")),
-        ("Agents", Some("2 Provision Pair a box")),
-        ("Agents", Some("2 Provision Pair a box")),
+        ("Agents", Some("1 Declare New agent")),
+        ("Agents", Some("1 Declare New agent")),
+        ("Agents", Some("1 Declare New agent")),
         ("Agents", Some("1 Declare Declarations")),
         ("Agents", Some("1 Declare Declarations")),
         ("Agents", Some("1 Declare Declarations")),

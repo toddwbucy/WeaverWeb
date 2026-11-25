@@ -138,7 +138,7 @@ const SELECT: &str = "SELECT s.setup_id, s.name, s.virtual_machine, p.name AS be
 
 impl Store {
     /// **The setups left open**, the oldest first, for the start page and
-    /// Pair a box.
+    /// New agent.
     pub async fn open_setups(&self) -> anyhow::Result<Vec<Setup>> {
         let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
             "{SELECT} WHERE s.state = 'open' ORDER BY s.begun_at, s.setup_id"

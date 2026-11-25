@@ -1,22 +1,24 @@
 {% extends "instrument.html" %}
-{% block title %}Pair a box - weaver-web{% endblock %}
+{% block title %}New agent - weaver-web{% endblock %}
 {% block body %}
-{#- Pair a box, Provision's page (Spec 8.2; the operator's rulings of
-    2026-11-23: "Pairing is its own page", and "the agent is named at
-    pairing"; and of 2026-11-24: "'Create new agent' opens a requirements
-    page first"): Create new agent, which opens the requirements page where
-    the agent is named, and the named agents whose box is not yet paired. -#}
-<h1>Pair a box</h1>
+{#- New agent, the first page of stage 1 (the operator's ruling of
+    2026-11-25: "New agent is the first page of stage 1"; Spec 8.2; the
+    operator's rulings of 2026-11-23: "Pairing is its own page", and "the
+    agent is named at pairing"; and of 2026-11-24: "'Create new agent'
+    opens a requirements page first"): Create new agent, which opens the
+    requirements page where the agent is named, and the named agents whose
+    box is not yet paired. -#}
+<h1>New agent</h1>
 <div class="stack">
 <section class="pane">
-  <header><span class="stage"><b>2</b> Provision</span><h2>A new agent</h2><span class="backing built">built</span><span class="status ok">ok</span><span class="source">the requirements page</span></header>
+  <header><span class="stage"><b>1</b> Declare</span><h2>A new agent</h2><span class="backing built">built</span><span class="status ok">ok</span><span class="source">the requirements page</span></header>
   <div class="body">
   <p><a href="/pair/new">Create new agent</a></p>
   </div>
   <footer>Opens the requirements page, which ends in the agent's name.</footer>
 </section>
 <section class="pane">
-  <header><span class="stage"><b>2</b> Provision</span><h2>Agents waiting on their box</h2><span class="backing built">built</span><span class="status ok">ok</span><span class="source">the store's open setups</span></header>
+  <header><span class="stage"><b>1</b> Declare</span><h2>Agents waiting on their box</h2><span class="backing built">built</span><span class="status ok">ok</span><span class="source">the store's open setups</span></header>
   <div class="body">
   {%- if waiting.is_empty() %}
   <p>No named agent waits on its box.</p>

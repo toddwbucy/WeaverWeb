@@ -2,9 +2,9 @@
 //! conforms: web-the-start-page-refuses-every-name-the-box-refuses
 //! conforms: web-the-pairing-page-warns-where-the-box-cannot-dial-the-link
 //!
-//! Pair a box, the start page and the setup pages (Spec 6.2, 8.2,
+//! New agent, the start page and the setup pages (Spec 6.2, 8.2,
 //! `src/surfaces/setup.rs`, `src/store/setup.rs`). A name outside the start
-//! page's rule, held on Pair a box, opens no setup, one case per clause. A
+//! page's rule, held on New agent, opens no setup, one case per clause. A
 //! person without an admin grant is refused before any setup is looked up.
 //! One open setup holds a name. Every pane of every page carries its stage,
 //! its backing and its status, a held pane naming what it waits on and
@@ -188,7 +188,7 @@ pub(crate) async fn rig() -> Option<Rig> {
     rig_with("127.0.0.1:8081", Some("console.test:7443"), None).await
 }
 
-/// A setup begun under `session`, the agent named on Pair a box: the
+/// A setup begun under `session`, the agent named on New agent: the
 /// answer, and the setup's identity where it landed.
 pub(crate) async fn begin(
     app: &axum::Router,
@@ -237,7 +237,7 @@ pub(crate) async fn paired(s: &Store, setup: &str) {
     .unwrap();
 }
 
-/// The setup a begin's redirect names: its pairing, on Pair a box.
+/// The setup a begin's redirect names: its pairing, on New agent.
 fn setup_of(headers: &HeaderMap) -> Option<String> {
     let location = headers.get(header::LOCATION)?.to_str().ok()?;
     let rest = location.strip_prefix("/pair/")?;
@@ -311,7 +311,7 @@ fn tags<'a>(html: &'a str, kind: &str) -> Vec<&'a str> {
 }
 
 /// **The walk**: every pane of `page` carries the stage mark `1 Declare`
-/// (`walk_staged` takes another, Pair a box's `2 Provision`), a backing (`built`, `partly` or `unbuilt`) and a status word in a status
+/// (`walk_staged` takes another stage), a backing (`built`, `partly` or `unbuilt`) and a status word in a status
 /// mark (`ok`, `hold` or `fail`) in its header, and a held pane says in its
 /// footer what it waits on and holds no input with a value, no checked box
 /// and no selected option. Each pane that fails, named by its heading and
@@ -598,7 +598,7 @@ async fn a_second_open_setup_of_one_name_is_refused() {
     let (status, _, other) = begin(&rig.app, &ada, "otto").await;
     assert_eq!(status, StatusCode::SEE_OTHER, "another name opens its own");
     assert_ne!(other, first);
-    // Pair a box lists both, each a link to its pairing, and Declarations
+    // New agent lists both, each a link to its pairing, and Declarations
     // neither, since neither box is paired.
     let pair = page(&rig.app, "/pair", &ada).await;
     let start = page(&rig.app, "/setup", &ada).await;
@@ -615,11 +615,12 @@ async fn a_second_open_setup_of_one_name_is_refused() {
 /// **Every pane of every page carries its stage, its backing and its
 /// status**, and a held pane names what it waits on with no input holding
 /// a value, over every page this tree serves in each state it draws: the
-/// start page, Pair a box and the requirements page, the Pair page before
+/// start page, New agent and the requirements page, the Pair page before
 /// and after its box is paired, as a virtual machine at a loopback address
 /// and with the console at an unspecified one, the directories page with no key and then with one, the
-/// placement and confirm pages with nothing read, and the build page. Pair
-/// a box's panes carry `2 Provision`, the setup's `1 Declare`. **No page of
+/// placement and confirm pages with nothing read, and the build page. Every
+/// pane carries `1 Declare`, New agent's pages being the first of stage 1
+/// (the operator's ruling of 2026-11-25). **No page of
 /// the setup names a Pairing step**: its rail holds the five pages of the
 /// declaration, Directories first, and the old pairing and drives pages
 /// answer as no route does. **No page waits on the image's setup script**:
@@ -634,7 +635,7 @@ async fn every_pane_carries_its_stage_backing_and_status() {
     let s = rig.store();
     let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
     let mut walked = vec![("/setup".to_owned(), page(&rig.app, "/setup", &ada).await)];
-    let mut provision = vec![
+    let mut new_agent = vec![
         ("/pair".to_owned(), page(&rig.app, "/pair", &ada).await),
         (
             "/pair/new".to_owned(),
@@ -644,14 +645,14 @@ async fn every_pane_carries_its_stage_backing_and_status() {
     let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
     let setup = setup.unwrap();
     let pairing = format!("/pair/{setup}");
-    provision.push((pairing.clone(), page(&rig.app, &pairing, &ada).await));
+    new_agent.push((pairing.clone(), page(&rig.app, &pairing, &ada).await));
     paired(s, &setup).await;
     let shown = page(&rig.app, &pairing, &ada).await;
     assert!(
         shown.contains("<h2>The box's report at the pairing stage</h2>"),
         "{shown}"
     );
-    provision.push(("the Pair page, paired".to_owned(), shown));
+    new_agent.push(("the Pair page, paired".to_owned(), shown));
     for p in ["directories", "models", "placement", "confirm", "build"] {
         let uri = format!("/setup/{setup}/{p}");
         walked.push((uri.clone(), page(&rig.app, &uri, &ada).await));
@@ -667,7 +668,7 @@ async fn every_pane_carries_its_stage_backing_and_status() {
     assert_eq!(status, StatusCode::SEE_OTHER);
     let warned = page(&rig.app, &pairing, &ada).await;
     assert!(warned.contains("a loopback address"), "{warned}");
-    provision.push(("the Pair page, warned".to_owned(), warned));
+    new_agent.push(("the Pair page, warned".to_owned(), warned));
     let Some(every) = rig_with("0.0.0.0:8081", None, None).await else {
         return;
     };
@@ -675,7 +676,7 @@ async fn every_pane_carries_its_stage_backing_and_status() {
     let (_, _, other) = begin(&every.app, &bea, "otto").await;
     let warned = page(&every.app, &format!("/pair/{}", other.unwrap()), &bea).await;
     assert!(warned.contains("an unspecified address"), "{warned}");
-    provision.push(("the Pair page, unspecified".to_owned(), warned));
+    new_agent.push(("the Pair page, unspecified".to_owned(), warned));
     let key = crate::ssh_key_tests::line("ssh-ed25519", 1);
     let (status, _, body) = send_as(
         &rig.app,
@@ -695,8 +696,8 @@ async fn every_pane_carries_its_stage_backing_and_status() {
         let faults = walk(page);
         assert!(faults.is_empty(), "{uri}: {faults:?}\n{page}");
     }
-    for (uri, page) in &provision {
-        let faults = walk_staged(page, PROVISION);
+    for (uri, page) in &new_agent {
+        let faults = walk(page);
         assert!(faults.is_empty(), "{uri}: {faults:?}\n{page}");
         assert!(
             !page.contains(r#"<nav class="rail""#),
@@ -737,7 +738,7 @@ async fn every_pane_carries_its_stage_backing_and_status() {
         .await;
         assert_eq!(status, StatusCode::NOT_FOUND, "the old {gone} page is gone");
     }
-    for (uri, page) in walked.iter().chain(&provision) {
+    for (uri, page) in walked.iter().chain(&new_agent) {
         let page = page.to_lowercase();
         for never in [
             "the image's setup script",
@@ -772,7 +773,7 @@ async fn every_pane_carries_its_stage_backing_and_status() {
     // The Pair page offers no way on to the declaration before its box is
     // paired: the page read under its own URI, before `paired`, selected by
     // that URI so that the list's order cannot move the read.
-    let unpaired: Vec<&String> = provision
+    let unpaired: Vec<&String> = new_agent
         .iter()
         .filter(|(uri, _)| *uri == pairing)
         .map(|(_, page)| page)
@@ -1270,7 +1271,7 @@ async fn an_unknown_setup_is_not_found_and_a_malformed_one_refused() {
 /// write leaves the setup's own row the one row; and a second row
 /// registered through the register's page.
 ///
-/// Perturbations: draw the name's form on Pair a box beside Create new
+/// Perturbations: draw the name's form on New agent beside Create new
 /// agent; draw it on the unpaired Pair page alone; link the requirements
 /// page from `/setup` while no declaration is open, before any row
 /// stands. Each is an agent named, or the page reached, from another page.
@@ -1294,11 +1295,7 @@ async fn the_requirements_page_is_reached_from_create_new_agent_alone() {
     assert!(!pair.contains("New agent</summary>"), "{pair}");
 
     let new = page(&rig.app, "/pair/new", &ada).await;
-    assert!(
-        walk_staged(&new, PROVISION).is_empty(),
-        "{:?}",
-        walk_staged(&new, PROVISION)
-    );
+    assert!(walk(&new).is_empty(), "{:?}", walk(&new));
     let headings: Vec<&str> = panes(&new)
         .into_iter()
         .map(|p| between(p, "<h2>", "</h2>").unwrap())
@@ -1421,7 +1418,7 @@ async fn the_requirements_page_is_reached_from_create_new_agent_alone() {
 /// **A begin and the Pair page's write run from their first records to
 /// their outcomes in a task the request cannot cancel** (Spec 2.13, #150):
 /// each request dropped while its first record is held, the write still
-/// lands, its first record answered by its `ok` outcome, Pair a box links
+/// lands, its first record answered by its `ok` outcome, New agent links
 /// the setup the dropped begin opened, and the Pair page then reads the
 /// setup as it stands.
 ///
@@ -1447,7 +1444,7 @@ async fn a_begin_and_a_pairing_dropped_at_their_first_records_still_land() {
     let start = page(&rig.app, "/pair", &ada).await;
     assert!(
         start.contains(&format!(r#"href="{uri}""#)),
-        "Pair a box links the setup the dropped begin opened: {start}"
+        "New agent links the setup the dropped begin opened: {start}"
     );
     let shown = page(&rig.app, &uri, &ada).await;
     assert!(

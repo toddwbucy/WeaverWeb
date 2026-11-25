@@ -543,7 +543,7 @@ async fn serve(cfg: Arc<ServerConfig>) -> anyhow::Result<()> {
                 puller: puller.clone(),
             }),
         ))
-        // **Pair a box, Declare's path, the start page and the setup pages,
+        // **New agent, Declare's path, the start page and the setup pages,
         // and the operator's SSH keys** (Spec 6.2, 8.2): an admin's, drawn from the store
         // and the config alone, reaching no agent and no box.
         .merge(weaver_web::surfaces::script_policy(

@@ -360,10 +360,13 @@ fn a_staged_config_is_the_handover_and_the_box_facts_and_loads() {
         assert_eq!(admin.link.agent, agent);
         assert_eq!(
             admin.trace_socket,
-            rig.p(&format!("box/{agent}/trace.sock"))
+            Some(rig.p(&format!("box/{agent}/trace.sock")))
         );
-        assert_eq!(admin.weaver_admin, rig.p("box/admin-program"));
-        assert_eq!(admin.admin_log, rig.p(&format!("box/{agent}/admin.log")));
+        assert_eq!(admin.weaver_admin, Some(rig.p("box/admin-program")));
+        assert_eq!(
+            admin.admin_log,
+            Some(rig.p(&format!("box/{agent}/admin.log")))
+        );
         let (grace, bound) = if agent == "a2" {
             (Duration::from_secs(1500), Duration::from_secs(1200))
         } else {

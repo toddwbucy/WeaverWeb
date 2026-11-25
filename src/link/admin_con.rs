@@ -151,16 +151,22 @@ pub struct AdminConConfig {
     #[serde(flatten)]
     pub link: LinkConfig,
     /// The trace relay's socket, absolute: the door the agent's start step
-    /// opens for admin-con's user alone (Spec 7.2).
-    pub trace_socket: PathBuf,
+    /// opens for admin-con's user alone (Spec 7.2). **Absent with no agent
+    /// laid**: the door reads closed for that reason and no relay is dialed.
+    #[serde(default)]
+    pub trace_socket: Option<PathBuf>,
     /// The absolute path of `weaver-admin` the box's sudo rule names, the
     /// one config value in a privileged command line beside the agent's
-    /// name (Spec 7.2).
-    pub weaver_admin: PathBuf,
+    /// name (Spec 7.2). **Absent with no agent laid**: the ceiling is empty
+    /// and no `sudo` runs.
+    #[serde(default)]
+    pub weaver_admin: Option<PathBuf>,
     /// **The agent's `admin.log`, absolute** (Spec 2.14, 8): a box fact
     /// with no default, read line by line from admin-con's start and sent
-    /// upstream as entries (`link::admin_log`).
-    pub admin_log: PathBuf,
+    /// upstream as entries (`link::admin_log`). **Absent with no agent
+    /// laid**: nothing is read and no entry is raised.
+    #[serde(default)]
+    pub admin_log: Option<PathBuf>,
     /// How much of the file's tail is relayed after a server restart, and
     /// how much of what an opening read it holds to replay without reading
     /// again.
@@ -272,32 +278,41 @@ impl AdminConConfig {
                 cfg.backfill_bytes
             );
         }
-        if !cfg.weaver_admin.is_absolute() {
-            anyhow::bail!(
-                "{}: weaver_admin {} is not an absolute path",
-                path.display(),
-                cfg.weaver_admin.display()
-            );
-        }
-        if !cfg.trace_socket.is_absolute() {
-            anyhow::bail!(
-                "{}: trace_socket {} is not an absolute path",
-                path.display(),
-                cfg.trace_socket.display()
-            );
-        }
-        if !cfg.admin_log.is_absolute() {
-            anyhow::bail!(
-                "{}: admin_log {} is not an absolute path",
-                path.display(),
-                cfg.admin_log.display()
-            );
+        // **Each box fact binds where it is present** (Spec 7.2): absent,
+        // no agent is laid yet.
+        for (member, fact) in [
+            ("weaver_admin", &cfg.weaver_admin),
+            ("trace_socket", &cfg.trace_socket),
+            ("admin_log", &cfg.admin_log),
+        ] {
+            if let Some(fact) = fact
+                && !fact.is_absolute()
+            {
+                anyhow::bail!(
+                    "{}: {member} {} is not an absolute path",
+                    path.display(),
+                    fact.display()
+                );
+            }
         }
         Ok(cfg)
     }
 }
 
 // ---------- the door ----------
+
+/// **Why the door reads closed with no agent laid** (Spec 7.2).
+pub const NO_AGENT_LAID: &str = "no agent is laid: the config names no trace_socket";
+
+/// **The relay's dial, or the door closed with no agent laid** (Spec 7.2):
+/// the empty path stands for a config naming no `trace_socket`, and is
+/// never dialed.
+async fn dial_relay(socket: &Path, from: &Position) -> relay::Dial {
+    if socket.as_os_str().is_empty() {
+        return relay::Dial::Closed(NO_AGENT_LAID.to_owned());
+    }
+    relay::dial(socket, from).await
+}
 
 /// What the door hands the connection.
 enum Item {
@@ -576,7 +591,7 @@ async fn connect(
 ) -> Result<(relay::Stream, Position), String> {
     let mut at = from.clone();
     loop {
-        match relay::dial(socket, &at).await {
+        match dial_relay(socket, &at).await {
             // **Another file than the position names is a replacement at
             // any offset**, zero included: only the empty generation, the
             // position before any header was read, names no file. A request
@@ -668,7 +683,7 @@ async fn verify(socket: &Path, opened: &mut Opened, resume: &Resume) -> Result<R
     // **The verification dial gets only what remains of the opening's one
     // deadline**: where nothing remains it fails at once, a closed door on
     // the backoff, as a dial past the deadline does.
-    match tokio::time::timeout_at(opened.until, relay::dial(socket, acked)).await {
+    match tokio::time::timeout_at(opened.until, dial_relay(socket, acked)).await {
         Ok(Dial::Open(stream)) if stream.identity == opened.boundary.generation => {
             opened.resumed = Some(*stream);
             Ok(resume.clone())
@@ -1095,7 +1110,7 @@ impl Door {
     /// its start; and a relay that serves another file, or none, closed
     /// the door, so the next opening is an admission of the trace.
     async fn redial(&mut self, step: &mut Step) {
-        match relay::dial(&self.socket, &self.at).await {
+        match dial_relay(&self.socket, &self.at).await {
             Dial::Open(stream) if stream.identity == self.at.generation => {
                 self.stream = Some(*stream);
                 self.fresh = true;
@@ -1304,17 +1319,25 @@ pub async fn run<I: Invoker>(
     // box's admin.log read on a thread of its own, sent upstream by the
     // connection's pump.
     let entries = Entries::new("admin-con");
-    let _tail = admin_log::tail(
-        cfg.admin_log.clone(),
-        entries.clone(),
-        admin_log::my_uid(),
-        shutdown.clone(),
-    );
+    // **No `admin_log`, nothing read** (Spec 7.2): with no agent laid the
+    // file does not exist yet, and its absence is no failure.
+    let _tail = cfg.admin_log.clone().map(|admin_log| {
+        admin_log::tail(
+            admin_log,
+            entries.clone(),
+            admin_log::my_uid(),
+            shutdown.clone(),
+        )
+    });
+    // **No `trace_socket`, no relay dialed** (Spec 7.2): the empty path
+    // stands for none, and `dial_relay` answers it closed for the reason
+    // that no agent is laid without dialing.
+    let trace_socket = cfg.trace_socket.clone().unwrap_or_default();
     let hello_entries = entries.clone();
     let opts = ServeOptions {
         entries: entries.clone(),
         agent: cfg.link.agent.clone(),
-        socket: cfg.trace_socket.clone(),
+        socket: trace_socket.clone(),
         backoff,
         backfill: cfg.backfill_bytes,
         boundary_bound: cfg.boundary_bound,
@@ -1324,7 +1347,7 @@ pub async fn run<I: Invoker>(
         slot: slot.clone(),
     };
     let grants_bound = cfg.grants_bound;
-    let socket = cfg.trace_socket.clone();
+    let socket = trace_socket;
     let backfill = cfg.backfill_bytes;
     let boundary_bound = cfg.boundary_bound;
     // The stop's grace runs from the moment the stop is asked, whatever

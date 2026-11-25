@@ -5354,6 +5354,21 @@ line naming its caller's uid and its outcome as the answer or refusal
 object), from the absolute path its config names as the box fact
 `admin_log`, no default; each line it reads is an entry of section 2.14.
 
+**admin-con holds its connection with no agent laid**, on the Planner's word of
+2026-11-25 accepting the plan, since an appliance pairs before any agent stands on
+it and its loop is installed over admin-con (section 8.2). Its three box facts,
+`trace_socket`, `weaver_admin` and `admin_log`, are optional in its config, and
+each binds as before where it is present, an absolute path. **Where
+`trace_socket` is absent** the door reads closed for the reason that no agent is
+laid, and admin-con dials no relay. **Where `weaver_admin` is absent** the ceiling
+is empty and admin-con runs no `sudo`, so the server asks no verb. **Where
+`admin_log` is absent** nothing is read and no entry is raised, so an appliance
+with no agent shows no alert for files that do not yet exist. A config the
+pairing's `adopt` completes holds none of the three; the act that lays the agent
+adds them and restarts the service, whose next hello declares the ceiling the
+box's rule then grants. The staging tool of section 8.1 still requires the four
+box facts for an agent it stages, since it stages an agent's connectors.
+
 **Access to the verbs is the box's sudo rule, and this crate holds exactly
 one privileged invocation: admin-con's sudo invoker**, on the operator's
 ruling of 2026-10-03, which revised the rule of 2026-10-02 that no sudo
@@ -6970,8 +6985,9 @@ the commands on the box in `link::key_config` and `link::box_commands`.
   the authority's certificate (`link::client::LinkConfig`). The operator's rulings of
   2026-11-16 (setup pages) have the operator enter the console's address and port,
   localhost allowed, in the appliance's setup script, and the code on the console's
-  Pair page. The exchange answers the rest (below), and the box facts each config
-  needs are added on the box by the image's install, as for a registered agent.
+  Pair page. The exchange answers the rest (below). admin-con stands on the adopted
+  config with none of its box facts, since no agent is laid yet (section 7.2), and the
+  act that lays the agent adds them on the box, as for a registered agent.
 - **What coexists.** Registration and its handover stand as built (section 8.1). Both
   paths write the same row, registration with its two credentials live and the pairing
   with admin-con's live and the gate plane not enrolled until the loop's install. The setup flow serves a host as
@@ -7921,6 +7937,7 @@ two connectors report.
 | the data door never serves the pairing protocol (section 8) | perturbation in `src/link/pairing_tests.rs`, `the_data_door_never_serves_the_pairing_protocol`: serve the pairing at every door, and a box dialing the data door waits there (measured 2026-11-25) |
 | a connector dials from its `local_address` where one is named (section 8) | perturbation in `src/link/client_tests.rs`, `a_connector_dials_from_its_local_address`: drop the bind, and the server sees the connection from `127.0.0.1` (measured 2026-11-25) |
 | `gate_listen` and `gate_address` parse, default absent, and `gate_address` without `gate_listen` is refused at load; gate-con's config carries the data door's address (section 8) | `src/config.rs`'s tests, `the_data_door_is_optional_and_its_address_needs_it`; perturbation in `src/agents_tests.rs`, `the_register_page_and_the_agent_page_say_how_many_doors`: write the management door's address into gate-con's config, and the two-door case fails (measured 2026-11-25) |
+| admin-con holds its connection with no box fact: the door closed for the reason that no agent is laid, an empty ceiling with no `sudo` run, and no entry raised (section 7.2) | perturbation in `src/link/admin_con_tests.rs`, against the real listener, `admin_con_with_no_box_fact_is_admitted_with_the_door_closed_and_no_alert`: read an absent `admin_log` as a failure, and an alert stands (measured 2026-11-25) |
 
 **A watch that cannot fail is not a test.** For each perturbation above, the
 act that lands it states what removal makes it fail and confirms it does.

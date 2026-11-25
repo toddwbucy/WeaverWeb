@@ -1333,7 +1333,9 @@ exchange, and the name covers it.
 ### 10.2 Keys
 
 **Each connector makes its own private key inside the appliance, and the key never
-leaves it.** The console signs the public half. **The reason** is section 5's standing
+leaves it.** The console signs the public half. **The pairing enrolls admin-con alone**
+(the operator's rulings of 2026-11-25): gate-con makes its key and is enrolled at the
+loop's install, and until then the agent reads "admin alone". **The reason** is section 5's standing
 rule that the server keeps fingerprints and never keys, carried one step further: the
 console never holds the private key at all, so no file carries one from the console to
 the machine. For an appliance this replaces the making of keys on the server at

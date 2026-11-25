@@ -90,7 +90,8 @@ fn the_policy_carries_a_standing_person_only_where_one_is_named() {
 }
 
 /// **With no cookie, the pages serve the standing person**: `/` goes on to
-/// The Record, The Record shows their name, the persons page serves a
+/// `/pair`, the standing person holding the admin grant, The Record shows
+/// their name, the persons page serves a
 /// standing admin, and an admin write lands with them as its principal by
 /// `session`, as any signed-in admin's does. No cookie is set.
 #[tokio::test]
@@ -107,7 +108,7 @@ async fn with_no_cookie_the_pages_serve_the_standing_person() {
 
     let (status, headers, _) = send(&app, "GET", "/", None).await;
     assert_eq!(status, StatusCode::SEE_OTHER);
-    assert_eq!(headers[header::LOCATION], "/record");
+    assert_eq!(headers[header::LOCATION], "/pair");
 
     let (status, headers, page) = send(&app, "GET", "/record", None).await;
     assert_eq!(status, StatusCode::OK, "{page}");

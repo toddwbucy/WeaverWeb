@@ -313,7 +313,8 @@ async fn the_host_issues_a_short_lived_token_kept_as_its_digest() {
 }
 
 /// **A token signs its person in once** (Spec 2.8): the name in any case,
-/// the browser sent to The Record with the cookie, the session naming its
+/// the browser sent to `/agents` with the cookie, Ada holding no admin
+/// grant, the session naming its
 /// method and no passkey, the opening audited by `sign-in token` on the
 /// person with its outcome, the token ended `redeemed`; the same token again
 /// gets the one answer and no record.
@@ -329,7 +330,7 @@ async fn a_token_signs_its_person_in_once() {
 
     let (status, headers, body) = post_token(&app, " ADA ", &token).await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
-    assert_eq!(location(&headers), "/record");
+    assert_eq!(location(&headers), "/agents");
     let session = bearer(&headers);
     let row: (String, Option<String>, String) = sqlx::query_as(
         "SELECT person_id, passkey_id, method FROM session WHERE bearer_digest = $1",
@@ -646,8 +647,15 @@ async fn landed(
     landed
 }
 
-/// **`GET /` sends a browser on** (Spec 2.8): to sign-in with no cookie or
-/// one naming no session, to The Record with a live session.
+/// **`GET /` sends a browser on** (Spec 2.8, the operator's ruling of
+/// 2026-11-25 on the order of work): to sign-in with no cookie or one
+/// naming no session; with a live session to `/agents` where its person
+/// holds no admin grant and to `/pair` where they hold it. **A token's
+/// sign-in lands at the same page** (the Planner's ruling of 2026-11-25).
+///
+/// Perturbations: send every session to `/pair`, and Bea, without the
+/// grant, fails; send every session to The Record, and Ada, an admin,
+/// fails.
 #[tokio::test]
 async fn the_root_sends_a_browser_on() {
     let Some(fresh) = fresh_store().await else {
@@ -661,11 +669,18 @@ async fn the_root_sends_a_browser_on() {
         assert_eq!(location(&headers), "/sign-in", "{session:?}");
     }
     let ada = person(s, "ada").await;
-    let token = token_for(s, &ada).await;
-    let (_, headers, _) = post_token(&app, "ada", &token).await;
-    let (status, headers, _) = send(&app, "GET", "/", None, Some(&bearer(&headers))).await;
-    assert_eq!(status, StatusCode::SEE_OTHER);
-    assert_eq!(location(&headers), "/record");
+    let granted = host::grant_add(s, &ada, "admin", None, None).await;
+    assert!(granted.ok, "{}", granted.value);
+    let bea = person(s, "bea").await;
+    for (name, id, page) in [("bea", &bea, "/agents"), ("ada", &ada, "/pair")] {
+        let token = token_for(s, id).await;
+        let (status, headers, body) = post_token(&app, name, &token).await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{name}: {body}");
+        assert_eq!(location(&headers), page, "{name}: the sign-in lands");
+        let (status, headers, _) = send(&app, "GET", "/", None, Some(&bearer(&headers))).await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{name}");
+        assert_eq!(location(&headers), page, "{name}: the root");
+    }
 }
 
 /// **A person issued a sign-in token takes an enrollment token from the host

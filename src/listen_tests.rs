@@ -18,6 +18,8 @@ fn cfg() -> ServerConfig {
         authority_dir: PathBuf::new(),
         silence_bound_secs: 60,
         link_address: None,
+        gate_listen: None,
+        gate_address: None,
         server_name: "weaver-web".into(),
         enrollment_token_hours: 24,
         origin: None,

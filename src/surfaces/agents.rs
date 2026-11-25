@@ -286,6 +286,8 @@ struct AgentsPage {
     rows: Vec<AgentRow>,
     /// The register form's name, as a link from a saved declaration asks.
     name: String,
+    /// One door serves both planes (Spec 8), which the page says.
+    one_door: bool,
 }
 
 /// **What a link may fill into the register form** (Spec 2.13): the
@@ -342,6 +344,7 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, ask: Prefill) -> 
             .name
             .filter(|name| crate::declaration::is_name(name))
             .unwrap_or_default(),
+        one_door: seams.cfg.data_door().is_none(),
     })
     .render()
     {

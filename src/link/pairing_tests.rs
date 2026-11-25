@@ -854,3 +854,45 @@ async fn a_report_that_is_not_one_object_within_64_kib_is_refused() {
     let answer = first_line_for(&rig, &taken).await.expect("an answer");
     assert!(answer.contains(r#""svc":"waiting""#), "{answer}");
 }
+
+/// **The data door never serves the pairing protocol** (Spec 8): with two
+/// doors, a box dialing the data door under `weaver-pair/1` meets mutual
+/// TLS, presents no certificate and is unreachable there, and the same claim
+/// at the management door waits with a code.
+///
+/// Perturbation: serve the pairing at every door (`Door::pairs` true for the
+/// data door), and the box at the data door hears waiting (measured
+/// 2026-11-25).
+#[tokio::test]
+async fn the_data_door_never_serves_the_pairing_protocol() {
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let dir = crate::test_dir::tempdir().unwrap();
+    let authority = Authority::init(&dir.path().join("authority"), "weaver-web", &[]).unwrap();
+    let listener = Listener::start_doors(
+        fresh.store.clone(),
+        &authority,
+        "127.0.0.1:0",
+        Some("127.0.0.1:0"),
+        SILENCE,
+        None,
+    )
+    .await
+    .unwrap();
+    let data = listener.data_address().expect("two doors").to_string();
+    match pair_client::dial(&data, &claim("box-a")).await {
+        Err(DialError::Unreachable(_)) => {}
+        Err(other) => panic!("the data door answered the pairing: {other}"),
+        Ok(_) => panic!("the data door served the pairing: a box waits there"),
+    }
+    assert!(listener.waiting().is_empty());
+    let management = listener.address().to_string();
+    let dialed = pair_client::dial(&management, &claim("box-a"))
+        .await
+        .expect("the management door serves the pairing");
+    assert_eq!(listener.waiting().len(), 1);
+    drop(dialed);
+    listener.stop_now();
+    drop(fresh);
+}

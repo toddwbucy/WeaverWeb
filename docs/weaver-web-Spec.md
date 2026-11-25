@@ -6058,6 +6058,45 @@ ClientHello offers, before the handshake (section 8.2). Where a certificate and 
 configured, the browser's listener serves TLS only, per section 2.13. The link's
 encryption is its own and holds without configuration.
 
+**The link has two doors, one per plane**, on the operator's words of 2026-11-25:
+"GateCon is going to handle all outward facing communication from the agent. So even to
+Weaver Web, when we talk directly to the agent, it should be through GateCon", and "When
+we're managing the agent and messing with its internals, that should happen through
+AdminCom." So a person's turns stay on gate-con and the gate plane, and the lifecycle
+verbs, the trace and the setup's asks on admin-con and the admin plane, as built.
+
+- **The management door is `link_listen`**: admin-con's connections and an appliance's
+  enrollment (section 8.2). Its address in a client config is `link_address`, else
+  `link_listen`.
+- **The data door is `gate_listen`**: gate-con's connections. It is optional. Its
+  address in a client config is `gate_address`, else `gate_listen`, and `register` and
+  `rotate` write it into gate-con's config. `gate_address` without `gate_listen` is
+  refused at load. Its port is 8082 by convention, beside the management door's 8081, on
+  the Planner's word of 2026-11-25, and the code holds no default for it; the operator's
+  network admits that port on the data card's network.
+- **Where `gate_listen` is absent or equal to `link_listen`, one door serves both
+  planes, and says so**: the server's line at start names "one door for both planes",
+  and so do the register page and the agent page. This is the operator's line "one card
+  only on purpose, and it shows", carried to Weaver Web's own door.
+- **One listener, one store lock, one register and one epoch serve both doors**, with
+  one accept loop per door. Each accepted connection carries its door. **After the
+  handshake and the register's lookup, before the first frame is read, a live credential
+  whose plane is not its door's is refused `wrong_door`**, logged at error as the
+  connector's defect, and the connector retries at its backoff's cap and reloads its
+  config, as it does on `not_live`. A shared door admits both planes.
+- **The data door never serves the pairing protocol.** A ClientHello there that offers
+  `weaver-pair/1` meets the mutual-TLS configuration as every other does, and with no
+  client certificate its handshake fails. The browser's listener (`listen`) is neither.
+- **Each connector may name its card, by `local_address`**, an IP literal, optional in
+  both connectors' configs, and `--local-address` on `admin-con pair`. The connector
+  binds it, port zero, before it dials, so its connection leaves by that card's address
+  whatever the machine's routes. Where it is absent the connector dials by the routes, as
+  built. **It is a box fact appended after each adopt, by whoever appends it**: `adopt`
+  writes the config back to its key and writes its tail again from the answer (section
+  8.2), so a member appended after one adopt is gone after the next, as `trace_socket`
+  is. The appliance's setup script appends admin-con's from the management card after
+  every adopt, and gate-con's from the data card at the loop's install.
+
 **The server's authority is durable state and is never minted at start.**
 Its key and certificate are created once by an explicit register verb, the
 first of them, run before any agent is registered; they are stored at a
@@ -7023,9 +7062,10 @@ ruling of 2026-11-24 on the plan, and the command's name joins it once the appli
 setup script is merged. The pairing belongs with the connectors and serves a host too,
 and setup uses no SSH. The members are ruled: the console's address and port, the code,
 and the console's certificate fingerprint, which the operator compares. **As built, the
-link address `register` writes into a client config is `link_address`, else
-`link_listen`** (`ServerConfig` in `src/config.rs`), and that is the address a connector
-dials. **The fingerprint is the authority's**, on this document's election of
+link address `register` writes into admin-con's config is `link_address`, else
+`link_listen`, and into gate-con's `gate_address`, else `gate_listen`, else admin-con's**
+(`ServerConfig` in `src/config.rs`, the two doors of section 8), and that is the address
+a connector dials. The pairing dials the management door alone. **The fingerprint is the authority's**, on this document's election of
 2026-11-17: the certificate every connector pins (`link::authority`, `certificate_pem`)
 and `authority init` answers. As built the listener's handshake presents the server's
 own certificate alone (`server_tls`), so the pairing's configuration presents a chain of
@@ -7876,6 +7916,11 @@ two connectors report.
 | a tuple's adapter members are all present or all absent, and its base's identity is required either way | perturbation at the schema in `src/setup_place_tests.rs`, `a_tuples_adapter_members_are_whole_or_absent`: copies of a confirmed tuple under a second setup, each with one of the six adapter members absent, are each refused by the check, one with all six and the base's identity absent by the base's own constraint, and one with all six absent accepted; drop migration `0032`'s check, and a tuple holding five of the six adapter members lands (measured 2026-11-18) |
 | an open setup's adapter pick can be dropped, in a task the request cannot cancel, and a confirmed setup's cannot | perturbation in `src/setup_models_tests.rs`: `an_open_setups_adapter_pick_is_dropped_and_a_confirmed_setups_is_not`, the drop's refusals (a field beside the version 400 and no record, a stale version 409 after its first record, no adapter picked 409 and no record), the drop landing (the adapter's row gone, the version moved, the pane `ok` saying the agent loads its base alone and drawing no Drop, the dropped pick's files in the cache), and a confirmed setup's drop refused 409 with no record and its adapter row standing: drop the handler's check that the setup is open, and the confirmed setup's drop writes a first record before the store refuses it as stale; `a_pick_and_a_drop_dropped_at_their_first_records_still_land`: run the drop's step four in the request's own future, and a drop whose request is dropped at the hold leaves its first record without its outcome (each measured 2026-11-18) |
 | `describe`'s laying names an adapter only where the tuple holds one | perturbation through the real listener in `src/enrollment_tests.rs`: `a_setup_with_no_adapter_confirms_a_tuple_with_none`, the box reading a laying with no `adapter` member, and `the_reports_a_box_sends_feed_placement_and_confirm`, the box reading a tuple's adapter back whole (its artifact, SHA-256, base's identity and scale); and `a_setup_with_no_adapter_confirms_a_tuple_and_a_laying_with_none` in `src/setup_place_tests.rs`: answer the laying's `adapter` member always, and the laying of a tuple with no adapter carries the member, null, in both (measured 2026-11-18) |
+| each door refuses the other plane's credential `wrong_door` before the first frame, and admits its own (section 8) | perturbation in `src/link/tests.rs`, `each_door_refuses_the_other_planes_certificate`: drop the door check, and a gate credential at the management door is not refused (measured 2026-11-25) |
+| one door for both planes admits both and says so, at start and on the register page and the agent page (section 8) | perturbation in `src/link/tests.rs`, `a_shared_door_admits_both_planes_and_says_so`: let the shared door admit the admin plane alone, and the gate's admission fails; in `src/agents_tests.rs`, `the_register_page_and_the_agent_page_say_how_many_doors`: drop the line from the register page, and it fails (each measured 2026-11-25) |
+| the data door never serves the pairing protocol (section 8) | perturbation in `src/link/pairing_tests.rs`, `the_data_door_never_serves_the_pairing_protocol`: serve the pairing at every door, and a box dialing the data door waits there (measured 2026-11-25) |
+| a connector dials from its `local_address` where one is named (section 8) | perturbation in `src/link/client_tests.rs`, `a_connector_dials_from_its_local_address`: drop the bind, and the server sees the connection from `127.0.0.1` (measured 2026-11-25) |
+| `gate_listen` and `gate_address` parse, default absent, and `gate_address` without `gate_listen` is refused at load; gate-con's config carries the data door's address (section 8) | `src/config.rs`'s tests, `the_data_door_is_optional_and_its_address_needs_it`; perturbation in `src/agents_tests.rs`, `the_register_page_and_the_agent_page_say_how_many_doors`: write the management door's address into gate-con's config, and the two-door case fails (measured 2026-11-25) |
 
 **A watch that cannot fail is not a test.** For each perturbation above, the
 act that lands it states what removal makes it fail and confirms it does.
@@ -8267,7 +8312,9 @@ a `web-` assertion beside `weaver-admin`'s.
   can dial, so an operator who enrolls appliances sets it, and the address a connector
   dials is `link_address`, else `link_listen`. The operator suggested a default in the
   range 6000 to 7000, which the operator can change. Settled by the operator's ruling of
-  the number.
+  the number. The data door (section 8), optional and with no default in the code,
+  takes port 8082 by convention, on the Planner's word of 2026-11-25, and moves with this
+  election's number.
 - **The certificate the shown fingerprint names, closed 2026-11-17 by section 8.2**,
   opened 2026-11-15 (section 8.2). The authority's, presented in the pairing
   configuration's chain, read from the handshake by the box and pinned at `adopt`. The

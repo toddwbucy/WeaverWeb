@@ -96,7 +96,7 @@ const CALLS: &[(&str, &str, Why)] = &[
     ("src/link/exchange.rs", "run", Socket),      // the box's word, under the authority lock
     ("src/link/gate_con.rs", "serve", Channel),   // the turns declined at the grace
     ("src/link/gate_con.rs", "serve", Join),      // the turns in flight at the grace
-    ("src/link/listener.rs", "start_with", Reads), // the lock's ping
+    ("src/link/listener.rs", "start_doors", Reads), // the lock's ping
     ("src/link/listener.rs", "record_ask", WriteOutside), // the first record's hand-over
     ("src/link/listener.rs", "ask", Channel),
     ("src/link/listener.rs", "ask_held", Reads), // the held asks' semaphore
@@ -123,7 +123,7 @@ const CALLS: &[(&str, &str, Why)] = &[
     ("src/link/pair_client.rs", "written", Socket),
     ("src/link/pair_client.rs", "last_word", Socket),
     ("src/link/pair_client.rs", "next", Socket),
-    ("src/link/pair_client.rs", "dial", Socket),
+    ("src/link/pair_client.rs", "dial_from", Socket),
     ("src/link/pair_client.rs", "over", Socket),
     ("src/link/pair_client.rs", "over", Socket),
     ("src/link/pair_client.rs", "over", Socket),

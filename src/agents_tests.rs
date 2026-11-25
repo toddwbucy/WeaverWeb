@@ -63,6 +63,8 @@ pub(crate) fn server_config(
         authority_dir: dir.join("authority"),
         silence_bound_secs: 60,
         link_address: Some(link.to_string()),
+        gate_listen: None,
+        gate_address: None,
         server_name: "weaver-web".into(),
         enrollment_token_hours: 24,
         origin: None,
@@ -92,20 +94,33 @@ async fn rig_with(handover: Handover) -> Option<Rig> {
 }
 
 async fn rig_of(handover: Handover, silence: Duration) -> Option<Rig> {
+    rig_on(handover, silence, false).await
+}
+
+/// A rig whose listener has two doors (Spec 8), its config naming the data
+/// door's bound address as `gate_listen`.
+pub(crate) async fn rig_doors() -> Option<Rig> {
+    rig_on(Handover::default(), Duration::from_secs(60), true).await
+}
+
+async fn rig_on(handover: Handover, silence: Duration, two_doors: bool) -> Option<Rig> {
     let fresh = fresh_store().await?;
     let dir = crate::test_dir::tempdir().unwrap();
     let authority =
         Arc::new(Authority::init(&dir.path().join("authority"), "weaver-web", &[]).unwrap());
-    let listener = Listener::start_with(
+    let listener = Listener::start_doors(
         fresh.store.clone(),
         &authority,
         "127.0.0.1:0",
+        two_doors.then_some("127.0.0.1:0"),
         silence,
         Some(dir.path().join("operations.log")),
     )
     .await
     .unwrap();
-    let cfg = Arc::new(server_config(dir.path(), listener.address()));
+    let mut cfg = server_config(dir.path(), listener.address());
+    cfg.gate_listen = listener.data_address().map(|data| data.to_string());
+    let cfg = Arc::new(cfg);
     let policy = gate::Policy {
         origin: Some(ORIGIN.to_owned()),
         idle: Duration::from_secs(3600),
@@ -1962,4 +1977,52 @@ async fn the_admins_revoke_and_rotation_of_a_gate_not_enrolled_are_refused_not_e
         .await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{answer}");
     assert_eq!(states(s, &id).await, ("none".into(), "revoked".into()));
+}
+
+/// **The register page and the agent page say how many doors** (Spec 8), and
+/// gate-con's config carries the data door's address: with one door, both
+/// pages say "one door for both planes" and both configs name the one
+/// address; with two, both say "a door for each plane", gate-con's config
+/// names the data door and admin-con's the management door.
+///
+/// Perturbation: drop the line from the register page, and it fails; write
+/// the management door's address into gate-con's config, and the two-door
+/// case fails (each measured 2026-11-25).
+#[tokio::test]
+async fn the_register_page_and_the_agent_page_say_how_many_doors() {
+    for two in [false, true] {
+        let rig = if two { rig_doors().await } else { rig().await };
+        let Some(rig) = rig else { return };
+        let s = rig.store();
+        let (ada, session) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+        let (karl, handles) = rig.register(&session, "box-a", "karl").await;
+        let granted = host::grant_add(s, &ada, "observer", Some(&karl), None).await;
+        assert!(granted.ok, "{}", granted.value);
+        let (said, unsaid) = if two {
+            ("a door for each plane", "one door for both planes")
+        } else {
+            ("one door for both planes", "a door for each plane")
+        };
+        let (_, _, register) = send_as(&rig.app, "GET", "/admin/agents", None, &session).await;
+        let (_, _, page) =
+            send_as(&rig.app, "GET", &format!("/agents/{karl}"), None, &session).await;
+        for (shown, what) in [(&register, "the register page"), (&page, "the agent page")] {
+            assert!(
+                shown.to_lowercase().contains(said) && !shown.to_lowercase().contains(unsaid),
+                "{what} with two doors {two}: {shown}"
+            );
+        }
+        let server_of = |config: &str| -> String {
+            config.parse::<toml::Table>().unwrap()["server"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        };
+        let (_, _, gate) = rig.take(&handles[0], &session).await;
+        let (_, _, admin_config) = rig.take(&handles[1], &session).await;
+        let management = rig.listener.address().to_string();
+        let data = rig.listener.data_address().map(|d| d.to_string());
+        assert_eq!(server_of(&admin_config), management);
+        assert_eq!(server_of(&gate), data.unwrap_or(management));
+    }
 }

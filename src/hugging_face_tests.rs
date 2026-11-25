@@ -733,6 +733,8 @@ fn config(dir: &std::path::Path) -> crate::config::ServerConfig {
         authority_dir: dir.join("authority"),
         silence_bound_secs: 60,
         link_address: None,
+        gate_listen: None,
+        gate_address: None,
         server_name: "weaver-web".into(),
         enrollment_token_hours: 24,
         origin: None,

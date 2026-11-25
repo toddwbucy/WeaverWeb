@@ -543,6 +543,9 @@ pub enum Refusal {
     SetupClosed,
     /// A setup report past `REPORT_BOUND` (Spec 8.3).
     TooLarge,
+    /// A credential at the other plane's door (Spec 8): the config names the
+    /// wrong address.
+    WrongDoor,
 }
 
 impl Refusal {
@@ -559,6 +562,7 @@ impl Refusal {
             Refusal::NoSetup => "no_setup",
             Refusal::SetupClosed => "setup_closed",
             Refusal::TooLarge => "too_large",
+            Refusal::WrongDoor => "wrong_door",
         }
     }
 }

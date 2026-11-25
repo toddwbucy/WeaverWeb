@@ -112,6 +112,7 @@
     <table>
       <tbody>
       <tr><th>Present</th><td>{% if setup_running %}paired, setup running{% else if admin_alone %}{% if admin_connected %}<span class="status ok">admin alone</span>{% else %}<span class="status fail">admin alone, admin-con down</span>{% endif %}{% else if present %}both planes connected{% else %}not present{% endif %}</td></tr>
+      <tr><th>Doors</th><td>{% if one_door %}one door for both planes{% else %}a door for each plane{% endif %}</td></tr>
       <tr><th>Gate plane</th><td>{{ gate }}</td></tr>
       <tr><th>Admin plane</th><td>{{ admin_plane }}</td></tr>
       </tbody>

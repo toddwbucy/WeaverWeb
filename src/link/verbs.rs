@@ -355,7 +355,13 @@ pub(crate) fn client_config(
     credential: &ClientCredential,
 ) -> String {
     let mut table = toml::Table::new();
-    table.insert("server".into(), cfg.link_address().into());
+    // **Each plane dials its own door** (Spec 8): gate-con the data door's
+    // address, admin-con the management door's.
+    let server = match plane {
+        Plane::Gate => cfg.gate_address(),
+        Plane::Admin => cfg.link_address(),
+    };
+    table.insert("server".into(), server.into());
     // The name the server's certificate was minted for, which is what the
     // connector verifies, and not the config's, which could have moved.
     table.insert(

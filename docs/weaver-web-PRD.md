@@ -1262,6 +1262,13 @@ is a network service's work. Both connectors have kept that direction since 2026
 appliance opens no port for the console at any point. The connectors dial the console on
 every boot and redial a dropped link, and load and unload do not drop them.
 
+**Each connector has its own door on the console**, on the operator's words of
+2026-11-25: gate-con carries all outward-facing communication from the agent, Weaver
+Web's own turns included, to the data door, and the managing of the agent, with the
+pairing, goes through admin-con to the management door. A console configured with one
+door serves both planes there and says so. Each connector may be tied to its card by the
+address it dials from.
+
 **The box shows a short one-time code with the console's fingerprint, and the operator
 enters the code in the console**, on the operator's rulings of 2026-11-16 (setup pages)
 and their addendum, which supersede the line the operator ran in the appliance over SSH.

@@ -72,6 +72,10 @@ pub struct PairArgs {
     /// The survey's `drives` stage report, where the script holds one.
     #[arg(long)]
     pub drives_report: Option<PathBuf>,
+    /// The management card's address to dial from (Spec 8), an IP literal;
+    /// absent, the dial goes by the machine's routes.
+    #[arg(long)]
+    pub local_address: Option<std::net::IpAddr>,
     /// The file the answer is written to, which must not exist.
     #[arg(long)]
     pub answer: PathBuf,
@@ -426,7 +430,7 @@ pub async fn pair<O: Write, E: Write>(p: &mut Printer<O, E>, args: &PairArgs) ->
         admin_request,
         reports,
     };
-    let mut dialed = match pair_client::dial(&args.console, &claim).await {
+    let mut dialed = match pair_client::dial_from(&args.console, args.local_address, &claim).await {
         Ok(dialed) => dialed,
         Err(e) => return dial_failed(p, &args.console, &e),
     };

@@ -753,6 +753,9 @@ struct Inner {
     next_ask: AtomicU64,
     next_incarnation: AtomicI64,
     address: SocketAddr,
+    /// The data door's bound address, or `None` where one door serves both
+    /// planes (Spec 8).
+    data_address: Option<SocketAddr>,
     /// The connection holding the listener's advisory lock, dropped by
     /// `stop` or with the listener; its session ending releases the lock.
     /// The backend holding the listener's advisory lock: what the monitor
@@ -918,6 +921,20 @@ impl Listener {
         silence: Duration,
         operations_log: Option<std::path::PathBuf>,
     ) -> anyhow::Result<Self> {
+        Self::start_doors(store, authority, listen, None, silence, operations_log).await
+    }
+
+    /// **Start with two doors** (Spec 8): `listen` is the management door,
+    /// admin-con's and an appliance's enrollment, and `data_door`, where it
+    /// is given, gate-con's alone. With none, one door serves both planes.
+    pub async fn start_doors(
+        store: Store,
+        authority: &Authority,
+        listen: &str,
+        data_door: Option<&str>,
+        silence: Duration,
+        operations_log: Option<std::path::PathBuf>,
+    ) -> anyhow::Result<Self> {
         if silence.as_secs() < LEAST_SILENCE_SECS {
             anyhow::bail!(
                 "the silence bound is {silence:?}, under the {LEAST_SILENCE_SECS} s the cadence rule admits"
@@ -927,6 +944,14 @@ impl Listener {
         let pairing_tls = authority.pairing_tls()?;
         let tcp = TcpListener::bind(listen).await?;
         let address = tcp.local_addr()?;
+        let data_tcp = match data_door {
+            Some(gate) => Some(TcpListener::bind(gate).await?),
+            None => None,
+        };
+        let data_address = match &data_tcp {
+            Some(tcp) => Some(tcp.local_addr()?),
+            None => None,
+        };
         // **The store's lock first** (Spec 8): a session-level advisory
         // lock on a connection detached from the pool, so it lives with
         // this listener and with nothing the pool hands out later. A
@@ -974,6 +999,7 @@ impl Listener {
                 next_ask: AtomicU64::new(1),
                 next_incarnation: AtomicI64::new(1),
                 address,
+                data_address,
                 lock_pid,
                 prove: prove_tx,
                 cadence: silence / 4,
@@ -1019,44 +1045,26 @@ impl Listener {
                 close_reask_ms: AtomicU64::new(CLOSE_REASK.as_millis() as u64),
             }),
         };
-        tracing::info!("link listening on {address} under epoch {epoch}");
+        match data_address {
+            Some(data) => tracing::info!(
+                "link listening under epoch {epoch}: the management door on {address}, the data door on {data}"
+            ),
+            None => tracing::info!(
+                "link listening on {address} under epoch {epoch}: one door for both planes"
+            ),
+        };
 
-        let weak = Arc::downgrade(&listener.inner);
-        let accept = tokio::spawn(async move {
-            loop {
-                let (stream, accepted) = match tcp.accept().await {
-                    // **The accept's instant is taken here**, not where the
-                    // connection's task starts (Spec 8, 8.3): both deadlines
-                    // run from it.
-                    Ok((stream, peer)) => (
-                        stream,
-                        Accepted {
-                            peer,
-                            at: tokio::time::Instant::now(),
-                            dialed: std::time::Instant::now(),
-                        },
-                    ),
-                    Err(e) => {
-                        tracing::error!("link accept failed: {e}");
-                        tokio::time::sleep(Duration::from_secs(1)).await;
-                        continue;
-                    }
-                };
-                let Some(inner) = weak.upgrade() else { return };
-                let mut set = inner.connections.lock().unwrap();
-                if inner.closed.load(Ordering::Acquire) {
-                    tracing::info!(
-                        "link from {}: the listener is closing, refused",
-                        accepted.peer
-                    );
-                    drop(stream);
-                    continue;
-                }
-                while set.try_join_next().is_some() {}
-                set.spawn(serve_connection(inner.clone(), stream, accepted));
-            }
-        });
-
+        let mut accepts = vec![spawn_accept(
+            &listener.inner,
+            tcp,
+            match data_tcp {
+                Some(_) => Door::Management,
+                None => Door::Both,
+            },
+        )];
+        if let Some(data_tcp) = data_tcp {
+            accepts.push(spawn_accept(&listener.inner, data_tcp, Door::Data));
+        }
         // **The revocation channel outlives its errors, and the sweep
         // follows the re-subscription.** A notification raised while the
         // connection to the store is down is lost, so once the subscription
@@ -1158,7 +1166,7 @@ impl Listener {
             .tasks
             .lock()
             .unwrap()
-            .extend([accept, notify]);
+            .extend(accepts.into_iter().chain([notify]));
         *listener.inner.monitor.lock().unwrap() = Some(monitor);
         Ok(listener)
     }
@@ -1213,6 +1221,18 @@ impl Listener {
 
     pub fn address(&self) -> SocketAddr {
         self.inner.address
+    }
+
+    /// The data door's bound address, or `None` where one door serves both
+    /// planes (Spec 8).
+    pub fn data_address(&self) -> Option<SocketAddr> {
+        self.inner.data_address
+    }
+
+    /// Whether one door serves both planes (Spec 8), which the register
+    /// page and the agent page say.
+    pub fn one_door(&self) -> bool {
+        self.inner.data_address.is_none()
     }
 
     /// **The boxes waiting to pair** (Spec 8.2), each by the name it
@@ -2402,7 +2422,8 @@ impl Inner {
             let standing = match self.store.agent(&agent).await {
                 Ok(Some(row)) => {
                     let credential = row.credential(plane);
-                    credential.fingerprint == fp && credential.state == CredentialState::Live
+                    credential.fingerprint.as_deref() == Some(fp.as_str())
+                        && credential.state == CredentialState::Live
                 }
                 Ok(None) => false,
                 Err(e) => {
@@ -3662,10 +3683,76 @@ async fn serve_setup(
     }
 }
 
+/// **Which door a connection came by** (Spec 8): the management door
+/// serves the admin plane and the pairing, the data door the gate plane
+/// alone, and one door both planes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Door {
+    Management,
+    Data,
+    Both,
+}
+
+impl Door {
+    fn admits(self, plane: Plane) -> bool {
+        match self {
+            Door::Both => true,
+            Door::Management => plane == Plane::Admin,
+            Door::Data => plane == Plane::Gate,
+        }
+    }
+
+    fn pairs(self) -> bool {
+        self != Door::Data
+    }
+}
+
+/// **One door's accept loop** (Spec 8): each accepted connection carries
+/// its door, and the loop ends with its listener.
+fn spawn_accept(inner: &Arc<Inner>, tcp: TcpListener, door: Door) -> tokio::task::JoinHandle<()> {
+    let weak = Arc::downgrade(inner);
+    tokio::spawn(async move {
+        loop {
+            let (stream, accepted) = match tcp.accept().await {
+                // **The accept's instant is taken here**, not where the
+                // connection's task starts (Spec 8, 8.3): both deadlines
+                // run from it.
+                Ok((stream, peer)) => (
+                    stream,
+                    Accepted {
+                        peer,
+                        door,
+                        at: tokio::time::Instant::now(),
+                        dialed: std::time::Instant::now(),
+                    },
+                ),
+                Err(e) => {
+                    tracing::error!("link accept failed: {e}");
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    continue;
+                }
+            };
+            let Some(inner) = weak.upgrade() else { return };
+            let mut set = inner.connections.lock().unwrap();
+            if inner.closed.load(Ordering::Acquire) {
+                tracing::info!(
+                    "link from {}: the listener is closing, refused",
+                    accepted.peer
+                );
+                drop(stream);
+                continue;
+            }
+            while set.try_join_next().is_some() {}
+            set.spawn(serve_connection(inner.clone(), stream, accepted));
+        }
+    })
+}
+
 /// **A connection as the accept loop took it**: its peer and the instants
 /// of its accept, from which its deadlines run.
 struct Accepted {
     peer: SocketAddr,
+    door: Door,
     at: tokio::time::Instant,
     dialed: std::time::Instant,
 }
@@ -3673,6 +3760,7 @@ struct Accepted {
 async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, accepted: Accepted) {
     let Accepted {
         peer,
+        door,
         at: accepted,
         dialed,
     } = accepted;
@@ -3725,7 +3813,10 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, accepted: Accept
         .client_hello()
         .alpn()
         .is_some_and(|mut offered| offered.any(|p| p == PAIR_PROTOCOL));
-    if pairs {
+    // **The data door never serves the pairing protocol** (Spec 8): there a
+    // ClientHello offering it meets the mutual-TLS configuration as every
+    // other does, and with no client certificate its handshake fails.
+    if pairs && door.pairs() {
         crate::link::pairing::serve(
             start,
             crate::link::pairing::Context {
@@ -3860,6 +3951,18 @@ async fn serve_connection(inner: Arc<Inner>, stream: TcpStream, accepted: Accept
         }
     };
 
+    // **Each door admits its own plane** (Spec 8): a live credential at the
+    // other plane's door is the connector's defect, its config naming the
+    // wrong address, and is refused before its first frame is read.
+    if !door.admits(plane) {
+        tracing::error!(
+            "link from {peer}: credential {} of {} ({plane}) came by the {door:?} door, which serves the other plane; refused wrong_door, the connector's config names the other door",
+            &fp[..12],
+            agent.agent_id
+        );
+        refuse(tx, writer, Refusal::WrongDoor).await;
+        return;
+    }
     // The hello has the handshake's bound, not the silence bound: a peer
     // that authenticated and then says nothing is not a connector yet.
     let hello = tokio::select! {

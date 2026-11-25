@@ -22,7 +22,7 @@
 //! whose exchange waits on the authority lock or the store never goes silent.
 
 use crate::link::frames::{
-    Line, LineReader, PAIR_FIRST_FRAME_BOUND, PairFromBox, PairToBox, pair_reason,
+    Line, LineReader, PAIR_FIRST_FRAME_BOUND, PairFromBox, PairReport, PairToBox, pair_reason,
 };
 use crate::link::pair_code::Code;
 use crate::link::verbs::is_box;
@@ -80,8 +80,10 @@ pub(crate) type PairConnection = LineReader<TlsStream<TcpStream>>;
 /// nothing after.
 pub struct Taken {
     pub r#box: String,
-    pub gate_request: String,
     pub admin_request: String,
+    /// The first frame's reports, checked at the frame, written by the
+    /// exchange with the row (Spec 8.2).
+    pub reports: Vec<PairReport>,
     pub peer: IpAddr,
     /// The connection, kept alive by its heartbeats until the exchange
     /// writes to it, which only the exchange carries on, so a build without
@@ -424,19 +426,35 @@ pub(crate) async fn serve(start: StartHandshake<TcpStream>, mut cx: Context<'_>)
         f = tokio::time::timeout(cx.waiting.bounds().first_frame, reader.next()) => f,
         _ = cx.halting.changed() => return,
     };
-    let claim = match first {
-        Ok(Line::Frame(line)) => serde_json::from_str::<PairFromBox>(&line).ok(),
-        _ => None,
+    let line = match first {
+        Ok(Line::Frame(line)) => line,
+        _ => return,
     };
-    let Some(PairFromBox::Hello {
+    // **A first frame that is not this hello is refused `frame_refused`**
+    // (Spec 8.2), so a box built to the earlier hello, which carried a gate
+    // request too, prints why and is never listed.
+    let Ok(PairFromBox::Hello {
         mut r#box,
-        mut gate_request,
         mut admin_request,
-    }) = claim
+        mut reports,
+    }) = serde_json::from_str::<PairFromBox>(&line)
     else {
+        let refused = PairToBox::Refused {
+            reason: crate::link::frames::pair_reason::FRAME_REFUSED.to_owned(),
+        };
+        close_with(&mut reader, &refused, cx.write_bound).await;
         return;
     };
-    if !is_box(&r#box) || gate_request.is_empty() || admin_request.is_empty() {
+    if !is_box(&r#box) || admin_request.is_empty() {
+        return;
+    }
+    // **The reports are checked before the box is listed** (Spec 8.2), so
+    // a box without its receipt hears why at once.
+    if let Some(reason) = crate::link::frames::reports_refused(&reports) {
+        let refused = PairToBox::Refused {
+            reason: reason.to_owned(),
+        };
+        close_with(&mut reader, &refused, cx.write_bound).await;
         return;
     }
 
@@ -485,8 +503,8 @@ pub(crate) async fn serve(start: StartHandshake<TcpStream>, mut cx: Context<'_>)
                 let lifted = reservation.lift();
                 let handed = answer.send(Some(Taken {
                     r#box,
-                    gate_request,
                     admin_request,
+                    reports,
                     peer: cx.peer,
                     #[cfg(feature = "enrollment")]
                     connection: Kept::new(reader, cx.cadence, cx.write_bound),
@@ -503,8 +521,8 @@ pub(crate) async fn serve(start: StartHandshake<TcpStream>, mut cx: Context<'_>)
                     reservation.restore(slot);
                 }
                 r#box = back.r#box;
-                gate_request = back.gate_request;
                 admin_request = back.admin_request;
+                reports = back.reports;
                 #[cfg(feature = "enrollment")]
                 match back.connection.resume().await {
                     Some(connection) => reader = connection,

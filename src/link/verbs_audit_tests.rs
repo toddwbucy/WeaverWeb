@@ -500,3 +500,96 @@ async fn a_register_verb_asked_by_an_identitys_shape_does_not_act() {
         "no credential was revoked"
     );
 }
+
+/// **A plane that is not enrolled is neither revoked nor rotated, and
+/// retiring the row leaves it not enrolled** (Spec 2.12, section 9): on a
+/// row whose gate is `none`, as a pairing writes it, the host's `revoke`
+/// of the gate and its `rotate` are each refused `not_enrolled` before any
+/// record, the store's own revocation beneath them refuses it again, the
+/// row's version stays, and re-registering the box and name retires the
+/// row with its gate still `none` and its admin plane revoked.
+///
+/// Perturbation: drop the state's check in `Store::revoke_credential_in`
+/// and the host's, and the revocation fails at the schema (`0033`'s
+/// binding check) rather than as `not_enrolled`; write `revoked` for every
+/// plane in the retire, and the re-registration fails at the schema.
+#[tokio::test]
+async fn a_revoke_or_rotation_of_a_plane_not_enrolled_is_refused_not_enrolled() {
+    let Some(lab) = Lab::open().await else { return };
+    let cfg = lab_config(&lab);
+    let authority = Authority::load(lab.authority.dir()).unwrap();
+    let r#box = format!("box-{}", uuid::Uuid::new_v4().simple());
+    let spec = format!("{}/karl", r#box);
+    let out = crate::test_dir::tempdir().unwrap();
+    let answer = super::verbs::register(
+        &lab.store,
+        &cfg,
+        &authority,
+        &r#box,
+        "karl",
+        out.path(),
+        Some("lab"),
+    )
+    .await;
+    assert!(answer.ok, "{}", answer.value);
+    let agent = lab.store.resolve_agent(&spec).await.unwrap();
+    sqlx::query(
+        "UPDATE agent SET gate_fingerprint = NULL, gate_authority = NULL, gate_state = 'none' \
+         WHERE agent_id = $1",
+    )
+    .bind(agent.agent_id.as_str())
+    .execute(&lab.store.pool)
+    .await
+    .unwrap();
+    let agent = lab.store.resolve_agent(&spec).await.unwrap();
+    assert_eq!(agent.gate.state, CredentialState::None);
+    let not_enrolled = |answer: &super::verbs::Answer| {
+        assert!(!answer.ok, "{}", answer.value);
+        assert!(
+            answer.value["error"]
+                .as_str()
+                .is_some_and(|e| e.starts_with("not_enrolled")),
+            "{}",
+            answer.value
+        );
+    };
+    not_enrolled(&super::verbs::revoke(&lab.store, &spec, Plane::Gate, Some("lab")).await);
+    let rotated = crate::test_dir::tempdir().unwrap();
+    not_enrolled(
+        &super::verbs::rotate(
+            &lab.store,
+            &cfg,
+            &authority,
+            &spec,
+            rotated.path(),
+            Some("lab"),
+        )
+        .await,
+    );
+    let beneath = lab
+        .store
+        .revoke_credential(&agent, Plane::Gate, Some("lab"))
+        .await
+        .unwrap_err();
+    assert!(beneath.is::<super::register::NotEnrolled>(), "{beneath:#}");
+    let after = lab.store.resolve_agent(&spec).await.unwrap();
+    assert_eq!(after.version, agent.version, "nothing was written");
+    assert_eq!(after.gate.state, CredentialState::None);
+    assert_eq!(after.admin.state, CredentialState::Live);
+
+    let again = crate::test_dir::tempdir().unwrap();
+    let answer = super::verbs::register(
+        &lab.store,
+        &cfg,
+        &authority,
+        &r#box,
+        "karl",
+        again.path(),
+        Some("lab"),
+    )
+    .await;
+    assert!(answer.ok, "{}", answer.value);
+    let retired = lab.store.agent(&agent.agent_id).await.unwrap().unwrap();
+    assert_eq!(retired.gate.state, CredentialState::None);
+    assert_eq!(retired.admin.state, CredentialState::Revoked);
+}

@@ -661,6 +661,8 @@ fn cfg() -> crate::config::ServerConfig {
         authority_dir: std::path::PathBuf::new(),
         silence_bound_secs: 60,
         link_address: None,
+        gate_listen: None,
+        gate_address: None,
         server_name: "weaver-web".into(),
         enrollment_token_hours: 24,
         origin: None,

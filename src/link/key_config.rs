@@ -179,7 +179,11 @@ pub struct AnswerFile {
     #[serde(rename = "box")]
     pub r#box: String,
     pub authority: String,
-    pub gate: String,
+    /// The gate's certificate, absent where the pairing enrolled admin-con
+    /// alone, as every pairing does (Spec 8.2); `gate-con adopt` given such
+    /// an answer refuses it as `usage`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gate: Option<String>,
     pub admin: String,
 }
 
@@ -236,11 +240,11 @@ impl AnswerFile {
         Ok(answer)
     }
 
-    /// The certificate the answer carries for `plane`.
-    fn certificate(&self, plane: Plane) -> &str {
+    /// The certificate the answer carries for `plane`, if it carries one.
+    fn certificate(&self, plane: Plane) -> Option<&str> {
         match plane {
-            Plane::Gate => &self.gate,
-            Plane::Admin => &self.admin,
+            Plane::Gate => self.gate.as_deref(),
+            Plane::Admin => Some(&self.admin),
         }
     }
 }
@@ -319,12 +323,19 @@ pub fn adopt_with(
     let (key_pem, prefix) = prefix_of(plane, &content)
         .map_err(|why| AdoptRefused::Usage(format!("{}: {why}", config.display())))?;
     let answered = AnswerFile::read(answer).map_err(usage)?;
+    if answered.certificate(plane).is_none() {
+        return Err(AdoptRefused::Usage(format!(
+            "{}: the answer carries no certificate for the {} plane, which the pairing does not enroll",
+            answer.display(),
+            plane.as_str()
+        )));
+    }
 
     // The answer's certificate for this plane is over this key, and verifies
     // under the answer's authority as a client's.
     let (Some(authority), Some(certificate)) = (
         one_certificate(&answered.authority),
-        one_certificate(answered.certificate(plane)),
+        answered.certificate(plane).and_then(one_certificate),
     ) else {
         return Err(AdoptRefused::Usage(format!(
             "{}: a certificate is not one PEM block",
@@ -438,7 +449,11 @@ fn tail(plane: Plane, answer: &AnswerFile) -> String {
     table.insert("server_certificate".into(), answer.authority.clone().into());
     table.insert(
         "certificate".into(),
-        answer.certificate(plane).to_owned().into(),
+        answer
+            .certificate(plane)
+            .expect("adopt checked the plane's certificate")
+            .to_owned()
+            .into(),
     );
     format!(
         "# Completed by `{}-con adopt` from the pairing's answer.\n{}",

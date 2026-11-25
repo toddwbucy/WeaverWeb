@@ -98,7 +98,7 @@ async fn the_pairing_pages_report_is_served_waiting_refused_misfiled_and_read() 
         r#"<span class="status hold">waiting</span>"#
     );
     assert!(
-        waiting.contains("No report has arrived at the pairing stage. The appliance's setup script runs the survey and sends its report once the pairing has succeeded."),
+        waiting.contains("No report has arrived at the pairing stage. A box brings its report with the pairing; this row was paired before the report crossed with it, and the appliance's setup script sends one with admin-con setup report."),
         "{waiting}"
     );
     assert!(

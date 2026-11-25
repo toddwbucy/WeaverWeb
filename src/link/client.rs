@@ -122,6 +122,22 @@ pub fn parse_config<T: serde::de::DeserializeOwned>(
     content: &str,
     members: &[&str],
 ) -> anyhow::Result<T> {
+    // **`local_address` is checked by name first** (Spec 8): it rides the
+    // flattened `LinkConfig`, and serde's flatten drops a member's span, so
+    // a value that is not an IP literal would be blamed on the file's first
+    // line. The value is never quoted.
+    if members.contains(&"local_address")
+        && let Ok(table) = content.parse::<toml::Table>()
+        && let Some(value) = table.get("local_address")
+        && value
+            .as_str()
+            .is_none_or(|text| text.parse::<std::net::IpAddr>().is_err())
+    {
+        anyhow::bail!(
+            "{}: the config does not parse: the member local_address is not an IP literal",
+            path.display()
+        );
+    }
     toml::from_str(content).map_err(|e| unparsed(path, content, &e, members))
 }
 
@@ -162,6 +178,42 @@ fn unparsed(path: &Path, content: &str, e: &toml::de::Error, members: &[&str]) -
     }
 }
 
+/// **Dial `server` from `local`, where one is named** (Spec 8): the socket
+/// binds that address, port zero, before it connects, so the connection
+/// leaves by that card's address; which card carries it is still the
+/// machine's routes'. Each of the server's addresses of the local address's
+/// family is tried in turn. With no `local`, a plain connect by the routes.
+pub(crate) async fn dial_from(
+    server: &str,
+    local: Option<std::net::IpAddr>,
+) -> std::io::Result<TcpStream> {
+    let Some(local) = local else {
+        return TcpStream::connect(server).await;
+    };
+    let mut last = None;
+    for at in tokio::net::lookup_host(server).await? {
+        if at.is_ipv4() != local.is_ipv4() {
+            continue;
+        }
+        let socket = if at.is_ipv4() {
+            tokio::net::TcpSocket::new_v4()?
+        } else {
+            tokio::net::TcpSocket::new_v6()?
+        };
+        socket.bind(std::net::SocketAddr::new(local, 0))?;
+        match socket.connect(at).await {
+            Ok(tcp) => return Ok(tcp),
+            Err(e) => last = Some(e),
+        }
+    }
+    Err(last.unwrap_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::AddrNotAvailable,
+            format!("{server} has no address of the family of the local address {local}"),
+        )
+    }))
+}
+
 /// The members `weaver-web register` writes into every connector's config.
 /// A connector's own config flattens this and adds its box facts.
 #[derive(Clone, PartialEq, Eq, Deserialize)]
@@ -179,6 +231,12 @@ pub struct LinkConfig {
     pub server_certificate: String,
     pub certificate: String,
     pub key: String,
+    /// **The card's address this connector dials from** (Spec 8): an IP
+    /// literal bound, port zero, before the dial, a box fact appended after
+    /// each adopt.
+    /// Absent, the connector dials by the machine's routes.
+    #[serde(default)]
+    pub local_address: Option<std::net::IpAddr>,
 }
 
 // The key is never printed.
@@ -355,9 +413,11 @@ impl Link {
     > {
         let hello = first;
         let attempt = async {
-            let tcp = TcpStream::connect(&self.config.server).await.map_err(|e| {
-                Failure::Unreachable(format!("dialing {}: {e}", self.config.server))
-            })?;
+            let tcp = dial_from(&self.config.server, self.config.local_address)
+                .await
+                .map_err(|e| {
+                    Failure::Unreachable(format!("dialing {}: {e}", self.config.server))
+                })?;
             let _ = tcp.set_nodelay(true);
             let fd = tcp.as_raw_fd();
             let stream = self
@@ -1013,9 +1073,13 @@ pub async fn run<S, F, H, HF>(
         }
         let delay = match &ended {
             Ended::Shutdown => return,
-            Ended::Refused(reason @ (Refusal::NotLive | Refusal::RosterMismatch)) => {
+            Ended::Refused(
+                reason @ (Refusal::NotLive | Refusal::RosterMismatch | Refusal::WrongDoor),
+            ) => {
                 let what = if *reason == Refusal::NotLive {
                     "its credential is not live in the server's register (revoked, rotated, or registered on another server)"
+                } else if *reason == Refusal::WrongDoor {
+                    "its config's server address is the other plane's door (Spec 8)"
                 } else {
                     "its hello named an agent or plane other than the credential's (the config was edited)"
                 };

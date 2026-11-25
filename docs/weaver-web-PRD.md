@@ -1262,6 +1262,13 @@ is a network service's work. Both connectors have kept that direction since 2026
 appliance opens no port for the console at any point. The connectors dial the console on
 every boot and redial a dropped link, and load and unload do not drop them.
 
+**Each connector has its own door on the console**, on the operator's words of
+2026-11-25: gate-con carries all outward-facing communication from the agent, Weaver
+Web's own turns included, to the data door, and the managing of the agent, with the
+pairing, goes through admin-con to the management door. A console configured with one
+door serves both planes there and says so. Each connector may be tied to its card by the
+address it dials from.
+
 **The box shows a short one-time code with the console's fingerprint, and the operator
 enters the code in the console**, on the operator's rulings of 2026-11-16 (setup pages)
 and their addendum, which supersede the line the operator ran in the appliance over SSH.
@@ -1272,7 +1279,9 @@ and shows the code and the fingerprint of the certificate it met. In the console
 a box, where the agent is named, the Pair page shows the box waiting, and the operator compares the fingerprint with the console's own
 and enters the code. The connectors hand over the public halves of keys made in the box
 and receive their certificates. From then on every connection between the two is mutual
-TLS, and the code is spent. **The pairing belongs with the connectors, so it serves a
+TLS, and the code is spent. **The pairing carries the survey's report**, which is the
+receipt (the operator's rulings of 2026-11-25): the appliance sends it with its first
+frame, and the console keeps it with the agent's row in the one write that pairs. **The pairing belongs with the connectors, so it serves a
 host as it serves an appliance**, and the address may be localhost. **The reason is that
 trust has to be carried by hand once, in each direction.** The fingerprint the operator
 compares shows that the box reached this console, and the code lets the console know the
@@ -1333,7 +1342,9 @@ exchange, and the name covers it.
 ### 10.2 Keys
 
 **Each connector makes its own private key inside the appliance, and the key never
-leaves it.** The console signs the public half. **The reason** is section 5's standing
+leaves it.** The console signs the public half. **The pairing enrolls admin-con alone**
+(the operator's rulings of 2026-11-25): gate-con makes its key and is enrolled at the
+loop's install, and until then the agent reads "admin alone". **The reason** is section 5's standing
 rule that the server keeps fingerprints and never keys, carried one step further: the
 console never holds the private key at all, so no file carries one from the console to
 the machine. For an appliance this replaces the making of keys on the server at

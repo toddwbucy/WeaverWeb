@@ -100,6 +100,12 @@ pub(super) struct PairPane {
 pub(super) fn label(row: &Agent) -> &'static str {
     if row.setup_running {
         "paired, setup running"
+    } else if row.admin_alone() {
+        if row.admin.connected {
+            "admin alone"
+        } else {
+            "admin alone, admin-con down"
+        }
     } else if row.present() {
         "present"
     } else {
@@ -109,8 +115,11 @@ pub(super) fn label(row: &Agent) -> &'static str {
 
 fn credential(c: &crate::link::register::Credential) -> String {
     match c.state {
-        crate::link::register::CredentialState::Live => grouped(&c.fingerprint),
+        crate::link::register::CredentialState::Live => {
+            grouped(c.fingerprint.as_deref().unwrap_or_default())
+        }
         crate::link::register::CredentialState::Revoked => "revoked".to_owned(),
+        crate::link::register::CredentialState::None => "not enrolled".to_owned(),
     }
 }
 
@@ -528,17 +537,17 @@ mod entry {
         settled(&store, &first, &written).await;
         // **The exchange's diagnostics are written here**, in the task, so a
         // request gone since the match loses none of them: an unknown's
-        // error, and beside any end but `paired` the two fingerprints the
-        // box was answered with.
+        // error, and beside any end but `paired` the fingerprint the box
+        // was answered with.
         if let Outcome::Unknown(e) = &ended.outcome {
             tracing::error!("the pairing of {setup_id} ended unknown: {e:#}");
         }
-        if let (false, Some([gate, admin])) = (
+        if let (false, Some(admin)) = (
             matches!(ended.outcome, Outcome::Paired { .. }),
             &ended.answered,
         ) {
             tracing::warn!(
-                "the pairing of {setup_id} ended with no row confirmed: the box was answered gate {gate} and admin {admin}"
+                "the pairing of {setup_id} ended with no row confirmed: the box was answered admin {admin}"
             );
         }
         Ok(ended)
@@ -647,7 +656,7 @@ mod entry {
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "fail",
                 format!(
-                    "unknown: whether the pairing's write landed cannot be said. The rows below are what the register holds for {name}: compare their fingerprints with the two the box's unknown line shows, and adopt only where both match"
+                    "unknown: whether the pairing's write landed cannot be said. The rows below are what the register holds for {name}: compare their admin fingerprint with the one the box's unknown line shows, and adopt only where it matches"
                 ),
             ),
         };

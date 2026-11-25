@@ -39,12 +39,13 @@ pub const DIAL_SECS: u64 = 10;
 pub const REASON_BOUND: usize = 64;
 
 /// What the box claims in its first frame: its name, in section 2.12's
-/// grammar, and the two certificate requests, the gate's and admin's.
+/// grammar, admin-con's certificate request, and the survey's reports
+/// (Spec 8.2).
 #[derive(Debug, Clone)]
 pub struct Claim {
     pub r#box: String,
-    pub gate_request: String,
     pub admin_request: String,
+    pub reports: Vec<crate::link::frames::PairReport>,
 }
 
 /// Why a dial ended before the box waits.
@@ -102,14 +103,13 @@ pub struct Answer {
     pub r#box: String,
     pub server_name: String,
     pub authority: String,
-    pub gate: String,
     pub admin: String,
 }
 
 /// **The console's last word**, after the box's (Spec 8.2, step 6).
 #[derive(Debug, PartialEq, Eq)]
 pub enum LastWord {
-    /// The row stands with the answer's two certificates live.
+    /// The row stands with the answer's certificate live.
     Paired,
     /// The console refused, with its reason, checked printable.
     Refused(String),
@@ -172,8 +172,8 @@ impl Dialed {
         if authority != self.authority {
             return Err("the answer's authority is not the one the handshake presented");
         }
-        if one_certificate(&answer.gate).is_none() || one_certificate(&answer.admin).is_none() {
-            return Err("an answer's certificate is not one certificate");
+        if one_certificate(&answer.admin).is_none() {
+            return Err("the answer's certificate is not one certificate");
         }
         Ok(answer)
     }
@@ -243,7 +243,6 @@ impl Dialed {
                     r#box,
                     server_name,
                     authority,
-                    gate,
                     admin,
                 }) => {
                     let answer = Answer {
@@ -252,7 +251,6 @@ impl Dialed {
                         r#box,
                         server_name,
                         authority,
-                        gate,
                         admin,
                     };
                     return match self.checked(answer) {
@@ -331,20 +329,32 @@ fn host_of(address: &str) -> Option<&str> {
 /// **Dial the console's link port under the pairing protocol**, send the
 /// first frame and read the console's answer: waiting, or why not.
 pub async fn dial(address: &str, claim: &Claim) -> Result<Dialed, DialError> {
+    dial_from(address, None, claim).await
+}
+
+/// **Dial from a card's address** (Spec 8), as `dial` does by the routes:
+/// `admin-con pair --local-address`.
+pub async fn dial_from(
+    address: &str,
+    local: Option<std::net::IpAddr>,
+    claim: &Claim,
+) -> Result<Dialed, DialError> {
     let host = host_of(address)
         .ok_or_else(|| DialError::Fault(format!("{address:?} is not a host and a port")))?;
-    let tcp =
-        match tokio::time::timeout(Duration::from_secs(DIAL_SECS), TcpStream::connect(address))
-            .await
-        {
-            Ok(Ok(tcp)) => tcp,
-            Ok(Err(e)) => return Err(DialError::Unreachable(format!("{address}: {e}"))),
-            Err(_) => {
-                return Err(DialError::Unreachable(format!(
-                    "{address}: no connection within {DIAL_SECS} s"
-                )));
-            }
-        };
+    let tcp = match tokio::time::timeout(
+        Duration::from_secs(DIAL_SECS),
+        crate::link::client::dial_from(address, local),
+    )
+    .await
+    {
+        Ok(Ok(tcp)) => tcp,
+        Ok(Err(e)) => return Err(DialError::Unreachable(format!("{address}: {e}"))),
+        Err(_) => {
+            return Err(DialError::Unreachable(format!(
+                "{address}: no connection within {DIAL_SECS} s"
+            )));
+        }
+    };
     over(tcp, host, claim).await
 }
 
@@ -386,8 +396,8 @@ pub(crate) async fn over(tcp: TcpStream, host: &str, claim: &Claim) -> Result<Di
     let mut transcript = Vec::new();
     let hello = PairFromBox::Hello {
         r#box: claim.r#box.clone(),
-        gate_request: claim.gate_request.clone(),
         admin_request: claim.admin_request.clone(),
+        reports: claim.reports.clone(),
     };
     let mut line = serde_json::to_string(&hello).expect("a frame serializes");
     #[cfg(test)]

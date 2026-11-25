@@ -543,6 +543,9 @@ pub enum Refusal {
     SetupClosed,
     /// A setup report past `REPORT_BOUND` (Spec 8.3).
     TooLarge,
+    /// A credential at the other plane's door (Spec 8): the config names the
+    /// wrong address.
+    WrongDoor,
 }
 
 impl Refusal {
@@ -559,6 +562,7 @@ impl Refusal {
             Refusal::NoSetup => "no_setup",
             Refusal::SetupClosed => "setup_closed",
             Refusal::TooLarge => "too_large",
+            Refusal::WrongDoor => "wrong_door",
         }
     }
 }
@@ -575,8 +579,44 @@ impl std::fmt::Display for Refusal {
 pub const PAIR_PROTOCOL: &[u8] = b"weaver-pair/1";
 
 /// The pairing's first frame's bound, inclusive, excluding the delimiter
-/// (Spec 8.2): the box's name and two certificate requests fit well inside.
-pub const PAIR_FIRST_FRAME_BOUND: usize = 16 * 1024;
+/// (Spec 8.2): the box's name, admin-con's certificate request and two
+/// reports of `REPORT_BOUND` each, escaped as JSON strings, fit inside.
+pub const PAIR_FIRST_FRAME_BOUND: usize = 288 * 1024;
+
+/// **One of the first frame's reports** (Spec 8.2): its stage and the text
+/// as the survey wrote it, which the console keeps verbatim.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PairReport {
+    pub stage: Stage,
+    pub report: String,
+}
+
+/// **Whether a text is one JSON object** within `REPORT_BOUND`, the check
+/// the box makes before it dials and the console at the first frame and
+/// at a setup report; nothing more of it is parsed (Spec 8.3).
+pub fn one_report(report: &str) -> bool {
+    report.len() <= REPORT_BOUND
+        && report.trim_start().starts_with('{')
+        && serde_json::from_str::<serde::de::IgnoredAny>(report).is_ok()
+}
+
+/// **The first frame's reports refused, or not** (Spec 8.2): `no_report`
+/// without a `pairing` stage report, `report_refused` where one is not one
+/// JSON object within its bound or a stage is named twice.
+pub fn reports_refused(reports: &[PairReport]) -> Option<&'static str> {
+    if reports.iter().any(|r| !one_report(&r.report)) {
+        return Some(pair_reason::REPORT_REFUSED);
+    }
+    let named = |stage: Stage| reports.iter().filter(|r| r.stage == stage).count();
+    if named(Stage::Pairing) > 1 || named(Stage::Drives) > 1 {
+        return Some(pair_reason::REPORT_REFUSED);
+    }
+    if named(Stage::Pairing) == 0 {
+        return Some(pair_reason::NO_REPORT);
+    }
+    None
+}
 
 /// **A frame the box sends on a pairing connection** (Spec 8.2), apart from
 /// the plane frames: a pairing connection carries no credential and speaks
@@ -584,13 +624,19 @@ pub const PAIR_FIRST_FRAME_BOUND: usize = 16 * 1024;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "svc", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PairFromBox {
-    /// The first frame: the box's name, as the box claims it, and the two
-    /// certificate requests, PKCS #10 in PEM, the gate's and admin's. It
-    /// carries nothing of the code.
+    /// The first frame: the box's name, as the box claims it, and
+    /// admin-con's certificate request, PKCS #10 in PEM: the pairing enrolls
+    /// admin-con alone (the operator's rulings of 2026-11-25). It carries
+    /// nothing of the code. The earlier hello, which carried a gate request
+    /// too, is not this frame and is refused `frame_refused`.
     Hello {
         r#box: String,
-        gate_request: String,
         admin_request: String,
+        /// **The survey's reports**, the receipt (the operator's ruling of
+        /// 2026-11-25): the `pairing` stage's, and at most one `drives`
+        /// stage's. An absent member reads as none, refused `no_report`.
+        #[serde(default)]
+        reports: Vec<PairReport>,
     },
     /// **The box's word** (Spec 8.2, the exchange's step 5): it wrote the
     /// answer, and the console may write the row.
@@ -619,19 +665,18 @@ pub enum PairToBox {
     /// **The exchange's answer** (Spec 8.2, step 4): the agent's name, the
     /// row's identity, the box as the row will hold it, the name the
     /// server's certificate is verified under, the authority's certificate,
-    /// and the two certificates signed over the box's requests, each in
-    /// PEM. No key: the box made both.
+    /// and admin-con's certificate signed over the box's request, each in
+    /// PEM. No key: the box made it.
     Answer {
         agent: String,
         agent_id: String,
         r#box: String,
         server_name: String,
         authority: String,
-        gate: String,
         admin: String,
     },
     /// **The console's last word** (Spec 8.2, step 6): the row stands with
-    /// the answer's two certificates live. The console closes.
+    /// the answer's certificate live. The console closes.
     Paired,
 }
 
@@ -647,6 +692,14 @@ pub mod pair_reason {
     /// A certificate request is not ECDSA P-256 with SHA-256 whose own
     /// signature verifies.
     pub const REQUEST_REFUSED: &str = "request_refused";
+    /// The first frame is not this console's hello: among others the
+    /// earlier hello that carried a gate request too (Spec 8.2).
+    pub const FRAME_REFUSED: &str = "frame_refused";
+    /// The first frame carries no `pairing` stage report.
+    pub const NO_REPORT: &str = "no_report";
+    /// A report is not one JSON object within its bound, or a stage is
+    /// named twice.
+    pub const REPORT_REFUSED: &str = "report_refused";
 }
 
 #[cfg(test)]

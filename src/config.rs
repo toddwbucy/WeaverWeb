@@ -38,6 +38,17 @@ pub struct ServerConfig {
     /// forwarded port). Defaults to `link_listen`.
     #[serde(default)]
     pub link_address: Option<String>,
+    /// **The data door** (Spec 8): where the server listens for gate-con,
+    /// apart from the management door, `link_listen`, which admin-con and an
+    /// appliance's enrollment dial. Optional: where it is absent or equal to
+    /// `link_listen`, one door serves both planes, and says so.
+    #[serde(default)]
+    pub gate_listen: Option<String>,
+    /// The address gate-con's config carries as the server's, where it
+    /// differs from `gate_listen`, as `link_address` is to `link_listen`.
+    /// Refused at load without `gate_listen`.
+    #[serde(default)]
+    pub gate_address: Option<String>,
     /// The name the server's certificate carries and a connector verifies
     /// it under, independent of the address it dials, so a server that
     /// moves keeps its identity. Pinned in each client config at
@@ -153,6 +164,23 @@ impl ServerConfig {
         self.link_address.as_deref().unwrap_or(&self.link_listen)
     }
 
+    /// The data door to bind apart from the management door, or `None`
+    /// where one door serves both planes (Spec 8).
+    pub fn data_door(&self) -> Option<&str> {
+        self.gate_listen
+            .as_deref()
+            .filter(|gate| *gate != self.link_listen)
+    }
+
+    /// The address gate-con's config carries for the server (Spec 8):
+    /// `gate_address`, else `gate_listen`, else the management door's.
+    pub fn gate_address(&self) -> &str {
+        match self.data_door() {
+            Some(gate) => self.gate_address.as_deref().unwrap_or(gate),
+            None => self.link_address(),
+        }
+    }
+
     /// Whether the config admits `method` for sign-in.
     pub fn signs_in_by(&self, method: SignInMethod) -> bool {
         self.sign_in.contains(&method)
@@ -193,6 +221,13 @@ fn load_toml<T: serde::de::DeserializeOwned>(path: &Path) -> anyhow::Result<T> {
 impl ServerConfig {
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let cfg: Self = load_toml(path)?;
+        // `gate_address` names where gate-con dials the data door, so it
+        // means nothing without one (Spec 8).
+        if cfg.gate_address.is_some() && cfg.data_door().is_none() {
+            anyhow::bail!(
+                "gate_address is configured and gate_listen names no data door apart from link_listen"
+            );
+        }
         // The cadence is the bound divided by four (Spec 8), so a bound under
         // four seconds has no cadence and is refused here rather than at the
         // first hello.
@@ -272,6 +307,46 @@ impl ServerConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **The data door is optional and its address needs it** (Spec 8): no
+    /// `gate_listen` is one door, and gate-con dials the management door's
+    /// address; a `gate_listen` equal to `link_listen` is one door too; a
+    /// data door apart gives gate-con `gate_address`, else `gate_listen`;
+    /// and `gate_address` without a data door is refused at load.
+    #[test]
+    fn the_data_door_is_optional_and_its_address_needs_it() {
+        let dir = crate::test_dir::tempdir().unwrap();
+        let path = dir.path().join("server.toml");
+        let load = |extra: &str| {
+            std::fs::write(
+                &path,
+                format!(
+                    "listen = \"127.0.0.1:0\"\ndatabase = \"postgres:///x\"\nauthority_dir = \"/a\"\nlink_listen = \"0.0.0.0:8081\"\nlink_address = \"10.0.0.1:8081\"\n{extra}"
+                ),
+            )
+            .unwrap();
+            ServerConfig::load(&path)
+        };
+        let one = load("").unwrap();
+        assert_eq!(
+            (one.data_door(), one.gate_address()),
+            (None, "10.0.0.1:8081")
+        );
+        let same = load("gate_listen = \"0.0.0.0:8081\"\n").unwrap();
+        assert_eq!(same.data_door(), None);
+        let two = load("gate_listen = \"0.0.0.0:8082\"\n").unwrap();
+        assert_eq!(
+            (two.data_door(), two.gate_address()),
+            (Some("0.0.0.0:8082"), "0.0.0.0:8082")
+        );
+        let named =
+            load("gate_listen = \"0.0.0.0:8082\"\ngate_address = \"10.0.1.1:8082\"\n").unwrap();
+        assert_eq!(named.gate_address(), "10.0.1.1:8082");
+        let why = load("gate_address = \"10.0.1.1:8082\"\n")
+            .unwrap_err()
+            .to_string();
+        assert!(why.contains("gate_address"), "{why}");
+    }
 
     /// **The server refuses a silence bound whose cadence a connector would
     /// refuse**, so the two ends agree from one constant.

@@ -461,10 +461,11 @@ async fn serve(cfg: Arc<ServerConfig>) -> anyhow::Result<()> {
     let store = store::Store::connect(&cfg.database).await?;
     tracing::info!("store connected, migrations applied");
 
-    let link = Listener::start_with(
+    let link = Listener::start_doors(
         store.clone(),
         &authority,
         &cfg.link_listen,
+        cfg.data_door(),
         Duration::from_secs(cfg.silence_bound_secs),
         Some(operations_log),
     )

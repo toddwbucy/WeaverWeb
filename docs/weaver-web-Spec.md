@@ -7096,7 +7096,24 @@ console checks it at the first frame, before the box is listed and before any co
 a frame with no `pairing` stage report is refused `no_report`, and one whose report is
 not one JSON object within 64 KiB, or that names the stage twice, is refused
 `report_refused`, so the box hears either at once. A report at version 1's stage
-`drives` makes the frame one the console does not parse, refused `frame_refused`. Nothing of a report is shown or
+`drives` makes the frame one the console does not parse, refused `frame_refused`.
+**The report's version is read at the frame** (the Planner's rulings of 2026-11-25):
+its `format` member alone (`survey::format_taken`), and a report whose `format` does
+not read as `weaver-survey/2` is refused `format_refused`, whatever the cause: another
+version, version 1 among them; a `format` missing, of another type or given twice at
+the report's top; or a report from which the reader reads no member, though the
+frame's check took it as one JSON object (whitespace past one newline after it, a
+byte-order mark). The console cannot say such a report is version 2, so the box is
+not listed. Nothing else of the report is judged at the frame: a report of version 2
+the reader refuses for another cause pairs, and the Pair page shows its cause. A
+report's text is the frame's JSON string, so it is UTF-8 by the frame's own grammar;
+a lone surrogate escape in it leaves the frame unparsed, refused `frame_refused`. **The
+detail is written nowhere, and the box hears the word alone** (the Planner's ruling of
+2026-11-25): the check answers one thing, whether the `format` reads as
+`weaver-survey/2`, builds no detail, and logs nothing, as no refusal before a code
+matches does. The box knows which version it wrote, and the setup script says so in
+its own words. The reader's detail under cause 4 stays where it is read, on a stored
+report. Nothing of a report is shown or
 written before the code matches. Nothing reaches the store before a code
 matches: no row, no audit record and no log line per connection. At most 16 connections
 wait in all and 4 from one peer address, and a connection past either is refused `busy`.
@@ -7351,8 +7368,8 @@ which enrolls gate-con, and the pairing runs neither:
    the exchange's step 4. Out, one line of these:
    - `paired` (0), with `agent`, `agent_id` and `box`, the answer written
    - `refused` (4), with `reason`: `busy`, `box_and_name_live`, `setup_closed`,
-     `request_refused`, `frame_refused`, `no_report`, `report_refused` or
-     `code_missed`, the last when the operator's third miss on New agent closed the
+     `request_refused`, `frame_refused`, `no_report`, `report_refused`,
+     `format_refused` or `code_missed`, the last when the operator's third miss on New agent closed the
      connection, so the setup script dials anew
    - `expired` (5), the window past with no code entered
    - `unreachable` (3), with the address it dialed
@@ -7834,6 +7851,7 @@ two connectors report.
 | the connectors' build holds no `x509-parser` | measurement in `tests/connectors_link.rs`: the package's normal graph without the default features holds no `x509-parser`, and the default graph holds it, which the `enrollment` feature brings in. Make the parser a dependency the default features do not gate, and the graph holds it |
 | at the pairing the box takes the console's chain only where the server's certificate chains to the authority presented with it, and the pairing is TLS 1.3 alone | perturbation in `src/link/pairing_tests.rs`: a console that presents its certificate with another authority's completes no handshake with the box, and a client offering the pairing protocol under TLS 1.2 alone completes none with the listener. Let the box's check pass any chain, or build the pairing's configuration on the default versions, and each completes |
 | a first frame without a `pairing` stage report is refused `no_report`, and one whose report is not one JSON object within 64 KiB is refused `report_refused`, each before the box is listed; a frame carrying a report at version 1's stage `drives`, alone or beside a `pairing` report, is refused `frame_refused` | perturbation in `src/link/pairing_tests.rs`, `a_first_frame_without_a_report_is_refused_no_report` and `a_report_that_is_not_one_object_within_64_kib_is_refused`: a hello with no report, one whose report is an array, one past 64 KiB and one naming `pairing` twice each hear their refusal and none is listed. Drop the checks at the first frame, and the box is listed. Read `drives` as `pairing` (a serde alias), and the two frames naming `drives` are not refused `frame_refused` (measured 2026-11-25) |
+| a first frame whose report's `format` does not read as `weaver-survey/2` is refused `format_refused` before the box is listed, whatever the cause, and a report of version 2 refused by the reader for another cause waits | perturbation in `src/link/pairing_tests.rs`, `a_report_not_of_version_2_by_its_format_is_refused_format_refused`, version 1's worked example, version 3, a version with a trailing space, `format` missing, null, a number or given twice, and whitespace past one newline each refused `format_refused`, a lone surrogate refused `frame_refused`, and two reports of version 2 refused by the reader for other causes waiting, and in `src/survey_tests.rs`, `the_first_frame_reads_the_format_alone`, each case by its outcome: drop the format's check at the frame, and the reports of other versions wait; take a `format` given twice, or read the report with its trailing whitespace trimmed, and both tests fail (each measured 2026-11-25) |
 | the reports land with the row in one transaction, and nothing of a report is drawn before the code matches | perturbation in `src/enrollment_tests.rs`, `the_report_lands_with_the_row_in_one_transaction`, `a_lost_word_writes_no_row` and `nothing_of_a_report_is_drawn_before_the_code_matches`: a pairing leaves the first frame's `pairing` and `drives` reports on the setup byte for byte, a lost word leaves neither row nor report, and while two boxes wait with reports neither New agent nor the Pair page draws a member of either, though each lists both appliances. Drop the reports' insert, and the setup holds none; write the reports before the row's transaction, and a lost word leaves a report; draw a waiting box's report on its row, and the Pair page carries its member |
 | at most 16 boxes wait in all and 4 from one peer address, the first frame within 10 s and 288 KiB, and ten minutes from the dial the console closes the connection `expired` | perturbation in `src/link/pairing_tests.rs`, each bound alone, the time bounds shortened: the fifth box from one address and the seventeenth in all are refused `busy`, a silent box and a first line past 288 KiB are closed unanswered and give their places back, and a box past its life hears `expired`. Drop any one bound, and its box is held |
 | the server never asks a verb outside the agent's ceiling | perturbation: drop the ceiling check, ask a verb admin-con's hello did not declare, and it leaves the server; and admin-con's half, drop its typed error answer, and it reaches the invoker. **One clause is owed**: check against the row's copy, narrow the ceiling by reconnecting between the check and the enqueue, and an ask outside the new ceiling leaves. The race has no deterministic staging, and the guard is held by review: the check reads the live connection's ceiling under the live map's lock that finds the connection |

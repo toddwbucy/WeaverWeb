@@ -135,15 +135,32 @@ pub fn routes(policy: gate::Policy) -> Router<Store> {
 }
 
 /// **`GET /` sends the browser on** (Spec 2.8): to sign-in where the request
-/// names no session that serves, and to The Record, where every sign-in lands,
-/// where it names one. It reads the session as any use does, and is a
-/// redirect (`303 See Other`), never a page of its own.
+/// names no session that serves, and where it names one to `first_page` of
+/// its person. It reads the session as any use does, and is a redirect
+/// (`303 See Other`), never a page of its own.
 async fn landing(store: Store, policy: gate::Policy, headers: HeaderMap) -> Response {
-    match gate::session(&store, &policy, &headers).await {
-        Ok(Some(_)) => Redirect::to("/record").into_response(),
-        Ok(None) => Redirect::to("/sign-in").into_response(),
+    let session = match gate::session(&store, &policy, &headers).await {
+        Ok(Some(session)) => session,
+        Ok(None) => return Redirect::to("/sign-in").into_response(),
+        Err(e) => return crate::fault::Fault::from(e).into_response(),
+    };
+    match first_page(&store, &session.person_id).await {
+        Ok(page) => Redirect::to(page).into_response(),
         Err(e) => crate::fault::Fault::from(e).into_response(),
     }
+}
+
+/// **Where a session is sent on** (Spec 2.8, the operator's ruling of
+/// 2026-11-25 on the order of work): `/pair` where `person` holds the admin
+/// grant, `/agents` where not. `GET /` sends a session here, and every
+/// sign-in lands here (the Planner's ruling of 2026-11-25). The grant is
+/// read as the admin pages read it, and each page checks its own gate.
+pub(crate) async fn first_page(store: &Store, person: &str) -> anyhow::Result<&'static str> {
+    Ok(if store.is_admin(person).await? {
+        "/pair"
+    } else {
+        "/agents"
+    })
 }
 
 /// **A script runs from this server's own files alone**: the surfaces answer

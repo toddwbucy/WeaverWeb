@@ -165,7 +165,8 @@ pub struct TokenAsk {
 /// name's canonical form, redeemable, before anything is written; then the
 /// opening's first record, the person by `sign-in token` on the person; then
 /// the opening, which ends the token and inserts the session in one
-/// transaction. The browser is sent to The Record with the cookie.
+/// transaction. The browser is sent with the cookie where `GET /` sends the
+/// session (`surfaces::first_page`), read before anything is written.
 async fn token_sign_in(store: Store, shown: Shown, ask: TokenAsk) -> Response {
     let token = ask.token.trim();
     // **A token is 64 hex digits as the host prints it**; any other value
@@ -178,6 +179,10 @@ async fn token_sign_in(store: Store, shown: Shown, ask: TokenAsk) -> Response {
     let person_id = match store.sign_in_token_person(&token_digest, &name_key).await {
         Ok(Some(person_id)) => person_id,
         Ok(None) => return page(shown, Some(NO_TOKEN_SIGN_IN), StatusCode::FORBIDDEN).await,
+        Err(e) => return Fault::from(e).into_response(),
+    };
+    let next = match super::first_page(&store, &person_id).await {
+        Ok(next) => next,
         Err(e) => return Fault::from(e).into_response(),
     };
     let principal = Principal::Person {
@@ -206,10 +211,7 @@ async fn token_sign_in(store: Store, shown: Shown, ask: TokenAsk) -> Response {
             StatusCode::SEE_OTHER,
             [
                 (header::SET_COOKIE, gate::set_cookie(&bearer)),
-                (
-                    header::LOCATION,
-                    axum::http::HeaderValue::from_static("/record"),
-                ),
+                (header::LOCATION, axum::http::HeaderValue::from_static(next)),
             ],
         )
             .into_response(),
@@ -330,7 +332,8 @@ async fn clone_refused(store: &Store, person_id: &str, passkey_id: &str) -> Resp
 
 /// **The ceremony's finish**: the ceremony taken once; the assertion
 /// verified by the library; the counter rule, committed in its own
-/// transaction; then the session's opening, audited, in its own.
+/// transaction; then the session's opening, audited, in its own. The
+/// answer names where the browser goes on, where `GET /` sends the session.
 async fn finish(store: Store, passkeys: &Passkeys, ask: FinishAsk) -> Response {
     let Some(Ceremony::SignIn {
         state,
@@ -379,6 +382,12 @@ async fn finish(store: Store, passkeys: &Passkeys, ask: FinishAsk) -> Response {
     let Some(challenged_id) = challenged.get(&asserted) else {
         return refused(StatusCode::FORBIDDEN, NO_SIGN_IN);
     };
+    // Where the browser goes on, where `GET /` sends the session, read
+    // before the counter rule writes.
+    let next = match super::first_page(&store, &person_id).await {
+        Ok(next) => next,
+        Err(e) => return Fault::from(e).into_response(),
+    };
     let passkey_id = match passkeys::count(&store, challenged_id, &person_id, &result).await {
         Ok(Counted::Admitted { passkey_id }) => passkey_id,
         Ok(Counted::PossibleClone { passkey_id }) => {
@@ -410,7 +419,7 @@ async fn finish(store: Store, passkeys: &Passkeys, ask: FinishAsk) -> Response {
     match opened {
         Ok(Some(bearer)) => (
             [(header::SET_COOKIE, gate::set_cookie(&bearer))],
-            Json(json!({ "signed_in": true, "next": "/record" })),
+            Json(json!({ "signed_in": true, "next": next })),
         )
             .into_response(),
         Ok(None) => refused(StatusCode::FORBIDDEN, NO_SIGN_IN),

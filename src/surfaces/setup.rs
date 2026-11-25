@@ -6,9 +6,9 @@
 //! conforms: web-the-pair-page-shows-the-pairing-stages-report-read-only-once-paired
 //! conforms: web-the-requirements-page-is-reached-from-create-new-agent-alone-and-an-agent-is-named-from-it-alone
 //!
-//! **Pair a box, and Declare's path** (Spec 6.2, 8.2), an admin's, the
-//! server-wide admin grant. **Pair a box is Provision's** (the operator's
-//! rulings of 2026-11-23: "Pairing is its own page", and "the agent is
+//! **New agent, and Declare's path** (Spec 6.2, 8.2), an admin's, the
+//! server-wide admin grant. **New agent is the first page of stage 1**
+//! (the operator's ruling of 2026-11-25; and of 2026-11-23: "Pairing is its own page", and "the agent is
 //! named at pairing"): `GET /pair` offers Create new agent and lists the
 //! named agents whose box is not yet paired; `GET /pair/new` is the
 //! requirements page (the operator's ruling of 2026-11-24), which ends in
@@ -93,7 +93,7 @@ pub struct Seams {
 const MALFORMED_SETUP: &str = "a setup's identity is st- and sixteen lowercase hex";
 
 /// **The setup's pages, in the path's order** (Spec 6.2). Pairing is no
-/// page of the setup: it is Provision's Pair a box, before the declaration.
+/// page of the setup: it is New agent's, before the declaration.
 /// **The declaration starts at directories** (the operator's ruling of
 /// 2026-11-23: "The declaration starts at directories, not drives").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -398,7 +398,7 @@ impl OpenView {
     }
 }
 
-/// The page of a pairing: Pair a box's page for `setup_id`.
+/// The page of a pairing: New agent's page for `setup_id`.
 fn pair_href(setup_id: &str) -> String {
     format!("/pair/{setup_id}")
 }
@@ -412,7 +412,7 @@ fn declare_next(setup_id: &str) -> Next {
 }
 
 /// The open setups, the admin's session and the chrome, for the start page
-/// and Pair a box, or the answer.
+/// and New agent, or the answer.
 async fn open_read(
     store: &Store,
     seams: &Seams,
@@ -448,7 +448,7 @@ struct StartPage {
 
 /// **The start page, Declarations**: the paired agents whose declaration is
 /// open, each a link to the declaration's first page. An agent is named
-/// where its box is paired, on Pair a box.
+/// where its box is paired, on New agent.
 async fn start(store: Store, seams: &Seams, headers: HeaderMap) -> Response {
     let (session, chrome, open) = match open_read(&store, seams, &headers).await {
         Ok(read) => read,
@@ -484,7 +484,7 @@ struct PairStartPage {
     waiting: Vec<OpenView>,
 }
 
-/// **Pair a box**: Create new agent, which opens the requirements page, and
+/// **New agent**: Create new agent, which opens the requirements page, and
 /// the named agents whose box is not yet paired, each a link to its
 /// pairing.
 async fn pair_start(store: Store, seams: &Seams, headers: HeaderMap) -> Response {
@@ -523,7 +523,7 @@ struct RequirementsPage {
 }
 
 /// **The requirements page**, Create new agent's (Spec 8.2, the operator's
-/// ruling of 2026-11-24): what an agent needs, read by Pair a box's grant,
+/// ruling of 2026-11-24): what an agent needs, read by New agent's grant,
 /// ending in the agent's name, its one form, which posts to `POST /pair`.
 async fn requirements(store: Store, seams: &Seams, headers: HeaderMap) -> Response {
     let session = match admin_session(&store, &seams.policy, &headers).await {
@@ -553,7 +553,7 @@ pub struct BeginAsk {
     name: String,
 }
 
-/// **A new setup of the name**, from Pair a box, the name held to the
+/// **A new setup of the name**, from New agent, the name held to the
 /// start page's rule before anything else, so a refused name opens no
 /// setup and is recorded nowhere. It lands on the agent's pairing.
 async fn begin(store: Store, seams: &Seams, headers: HeaderMap, ask: BeginAsk) -> Response {
@@ -760,7 +760,7 @@ fn pairing_page(
     }
 }
 
-/// **An agent's pairing**, Pair a box's page for `setup_id`: what to do at
+/// **An agent's pairing**, New agent's page for `setup_id`: what to do at
 /// the appliance, Weaver Web's address, the checkbox and the waiting box.
 async fn pair_box(store: Store, seams: &Seams, headers: HeaderMap, setup_id: &str) -> Response {
     let (session, setup) = match admin_read(&store, seams, &headers, setup_id).await {

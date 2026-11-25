@@ -58,14 +58,14 @@
   {%- endfor %}
   <p>Each card by the ordinal the survey gives it in PCI bus order, the order the agent numbers its devices in. The checked cards hold the layers in ascending ordinal, the first card the first layers.</p>
   {%- else %}
-  <p>Not read: the latest report of either stage brings no card the reader reads.</p>
+  <p>Not read: the report brings no card the reader reads.</p>
   {%- endif %}
   </div>
   {%- if cards.is_none() %}
   {%- if devices.class == "hold" %}
   <footer>Waits on the survey's report, which brings the cards.</footer>
   {%- else %}
-  <footer>Waits on a later report the reader reads, at either stage, which brings the cards.</footer>
+  <footer>Waits on a later report the reader reads, which brings the cards.</footer>
   {%- endif %}
   {%- else %}
   <footer>A set of one card at least, and no card is checked until one is kept.</footer>

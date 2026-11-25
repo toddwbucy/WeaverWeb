@@ -251,7 +251,7 @@ fn adapter_view(m: &Members) -> Vec<MemberView> {
 /// **Every member of the tuple as a pane**, in the Spec's order.
 fn members_view(m: &Members) -> Vec<MemberView> {
     let one = |label: &str, value: String| vec![(label.to_owned(), value)];
-    let box_waits = "the box's members, from the latest report of either stage";
+    let box_waits = "the box's members, from the report";
     let mut views = vec![member(
         "The decoder",
         "the pull's record, verified",
@@ -304,14 +304,14 @@ fn members_view(m: &Members) -> Vec<MemberView> {
         ),
         member(
             "The box's machine",
-            "the box's latest report, of either stage",
+            "the box's report",
             box_waits,
             &m.box_members,
             machine_rows,
         ),
         member(
             "The drives",
-            "the box's latest report, of either stage",
+            "the box's report",
             box_waits,
             &m.box_members,
             |b| {

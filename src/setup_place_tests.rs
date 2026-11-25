@@ -13,7 +13,7 @@
 //! The placement and confirm pages (Spec 6.2, `src/surfaces/setup/placement.rs`,
 //! `src/surfaces/setup/confirm.rs`, `src/store/tuple.rs`), against the models
 //! page's fake Hugging Face and a box whose reports each test sets through
-//! the `boxes` seam, the worked example of `weaver-survey/1` with its names
+//! the `boxes` seam, the worked example of `weaver-survey/2` with its names
 //! made up. A context length above the
 //! decoder's maximum or below the box's max-tokens-per-turn is refused, and
 //! one at either bound kept. The turn context is
@@ -40,16 +40,14 @@ use crate::setup_models_tests::{
 use crate::setup_tests::{Rig, audited, begin, page, walk};
 use crate::store::setup::MAX_TOKENS_PER_TURN;
 use crate::store::tuple::{Laying, LayingAdapter, Part};
-use crate::survey::{MODELS_MOUNT, STATE_MOUNT};
 
-/// What the test's box reports, each stage's report set as each test goes.
+/// What the test's box reports, set as each test goes: the report, kept
+/// under the stage `pairing`, and a row kept under version 1's stage
+/// `drives`, which feeds nothing.
 #[derive(Default)]
 pub(crate) struct Reported {
     pub(crate) pairing: Mutex<Option<String>>,
     pub(crate) drives: Mutex<Option<String>>,
-    /// The pairing stage's report stamped after the drives stage's, where
-    /// set; before it otherwise.
-    pub(crate) pairing_last: std::sync::atomic::AtomicBool,
 }
 
 impl BoxReports for Reported {
@@ -59,11 +57,7 @@ impl BoxReports for Reported {
         _setup_id: &'a str,
     ) -> futures::future::BoxFuture<'a, anyhow::Result<Reports>> {
         let mut rows = Vec::new();
-        let mut stages = [("pairing", &self.pairing), ("drives", &self.drives)];
-        if self.pairing_last.load(std::sync::atomic::Ordering::SeqCst) {
-            stages.reverse();
-        }
-        for (stage, report) in stages {
+        for (stage, report) in [("pairing", &self.pairing), ("drives", &self.drives)] {
             if let Some(report) = report.lock().unwrap().clone() {
                 rows.push((stage.to_owned(), report, chrono::Utc::now()));
             }
@@ -72,49 +66,49 @@ impl BoxReports for Reported {
     }
 }
 
-const EXAMPLE: &str = include_str!("../tests/fixtures/weaver-survey-1-worked-example.json");
+const EXAMPLE: &str = include_str!("../tests/fixtures/weaver-survey-2-worked-example.json");
 
-/// The format's worked example at `stage`, its cards', CPU's and machine's
-/// names made up: as written at the drives stage, and both drives not
-/// mounted at the pairing stage.
-pub(crate) fn report(stage: &str) -> String {
+/// Version 1's worked example, as a row kept under the stage `drives`
+/// before version 2.
+pub(crate) const VERSION_1: &str =
+    include_str!("../tests/fixtures/weaver-survey-1-worked-example.json");
+
+/// The format's worked example of version 2, its cards', CPU's and
+/// machine's names made up: both drives mounted where `laid`, as the
+/// example writes them, and both not mounted at the image proof's places
+/// otherwise.
+fn report(laid: bool) -> String {
     let mut v: serde_json::Value = serde_json::from_str(EXAMPLE).unwrap();
-    v["stage"] = serde_json::json!(stage);
     v["cards"][0]["name"] = serde_json::json!("card-a");
     v["cards"][1]["name"] = serde_json::json!("card-b");
     v["cpu"]["vendor"] = serde_json::json!("cpu-vendor");
     v["cpu"]["model_name"] = serde_json::json!("cpu-1");
     v["machine"]["vendor"] = serde_json::json!("machine-vendor");
     v["machine"]["product"] = serde_json::json!("machine-1");
-    if stage == "pairing" {
+    if !laid {
         v["drives"] = serde_json::json!([
-            {"role": "state", "mount_point": STATE_MOUNT, "mounted": false},
-            {"role": "models", "mount_point": MODELS_MOUNT, "mounted": false},
+            {"role": "state", "mount_point": "/mnt/weaver/state", "mounted": false},
+            {"role": "models", "mount_point": "/mnt/weaver/models", "mounted": false},
         ]);
     }
     v.to_string()
 }
 
+/// The report of a box whose disks are not yet laid: both drives not
+/// mounted.
 pub(crate) fn pairing_report() -> String {
-    report("pairing")
+    report(false)
 }
 
-pub(crate) fn drives_report() -> String {
-    report("drives")
-}
-
-/// The pairing stage's report of a box whose disks were laid before
-/// pairing (the operator's ruling of 2026-11-23): both drives mounted, as
-/// at the drives stage.
+/// The report of a box whose disks were laid before pairing (the
+/// operator's ruling of 2026-11-23): both drives mounted.
 pub(crate) fn laid_pairing_report() -> String {
-    let mut v: serde_json::Value = serde_json::from_str(&report("drives")).unwrap();
-    v["stage"] = serde_json::json!("pairing");
-    v.to_string()
+    report(true)
 }
 
-/// The box's members the drives report gives.
+/// The box's members the laid report gives.
 fn box_members() -> BoxMembers {
-    Reports::of(&[("drives".into(), drives_report(), chrono::Utc::now())])
+    Reports::of(&[("pairing".into(), laid_pairing_report(), chrono::Utc::now())])
         .members()
         .unwrap()
 }
@@ -636,11 +630,11 @@ pub(crate) async fn identity_kept(s: &crate::store::Store) -> String {
 /// **Confirm stands only where every member is read, and writes one
 /// tuple, its members their sources'** (Spec 6.2). With nothing read the
 /// page holds Confirm and offers no way forward. With every member read
-/// but the box's, its pairing-stage report's drives not mounted, Confirm
-/// still holds, naming them, and a post is refused writing nothing, and no
-/// laying member stands. A pairing-stage report of disks laid before
-/// pairing stands alone, the box's members read from it; a drives-stage
-/// report arriving later is read in its place. Once the box reports,
+/// but the box's, its report's drives not mounted, Confirm still holds,
+/// naming them, and a post is refused writing nothing, and no laying
+/// member stands. A report of disks laid before pairing stands, the box's
+/// members read from it; a row kept under version 1's stage `drives` is
+/// read by nothing. Once the box reports,
 /// Confirm stands, and its post writes one tuple whose members are the
 /// pulls' records, the base's identity row, the placement and the box's
 /// report, and the laying members are the tuple's own. The tuple is drawn
@@ -726,22 +720,19 @@ async fn confirm_stands_only_where_every_member_is_read_and_writes_one_tuple() {
     assert_eq!(audited(s, "setup confirm").await, (0, 0, 0, 0));
     assert_eq!(s.laying(&setup).await.unwrap(), None);
 
-    // A pairing-stage report alone stands, the disks laid before pairing.
+    // The report stands, the disks laid before pairing.
     *reported.pairing.lock().unwrap() = Some(laid_pairing_report());
-    let laid = read(&rig.app, &confirm, &ada).await;
-    assert!(walk(&laid).is_empty(), "{:?}", walk(&laid));
-    assert!(laid.contains(&action), "{laid}");
-    assert!(laid.contains("the pairing stage's, taken"), "{laid}");
-    assert!(
-        laid.contains("Read from the box's latest report, of either stage."),
-        "{laid}"
-    );
-    // A drives-stage report that arrives later is read in its place.
-    *reported.drives.lock().unwrap() = Some(drives_report());
     let ready = read(&rig.app, &confirm, &ada).await;
     assert!(walk(&ready).is_empty(), "{:?}", walk(&ready));
     assert!(ready.contains(&action), "{ready}");
-    assert!(ready.contains("the drives stage's, taken"), "{ready}");
+    assert!(ready.contains("the pairing stage's, taken"), "{ready}");
+    assert!(ready.contains("Read from the box's report."), "{ready}");
+    // A row kept under version 1's stage `drives` is read by nothing: its
+    // CPU is not the report's.
+    *reported.drives.lock().unwrap() = Some(VERSION_1.to_owned());
+    let kept_drives = read(&rig.app, &confirm, &ada).await;
+    assert!(kept_drives.contains("cpu-1"), "{kept_drives}");
+    assert!(!kept_drives.contains("AMD EPYC"), "{kept_drives}");
     // The survey's `image` members are the appliance's version.
     assert!(
         ready.contains("<tr><th>The appliance&#39;s version</th>")
@@ -749,17 +740,11 @@ async fn confirm_stands_only_where_every_member_is_read_and_writes_one_tuple() {
         "{ready}"
     );
     assert!(!ready.contains("Image version"), "{ready}");
-    // A pairing report that arrives after the drives report is read in its
-    // place, and the drives report again once it is the later.
-    reported
-        .pairing_last
-        .store(true, std::sync::atomic::Ordering::SeqCst);
-    let later = read(&rig.app, &confirm, &ada).await;
-    assert!(later.contains("the pairing stage's, taken"), "{later}");
-    // **Two reports that both read and differ in cards, the pairing one the
-    // later**: Placement offers the later report's one card and names the
-    // kept card 1 it lacks, and Confirm's post is refused naming it, the
-    // tuple's devices checked against the report its members come from.
+    // **A second run's report, with one card, replaces the row** (the
+    // operator's ruling of 2026-11-25): Placement offers its one card and
+    // names the kept card 1 it lacks, the drives row's two cards masking
+    // nothing, and Confirm's post is refused naming it, the tuple's devices
+    // checked against the report its members come from.
     *reported.pairing.lock().unwrap() = Some({
         let mut v: serde_json::Value = serde_json::from_str(&laid_pairing_report()).unwrap();
         v["cards"] = serde_json::json!([v["cards"][0].clone()]);
@@ -767,7 +752,7 @@ async fn confirm_stands_only_where_every_member_is_read_and_writes_one_tuple() {
     });
     let placement = read(&rig.app, &format!("/setup/{setup}/placement"), &ada).await;
     assert!(
-        placement.contains(r#"<span class="source">the pairing stage's report</span>"#),
+        placement.contains(r#"<span class="source">the report</span>"#),
         "{placement}"
     );
     assert!(
@@ -779,7 +764,7 @@ async fn confirm_stands_only_where_every_member_is_read_and_writes_one_tuple() {
         "{placement}"
     );
     assert!(
-        placement.contains("Card 1 is kept, and the pairing stage's report lacks it"),
+        placement.contains("Card 1 is kept, and the report lacks it"),
         "{placement}"
     );
     let (status, body, _) = post(&rig, &ada, &setup, "confirm", &[("version", "4")]).await;
@@ -790,9 +775,7 @@ async fn confirm_stands_only_where_every_member_is_read_and_writes_one_tuple() {
     );
     assert_eq!(count(s, "deployment_tuple").await, 0);
     *reported.pairing.lock().unwrap() = Some(laid_pairing_report());
-    reported
-        .pairing_last
-        .store(false, std::sync::atomic::Ordering::SeqCst);
+    *reported.drives.lock().unwrap() = None;
     // The machine's kind is changed from here, one step to the Pair page.
     assert!(
         ready.contains(&format!(
@@ -955,7 +938,7 @@ async fn confirm_stands_only_where_every_member_is_read_and_writes_one_tuple() {
     );
 
     // Drawn from the tuple's row after Confirm, whatever the box reports.
-    *reported.drives.lock().unwrap() = None;
+    *reported.pairing.lock().unwrap() = None;
     let shown = read(&rig.app, &confirm, &ada).await;
     assert!(
         !shown.contains("Change it on the Pair page"),
@@ -1070,7 +1053,7 @@ async fn confirmed_on(
     ada: &str,
     name: &str,
     adapter: bool,
-    drives: bool,
+    laid: bool,
 ) -> String {
     let s = rig.store();
     let (status, body, setup) = begin(rig.store(), ada, name).await;
@@ -1113,8 +1096,8 @@ async fn confirmed_on(
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
     identity_kept(s).await;
-    if drives {
-        *reported.drives.lock().unwrap() = Some(drives_report());
+    if laid {
+        *reported.pairing.lock().unwrap() = Some(laid_pairing_report());
     }
     let (status, body, _) = post(
         rig,
@@ -1128,15 +1111,15 @@ async fn confirmed_on(
     setup
 }
 
-/// **Confirm's post on a pairing-stage report alone writes the tuple**
-/// (the Planner's ruling of 2026-11-24 on the plan): the disks laid before
-/// pairing, no drives-stage report is ever sent, and the tuple's box
-/// members, and the cards its devices were checked against, are the
-/// pairing stage's report's.
+/// **Confirm's post writes the tuple from the report alone**: the disks
+/// laid before pairing, the tuple's box members, and the cards its devices
+/// were checked against, are the report's, and a row kept under version
+/// 1's stage `drives` feeds none of them.
 #[tokio::test]
-async fn confirm_on_a_pairing_stage_report_alone_writes_its_tuple() {
+async fn confirm_writes_its_tuple_from_the_report_and_never_a_drives_row() {
     let reported = Arc::new(Reported::default());
     *reported.pairing.lock().unwrap() = Some(laid_pairing_report());
+    *reported.drives.lock().unwrap() = Some(VERSION_1.to_owned());
     let Some((rig, _fake, _, _cache)) = rig_boxed(true, reported.clone()).await else {
         return;
     };
@@ -1148,10 +1131,6 @@ async fn confirm_on_a_pairing_stage_report_alone_writes_its_tuple() {
     );
     let (ada, _) = setup_of(&rig, "bob").await;
     let setup = confirmed_on(&rig, &reported, &ada, "karl", false, false).await;
-    assert!(
-        reported.drives.lock().unwrap().is_none(),
-        "no drives report was sent"
-    );
     let confirmed = s
         .deployment_tuple(&setup)
         .await
@@ -1159,6 +1138,10 @@ async fn confirm_on_a_pairing_stage_report_alone_writes_its_tuple() {
         .expect("the tuple stands");
     let members = &confirmed.tuple.box_members;
     assert_eq!(members.report.stage, "pairing");
+    assert_eq!(
+        members.cpu.model_name, "cpu-1",
+        "the report's, not the row's"
+    );
     assert_eq!(members.cards.len(), 2);
     assert_eq!(confirmed.tuple.devices, vec![0]);
     assert_eq!(
@@ -1310,7 +1293,7 @@ async fn a_setup_with_no_adapter_confirms_a_tuple_and_a_laying_with_none() {
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
     let blake3 = identity_kept(s).await;
-    *reported.drives.lock().unwrap() = Some(drives_report());
+    *reported.pairing.lock().unwrap() = Some(laid_pairing_report());
 
     let confirm = format!("/setup/{setup}/confirm");
     let action = format!(r#"<form method="post" action="{confirm}">"#);
@@ -1348,7 +1331,7 @@ async fn a_setup_with_no_adapter_confirms_a_tuple_and_a_laying_with_none() {
         }
     );
 
-    *reported.drives.lock().unwrap() = None;
+    *reported.pairing.lock().unwrap() = None;
     let shown = read(&rig.app, &confirm, &ada).await;
     assert!(walk(&shown).is_empty(), "{:?}", walk(&shown));
     assert!(shown.contains(&confirmed.tuple_id), "{shown}");
@@ -1510,7 +1493,7 @@ async fn setup_describe_answers_the_picks_their_need_and_the_laying_once_confirm
     }
     assert_eq!(picked.bytes, need);
 
-    *reported.drives.lock().unwrap() = Some(drives_report());
+    *reported.pairing.lock().unwrap() = Some(laid_pairing_report());
     let (status, body, _) = post(&rig, &ada, &setup, "confirm", &[("version", "4")]).await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
     let confirmed = s.deployment_tuple(&setup).await.unwrap().unwrap();
@@ -1569,8 +1552,7 @@ async fn setup_describe_answers_the_picks_their_need_and_the_laying_once_confirm
 #[tokio::test]
 async fn setup_describe_reads_every_member_in_one_snapshot() {
     let reported = Arc::new(Reported::default());
-    *reported.pairing.lock().unwrap() = Some(pairing_report());
-    *reported.drives.lock().unwrap() = Some(drives_report());
+    *reported.pairing.lock().unwrap() = Some(laid_pairing_report());
     let Some((rig, _fake, _, _cache)) = rig_boxed(true, reported.clone()).await else {
         return;
     };
@@ -1800,7 +1782,7 @@ async fn a_placement_and_a_confirm_dropped_at_their_first_records_still_land() {
     assert!(placed.contains("value=\"4096\""), "{placed}");
     identity_kept(s).await;
 
-    *reported.drives.lock().unwrap() = Some(drives_report());
+    *reported.pairing.lock().unwrap() = Some(laid_pairing_report());
     let confirm = format!("/setup/{setup}/confirm");
     let action = format!(r#"<form method="post" action="{confirm}">"#);
     assert!(read(&rig.app, &confirm, &ada).await.contains(&action));

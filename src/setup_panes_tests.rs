@@ -1,22 +1,24 @@
-//! **The panes a box's report feeds** (Spec 6.2): the pairing stage's report,
-//! the directories page's directories as mounted with their judgments, and the
-//! placement page's devices, each served read, refused, misfiled and waiting,
-//! with a box whose reports each test sets through the `boxes` seam. A
-//! refused report is drawn by its stage, arrival and cause, and never its
-//! text or the refusal's detail. A value a report chose is drawn through the
-//! templates' escaping.
+//! **The panes a box's report feeds** (Spec 6.2): the report on the Pair
+//! page, the directories page's directories as mounted with their
+//! judgments, and the placement page's devices, each served read, refused
+//! and waiting, with a box whose report each test sets through the `boxes`
+//! seam. A refused report is drawn by its arrival and cause, and never its
+//! text or the refusal's detail. A row kept under version 1's stage
+//! `drives` is named on the Pair page and feeds no pane. A value a report
+//! chose is drawn through the templates' escaping.
 
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
 
 use axum::http::StatusCode;
 use serde_json::{Value, json};
 
 use crate::box_report::{STATE_DRIVE_FLOOR, gib};
 use crate::setup_models_tests::{rig_boxed, setup_of};
-use crate::setup_place_tests::{Reported, decoder_picked, post, read, report};
+use crate::setup_place_tests::{
+    Reported, VERSION_1, decoder_picked, laid_pairing_report, pairing_report, post, read,
+};
 use crate::setup_tests::{between, panes, walk};
-use crate::survey::{Cause, MODELS_MOUNT};
+use crate::survey::Cause;
 
 const PAIRING_PANE: &str = "The box's report at the pairing stage";
 const DRIVES_PANE: &str = "The directories as mounted";
@@ -26,11 +28,11 @@ const DEVICES_PANE: &str = "The devices";
 /// A mebibyte, the margin case's shortfall.
 const MIB: u64 = 1024 * 1024;
 
-const REFUSED: &str = r#"{"format":"weaver-survey/2","stage":"pairing"}"#;
+const REFUSED: &str = r#"{"format":"weaver-survey/9","stage":"pairing"}"#;
 
-/// The test's report at `stage` with one edit made.
-fn edited(stage: &str, edit: impl FnOnce(&mut Value)) -> String {
-    let mut value: Value = serde_json::from_str(&report(stage)).unwrap();
+/// The test's laid report with one edit made.
+fn edited(edit: impl FnOnce(&mut Value)) -> String {
+    let mut value: Value = serde_json::from_str(&laid_pairing_report()).unwrap();
     edit(&mut value);
     value.to_string()
 }
@@ -67,8 +69,8 @@ pub(crate) fn status(pane: &str) -> String {
 /// page draws no report pane, and the directories page none of its own;
 /// with no report the pane waits on it, saying what sends it; a refused report is drawn by its stage,
 /// arrival and cause by number and words, with neither its text nor the
-/// refusal's detail; a report kept as the pairing stage's that names the
-/// drives stage is misfiled; and a read report is drawn by its arrival and
+/// refusal's detail; a row kept under version 1's stage `drives` is named
+/// by its arrival and feeds nothing; and a read report is drawn by its arrival and
 /// `taken`, then its members grouped, the CPU's flags as a count with the
 /// list folded, and each card by its ordinal, model, PCI address and memory.
 /// A box with no card says so as a reading. Every status passes the walk,
@@ -78,7 +80,7 @@ pub(crate) fn status(pane: &str) -> String {
 /// unpaired setup's Pair page draws it; read no report for the Pair page,
 /// and the paired one draws none.
 #[tokio::test]
-async fn the_pairing_pages_report_is_served_waiting_refused_misfiled_and_read() {
+async fn the_pairing_pages_report_is_served_waiting_refused_and_read() {
     let reported = Arc::new(Reported::default());
     let Some((rig, _fake, _, _cache)) = rig_boxed(false, reported.clone()).await else {
         return;
@@ -86,7 +88,7 @@ async fn the_pairing_pages_report_is_served_waiting_refused_misfiled_and_read() 
     let (ada, setup) = setup_of(&rig, "karl").await;
     let uri = format!("/pair/{setup}");
     let (_, _, unpaired) = crate::setup_tests::begin(rig.store(), &ada, "otto").await;
-    *reported.pairing.lock().unwrap() = Some(report("pairing"));
+    *reported.pairing.lock().unwrap() = Some(pairing_report());
     let page = read(&rig.app, &format!("/pair/{}", unpaired.unwrap()), &ada).await;
     assert!(!page.contains(PAIRING_PANE), "unpaired: {page}");
     let page = read(&rig.app, &format!("/setup/{setup}/directories"), &ada).await;
@@ -121,25 +123,26 @@ async fn the_pairing_pages_report_is_served_waiting_refused_misfiled_and_read() 
     assert!(refused.contains(Cause::Format.words()), "{refused}");
     assert!(refused.contains("Arrived "), "{refused}");
     assert!(
-        !page.contains("weaver-survey/2"),
+        !page.contains("weaver-survey/9"),
         "neither the text nor the detail quoting it is drawn: {page}"
     );
     assert!(pair_walk(&page).is_empty(), "{:?}", pair_walk(&page));
 
-    *reported.pairing.lock().unwrap() = Some(report("drives"));
+    // A row kept under version 1's stage `drives` is named, and the
+    // refused report stays refused.
+    *reported.drives.lock().unwrap() = Some(VERSION_1.to_owned());
     let page = read(&rig.app, &uri, &ada).await;
-    let misfiled = pane(&page, PAIRING_PANE);
-    assert_eq!(
-        status(misfiled),
-        r#"<span class="status fail">misfiled</span>"#
-    );
+    let named = pane(&page, PAIRING_PANE);
+    assert_eq!(status(named), r#"<span class="status fail">refused</span>"#);
     assert!(
-        misfiled.contains("The report kept as the pairing stage's names its stage drives."),
-        "{misfiled}"
+        named.contains(r#"<span class="status hold">not read</span> A report kept under the stage drives, which <code>weaver-survey/2</code> does not have, arrived "#)
+            && named.contains("It feeds nothing."),
+        "{named}"
     );
     assert!(pair_walk(&page).is_empty(), "{:?}", pair_walk(&page));
+    *reported.drives.lock().unwrap() = None;
 
-    *reported.pairing.lock().unwrap() = Some(report("pairing"));
+    *reported.pairing.lock().unwrap() = Some(pairing_report());
     let page = read(&rig.app, &uri, &ada).await;
     let shown = pane(&page, PAIRING_PANE);
     assert_eq!(status(shown), r#"<span class="status ok">read</span>"#);
@@ -153,7 +156,7 @@ async fn the_pairing_pages_report_is_served_waiting_refused_misfiled_and_read() 
     for row in [
         "taken 2026-11-17 09:00:00 UTC",
         "<tr><th>Version</th><td class=\"mono\">2.0</td></tr>",
-        "<td class=\"mono\">5b1f0c9e7a2d4486b3e0f19c2d7a65e8c41f03b9d2a7e6158c0b94f3a1d2e7c6</td>",
+        "<td class=\"mono\">03fcfb2e3fffc40f40d87b49d7f086d1c45c0c394a6794fbfdb1ce855502c1c8</td>",
         "<tr><th>Release</th><td class=\"mono\">7.3.4-arch1-2</td></tr>",
         "<tr><th>Virtualization</th><td>kvm</td></tr>",
         "<tr><th>Vendor</th><td>machine-vendor</td></tr>",
@@ -189,7 +192,7 @@ async fn the_pairing_pages_report_is_served_waiting_refused_misfiled_and_read() 
     assert!(shown.contains("Arrived "), "{shown}");
     assert!(pair_walk(&page).is_empty(), "{:?}", pair_walk(&page));
 
-    *reported.pairing.lock().unwrap() = Some(edited("pairing", |v| {
+    *reported.pairing.lock().unwrap() = Some(edited(|v| {
         v["cards"] = json!([]);
         v["driver"]["loaded"] = json!(false);
     }));
@@ -220,7 +223,7 @@ async fn a_value_a_report_chose_is_drawn_escaped() {
     };
     let (ada, setup) = setup_of(&rig, "karl").await;
     let script = "<script>alert(1)</script>";
-    *reported.pairing.lock().unwrap() = Some(edited("pairing", |v| {
+    *reported.pairing.lock().unwrap() = Some(edited(|v| {
         v["machine"]["product"] = json!(script);
         v["cards"][0]["name"] = json!(script);
     }));
@@ -248,10 +251,9 @@ async fn a_value_a_report_chose_is_drawn_escaped() {
 }
 
 /// **The directories page draws the directories as mounted, each with its
-/// judgments** (Spec 6.2), from the latest report of either stage: waiting
-/// where neither has arrived, read from a pairing-stage report alone (the
-/// operator lays the disks before pairing), a drives-stage report arriving
-/// later read in its place, refused by its cause, and read, each directory
+/// judgments** (Spec 6.2), from the report: waiting where none has
+/// arrived, refused by its cause, and read (the operator lays the disks
+/// before pairing), each directory at the place the operator chose,
 /// with its role, path, label, filesystem, size, free space and project
 /// quota. One not mounted holds Confirm, naming it; a state directory one
 /// byte under 9 GiB of filesystem holds Confirm by its exact size, and one
@@ -278,27 +280,17 @@ async fn the_directories_page_draws_the_directories_as_mounted_with_their_judgme
         status(waiting),
         r#"<span class="status hold">waiting</span>"#
     );
-    assert!(
-        waiting.contains("Waits on the box's report at either stage"),
-        "{waiting}"
-    );
+    assert!(waiting.contains("Waits on the box's report."), "{waiting}");
     assert!(walk(&page).is_empty(), "{:?}", walk(&page));
 
-    // A pairing-stage report alone, the disks laid before pairing, is read.
-    *reported.pairing.lock().unwrap() = Some(edited("drives", |v| {
-        v["stage"] = json!("pairing");
-    }));
+    // A row kept under version 1's stage `drives` alone leaves it waiting.
+    *reported.drives.lock().unwrap() = Some(VERSION_1.to_owned());
     let page = read(&rig.app, &uri, &ada).await;
-    let laid = pane(&page, DRIVES_PANE);
-    assert_eq!(status(laid), r#"<span class="status ok">read</span>"#);
-    assert!(
-        laid.contains("<p>The pairing stage's report, arrived "),
-        "{laid}"
-    );
-    assert!(laid.contains("weaver-models"), "{laid}");
-    assert!(walk(&page).is_empty(), "{:?}", walk(&page));
+    let still = pane(&page, DRIVES_PANE);
+    assert_eq!(status(still), r#"<span class="status hold">waiting</span>"#);
+    assert!(still.contains("<p>No report has arrived.</p>"), "{still}");
 
-    *reported.drives.lock().unwrap() = Some(REFUSED.replace("pairing", "drives"));
+    *reported.pairing.lock().unwrap() = Some(REFUSED.to_owned());
     let page = read(&rig.app, &uri, &ada).await;
     let refused = pane(&page, DRIVES_PANE);
     assert_eq!(
@@ -307,24 +299,21 @@ async fn the_directories_page_draws_the_directories_as_mounted_with_their_judgme
     );
     assert!(refused.contains("Refused for cause 4: "), "{refused}");
     assert!(refused.contains("Confirm holds"), "{refused}");
-    assert!(!page.contains("weaver-survey/2"), "{page}");
+    assert!(!page.contains("weaver-survey/9"), "{page}");
     assert!(walk(&page).is_empty(), "{:?}", walk(&page));
 
-    *reported.drives.lock().unwrap() = Some(report("drives"));
+    *reported.pairing.lock().unwrap() = Some(laid_pairing_report());
     let page = read(&rig.app, &uri, &ada).await;
     let shown = pane(&page, DRIVES_PANE);
     assert_eq!(status(shown), r#"<span class="status ok">read</span>"#);
-    assert!(
-        shown.contains("<p>The drives stage's report, arrived "),
-        "{shown}"
-    );
+    assert!(shown.contains("<p>The report, arrived "), "{shown}");
     let state = format!(
         "<tr><td>state</td><td class=\"mono\">/mnt/weaver/state</td><td class=\"mono\">weaver-state</td><td>ext4</td><td>{}</td><td>{}</td><td>on</td>",
         gib(25_191_575_552),
         gib(23_863_877_632)
     );
     let models = format!(
-        "<tr><td>models</td><td class=\"mono\">/mnt/weaver/models</td><td class=\"mono\">weaver-models</td><td>ext4</td><td>{}</td><td>{}</td><td>off</td>",
+        "<tr><td>models</td><td class=\"mono\">/srv/weaver-models</td><td class=\"mono\">weaver-models</td><td>ext4</td><td>{}</td><td>{}</td><td>off</td>",
         gib(135_089_524_736),
         gib(72_464_760_832)
     );
@@ -340,8 +329,9 @@ async fn the_directories_page_draws_the_directories_as_mounted_with_their_judgme
     );
     assert!(walk(&page).is_empty(), "{:?}", walk(&page));
 
-    *reported.drives.lock().unwrap() = Some(edited("drives", |v| {
-        v["drives"][1] = json!({"role": "models", "mount_point": MODELS_MOUNT, "mounted": false});
+    *reported.pairing.lock().unwrap() = Some(edited(|v| {
+        v["drives"][1] =
+            json!({"role": "models", "mount_point": "/srv/weaver-models", "mounted": false});
     }));
     let page = read(&rig.app, &uri, &ada).await;
     let unmounted = pane(&page, DRIVES_PANE);
@@ -353,7 +343,7 @@ async fn the_directories_page_draws_the_directories_as_mounted_with_their_judgme
     );
 
     for (bytes, holds) in [(STATE_DRIVE_FLOOR - 1, true), (STATE_DRIVE_FLOOR, false)] {
-        *reported.drives.lock().unwrap() = Some(edited("drives", |v| {
+        *reported.pairing.lock().unwrap() = Some(edited(|v| {
             v["drives"][0]["bytes"] = json!(bytes);
             v["drives"][0]["free_bytes"] = json!(bytes / 2);
         }));
@@ -388,7 +378,7 @@ async fn the_directories_page_draws_the_directories_as_mounted_with_their_judgme
         (margin + need_bytes - MIB, margin + need_bytes - MIB, "room"),
         (135_089_524_736, 72_464_760_832, "room"),
     ] {
-        *reported.drives.lock().unwrap() = Some(edited("drives", |v| {
+        *reported.pairing.lock().unwrap() = Some(edited(|v| {
             v["drives"][1]["bytes"] = json!(bytes);
             v["drives"][1]["free_bytes"] = json!(free);
         }));
@@ -419,21 +409,16 @@ async fn the_directories_page_draws_the_directories_as_mounted_with_their_judgme
         }
     }
 
-    // **A pairing report that arrives after the drives report is the one
-    // both pages read**: its models directory short of the need, so both
-    // warn where the drives report left room, and the directories pane
-    // names the pairing stage's report.
-    *reported.pairing.lock().unwrap() = Some(edited("drives", |v| {
-        v["stage"] = json!("pairing");
+    // **A second run's report replaces the row** (the operator's ruling of
+    // 2026-11-25): its models directory short of the need, so both pages
+    // warn where the last report left room. A row kept under `drives`
+    // changes neither.
+    *reported.pairing.lock().unwrap() = Some(edited(|v| {
         v["drives"][1]["free_bytes"] = json!(1);
     }));
-    reported.pairing_last.store(true, Ordering::SeqCst);
+    *reported.drives.lock().unwrap() = Some(VERSION_1.to_owned());
     let page = read(&rig.app, &uri, &ada).await;
     let later = pane(&page, DRIVES_PANE);
-    assert!(
-        later.contains("<p>The pairing stage's report, arrived "),
-        "{later}"
-    );
     assert!(
         later.contains(r#"<span class="status hold">warning</span>"#),
         "{later}"
@@ -445,22 +430,24 @@ async fn the_directories_page_draws_the_directories_as_mounted_with_their_judgme
         "{need_pane}"
     );
 
-    // **Where the latest does not read, the models page says which**: a
-    // refused latest by its stage and cause, a misfiled one by the stage it
-    // names.
+    // **Where the report does not read, the models page says which**: a
+    // refused report by its cause, and no report though a `drives` row
+    // stands.
     *reported.pairing.lock().unwrap() = Some(REFUSED.to_owned());
     let models = read(&rig.app, &models_page, &ada).await;
     let need_pane = pane(&models, "The models directory's need");
     assert!(
-        need_pane.contains("<p>The pairing stage's report, the latest, is refused for cause 4: ")
+        need_pane.contains("<p>The report is refused for cause 4: ")
             && need_pane.contains(", so the need is not judged against the models directory.</p>"),
         "{need_pane}"
     );
-    *reported.pairing.lock().unwrap() = Some(report("drives"));
+    *reported.pairing.lock().unwrap() = None;
     let models = read(&rig.app, &models_page, &ada).await;
     let need_pane = pane(&models, "The models directory's need");
     assert!(
-        need_pane.contains("<p>The report kept as the pairing stage's, the latest, names its stage drives, so the need is not judged against the models directory.</p>"),
+        need_pane.contains(
+            "<p>No report has arrived, so the need is not judged against the models directory.</p>"
+        ),
         "{need_pane}"
     );
 }
@@ -473,12 +460,10 @@ fn need_shown(page: &str) -> String {
 }
 
 /// **The placement page names a kept device a later report lacks** (Spec
-/// 6.2), and its devices pane carries its report's status: read from the
-/// pairing stage's report, then the drives stage's, refused naming the
-/// drives stage's report where it is refused and the pairing stage's has
-/// not arrived, and waiting where neither has. With cards 0 and 1 kept and
-/// a drives report carrying card 0 alone, card 1 is named, status fail, and
-/// Confirm refuses it.
+/// 6.2), and its devices pane carries its report's status: waiting, refused
+/// by its cause, and read. With cards 0 and 1 kept and a second run's
+/// report carrying card 0 alone, card 1 is named, status fail, and Confirm
+/// refuses it; a row kept under `drives` with two cards masks nothing.
 #[tokio::test]
 async fn the_placement_page_names_a_kept_device_a_later_report_lacks() {
     let reported = Arc::new(Reported::default());
@@ -496,7 +481,7 @@ async fn the_placement_page_names_a_kept_device_a_later_report_lacks() {
     );
     assert!(walk(&page).is_empty(), "{:?}", walk(&page));
 
-    *reported.drives.lock().unwrap() = Some(REFUSED.replace("pairing", "drives"));
+    *reported.pairing.lock().unwrap() = Some(REFUSED.to_owned());
     let page = read(&rig.app, &uri, &ada).await;
     let refused = pane(&page, DEVICES_PANE);
     assert_eq!(
@@ -504,38 +489,23 @@ async fn the_placement_page_names_a_kept_device_a_later_report_lacks() {
         r#"<span class="status fail">refused</span>"#
     );
     assert!(
-        refused.contains("The drives stage's report is refused for cause 4: "),
+        refused.contains("The report is refused for cause 4: ")
+            && refused.contains(", so no card is offered."),
         "{refused}"
     );
     assert!(!refused.contains("name=\"device\""), "{refused}");
     assert!(walk(&page).is_empty(), "{:?}", walk(&page));
 
-    // **The cards are the latest report's**: an earlier pairing report that
-    // reads does not mask a refused drives report sent after it.
-    *reported.pairing.lock().unwrap() = Some(report("pairing"));
+    *reported.pairing.lock().unwrap() = Some(pairing_report());
     let page = read(&rig.app, &uri, &ada).await;
-    let masked = pane(&page, DEVICES_PANE);
+    let from_report = pane(&page, DEVICES_PANE);
     assert_eq!(
-        status(masked),
-        r#"<span class="status fail">refused</span>"#
-    );
-    assert!(
-        masked.contains("The drives stage's report is refused for cause 4: ")
-            && masked.contains("It is the latest, so no card is offered."),
-        "{masked}"
-    );
-    assert!(!masked.contains("name=\"device\""), "{masked}");
-    // A pairing report that arrives after the drives report is read.
-    reported.pairing_last.store(true, Ordering::SeqCst);
-    let page = read(&rig.app, &uri, &ada).await;
-    let from_pairing = pane(&page, DEVICES_PANE);
-    assert_eq!(
-        status(from_pairing),
+        status(from_report),
         r#"<span class="status ok">read</span>"#
     );
     assert!(
-        from_pairing.contains(r#"<span class="source">the pairing stage's report</span>"#),
-        "{from_pairing}"
+        from_report.contains(r#"<span class="source">the report</span>"#),
+        "{from_report}"
     );
     let (status_code, body, _) = post(
         &rig,
@@ -552,19 +522,19 @@ async fn the_placement_page_names_a_kept_device_a_later_report_lacks() {
     .await;
     assert_eq!(status_code, StatusCode::SEE_OTHER, "{body}");
 
-    // A drives report that arrives later still is read in its place.
-    *reported.drives.lock().unwrap() = Some(edited("drives", |v| {
+    // A second run's report with one card replaces the row.
+    *reported.pairing.lock().unwrap() = Some(edited(|v| {
         v["cards"] = json!([v["cards"][0].clone()]);
     }));
-    reported.pairing_last.store(false, Ordering::SeqCst);
+    *reported.drives.lock().unwrap() = Some(VERSION_1.to_owned());
     let page = read(&rig.app, &uri, &ada).await;
     let lacking = pane(&page, DEVICES_PANE);
     assert!(
-        lacking.contains(r#"<span class="source">the drives stage's report</span>"#),
+        lacking.contains(r#"<span class="source">the report</span>"#),
         "{lacking}"
     );
     assert!(
-        lacking.contains(r#"<span class="status fail">lacking</span> Card 1 is kept, and the drives stage's report lacks it: Confirm refuses the placement until it is saved on the reported cards."#),
+        lacking.contains(r#"<span class="status fail">lacking</span> Card 1 is kept, and the report lacks it: Confirm refuses the placement until it is saved on the reported cards."#),
         "{lacking}"
     );
     assert!(
@@ -580,11 +550,11 @@ async fn the_placement_page_names_a_kept_device_a_later_report_lacks() {
     );
 
     // **A placement saved while the latest report does not read keeps the
-    // devices stored before it**: a refused drives report arrives last, no
-    // card is offered, the pane says the kept devices stand, and a save of
-    // the turn context leaves them. Confirm's devices line names the
-    // latest report's state.
-    *reported.drives.lock().unwrap() = Some(REFUSED.replace("pairing", "drives"));
+    // devices stored before it**: a refused report arrives, no card is
+    // offered, the pane says the kept devices stand, and a save of the turn
+    // context leaves them. Confirm's devices line names the report's
+    // state.
+    *reported.pairing.lock().unwrap() = Some(REFUSED.to_owned());
     let page = read(&rig.app, &uri, &ada).await;
     let none_offered = pane(&page, DEVICES_PANE);
     assert!(!none_offered.contains("name=\"device\""), "{none_offered}");
@@ -610,8 +580,7 @@ async fn the_placement_page_names_a_kept_device_a_later_report_lacks() {
     assert_eq!(kept.devices, Some(vec![0, 1]), "the kept devices stand");
     let confirm = read(&rig.app, &format!("/setup/{setup}/confirm"), &ada).await;
     assert!(
-        confirm.contains("the drives stage&#39;s report, the latest, is refused for cause 4")
-            || confirm.contains("the drives stage's report, the latest, is refused for cause 4"),
+        confirm.contains("the report is refused for cause 4"),
         "{confirm}"
     );
     assert!(confirm.contains("so no card is read"), "{confirm}");

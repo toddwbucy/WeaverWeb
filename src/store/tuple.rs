@@ -257,7 +257,7 @@ async fn model_of(
 /// **Each member of the setup's tuple, read from its source or not**, on
 /// `conn`: the role rows and their pulls' records, the base's identity, the
 /// setup's fields, and what the box reports (Spec 6.2): the cards and the
-/// box's members, both the latest report's of either stage, so one tuple
+/// box's members, both the report's, so one tuple
 /// stands on one report, or why Confirm holds.
 async fn members_on(
     conn: &mut PgConnection,

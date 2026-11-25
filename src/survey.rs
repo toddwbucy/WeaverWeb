@@ -1,6 +1,11 @@
 //! **The survey's reader** (Spec 8.3): the box's survey report, which the
-//! setup keeps verbatim, read as `weaver-survey/1`, the format stated in the
-//! suite repository's `docs/profiles/weaver-survey-format.md` at `75ae7c54`.
+//! setup keeps verbatim, read as `weaver-survey/2`, the format stated in the
+//! suite repository's `docs/profiles/weaver-survey-format.md`, on its draft
+//! pull request 57 at `1415dea092d53f5bee2cb85bbd704fbb63e4f057`, the
+//! document's sha256
+//! `a4d45bd3e4c7080c00e6721fe0899ab11d0c65f09ffa9720d202c8912f3abefe`.
+//! A report of `weaver-survey/1` is refused by its version's name (the
+//! format's section 7), and no member of it is read.
 //!
 //! A report is read whole or not at all: any cause of the format's section 3
 //! refuses it, and no member of a refused report is read. The reader first
@@ -11,25 +16,30 @@
 //! Then it reads the format's members from the tree, and ignores every
 //! member it does not know, at any depth.
 //!
-//! **The two mount points are the format's constants**, the appliance
-//! profile's, on the operator's ruling of 2026-11-17, so refusal 10 applies
-//! as written.
+//! **The two mount points are the report's values**, as the operator chose
+//! them at the setup script (the operator's rulings of 2026-11-24 and
+//! 2026-11-25: "The two mount paths are hard coded nowhere."): the reader
+//! holds no place, and judges each by the format's one spelling (its
+//! section 1.1), the two different and neither inside the other. **Each
+//! plane's address** is parsed and written again in that spelling, and one
+//! whose bytes differ is refused, as is one of a kind section 1.1 refuses.
 
 use std::collections::HashSet;
 use std::fmt;
+use std::net::{IpAddr, Ipv4Addr};
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 use serde::de::{Deserialize, Deserializer, MapAccess, Visitor};
 use serde_json::value::RawValue;
 
 /// The one version this reader knows.
-pub const FORMAT: &str = "weaver-survey/1";
+pub const FORMAT: &str = "weaver-survey/2";
+/// The version before it, which a refusal names (the format's section 7).
+pub const EARLIER: &str = "weaver-survey/1";
 /// The bound on a report, the one admin-con enforces.
 pub const REPORT_BOUND: usize = 65536;
-/// The state drive's mount point, the profile's constant.
-pub const STATE_MOUNT: &str = "/mnt/weaver/state";
-/// The models drive's mount point, the profile's constant.
-pub const MODELS_MOUNT: &str = "/mnt/weaver/models";
+/// A place's bound, the whole and each part (the format's section 1.1).
+pub const PLACE_BOUND: usize = 255;
 /// The largest integer the format admits, 2^53 - 1.
 pub const INTEGER_BOUND: u64 = (1 << 53) - 1;
 /// At most this many cards.
@@ -44,7 +54,6 @@ pub const QUOTE_BOUND: usize = 64;
 /// **A report read whole.**
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Survey {
-    pub stage: Stage,
     pub taken: DateTime<Utc>,
     pub image: Image,
     pub kernel_release: String,
@@ -56,13 +65,39 @@ pub struct Survey {
     pub cards: Vec<Card>,
     /// Exactly two, the state drive then the models drive.
     pub drives: Vec<Drive>,
+    pub network: Network,
 }
 
-/// Which run of the survey a report is.
+/// **The two planes' addresses**, as the operator chose them, and whether
+/// the planes are separate or shared.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Network {
+    pub management: Plane,
+    pub data: Plane,
+    pub planes: Planes,
+}
+
+/// A plane's address and the length of its network's prefix.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Stage {
-    Pairing,
-    Drives,
+pub struct Plane {
+    pub address: IpAddr,
+    pub prefix_length: u8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Planes {
+    Separate,
+    Shared,
+}
+
+impl Planes {
+    /// The value by the format's word.
+    pub fn word(self) -> &'static str {
+        match self {
+            Planes::Separate => "separate",
+            Planes::Shared => "shared",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -147,6 +182,7 @@ pub enum Cause {
     Cards,
     Drives,
     Bound,
+    Network,
 }
 
 impl Cause {
@@ -164,6 +200,7 @@ impl Cause {
             Cause::Cards => 9,
             Cause::Drives => 10,
             Cause::Bound => 11,
+            Cause::Network => 12,
         }
     }
 
@@ -183,27 +220,35 @@ impl Cause {
                 "a member of section 1 that is missing or null, or of the wrong JSON type"
             }
             Cause::Integer => {
-                "an integer that is negative, fractional, written with an exponent, or above \
-                 2^53 - 1"
+                "an integer that is negative, written with a sign (-0 included), fractional, \
+                 written with an exponent, or above 2^53 - 1"
             }
             Cause::String => {
                 "a string outside printable ASCII, over its bound, or not matching its pattern"
             }
             Cause::StageOrTaken => {
-                "a stage other than pairing or drives, or a taken not in section 1's form"
+                "a stage other than pairing, or a taken not in section 1's form, a leap second \
+                 included"
             }
             Cause::Cards => {
                 "a card whose ordinal is not its index, or pci_address values that do not \
-                 strictly ascend"
+                 strictly ascend by number"
             }
             Cause::Drives => {
-                "drives that is not exactly state then models with their mount points, or a \
+                "drives that is not exactly state then models, a mount_point not in the one \
+                 spelling of section 1.1, two equal mount points or one inside the other, or a \
                  drive with mounted false that carries a mounted drive's members"
             }
             Cause::Bound => {
                 "an integer outside its bound in section 1, more than 16 cards, or a cpu.flags \
                  with no entry, more than 512 entries, entries out of byte order, or an entry \
                  given twice"
+            }
+            Cause::Network => {
+                "a plane's address not in the one spelling of section 1.1, or of a kind it \
+                 refuses; a prefix length outside its bound for its address's family; a \
+                 network.planes other than separate or shared; or separate where the two \
+                 addresses are equal, or where either address lies in the other's network"
             }
         }
     }
@@ -252,8 +297,19 @@ pub fn read(report: &[u8]) -> Result<Survey, Refused> {
     let top = Members::new(top, "");
     match top.find("format") {
         Some(Node::String(format)) if format == FORMAT => {}
+        // **The version read and the version taken** (the format's section
+        // 7: the reader "refuses a report of version 1 by its version's
+        // name").
         Some(Node::String(other)) => {
-            return refused(Cause::Format, format!("format {}", quoted(other)));
+            let earlier = if other == EARLIER {
+                ", the earlier version, which this reader does not read"
+            } else {
+                ""
+            };
+            return refused(
+                Cause::Format,
+                format!("format {} read{earlier}; {FORMAT} taken", quoted(other)),
+            );
         }
         Some(_) => return refused(Cause::Format, "format is not a string"),
         None => return refused(Cause::Format, "format is missing"),
@@ -675,7 +731,9 @@ fn pci_address(s: &str) -> bool {
         && parts.iter().all(|p| hex(p))
 }
 
-/// `taken`: RFC 3339 in UTC, whole seconds, `Z`, a real date and time.
+/// `taken`: RFC 3339 in UTC, whole seconds, `Z`, a real date and time, the
+/// seconds from 00 to 59, so a leap second is refused (chrono's `%S` takes
+/// `60`).
 fn taken(s: &str) -> Option<DateTime<Utc>> {
     let b = s.as_bytes();
     let shape = b.len() == 20
@@ -686,7 +744,7 @@ fn taken(s: &str) -> Option<DateTime<Utc>> {
             19 => *c == b'Z',
             _ => c.is_ascii_digit(),
         });
-    if !shape {
+    if !shape || &s[17..19] > "59" {
         return None;
     }
     NaiveDateTime::parse_from_str(&s[..19], "%Y-%m-%dT%H:%M:%S")
@@ -696,11 +754,10 @@ fn taken(s: &str) -> Option<DateTime<Utc>> {
 
 /// **Every member of section 1**, the format string already read.
 fn members(top: &Members<'_>) -> Result<Survey, Refused> {
-    let stage = match top.raw_string("stage")? {
-        "pairing" => Stage::Pairing,
-        "drives" => Stage::Drives,
+    match top.raw_string("stage")? {
+        "pairing" => {}
         other => return refused(Cause::StageOrTaken, format!("stage {}", quoted(other))),
-    };
+    }
     let taken_text = top.raw_string("taken")?;
     let Some(taken) = taken(taken_text) else {
         return refused(Cause::StageOrTaken, format!("taken {}", quoted(taken_text)));
@@ -743,7 +800,6 @@ fn members(top: &Members<'_>) -> Result<Survey, Refused> {
             .string("version", REPORT_BOUND, cuda_version)?;
 
     Ok(Survey {
-        stage,
         taken,
         image,
         kernel_release,
@@ -754,6 +810,7 @@ fn members(top: &Members<'_>) -> Result<Survey, Refused> {
         cuda_runtime_version,
         cards: cards(top)?,
         drives: drives(top)?,
+        network: network(top)?,
     })
 }
 
@@ -815,9 +872,12 @@ fn cards(top: &Members<'_>) -> Result<Vec<Card>, Refused> {
             );
         }
         if let Some(before) = cards.last()
-            && before.pci_address >= pci_address
+            && bus_order(&before.pci_address) >= bus_order(&pci_address)
         {
-            return refused(Cause::Cards, format!("{path}.pci_address does not ascend"));
+            return refused(
+                Cause::Cards,
+                format!("{path}.pci_address does not ascend by number"),
+            );
         }
         cards.push(Card {
             ordinal: ordinal as u32,
@@ -840,10 +900,7 @@ const MOUNTED_MEMBERS: [&str; 5] = [
 
 fn drives(top: &Members<'_>) -> Result<Vec<Drive>, Refused> {
     let items = top.array("drives")?;
-    let expected = [
-        (Role::State, "state", STATE_MOUNT),
-        (Role::Models, "models", MODELS_MOUNT),
-    ];
+    let expected = [(Role::State, "state"), (Role::Models, "models")];
     let mut drives = Vec::with_capacity(2);
     for (i, item) in items.iter().enumerate() {
         let path = format!("drives[{i}]");
@@ -854,19 +911,21 @@ fn drives(top: &Members<'_>) -> Result<Vec<Drive>, Refused> {
         let role_text = drive.raw_string("role")?;
         let mount_point = drive.raw_string("mount_point")?;
         let mounted = drive.boolean("mounted")?;
-        let Some(&(role, _, _)) = expected
-            .get(i)
-            .filter(|(_, name, mount)| role_text == *name && mount_point == *mount)
-        else {
+        let Some(&(role, _)) = expected.get(i).filter(|(_, name)| role_text == *name) else {
+            return refused(
+                Cause::Drives,
+                format!("{path} is {}, not state then models", quoted(role_text)),
+            );
+        };
+        if !place(mount_point) {
             return refused(
                 Cause::Drives,
                 format!(
-                    "{path} is {} at {}, not state then models at their mount points",
-                    quoted(role_text),
+                    "{path}.mount_point {} is not a place in the one spelling",
                     quoted(mount_point)
                 ),
             );
-        };
+        }
         let mount = if mounted {
             Mount::Mounted {
                 label: drive.string("label", 16, any)?,
@@ -896,5 +955,172 @@ fn drives(top: &Members<'_>) -> Result<Vec<Drive>, Refused> {
             format!("drives has {} entries, not state then models", drives.len()),
         );
     }
+    let (state, models) = (&drives[0].mount_point, &drives[1].mount_point);
+    if state == models || inside(state, models) || inside(models, state) {
+        return refused(
+            Cause::Drives,
+            format!(
+                "the mount points {} and {} are equal, or one is inside the other",
+                quoted(state),
+                quoted(models)
+            ),
+        );
+    }
     Ok(drives)
+}
+
+/// **A place in the one spelling** (the format's section 1.1): `/`, then
+/// one or more parts each separated by one `/`, no part empty, `.` or
+/// `..`, each 1 to 255 of `A-Z a-z 0-9 . _ -`, the whole at most 255
+/// bytes.
+fn place(s: &str) -> bool {
+    let Some(rest) = s.strip_prefix('/') else {
+        return false;
+    };
+    s.len() <= PLACE_BOUND
+        && rest.split('/').all(|part| {
+            (1..=PLACE_BOUND).contains(&part.len())
+                && part != "."
+                && part != ".."
+                && part
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+        })
+}
+
+/// **`one` is inside `other`**: `other`'s parts are the first parts of
+/// `one`, judged part by part, so `/a/b` is inside `/a` and `/ab` is not.
+fn inside(one: &str, other: &str) -> bool {
+    let (one, other): (Vec<&str>, Vec<&str>) =
+        (one.split('/').collect(), other.split('/').collect());
+    one.len() > other.len() && one[..other.len()] == other[..]
+}
+
+/// **A card's address by number**: the domain, the bus, the device and the
+/// function, compared in that order and not by their bytes, since the
+/// domain is 4 to 8 hex digits. The pattern has already held it.
+fn bus_order(address: &str) -> (u32, u8, u8, u8) {
+    let number = |part: &str| u32::from_str_radix(part, 16).unwrap_or(u32::MAX);
+    let (rest, function) = address.rsplit_once('.').unwrap_or((address, ""));
+    let mut parts = rest.split(':').map(number);
+    let mut next = || parts.next().unwrap_or(u32::MAX);
+    let (domain, bus, device) = (next(), next(), next());
+    (domain, bus as u8, device as u8, number(function) as u8)
+}
+
+/// **`network`** (the format's sections 1 and 1.1, refusal 12).
+fn network(top: &Members<'_>) -> Result<Network, Refused> {
+    let network = top.object("network")?;
+    let management = plane(&network.object("management")?)?;
+    let data = plane(&network.object("data")?)?;
+    let planes = match network.raw_string("planes")? {
+        "separate" => Planes::Separate,
+        "shared" => Planes::Shared,
+        other => {
+            return refused(
+                Cause::Network,
+                format!("{} {}", network.at("planes"), quoted(other)),
+            );
+        }
+    };
+    if planes == Planes::Separate
+        && (management.address == data.address
+            || in_network(management.address, data)
+            || in_network(data.address, management))
+    {
+        return refused(
+            Cause::Network,
+            format!(
+                "separate planes at {}/{} and {}/{}: equal, or one in the other's network",
+                management.address, management.prefix_length, data.address, data.prefix_length
+            ),
+        );
+    }
+    Ok(Network {
+        management,
+        data,
+        planes,
+    })
+}
+
+/// One plane: its address in the one spelling and of an allowed kind, and
+/// its prefix length within its family's bound.
+fn plane(plane: &Members<'_>) -> Result<Plane, Refused> {
+    let at = plane.at("address");
+    let text = plane.raw_string("address")?;
+    let Some(address) = spelled(text) else {
+        return refused(
+            Cause::Network,
+            format!(
+                "{at} {} is not an address in the one spelling",
+                quoted(text)
+            ),
+        );
+    };
+    if let Some(kind) = refused_kind(address) {
+        return refused(Cause::Network, format!("{at} {} is {kind}", quoted(text)));
+    }
+    let prefix_length = plane.integer("prefix_length")?;
+    let most = if address.is_ipv4() { 32 } else { 128 };
+    if !(1..=most).contains(&prefix_length) {
+        return refused(
+            Cause::Network,
+            format!(
+                "{} is {prefix_length}, outside 1 to {most} for its address",
+                plane.at("prefix_length")
+            ),
+        );
+    }
+    Ok(Plane {
+        address,
+        prefix_length: prefix_length as u8,
+    })
+}
+
+/// **An address in the one spelling** (the format's section 1.1): parsed,
+/// and written again as IPv4's dotted decimal or RFC 5952's form, which the
+/// standard library's `Display` writes (pinned by the reader's tests on RFC
+/// 5952's own examples); an address whose bytes differ is none. A zone does
+/// not parse.
+fn spelled(text: &str) -> Option<IpAddr> {
+    let address: IpAddr = text.parse().ok()?;
+    (address.to_string() == text).then_some(address)
+}
+
+/// **The kinds section 1.1 refuses**, by name, or none. A loopback address
+/// is allowed.
+fn refused_kind(address: IpAddr) -> Option<&'static str> {
+    match address {
+        IpAddr::V4(a) if a.is_unspecified() => Some("unspecified"),
+        IpAddr::V4(a) if a.is_link_local() => Some("link-local"),
+        IpAddr::V4(a) if a.is_multicast() => Some("multicast"),
+        IpAddr::V4(a) if a == Ipv4Addr::BROADCAST => Some("the limited broadcast"),
+        IpAddr::V4(_) => None,
+        IpAddr::V6(a) if a.is_unspecified() => Some("unspecified"),
+        IpAddr::V6(a) if a.segments()[0] & 0xffc0 == 0xfe80 => Some("link-local"),
+        IpAddr::V6(a) if a.is_multicast() => Some("multicast"),
+        IpAddr::V6(a) if a.to_ipv4_mapped().is_some() => Some("an IPv4 address written as IPv6"),
+        IpAddr::V6(_) => None,
+    }
+}
+
+/// **`address` lies in `plane`'s network**: the same family, and equal to
+/// it with every bit past the plane's prefix length cleared. An IPv4
+/// address never lies in an IPv6 network, nor the reverse.
+fn in_network(address: IpAddr, plane: Plane) -> bool {
+    match (address, plane.address) {
+        (IpAddr::V4(a), IpAddr::V4(n)) => {
+            let mask = u32::MAX
+                .checked_shl(32 - u32::from(plane.prefix_length))
+                .unwrap_or(0);
+            u32::from(a) & mask == u32::from(n) & mask
+        }
+        (IpAddr::V6(a), IpAddr::V6(n)) => {
+            let mask = u128::MAX
+                .checked_shl(128 - u32::from(plane.prefix_length))
+                .unwrap_or(0);
+            u128::from(a) & mask == u128::from(n) & mask
+        }
+        _ => false,
+    }
 }

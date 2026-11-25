@@ -47,7 +47,7 @@ Weaver Web and its appliances are not meant to be deployed on a network you do n
 **At the appliance**
 1. Start the appliance with its two disks attached, and connect to it over SSH as the appliance's starting user. Its first password is changed at the first login. (See answer 9 for what this line may name.)
 2. Run `sudo weaver-setup`. The command stands in one place in the templates.
-3. The script marks each card for a plane, prepares and mounts the two disks, and asks for Weaver Web's address on the management plane.
+3. The script prepares and mounts the two disks, marks each card for a plane, and asks for Weaver Web's address on the management plane.
 4. Give it this address: <the management door's address and port>. Both planes share one door. (The last sentence shows only where one door serves both planes.)
 5. The script asks for a name for the appliance, then dials Weaver Web. The appliance is listed below under the name you gave it, and the SSH session shows Weaver Web's fingerprint and a code.
 

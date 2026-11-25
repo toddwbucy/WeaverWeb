@@ -5085,9 +5085,13 @@ Planner's rulings of 2026-11-24 on the plan and on its review:
 2026-11-24: "After a pairing succeeds, the Pair page shows the hardware report, read
 only. The next page carries it into the declaration. This replaces my ruling of
 2026-11-20." Once the box is paired, the agent's Pair page shows the report in a pane
-that holds no form, and before a report arrives the pane says that none has and that
-the appliance's setup script sends it. An unpaired setup's Pair page shows no report
-pane, since no report arrives before the pairing. The directories page keeps the
+that holds no form. **The report rides the pairing** (the operator's ruling of
+2026-11-25 that "the survey's report is the receipt"; section 8.2): the exchange keeps
+it with the row in the one write that pairs, so a page that says paired holds the
+report, and the pane says that none has arrived only for a row paired before this
+build. An unpaired setup's Pair page shows no report pane, and nothing of a report a
+waiting box carries is drawn before its code matches, since until then it is the box's
+claim. The directories page keeps the
 directories as mounted, below, and does not show the report in full.
 
 **The pairing stage's report**, this document's election of 2026-11-17, on the Pair
@@ -6982,10 +6986,19 @@ pairing is admin-con's only (2026-11-25). **A first frame that is not this hello
 among them the earlier hello that carried a gate request too, is refused
 `frame_refused`, and the box prints `refused` with that reason: the protocol keeps its
 name `weaver-pair/1` (the Planner's ruling of 2026-11-25), since one appliance stood
-built to the earlier frame. Nothing reaches the store before a code
+built to the earlier frame. **The first frame carries the survey's reports**, the
+receipt (the operator's ruling of 2026-11-25): one of the `pairing` stage, and at most
+one of the `drives` stage, each by its stage and the text as the survey wrote it. The
+console checks them at the first frame, before the box is listed and before any code:
+a frame with no `pairing` stage report is refused `no_report`, and one whose report is
+not one JSON object within 64 KiB, or that names a stage twice, is refused
+`report_refused`, so the box hears either at once. Nothing of a report is shown or
+written before the code matches. Nothing reaches the store before a code
 matches: no row, no audit record and no log line per connection. At most 16 connections
 wait in all and 4 from one peer address, and a connection past either is refused `busy`.
-The first frame arrives within 10 seconds and holds at most 16 KiB. The server sends a
+The first frame arrives within 10 seconds and holds at most 288 KiB, two reports of
+64 KiB each escaped as JSON strings with room for the request, so the table holds at
+most 16 such frames; a longer line is closed unanswered. The server sends a
 heartbeat while the box waits, and ten minutes from the dial it closes the connection
 `expired`, the life the rulings name. **The Pair page lists the boxes waiting**, each
 by the name it claims, its peer address and how long it has waited, marked as the box's
@@ -7122,7 +7135,8 @@ connection, the console takes six steps under the authority lock:
    `server_name`, the authority's certificate and admin-con's certificate.
 5. It waits, bounded, for the box's word that it wrote the answer.
 6. It writes the register row of section 2.12 with admin-con's fingerprint live and the
-   gate plane not enrolled, and the setup
+   gate plane not enrolled, the first frame's reports on the setup, each the latest of
+   its stage, and the setup
    row's link to it, in one identity transaction that first re-checks the session and
    the admin grant, with the audit's outcome naming the first record, and then sends its
    last word.
@@ -7207,7 +7221,10 @@ which enrolls gate-con, and the pairing runs neither:
    created holding the connector's new key alone, under the trust rule a connector's
    config already takes, and a `request` line carrying the certificate request. No dial.
 2. **`admin-con pair`**, under an unprivileged account the image names. In: the
-   console's address and port, admin-con's request, the file the answer is written to,
+   console's address and port, admin-con's request, the survey's `pairing` stage report
+   (`--report`, required) and its `drives` stage report (`--drives-report`, optional),
+   each a file read before any dial and refused as `usage` where it is not one JSON
+   object within 64 KiB, the file the answer is written to,
    which must not exist, and the box's name in section 2.12's grammar. **An appliance
    always passes the box's name**, since every appliance boots with the same host name,
    and the setup script asks it of the operator. The default, the machine's own name,
@@ -7216,7 +7233,7 @@ which enrolls gate-con, and the pairing runs neither:
    the exchange's step 4. Out, one line of these:
    - `paired` (0), with `agent`, `agent_id` and `box`, the answer written
    - `refused` (4), with `reason`: `busy`, `box_and_name_live`, `setup_closed`,
-     `request_refused` or `frame_refused`
+     `request_refused`, `frame_refused`, `no_report` or `report_refused`
    - `expired` (5), the window past with no code entered
    - `unreachable` (3), with the address it dialed
    - `unknown` (6), the connection ended after the answer was written and before the
@@ -7259,9 +7276,9 @@ bind the move:
 
 **The steps after `paired` are the appliance's setup script's**, on the operator's ruling
 of 2026-11-23 that one interactive script finishes setup and ends in pairing: it moves
-admin-con's config, runs its `adopt`, and sends the `pairing` stage's report with `setup
-report` (section 8.3). It need not send a `drives` stage report, and one it sends is
-read where it is the latest (section 6.2). Weaver Web's pages wait on none of these
+admin-con's config and runs its `adopt`. The `pairing` stage's report has crossed with
+the pairing itself, and `setup report` (section 8.3) sends a report run again, or a
+`drives` stage report, each read where it is the latest (section 6.2). Weaver Web's pages wait on none of these
 steps, and the box commands keep their arguments and printed lines (the Planner's ruling
 of 2026-11-24 on the plan).
 
@@ -7439,7 +7456,9 @@ a `setup` frame after a hello is refused as malformed. It makes two asks:
   - `ssh_keys`, each key of the console setting as stored, with its fingerprint in
     OpenSSH's SHA256 form, empty where none is set
 - **`admin-con setup report --stage pairing|drives`.** In: the survey's report on
-  standard input, the setup script having run the survey locally. Out: `accepted` (0),
+  standard input, the setup script having run the survey locally. The first report of
+  each stage the script holds at pairing crosses with the pairing (section 8.2); this
+  command sends a report run again after it, or a `drives` stage report. Out: `accepted` (0),
   or `refused` (4) with a reason such as `too_large`. A report past 64 KiB is refused
   `too_large` by admin-con before any dial, and by the listener again for a client that
   skips that check, and an input that is not one JSON object is `usage` (2). **The stage
@@ -7674,7 +7693,9 @@ two connectors report.
 | an adopted admin-con connects, and its row reads admin alone | end to end in `src/enrollment_tests.rs`: `admin-con request`, then `pair` against the real listener with the code its `waiting` line shows entered through the page, then `admin-con adopt`, and admin-con is admitted on the row, which reads admin alone and never present. `adopt`'s append is shown in `src/link/key_config_tests.rs`: a crash after the open, mid-certificate and before the sync leaves the key byte for byte, the service refuses the config each leaves, and a re-run completes it. Truncate one byte into the key's prefix, and the key's bytes move; accept another plane's header, and the gate's `adopt` takes the admin config |
 | the connectors' build holds no `x509-parser` | measurement in `tests/connectors_link.rs`: the package's normal graph without the default features holds no `x509-parser`, and the default graph holds it, which the `enrollment` feature brings in. Make the parser a dependency the default features do not gate, and the graph holds it |
 | at the pairing the box takes the console's chain only where the server's certificate chains to the authority presented with it, and the pairing is TLS 1.3 alone | perturbation in `src/link/pairing_tests.rs`: a console that presents its certificate with another authority's completes no handshake with the box, and a client offering the pairing protocol under TLS 1.2 alone completes none with the listener. Let the box's check pass any chain, or build the pairing's configuration on the default versions, and each completes |
-| at most 16 boxes wait in all and 4 from one peer address, the first frame within 10 s and 16 KiB, and ten minutes from the dial the console closes the connection `expired` | perturbation in `src/link/pairing_tests.rs`, each bound alone, the time bounds shortened: the fifth box from one address and the seventeenth in all are refused `busy`, a silent box and a first line past 16 KiB are closed unanswered and give their places back, and a box past its life hears `expired`. Drop any one bound, and its box is held |
+| a first frame without a `pairing` stage report is refused `no_report`, and one whose report is not one JSON object within 64 KiB is refused `report_refused`, each before the box is listed | perturbation in `src/link/pairing_tests.rs`, `a_first_frame_without_a_report_is_refused_no_report` and `a_report_that_is_not_one_object_within_64_kib_is_refused`: a hello with no report, one with only a `drives` report, one whose report is an array, one past 64 KiB and one naming `pairing` twice each hear their refusal and none is listed. Drop the checks at the first frame, and the box is listed |
+| the reports land with the row in one transaction, and nothing of a report is drawn before the code matches | perturbation in `src/enrollment_tests.rs`, `the_report_lands_with_the_row_in_one_transaction`, `a_lost_word_leaves_neither_row_nor_report` and `nothing_of_a_report_is_drawn_before_the_code_matches`: a pairing leaves the first frame's `pairing` and `drives` reports on the setup byte for byte, a lost word leaves neither row nor report, and while two boxes wait with reports neither Pair page draws a member of either. Write the reports before the row's transaction, and a lost word leaves a report; draw a waiting box's report on its row, and the page carries its member |
+| at most 16 boxes wait in all and 4 from one peer address, the first frame within 10 s and 288 KiB, and ten minutes from the dial the console closes the connection `expired` | perturbation in `src/link/pairing_tests.rs`, each bound alone, the time bounds shortened: the fifth box from one address and the seventeenth in all are refused `busy`, a silent box and a first line past 288 KiB are closed unanswered and give their places back, and a box past its life hears `expired`. Drop any one bound, and its box is held |
 | the server never asks a verb outside the agent's ceiling | perturbation: drop the ceiling check, ask a verb admin-con's hello did not declare, and it leaves the server; and admin-con's half, drop its typed error answer, and it reaches the invoker. **One clause is owed**: check against the row's copy, narrow the ceiling by reconnecting between the check and the enqueue, and an ask outside the new ceiling leaves. The race has no deterministic staging, and the guard is held by review: the check reads the live connection's ceiling under the live map's lock that finds the connection |
 | a verb its principal may not ask is refused before an ask | perturbation, in `src/verbs_tests.rs` against the real listener and a fake admin-con: drop the grant check, and an observer's `stop` leaves the server; drop the session's re-check under the hold, disable the person between the gate and the check, and the ask leaves; release the hold before the enqueue, and a revocation commits while the frame of the ask it revoked is still to be sent; reserve the slot under the hold, and a grant's removal waits on a stalled connector; run the ask in the request's own future, and a dropped request loses an authorized ask after its first, and a refusal its record; admit every ask, and a client posting past its share detaches tasks without bound; drop the per-connection cap on persons' slots, and asks parked on the server's own waits take the channel and an opening's `show` waits behind them; read the grants without the deadline, and an ask stalled on the store never answers and keeps its place; answer no grant with 403, and the page tells a stranger the agent exists. The server's `show`-only rule stands in the row of its asks, and the register verbs through the server in their own row |
 | a turn its principal may not ask is refused before an ask | perturbation, in `src/verbs_tests.rs`, the verb's held ask on the gate plane: drop the grant check, and an observer places a turn; release the hold before the enqueue, and a revocation commits while the turn is still to be sent. The session's re-check, the admission, the slots and the deadline are the verb row's own instruments, the one mechanism serving both planes, and `src/verbs_tests.rs` shows the hold, the admission, the slots and the deadline on the gate plane once each |

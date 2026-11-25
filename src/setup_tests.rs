@@ -518,6 +518,14 @@ async fn a_name_outside_the_rule_is_refused_opening_no_setup() {
         ("abcdefghijklmnopq", "16 characters at most"),
         ("gatecon", "a box's own accounts"),
         ("admincon", "a box's own accounts"),
+        (
+            "admin",
+            "a folder the appliance keeps beside each agent's own",
+        ),
+        (
+            "stack",
+            "a folder the appliance keeps beside each agent's own",
+        ),
     ] {
         let (status, body) = finalize_named(&rig.app, &ada, name).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{name}: {body}");
@@ -548,6 +556,54 @@ async fn a_name_outside_the_rule_is_refused_opening_no_setup() {
         landed.virtual_machine,
         "a new setup's checkbox starts checked"
     );
+}
+
+/// **The store refuses every reserved name by its own CHECK** (Spec 6.2,
+/// migration `0034`): a setup's insert past the start page's rule, of each
+/// of admin's two reserved names and the appliance's two folders, is a
+/// fault and writes no row, and a name beside them is taken.
+///
+/// Perturbation: drop `admin` from `0034`'s CHECK, and its insert writes a
+/// row (measured 2026-11-25).
+#[tokio::test]
+async fn the_store_refuses_every_reserved_name_by_its_check() {
+    let Some(rig) = rig().await else {
+        return;
+    };
+    let s = rig.store();
+    let (person, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let session_id: i64 =
+        sqlx::query_scalar("SELECT session_id FROM session WHERE bearer_digest = $1")
+            .bind(gate::digest(&ada))
+            .fetch_one(&s.pool)
+            .await
+            .unwrap();
+    let principal = crate::store::audit::Principal::Person {
+        person_id: &person,
+        method: crate::store::audit::PersonMethod::Session,
+    };
+    for (name, refused) in [
+        ("gatecon", true),
+        ("admincon", true),
+        ("admin", true),
+        ("stack", true),
+        ("admins", false),
+    ] {
+        let setup_id = s.mint_key("st").await.unwrap();
+        let first = s
+            .audit_first(
+                principal,
+                crate::store::audit::Target::Setup(&setup_id),
+                "setup begin",
+            )
+            .await
+            .unwrap();
+        let written = s
+            .begin_setup(&person, session_id, &first, &setup_id, name)
+            .await;
+        assert_eq!(written.is_err(), refused, "{name}: {written:?}");
+    }
+    assert_eq!(setups(s).await, 1, "admins alone stands");
 }
 
 /// **A console that serves no pairing says so past the admin gate** (Spec

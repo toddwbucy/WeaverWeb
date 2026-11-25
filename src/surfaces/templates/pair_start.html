@@ -38,7 +38,7 @@
   <ol>
     <li>Start the appliance with its two disks attached, and connect to it over SSH as {{ starting_user }}. {{ first_password }} is changed at the first login.</li>
     <li>Run <code>{{ command }}</code> with root's authority.</li>
-    <li>The script marks each card for a plane, prepares and mounts the two disks, and asks for Weaver Web's address on the management plane.</li>
+    <li>The script prepares and mounts the two disks, marks each card for a plane, and asks for Weaver Web's address on the management plane.</li>
     <li>Give it this address: <span class="mono">{{ link.address }}</span>, port <span class="mono">{% match link.port %}{% when Some with (port) %}{{ port }}{% when None %}none named{% endmatch %}</span>.{% if one_door %} Both planes share one door.{% endif %}</li>
     <li>The script asks for a name for the appliance, then dials Weaver Web. The appliance is listed below under the name you gave it, and the SSH session shows Weaver Web's fingerprint and a code.</li>
   </ol>
@@ -57,7 +57,7 @@
   <header><span class="stage"><b>1</b> Declare</span><h2>Weaver Web's fingerprint</h2><span class="backing built">built</span><span class="status ok">ok</span><span class="source">the authority Weaver Web loaded</span></header>
   <div class="body">
   <p class="mono">{% for row in fingerprint %}{% if !loop.first %}<br>{% endif %}{{ row }}{% endfor %}</p>
-  <label><input type="checkbox" name="compared" value="on"> The fingerprint the appliance shows is Weaver Web's, above, row by row and group for group.</label>
+  <label><input type="checkbox" name="compared" value="on" required> The fingerprint the appliance shows is Weaver Web's, above, row by row and group for group.</label>
   </div>
   <footer>The SSH session shows the same four rows of four groups. Compare them before the code.</footer>
 </section>
@@ -70,7 +70,7 @@
   <fieldset>
     <legend>Each by the name typed in its setup script</legend>
     {%- for w in waiting %}
-    <label><input type="radio" name="appliance" value="{{ w.handle }}"{% if w.chosen %} checked{% endif %}> <span class="mono">{{ w.claim }}</span>, from <span class="mono">{{ w.peer }}</span>, waiting {{ w.waited }}</label>
+    <label><input type="radio" name="appliance" value="{{ w.handle }}" required{% if w.chosen %} checked{% endif %}> <span class="mono">{{ w.claim }}</span>, from <span class="mono">{{ w.peer }}</span>, waiting {{ w.waited }}</label>
     {%- endfor %}
   </fieldset>
   {%- for w in waiting %}{% if w.loopback %}
@@ -84,9 +84,13 @@
 <section class="pane">
   <header><span class="stage"><b>1</b> Declare</span><h2>Name the agent</h2><span class="backing built">built</span><span class="status ok">ok</span><span class="source">the start page's rule</span></header>
   <div class="body">
-  <label>Name the agent: <input type="text" name="name" value="{{ name }}" maxlength="{{ name_most }}" autocomplete="off" spellcheck="false"></label>
-  <label>Code from the SSH session: <input type="text" name="code" autocomplete="off" spellcheck="false" maxlength="16"></label>
+  <label>Name the agent: <input type="text" name="name" value="{{ name }}" maxlength="{{ name_most }}" autocomplete="off" spellcheck="false" required></label>
+  <label>Code from the SSH session: <input type="text" name="code" autocomplete="off" spellcheck="false" maxlength="16" required></label>
+  {%- if waiting.is_empty() %}
+  <p>Finalize the pairing is offered once an appliance is listed above.</p>
+  {%- else %}
   <button type="submit">Finalize the pairing</button>
+  {%- endif %}
   </div>
   <footer>A lowercase letter, then lowercase letters and digits, 2 to {{ name_most }} characters in all. The appliance names the agent's accounts, its directories and its admin entry after it, so the name is one it can take. Once paired, the agent's Pair page shows the appliance's report and leads on to its declaration.</footer>
 </section>

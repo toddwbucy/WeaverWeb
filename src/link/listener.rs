@@ -1251,14 +1251,14 @@ impl Listener {
         self.inner.waiting.take(code).await
     }
 
-    /// **The waiting connection `handle` names, asked alone** (Spec 8.2):
-    /// New agent's entry, taken where `code` is its own, else a miss on it,
-    /// the last of `pairing::TRIES` closing it (`Waiting::take_chosen`).
     /// The wait of the connection `handle` named ended lately (Spec 8.2).
     pub fn wait_ended(&self, handle: &str) -> bool {
         self.inner.waiting.wait_ended(handle)
     }
 
+    /// **The waiting connection `handle` names, asked alone** (Spec 8.2):
+    /// New agent's entry, taken where `code` is its own, else a miss on it,
+    /// the last of `pairing::TRIES` closing it (`Waiting::take_chosen`).
     pub async fn take_chosen(
         &self,
         handle: &str,
@@ -1272,6 +1272,14 @@ impl Listener {
     #[cfg(test)]
     pub(crate) async fn probe_abandoned(&self, code: &crate::link::pair_code::Code) {
         self.inner.waiting.probe_abandoned(code).await
+    }
+
+    /// A test's lever on every waiting connection's task
+    /// (`pairing::Lever`).
+    // Pulled by `enrollment_tests` alone.
+    #[cfg(all(test, feature = "passkeys", feature = "enrollment"))]
+    pub(crate) fn set_pairing_lever(&self, lever: Option<crate::link::pairing::Lever>) {
+        self.inner.waiting.set_lever(lever);
     }
 
     /// A test's lever: the waiting boxes' bounds, shortened.

@@ -252,6 +252,7 @@ pub(crate) async fn begin(
 /// **New agent's post**, well shaped but for the name, so the name is what
 /// the answer judges: a handle of the right shape that names no waiting
 /// appliance, a code in Crockford's form, and the comparison confirmed.
+#[cfg(feature = "enrollment")]
 pub(crate) async fn finalize_named(
     app: &axum::Router,
     session: &str,
@@ -694,9 +695,13 @@ async fn a_person_without_an_admin_grant_is_refused_before_any_setup_is_looked_u
             assert_eq!(body, crate::surfaces::admin::NOT_AN_ADMIN, "{target}");
         }
     }
-    let (status, body) = finalize_named(&rig.app, &bea, "otto").await;
-    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
-    assert_eq!(audited(s, "pair").await, (0, 0, 0, 1));
+    // New agent's entry is served by the `enrollment` feature alone.
+    #[cfg(feature = "enrollment")]
+    {
+        let (status, body) = finalize_named(&rig.app, &bea, "otto").await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        assert_eq!(audited(s, "pair").await, (0, 0, 0, 1));
+    }
     assert_eq!(audited(s, "setup pairing").await, (0, 0, 0, 2));
     assert_eq!(audited(s, "setup placement").await, (0, 0, 0, 2));
     assert_eq!(audited(s, "setup confirm").await, (0, 0, 0, 2));
@@ -1395,9 +1400,11 @@ async fn an_unknown_setup_is_not_found_and_a_malformed_one_refused() {
 /// `SETUP_COMMAND`, neither the starting user nor the first password named
 /// (held for the operator's ruling); the name's bounds stated with the
 /// number from `NAME_MOST`; one form, posting to `POST /pair`, holding the
-/// comparison's box, the appliances' choice, the name, the code and
-/// Finalize the pairing; a list with none waiting that says so and a plain
-/// link to refresh it, no polling. Every word the operator reads says
+/// comparison's box, the appliances' choice, the name and the code, each
+/// `required`, and Finalize the pairing, offered as a button only once an
+/// appliance is listed (the fix round of 2026-11-25, point 4; the button
+/// with one waiting is `enrollment_tests`'); a list with none waiting that
+/// says so and a plain link to refresh it, no polling. Every word the operator reads says
 /// appliance, never box. No other page holds the form, each read in three
 /// states: no setup standing, a setup begun the old way and unpaired, and
 /// paired.
@@ -1441,7 +1448,7 @@ async fn new_agent_holds_what_an_agent_needs_the_steps_and_one_form() {
         "GB10 Spark-class devices are hardware we want to deploy to and do not have yet.",
         "Start the appliance with its two disks attached, and connect to it over SSH as the appliance&#39;s starting user. Its first password is changed at the first login.",
         "<li>Run <code>weaver-setup</code> with root's authority.</li>",
-        "The script marks each card for a plane, prepares and mounts the two disks, and asks for Weaver Web's address on the management plane.",
+        "The script prepares and mounts the two disks, marks each card for a plane, and asks for Weaver Web's address on the management plane.",
         "Give it this address:",
         "The script asks for a name for the appliance, then dials Weaver Web.",
         "No appliance is waiting. Run the setup script on the appliance; it is listed here once it dials.",
@@ -1477,13 +1484,17 @@ async fn new_agent_holds_what_an_agent_needs_the_steps_and_one_form() {
         .unwrap();
     let form = &new[form_at..new[form_at..].find("</form>").unwrap() + form_at];
     for holds in [
-        r#"<input type="checkbox" name="compared" value="on">"#,
-        r#"<input type="text" name="name" value="""#,
-        r#"<input type="text" name="code""#,
-        r#"<button type="submit">Finalize the pairing</button>"#,
+        r#"<input type="checkbox" name="compared" value="on" required>"#,
+        r#"<input type="text" name="name" value="" maxlength="16" autocomplete="off" spellcheck="false" required>"#,
+        r#"<input type="text" name="code" autocomplete="off" spellcheck="false" maxlength="16" required>"#,
+        "Finalize the pairing is offered once an appliance is listed above.",
     ] {
         assert!(form.contains(holds), "{holds}: {form}");
     }
+    assert!(
+        !form.contains("<button"),
+        "no appliance waits, no button: {form}"
+    );
 
     async fn none_hold_it(app: &axum::Router, session: &str, others: &[String], state: &str) {
         for uri in others {

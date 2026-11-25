@@ -132,7 +132,7 @@ Section 1: a string whose bound names no pattern may be empty, and one with a pa
 - **The worked example** reads whole from `tests/fixtures/weaver-survey-2-worked-example.json`. The test first checks the file's sha256 against `fb6801694af2ebccedf3a2a52915f2610205fa20ac7defc16ada88a58ab59d95`, then pins each member, the example's models place `/srv/weaver-models` among them, a place other than the version 1 constant.
 - **The image proof's shape reads:** both drives not mounted and one address as both planes under `shared`. The pairing succeeds, and the Pair page names what is lacking.
 - **Every row of the two tables above has its test.** Every check the act adds has a measured perturbation.
-- **The places stand in the code nowhere:** a search of `src/` and the templates for the two default places finds them in the version 1 fixture and its test alone.
+- **The places stand in the code nowhere:** a search of `src/` and the templates for the two default places finds them in no file a build ships, only in tests and the two fixtures. The version 2 example's state place is one of them, and the tests use the image proof's places for a report whose drives are not mounted.
 - **The gates:** the repository's gates, alone, with `DATABASE_URL` and `PGUSER` set, the count reported and nothing skipped.
 
 ## The scope boundary

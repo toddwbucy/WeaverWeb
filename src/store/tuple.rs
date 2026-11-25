@@ -256,14 +256,14 @@ async fn model_of(
 
 /// **Each member of the setup's tuple, read from its source or not**, on
 /// `conn`: the role rows and their pulls' records, the base's identity, the
-/// setup's fields, and what the box reports (Spec 6.2): the cards, the
-/// drives stage's report's or the pairing stage's, and the box's members,
-/// the drives stage's report's or why Confirm holds.
+/// setup's fields, and what the box reports (Spec 6.2): the cards and the
+/// box's members, both the latest report's of either stage, so one tuple
+/// stands on one report, or why Confirm holds.
 async fn members_on(
     conn: &mut PgConnection,
     setup_id: &str,
     fields: &Fields,
-    survey: Option<&[Card]>,
+    survey: Result<Vec<Card>, String>,
     reported: Result<BoxMembers, String>,
 ) -> anyhow::Result<Members> {
     let rows = sqlx::query(
@@ -352,8 +352,8 @@ async fn members_on(
         .ok_or_else(|| "no turn context is kept".to_owned());
     let devices = match (&fields.devices, survey) {
         (None, _) => Err("no devices are chosen".to_owned()),
-        (Some(_), None) => Err("the survey has reported no cards".to_owned()),
-        (Some(devices), Some(cards)) => match devices
+        (Some(_), Err(why)) => Err(why),
+        (Some(devices), Ok(cards)) => match devices
             .iter()
             .find(|d| !cards.iter().any(|c| c.ordinal == **d))
         {
@@ -405,7 +405,7 @@ impl Store {
             &mut conn,
             &setup.setup_id,
             &fields,
-            reports.cards().as_deref(),
+            reports.cards_or_why(),
             reports.members(),
         )
         .await
@@ -456,7 +456,7 @@ impl Store {
             &mut tx,
             setup_id,
             &fields,
-            reports.cards().as_deref(),
+            reports.cards_or_why(),
             reports.members(),
         )
         .await?;

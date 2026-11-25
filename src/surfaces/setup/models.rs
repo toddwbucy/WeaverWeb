@@ -38,7 +38,9 @@ use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use serde::Deserialize;
 
-use super::{Frame, MALFORMED_SETUP, Page, Seams, admin_read, frame, landed, when};
+use super::{
+    Frame, MALFORMED_SETUP, Page, Seams, admin_read, declaration_state, frame, landed, when,
+};
 use crate::gguf::{self, Header, KvHeads};
 use crate::hugging_face::choice::{self, Choice, part_of};
 use crate::hugging_face::seal::SealKey;
@@ -345,6 +347,51 @@ struct ModelsPage {
     /// Why no pick is offered on this page, where none is.
     no_pick: Option<String>,
     pulls: PullsView,
+    /// **The models directory's need** (Spec 6.2), where a model is picked,
+    /// and the models directory as the latest report of either stage shows
+    /// it, judged against the need.
+    need: Option<super::Need>,
+    /// The models directory, or why none is judged: which of no report, the
+    /// latest refused or misfiled, or a latest naming none.
+    models_directory: Result<super::report::DriveRow, String>,
+}
+
+/// The models directory as `reports`' latest shows it, judged against
+/// `need`, where that report reads and names one, else why none is.
+fn models_directory(
+    reports: &crate::box_report::Reports,
+    need: Option<&super::Need>,
+) -> Result<super::report::DriveRow, String> {
+    use crate::box_report::{Report, stage_name};
+    let (stage, latest) = reports.latest();
+    let stage = stage_name(stage);
+    let why = match latest {
+        Report::Waiting => "No report has arrived at either stage".to_owned(),
+        Report::Refused { refused, .. } => format!(
+            "The {stage} stage's report, the latest, is refused for cause {}: {}",
+            refused.cause.number(),
+            refused.cause.words()
+        ),
+        Report::Misfiled { names, .. } => format!(
+            "The report kept as the {stage} stage's, the latest, names its stage {}",
+            stage_name(*names)
+        ),
+        Report::Read { .. } => {
+            if let super::report::Shown::Read { body, .. } = super::directories(reports, need).0
+                && let Some(row) = body.drives.into_iter().find(|d| d.role == "models")
+            {
+                return Ok(row);
+            }
+            // Unreachable: the survey's reader refuses a report whose
+            // drives are not state then models at their mount points
+            // (`survey::read`), so a read report always names the models
+            // directory. The type of `drives` cannot say so.
+            format!("The {stage} stage's report, the latest, is read")
+        }
+    };
+    Err(format!(
+        "{why}, so the need is not judged against the models directory."
+    ))
 }
 
 fn role_view(role: Role, rows: &[SetupModel], setup: &Setup) -> RoleView {
@@ -392,16 +439,18 @@ async fn page(
     look: Look,
 ) -> Response {
     let wanted = wanted(&look);
-    let (session, setup) = match admin_read(&store, seams, &headers, setup_id).await {
+    let (session, setup) = match super::declaration_read(&store, seams, &headers, setup_id).await {
         Ok(read) => read,
         Err(answer) => return answer,
     };
-    let (chrome, rows, through, pulls) = match async {
+    let (chrome, rows, through, pulls, need, reports) = match async {
         Ok::<_, anyhow::Error>((
             crate::surfaces::Chrome::of(&store, &session.person_id).await?,
             store.setup_models(setup_id).await?,
             through(&store, seams).await?,
             pulls_view(&store, setup_id).await?,
+            super::need(&store, setup_id).await?,
+            store.reports(seams.boxes.as_ref(), setup_id).await?,
         ))
     }
     .await
@@ -437,6 +486,8 @@ async fn page(
         listing,
         no_pick,
         pulls,
+        models_directory: models_directory(&reports, need.as_ref()),
+        need,
     }
     .render();
     match rendered {
@@ -594,6 +645,12 @@ async fn header(
         Ok(read) => read,
         Err(answer) => return answer,
     };
+    // **A fragment of an unpaired setup's declaration is refused as its
+    // writes are**, before Hugging Face is asked (the Planner's ruling of
+    // 2026-11-24 on the second review).
+    if setup.paired.is_none() {
+        return refused(&Refusal::SetupUnpaired);
+    }
     let through = match through(&store, seams).await {
         Ok(through) => through,
         Err(e) => return fault(e),
@@ -761,6 +818,7 @@ async fn pulls(store: Store, seams: &Seams, headers: HeaderMap, setup_id: &str) 
         Err(e) => return fault(e),
     }
     match store.setup(setup_id).await {
+        Ok(Some(setup)) if setup.paired.is_none() => return refused(&Refusal::SetupUnpaired),
         Ok(Some(_)) => {}
         Ok(None) => return refused(&Refusal::NoSuchSetup),
         Err(e) => return fault(e),
@@ -1021,7 +1079,11 @@ async fn pick(
         Ok(session) => session,
         Err(answer) => return answer,
     };
+    // **A pick on a setup whose box is not paired is refused**, as the
+    // other declaration writes are; a confirmed setup's pick stays the
+    // store's stale refusal, as before.
     match store.setup(setup_id).await {
+        Ok(Some(setup)) if setup.paired.is_none() => return refused(&Refusal::SetupUnpaired),
         Ok(Some(_)) => {}
         Ok(None) => return refused(&Refusal::NoSuchSetup),
         Err(e) => return fault(e),
@@ -1122,8 +1184,11 @@ async fn drop_adapter(
         Err(answer) => return answer,
     };
     match store.setup(setup_id).await {
-        Ok(Some(setup)) if setup.state == "open" => {}
-        Ok(Some(_)) => return refused(&Refusal::SetupConfirmed),
+        Ok(Some(setup)) => {
+            if let Err(refusal) = declaration_state(&setup) {
+                return refused(&refusal);
+            }
+        }
         Ok(None) => return refused(&Refusal::NoSuchSetup),
         Err(e) => return fault(e),
     }

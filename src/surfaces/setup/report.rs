@@ -1,5 +1,7 @@
-//! **The panes a box's report feeds** (Spec 6.2): the pairing page's report
-//! and the drives page's drives as mounted, each a stage's report as the
+//! conforms: web-no-page-judges-the-models-disks-margin
+//!
+//! **The panes a box's report feeds** (Spec 6.2): the pairing stage's report
+//! and the directories page's directories as mounted, each a report as the
 //! source reads it (`crate::box_report`), and the status each carries:
 //! read, refused, misfiled or waiting. A refused report is drawn by its
 //! arrival and its cause, by number and in the format's words, and never by
@@ -147,8 +149,8 @@ impl PairingBody {
     }
 }
 
-/// **The drives stage's report, read** (Spec 6.2): its `taken` and each
-/// drive as mounted, with its judgments.
+/// **The latest report of either stage, read** (Spec 6.2): its `taken` and
+/// each directory as mounted, with its judgments.
 pub(crate) struct DrivesBody {
     pub(crate) taken: String,
     pub(crate) drives: Vec<DriveRow>,
@@ -190,7 +192,7 @@ impl Judgment {
     }
 }
 
-/// The models drive's need as the drives page judges a drive by it: its
+/// The models directory's need as the pages judge a directory by it: its
 /// bytes, and as the page states it.
 pub(crate) struct NeedOf<'a> {
     pub(crate) bytes: u64,
@@ -198,11 +200,14 @@ pub(crate) struct NeedOf<'a> {
 }
 
 impl DrivesBody {
-    /// **The drives as mounted, judged** (Spec 6.2, the operator's rulings
-    /// of 2026-11-17): a drive not mounted holds Confirm; a state drive
-    /// whose filesystem is under 9 GiB holds Confirm by its exact size; a
-    /// models drive whose free space is under the picks' need is a warning
-    /// and not a hold, and one with room says so.
+    /// **The directories as mounted, judged** (Spec 6.2, the operator's
+    /// rulings of 2026-11-17, 2026-11-23 and 2026-11-24): one not mounted
+    /// holds Confirm; a state directory whose filesystem is under 9 GiB
+    /// holds Confirm by its exact size; a models directory whose free space
+    /// is under the picks' need is a warning and not a hold, and one with
+    /// room says so. No judgment names the models disk's margin, which the
+    /// requirements page states as guidance (the operator's ruling of
+    /// 2026-11-24: "No page warns").
     pub(crate) fn of(survey: &Survey, need: Option<NeedOf<'_>>) -> DrivesBody {
         let drives = survey
             .drives

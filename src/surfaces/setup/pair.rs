@@ -1,10 +1,11 @@
 //! conforms: web-the-pairing-page-reads-an-entry-in-crockfords-form-and-a-malformed-entry-is-no-miss
 //! conforms: web-on-unknown-the-pairing-page-shows-what-the-write-made
 //!
-//! **The pairing page's waiting box and the code's entry** (Spec 8.2, 6.2).
+//! **The Pair page's waiting box and the code's entry** (Spec 8.2, 6.2).
 //! The pane lists the boxes waiting, each by the name it claims, its peer
 //! address and its wait, marked as the box's claim, beside the console's
-//! fingerprint, the fingerprint's confirmation and the code's field, and
+//! fingerprint in four rows of four groups, as the appliance's setup script
+//! shows it, the fingerprint's confirmation and the code's field, and
 //! the register's live rows holding the setup's name, each by its box and
 //! its live credentials' fingerprints as the register keeps them. **Those
 //! rows are what a pairing's write made**, whether its answer was lost or
@@ -79,9 +80,10 @@ pub(super) struct PairPane {
     /// The enrollment is served: false draws the pane held.
     pub live: bool,
     pub status: &'static str,
-    /// The console's fingerprint, the authority's, in sixteen groups of
-    /// four.
-    pub fingerprint: String,
+    /// The console's fingerprint, the authority's, in four rows of four
+    /// groups of four, as the appliance's setup script shows it, so the two
+    /// are compared row by row.
+    pub fingerprint: Vec<String>,
     pub waiting: Vec<WaitingView>,
     /// The setup is in its pairing step, so the field is drawn.
     pub in_step: bool,
@@ -125,6 +127,17 @@ pub(super) fn rows_of(rows: &[Agent]) -> Vec<RowView> {
         .collect()
 }
 
+/// **A fingerprint in four rows of four groups** (Spec 8.2), its sixteen
+/// groups as `grouped` writes them, four to a row.
+pub(super) fn fingerprint_rows(fingerprint: &str) -> Vec<String> {
+    grouped(fingerprint)
+        .split(' ')
+        .collect::<Vec<_>>()
+        .chunks(4)
+        .map(|row| row.join(" "))
+        .collect()
+}
+
 fn waited(d: std::time::Duration) -> String {
     let secs = d.as_secs();
     format!("{} min {} s", secs / 60, secs % 60)
@@ -148,7 +161,7 @@ pub(super) async fn pane(
         return Ok(PairPane {
             live: false,
             status: "hold",
-            fingerprint: String::new(),
+            fingerprint: Vec::new(),
             waiting: Vec::new(),
             in_step: setup.in_pairing_step(),
             paired: setup.paired.clone(),
@@ -176,7 +189,7 @@ pub(super) async fn pane(
     Ok(PairPane {
         live: cfg!(feature = "enrollment"),
         status,
-        fingerprint: grouped(&enrollment.authority.fingerprint()),
+        fingerprint: fingerprint_rows(&enrollment.authority.fingerprint()),
         waiting,
         in_step: setup.in_pairing_step(),
         paired: setup.paired.clone(),
@@ -214,7 +227,7 @@ mod entry {
     use crate::surfaces::admin::{fault, first_of, refused, settled, writer};
     use crate::surfaces::gate::Session;
 
-    use super::super::{MALFORMED_SETUP, Page, Seams, frame, pairing_page};
+    use super::super::{MALFORMED_SETUP, Seams, pair_href, pairing_page, pairing_report};
 
     /// What an entry posts: the code as typed, the confirmation that the
     /// fingerprints were compared, and, for a setup whose name a live row
@@ -292,7 +305,7 @@ mod entry {
         if ask.compared.as_deref() != Some("on") {
             return (
                 StatusCode::BAD_REQUEST,
-                "compare the fingerprint the box shows with the console's, group for group, and confirm it before the code",
+                "compare the fingerprint the box shows with Weaver Web's, row by row and group for group, and confirm it before the code",
             )
                 .into_response();
         }
@@ -327,7 +340,7 @@ mod entry {
         let Some(enrollment) = seams.enrollment.clone() else {
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
-                "this console serves no pairing",
+                "this build of Weaver Web serves no pairing",
             )
                 .into_response();
         };
@@ -580,9 +593,10 @@ mod entry {
         })
     }
 
-    /// **The entry's answer**: back to the page where the row stands, else
-    /// the pairing page with what happened above it and, below, the rows
-    /// the register holds for the name, which is what the write made.
+    /// **The entry's answer**: back to the Pair page where the row stands,
+    /// its way on the declaration, else the Pair page with what happened
+    /// above it and, below, the rows the register holds for the name, which
+    /// is what the write made.
     async fn answer(
         store: &Store,
         seams: &Seams,
@@ -593,7 +607,7 @@ mod entry {
     ) -> Response {
         let (status, entered_status, words) = match &ended.outcome {
             Outcome::Paired { .. } => {
-                return (StatusCode::SEE_OTHER, [(header::LOCATION, format!("/setup/{setup_id}"))])
+                return (StatusCode::SEE_OTHER, [(header::LOCATION, pair_href(setup_id))])
                     .into_response();
             }
             Outcome::Refused(refusal) => (
@@ -614,7 +628,7 @@ mod entry {
             Outcome::Busy => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 "fail",
-                "another register write held the console past the box's ten minutes, so the box was refused busy and nothing was written: pair the box again".to_owned(),
+                "another register write held Weaver Web past the box's ten minutes, so the box was refused busy and nothing was written: pair the box again".to_owned(),
             ),
             Outcome::LostWord => (
                 StatusCode::CONFLICT,
@@ -658,19 +672,11 @@ mod entry {
             Ok(pair) => pair,
             Err(e) => return fault(e),
         };
-        let report = match super::super::pairing_report(store, seams, setup_id).await {
+        let report = match pairing_report(store, seams, &setup).await {
             Ok(report) => report,
             Err(e) => return fault(e),
         };
-        let page = pairing_page(
-            seams,
-            session.name.clone(),
-            chrome,
-            frame(&setup, Page::Pairing),
-            &setup,
-            pair,
-            report,
-        );
+        let page = pairing_page(seams, session.name.clone(), chrome, &setup, pair, report);
         match askama::Template::render(&page) {
             Ok(html) => (status, Html(html)).into_response(),
             Err(e) => fault(e),

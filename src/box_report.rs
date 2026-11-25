@@ -4,12 +4,15 @@
 //! setup keeps (`agent_setup_report`, each stage's latest, verbatim), read
 //! by the survey's reader (`crate::survey`, Spec 8.3).
 //!
-//! **Which report feeds what** is 6.2's: the cards from the `drives`
-//! stage's report where it reads, else the `pairing` stage's, and every box
-//! member from the `drives` stage's report alone. A report absent, refused,
-//! or kept under one stage while naming the other feeds nothing, and what
-//! it would feed holds, naming it. A store that fails to answer is a fault,
-//! never an absent report.
+//! **Which report feeds what** is 6.2's: the cards, every box member, and
+//! the directories page's directories, from the latest report of either
+//! stage, so one tuple stands on one report (the Planner's rulings of
+//! 2026-11-24 on the plan and on its review: the
+//! operator lays the disks before pairing, so a drives-stage report may
+//! never come, and one that is sent is still read). A report absent,
+//! refused, or kept under one stage while naming the other feeds nothing,
+//! and what it would feed holds, naming it. A store that fails to answer is
+//! a fault, never an absent report.
 //!
 //! **The seam** (`BoxReports`) is how the setup pages' tests supply a
 //! report. It reads on the connection it is handed, so Confirm reads the
@@ -74,7 +77,7 @@ pub struct Reports {
 }
 
 /// **The box's members of the deployment tuple** (Spec 6.2, the operator's
-/// rulings of 2026-11-17), from the `drives` stage's report: the machine's
+/// rulings of 2026-11-17), from the latest report of either stage: the machine's
 /// facts and none of the moment's, so no drive's free space and not
 /// whether the driver is loaded.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -219,21 +222,42 @@ impl Reports {
         reports
     }
 
-    /// **The cards the placement page offers**: the `drives` stage's
-    /// report's where it reads, else the `pairing` stage's, and none where
-    /// neither reads.
+    /// **The cards the placement page offers and Confirm checks**: the
+    /// latest report's of either stage, and none where the latest does not
+    /// read, so the devices and the box's members stand on one report.
     pub fn cards(&self) -> Option<Vec<Card>> {
         self.cards_from().map(|(_, cards)| cards)
     }
 
+    /// **The cards Confirm checks the kept devices against**, or why none
+    /// is read, by the latest report's stage and state.
+    pub fn cards_or_why(&self) -> Result<Vec<Card>, String> {
+        if let Some((_, cards)) = self.cards_from() {
+            return Ok(cards);
+        }
+        let (stage, latest) = self.latest();
+        let stage = stage_name(stage);
+        Err(match latest {
+            Report::Refused { refused, .. } => format!(
+                "the {stage} stage's report, the latest, is refused for cause {}: {}, so no card is read",
+                refused.cause.number(),
+                refused.cause.words()
+            ),
+            Report::Misfiled { names, .. } => format!(
+                "the report kept as the {stage} stage's, the latest, names its stage {}, so no card is read",
+                stage_name(*names)
+            ),
+            Report::Waiting | Report::Read { .. } => {
+                "no report of either stage has arrived, so no card is read".to_owned()
+            }
+        })
+    }
+
     /// The cards the placement page offers, with the stage whose report
-    /// brings them.
+    /// brings them: the latest report's, where it reads.
     pub fn cards_from(&self) -> Option<(Stage, Vec<Card>)> {
-        let (stage, survey) = match (self.drives.survey(), self.pairing.survey()) {
-            (Some(survey), _) => (Stage::Drives, survey),
-            (None, Some(survey)) => (Stage::Pairing, survey),
-            (None, None) => return None,
-        };
+        let (stage, latest) = self.latest();
+        let survey = latest.survey()?;
         Some((
             stage,
             survey
@@ -249,25 +273,38 @@ impl Reports {
         ))
     }
 
-    /// **The box's members Confirm reads**, from the `drives` stage's
-    /// report alone, or why Confirm holds: the report absent, refused or
-    /// misfiled, a drive not mounted, or the state drive's filesystem under
-    /// the figure, each named.
+    /// **The latest report of either stage**, by its arrival, and its
+    /// stage: the drives stage's on a tie, and the drives stage's waiting
+    /// where neither has arrived.
+    pub fn latest(&self) -> (Stage, &Report) {
+        match (self.pairing.arrived_at(), self.drives.arrived_at()) {
+            (Some(pairing), Some(drives)) if pairing > drives => (Stage::Pairing, &self.pairing),
+            (Some(_), None) => (Stage::Pairing, &self.pairing),
+            _ => (Stage::Drives, &self.drives),
+        }
+    }
+
+    /// **The box's members Confirm reads**, from the latest report of
+    /// either stage, or why Confirm holds: no report arrived, the latest
+    /// refused or misfiled, a drive not mounted, or the state drive's
+    /// filesystem under the figure, each named.
     pub fn members(&self) -> Result<BoxMembers, String> {
-        let survey = match &self.drives {
+        let (stage, latest) = self.latest();
+        let stage = stage_name(stage);
+        let survey = match latest {
             Report::Waiting => {
-                return Err("the drives stage's report has not arrived".to_owned());
+                return Err("no report of either stage has arrived".to_owned());
             }
             Report::Refused { refused, .. } => {
                 return Err(format!(
-                    "the drives stage's report is refused for cause {}: {}",
+                    "the {stage} stage's report, the latest, is refused for cause {}: {}",
                     refused.cause.number(),
                     refused.cause.words()
                 ));
             }
             Report::Misfiled { names, .. } => {
                 return Err(format!(
-                    "the report kept as the drives stage's names its stage {}",
+                    "the report kept as the {stage} stage's, the latest, names its stage {}",
                     stage_name(*names)
                 ));
             }

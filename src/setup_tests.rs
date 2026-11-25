@@ -2,16 +2,18 @@
 //! conforms: web-the-start-page-refuses-every-name-the-box-refuses
 //! conforms: web-the-pairing-page-warns-where-the-box-cannot-dial-the-link
 //!
-//! The start page and the setup pages (Spec 6.2, `src/surfaces/setup.rs`,
-//! `src/store/setup.rs`). A name outside the start page's rule opens no
-//! setup, one case per clause. A person without an admin grant is refused
-//! before any setup is looked up. One open setup holds a name. Every pane of
-//! every page carries its stage, its backing and its status, a held pane
-//! naming what it waits on and holding no input with a value. The pairing
-//! page shows the console's link address and port, and warns where that
-//! address is loopback and the box a virtual machine, or unspecified. A
-//! stale write answers 409, writing nothing. Each DB-backed test runs on a
-//! store of its own. No name or address is a real one.
+//! Pair a box, the start page and the setup pages (Spec 6.2, 8.2,
+//! `src/surfaces/setup.rs`, `src/store/setup.rs`). A name outside the start
+//! page's rule, held on Pair a box, opens no setup, one case per clause. A
+//! person without an admin grant is refused before any setup is looked up.
+//! One open setup holds a name. Every pane of every page carries its stage,
+//! its backing and its status, a held pane naming what it waits on and
+//! holding no input with a value, and no page of the setup names a Pairing
+//! step. The Pair page says what to do at the appliance, shows the
+//! console's link address and port, and warns where that address is
+//! loopback and the box a virtual machine, or unspecified. A stale write
+//! answers 409, writing nothing. Each DB-backed test runs on a store of its
+//! own. No name or address is a real one.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -186,30 +188,65 @@ pub(crate) async fn rig() -> Option<Rig> {
     rig_with("127.0.0.1:8081", Some("console.test:7443"), None).await
 }
 
-/// A setup begun under `session`: the answer, and the setup's identity
-/// where it landed.
+/// A setup begun under `session`, the agent named on Pair a box: the
+/// answer, and the setup's identity where it landed.
 pub(crate) async fn begin(
     app: &axum::Router,
     session: &str,
     name: &str,
 ) -> (StatusCode, String, Option<String>) {
-    let (status, headers, body) = send_as(
-        app,
-        "POST",
-        "/setup",
-        Some(form(&[("name", name)])),
-        session,
-    )
-    .await;
+    let (status, headers, body) =
+        send_as(app, "POST", "/pair", Some(form(&[("name", name)])), session).await;
     (status, body, setup_of(&headers))
 }
 
-/// The setup a write's redirect names.
+/// **The setup's box paired**, as a pairing's write leaves it, with no box
+/// dialing: a register row of the setup's name and the setup's link to it
+/// (migration `0030`), so its declaration opens. The pairing itself is
+/// `enrollment_tests`'.
+pub(crate) async fn paired(s: &Store, setup: &str) {
+    let name: String = sqlx::query_scalar("SELECT name FROM agent_setup WHERE setup_id = $1")
+        .bind(setup)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    let id: crate::store::key::AgentId = s.mint_key("ag").await.unwrap().parse().unwrap();
+    let mut conn = s.pool.acquire().await.unwrap();
+    // Fingerprints of the setup's own, so no other row in a test holds them.
+    let hex = &setup["st-".len()..];
+    Store::register_agent_on(
+        &mut conn,
+        &id,
+        &format!("box-{name}"),
+        &name,
+        None,
+        &format!("a{hex:0>63}"),
+        &format!("b{hex:0>63}"),
+        &format!("c{hex:0>63}"),
+    )
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE agent_setup SET agent_id = $1, paired_as = 'pair', paired_at = now() \
+         WHERE setup_id = $2",
+    )
+    .bind(id.as_str())
+    .bind(setup)
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+}
+
+/// The setup a begin's redirect names: its pairing, on Pair a box.
 fn setup_of(headers: &HeaderMap) -> Option<String> {
     let location = headers.get(header::LOCATION)?.to_str().ok()?;
-    let rest = location.strip_prefix("/setup/")?;
-    Some(rest[..rest.find('/')?].to_owned())
+    let rest = location.strip_prefix("/pair/")?;
+    Some(rest.split('/').next()?.to_owned())
 }
+
+/// The stage mark of Declare's panes, and of Provision's.
+pub(crate) const DECLARE: &str = r#"<span class="stage"><b>1</b> Declare</span>"#;
+pub(crate) const PROVISION: &str = r#"<span class="stage"><b>2</b> Provision</span>"#;
 
 pub(crate) async fn setups(s: &Store) -> i64 {
     sqlx::query_scalar("SELECT count(*) FROM agent_setup")
@@ -273,13 +310,22 @@ fn tags<'a>(html: &'a str, kind: &str) -> Vec<&'a str> {
         .collect()
 }
 
-/// **The walk**: every pane of `page` carries the stage mark `1 Declare`,
-/// a backing (`built`, `partly` or `unbuilt`) and a status word in a status
+/// **The walk**: every pane of `page` carries the stage mark `1 Declare`
+/// (`walk_staged` takes another, Pair a box's `2 Provision`), a backing (`built`, `partly` or `unbuilt`) and a status word in a status
 /// mark (`ok`, `hold` or `fail`) in its header, and a held pane says in its
 /// footer what it waits on and holds no input with a value, no checked box
 /// and no selected option. Each pane that fails, named by its heading and
 /// its fault.
 pub(crate) fn walk(page: &str) -> Vec<String> {
+    walk_staged(page, DECLARE)
+}
+
+/// The walk, every pane carrying the stage mark `stage`.
+pub(crate) fn walk_staged(page: &str, stage: &str) -> Vec<String> {
+    let mark = stage
+        .replace(r#"<span class="stage"><b>"#, "")
+        .replace("</b>", "")
+        .replace("</span>", "");
     let mut faults = Vec::new();
     let all = panes(page);
     if all.is_empty() {
@@ -289,8 +335,8 @@ pub(crate) fn walk(page: &str) -> Vec<String> {
         let header = between(pane, "<header>", "</header>").unwrap_or("");
         let name = between(header, "<h2>", "</h2>").unwrap_or("a pane without a heading");
         let mut fault = |why: &str| faults.push(format!("{name}: {why}"));
-        if !header.contains(r#"<span class="stage"><b>1</b> Declare</span>"#) {
-            fault("no stage mark 1 Declare");
+        if !header.contains(stage) {
+            fault(&format!("no stage mark {mark}"));
         }
         if !["built", "partly", "unbuilt"]
             .iter()
@@ -370,13 +416,24 @@ fn the_walk_names_a_pane_without_a_status_or_with_a_filled_input() {
     assert_eq!(walk(&unstaged), ["Live: no stage mark 1 Declare"]);
     let unbacked = live.replace(r#"<span class="backing built">built</span>"#, "");
     assert_eq!(walk(&unbacked), ["Live: no backing"]);
+    assert_eq!(
+        walk_staged(live, PROVISION),
+        ["Live: no stage mark 2 Provision"]
+    );
+    let provisioned = live.replace(DECLARE, PROVISION);
+    assert!(walk_staged(&provisioned, PROVISION).is_empty());
 }
 
-/// **A name outside the start page's rule opens no setup**, one case per
-/// clause, each refused at 400 before any record: an uppercase letter, a
+/// **A name outside the start page's rule opens no setup**, held on Pair a
+/// box where the agent is named, one case per clause, each refused at 400
+/// before any record: an uppercase letter, a
 /// `-`, a `_`, a leading digit, one character, seventeen characters, and
 /// each name `weaver-admin-Spec` section 4 reserves whole. A name of
-/// sixteen characters opens one.
+/// sixteen characters opens one, its checkbox checked (the operator's
+/// ruling of 2026-11-24).
+///
+/// Perturbation: begin a setup with the column's default, and its checkbox
+/// starts unchecked.
 #[tokio::test]
 async fn a_name_outside_the_rule_is_refused_opening_no_setup() {
     let Some(rig) = rig().await else {
@@ -416,7 +473,10 @@ async fn a_name_outside_the_rule_is_refused_opening_no_setup() {
         (landed.name.as_str(), landed.state.as_str(), landed.version),
         ("abcdefghijklmnop", "open", 1)
     );
-    assert!(!landed.virtual_machine, "an unchecked box says host");
+    assert!(
+        landed.virtual_machine,
+        "a new setup's checkbox starts checked"
+    );
 }
 
 /// **A console that serves no pairing says so past the admin gate** (Spec
@@ -437,13 +497,13 @@ async fn a_console_serving_no_pairing_says_so_past_the_admin_gate() {
     let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
     let setup = setup.unwrap();
     let entry = form(&[("compared", "on"), ("code", "HWX5R 0F74A")]);
-    let uri = format!("/setup/{setup}/pair");
+    let uri = format!("/pair/{setup}/code");
     let (status, _, body) = send_as(&rig.app, "POST", &uri, Some(entry.clone()), &bea).await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
     assert_eq!(body, crate::surfaces::admin::NOT_AN_ADMIN);
     let (status, _, body) = send_as(&rig.app, "POST", &uri, Some(entry), &ada).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
-    assert_eq!(body, "this console serves no pairing");
+    assert_eq!(body, "this build of Weaver Web serves no pairing");
 }
 
 /// **A person without an admin grant is refused before any setup is looked
@@ -463,16 +523,17 @@ async fn a_person_without_an_admin_grant_is_refused_before_any_setup_is_looked_u
 
     for uri in [
         "/setup".to_owned(),
-        format!("/setup/{setup}"),
-        format!("/setup/{setup}/pairing"),
+        "/pair".to_owned(),
+        "/pair/new".to_owned(),
+        format!("/pair/{setup}"),
         format!("/setup/{setup}/models"),
-        format!("/setup/{setup}/drives"),
+        format!("/setup/{setup}/directories"),
         format!("/setup/{setup}/placement"),
         format!("/setup/{setup}/confirm"),
         format!("/setup/{setup}/build"),
-        format!("/setup/{unknown}/pairing"),
+        format!("/pair/{unknown}"),
         format!("/setup/{unknown}/models"),
-        format!("/setup/{unknown}/drives"),
+        format!("/setup/{unknown}/directories"),
         format!("/setup/{unknown}/placement"),
         format!("/setup/{unknown}/confirm"),
     ] {
@@ -482,7 +543,7 @@ async fn a_person_without_an_admin_grant_is_refused_before_any_setup_is_looked_u
     }
     for target in [setup.as_str(), unknown] {
         for (page, fields) in [
-            ("pairing", vec![("version", "1"), ("virtual_machine", "on")]),
+            ("pairing", vec![("version", "1")]),
             (
                 "placement",
                 vec![("version", "1"), ("turn_context", "continuous")],
@@ -490,14 +551,12 @@ async fn a_person_without_an_admin_grant_is_refused_before_any_setup_is_looked_u
             ("confirm", vec![("version", "1")]),
             ("models/drop", vec![("version", "1")]),
         ] {
-            let (status, _, body) = send_as(
-                &rig.app,
-                "POST",
-                &format!("/setup/{target}/{page}"),
-                Some(form(&fields)),
-                &bea,
-            )
-            .await;
+            let uri = match page {
+                "pairing" => format!("/pair/{target}"),
+                _ => format!("/setup/{target}/{page}"),
+            };
+            let (status, _, body) =
+                send_as(&rig.app, "POST", &uri, Some(form(&fields)), &bea).await;
             assert_eq!(status, StatusCode::FORBIDDEN, "{target} {page}: {body}");
             assert_eq!(body, crate::surfaces::admin::NOT_AN_ADMIN, "{target}");
         }
@@ -513,8 +572,8 @@ async fn a_person_without_an_admin_grant_is_refused_before_any_setup_is_looked_u
     assert_eq!(setups(s).await, 1, "bea's begin opens no setup");
     let kept = s.setup(&setup).await.unwrap().unwrap();
     assert!(
-        !kept.virtual_machine && kept.version == 1,
-        "nothing written"
+        kept.virtual_machine && kept.version == 1,
+        "nothing written: the checkbox as it started"
     );
 }
 
@@ -539,23 +598,33 @@ async fn a_second_open_setup_of_one_name_is_refused() {
     let (status, _, other) = begin(&rig.app, &ada, "otto").await;
     assert_eq!(status, StatusCode::SEE_OTHER, "another name opens its own");
     assert_ne!(other, first);
-    // The start page lists both, each a link to its next page.
+    // Pair a box lists both, each a link to its pairing, and Declarations
+    // neither, since neither box is paired.
+    let pair = page(&rig.app, "/pair", &ada).await;
     let start = page(&rig.app, "/setup", &ada).await;
     for (name, setup) in [("karl", first.unwrap()), ("otto", other.unwrap())] {
         assert!(
-            start.contains(&format!(r#"<a href="/setup/{setup}/pairing">{name}</a>"#)),
-            "{start}"
+            pair.contains(&format!(r#"<a href="/pair/{setup}">{name}</a>"#)),
+            "{pair}"
         );
+        assert!(!start.contains(&setup), "{start}");
     }
+    assert!(start.contains("<p>No declaration is open.</p>"), "{start}");
 }
 
 /// **Every pane of every page carries its stage, its backing and its
 /// status**, and a held pane names what it waits on with no input holding
 /// a value, over every page this tree serves in each state it draws: the
-/// start page, the pairing page with the box a host and a virtual machine
-/// at a loopback address and with the console at an unspecified one, the
-/// drives page with no key and then with one, the placement and confirm
-/// pages with nothing read, and the build page.
+/// start page, Pair a box and the requirements page, the Pair page before
+/// and after its box is paired, as a virtual machine at a loopback address
+/// and with the console at an unspecified one, the directories page with no key and then with one, the
+/// placement and confirm pages with nothing read, and the build page. Pair
+/// a box's panes carry `2 Provision`, the setup's `1 Declare`. **No page of
+/// the setup names a Pairing step**: its rail holds the five pages of the
+/// declaration, Directories first, and the old pairing and drives pages
+/// answer as no route does. **No page waits on the image's setup script**:
+/// none holds "the image's setup script", "first boot" or the held setup
+/// command's pane.
 #[tokio::test]
 async fn every_pane_carries_its_stage_backing_and_status() {
     let cache = crate::test_dir::tempdir().unwrap();
@@ -565,45 +634,48 @@ async fn every_pane_carries_its_stage_backing_and_status() {
     let s = rig.store();
     let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
     let mut walked = vec![("/setup".to_owned(), page(&rig.app, "/setup", &ada).await)];
+    let mut provision = vec![
+        ("/pair".to_owned(), page(&rig.app, "/pair", &ada).await),
+        (
+            "/pair/new".to_owned(),
+            page(&rig.app, "/pair/new", &ada).await,
+        ),
+    ];
     let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
     let setup = setup.unwrap();
-    for p in [
-        "",
-        "/pairing",
-        "/models",
-        "/drives",
-        "/placement",
-        "/confirm",
-        "/build",
-    ] {
-        let uri = format!("/setup/{setup}{p}");
+    let pairing = format!("/pair/{setup}");
+    provision.push((pairing.clone(), page(&rig.app, &pairing, &ada).await));
+    paired(s, &setup).await;
+    let shown = page(&rig.app, &pairing, &ada).await;
+    assert!(
+        shown.contains("<h2>The box's report at the pairing stage</h2>"),
+        "{shown}"
+    );
+    provision.push(("the Pair page, paired".to_owned(), shown));
+    for p in ["directories", "models", "placement", "confirm", "build"] {
+        let uri = format!("/setup/{setup}/{p}");
         walked.push((uri.clone(), page(&rig.app, &uri, &ada).await));
     }
     let (status, _, _) = send_as(
         &rig.app,
         "POST",
-        &format!("/setup/{setup}/pairing"),
+        &pairing,
         Some(form(&[("version", "1"), ("virtual_machine", "on")])),
         &ada,
     )
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER);
-    let warned = page(&rig.app, &format!("/setup/{setup}/pairing"), &ada).await;
+    let warned = page(&rig.app, &pairing, &ada).await;
     assert!(warned.contains("a loopback address"), "{warned}");
-    walked.push(("the pairing page, warned".to_owned(), warned));
+    provision.push(("the Pair page, warned".to_owned(), warned));
     let Some(every) = rig_with("0.0.0.0:8081", None, None).await else {
         return;
     };
     let (_, bea) = admin(&every.app, every.store(), &mut authenticator(), "bea").await;
     let (_, _, other) = begin(&every.app, &bea, "otto").await;
-    let warned = page(
-        &every.app,
-        &format!("/setup/{}/pairing", other.unwrap()),
-        &bea,
-    )
-    .await;
+    let warned = page(&every.app, &format!("/pair/{}", other.unwrap()), &bea).await;
     assert!(warned.contains("an unspecified address"), "{warned}");
-    walked.push(("the pairing page, unspecified".to_owned(), warned));
+    provision.push(("the Pair page, unspecified".to_owned(), warned));
     let key = crate::ssh_key_tests::line("ssh-ed25519", 1);
     let (status, _, body) = send_as(
         &rig.app,
@@ -615,49 +687,76 @@ async fn every_pane_carries_its_stage_backing_and_status() {
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
     walked.push((
-        "the drives page, a key held".to_owned(),
-        page(&rig.app, &format!("/setup/{setup}/drives"), &ada).await,
+        "the directories page, a key held".to_owned(),
+        page(&rig.app, &format!("/setup/{setup}/directories"), &ada).await,
     ));
 
     for (uri, page) in &walked {
         let faults = walk(page);
         assert!(faults.is_empty(), "{uri}: {faults:?}\n{page}");
     }
-    // Every page of a setup carries the rail of its six pages in order,
-    // the current one marked, each served.
-    let pairing = &walked[2].1;
-    let rail = between(pairing, r#"<nav class="rail""#, "</nav>").unwrap();
-    let order: Vec<usize> = [
-        "Pairing",
-        "Models",
-        "Drives",
-        "Placement",
-        "Confirm",
-        "Build",
-    ]
-    .iter()
-    .map(|t| {
-        rail.find(&format!("</span> {t}"))
-            .unwrap_or_else(|| panic!("{t}: {rail}"))
-    })
-    .collect();
+    for (uri, page) in &provision {
+        let faults = walk_staged(page, PROVISION);
+        assert!(faults.is_empty(), "{uri}: {faults:?}\n{page}");
+        assert!(
+            !page.contains(r#"<nav class="rail""#),
+            "{uri}: no setup rail"
+        );
+    }
+    // Every page of a setup carries the rail of its five pages in order,
+    // the current one marked, each served, and none of them Pairing.
+    let directories = &walked[1].1;
+    let rail = between(directories, r#"<nav class="rail""#, "</nav>").unwrap();
+    let order: Vec<usize> = ["Directories", "Models", "Placement", "Confirm", "Build"]
+        .iter()
+        .map(|t| {
+            rail.find(&format!("</span> {t}"))
+                .unwrap_or_else(|| panic!("{t}: {rail}"))
+        })
+        .collect();
     assert!(order.windows(2).all(|w| w[0] < w[1]), "{rail}");
+    assert_eq!(rail.matches(r#"<a class="step"#).count(), 5, "{rail}");
     assert!(
         rail.contains(&format!(
-            r#"<a class="step here" href="/setup/{setup}/pairing">"#
+            r#"<a class="step here" href="/setup/{setup}/directories">"#
         )),
         "{rail}"
     );
+    for (uri, page) in &walked[1..] {
+        assert!(!page.contains("Pairing"), "{uri}: {page}");
+        assert!(!page.contains(&format!("/setup/{setup}/pairing")), "{uri}");
+    }
+    for gone in ["pairing", "drives"] {
+        let (status, _, _) = send_as(
+            &rig.app,
+            "GET",
+            &format!("/setup/{setup}/{gone}"),
+            None,
+            &ada,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "the old {gone} page is gone");
+    }
+    for (uri, page) in walked.iter().chain(&provision) {
+        let page = page.to_lowercase();
+        for never in [
+            "the image's setup script",
+            "the image&#39;s setup script",
+            "first boot",
+            "<h2>the setup command</h2>",
+        ] {
+            assert!(!page.contains(never), "{uri}: {never}");
+        }
+    }
     assert_eq!(
         rail.matches(r#"<span class="backing unbuilt">"#).count(),
         0,
         "{rail}"
     );
     for (at, next) in [
-        (2, "models\">Models"),
-        (3, "drives\">Drives"),
-        (4, "placement\">Placement"),
-        (5, "confirm\">Confirm"),
+        (1, "models\">Models"),
+        (2, "placement\">Placement"),
+        (3, "confirm\">Confirm"),
     ] {
         assert!(
             walked[at]
@@ -669,8 +768,18 @@ async fn every_pane_carries_its_stage_backing_and_status() {
         );
     }
     // Confirm's way forward stands only once Confirm does.
-    assert!(!walked[6].1.contains("Next:"), "{}", walked[6].1);
-    // The drives page names the model cache where it is set, and the key
+    assert!(!walked[4].1.contains("Next:"), "{}", walked[4].1);
+    // The Pair page offers no way on to the declaration before its box is
+    // paired: the page read under its own URI, before `paired`, selected by
+    // that URI so that the list's order cannot move the read.
+    let unpaired: Vec<&String> = provision
+        .iter()
+        .filter(|(uri, _)| *uri == pairing)
+        .map(|(_, page)| page)
+        .collect();
+    assert_eq!(unpaired.len(), 1, "the unpaired Pair page is read once");
+    assert!(!unpaired[0].contains("Next:"), "{pairing}: {}", unpaired[0]);
+    // The directories page names the model cache where it is set, and the key
     // by its fingerprint, with the way to change it.
     let drives = &walked[walked.len() - 1].1;
     assert!(
@@ -682,13 +791,141 @@ async fn every_pane_carries_its_stage_backing_and_status() {
     ));
     // The build page links the declaration screen as built.
     assert!(
-        walked[7]
+        walked[5]
             .1
             .contains(r#"<a href="/declarations">the declaration screen</a>"#)
     );
 }
 
-/// **The pairing page shows the console's link address and its port**:
+/// **A declaration opens once its box is paired** (the Planner's ruling
+/// of 2026-11-24 on the review): every declaration page of a setup whose
+/// box is not paired leads to its Pair page, and each declaration write,
+/// a pick, the adapter's drop, the placement and Confirm, is refused 409
+/// naming the pairing, as a confirmed setup's writes are, with no record
+/// and nothing written. Once its box is paired, the pages serve.
+#[tokio::test]
+async fn a_declaration_opens_once_its_box_is_paired() {
+    let Some(rig) = rig().await else {
+        return;
+    };
+    let s = rig.store();
+    let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
+    let setup = setup.unwrap();
+    for p in ["directories", "models", "placement", "confirm", "build"] {
+        let uri = format!("/setup/{setup}/{p}");
+        let (status, headers, body) = send_as(&rig.app, "GET", &uri, None, &ada).await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{uri}: {body}");
+        assert_eq!(headers[header::LOCATION], format!("/pair/{setup}"), "{uri}");
+    }
+    let unpaired = crate::store::admin::Refusal::SetupUnpaired.to_string();
+    for (page, body, action) in [
+        (
+            "models",
+            crate::setup_models_tests::pick(
+                "1",
+                "decoder",
+                "org/split",
+                "m-00001-of-00002.gguf",
+                None,
+            ),
+            "setup pick",
+        ),
+        ("models/drop", form(&[("version", "1")]), "setup drop"),
+        (
+            "placement",
+            form(&[("version", "1"), ("turn_context", "continuous")]),
+            "setup placement",
+        ),
+        ("confirm", form(&[("version", "1")]), "setup confirm"),
+    ] {
+        let (status, _, answer) = send_as(
+            &rig.app,
+            "POST",
+            &format!("/setup/{setup}/{page}"),
+            Some(body),
+            &ada,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{page}: {answer}");
+        assert_eq!(answer, unpaired, "{page}");
+        assert_eq!(
+            audited(s, action).await,
+            (0, 0, 0, 0),
+            "{page} records nothing"
+        );
+    }
+    // The two fragments are refused as the writes are, before Hugging Face
+    // is asked: the rig's Hugging Face is a port nothing answers on.
+    for fragment in [
+        format!(
+            "/setup/{setup}/models/header?repository=org/split&commit={}&choice=m-00001-of-00002.gguf",
+            crate::setup_models_tests::COMMIT
+        ),
+        format!("/setup/{setup}/models/pull"),
+    ] {
+        let (status, _, answer) = send_as(&rig.app, "GET", &fragment, None, &ada).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{fragment}: {answer}");
+        assert_eq!(answer, unpaired, "{fragment}");
+    }
+    let kept = s.setup(&setup).await.unwrap().unwrap();
+    assert_eq!(
+        (kept.version, kept.turn_context),
+        (1, None),
+        "nothing written"
+    );
+    paired(s, &setup).await;
+    page(&rig.app, &format!("/setup/{setup}/directories"), &ada).await;
+}
+
+/// **The Pair page says what to do at the appliance** (the operator's
+/// rulings of 2026-11-23): log in at its console, where the setup prompt at
+/// the first console login starts the appliance's setup script; the script
+/// ends in pairing; give it Weaver Web's address and port, shown in the
+/// next pane; compare the fingerprint row by row and enter the code. It
+/// names no command, which joins once the script is merged, and nothing on
+/// it waits on "the image's setup script" or a "first boot".
+#[tokio::test]
+async fn the_pair_page_says_what_to_do_at_the_appliance() {
+    let Some(rig) = rig().await else {
+        return;
+    };
+    let s = rig.store();
+    let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
+    let shown = page(&rig.app, &format!("/pair/{}", setup.unwrap()), &ada).await;
+    let at = panes(&shown)
+        .into_iter()
+        .find(|p| p.contains("<h2>At the appliance</h2>"))
+        .unwrap_or_else(|| panic!("the pane stands: {shown}"));
+    for says in [
+        "Log in at the appliance's console. At its first console login it shows the setup prompt, and the prompt's one command starts the appliance's setup script.",
+        "ends in pairing with Weaver Web",
+        "When the script asks for Weaver Web's address and port, give it the two in the next pane.",
+        "Compare the fingerprint with the one in the waiting box's pane, row by row, then enter the code there.",
+        "<footer>The setup prompt at the appliance's first console login names the command. The agent's name, karl, is the one the box takes.</footer>",
+    ] {
+        assert!(at.contains(says), "{says}: {at}");
+    }
+    // The next pane is Weaver Web's address, its address and port filled.
+    let after = &shown[shown.find("<h2>At the appliance</h2>").unwrap()..];
+    let next = panes(after)[0];
+    assert!(next.contains("<h2>Weaver Web's address</h2>"), "{next}");
+    assert!(
+        next.contains(r#"<tr><th>Address</th><td class="mono">console.test</td></tr>"#),
+        "{next}"
+    );
+    assert!(
+        next.contains(r#"<tr><th>Port</th><td class="mono">7443</td></tr>"#),
+        "{next}"
+    );
+    assert!(shown.contains("<h1>Pair karl</h1>"), "{shown}");
+    for never in ["the image's setup script", "first boot", "Pairing"] {
+        assert!(!shown.contains(never), "{never}: {shown}");
+    }
+}
+
+/// **The Pair page shows the console's link address and its port**:
 /// `link_address` where it is set, else `link_listen`'s, in the pane titled
 /// Weaver Web's address, which states that the address is Weaver Web's own,
 /// for the box to dial, and never the box's (the operator's walk of
@@ -717,12 +954,7 @@ async fn the_pairing_page_shows_link_address_and_its_port_else_link_listens() {
         let s = rig.store();
         let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
         let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
-        let pairing = page(
-            &rig.app,
-            &format!("/setup/{}/pairing", setup.unwrap()),
-            &ada,
-        )
-        .await;
+        let pairing = page(&rig.app, &format!("/pair/{}", setup.unwrap()), &ada).await;
         assert!(
             pairing.contains(&format!(
                 r#"<tr><th>Address</th><td class="mono">{address}</td></tr>"#
@@ -754,7 +986,8 @@ async fn the_pairing_page_shows_link_address_and_its_port_else_link_listens() {
 /// **The loopback warning shows where the console's link address is a
 /// loopback address and the checkbox says virtual machine**, and not
 /// otherwise: not for a host at loopback, and not for a virtual machine at
-/// an address it reaches.
+/// an address it reaches. A new setup's checkbox is drawn checked, and one
+/// saved unchecked stays unchecked (the operator's ruling of 2026-11-24).
 #[tokio::test]
 async fn the_loopback_warning_shows_for_a_virtual_machine_alone() {
     for (link_address, loopback) in [
@@ -770,48 +1003,55 @@ async fn the_loopback_warning_shows_for_a_virtual_machine_alone() {
         let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
         let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
         let setup = setup.unwrap();
-        let uri = format!("/setup/{setup}/pairing");
-        let host = page(&rig.app, &uri, &ada).await;
-        assert!(
-            !host.contains("a loopback address"),
-            "{link_address}, host: {host}"
-        );
-        assert!(
-            !host.contains(" checked"),
-            "a new setup's box is drawn unchecked"
-        );
-        let (status, _, _) = send_as(
-            &rig.app,
-            "POST",
-            &uri,
-            Some(form(&[("version", "1"), ("virtual_machine", "on")])),
-            &ada,
-        )
-        .await;
-        assert_eq!(status, StatusCode::SEE_OTHER);
+        let uri = format!("/pair/{setup}");
+        // **A new setup's checkbox starts checked** (the operator's ruling
+        // of 2026-11-24), so the warning stands at once.
         let vm = page(&rig.app, &uri, &ada).await;
-        assert!(vm.contains(r#"value="on" checked"#), "{vm}");
+        assert!(
+            vm.contains(r#"value="on" checked"#),
+            "a new setup's box is drawn checked: {vm}"
+        );
         assert_eq!(
             vm.contains("a loopback address"),
             loopback,
             "{link_address}, virtual machine: {vm}"
         );
-        // Unchecked again, the box is a host and the warning goes.
+        // Saved unchecked, the box is a host, the warning goes, and the
+        // checkbox stays unchecked when the page is read again.
         let (status, _, _) = send_as(
             &rig.app,
             "POST",
             &uri,
-            Some(form(&[("version", "2")])),
+            Some(form(&[("version", "1")])),
+            &ada,
+        )
+        .await;
+        assert_eq!(status, StatusCode::SEE_OTHER);
+        for _ in 0..2 {
+            let host = page(&rig.app, &uri, &ada).await;
+            assert!(
+                !host.contains("a loopback address"),
+                "{link_address}, host: {host}"
+            );
+            assert!(!host.contains(" checked"), "saved unchecked: {host}");
+        }
+        assert!(!s.setup(&setup).await.unwrap().unwrap().virtual_machine);
+        // Checked again, the warning returns.
+        let (status, _, _) = send_as(
+            &rig.app,
+            "POST",
+            &uri,
+            Some(form(&[("version", "2"), ("virtual_machine", "on")])),
             &ada,
         )
         .await;
         assert_eq!(status, StatusCode::SEE_OTHER);
         let again = page(&rig.app, &uri, &ada).await;
-        assert!(
-            !again.contains("a loopback address"),
+        assert_eq!(
+            again.contains("a loopback address"),
+            loopback,
             "{link_address}: {again}"
         );
-        assert!(!s.setup(&setup).await.unwrap().unwrap().virtual_machine);
     }
 }
 
@@ -835,7 +1075,7 @@ async fn the_unspecified_warning_shows_for_a_host_and_a_virtual_machine() {
         let s = rig.store();
         let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
         let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
-        let uri = format!("/setup/{}/pairing", setup.unwrap());
+        let uri = format!("/pair/{}", setup.unwrap());
         let host = page(&rig.app, &uri, &ada).await;
         let (status, _, _) = send_as(
             &rig.app,
@@ -876,7 +1116,7 @@ async fn a_stale_version_answers_409_and_writes_nothing() {
     let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
     let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
     let setup = setup.unwrap();
-    let uri = format!("/setup/{setup}/pairing");
+    let uri = format!("/pair/{setup}");
     let (status, _, _) = send_as(
         &rig.app,
         "POST",
@@ -926,20 +1166,11 @@ async fn an_unknown_setup_is_not_found_and_a_malformed_one_refused() {
     let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
     let setup = setup.unwrap();
     for (method, uri, want) in [
-        (
-            "GET",
-            "/setup/st-0123456789abcdef/pairing",
-            StatusCode::NOT_FOUND,
-        ),
-        ("GET", "/setup/st-0123456789abcdef", StatusCode::NOT_FOUND),
-        ("GET", "/setup/st-0123/pairing", StatusCode::BAD_REQUEST),
-        ("GET", "/setup/karl/drives", StatusCode::BAD_REQUEST),
-        (
-            "POST",
-            "/setup/st-0123456789abcdef/pairing",
-            StatusCode::NOT_FOUND,
-        ),
-        ("POST", "/setup/st-0123/pairing", StatusCode::BAD_REQUEST),
+        ("GET", "/pair/st-0123456789abcdef", StatusCode::NOT_FOUND),
+        ("GET", "/pair/st-0123", StatusCode::BAD_REQUEST),
+        ("GET", "/setup/karl/directories", StatusCode::BAD_REQUEST),
+        ("POST", "/pair/st-0123456789abcdef", StatusCode::NOT_FOUND),
+        ("POST", "/pair/st-0123", StatusCode::BAD_REQUEST),
         (
             "GET",
             "/setup/st-0123456789abcdef/models",
@@ -992,6 +1223,19 @@ async fn an_unknown_setup_is_not_found_and_a_malformed_one_refused() {
             &format!("/setup/{setup}/elsewhere"),
             StatusCode::NOT_FOUND,
         ),
+        // The setup's own pairing page and its writes left with Pairing.
+        ("GET", &format!("/setup/{setup}"), StatusCode::NOT_FOUND),
+        (
+            "GET",
+            &format!("/setup/{setup}/pairing"),
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            "POST",
+            &format!("/setup/{setup}/pairing"),
+            StatusCode::NOT_FOUND,
+        ),
+        ("POST", "/setup", StatusCode::METHOD_NOT_ALLOWED),
     ] {
         // Each post well shaped, so the setup's answer is what is judged.
         let body = (method == "POST").then(|| {
@@ -1008,49 +1252,178 @@ async fn an_unknown_setup_is_not_found_and_a_malformed_one_refused() {
     assert_eq!(audited(s, "setup drop").await, (0, 0, 0, 0));
 }
 
-/// **The start page draws New agent once an agent stands in the
-/// register**, the name's field opened from it, and the field itself
-/// before.
+/// **The requirements page is reached from Create new agent alone, and an
+/// agent is named from it alone** (Spec 8.2, the operator's ruling of
+/// 2026-11-24: "'Create new agent' opens a requirements page first"): Pair
+/// a box holds Create new agent and no name's field; the requirements page
+/// states, in order, the VM, the operator's part, the two disks (the
+/// appliance coming with none, the operator adding both sized to their
+/// need, laying them before pairing each at its default path, and no
+/// other until the console reads others, the setup script asking whether to
+/// keep or erase a disk that holds data, and the 10 GB margin as guidance;
+/// the operator's rulings of 2026-11-23 and 2026-11-24), Weaver Web's
+/// address and the note, then ends
+/// in the name's field and Begin, its one form, posting to `POST /pair`.
+/// It names no CPU requirement and offers no host install. No other page
+/// links it or holds the name's form, each read in three states: the setup
+/// begun and its box not paired, no register row standing; paired, whose
+/// write leaves the setup's own row the one row; and a second row
+/// registered through the register's page.
+///
+/// Perturbations: draw the name's form on Pair a box beside Create new
+/// agent; draw it on the unpaired Pair page alone; link the requirements
+/// page from `/setup` while no declaration is open, before any row
+/// stands. Each is an agent named, or the page reached, from another page.
+/// And drop the two disks' sentence that the appliance comes with no disk,
+/// or put "unless they choose others" back, and the page no longer says
+/// what the operator ruled.
 #[tokio::test]
-async fn the_start_page_draws_new_agent_once_an_agent_stands() {
+async fn the_requirements_page_is_reached_from_create_new_agent_alone() {
     let Some(rig) = crate::agents_tests::rig().await else {
         return;
     };
     let s = rig.store();
     let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
-    let before = page(&rig.app, "/setup", &ada).await;
-    assert!(!before.contains("<summary>New agent</summary>"), "{before}");
+    let entry = r#"<a href="/pair/new">Create new agent</a>"#;
+    let field = r#"<input type="text" name="name""#;
+    let form_of_name = r#"<form method="post" action="/pair">"#;
+    let pair = page(&rig.app, "/pair", &ada).await;
+    assert_eq!(pair.matches(entry).count(), 1, "{pair}");
+    assert!(!pair.contains(field), "{pair}");
+    assert!(!pair.contains(form_of_name), "{pair}");
+    assert!(!pair.contains("New agent</summary>"), "{pair}");
+
+    let new = page(&rig.app, "/pair/new", &ada).await;
     assert!(
-        before.contains(r#"<input type="text" name="name""#),
-        "{before}"
+        walk_staged(&new, PROVISION).is_empty(),
+        "{:?}",
+        walk_staged(&new, PROVISION)
     );
+    let headings: Vec<&str> = panes(&new)
+        .into_iter()
+        .map(|p| between(p, "<h2>", "</h2>").unwrap())
+        .collect();
+    assert_eq!(
+        headings,
+        [
+            "The VM",
+            "The operator's part",
+            "The two disks",
+            "Weaver Web's address",
+            "A note",
+            "Name the agent",
+        ]
+    );
+    for said in [
+        "An agent runs in a VM made from the appliance. This version covers VMs only.",
+        "One agent per VM is the recommendation.",
+        "The operator holds the hypervisor, the cards, the disks and the network between VMs.",
+        "The VM must reach Weaver Web's address and port.",
+        "GB10 Spark-class devices are hardware we want to deploy to and do not have yet.",
+    ] {
+        assert!(new.contains(said), "{said}: {new}");
+    }
+    // The two disks, in the operator's rulings of 2026-11-23 and 2026-11-24,
+    // in this order within their pane.
+    let disks = panes(&new)[2];
+    assert!(
+        disks.contains("the operator's rulings of 2026-11-23 and 2026-11-24</span>"),
+        "{disks}"
+    );
+    let mut from = 0;
+    for said in [
+        "The appliance comes with no state disk and no models disk. It comes with itself.",
+        "The operator adds both in the hypervisor, sized to their need: a models disk at \
+         least 10 GB larger than the model, and a state disk of at least 10 GiB.",
+        "The operator lays the disks before pairing, with our help. Each is mounted at its \
+         default path.",
+        "Where a disk already holds data, the appliance's setup script asks at the console \
+         whether to keep it or erase it.",
+        "The 10 GB margin is guidance. No page judges it.",
+    ] {
+        let at = disks[from..]
+            .find(said)
+            .unwrap_or_else(|| panic!("{said}, in order: {disks}"));
+        from += at + said.len();
+    }
+    // The default paths alone, until the console reads others (the
+    // operator's ruling of 2026-11-24): the survey's reader takes the two
+    // default mount points and no other.
+    assert!(!disks.contains("choose others"), "{disks}");
+    let forms: usize = panes(&new)
+        .iter()
+        .map(|p| p.matches("<form ").count())
+        .sum();
+    assert_eq!(forms, 1, "one form among the panes: {new}");
+    assert_eq!(new.matches(form_of_name).count(), 1, "{new}");
+    let last = *panes(&new).last().unwrap();
+    assert!(
+        last.contains(field) && last.contains(form_of_name),
+        "{last}"
+    );
+    let lowered = new.to_lowercase();
+    for never in ["cpu", "install on a host", "host install"] {
+        assert!(!lowered.contains(never), "{never}: {new}");
+    }
+
+    // No other page links it or names an agent, each read in each state.
+    async fn none_reach_it(app: &axum::Router, session: &str, others: &[String], state: &str) {
+        for uri in others {
+            let other = page(app, uri, session).await;
+            assert!(!other.contains("/pair/new"), "{state}, {uri}: {other}");
+            assert!(
+                !other.contains(r#"<form method="post" action="/pair">"#),
+                "{state}, {uri}: {other}"
+            );
+        }
+        let pair = page(app, "/pair", session).await;
+        assert_eq!(
+            pair.matches(r#"<a href="/pair/new">Create new agent</a>"#)
+                .count(),
+            1,
+            "{state}: {pair}"
+        );
+        assert!(
+            !pair.contains(r#"<form method="post" action="/pair">"#),
+            "{state}: {pair}"
+        );
+    }
+    let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
+    let setup = setup.unwrap();
+    let mut others = vec![
+        "/setup".to_owned(),
+        format!("/pair/{setup}"),
+        "/admin/agents".to_owned(),
+    ];
+    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM agent")
+        .fetch_one(&s.pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0, "no register row stands before the pairing");
+    none_reach_it(&rig.app, &ada, &others, "unpaired, no row").await;
+    paired(s, &setup).await;
+    for p in ["directories", "models", "placement", "confirm", "build"] {
+        others.push(format!("/setup/{setup}/{p}"));
+    }
+    none_reach_it(&rig.app, &ada, &others, "paired, its own row alone").await;
     let (status, _, handover) = send_as(
         &rig.app,
         "POST",
         "/admin/agents/register",
-        Some(form(&[("box", "box-a"), ("name", "karl")])),
+        Some(form(&[("box", "box-a"), ("name", "otto")])),
         &ada,
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{handover}");
-    let after = page(&rig.app, "/setup", &ada).await;
-    let opened = between(&after, "<details>", "</details>").expect("New agent stands");
-    assert!(
-        opened.starts_with("\n  <summary>New agent</summary>"),
-        "{opened}"
-    );
-    assert!(
-        opened.contains(r#"<input type="text" name="name""#),
-        "{opened}"
-    );
+    none_reach_it(&rig.app, &ada, &others, "a second row registered").await;
 }
 
-/// **A begin and the pairing page's write run from their first records to
+/// **A begin and the Pair page's write run from their first records to
 /// their outcomes in a task the request cannot cancel** (Spec 2.13, #150):
 /// each request dropped while its first record is held, the write still
-/// lands, its first record answered by its `ok` outcome, the start page
-/// links the setup the dropped begin opened, and the pairing page then
-/// reads the setup as it stands.
+/// lands, its first record answered by its `ok` outcome, Pair a box links
+/// the setup the dropped begin opened, and the Pair page then reads the
+/// setup as it stands.
 ///
 /// Perturbation: run step four in the request's own future
 /// (`admin::step_four` awaiting it in place), and the first write's
@@ -1064,39 +1437,32 @@ async fn a_begin_and_a_pairing_dropped_at_their_first_records_still_land() {
     let s = rig.store();
     let (person, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
 
-    dropped_at_the_hold(&rig.app, &person, &ada, "/setup", form(&[("name", "karl")])).await;
+    dropped_at_the_hold(&rig.app, &person, &ada, "/pair", form(&[("name", "karl")])).await;
     assert_eq!(outcome_of(s, &person, "setup begin").await, "ok");
     let setup: String = sqlx::query_scalar("SELECT setup_id FROM agent_setup WHERE name = 'karl'")
         .fetch_one(&s.pool)
         .await
         .expect("the begin landed");
-    let uri = format!("/setup/{setup}/pairing");
-    let start = page(&rig.app, "/setup", &ada).await;
+    let uri = format!("/pair/{setup}");
+    let start = page(&rig.app, "/pair", &ada).await;
     assert!(
-        start.contains(&uri),
-        "the start page links the setup the dropped begin opened: {start}"
+        start.contains(&format!(r#"href="{uri}""#)),
+        "Pair a box links the setup the dropped begin opened: {start}"
     );
-    let shown = page(&rig.app, &uri, &ada).await;
-    assert!(
-        !shown.contains(" checked> The box is a virtual machine"),
-        "{shown}"
-    );
-
-    dropped_at_the_hold(
-        &rig.app,
-        &person,
-        &ada,
-        &uri,
-        form(&[("version", "1"), ("virtual_machine", "on")]),
-    )
-    .await;
-    assert_eq!(outcome_of(s, &person, "setup pairing").await, "ok");
-    let kept = s.setup(&setup).await.unwrap().unwrap();
-    assert!(kept.virtual_machine, "the pairing's write landed");
-    assert_eq!(kept.version, 2);
     let shown = page(&rig.app, &uri, &ada).await;
     assert!(
         shown.contains(" checked> The box is a virtual machine"),
+        "a new setup's checkbox starts checked: {shown}"
+    );
+
+    dropped_at_the_hold(&rig.app, &person, &ada, &uri, form(&[("version", "1")])).await;
+    assert_eq!(outcome_of(s, &person, "setup pairing").await, "ok");
+    let kept = s.setup(&setup).await.unwrap().unwrap();
+    assert!(!kept.virtual_machine, "the pairing's write landed");
+    assert_eq!(kept.version, 2);
+    let shown = page(&rig.app, &uri, &ada).await;
+    assert!(
+        !shown.contains(" checked> The box is a virtual machine"),
         "{shown}"
     );
 }

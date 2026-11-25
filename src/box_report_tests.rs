@@ -1,6 +1,6 @@
 //! **The source's reading of the kept reports** (Spec 6.2): which report
 //! feeds the cards and which the box's members, the holds Confirm takes
-//! from the drives stage's report, and the state drive's figure. No store:
+//! from the latest report of either stage, and the state drive's figure. No store:
 //! `Reports::of` reads rows as the store hands them over.
 
 use chrono::{DateTime, TimeZone, Utc};
@@ -56,16 +56,31 @@ fn ordinals(cards: &[Card]) -> Vec<i32> {
     cards.iter().map(|c| c.ordinal).collect()
 }
 
+/// **The cards are the latest report's of either stage**, as the box's
+/// members are, so one tuple stands on one report (the Planner's ruling of
+/// 2026-11-24 on the review): the drives report's where it arrived last or
+/// on a tie, the pairing report's where that arrived after it, and none
+/// where the latest does not read, an earlier report that reads masking
+/// nothing.
 #[test]
-fn the_cards_are_the_drives_reports_where_it_reads_else_the_pairing_reports() {
+fn the_cards_are_the_latest_reports_of_either_stage() {
+    let (early, late) = (arrived(), arrived() + chrono::Duration::minutes(5));
     let both = kept(Some(pairing()), Some(EXAMPLE.to_owned()));
     let cards = both.cards().unwrap();
     assert_eq!(ordinals(&cards), vec![0, 1]);
     assert_eq!(cards[1].model, "NVIDIA RTX A5000");
+    let pairing_after = kept_at(&[
+        ("drives", EXAMPLE.to_owned(), early),
+        ("pairing", pairing(), late),
+    ]);
+    assert_eq!(ordinals(&pairing_after.cards().unwrap()), vec![0]);
     let pairing_alone = kept(Some(pairing()), None);
     assert_eq!(ordinals(&pairing_alone.cards().unwrap()), vec![0]);
-    let refused_drives = kept(Some(pairing()), Some("{}".to_owned()));
-    assert_eq!(ordinals(&refused_drives.cards().unwrap()), vec![0]);
+    let refused_drives_after = kept_at(&[
+        ("pairing", pairing(), early),
+        ("drives", "{}".to_owned(), late),
+    ]);
+    assert_eq!(refused_drives_after.cards(), None);
     assert_eq!(kept(None, None).cards(), None);
     assert_eq!(kept(Some("not json".to_owned()), None).cards(), None);
 }
@@ -135,16 +150,79 @@ fn the_box_members_are_the_drives_reports_typed_as_ruled() {
     }
 }
 
+/// The setup's kept reports, each with its own arrival.
+fn kept_at(rows: &[(&str, String, chrono::DateTime<Utc>)]) -> Reports {
+    let rows: Vec<_> = rows
+        .iter()
+        .map(|(stage, report, at)| ((*stage).to_owned(), report.clone(), *at))
+        .collect();
+    Reports::of(&rows)
+}
+
+/// The pairing stage's report of a box whose disks were laid before
+/// pairing (the operator's ruling of 2026-11-23): both drives mounted.
+fn laid_pairing() -> String {
+    edited(|v| v["stage"] = json!("pairing"))
+}
+
+/// **Confirm reads the latest report of either stage, and holds naming
+/// it** (the Planner's ruling of 2026-11-24 on the plan): a pairing-stage
+/// report alone gives the box's members, a drives-stage report arriving
+/// later is read in its place, a pairing-stage report arriving after a
+/// drives-stage one is read in its, and a tie goes to the drives stage.
+/// Where no report has arrived, or the latest is refused or misfiled,
+/// Confirm holds naming it, a refused latest never masked by an earlier
+/// report that reads.
 #[test]
-fn confirm_holds_naming_the_drives_report_while_it_is_absent_refused_or_misfiled() {
-    let waiting = kept(Some(pairing()), None).members().unwrap_err();
-    assert!(waiting.contains("drives stage's report"), "{waiting}");
-    let refused = kept(Some(pairing()), Some("{}".to_owned()))
-        .members()
-        .unwrap_err();
-    assert!(refused.contains("refused for cause 4"), "{refused}");
+fn confirm_reads_the_latest_report_of_either_stage_and_holds_naming_it() {
+    let (early, late) = (arrived(), arrived() + chrono::Duration::minutes(5));
+    let stage = |reports: Reports| reports.members().unwrap().report.stage;
+    assert_eq!(
+        stage(kept_at(&[("pairing", laid_pairing(), early)])),
+        "pairing"
+    );
+    assert_eq!(
+        stage(kept_at(&[
+            ("pairing", laid_pairing(), early),
+            ("drives", EXAMPLE.to_owned(), late),
+        ])),
+        "drives"
+    );
+    assert_eq!(
+        stage(kept_at(&[
+            ("drives", EXAMPLE.to_owned(), early),
+            ("pairing", laid_pairing(), late),
+        ])),
+        "pairing"
+    );
+    assert_eq!(
+        stage(kept_at(&[
+            ("pairing", laid_pairing(), early),
+            ("drives", EXAMPLE.to_owned(), early),
+        ])),
+        "drives"
+    );
+    let waiting = kept(None, None).members().unwrap_err();
+    assert_eq!(waiting, "no report of either stage has arrived");
+    // A pairing-stage report with its drives not mounted holds, naming them.
+    let unlaid = kept(Some(pairing()), None).members().unwrap_err();
+    assert!(unlaid.contains("is not mounted"), "{unlaid}");
+    let refused = kept_at(&[
+        ("pairing", laid_pairing(), early),
+        ("drives", "{}".to_owned(), late),
+    ])
+    .members()
+    .unwrap_err();
+    assert!(
+        refused.contains("the drives stage's report, the latest, is refused for cause 4"),
+        "{refused}"
+    );
     let misfiled = kept(None, Some(pairing())).members().unwrap_err();
-    assert!(misfiled.contains("names its stage pairing"), "{misfiled}");
+    assert!(
+        misfiled
+            .contains("the report kept as the drives stage's, the latest, names its stage pairing"),
+        "{misfiled}"
+    );
     let reports = kept(None, Some(pairing()));
     assert!(matches!(
         reports.drives,

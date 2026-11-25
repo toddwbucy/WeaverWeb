@@ -1,5 +1,6 @@
 //! conforms: web-the-start-page-refuses-every-name-the-box-refuses
 //! conforms: web-an-open-setups-adapter-pick-can-be-dropped-and-a-confirmed-setups-cannot
+//! conforms: web-a-new-setups-checkbox-starts-checked
 //!
 //! **The agent's setup** (Spec 6.2, migration `0026`): one row per setup,
 //! mutable until Confirm, written by an admin alone. Each write takes the
@@ -136,7 +137,8 @@ const SELECT: &str = "SELECT s.setup_id, s.name, s.virtual_machine, p.name AS be
      FROM agent_setup s JOIN person p ON p.person_id = s.begun_by";
 
 impl Store {
-    /// **The setups left open**, the oldest first, for the start page.
+    /// **The setups left open**, the oldest first, for the start page and
+    /// Pair a box.
     pub async fn open_setups(&self) -> anyhow::Result<Vec<Setup>> {
         let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
             "{SELECT} WHERE s.state = 'open' ORDER BY s.begun_at, s.setup_id"
@@ -157,14 +159,6 @@ impl Store {
         Ok(row.as_ref().map(setup_of))
     }
 
-    /// **Whether an agent stands in the register**, so the start page draws
-    /// New agent in the name's place. A retired row still stands there.
-    pub async fn an_agent_stands(&self) -> anyhow::Result<bool> {
-        Ok(sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM agent)")
-            .fetch_one(&self.pool)
-            .await?)
-    }
-
     /// **An admin's new setup of `name`**, already held to the start page's
     /// rule. Refused where an open setup holds the name, the one-open index
     /// deciding under concurrency.
@@ -180,8 +174,13 @@ impl Store {
         if let Err(refusal) = authorized(&mut tx, session_id, admin).await? {
             return Ok(Err(refusal));
         }
+        // **The Pair page's checkbox starts checked** (the operator's
+        // ruling of 2026-11-24): a new setup names the box a virtual
+        // machine. The column's default, a merged migration's, is not
+        // edited, and a setup saved unchecked keeps its value.
         let written = sqlx::query(
-            "INSERT INTO agent_setup (setup_id, name, begun_by) VALUES ($1, $2, $3) \
+            "INSERT INTO agent_setup (setup_id, name, begun_by, virtual_machine) \
+             VALUES ($1, $2, $3, TRUE) \
              ON CONFLICT (name) WHERE state = 'open' DO NOTHING",
         )
         .bind(setup_id)
@@ -196,7 +195,7 @@ impl Store {
         Ok(Ok(()))
     }
 
-    /// **The pairing page's checkbox**, over the open setup read at
+    /// **The Pair page's checkbox**, over the open setup read at
     /// `version`. Stale where the row is not what the page read.
     pub async fn setup_machine(
         &self,

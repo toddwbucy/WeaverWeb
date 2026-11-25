@@ -115,7 +115,7 @@ pub enum LastWord {
     Refused(String),
     /// The connection ended, or went silent, after the box's word and
     /// before the console's: the console may have written the row, and the
-    /// pairing page says what the write made.
+    /// Pair page says what the write made.
     Unknown,
 }
 

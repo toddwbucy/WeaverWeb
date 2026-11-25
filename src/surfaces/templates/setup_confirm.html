@@ -19,6 +19,9 @@
     </tbody>
   </table>
   {%- endif %}
+  {%- if let Some(href) = m.change %}
+  <p><a href="{{ href }}">Change it on the Pair page</a>, where the box was paired.</p>
+  {%- endif %}
   </div>
   {%- if m.why.is_some() %}
   <footer>Waits on {{ m.waits }}.</footer>

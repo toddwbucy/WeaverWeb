@@ -138,6 +138,12 @@ struct BoxKeys {
     claim: Claim,
 }
 
+/// A `pairing` stage report naming the box, which no page draws before
+/// the box's code matches.
+fn report_claimed(r#box: &str) -> String {
+    format!("{{\"claimed\":\"report-of-{box}\"}}")
+}
+
 fn request_of(key: &KeyPair) -> String {
     CertificateParams::new(Vec::<String>::new())
         .unwrap()
@@ -152,6 +158,10 @@ fn box_keys(r#box: &str) -> BoxKeys {
     let claim = Claim {
         r#box: r#box.into(),
         admin_request: request_of(&admin),
+        reports: vec![crate::link::frames::PairReport {
+            stage: crate::link::frames::Stage::Pairing,
+            report: report_claimed(r#box),
+        }],
     };
     BoxKeys { admin, claim }
 }
@@ -966,10 +976,11 @@ async fn a_request_of_another_kind_is_refused_at_the_exchange() {
 }
 
 /// **A lost word writes no row** (Spec 8.2, step 5): a box that closes
-/// before its word leaves no row, no link and a failed outcome.
+/// before its word leaves no row, no link, no report and a failed outcome.
 ///
 /// Perturbation: write the row without the box's word, and a row stands
-/// for an answer no box adopted.
+/// for an answer no box adopted; write the reports before the row's
+/// transaction, and a report stands for a pairing that wrote no row.
 #[tokio::test]
 async fn a_lost_word_writes_no_row() {
     let Some(rig) = rig().await else { return };
@@ -996,6 +1007,10 @@ async fn a_lost_word_writes_no_row() {
         "a row stands for an answer no box adopted"
     );
     assert!(s.setup(&setup).await.unwrap().unwrap().paired.is_none());
+    assert!(
+        s.setup_reports(&setup).await.unwrap().is_empty(),
+        "a report stands for a pairing that wrote no row"
+    );
     let failed: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM audit WHERE action = 'pair' AND outcome = 'failed'",
     )
@@ -1211,9 +1226,12 @@ async fn enrolled_on_box(
     );
     let (out, _) = p.into_inner();
     std::fs::write(dir.join("admin.request"), out).unwrap();
+    std::fs::write(dir.join("pairing.json"), report_claimed(r#box)).unwrap();
     let args = PairArgs {
         console: rig.listener().address().to_string(),
         admin_request: dir.join("admin.request"),
+        report: dir.join("pairing.json"),
+        drives_report: None,
         answer: dir.join("answer.json"),
         r#box: Some(r#box.into()),
     };
@@ -1457,7 +1475,18 @@ async fn a_setup_ask_beside_a_standing_connection_is_refused_and_counts_for_noth
     let (status, line) = report(&admin_config, Stage::Pairing, b"{}").await;
     assert_eq!(status, Status::Refused, "{line}");
     assert_eq!(line["reason"], "already_connected");
-    assert!(s.setup_reports(&setup).await.unwrap().is_empty());
+    let kept: Vec<String> = s
+        .setup_reports(&setup)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|(_, report, _)| report)
+        .collect();
+    assert_eq!(
+        kept,
+        [report_claimed("box-a")],
+        "the setup holds the pairing's own report alone"
+    );
     standing.close().await;
 }
 
@@ -1591,9 +1620,12 @@ async fn a_pair_whose_waiting_line_is_not_delivered_ends_at_once() {
     );
     let (out, _) = p.into_inner();
     std::fs::write(dir.path().join("admin.request"), out).unwrap();
+    std::fs::write(dir.path().join("pairing.json"), "{}").unwrap();
     let args = PairArgs {
         console: rig.listener.address().to_string(),
         admin_request: dir.path().join("admin.request"),
+        report: dir.path().join("pairing.json"),
+        drives_report: None,
         answer: dir.path().join("answer.json"),
         r#box: Some("box-a".into()),
     };
@@ -1841,6 +1873,13 @@ async fn a_setup_ask_the_store_holds_past_the_bound_is_refused_and_lets_its_clai
     let setup = setup.unwrap();
     let on_box = crate::test_dir::tempdir().unwrap();
     enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a", None).await;
+    // A row paired before the report crossed with the pairing: its setup
+    // holds none, so the held report is the only one that could land.
+    sqlx::query("DELETE FROM agent_setup_report WHERE setup_id = $1")
+        .bind(&setup)
+        .execute(&s.pool)
+        .await
+        .unwrap();
     let config = on_box.path().join("admin-con.toml");
     let the_box = SILENCE * 3;
 
@@ -2752,6 +2791,13 @@ async fn the_panes_are_served_in_each_status_as_the_box_reports() {
     let setup = setup.unwrap();
     let on_box = crate::test_dir::tempdir().unwrap();
     enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a", None).await;
+    // A row paired before the report crossed with the pairing: its setup
+    // holds none, which is the pane's waiting state.
+    sqlx::query("DELETE FROM agent_setup_report WHERE setup_id = $1")
+        .bind(&setup)
+        .execute(&rig.store().pool)
+        .await
+        .unwrap();
     let config = on_box.path().join("admin-con.toml");
     let page_of = |name: &str| {
         let (app, ada, uri) = (
@@ -2798,7 +2844,7 @@ async fn the_panes_are_served_in_each_status_as_the_box_reports() {
     let shown = page_of("pair").await;
     assert!(
         pane(&shown, pairing).contains(
-            "No report has arrived at the pairing stage. The appliance's setup script runs the survey and sends its report once the pairing has succeeded."
+            "No report has arrived at the pairing stage. A box brings its report with the pairing; this row was paired before the report crossed with it, and the appliance's setup script sends one with admin-con setup report."
         ),
         "{shown}"
     );
@@ -2902,4 +2948,99 @@ async fn the_panes_are_served_in_each_status_as_the_box_reports() {
         "{shown}"
     );
     assert!(crate::setup_tests::walk(&shown).is_empty());
+}
+
+/// **The reports land with the row in one transaction** (Spec 8.2, section
+/// 9): a pairing whose first frame carries a `pairing` and a `drives` stage
+/// report leaves both on the setup byte for byte once the box hears
+/// `paired`, and the Pair page shows the pairing stage's report, not the
+/// pane that waits for one.
+///
+/// Perturbation: drop the reports' insert from `pairing_write_on`, and the
+/// setup holds none.
+#[tokio::test]
+async fn the_report_lands_with_the_row_in_one_transaction() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
+    let setup = setup.unwrap();
+    let mut keys = box_keys("box-a");
+    let pairing = "{ \"cards\" : [1,  2] }\n";
+    let drives = "{\"disks\":[{\"model\":\"\\u00e9\"}]}";
+    keys.claim.reports = vec![
+        crate::link::frames::PairReport {
+            stage: Stage::Pairing,
+            report: pairing.into(),
+        },
+        crate::link::frames::PairReport {
+            stage: Stage::Drives,
+            report: drives.into(),
+        },
+    ];
+    let dialed = dial(&rig, &keys.claim).await;
+    let code = dialed.code().to_string();
+    let the_box = tokio::spawn(the_box(dialed, Box::Whole));
+    let (status, _, body) = enter(&rig, &ada, &setup, &code, None).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let (_, last) = the_box.await.unwrap();
+    assert_eq!(last, Some(LastWord::Paired));
+    let kept: Vec<(String, String)> = s
+        .setup_reports(&setup)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|(stage, report, _)| (stage, report))
+        .collect();
+    assert_eq!(
+        kept,
+        [
+            ("pairing".to_owned(), pairing.to_owned()),
+            ("drives".to_owned(), drives.to_owned())
+        ]
+    );
+    let page = page(&rig.app, &format!("/pair/{setup}"), &ada).await;
+    assert!(
+        !page.contains("No report has arrived at the pairing stage"),
+        "{page}"
+    );
+}
+
+/// **Nothing of a report is drawn before the code matches** (Spec 6.2,
+/// 8.2, section 9): while two boxes wait, each with a `pairing` stage
+/// report naming it, neither the start page nor the agent's Pair page,
+/// which lists the waiting boxes, draws a member of either.
+///
+/// Perturbation: draw a waiting box's report on its row (its report's text
+/// joined to the name it claims as its slot is listed), and the Pair page
+/// carries its member (measured 2026-11-25).
+#[tokio::test]
+async fn nothing_of_a_report_is_drawn_before_the_code_matches() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
+    let setup = setup.unwrap();
+    let first = dial(&rig, &box_keys("box-a").claim).await;
+    let second = dial(&rig, &box_keys("box-b").claim).await;
+    let until = tokio::time::Instant::now() + SOON;
+    while rig.listener.waiting().len() < 2 {
+        assert!(tokio::time::Instant::now() < until, "both boxes wait");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    for uri in ["/pair".to_owned(), format!("/pair/{setup}")] {
+        let shown = page(&rig.app, &uri, &ada).await;
+        for r#box in ["box-a", "box-b"] {
+            assert!(
+                !shown.contains(&format!("report-of-{box}")),
+                "{uri} draws {box}'s report: {shown}"
+            );
+        }
+    }
+    let pair = page(&rig.app, &format!("/pair/{setup}"), &ada).await;
+    assert!(
+        pair.contains("box-a") && pair.contains("box-b"),
+        "the page lists both boxes: {pair}"
+    );
+    drop((first, second));
 }

@@ -139,7 +139,7 @@
   <div class="body">
   {%- match report %}
   {%- when report::Shown::Waiting %}
-  <p>No report has arrived at the pairing stage. The appliance's setup script runs the survey and sends its report once the pairing has succeeded.</p>
+  <p>No report has arrived at the pairing stage. A box brings its report with the pairing; this row was paired before the report crossed with it, and the appliance's setup script sends one with admin-con setup report.</p>
   {%- when report::Shown::Refused with { arrived, number, words } %}
   <p>Arrived {{ arrived }}. Refused for cause {{ number }}: {{ words }}.</p>
   {%- when report::Shown::Misfiled with { arrived, names } %}
@@ -214,7 +214,7 @@
   </div>
   {%- match report %}
   {%- when report::Shown::Waiting %}
-  <footer>Waits on the box's report at the pairing stage, which the appliance's setup script sends.</footer>
+  <footer>Waits on the box's report at the pairing stage, which a row paired before the report crossed with the pairing receives from admin-con setup report.</footer>
   {%- when report::Shown::Refused with { arrived: _, number: _, words: _ } %}
   <footer>Neither the report's text nor the refusal's detail is drawn, the detail being in the console's log. Waits on a report at the pairing stage that the reader reads.</footer>
   {%- when report::Shown::Misfiled with { arrived: _, names: _ } %}

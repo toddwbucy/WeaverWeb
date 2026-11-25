@@ -39,11 +39,13 @@ pub const DIAL_SECS: u64 = 10;
 pub const REASON_BOUND: usize = 64;
 
 /// What the box claims in its first frame: its name, in section 2.12's
-/// grammar, and admin-con's certificate request (Spec 8.2).
+/// grammar, admin-con's certificate request, and the survey's reports
+/// (Spec 8.2).
 #[derive(Debug, Clone)]
 pub struct Claim {
     pub r#box: String,
     pub admin_request: String,
+    pub reports: Vec<crate::link::frames::PairReport>,
 }
 
 /// Why a dial ended before the box waits.
@@ -383,6 +385,7 @@ pub(crate) async fn over(tcp: TcpStream, host: &str, claim: &Claim) -> Result<Di
     let hello = PairFromBox::Hello {
         r#box: claim.r#box.clone(),
         admin_request: claim.admin_request.clone(),
+        reports: claim.reports.clone(),
     };
     let mut line = serde_json::to_string(&hello).expect("a frame serializes");
     #[cfg(test)]

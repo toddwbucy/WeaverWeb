@@ -1272,7 +1272,9 @@ and shows the code and the fingerprint of the certificate it met. In the console
 a box, where the agent is named, the Pair page shows the box waiting, and the operator compares the fingerprint with the console's own
 and enters the code. The connectors hand over the public halves of keys made in the box
 and receive their certificates. From then on every connection between the two is mutual
-TLS, and the code is spent. **The pairing belongs with the connectors, so it serves a
+TLS, and the code is spent. **The pairing carries the survey's report**, which is the
+receipt (the operator's rulings of 2026-11-25): the appliance sends it with its first
+frame, and the console keeps it with the agent's row in the one write that pairs. **The pairing belongs with the connectors, so it serves a
 host as it serves an appliance**, and the address may be localhost. **The reason is that
 trust has to be carried by hand once, in each direction.** The fingerprint the operator
 compares shows that the box reached this console, and the code lets the console know the

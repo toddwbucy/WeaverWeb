@@ -1685,6 +1685,7 @@ impl Store {
         pairing: &Pairing<'_>,
         admin_fingerprint: &str,
         authority: &str,
+        reports: &[crate::link::frames::PairReport],
     ) -> anyhow::Result<Result<Vec<String>, PairingRefusal>> {
         let mut tx = conn.begin().await?;
         admin.stands(&mut tx).await?;
@@ -1763,7 +1764,34 @@ impl Store {
         if linked != 1 {
             anyhow::bail!("the setup moved under its lock");
         }
+        // **The reports land with the row** (Spec 8.2), each the latest of
+        // its stage, in this one transaction: a page that says paired holds
+        // the receipt, and a write that does not commit leaves neither.
+        for report in reports {
+            sqlx::query(
+                "INSERT INTO agent_setup_report (setup_id, stage, report, arrived_at) \
+                 VALUES ($1, $2, $3, now()) \
+                 ON CONFLICT (setup_id, stage) \
+                 DO UPDATE SET report = EXCLUDED.report, arrived_at = EXCLUDED.arrived_at",
+            )
+            .bind(pairing.setup_id)
+            .bind(report.stage.as_str())
+            .bind(&report.report)
+            .execute(&mut *tx)
+            .await?;
+        }
         admin.commit(tx, pairing.act.action()).await?;
+        for report in reports {
+            if let Err(refused) = crate::survey::read(report.report.as_bytes()) {
+                tracing::warn!(
+                    setup = %pairing.setup_id,
+                    stage = report.stage.as_str(),
+                    cause = refused.cause.number(),
+                    detail = %refused.detail,
+                    "the survey's reader refused a setup report"
+                );
+            }
+        }
         Ok(Ok(revoked))
     }
 

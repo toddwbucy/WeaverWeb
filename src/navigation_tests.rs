@@ -340,7 +340,7 @@ async fn every_page_declares_its_tab_and_sub_tab() {
         .unwrap();
     let granted = host::grant_add(s, &ada_id, "observer", Some(&karl), None).await;
     assert!(granted.ok, "{}", granted.value);
-    let (_, _, setup) = crate::setup_tests::begin(&rig.app, &ada, "otto").await;
+    let (_, _, setup) = crate::setup_tests::begin(rig.store(), &ada, "otto").await;
     let setup = setup.expect("a setup opens");
     crate::setup_tests::paired(s, &setup).await;
 
@@ -360,7 +360,6 @@ async fn every_page_declares_its_tab_and_sub_tab() {
         "/passkeys",
         "/setup",
         "/pair",
-        "/pair/new",
         &format!("/pair/{setup}"),
         &format!("/setup/{setup}/models"),
         &format!("/setup/{setup}/directories"),
@@ -386,7 +385,6 @@ async fn every_page_declares_its_tab_and_sub_tab() {
         ("IAM", Some("SSH keys")),
         ("IAM", Some("Passkeys")),
         ("Agents", Some("1 Declare Declarations")),
-        ("Agents", Some("1 Declare New agent")),
         ("Agents", Some("1 Declare New agent")),
         ("Agents", Some("1 Declare New agent")),
         ("Agents", Some("1 Declare Declarations")),

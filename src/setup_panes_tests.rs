@@ -85,7 +85,7 @@ async fn the_pairing_pages_report_is_served_waiting_refused_misfiled_and_read() 
     };
     let (ada, setup) = setup_of(&rig, "karl").await;
     let uri = format!("/pair/{setup}");
-    let (_, _, unpaired) = crate::setup_tests::begin(&rig.app, &ada, "otto").await;
+    let (_, _, unpaired) = crate::setup_tests::begin(rig.store(), &ada, "otto").await;
     *reported.pairing.lock().unwrap() = Some(report("pairing"));
     let page = read(&rig.app, &format!("/pair/{}", unpaired.unwrap()), &ada).await;
     assert!(!page.contains(PAIRING_PANE), "unpaired: {page}");

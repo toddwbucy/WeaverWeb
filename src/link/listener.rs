@@ -1251,6 +1251,22 @@ impl Listener {
         self.inner.waiting.take(code).await
     }
 
+    /// **The waiting connection `handle` names, asked alone** (Spec 8.2):
+    /// New agent's entry, taken where `code` is its own, else a miss on it,
+    /// the last of `pairing::TRIES` closing it (`Waiting::take_chosen`).
+    /// The wait of the connection `handle` named ended lately (Spec 8.2).
+    pub fn wait_ended(&self, handle: &str) -> bool {
+        self.inner.waiting.wait_ended(handle)
+    }
+
+    pub async fn take_chosen(
+        &self,
+        handle: &str,
+        code: &crate::link::pair_code::Code,
+    ) -> crate::link::pairing::Chosen {
+        self.inner.waiting.take_chosen(handle, code).await
+    }
+
     /// A test's lever: a probe for `code` its entry gave up on, read by
     /// every waiting connection (`Waiting::probe_abandoned`).
     #[cfg(test)]

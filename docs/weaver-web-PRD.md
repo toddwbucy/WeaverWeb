@@ -177,7 +177,7 @@ agent in a way that blocks many.
 
 | stage | what it holds | backing |
 | --- | --- | --- |
-| 1 Declare | New agent, the stage's first page (the operator's ruling of 2026-11-25: "A. Eight stages stay. New agent is the first page of stage 1."), a page of its own where the agent is named (the operator's rulings of 2026-11-23: "Pairing is its own page", and "the agent is named at pairing"), from the requirements page its Create new agent opens (the operator's ruling of 2026-11-24), and the box's side of the setup (the operator's rulings of 2026-11-16, setup pages, and their addendum, and of 2026-11-23): the operator lays the disks before pairing, a state disk and a models disk at least 10 GB larger than the model, with the appliance's setup script's help; at the appliance's first console login a setup prompt's one command starts that script, which walks the operator through finishing setup, the disks included, asks this server's address and port and ends in pairing; the box dials this server over TLS and shows a short one-time code and this server's fingerprint; on the Pair page the operator compares the fingerprint and enters the code; the connectors send the public halves of keys made in the box, this server signs them, and mutual TLS comes up; the survey's report crosses over TLS. The pairing is the connectors' and serves a host too. Weaver Web lists and formats no disk. Then a start page, the setup pages and the build page (the operator's rulings of 2026-11-16, setup pages, and their addendum, and of 2026-11-23): the start page lists the paired agents whose declaration is open, the agent being named where its box is paired, under New agent; the declaration starts at directories, and the setup pages run, in order, the directories as the box mounted them, the models, the placement and the confirmed deployment tuple; the build page holds the board, which wires what was declared, and the prompt tuple panel | partly: New agent is built; the start page and the setup pages stand to the confirm page, each part live or held (Spec 6.2); the declaration screen of 2026-11-11 saves versioned declarations and shows the file each will become (Spec 6.1), and stays as built beside them; the build page is held, the board waiting on contracts WeaverAgent has yet to write |
+| 1 Declare | New agent, the stage's first page (the operator's ruling of 2026-11-25: "A. Eight stages stay. New agent is the first page of stage 1."), a page of its own where the agent is named (the operator's rulings of 2026-11-23: "Pairing is its own page", and "the agent is named at pairing"), holding what an agent needs, the steps at the appliance and one form, with no click before them (the operator's rulings of 2026-11-25), and the box's side of the setup (the operator's rulings of 2026-11-16, setup pages, and their addendum, of 2026-11-23 and of 2026-11-25): the operator adds a state disk and a models disk at least 10 GB larger than the model; over SSH the operator runs the appliance's setup script by one command, which walks the operator through finishing setup, the cards and the disks included, asks this server's management address and the appliance's name, and ends in pairing; the appliance dials this server over TLS, is listed as awaiting final initialization, and shows a short one-time code and this server's fingerprint; on New agent the operator compares the fingerprint, chooses the appliance, names the agent and enters the code; the connectors send the public halves of keys made in the box, this server signs them, and mutual TLS comes up; the survey's report crosses over TLS. The pairing is the connectors' and serves a host too. Weaver Web lists and formats no disk. Then a start page, the setup pages and the build page (the operator's rulings of 2026-11-16, setup pages, and their addendum, and of 2026-11-23): the start page lists the paired agents whose declaration is open, the agent being named where its box is paired, under New agent; the declaration starts at directories, and the setup pages run, in order, the directories as the box mounted them, the models, the placement and the confirmed deployment tuple; the build page holds the board, which wires what was declared, and the prompt tuple panel | partly: New agent is built; the start page and the setup pages stand to the confirm page, each part live or held (Spec 6.2); the declaration screen of 2026-11-11 saves versioned declarations and shows the file each will become (Spec 6.1), and stays as built beside them; the build page is held, the board waiting on contracts WeaverAgent has yet to write |
 | 2 Provision | After pairing, the box pulls the model from this server's cache over TLS. Laying the disks is the operator's with the appliance's script, and a host's own script is later. A host install points at a state directory and a models directory and attaches and formats nothing. Every root act runs on the box at a screen the operator is sitting at, and this server's reach is the two connectors from pairing onward (section 10). Installing the declaration Declare saved is the operator's work on the box as built, and no console verb does it. Then `validate`, which reads the installed declaration. Registration and its one-time config handover stand as built | partly: the register page and the one-time config handover are built, and the installing of the declaration and the validate step are not |
 | 3 Run | load, serve turns through the gate, unload | built; `load` is offered as every verb is, where the person's grants and the connection's ceiling carry it |
 | 4 Observe | availability, alerts, the live trace | built |
@@ -234,23 +234,24 @@ beside them, reached from the build page's stub for the fields no setup page ask
 6.1).
 
 - **New agent comes first, the first page of stage 1** (the operator's ruling of
-  2026-11-25). Its Create new agent opens the
-  requirements page, which states what an agent needs, VMs only at this stage, with the
-  10 GB margin as guidance and a note on GB10 Spark-class devices, and offers no host
-  install (the operator's ruling of 2026-11-24). The page ends in the agent's name, one
-  field, the one place an agent is named, because the appliance names its directories
-  and admin entry after the agent. The agent's pairing says what to
-  do at the appliance: at its first console login, the setup prompt's one command starts
-  the appliance's setup script, which asks Weaver Web's address and port, shown on the
-  page. The page shows the box waiting, which dialed this server from the script, and
-  the operator compares the fingerprint the box shows with this server's own, shown in
-  four rows of four groups as the script shows it (the operator's ruling of
-  2026-11-24), and enters the short one-time code the box shows (section 10.1). A
-  checkbox says whether the box is a virtual machine or a host, and starts checked (the
-  same day's ruling). Where the address is localhost and the checkbox says virtual
-  machine, the page warns that the console could lose access to itself. Once the box is
-  paired, the page shows the report the box's survey sent over TLS, read only, and leads
-  into the agent's directories (the operator's rulings of 2026-11-24).
+  2026-11-25), and holds everything before the pairing with no click before it (his yes
+  of the same day). It says the suite is meant for a trusted network, the place a
+  hypervisor goes; states what an agent needs, VMs only at this stage, the two disks
+  the operator adds with the 10 GB margin as guidance, and a note on GB10 Spark-class
+  devices, offering no host install (the operator's rulings of 2026-11-23, 2026-11-24
+  and 2026-11-25); and says what to do at the appliance: connect over SSH, run the setup
+  script by one command (the operator's rulings of 2026-11-25), give it Weaver Web's
+  address on the management plane, shown on the page, and name the appliance, after
+  which it dials this server. The page lists the appliances awaiting final
+  initialization, each by the name typed in its setup script. The operator compares the
+  fingerprint the SSH session shows with this server's own, in four rows of four groups
+  (the operator's ruling of 2026-11-24), chooses the appliance, names the agent, the one
+  place an agent is named because the appliance names its directories and admin entry
+  after it, enters the short one-time code (section 10.1), and finalizes the pairing in
+  one form. A miss writes nothing, and three close that appliance's connection. The
+  setup is a virtual machine. Once paired, the agent's Pair page shows the report the
+  box's survey sent over TLS, read only, and leads into the agent's directories (the
+  operator's rulings of 2026-11-24).
 - **The start page** lists the paired agents whose declaration is open.
 - **The directories**, as the box mounted them, where the declaration starts. The
   operator lays the disks before pairing (section 10.4), and Weaver Web lists and
@@ -267,7 +268,7 @@ beside them, reached from the build page's stub for the fields no setup page ask
   unit, GiB, serves the whole flow.
 - **The models.** The models directory's need, computed from the chosen files, judged
   against the directory the box reports, free space short of it a warning only. No page
-  judges the models disk's margin, which the requirements page states as guidance (the
+  judges the models disk's margin, which New agent states as guidance (the
   operator's ruling of 2026-11-24). A
   Hugging Face repository, then a pick from its files, a split model shown as one choice
   with all its parts, and the precision read from the file (section 10.4). What is built

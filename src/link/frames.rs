@@ -704,6 +704,11 @@ pub mod pair_reason {
     /// A report is not one JSON object within its bound, or a stage is
     /// named twice.
     pub const REPORT_REFUSED: &str = "report_refused";
+    /// The `pairing` report's `format` does not read as `weaver-survey/2`:
+    /// another version, none, one of another type, or a report from which
+    /// no member can be read (Spec 8.2, the Planner's rulings of
+    /// 2026-11-25).
+    pub const FORMAT_REFUSED: &str = "format_refused";
 }
 
 #[cfg(test)]

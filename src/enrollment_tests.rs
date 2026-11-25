@@ -139,9 +139,10 @@ struct BoxKeys {
 }
 
 /// A `pairing` stage report naming the box, which no page draws before
-/// the box's code matches.
+/// the box's code matches. Its `format` reads as `weaver-survey/2`, the
+/// one member the first frame reads.
 fn report_claimed(r#box: &str) -> String {
-    format!("{{\"claimed\":\"report-of-{box}\"}}")
+    format!("{{\"format\":\"weaver-survey/2\",\"claimed\":\"report-of-{box}\"}}")
 }
 
 fn request_of(key: &KeyPair) -> String {
@@ -1613,7 +1614,11 @@ async fn a_pair_whose_waiting_line_is_not_delivered_ends_at_once() {
     );
     let (out, _) = p.into_inner();
     std::fs::write(dir.path().join("admin.request"), out).unwrap();
-    std::fs::write(dir.path().join("pairing.json"), "{}").unwrap();
+    std::fs::write(
+        dir.path().join("pairing.json"),
+        r#"{"format":"weaver-survey/2"}"#,
+    )
+    .unwrap();
     let args = PairArgs {
         console: rig.listener.address().to_string(),
         admin_request: dir.path().join("admin.request"),
@@ -2947,7 +2952,7 @@ async fn the_report_lands_with_the_row_in_one_transaction() {
     let (_, _, setup) = begin(rig.store(), &ada, "karl").await;
     let setup = setup.unwrap();
     let mut keys = box_keys("box-a");
-    let pairing = "{ \"cards\" : [1,  2], \"disks\":[{\"model\":\"\\u00e9\"}] }\n";
+    let pairing = "{ \"format\": \"weaver-survey/2\", \"cards\" : [1,  2], \"disks\":[{\"model\":\"\\u00e9\"}] }\n";
     keys.claim.reports = vec![crate::link::frames::PairReport {
         stage: Stage::Pairing,
         report: pairing.into(),

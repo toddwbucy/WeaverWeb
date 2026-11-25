@@ -7,7 +7,7 @@
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use crate::survey::{Cause, Mount, Planes, QUOTE_BOUND, Role, read};
+use crate::survey::{Cause, Mount, Planes, QUOTE_BOUND, Role, format_taken, read};
 
 /// The format's worked example, carried byte for byte (its section 6).
 const EXAMPLE: &str = include_str!("../tests/fixtures/weaver-survey-2-worked-example.json");
@@ -1081,4 +1081,50 @@ fn a_refusals_detail_escapes_a_control_or_non_ascii_byte() {
     let address = read(one_address("\u{1b}[2J", 24).as_bytes()).unwrap_err();
     assert_eq!(address.cause, Cause::Network);
     assert!(printable(&address.detail), "{:?}", address.detail);
+}
+
+/// **What the pairing's first frame reads: the format alone** (Spec 8.2),
+/// answered yes or no. Version 2's example, and reports of version 2 the
+/// reader refuses for another cause, read yes. Another version, version 1
+/// among them; a `format` missing, of another type or given twice at the
+/// top; and a report from which the reader reads no member read no. The
+/// reader's own detail for version 1 stays where it is read, on a stored
+/// report (`refusal_4_...`).
+#[test]
+fn the_first_frame_reads_the_format_alone() {
+    assert!(format_taken(EXAMPLE.as_bytes()));
+    for other_cause in [
+        r#"{"format":"weaver-survey/2"}"#.to_owned(),
+        later(r#"{"a": 1, "a": 2}"#),
+        replaced("\"family\": 25,", "\"family\": -1,"),
+        edited(|v| v["stage"] = json!("drives")),
+        r#"{"format":"weaver-survey/2","x":{"format":1,"format":2}}"#.to_owned(),
+    ] {
+        assert!(read(other_cause.as_bytes()).is_err());
+        assert!(format_taken(other_cause.as_bytes()), "{other_cause}");
+    }
+    let mut latin = br#"{"format":"weaver-survey/2","x":"e"}"#.to_vec();
+    let at = latin.len() - 3;
+    latin[at] = 0xE9;
+    let past = format!("{}{EXAMPLE}", " ".repeat(65537 - EXAMPLE.len()));
+    for report in [
+        VERSION_1.as_bytes(),
+        br#"{"format":"weaver-survey/3"}"#,
+        br#"{"format":"weaver-survey/2 "}"#,
+        b"{}",
+        br#"{"format":null}"#,
+        br#"{"format":["weaver-survey/2"]}"#,
+        br#"{"format":"weaver-survey/2","format":"weaver-survey/2"}"#,
+        b"[]",
+        b"{\"format\":\"weaver-survey/2\"}  \n\n",
+        "\u{feff}{\"format\":\"weaver-survey/2\"}".as_bytes(),
+        &latin,
+        past.as_bytes(),
+    ] {
+        assert!(
+            !format_taken(report),
+            "{:?}",
+            String::from_utf8_lossy(report)
+        );
+    }
 }

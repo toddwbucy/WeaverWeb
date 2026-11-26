@@ -127,6 +127,23 @@ impl Store {
         .await?)
     }
 
+    /// **Which loop ran at the agent's last load** (Spec 2.12, migration
+    /// `0036`): `compiled` or the wire file's digest, with the load event's
+    /// date; the member none and its date set where the last load event
+    /// named no loop the page reads; both none where no load event landed.
+    pub async fn loop_ran(
+        &self,
+        agent: &AgentId,
+    ) -> anyhow::Result<(Option<String>, Option<DateTime<Utc>>)> {
+        let row = sqlx::query("SELECT loop_ran, loop_ran_at FROM agent WHERE agent_id = $1")
+            .bind(agent.as_str())
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row
+            .map(|r| (r.get("loop_ran"), r.get("loop_ran_at")))
+            .unwrap_or((None, None)))
+    }
+
     /// **A person's save** of a text the surface checked, at the version
     /// they read (0 where none was saved): in one transaction under the
     /// identity exclusion held shared, the session and the `operator` grant

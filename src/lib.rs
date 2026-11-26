@@ -48,6 +48,8 @@ pub mod listen;
 #[cfg(test)]
 mod listen_tests;
 #[cfg(all(test, feature = "passkeys"))]
+mod loop_tests;
+#[cfg(all(test, feature = "passkeys"))]
 mod model_pull_tests;
 #[cfg(all(test, feature = "passkeys"))]
 mod navigation_tests;

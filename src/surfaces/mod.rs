@@ -23,6 +23,7 @@ pub mod grants;
 pub mod hugging_face;
 #[cfg(feature = "passkeys")]
 pub mod keys;
+pub mod loop_page;
 pub mod reading;
 pub mod record;
 pub mod setup;

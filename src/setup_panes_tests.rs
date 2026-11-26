@@ -328,6 +328,33 @@ async fn the_pair_page_draws_the_network_and_what_a_blank_appliance_lacks() {
     );
 }
 
+/// **The Build page says the agent's account and its folder are laid at the
+/// pairing** (Spec 6.2, the operator's words of 2026-11-25), and the box
+/// lays the rest of the agent from the tuple once Confirm stands. It never
+/// says the box lays the whole agent after Confirm. The Pair page's paired
+/// line is pinned where a pairing draws it, in
+/// `enrollment_tests::a_pairing_issues_one_certificate_and_leaves_the_gate_not_enrolled`.
+///
+/// Perturbation: the old sentence put back, "The box lays the agent from
+/// the deployment tuple once Confirm stands." (measured 2026-11-26).
+#[tokio::test]
+async fn the_build_page_says_the_account_is_laid_at_the_pairing() {
+    let reported = Arc::new(Reported::default());
+    let Some((rig, _fake, _, _cache)) = rig_boxed(false, reported.clone()).await else {
+        return;
+    };
+    let (ada, setup) = setup_of(&rig, "karl").await;
+    let build = read(&rig.app, &format!("/setup/{setup}/build"), &ada).await;
+    assert!(
+        build.contains("<p>The appliance's setup script lays the agent's account and its folder at the pairing. The box lays the rest of the agent from the deployment tuple once Confirm stands."),
+        "{build}"
+    );
+    assert!(
+        !build.contains("The box lays the agent from the deployment tuple"),
+        "{build}"
+    );
+}
+
 /// **A value a report chose is drawn through the templates' escaping**
 /// (Spec 6.2): a read report whose machine's product and a card's model
 /// hold a script element draws them escaped, as askama escapes `<` and

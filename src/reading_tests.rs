@@ -952,3 +952,100 @@ async fn an_unrecovered_call_passes_the_relay_the_window_and_the_live_view() {
         .unwrap()
         .unwrap();
 }
+
+/// **A row whose gate plane is not enrolled reads admin alone and never
+/// present, and raises no turns banner** (Spec 8, 2.14, section 9): with
+/// admin-con connected the agent page reads "admin alone" with `ok`, the
+/// gate-con mark "not enrolled", the turn form held saying gate-con is
+/// created at the loop's install; with admin-con gone, "admin alone,
+/// admin-con down" as a fault; the register page says the same in each
+/// state; never present, and neither the agent page nor the list carries
+/// "turns unavailable". The reader holds `operator`, whose role carries
+/// `turn`, so the held turn form is the gate's doing.
+///
+/// Perturbation: raise the banner for a gate that is not revoked
+/// (`unavailable_for`), and the agent page carries "turns unavailable";
+/// draw "admin alone" on the register page whatever admin-con's
+/// connection, and it fails (each measured 2026-11-25).
+#[tokio::test]
+async fn an_agent_with_admin_con_alone_reads_admin_alone_and_never_present() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, admin_session) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (karl, handles) = rig.register(&admin_session, "box-a", "karl").await;
+    let (_, _, admin_config) = rig.take(&handles[1], &admin_session).await;
+    let (bea, session) = signed_in(&rig.app, s, &mut authenticator(), "bea").await;
+    // `operator` holds `turn`, so the turn form's absence is the gate's
+    // doing and not the role's.
+    let granted = host::grant_add(s, &bea, "operator", Some(&karl), None).await;
+    assert!(granted.ok, "{}", granted.value);
+    sqlx::query(
+        "UPDATE agent SET gate_fingerprint = NULL, gate_authority = NULL, gate_state = 'none' \
+         WHERE agent_id = $1",
+    )
+    .bind(&karl)
+    .execute(&s.pool)
+    .await
+    .unwrap();
+    let mut admin_con = Connector::dial_with(&admin_config, &[]).await;
+    assert!(matches!(
+        admin_con.recv().await,
+        Some(ToClient::HelloAnswer { .. })
+    ));
+    let read = |uri: String| {
+        let (app, session) = (rig.app.clone(), session.clone());
+        async move {
+            let (status, _, page) = send_as(&app, "GET", &uri, None, &session).await;
+            assert_eq!(status, StatusCode::OK, "{page}");
+            page
+        }
+    };
+    let page = read(format!("/agents/{karl}")).await;
+    assert!(
+        page.contains(r#"<span class="status ok">admin alone</span>"#),
+        "{page}"
+    );
+    assert!(
+        page.contains("No turn: gate-con is created at the loop's install."),
+        "{page}"
+    );
+    assert!(page.contains("not enrolled"), "{page}");
+    assert!(!page.contains("both planes connected"), "{page}");
+    assert!(!page.contains("turns unavailable"), "{page}");
+    let list = read("/agents".to_owned()).await;
+    assert!(list.contains("<td>not enrolled</td>"), "{list}");
+    assert!(!list.contains("turns unavailable"), "{list}");
+    let (_, _, register) = send_as(&rig.app, "GET", "/admin/agents", None, &admin_session).await;
+    assert!(
+        register.contains(r#"<span class="status ok">admin alone</span>"#),
+        "{register}"
+    );
+
+    drop(admin_con);
+    let until = tokio::time::Instant::now() + Duration::from_secs(5);
+    while s
+        .agent(&karl.parse().unwrap())
+        .await
+        .unwrap()
+        .unwrap()
+        .admin
+        .connected
+    {
+        assert!(
+            tokio::time::Instant::now() < until,
+            "admin-con's drop is seen"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let page = read(format!("/agents/{karl}")).await;
+    assert!(
+        page.contains(r#"<span class="status fail">admin alone, admin-con down</span>"#),
+        "{page}"
+    );
+    assert!(!page.contains("turns unavailable"), "{page}");
+    let (_, _, register) = send_as(&rig.app, "GET", "/admin/agents", None, &admin_session).await;
+    assert!(
+        register.contains(r#"<span class="status fail">admin alone, admin-con down</span>"#),
+        "the register page says admin-con is down: {register}"
+    );
+}

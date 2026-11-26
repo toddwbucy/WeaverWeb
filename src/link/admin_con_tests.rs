@@ -272,6 +272,17 @@ impl Running {
         Self::launch(config(path), Arc::new(NoVerbs), Some(path.to_owned()), FAST)
     }
 
+    /// As the binary runs it: `admin_con::run_as_configured`, whose invoker the config
+    /// chooses (Spec 7.2).
+    fn serving(cfg: AdminConConfig) -> Self {
+        let (stop, shutdown) = watch::channel(false);
+        let (status_tx, status) = watch::channel(LinkStatus::default());
+        let task = tokio::spawn(async move {
+            admin_con::run_as_configured(cfg, None, FAST, shutdown, &status_tx).await
+        });
+        Self { stop, status, task }
+    }
+
     fn launch<I: Invoker>(
         cfg: AdminConConfig,
         invoker: Arc<I>,
@@ -606,9 +617,9 @@ async fn admin_con_answers_an_ask_outside_its_ceiling_and_keeps_the_connection()
     let invoker = FakeInvoker::new(&["show"], "idle");
     let cfg = AdminConConfig {
         link: server.link(Plane::Admin),
-        trace_socket: trace.socket.clone(),
-        weaver_admin: PathBuf::from(NO_WEAVER_ADMIN),
-        admin_log: trace.admin_log.clone(),
+        trace_socket: Some(trace.socket.clone()),
+        weaver_admin: Some(PathBuf::from(NO_WEAVER_ADMIN)),
+        admin_log: Some(trace.admin_log.clone()),
         backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
         verb_bound: admin_con::VERB_BOUND,
         stop_grace: GRACE,
@@ -1112,8 +1123,14 @@ async fn an_admin_con_config_that_is_not_trusted_is_refused_at_start() {
         ),
     );
     assert!(refused(&gate).contains("gate plane"));
-    let missing = write("missing.toml", text(Plane::Admin, ""));
-    assert!(refused(&missing).contains("trace_socket"));
+    // With no agent laid the three box facts are absent, and the config
+    // loads (Spec 7.2).
+    let bare = write("bare.toml", text(Plane::Admin, ""));
+    let bare = AdminConConfig::load(&bare).unwrap();
+    assert_eq!(
+        (bare.trace_socket, bare.weaver_admin, bare.admin_log),
+        (None, None, None)
+    );
     let relative = write(
         "relative.toml",
         text(
@@ -1532,9 +1549,9 @@ async fn an_ask_during_the_replay_waits_behind_one_frame_not_a_step() {
     let invoker = FakeInvoker::new(&["show"], "idle");
     let cfg = AdminConConfig {
         link: server.link(Plane::Admin),
-        trace_socket: trace.socket.clone(),
-        weaver_admin: PathBuf::from(NO_WEAVER_ADMIN),
-        admin_log: trace.admin_log.clone(),
+        trace_socket: Some(trace.socket.clone()),
+        weaver_admin: Some(PathBuf::from(NO_WEAVER_ADMIN)),
+        admin_log: Some(trace.admin_log.clone()),
         backfill_bytes: 16 * 1024 * 1024,
         verb_bound: admin_con::VERB_BOUND,
         stop_grace: GRACE,
@@ -1629,9 +1646,9 @@ async fn an_ordinary_verb_asked_during_the_replay_waits_for_caught_up_and_the_dr
     let invoker = FakeInvoker::new(&["show"], "idle");
     let cfg = AdminConConfig {
         link: server.link(Plane::Admin),
-        trace_socket: trace.socket.clone(),
-        weaver_admin: PathBuf::from(NO_WEAVER_ADMIN),
-        admin_log: trace.admin_log.clone(),
+        trace_socket: Some(trace.socket.clone()),
+        weaver_admin: Some(PathBuf::from(NO_WEAVER_ADMIN)),
+        admin_log: Some(trace.admin_log.clone()),
         backfill_bytes: 4 * 1024 * 1024,
         verb_bound: admin_con::VERB_BOUND,
         stop_grace: GRACE,
@@ -1731,9 +1748,9 @@ async fn a_stop_against_a_server_that_stopped_reading_returns_within_the_grace()
     trace.append_raw(body.as_bytes());
     let cfg = AdminConConfig {
         link: server.link(Plane::Admin),
-        trace_socket: trace.socket.clone(),
-        weaver_admin: PathBuf::from(NO_WEAVER_ADMIN),
-        admin_log: trace.admin_log.clone(),
+        trace_socket: Some(trace.socket.clone()),
+        weaver_admin: Some(PathBuf::from(NO_WEAVER_ADMIN)),
+        admin_log: Some(trace.admin_log.clone()),
         backfill_bytes: 32 * 1024 * 1024,
         verb_bound: admin_con::VERB_BOUND,
         stop_grace: GRACE,
@@ -1777,9 +1794,9 @@ async fn a_stop_during_an_opening_that_waits_on_its_read_returns_within_the_grac
     trace.relay.hold(true);
     let cfg = AdminConConfig {
         link: server.link(Plane::Admin),
-        trace_socket: trace.socket.clone(),
-        weaver_admin: PathBuf::from(NO_WEAVER_ADMIN),
-        admin_log: trace.admin_log.clone(),
+        trace_socket: Some(trace.socket.clone()),
+        weaver_admin: Some(PathBuf::from(NO_WEAVER_ADMIN)),
+        admin_log: Some(trace.admin_log.clone()),
         backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
         verb_bound: admin_con::VERB_BOUND,
         stop_grace: GRACE,
@@ -3181,9 +3198,9 @@ async fn no_opening_is_taken_while_an_openings_hold_stands() {
     let invoker = FakeInvoker::new(&["show"], "idle");
     let cfg = AdminConConfig {
         link: server.link(Plane::Admin),
-        trace_socket: trace.socket.clone(),
-        weaver_admin: PathBuf::from(NO_WEAVER_ADMIN),
-        admin_log: trace.admin_log.clone(),
+        trace_socket: Some(trace.socket.clone()),
+        weaver_admin: Some(PathBuf::from(NO_WEAVER_ADMIN)),
+        admin_log: Some(trace.admin_log.clone()),
         backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
         verb_bound: admin_con::VERB_BOUND,
         stop_grace: GRACE,
@@ -3382,9 +3399,9 @@ async fn an_openings_show_asked_late_is_still_served_first() {
     invoker.slow("validate", Duration::from_secs(3));
     let cfg = AdminConConfig {
         link: server.link(Plane::Admin),
-        trace_socket: trace.socket.clone(),
-        weaver_admin: PathBuf::from(NO_WEAVER_ADMIN),
-        admin_log: trace.admin_log.clone(),
+        trace_socket: Some(trace.socket.clone()),
+        weaver_admin: Some(PathBuf::from(NO_WEAVER_ADMIN)),
+        admin_log: Some(trace.admin_log.clone()),
         backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
         verb_bound: admin_con::VERB_BOUND,
         stop_grace: GRACE,
@@ -3514,9 +3531,9 @@ async fn the_openings_hold_covers_the_servers_deadline() {
     invoker.slow("validate", Duration::from_secs(3));
     let cfg = AdminConConfig {
         link: server.link(Plane::Admin),
-        trace_socket: trace.socket.clone(),
-        weaver_admin: PathBuf::from(NO_WEAVER_ADMIN),
-        admin_log: trace.admin_log.clone(),
+        trace_socket: Some(trace.socket.clone()),
+        weaver_admin: Some(PathBuf::from(NO_WEAVER_ADMIN)),
+        admin_log: Some(trace.admin_log.clone()),
         backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
         verb_bound: admin_con::VERB_BOUND,
         stop_grace: GRACE,
@@ -3623,9 +3640,9 @@ async fn a_hello_answered_late_still_leaves_the_verification_its_reserve() {
         .store(300, Ordering::SeqCst);
     let cfg = AdminConConfig {
         link: server.link(Plane::Admin),
-        trace_socket: trace.socket.clone(),
-        weaver_admin: PathBuf::from(NO_WEAVER_ADMIN),
-        admin_log: trace.admin_log.clone(),
+        trace_socket: Some(trace.socket.clone()),
+        weaver_admin: Some(PathBuf::from(NO_WEAVER_ADMIN)),
+        admin_log: Some(trace.admin_log.clone()),
         backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
         verb_bound: admin_con::VERB_BOUND,
         stop_grace: GRACE,
@@ -3761,9 +3778,9 @@ async fn a_faulting_openings_show_keeps_the_hold() {
     let invoker = FakeInvoker::new(&["show", "load"], "idle");
     let cfg = AdminConConfig {
         link: server.link(Plane::Admin),
-        trace_socket: trace.socket.clone(),
-        weaver_admin: PathBuf::from(NO_WEAVER_ADMIN),
-        admin_log: trace.admin_log.clone(),
+        trace_socket: Some(trace.socket.clone()),
+        weaver_admin: Some(PathBuf::from(NO_WEAVER_ADMIN)),
+        admin_log: Some(trace.admin_log.clone()),
         backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
         verb_bound: admin_con::VERB_BOUND,
         stop_grace: GRACE,
@@ -3837,9 +3854,9 @@ async fn a_late_openings_show_still_runs_before_a_queued_verb() {
     let invoker = FakeInvoker::new(&["show", "validate"], "idle");
     let cfg = AdminConConfig {
         link: server.link(Plane::Admin),
-        trace_socket: trace.socket.clone(),
-        weaver_admin: PathBuf::from(NO_WEAVER_ADMIN),
-        admin_log: trace.admin_log.clone(),
+        trace_socket: Some(trace.socket.clone()),
+        weaver_admin: Some(PathBuf::from(NO_WEAVER_ADMIN)),
+        admin_log: Some(trace.admin_log.clone()),
         backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
         verb_bound: admin_con::VERB_BOUND,
         stop_grace: GRACE,
@@ -3919,9 +3936,9 @@ async fn a_closed_door_hello_holds_ordinary_asks_until_its_show() {
     invoker.fail("show");
     let cfg = AdminConConfig {
         link: server.link(Plane::Admin),
-        trace_socket: trace.socket.clone(),
-        weaver_admin: PathBuf::from(NO_WEAVER_ADMIN),
-        admin_log: trace.admin_log.clone(),
+        trace_socket: Some(trace.socket.clone()),
+        weaver_admin: Some(PathBuf::from(NO_WEAVER_ADMIN)),
+        admin_log: Some(trace.admin_log.clone()),
         backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
         verb_bound: admin_con::VERB_BOUND,
         stop_grace: GRACE,
@@ -3984,9 +4001,9 @@ async fn a_show_answered_but_not_landed_keeps_the_hold() {
     let invoker = FakeInvoker::new(&["show", "load"], "idle");
     let cfg = AdminConConfig {
         link: server.link(Plane::Admin),
-        trace_socket: trace.socket.clone(),
-        weaver_admin: PathBuf::from(NO_WEAVER_ADMIN),
-        admin_log: trace.admin_log.clone(),
+        trace_socket: Some(trace.socket.clone()),
+        weaver_admin: Some(PathBuf::from(NO_WEAVER_ADMIN)),
+        admin_log: Some(trace.admin_log.clone()),
         backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
         verb_bound: admin_con::VERB_BOUND,
         stop_grace: GRACE,
@@ -4325,4 +4342,202 @@ async fn a_steady_stream_never_postpones_the_resend() {
     }
     stream.abort();
     con.stop().await;
+}
+
+/// **admin-con with no box fact is admitted with the door closed and no
+/// alert** (Spec 7.2): a config holding none of `trace_socket`,
+/// `weaver_admin` and `admin_log`, as the pairing's `adopt` leaves it, on a
+/// row whose gate is not enrolled, as a pairing writes it, loads and is run
+/// as the binary runs it (`admin_con::run_as_configured`, which chooses its invoker); it
+/// is admitted on the admin plane against the real listener, declares an
+/// empty ceiling, reads the door closed, and raises no entry, so the agent
+/// carries no alert.
+///
+/// Perturbation: read an absent `admin_log` as a failure (tail the file
+/// next to the config, which does not exist), and an alert stands; choose
+/// the sudo invoker with no agent laid, and admin-con is never admitted
+/// (each measured 2026-11-25).
+#[tokio::test]
+async fn admin_con_with_no_box_fact_is_admitted_with_the_door_closed_and_no_alert() {
+    let Some(lab) = Lab::open().await else { return };
+    let out = crate::test_dir::tempdir().unwrap();
+    let r#box = format!("box-{}", uuid::Uuid::new_v4().simple());
+    let answer = super::verbs::register(
+        &lab.store,
+        &lab_config(&lab),
+        &lab.authority,
+        &r#box,
+        "karl",
+        out.path(),
+        Some("lab"),
+    )
+    .await;
+    assert!(answer.ok, "{}", answer.value);
+    let id: AgentId = answer.value["agent"].as_str().unwrap().parse().unwrap();
+    let path = PathBuf::from(answer.value["configs"][1].as_str().unwrap());
+    sqlx::query(
+        "UPDATE agent SET gate_fingerprint = NULL, gate_authority = NULL, gate_state = 'none' \
+         WHERE agent_id = $1",
+    )
+    .bind(id.as_str())
+    .execute(&lab.store.pool)
+    .await
+    .unwrap();
+    let cfg = config(&path);
+    assert!(cfg.laid().is_none());
+    let con = Running::serving(cfg);
+    lab.wait_for(&id, "admin-con admitted, the door closed", |a| {
+        a.admin.connected && a.trace_door == Some(false)
+    })
+    .await;
+    let row = lab.store.agent(&id).await.unwrap().unwrap();
+    assert_eq!(row.ceiling, Some(Vec::new()), "an empty ceiling");
+    // An entry raised at the start would have crossed and been applied by
+    // now: the pump sends at once, and the drainer polls within a second.
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    let alerts: i64 = sqlx::query_scalar("SELECT count(*) FROM alert WHERE agent_id = $1")
+        .bind(id.as_str())
+        .fetch_one(&lab.store.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        alerts, 0,
+        "an appliance with no agent laid carries no alert"
+    );
+    con.stop().await;
+}
+
+/// **The three box facts stand together, and one fact chooses** (Spec 7.2):
+/// a config with none loads with no agent laid and chooses no invoker; one
+/// with all three chooses the sudo invoker; one with some and not all is
+/// refused at load naming what is missing; and a door with no agent laid is
+/// closed for that reason, the relay never dialed.
+///
+/// Perturbation: drop the refusal of some and not all, and the half-laid
+/// config loads; drop the empty path's branch in `dial_relay`, and the door
+/// answers the relay's dial error instead (each measured 2026-11-25).
+#[tokio::test]
+async fn the_box_facts_stand_together_and_one_fact_chooses_the_invoker() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = crate::test_dir::tempdir().unwrap();
+    let authority =
+        crate::link::authority::Authority::init(&dir.path().join("authority"), "weaver-web", &[])
+            .unwrap();
+    let credential = authority.mint_client("karl", Plane::Admin).unwrap();
+    let mut table = toml::Table::new();
+    for (k, v) in [
+        ("server", "127.0.0.1:1"),
+        ("server_name", "weaver-web"),
+        ("agent", "karl"),
+        ("agent_id", "ag-0000000000000001"),
+        ("plane", "admin"),
+        ("server_certificate", authority.certificate_pem()),
+        ("certificate", &credential.certificate_pem),
+        ("key", &credential.key_pem),
+    ] {
+        table.insert(k.into(), v.into());
+    }
+    let base = toml::to_string(&table).unwrap();
+    let write = |name: &str, extra: &str| {
+        let path = dir.path().join(name);
+        std::fs::write(&path, format!("{base}{extra}")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        AdminConConfig::load(&path)
+    };
+    let bare = write("bare.toml", "").unwrap();
+    assert!(bare.laid().is_none());
+    assert!(matches!(
+        admin_con::invoking(&bare).unwrap(),
+        admin_con::Invoking::NoAgentLaid
+    ));
+    let all = write(
+        "all.toml",
+        "trace_socket = \"/t.sock\"\nweaver_admin = \"/w\"\nadmin_log = \"/a.log\"\n",
+    )
+    .unwrap();
+    assert_eq!(all.laid().unwrap().weaver_admin, Path::new("/w"));
+    assert!(matches!(
+        admin_con::invoking(&all).unwrap(),
+        admin_con::Invoking::Sudo(_)
+    ));
+    let half = write(
+        "half.toml",
+        "trace_socket = \"/t.sock\"\nweaver_admin = \"/w\"\n",
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        half.contains("stand together") && half.contains("admin_log is missing"),
+        "{half}"
+    );
+    let one = write("one.toml", "admin_log = \"/a.log\"\n")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        one.contains("trace_socket and weaver_admin are missing"),
+        "{one}"
+    );
+    match admin_con::dial_relay(Path::new(""), &super::tests::position(0)).await {
+        crate::link::relay::Dial::Closed(why) => assert_eq!(why, admin_con::NO_AGENT_LAID),
+        _ => panic!("a door with no agent laid is closed"),
+    }
+}
+
+/// **A mistyped `local_address` is refused naming the member** (Spec 8):
+/// the member is appended after every adopt, so it is a likely error, and
+/// both connectors' loads name it; a well-formed one loads.
+///
+/// Perturbation: drop `local_address` from admin-con's member list, and its
+/// refusal names no member; drop the check by name in `client::parse_config`,
+/// and the refusal names the file's first member, since serde's flatten
+/// drops the member's place (each measured 2026-11-25).
+#[tokio::test]
+async fn a_mistyped_local_address_is_refused_naming_the_member() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = crate::test_dir::tempdir().unwrap();
+    let authority =
+        crate::link::authority::Authority::init(&dir.path().join("authority"), "weaver-web", &[])
+            .unwrap();
+    for (plane, extra) in [
+        (Plane::Admin, ""),
+        (Plane::Gate, "gate_socket = \"/g.sock\"\n"),
+    ] {
+        let credential = authority.mint_client("karl", plane).unwrap();
+        let mut table = toml::Table::new();
+        for (k, v) in [
+            ("server", "127.0.0.1:1"),
+            ("server_name", "weaver-web"),
+            ("agent", "karl"),
+            ("agent_id", "ag-0000000000000001"),
+            ("plane", plane.as_str()),
+            ("server_certificate", authority.certificate_pem()),
+            ("certificate", &credential.certificate_pem),
+            ("key", &credential.key_pem),
+        ] {
+            table.insert(k.into(), v.into());
+        }
+        let base = format!("{}{extra}", toml::to_string(&table).unwrap());
+        let load = |local: &str| {
+            let path = dir.path().join(format!("{}.toml", plane.as_str()));
+            std::fs::write(&path, format!("{base}local_address = \"{local}\"\n")).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+            match plane {
+                Plane::Admin => AdminConConfig::load(&path).map(|c| c.link.local_address),
+                Plane::Gate => {
+                    super::gate_con::GateConConfig::load(&path).map(|c| c.link.local_address)
+                }
+            }
+        };
+        assert_eq!(
+            load("10.0.0.7").unwrap(),
+            Some("10.0.0.7".parse().unwrap()),
+            "{plane:?}"
+        );
+        let why = load("10.0.0.300").unwrap_err().to_string();
+        assert!(why.contains("the member local_address"), "{plane:?}: {why}");
+        assert!(
+            !why.contains("10.0.0.300"),
+            "the value is never quoted: {why}"
+        );
+    }
 }

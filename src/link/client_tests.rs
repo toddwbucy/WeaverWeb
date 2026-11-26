@@ -797,6 +797,7 @@ impl FakeServer {
             server_certificate: self.authority.certificate_pem().to_owned(),
             certificate: credential.certificate_pem,
             key: credential.key_pem,
+            local_address: None,
         }
     }
 
@@ -1500,4 +1501,39 @@ async fn a_stop_finishes_within_the_grace_when_the_server_stopped_reading() {
         "the stop took {took:?}, past the {:?} grace",
         gate_con::SHUTDOWN_GRACE
     );
+}
+
+/// **A connector dials from its `local_address`** (Spec 8): with the member
+/// naming `127.0.0.2`, a second loopback address that needs no second card,
+/// the server sees the connection from it; with none, from the routes'
+/// `127.0.0.1`.
+///
+/// Perturbation: drop the bind in `client::dial_from`, and the server sees
+/// `127.0.0.1` (measured 2026-11-25).
+#[tokio::test]
+async fn a_connector_dials_from_its_local_address() {
+    let server = FakeServer::start().await;
+    for (local, seen) in [(None, "127.0.0.1"), (Some("127.0.0.2"), "127.0.0.2")] {
+        let mut config = server.link(Plane::Gate);
+        config.local_address = local.map(|l: &str| l.parse().unwrap());
+        let link = Link::new(config).unwrap();
+        let dialing = tokio::spawn(async move {
+            link.connect(FromClient::Hello {
+                agent: "karl".into(),
+                plane: Plane::Gate,
+                tail: None,
+                ceiling: None,
+                door: None,
+                capabilities: None,
+            })
+            .await
+        });
+        let (stream, peer) = tokio::time::timeout(SOON, server.listener.accept())
+            .await
+            .expect("the connector dials")
+            .unwrap();
+        assert_eq!(peer.ip().to_string(), seen, "{local:?}");
+        drop(stream);
+        let _ = tokio::time::timeout(SOON, dialing).await;
+    }
 }

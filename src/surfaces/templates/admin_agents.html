@@ -6,6 +6,7 @@
     script. -#}
 <h1>Agents</h1>
 <p class="lede">Registering an agent, or rotating one, mints two client configs, offered once and for five minutes. Registering a box and name that hold a live row retires that row. Revoking a plane, or retiring the agent, closes its live connections at once; a retired agent is never live again, and its grants stand until revoked on the grants page.</p>
+<p>{% if one_door %}One door for both planes: gate-con and admin-con dial this server at the same address.{% else %}A door for each plane: gate-con dials the data door, admin-con and a pairing the management door.{% endif %}</p>
 <div class="stack">
 <section class="pane">
   <header><span class="stage"><b>2</b> Provision</span><h2>Register</h2><span class="backing built">built</span><span class="source">the register</span></header>
@@ -19,14 +20,18 @@
       <td>{{ row.agent_id }}</td>
       <td>{{ row.gate }}</td>
       <td>{{ row.admin }}</td>
-      <td>{% if row.setup_running %}paired, setup running{% else if row.present %}present{% else %}absent{% endif %}</td>
+      <td>{% if row.setup_running %}paired, setup running{% else if row.admin_alone %}{% if row.admin_connected %}<span class="status ok">admin alone</span>{% else %}<span class="status fail">admin alone, admin-con down</span>{% endif %}{% else if row.present %}present{% else %}absent{% endif %}</td>
       <td>{{ row.registered }}</td>
       <td>
         {% if row.live %}
+        {% if row.admin_alone %}
+        <span class="note">gate-con is created at the loop's install; no rotation until then</span>
+        {% else %}
         <form method="post" action="/admin/agents/rotate">
           <input type="hidden" name="agent" value="{{ row.agent_id }}">
           <button type="submit">Rotate</button>
         </form>
+        {% endif %}
         {% if row.gate_live %}
         <form method="post" action="/admin/agents/revoke">
           <input type="hidden" name="agent" value="{{ row.agent_id }}">

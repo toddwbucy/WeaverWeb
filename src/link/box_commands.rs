@@ -18,9 +18,7 @@ use serde::Serialize;
 
 use crate::link::box_line::{Nothing, Printer, Status};
 use crate::link::client::{ASK_SECS, Asked, Link, LinkConfig, parse_config, read_private};
-use crate::link::frames::{
-    FromClient, PAIR_FIRST_FRAME_BOUND, Plane, REPORT_BOUND, SetupAsk, Stage, ToClient,
-};
+use crate::link::frames::{FromClient, PairReport, Plane, REPORT_BOUND, SetupAsk, Stage, ToClient};
 use crate::link::key_config::{self, AdoptRefused, AnswerFile, RequestRefused};
 use crate::link::pair_client::{self, Claim, DialError, Heard, LastWord};
 use crate::link::pair_code::grouped;
@@ -36,6 +34,7 @@ const LINK_MEMBERS: &[&str] = &[
     "server_certificate",
     "certificate",
     "key",
+    "local_address",
 ];
 
 /// **`request`'s arguments**: the config to create, which must not exist.
@@ -64,12 +63,20 @@ pub struct PairArgs {
     /// The console's address and port, the link address.
     #[arg(long)]
     pub console: String,
-    /// What `gate-con request` printed: its `request` line.
-    #[arg(long)]
-    pub gate_request: PathBuf,
     /// What `admin-con request` printed: its `request` line.
     #[arg(long)]
     pub admin_request: PathBuf,
+    /// The survey's `pairing` stage report, one JSON object within 64 KiB,
+    /// which crosses with the pairing as its receipt.
+    #[arg(long)]
+    pub report: PathBuf,
+    /// The survey's `drives` stage report, where the script holds one.
+    #[arg(long)]
+    pub drives_report: Option<PathBuf>,
+    /// The management card's address to dial from (Spec 8), an IP literal;
+    /// absent, the dial goes by the machine's routes.
+    #[arg(long)]
+    pub local_address: Option<std::net::IpAddr>,
     /// The file the answer is written to, which must not exist.
     #[arg(long)]
     pub answer: PathBuf,
@@ -191,9 +198,10 @@ struct Paired<'a> {
     r#box: &'a str,
 }
 
+/// `unknown`'s fingerprint: the answer's one certificate, admin-con's
+/// (Spec 8.2).
 #[derive(Serialize)]
 struct Fingerprints {
-    gate: String,
     admin: String,
 }
 
@@ -244,8 +252,41 @@ pub fn adopt<O: Write, E: Write>(
     }
 }
 
+/// The longest request line `pair` reads: a connector's `request` line is
+/// far inside it.
+const REQUEST_LINE_BOUND: usize = 16 * 1024;
+
+/// **A report file `pair` carries** (Spec 8.2): read never through a link,
+/// a regular file, UTF-8, one JSON object within `REPORT_BOUND`, else the
+/// `usage` it is, before any dial.
+fn read_report_file(path: &Path) -> Result<String, String> {
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+        .map_err(|e| format!("opening {}: {e}", path.display()))?;
+    let regular = file.metadata().map(|m| m.file_type().is_file());
+    if !matches!(regular, Ok(true)) {
+        return Err(format!("{} is not a regular file", path.display()));
+    }
+    let mut bytes = Vec::new();
+    file.take(REPORT_BOUND as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("reading {}: {e}", path.display()))?;
+    let Ok(report) = String::from_utf8(bytes) else {
+        return Err(format!("{} is not UTF-8", path.display()));
+    };
+    if !crate::link::frames::one_report(&report) {
+        return Err(format!(
+            "{} is not one JSON object within {REPORT_BOUND} bytes",
+            path.display()
+        ));
+    }
+    Ok(report)
+}
+
 /// A request file as `pair` reads it: what `request` printed, its one
-/// `request` line, never through a link and within the first frame's bound.
+/// `request` line, never through a link and within its bound.
 fn read_request(path: &Path) -> Result<String, String> {
     let file = std::fs::OpenOptions::new()
         .read(true)
@@ -257,7 +298,7 @@ fn read_request(path: &Path) -> Result<String, String> {
         return Err(format!("{} is not a regular file", path.display()));
     }
     let mut text = String::new();
-    file.take(PAIR_FIRST_FRAME_BOUND as u64 + 1)
+    file.take(REQUEST_LINE_BOUND as u64 + 1)
         .read_to_string(&mut text)
         .map_err(|e| format!("reading {}: {e}", path.display()))?;
     #[derive(serde::Deserialize)]
@@ -271,7 +312,7 @@ fn read_request(path: &Path) -> Result<String, String> {
                 && line
                     .request
                     .starts_with("-----BEGIN CERTIFICATE REQUEST-----")
-                && text.len() <= PAIR_FIRST_FRAME_BOUND =>
+                && text.len() <= REQUEST_LINE_BOUND =>
         {
             Ok(line.request)
         }
@@ -346,14 +387,21 @@ pub fn heard<O: Write, E: Write>(p: &mut Printer<O, E>, heard: &Heard) -> Status
 /// line with the code and the authority's fingerprint, then the answer
 /// written to its file, the box's word, and the console's last word.
 pub async fn pair<O: Write, E: Write>(p: &mut Printer<O, E>, args: &PairArgs) -> Status {
-    let gate_request = match read_request(&args.gate_request) {
-        Ok(request) => request,
-        Err(why) => return p.ended(Status::Usage, &why),
-    };
     let admin_request = match read_request(&args.admin_request) {
         Ok(request) => request,
         Err(why) => return p.ended(Status::Usage, &why),
     };
+    let mut reports = Vec::new();
+    for (stage, path) in [
+        (Stage::Pairing, Some(&args.report)),
+        (Stage::Drives, args.drives_report.as_ref()),
+    ] {
+        let Some(path) = path else { continue };
+        match read_report_file(path) {
+            Ok(report) => reports.push(PairReport { stage, report }),
+            Err(why) => return p.ended(Status::Usage, &why),
+        }
+    }
     if std::fs::symlink_metadata(&args.answer).is_ok() {
         return p.ended(
             Status::Usage,
@@ -380,10 +428,10 @@ pub async fn pair<O: Write, E: Write>(p: &mut Printer<O, E>, args: &PairArgs) ->
     };
     let claim = Claim {
         r#box,
-        gate_request,
         admin_request,
+        reports,
     };
-    let mut dialed = match pair_client::dial(&args.console, &claim).await {
+    let mut dialed = match pair_client::dial_from(&args.console, args.local_address, &claim).await {
         Ok(dialed) => dialed,
         Err(e) => return dial_failed(p, &args.console, &e),
     };
@@ -409,7 +457,6 @@ pub async fn pair<O: Write, E: Write>(p: &mut Printer<O, E>, args: &PairArgs) ->
         other => return heard(p, &other),
     };
     let fingerprints = Fingerprints {
-        gate: grouped_fingerprint(&answer.gate),
         admin: grouped_fingerprint(&answer.admin),
     };
     let file = AnswerFile {
@@ -419,7 +466,7 @@ pub async fn pair<O: Write, E: Write>(p: &mut Printer<O, E>, args: &PairArgs) ->
         agent_id: answer.agent_id.clone(),
         r#box: answer.r#box.clone(),
         authority: answer.authority.clone(),
-        gate: answer.gate.clone(),
+        gate: None,
         admin: answer.admin.clone(),
     };
     // **No word before the answer is written**: a box that cannot write it
@@ -428,7 +475,7 @@ pub async fn pair<O: Write, E: Write>(p: &mut Printer<O, E>, args: &PairArgs) ->
         return p.ended(Status::Fault, &format!("{e:#}"));
     }
     if dialed.written().await.is_err() {
-        p.reason("the box's word may not have reached the console: compare the two fingerprints with the pairing page's");
+        p.reason("the box's word may not have reached the console: compare the fingerprint with the pairing page's");
         return p.outcome(Status::Unknown, "unknown", &fingerprints);
     }
     match dialed.last_word().await {
@@ -445,7 +492,7 @@ pub async fn pair<O: Write, E: Write>(p: &mut Printer<O, E>, args: &PairArgs) ->
             p.outcome(Status::Refused, "refused", &ReasonLine { reason: &reason })
         }
         LastWord::Unknown => {
-            p.reason("the connection ended after the answer was written and before the console's last word: compare the two fingerprints with the pairing page's");
+            p.reason("the connection ended after the answer was written and before the console's last word: compare the fingerprint with the pairing page's");
             p.outcome(Status::Unknown, "unknown", &fingerprints)
         }
     }
@@ -797,7 +844,6 @@ mod tests {
             r#box: format!("box{ESC}"),
             server_name: format!("weaver{ESC}"),
             authority: format!("pem{ESC}"),
-            gate: format!("pem{ESC}"),
             admin: format!("pem{ESC}"),
         };
         let heard_variants = [

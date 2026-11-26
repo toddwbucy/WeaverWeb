@@ -17,7 +17,6 @@
 use clap::Parser;
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::sync::Arc;
 use tokio::sync::watch;
 use weaver_web::link::admin_con::{self, AdminConConfig};
 use weaver_web::link::box_commands::{
@@ -25,7 +24,6 @@ use weaver_web::link::box_commands::{
 };
 use weaver_web::link::client::{Backoff, LinkStatus};
 use weaver_web::link::frames::Plane;
-use weaver_web::link::sudo_invoker::SudoInvoker;
 
 #[derive(Parser)]
 #[command(
@@ -38,8 +36,8 @@ struct Args {
     #[command(subcommand)]
     command: Option<Command>,
     /// Path to admin-con's TOML config: the file `weaver-web register`
-    /// wrote, or `adopt` completed, with `trace_socket` and `weaver_admin`
-    /// added at install.
+    /// wrote, or `adopt` completed, with `trace_socket`, `weaver_admin` and
+    /// `admin_log` added once an agent is laid (Spec 7.2).
     #[arg(long, required = true)]
     config: Option<PathBuf>,
 }
@@ -105,13 +103,21 @@ async fn main() -> anyhow::Result<ExitCode> {
     // Refuses to start on a config another party could read or swap, one
     // minted for the gate plane, or one missing a member.
     let cfg = AdminConConfig::load(&config)?;
-    let invoker = SudoInvoker::new(&cfg.weaver_admin, &cfg.link.agent)?;
-    tracing::info!(
-        "admin-con for {} reading its trace through the relay, server {}, verbs through its invoker of {}",
-        cfg.link.agent,
-        cfg.link.server,
-        cfg.weaver_admin.display()
-    );
+    // **One fact chooses** (Spec 7.2): the laid agent's box facts, all
+    // three or none, pick the invoker in `admin_con::run_as_configured` and this line.
+    match cfg.laid() {
+        Some(laid) => tracing::info!(
+            "admin-con for {} reading its trace through the relay, server {}, verbs through its invoker of {}",
+            cfg.link.agent,
+            cfg.link.server,
+            laid.weaver_admin.display()
+        ),
+        None => tracing::info!(
+            "admin-con for {}, server {}: no agent is laid, so no relay is dialed and no verb is invoked",
+            cfg.link.agent,
+            cfg.link.server
+        ),
+    }
     let (stop, shutdown) = watch::channel(false);
     tokio::spawn(async move {
         let mut term =
@@ -137,14 +143,6 @@ async fn main() -> anyhow::Result<ExitCode> {
         let _ = stop.send(true);
     });
     let (status, _) = watch::channel(LinkStatus::default());
-    admin_con::run(
-        cfg,
-        Arc::new(invoker),
-        Some(config),
-        Backoff::default(),
-        shutdown,
-        &status,
-    )
-    .await?;
+    admin_con::run_as_configured(cfg, Some(config), Backoff::default(), shutdown, &status).await?;
     Ok(ExitCode::SUCCESS)
 }

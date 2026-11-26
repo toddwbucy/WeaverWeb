@@ -73,6 +73,9 @@ pub enum Refusal {
     HandoverFull,
     /// The plane's credential is revoked already.
     PlaneRevoked,
+    /// The plane asked for is not enrolled (Spec 2.12): neither revoked nor
+    /// rotated until the loop's install enrolls it.
+    NotEnrolled,
     /// No such declaration row.
     NoSuchDeclaration,
     /// The row saved from is not its lineage's head (Spec 2.4).
@@ -178,6 +181,10 @@ impl std::fmt::Display for Refusal {
             ),
             Refusal::Authority(why) => write!(f, "{why}"),
             Refusal::PlaneRevoked => write!(f, "that plane's credential is revoked already"),
+            Refusal::NotEnrolled => write!(
+                f,
+                "not_enrolled: the gate plane is not enrolled; gate-con is created at the loop's install"
+            ),
             Refusal::NoSuchDeclaration => write!(f, "no such declaration"),
             Refusal::NotHead => write!(
                 f,

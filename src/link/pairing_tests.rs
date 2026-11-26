@@ -14,7 +14,10 @@
 //! showed the test failing with the guard removed, per Spec section 9.
 
 use super::authority::{Authority, provider};
-use super::frames::{Line, LineReader, PAIR_FIRST_FRAME_BOUND, PairFromBox, PairToBox};
+use super::frames::{
+    Line, LineReader, PAIR_FIRST_FRAME_BOUND, PairFromBox, PairReport, PairToBox, REPORT_BOUND,
+    Stage,
+};
 use super::listener::Listener;
 use super::pair_client::{self, Claim, DialError, Dialed, Heard};
 use super::pair_code::{self, Code, EXPORT_BYTES, LABEL};
@@ -71,10 +74,12 @@ async fn rig() -> Option<Rig> {
 fn claim(r#box: &str) -> Claim {
     Claim {
         r#box: r#box.into(),
-        gate_request:
-            "-----BEGIN CERTIFICATE REQUEST-----\ngate\n-----END CERTIFICATE REQUEST-----\n".into(),
         admin_request:
             "-----BEGIN CERTIFICATE REQUEST-----\nadmin\n-----END CERTIFICATE REQUEST-----\n".into(),
+        reports: vec![PairReport {
+            stage: Stage::Pairing,
+            report: "{}".into(),
+        }],
     }
 }
 
@@ -184,8 +189,8 @@ async fn a_clienthello_without_the_pairing_protocol_meets_mutual_tls_as_built() 
         Ok(mut tls) => {
             let hello = PairFromBox::Hello {
                 r#box: "box-a".into(),
-                gate_request: "gate".into(),
                 admin_request: "admin".into(),
+                reports: Vec::new(),
             };
             let line = serde_json::to_string(&hello).unwrap() + "\n";
             let _ = tls.write_all(line.as_bytes()).await;
@@ -341,8 +346,8 @@ async fn a_party_between_the_box_and_the_console_meets_a_code_that_matches_nothi
         };
         let Ok(PairFromBox::Hello {
             r#box,
-            gate_request,
             admin_request,
+            reports,
         }) = serde_json::from_str(&line)
         else {
             panic!("the box's first frame is not its hello");
@@ -351,8 +356,8 @@ async fn a_party_between_the_box_and_the_console_meets_a_code_that_matches_nothi
             &console,
             &Claim {
                 r#box,
-                gate_request,
                 admin_request,
+                reports,
             },
         )
         .await
@@ -417,7 +422,6 @@ async fn a_match_spends_the_connection() {
         .await
         .expect("its own code");
     assert_eq!(taken.r#box, "box-a");
-    assert!(taken.gate_request.contains("gate"));
     assert!(taken.admin_request.contains("admin"));
     assert!(rig.listener.waiting().is_empty());
     assert!(
@@ -700,4 +704,195 @@ async fn a_consoles_line_reaches_no_fault_unchecked() {
         Ok(Heard::Fault(why)) => assert!(printable(&why), "{why:?}"),
         other => panic!("{other:?}"),
     }
+}
+
+/// **A first frame that is not this console's hello is refused
+/// `frame_refused`** (Spec 8.2, section 9): the earlier hello, which
+/// carried a gate request beside admin-con's, hears `refused` with that
+/// reason, so a box built to it prints why, and it is never listed.
+///
+/// Perturbation: close such a frame unanswered, as the console did before,
+/// and the box reads no line.
+#[tokio::test]
+async fn a_first_frame_naming_a_gate_request_is_refused_frame_refused() {
+    let Some(rig) = rig().await else { return };
+    let tcp = TcpStream::connect(rig.listener.address()).await.unwrap();
+    let name = rustls::pki_types::ServerName::try_from("127.0.0.1")
+        .unwrap()
+        .to_owned();
+    let mut tls = TlsConnector::from(crate::link::pair_client::pairing_client_tls())
+        .connect(name, tcp)
+        .await
+        .unwrap();
+    let earlier = r#"{"svc":"hello","box":"box-a","gate_request":"gate","admin_request":"admin"}"#;
+    tls.write_all(format!("{earlier}\n").as_bytes())
+        .await
+        .unwrap();
+    tls.flush().await.unwrap();
+    let mut answer = String::new();
+    let read = tokio::time::timeout(SOON, BufReader::new(tls).read_line(&mut answer))
+        .await
+        .expect("the console answers within its bound");
+    assert!(read.is_ok_and(|n| n > 0), "the box reads no line");
+    assert_eq!(
+        serde_json::from_str::<PairToBox>(answer.trim_end()).unwrap(),
+        PairToBox::Refused {
+            reason: "frame_refused".into()
+        }
+    );
+    assert!(rig.listener.waiting().is_empty(), "the box is never listed");
+}
+
+/// A pairing connection's first frame as given, and the console's first
+/// line back.
+async fn first_line_for(rig: &Rig, frame: &str) -> Option<String> {
+    let tcp = TcpStream::connect(rig.listener.address()).await.unwrap();
+    let name = rustls::pki_types::ServerName::try_from("127.0.0.1")
+        .unwrap()
+        .to_owned();
+    let mut tls = TlsConnector::from(crate::link::pair_client::pairing_client_tls())
+        .connect(name, tcp)
+        .await
+        .unwrap();
+    tls.write_all(format!("{frame}\n").as_bytes())
+        .await
+        .unwrap();
+    tls.flush().await.unwrap();
+    let mut answer = String::new();
+    match tokio::time::timeout(SOON, BufReader::new(tls).read_line(&mut answer)).await {
+        Ok(Ok(n)) if n > 0 => Some(answer.trim_end().to_owned()),
+        _ => None,
+    }
+}
+
+fn hello_with(reports: Vec<PairReport>) -> String {
+    serde_json::to_string(&PairFromBox::Hello {
+        r#box: "box-a".into(),
+        admin_request: "admin".into(),
+        reports,
+    })
+    .unwrap()
+}
+
+fn refused(reason: &str) -> Option<String> {
+    Some(
+        serde_json::to_string(&PairToBox::Refused {
+            reason: reason.into(),
+        })
+        .unwrap(),
+    )
+}
+
+/// **A first frame without a `pairing` stage report is refused
+/// `no_report`** (Spec 8.2, section 9), before the box is listed: one with
+/// no reports, one without the member, and one with a `drives` stage report
+/// alone, each hear the refusal and none waits.
+///
+/// Perturbation: drop the check at the first frame, and the box is
+/// answered `waiting` and listed.
+#[tokio::test]
+async fn a_first_frame_without_a_report_is_refused_no_report() {
+    let Some(rig) = rig().await else { return };
+    let drives_alone = vec![PairReport {
+        stage: Stage::Drives,
+        report: "{}".into(),
+    }];
+    for frame in [
+        hello_with(Vec::new()),
+        r#"{"svc":"hello","box":"box-a","admin_request":"admin"}"#.to_owned(),
+        hello_with(drives_alone),
+    ] {
+        assert_eq!(
+            first_line_for(&rig, &frame).await,
+            refused("no_report"),
+            "{frame}"
+        );
+    }
+    assert!(rig.listener.waiting().is_empty(), "no box is listed");
+}
+
+/// **A report that is not one JSON object within 64 KiB is refused
+/// `report_refused`** (Spec 8.2, section 9), and so is a stage named twice,
+/// before the box is listed; a report of exactly 64 KiB beside a `drives`
+/// stage report is taken, the box waiting.
+///
+/// Perturbation: drop the report's bound in `one_report`, and the report
+/// past it is answered `waiting`.
+#[tokio::test]
+async fn a_report_that_is_not_one_object_within_64_kib_is_refused() {
+    let Some(rig) = rig().await else { return };
+    let pairing = |report: String| PairReport {
+        stage: Stage::Pairing,
+        report,
+    };
+    let padded = |len: usize| {
+        let head = r#"{"pad":""#;
+        format!("{head}{}\"}}", "x".repeat(len - head.len() - 2))
+    };
+    for reports in [
+        vec![pairing("[]".into())],
+        vec![pairing("{} trailing".into())],
+        vec![pairing(padded(REPORT_BOUND + 1))],
+        vec![pairing("{}".into()), pairing("{}".into())],
+    ] {
+        let frame = hello_with(reports);
+        assert_eq!(
+            first_line_for(&rig, &frame).await,
+            refused("report_refused"),
+            "{}",
+            &frame[..frame.len().min(120)]
+        );
+    }
+    assert!(rig.listener.waiting().is_empty(), "no box is listed");
+    let taken = hello_with(vec![
+        pairing(padded(REPORT_BOUND)),
+        PairReport {
+            stage: Stage::Drives,
+            report: "{}".into(),
+        },
+    ]);
+    let answer = first_line_for(&rig, &taken).await.expect("an answer");
+    assert!(answer.contains(r#""svc":"waiting""#), "{answer}");
+}
+
+/// **The data door never serves the pairing protocol** (Spec 8): with two
+/// doors, a box dialing the data door under `weaver-pair/1` meets mutual
+/// TLS, presents no certificate and is unreachable there, and the same claim
+/// at the management door waits with a code.
+///
+/// Perturbation: serve the pairing at every door (`Door::pairs` true for the
+/// data door), and the box at the data door hears waiting (measured
+/// 2026-11-25).
+#[tokio::test]
+async fn the_data_door_never_serves_the_pairing_protocol() {
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let dir = crate::test_dir::tempdir().unwrap();
+    let authority = Authority::init(&dir.path().join("authority"), "weaver-web", &[]).unwrap();
+    let listener = Listener::start_doors(
+        fresh.store.clone(),
+        &authority,
+        "127.0.0.1:0",
+        Some("127.0.0.1:0"),
+        SILENCE,
+        None,
+    )
+    .await
+    .unwrap();
+    let data = listener.data_address().expect("two doors").to_string();
+    match pair_client::dial(&data, &claim("box-a")).await {
+        Err(DialError::Unreachable(_)) => {}
+        Err(other) => panic!("the data door answered the pairing: {other}"),
+        Ok(_) => panic!("the data door served the pairing: a box waits there"),
+    }
+    assert!(listener.waiting().is_empty());
+    let management = listener.address().to_string();
+    let dialed = pair_client::dial(&management, &claim("box-a"))
+        .await
+        .expect("the management door serves the pairing");
+    assert_eq!(listener.waiting().len(), 1);
+    drop(dialed);
+    listener.stop_now();
+    drop(fresh);
 }

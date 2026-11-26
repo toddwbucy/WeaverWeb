@@ -128,6 +128,7 @@ pub(crate) fn refused(refusal: &Refusal) -> Response {
         | Refusal::Authority(_)
         | Refusal::Retired
         | Refusal::PlaneRevoked
+        | Refusal::NotEnrolled
         | Refusal::NotHead
         | Refusal::NameHeld(_)
         | Refusal::NameChanged(_)

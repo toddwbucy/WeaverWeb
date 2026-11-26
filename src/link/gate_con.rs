@@ -106,6 +106,7 @@ const MEMBERS: &[&str] = &[
     "server_certificate",
     "certificate",
     "key",
+    "local_address",
     "gate_socket",
     "turns_in_flight",
 ];

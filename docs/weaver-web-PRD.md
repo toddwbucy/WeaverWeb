@@ -250,8 +250,8 @@ beside them, reached from the build page's stub for the fields no setup page ask
   (the operator's ruling of 2026-11-24), chooses the appliance, names the agent, the one
   place an agent is named because the appliance names its directories and admin entry
   after it, enters the short one-time code (section 10.1), and finalizes the pairing in
-  one form. A miss writes nothing, and three close that appliance's connection. The
-  setup is a virtual machine. Once paired, the agent's Pair page shows the report the
+  one form. A miss writes one refusal record and makes no setup, and three close that
+  appliance's connection. The setup is a virtual machine. Once paired, the agent's Pair page shows the report the
   box's survey sent over TLS, read only, and leads into the agent's directories (the
   operator's rulings of 2026-11-24).
 - **The start page** lists the paired agents whose declaration is open.

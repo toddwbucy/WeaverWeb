@@ -3864,8 +3864,6 @@ async fn which_loop_ran_is_the_composer_where_the_tuple_is_written() {
         })
         .await;
     assert!(matches!(admin.recv().await, Some(ToClient::Ack { .. })));
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    assert_eq!(lab.store.loop_ran(&karl.id).await.unwrap(), (None, None));
     admin.send(FromClient::CaughtUp).await;
 
     let live = |offset: u64, event: TraceEvent| FromClient::Event {
@@ -3873,6 +3871,22 @@ async fn which_loop_ran_is_the_composer_where_the_tuple_is_written() {
         replayed: false,
         event,
     };
+    // **The replay's check waits on a landing, never a sleep**: a live
+    // event that writes no member lands after the replayed load, and only
+    // then is the member read.
+    admin
+        .send(live(100, trace_event(9, "turn.started", json!({}))))
+        .await;
+    assert!(matches!(admin.recv().await, Some(ToClient::Ack { .. })));
+    lab.wait_for(&karl.id, "active from the live turn's start", |a| {
+        a.load_state.as_deref() == Some("active")
+    })
+    .await;
+    assert_eq!(
+        lab.store.loop_ran(&karl.id).await.unwrap(),
+        (None, None),
+        "the replayed load wrote no member"
+    );
     admin
         .send(live(101, load(2, json!({"binary": "worker"}))))
         .await;
@@ -3969,4 +3983,110 @@ async fn which_loop_ran_is_the_composer_where_the_tuple_is_written() {
         Some("compiled"),
         "an unload leaves the last load's loop"
     );
+}
+
+/// **The loop that ran's date** (Spec 2.12; the Planner's decision of
+/// 2026-11-26): a live load event writes the member and its date always; a
+/// `show` answer holding `load` writes the member and moves the date only
+/// where it changes the member, since a `show`'s date is its arrival and a
+/// connection opening a day after the load names no load of that day.
+///
+/// Perturbation: drop the change condition, and the `show` naming the same
+/// loop moves the date (measured 2026-11-26).
+///
+/// conforms: web-the-loop-that-ran-is-the-composer-where-the-tuple-is-written
+#[tokio::test]
+async fn the_loop_that_rans_date_moves_with_a_load_event_or_a_change() {
+    let Some(lab) = Lab::open().await else { return };
+    let karl = lab.register("karl").await;
+    let mut admin = lab.admit_replaying(&karl, Plane::Admin).await;
+    admin.send(FromClient::CaughtUp).await;
+    let (one, two) = ("ab".repeat(32), "cd".repeat(32));
+    let wires = |sha: &str| json!({"binary": "worker", "file": "loop.py", "sha256": sha});
+    let date = |lab: &Lab, id: &AgentId| {
+        let (store, id) = (lab.store.clone(), id.clone());
+        async move {
+            store
+                .loop_ran(&id)
+                .await
+                .unwrap()
+                .1
+                .unwrap()
+                .timestamp_millis()
+        }
+    };
+    admin
+        .send(FromClient::Event {
+            position: position(101),
+            replayed: false,
+            event: trace_event(
+                1,
+                "load",
+                json!({"declaration": "sha-1", "composer": wires(&one)}),
+            ),
+        })
+        .await;
+    assert!(matches!(admin.recv().await, Some(ToClient::Ack { .. })));
+    loop_ran_reads(&lab, &karl.id, (Some(&one), true)).await;
+    assert_eq!(date(&lab, &karl.id).await, WALL_MS + 1);
+
+    shown(
+        &lab,
+        &mut admin,
+        &karl.id,
+        show_answer(
+            "karl",
+            "idle",
+            Some(json!({"artifact": "a-1", "composer": wires(&one)})),
+        ),
+    )
+    .await;
+    lab.wait_for(&karl.id, "the show's word", |a| {
+        a.state_source.as_deref() == Some("show")
+    })
+    .await;
+    assert_eq!(
+        date(&lab, &karl.id).await,
+        WALL_MS + 1,
+        "a show naming the same loop leaves the date"
+    );
+
+    shown(
+        &lab,
+        &mut admin,
+        &karl.id,
+        show_answer(
+            "karl",
+            "idle",
+            Some(json!({"artifact": "a-2", "composer": wires(&two)})),
+        ),
+    )
+    .await;
+    loop_ran_reads(&lab, &karl.id, (Some(&two), true)).await;
+    assert!(
+        date(&lab, &karl.id).await > WALL_MS + 1,
+        "a show naming another loop moves the date to its arrival"
+    );
+
+    admin
+        .send(FromClient::Event {
+            position: position(102),
+            replayed: false,
+            event: trace_event(
+                2,
+                "load",
+                json!({"declaration": "sha-2", "composer": wires(&two)}),
+            ),
+        })
+        .await;
+    assert!(matches!(admin.recv().await, Some(ToClient::Ack { .. })));
+    let until = tokio::time::Instant::now() + SOON;
+    while date(&lab, &karl.id).await != WALL_MS + 2 {
+        assert!(
+            tokio::time::Instant::now() < until,
+            "a load event of the same loop never moved the date"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    loop_ran_reads(&lab, &karl.id, (Some(&two), true)).await;
 }

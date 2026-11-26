@@ -1407,11 +1407,14 @@ async fn an_unknown_setup_is_not_found_and_a_malformed_one_refused() {
 /// says so and a plain link to refresh it, no polling. Every word the operator reads says
 /// appliance, never box. No other page holds the form, each read in three
 /// states: no setup standing, a setup begun the old way and unpaired, and
-/// paired.
+/// paired. The name's pane says that once paired the appliance's setup
+/// script lays the agent's account and its folder under the name (the
+/// operator's words of 2026-11-25).
 ///
 /// Perturbations: drop the number from the name's rule; close the form
 /// before the name's pane, so the name and the code stand outside it (each
-/// measured 2026-11-25).
+/// measured 2026-11-25); the name's pane's old sentence put back, "Once
+/// paired, the agent's Pair page shows ..." (measured 2026-11-26).
 #[tokio::test]
 async fn new_agent_holds_what_an_agent_needs_the_steps_and_one_form() {
     let Some(rig) = rig_full_with(None, None, "http://127.0.0.1:9/", Arc::new(Kept)).await else {
@@ -1454,6 +1457,7 @@ async fn new_agent_holds_what_an_agent_needs_the_steps_and_one_form() {
         "No appliance is waiting. Run the setup script on the appliance; it is listed here once it dials.",
         r#"<p><a href="/pair">Refresh the list</a></p>"#,
         "A lowercase letter, then lowercase letters and digits, 2 to 16 characters in all.",
+        "Once paired, the appliance's setup script lays the agent's account and its folder under this name, and the agent's Pair page shows the appliance's report and leads on to its declaration.",
     ] {
         let at = new[from..]
             .find(said)

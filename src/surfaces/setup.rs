@@ -512,6 +512,9 @@ struct Kept {
     name: String,
     appliance: String,
     entered: Option<pair::Entered>,
+    /// On an unknown outcome, the register's live rows holding the name,
+    /// drawn below the answer; `None` draws no table.
+    rows: Option<Vec<pair::RowView>>,
 }
 
 #[derive(Template)]
@@ -539,6 +542,8 @@ struct FirstPage {
     name_most: usize,
     name: String,
     entered: Option<pair::Entered>,
+    /// On an unknown outcome, the register's live rows holding the name.
+    rows: Option<Vec<pair::RowView>>,
     /// The open setups not paired, each with a link to its own Pair page;
     /// their pane is drawn only where one exists.
     unpaired: Vec<FirstUnpaired>,
@@ -604,6 +609,7 @@ async fn first_view(
         name_most: crate::store::setup::NAME_MOST,
         name: kept.name,
         entered: kept.entered,
+        rows: kept.rows,
         unpaired,
     })
 }

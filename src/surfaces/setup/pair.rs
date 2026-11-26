@@ -4,6 +4,7 @@
 //! conforms: web-a-name-an-open-setup-holds-is-refused-on-new-agent-before-any-code-is-compared
 //! conforms: web-new-agents-entry-runs-from-its-comparison-to-its-outcome-in-a-task-the-request-cannot-cancel
 //! conforms: web-a-malformed-entry-on-new-agent-is-drawn-back-into-the-page-with-no-record
+//! conforms: web-on-an-unknown-outcome-new-agent-draws-the-registers-live-rows-holding-the-name
 //!
 //! **The Pair page's waiting box and the code's entry** (Spec 8.2, 6.2).
 //! The pane lists the boxes waiting, each by the name it claims, its peer
@@ -819,6 +820,7 @@ mod entry {
                 words,
                 retire,
             }),
+            rows: None,
         }
     }
 
@@ -915,6 +917,11 @@ mod entry {
             appliance: ask.appliance.clone(),
             code,
         }));
+        // **On unknown the page draws what the write made** (Spec 8.2): the
+        // register's live rows holding the name, each with its admin
+        // fingerprint, which the operator compares with the appliance's
+        // unknown line.
+        let mut unknown = false;
         let (status, words, retire, appliance) = match continued.await {
             Ok(Ok(Finalized::Ended(ended))) => match first_words(&ended.outcome, &name) {
                 None => {
@@ -924,15 +931,18 @@ mod entry {
                     )
                         .into_response();
                 }
-                Some((status, words)) => (
-                    status,
-                    words,
-                    matches!(
-                        ended.outcome,
-                        Outcome::Refused(PairingRefusal::BoxAndNameLive)
-                    ),
-                    "",
-                ),
+                Some((status, words)) => {
+                    unknown = matches!(ended.outcome, Outcome::Unknown(_));
+                    (
+                        status,
+                        words,
+                        matches!(
+                            ended.outcome,
+                            Outcome::Refused(PairingRefusal::BoxAndNameLive)
+                        ),
+                        "",
+                    )
+                }
             },
             Ok(Ok(Finalized::Missed { left })) => (
                 StatusCode::CONFLICT,
@@ -957,7 +967,13 @@ mod entry {
             Ok(Err(early)) => return early,
             Err(e) => return fault(anyhow::Error::new(e)),
         };
-        let kept = kept(&name, appliance, words, retire);
+        let mut kept = kept(&name, appliance, words, retire);
+        if unknown {
+            kept.rows = match store.live_rows_named(&name).await {
+                Ok(rows) => Some(super::rows_of(&rows)),
+                Err(e) => return fault(e),
+            };
+        }
         first_answer(&store, seams, &session, status, kept).await
     }
 
@@ -1120,7 +1136,7 @@ mod entry {
             Outcome::Unknown(_) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!(
-                    "unknown: whether the pairing's write landed cannot be said. The register page lists the rows it holds for {name}: compare their admin fingerprint with the one the appliance's unknown line shows, and adopt only where it matches"
+                    "unknown: whether the pairing's write landed cannot be said. The rows below are the register's live rows holding {name}: compare their admin fingerprint with the one the appliance's unknown line shows, and adopt only where it matches"
                 ),
             ),
         })

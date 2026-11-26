@@ -3370,6 +3370,88 @@ async fn a_miss_compared_as_its_connection_ends_still_leaves_its_record() {
     drop(dialed);
 }
 
+/// **On an unknown outcome New agent draws the register's rows holding the
+/// name** (Spec 8.2; the review of pull request 214, finding 8): the
+/// pairing's COMMIT outlasts the read-back's bound, so whether its write
+/// landed cannot be said; the page says "the rows below" and draws the
+/// live row already holding the name, its agent, its box and its admin
+/// fingerprint, as the old Pair page does. The commit then completes on
+/// its own.
+///
+/// Perturbation: draw no rows on the unknown outcome, and the row and its
+/// fingerprint are absent (measured 2026-11-26).
+#[tokio::test]
+async fn on_an_unknown_outcome_new_agent_draws_the_registers_rows_holding_the_name() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let karl = registered(s, "box-old", "karl", &rig.authority).await;
+    // The pairing's `ok` outcome holds its COMMIT for 1.5 s, past the
+    // read-back's bound of 200 ms, and the server gives up on the
+    // COMMIT's answer at 100 ms.
+    sqlx::query(
+        "CREATE FUNCTION slow_commit() RETURNS trigger LANGUAGE plpgsql AS \
+         $$ BEGIN PERFORM pg_sleep(1.5); RETURN NULL; END $$",
+    )
+    .execute(&s.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE CONSTRAINT TRIGGER slow_commit AFTER INSERT ON audit \
+         DEFERRABLE INITIALLY DEFERRED FOR EACH ROW \
+         WHEN (NEW.action = 'pair' AND NEW.outcome = 'ok') \
+         EXECUTE FUNCTION slow_commit()",
+    )
+    .execute(&s.pool)
+    .await
+    .unwrap();
+    let dialed = dial(&rig, &box_keys("box-new").claim).await;
+    let code = dialed.code().to_string();
+    let a = handle_of(&rig, "box-new").await;
+    let the_box = tokio::spawn(the_box(dialed, Box::Whole));
+    crate::store::commit::GIVE_UP_ON_COMMIT
+        .with(|g| g.set(Some(("pair", Duration::from_millis(100)))));
+    crate::store::commit::READ_BACK_BOUND_FOR_TEST
+        .with(|b| b.set(Some(Duration::from_millis(200))));
+    let (status, _, body) = finalize(&rig, &ada, "karl", &a, &code).await;
+    crate::store::commit::READ_BACK_BOUND_FOR_TEST.with(|b| b.set(None));
+    assert!(
+        crate::store::commit::GIVE_UP_ON_COMMIT.with(|g| g.get().is_none()),
+        "the answer was given up"
+    );
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    assert!(
+        body.contains("The rows below are the register&#39;s live rows holding karl"),
+        "{body}"
+    );
+    assert!(!body.contains("register page lists"), "{body}");
+    assert!(
+        body.contains("<caption>The register's live rows holding karl</caption>"),
+        "{body}"
+    );
+    assert!(
+        body.contains(&format!(
+            r#"<tr><td class="mono">{}</td><td class="mono">box-old</td>"#,
+            karl.as_str()
+        )),
+        "the row, by its agent and its box: {body}"
+    );
+    assert!(
+        body.contains(&format!(
+            r#"<td class="mono">{}</td>"#,
+            grouped(&"2".repeat(64))
+        )),
+        "the row's admin fingerprint: {body}"
+    );
+    let _ = tokio::time::timeout(SOON, the_box).await;
+    // The commit completes on its own, its outcome standing.
+    let until = tokio::time::Instant::now() + SOON;
+    while pair_audit(s, "pair").await.1 != 1 {
+        assert!(tokio::time::Instant::now() < until, "the commit completes");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
 /// **A malformed entry on New agent is drawn back into the form** (Spec
 /// 8.2; the review of pull request 214, finding 7): a refused name, no
 /// appliance's handle, a code not of its alphabet and an unticked

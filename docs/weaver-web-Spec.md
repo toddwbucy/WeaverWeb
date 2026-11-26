@@ -8956,11 +8956,21 @@ a `web-` assertion beside `weaver-admin`'s.
   functional, the operator's test; one removes it, the compiled loop then running.
   This repository asks that each answer one JSON object, in `weaver-admin`'s shape, and
   that a refusal name a word from a closed list with the line the grammar names. **The
-  file reaching a line with root's authority on its standard input** meets the
-  operator's ruling of 2026-10-03 that nothing from the link enters the command, and
-  is his to rule. gate-con's enrollment at the loop's install (section 8.2) stands
-  with them. Open: the lines and the ruling. Settled by WeaverAgent's act on its
-  contract, the operator's ruling, then this repository's act on loop install.
+  file reaching a line with root's authority on its standard input**, from this
+  server's page with nobody at the appliance's screen, is ruled, the one exception to
+  his rulings of 2026-10-03 and 2026-11-16, on the operator's ruling of 2026-11-26:
+  "Yes. Ruled again when sign-in returns. Each install puts the digest of gatecon's
+  destinations file in the trace." Two riders stay open: it is ruled again when sign-in
+  returns; and each install writes the digest of gatecon's destinations file to the
+  trace, which is the agent's side's line's work, this server showing the digest once
+  the trace carries it. gate-con's enrollment at the loop's install (section 8.2) stands
+  with them. Open: the lines and the two riders. Settled by WeaverAgent's act on its
+  contract, then this repository's act on loop install.
+- **A trace's copy for Weaver Analysis, opened 2026-11-26.** On the operator's words of
+  2026-11-26: "Weaver Analysis never opens that file. It works on its own copy, received
+  through Weaver Web. What it produces is a new trace that carries the original's
+  provenance ID." This server is the one that hands the copy. Open: all of it. Settled
+  by an act of its own, not yet planned.
 - **A break's reason, opened 2026-11-26** (section 6.3). A loop that breaks ends the
   agent's service. The agent's side plans the runner's last line as one JSON object,
   kept in the worker's log, which is not `admin.log` and no feed of this repository

@@ -2541,8 +2541,9 @@ async fn the_reports_a_box_sends_feed_placement_and_confirm() {
 }
 
 /// **A setup with no adapter confirms a tuple with none, end to end** (Spec
-/// 6.2, 8.3): a box enrolled against the real listener sends its pairing
-/// and drives reports through it. The adapter picked is named among the
+/// 6.2, 8.3): a box enrolled against the real listener sends its report
+/// through it, then a second run's report with its drives mounted, which
+/// replaces the first. The adapter picked is named among the
 /// models the box's `setup describe` reads, and once dropped it is not, the
 /// decoder named alone. Confirm stands with the adapter's place reading none
 /// picked and no scale row, the tuple holds no adapter and the base's
@@ -2779,9 +2780,10 @@ async fn a_refused_reports_arrival_is_logged_once_with_its_detail_escaped() {
 /// 2026-11-24). A refused pairing report is drawn refused by its cause on
 /// the Pair page, and the devices are refused naming it. A pairing report whose
 /// machine's product holds a script element is drawn read, the value
-/// escaped, and the devices are read from it. A refused drives report is
-/// drawn refused, and Confirm holds naming it. A drives report that reads
-/// is drawn with each drive and its judgments.
+/// escaped, and the devices are read from it. A refused report sent again
+/// is drawn refused on the directories page, and Confirm holds naming it.
+/// A report with its drives mounted that reads is drawn with each drive and
+/// its judgments.
 #[tokio::test]
 async fn the_panes_are_served_in_each_status_as_the_box_reports() {
     use crate::setup_panes_tests::{pane, status};

@@ -870,7 +870,10 @@ async fn a_report_that_is_not_one_object_within_64_kib_is_refused() {
 /// one newline after it. A report of version 2 refused by the reader for
 /// another cause, here its missing members, is not judged at the frame and
 /// waits. A lone surrogate in the frame's report is no UTF-8 text, so the
-/// frame does not parse and is refused `frame_refused`.
+/// frame does not parse and is refused `frame_refused`. A report opening
+/// with a byte-order mark is refused `report_refused` first, since the
+/// frame's own check takes no U+FEFF as white space (the fix round of
+/// 2026-11-26).
 ///
 /// Perturbation: drop the format's check at the first frame, and each
 /// report of another version is answered `waiting`.
@@ -900,6 +903,14 @@ async fn a_report_not_of_version_2_by_its_format_is_refused_format_refused() {
         );
     }
     assert!(rig.listener.waiting().is_empty(), "no box is listed");
+    let marked = hello_with(vec![PairReport {
+        stage: Stage::Pairing,
+        report: "\u{feff}{\"format\":\"weaver-survey/2\"}".into(),
+    }]);
+    assert_eq!(
+        first_line_for(&rig, &marked).await,
+        refused("report_refused")
+    );
     let surrogate = r#"{"svc":"hello","box":"box-a","admin_request":"admin","reports":[{"stage":"pairing","report":"{\"format\":\"\ud800\"}"}]}"#;
     assert_eq!(
         first_line_for(&rig, surrogate).await,

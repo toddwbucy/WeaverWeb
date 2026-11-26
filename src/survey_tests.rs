@@ -7,7 +7,7 @@
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use crate::survey::{Cause, Mount, Planes, QUOTE_BOUND, Role, format_taken, read};
+use crate::survey::{Cause, Mount, Planes, QUOTE_BOUND, REPORT_BOUND, Role, format_taken, read};
 
 /// The format's worked example, carried byte for byte (its section 6).
 const EXAMPLE: &str = include_str!("../tests/fixtures/weaver-survey-2-worked-example.json");
@@ -113,14 +113,40 @@ fn the_worked_example_reads_whole() {
         (25, 17, 1)
     );
     assert_eq!(survey.cpu.logical_cpus, 16);
-    assert_eq!(survey.cpu.flags.len(), 20);
-    assert_eq!(survey.cpu.flags[3], "avx512_bf16");
+    assert_eq!(
+        survey.cpu.flags,
+        [
+            "aes",
+            "avx",
+            "avx2",
+            "avx512_bf16",
+            "avx512_vnni",
+            "avx512bw",
+            "avx512cd",
+            "avx512dq",
+            "avx512f",
+            "avx512vl",
+            "bmi1",
+            "bmi2",
+            "f16c",
+            "fma",
+            "fpu",
+            "sse",
+            "sse2",
+            "sse4_1",
+            "sse4_2",
+            "ssse3",
+        ]
+    );
     assert_eq!(survey.memory_total_bytes, 33071620096);
     assert_eq!(survey.driver.version, "620.70.06");
     assert!(survey.driver.loaded);
     assert_eq!(survey.cuda_runtime_version, "13.4.92");
     assert_eq!(survey.cards.len(), 2);
+    assert_eq!(survey.cards[0].ordinal, 0);
+    assert_eq!(survey.cards[0].model, "NVIDIA RTX A5000");
     assert_eq!(survey.cards[0].pci_address, "0000:06:00.0");
+    assert_eq!(survey.cards[0].memory_bytes, 25757220864);
     assert_eq!(survey.cards[1].ordinal, 1);
     assert_eq!(survey.cards[1].model, "NVIDIA RTX A5000");
     assert_eq!(survey.cards[1].pci_address, "0000:07:00.0");
@@ -152,12 +178,15 @@ fn the_worked_example_reads_whole() {
     match &survey.drives[1].mount {
         Mount::Mounted {
             label,
+            filesystem,
             bytes,
             free_bytes,
             project_quota,
-            ..
         } => {
-            assert_eq!(label, "weaver-models");
+            assert_eq!(
+                (label.as_str(), filesystem.as_str()),
+                ("weaver-models", "ext4")
+            );
             assert_eq!((*bytes, *free_bytes), (135089524736, 72464760832));
             assert!(!project_quota);
         }
@@ -336,7 +365,7 @@ fn refusal_4_a_format_missing_or_not_one_the_reader_knows() {
 
 #[test]
 fn refusal_5_a_member_missing_null_or_of_the_wrong_type() {
-    let cases: [Case; 14] = [
+    let cases: [Case; 16] = [
         ("missing", |v| {
             drop(v["kernel"].as_object_mut().unwrap().remove("release"))
         }),
@@ -376,6 +405,17 @@ fn refusal_5_a_member_missing_null_or_of_the_wrong_type() {
         }),
         ("a prefix length a string", |v| {
             v["network"]["management"]["prefix_length"] = json!("24")
+        }),
+        ("the data plane's prefix length missing", |v| {
+            drop(
+                v["network"]["data"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("prefix_length"),
+            )
+        }),
+        ("the data plane's prefix length null", |v| {
+            v["network"]["data"]["prefix_length"] = json!(null)
         }),
         ("planes null", |v| v["network"]["planes"] = json!(null)),
     ];
@@ -665,6 +705,23 @@ fn refusal_12_a_planes_address_its_prefix_or_planes() {
             "{address:?}"
         );
     }
+    // Just outside each refused kind: IPv6's link-local is fe80::/10 alone,
+    // IPv4's 169.254.0.0/16, multicast 224.0.0.0/4, and the limited
+    // broadcast one address.
+    for address in [
+        "fec0::1",
+        "fe7f::1",
+        "fe00::1",
+        "169.255.0.1",
+        "169.253.255.255",
+        "223.255.255.255",
+        "240.0.0.1",
+        "255.255.255.254",
+        "fe::1",
+        "feff::1",
+    ] {
+        assert!(reads(one_address(address, 24)), "{address}");
+    }
     for (address, prefix_length) in [
         ("192.0.2.10", 0),
         ("192.0.2.10", 33),
@@ -690,6 +747,10 @@ fn refusal_12_a_planes_address_its_prefix_or_planes() {
         (("192.0.2.10", 16), ("192.0.3.10", 24)),
         (("192.0.3.10", 24), ("192.0.2.10", 16)),
         (("2001:db8::10", 64), ("2001:db8::20", 64)),
+        (("192.0.2.10", 24), ("192.0.2.130", 24)),
+        (("192.0.2.10", 31), ("192.0.2.11", 31)),
+        (("2001:db8::10", 127), ("2001:db8::11", 127)),
+        (("2001:db8:1::1", 48), ("2001:db8:1:ffff::1", 64)),
     ] {
         assert_eq!(
             cause(network(management, data, "separate")),
@@ -703,6 +764,10 @@ fn refusal_12_a_planes_address_its_prefix_or_planes() {
         (("192.0.2.10", 24), ("192.0.2.10", 24), "shared"),
         (("192.0.2.10", 24), ("192.0.2.20", 24), "shared"),
         (("192.0.2.10", 25), ("192.0.2.200", 25), "separate"),
+        (("2001:db8:1::1", 64), ("2001:db8:2::1", 64), "separate"),
+        (("192.0.2.10", 32), ("192.0.2.11", 32), "separate"),
+        (("2001:db8::10", 128), ("2001:db8::11", 128), "separate"),
+        (("2001:db8::10", 64), ("192.0.2.10", 32), "separate"),
         (("127.0.0.1", 8), ("127.0.0.1", 8), "shared"),
         (("::1", 128), ("::1", 128), "shared"),
         (("192.0.2.10", 1), ("192.0.2.10", 32), "shared"),
@@ -1127,4 +1192,47 @@ fn the_first_frame_reads_the_format_alone() {
             String::from_utf8_lossy(report)
         );
     }
+}
+
+/// **The walk for a name given twice is linear in the report** (the
+/// Planner's fix round of 2026-11-26): a report within the bound whose one
+/// unknown member has a name of 30,000 bytes and holds an array filling the
+/// rest with zeros, some 16,800, reads, and a name given twice in an object
+/// at that array's end is refused naming its whole path by its length. The
+/// walk builds a path only where a name is found twice; before, it built
+/// one of 30 KB for each item, some 500 MB written for one read. Measured
+/// 2026-11-26 by the read's time in a debug build: 15.6 ms before and
+/// 6.7 ms after on this report, and after, 1.30, 2.44 and 4.71 ms on
+/// reports each twice the last (1.75, 5.00 and 11.08 ms before).
+#[test]
+fn a_long_name_over_a_long_array_reads_and_the_path_is_built_once() {
+    let mut v: Value = serde_json::from_str(EXAMPLE).unwrap();
+    let name = "n".repeat(30_000);
+    let room = REPORT_BOUND - EXAMPLE.len() - name.len() - 16;
+    let zeros = room / 2;
+    v[name.as_str()] = Value::Array(vec![json!(0); zeros]);
+    let report = v.to_string();
+    assert!(report.len() <= REPORT_BOUND, "{}", report.len());
+    assert!(zeros > 12_000, "{zeros}");
+    assert!(reads(report));
+
+    v[name.as_str()][zeros - 1] = json!({});
+    let twice = v.to_string().replacen("{}", r#"{"a":1,"a":2}"#, 1);
+    let refused = read(twice.as_bytes()).unwrap_err();
+    assert_eq!(refused.cause, Cause::NameTwice);
+    // The path, the name then the item's index, is cut for the detail and
+    // named by its whole length.
+    let path = format!("{name}[{}]", zeros - 1);
+    assert!(
+        refused
+            .detail
+            .ends_with(&format!("(cut, {} bytes) gives \"a\" twice", path.len())),
+        "{}",
+        &refused.detail[refused.detail.len().saturating_sub(80)..]
+    );
+    assert!(
+        refused.detail.starts_with("nnnn"),
+        "{}",
+        &refused.detail[..40]
+    );
 }

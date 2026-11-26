@@ -7430,8 +7430,7 @@ deployment tuple at Confirm (section 6.2).
 **What crosses after the pairing**, on the operator's rulings of 2026-11-16 (setup
 pages) and their addendum. The survey the image ships runs locally, and `admin-con setup
 report` hands its report across the paired link (section 8.3). The operator's SSH public
-keys cross the paired link to the box, since the operator's SSH door takes them, and the
-setup script's first question sets root's password. The console holds the keys as a
+keys cross the paired link to the box, since the operator's SSH door takes them. The console holds the keys as a
 console setting, public halves and no secret, and the appliance's setup script fetches
 them with `admin-con setup describe` (sections 6.2 and 8.3). **The operator lays the
 disks before pairing, with the setup script's help**, on the operator's rulings of
@@ -7654,8 +7653,8 @@ refused**, on the operator's ruling of 2026-11-15, **and so is a load whose stat
 is not one**, the state mount being required for every agent at a minimum of 10 GiB on
 the operator's rulings of 2026-11-16 (setup pages), which supersede the ruling of
 2026-11-15 that required it only where the declaration elects state (`weaver-web-PRD`
-section 10.4). The appliance's setup script, started at the setup prompt of the
-appliance's first console login, lists the disks the operator added and keeps, erases or
+section 10.4). The appliance's setup script, which the operator runs by one command over
+SSH (section 8.2), lists the disks the operator added and keeps, erases or
 formats each as the person at the console chooses, and mounts them, with no replacement
 case (section 8.2). The operator lays the disks so before pairing (the operator's
 rulings of 2026-11-23 and 2026-11-24). The console attaches and mounts nothing. The

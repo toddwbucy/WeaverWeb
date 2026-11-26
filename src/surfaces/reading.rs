@@ -532,7 +532,7 @@ struct RunView {
 /// **The verbs admin-con's live connection declares it may run**: the
 /// ceiling's copy on the row while the admin plane is connected, none
 /// otherwise.
-fn live_ceiling(row: &Agent) -> Vec<String> {
+pub(super) fn live_ceiling(row: &Agent) -> Vec<String> {
     row.ceiling
         .as_ref()
         .filter(|_| row.admin.connected)

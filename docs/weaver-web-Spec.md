@@ -8324,7 +8324,7 @@ two connectors report.
 | the first draft is today's compiled loop as wires, byte for byte (section 6.3) | the pin `the_first_draft_is_todays_loop_as_wires` in `src/loop_tests.rs`, the fixture's sha256 checked first, perturbation: one byte of the fixture changed |
 | the loop page says a saved loop is not on the appliance, beside the stored digest (section 6.3) | perturbation in `src/loop_tests.rs`: drop the sentence, and the page's test fails |
 | which loop ran is the `composer` wherever the tuple is written with a load, a live load event's or a `show` answer's `load`, never a replayed or older event's, and a `show` at rest leaves it (sections 2.12, 6.3) | perturbation in `src/link/tests.rs`, `which_loop_ran_is_the_composer_where_the_tuple_is_written`, against the real listener and a fake admin-con at the frame level: write the member from a replayed event, and a backfill moves it; write it with no `file` check, and a `composer` holding `file` and no digest reads as compiled; write it on a cleared tuple, and a `show` at rest clears it |
-| a reload asks `load` only after `unload` exits 0 (section 6.3) | perturbation in `src/loop_tests.rs`, against the fake invoker: ask `load` after any answer, and an `unload` refused is followed by a `load` |
+| a reload asks `load` only after `unload` exits 0 (section 6.3) | perturbation in `src/loop_tests.rs`, `a_reload_asks_load_only_after_unload_exits_0`, against the real listener and a fake admin-con at the frame level: ask `load` after any answer, and an `unload` refused is followed by a `load` frame |
 
 **A watch that cannot fail is not a test.** For each perturbation above, the
 act that lands it states what removal makes it fail and confirms it does.

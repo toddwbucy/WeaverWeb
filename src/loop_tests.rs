@@ -527,3 +527,157 @@ async fn only_an_operator_holder_saves_a_loop() {
     let head = s.loop_head(&karl).await.unwrap().unwrap();
     assert_eq!((head.version, head.text.as_str()), (1, "# one\n"));
 }
+
+/// admin's word on `verb` for karl: `exit` 0 an answer, 1 a refusal of
+/// `kind`.
+fn outcome(verb: &str, exit: i32, kind: &str) -> crate::link::frames::VerbOutcome {
+    crate::link::frames::VerbOutcome {
+        verb: verb.into(),
+        agent: "karl".into(),
+        exit_code: Some(exit),
+        answer: Some(serde_json::json!({ "kind": kind })),
+        raw_stdout: None,
+        stderr: None,
+    }
+}
+
+/// bea's reload, run as its own task.
+fn reloaded(
+    o: &crate::verbs_tests::Operated,
+) -> tokio::task::JoinHandle<(StatusCode, axum::http::HeaderMap, String)> {
+    let (app, session, uri) = (
+        o.rig.app.clone(),
+        o.bea_session.clone(),
+        format!("/agents/{}/loop/reload", o.karl),
+    );
+    tokio::spawn(async move { send_as(&app, "POST", &uri, None, &session).await })
+}
+
+/// **A reload asks `load` only after `unload` exits 0** (Spec 6.3): an
+/// `unload` answered leads to the `load`, both drawn as admin answered; an
+/// `unload` refused ends the reload with no `load` sent, its refusal drawn;
+/// a person holding no grant is answered as for an unknown agent and no
+/// frame leaves the server.
+///
+/// Perturbation: ask `load` after any `unload` answer, and the refused
+/// `unload` is followed by a `load` frame (measured 2026-11-26).
+#[tokio::test]
+async fn a_reload_asks_load_only_after_unload_exits_0() {
+    use crate::link::frames::FromClient;
+    use crate::verbs_tests::{no_frame, take_verb};
+    let Some(mut o) = operated(&["show", "unload", "load"]).await else {
+        return;
+    };
+    let page = send_as(
+        &o.rig.app,
+        "GET",
+        &format!("/agents/{}/loop", o.karl),
+        None,
+        &o.bea_session,
+    )
+    .await
+    .2;
+    assert!(
+        page.contains(&format!(
+            "<form method=\"post\" action=\"/agents/{}/loop/reload\"><button type=\"submit\" class=\"verb\">Reload</button></form>",
+            o.karl
+        )),
+        "offered: {page}"
+    );
+
+    let asked = reloaded(&o);
+    let (id, verb, _) = take_verb(&mut o.admin_con).await;
+    assert_eq!(verb, "unload");
+    o.admin_con
+        .send(FromClient::Verb {
+            id,
+            outcome: Some(outcome("unload", 0, "state")),
+            error: None,
+        })
+        .await;
+    let (id, verb, _) = take_verb(&mut o.admin_con).await;
+    assert_eq!(verb, "load", "the load follows the unload's exit 0");
+    o.admin_con
+        .send(FromClient::Verb {
+            id,
+            outcome: Some(outcome("load", 0, "state")),
+            error: None,
+        })
+        .await;
+    let (status, _, page) = asked.await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{page}");
+    crate::surfaces::assert_framed(&page);
+    let read = decoded(&page);
+    assert!(read.contains("<td>unload</td>"), "{read}");
+    assert!(read.contains("<td>load</td>"), "{read}");
+    assert!(!read.contains("no load sent"), "{read}");
+
+    let asked = reloaded(&o);
+    let (id, verb, _) = take_verb(&mut o.admin_con).await;
+    assert_eq!(verb, "unload");
+    o.admin_con
+        .send(FromClient::Verb {
+            id,
+            outcome: Some(outcome("unload", 1, "not_loaded")),
+            error: None,
+        })
+        .await;
+    no_frame(&mut o.admin_con).await;
+    let (status, _, page) = asked.await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let read = decoded(&page);
+    assert!(
+        read.contains("admin's refusal: not_loaded; no load sent"),
+        "{read}"
+    );
+    assert!(!read.contains("<td>load</td>"), "{read}");
+
+    let s = o.rig.store().clone();
+    let (_, cay_session) = signed_in(&o.rig.app, &s, &mut authenticator(), "cay").await;
+    let (status, _, answer) = send_as(
+        &o.rig.app,
+        "POST",
+        &format!("/agents/{}/loop/reload", o.karl),
+        None,
+        &cay_session,
+    )
+    .await;
+    let (unknown, _, of_unknown) = send_as(
+        &o.rig.app,
+        "POST",
+        "/agents/ag-0000000000000000/loop/reload",
+        None,
+        &cay_session,
+    )
+    .await;
+    assert_eq!((status, answer), (unknown, of_unknown));
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    no_frame(&mut o.admin_con).await;
+}
+
+/// **The reload pane says why it is not offered**, drawn disabled and
+/// never hidden: to an observer, that it is an operator's; to an operator
+/// whose connection's ceiling lacks `load`, the ceiling.
+#[tokio::test]
+async fn the_reload_pane_says_why_it_is_not_offered() {
+    use crate::surfaces::loop_page::{RELOAD_NOT_CEILING, RELOAD_NOT_OPERATOR};
+    let Some(o) = operated(&["show", "unload"]).await else {
+        return;
+    };
+    let uri = format!("/agents/{}/loop", o.karl);
+    let disabled = "<button type=\"submit\" class=\"verb\" disabled>Reload</button>";
+    let page = decoded(
+        &send_as(&o.rig.app, "GET", &uri, None, &o.bea_session)
+            .await
+            .2,
+    );
+    assert!(page.contains(disabled), "{page}");
+    assert!(page.contains(RELOAD_NOT_CEILING), "{page}");
+    let s = o.rig.store().clone();
+    let (cay, cay_session) = signed_in(&o.rig.app, &s, &mut authenticator(), "cay").await;
+    let granted = host::grant_add(&s, &cay, "observer", Some(&o.karl), None).await;
+    assert!(granted.ok, "{}", granted.value);
+    let page = decoded(&send_as(&o.rig.app, "GET", &uri, None, &cay_session).await.2);
+    assert!(page.contains(disabled), "{page}");
+    assert!(page.contains(RELOAD_NOT_OPERATOR), "{page}");
+}

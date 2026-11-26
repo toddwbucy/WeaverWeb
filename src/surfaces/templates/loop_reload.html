@@ -1,0 +1,31 @@
+{% extends "instrument.html" %}
+{% block title %}a reload - weaver-web{% endblock %}
+{% block body %}
+{#- A reload's steps (Spec 6.3), each the person's own ask: unload, then
+    load only where the unload exited 0. No inline script. -#}
+<h1>Reload</h1>
+<p class="lede"><span class="mono">{{ agent_id }}</span></p>
+<div class="stack">
+<section class="pane">
+  <header><span class="stage"><b>3</b> Run</span><h2>Steps of the reload</h2><span class="backing built">built</span><span class="source">admin-con, each step's answer</span></header>
+  {%- if pending %}
+  <div class="body">
+  <p>The reload runs on past the page's wait: each step's outcome is written when admin answers, and the loop page names the loop once the load event lands.</p>
+  </div>
+  {%- else %}
+  <div class="body flush">
+  <table>
+    <thead><tr><th>Step</th><th>Recorded as</th><th>Status</th></tr></thead>
+    <tbody>
+    {%- for step in steps %}
+    <tr><td>{{ step.verb }}</td><td>{{ step.first }}</td><td>{{ step.status }}</td></tr>
+    {%- endfor %}
+    </tbody>
+  </table>
+  </div>
+  {%- endif %}
+  <footer>A load is asked only once the unload exits 0.</footer>
+</section>
+<p class="back"><a href="/agents/{{ agent_id }}/loop">Back to the loop page</a></p>
+</div>
+{% endblock %}

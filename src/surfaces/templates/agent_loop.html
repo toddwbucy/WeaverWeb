@@ -40,5 +40,16 @@
   </div>
   <footer>What ran at the last load, as its load event named it; not what the appliance holds now.</footer>
 </section>
+<section class="pane" id="reload">
+  <header><span class="stage"><b>3</b> Run</span><h2>Reload</h2><span class="backing built">built</span><span class="source">admin-con, each step's answer</span></header>
+  <div class="body">
+  <p>A reload is today's unload, then load once the unload is answered; it runs the loop the appliance holds.</p>
+  <form method="post" action="/agents/{{ agent_id }}/loop/reload"><button type="submit" class="verb"{% if !reload.offered %} disabled{% endif %}>Reload</button></form>
+  {%- if !reload.offered %}
+  <p class="note read">{{ reload.reason }}</p>
+  {%- endif %}
+  </div>
+  <footer>Each step is your own ask, recorded and audited as a verb is.</footer>
+</section>
 </div>
 {% endblock %}

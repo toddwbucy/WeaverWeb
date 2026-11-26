@@ -54,13 +54,16 @@ use crate::surfaces::reading::{
 };
 
 /// **Today's compiled loop written as wires**, the first draft: the agent's
-/// side's file at its pushed head, carried byte for byte.
+/// side's file at its pushed head, carried byte for byte, last at
+/// WeaverAgent's `623fef40` (its pull request 655, the loop's second act),
+/// whose parse keeps every member of an object as read, a name given twice
+/// among them, so a member a later one replaces is judged too.
 pub const FIRST_DRAFT: &str = include_str!("../../tests/fixtures/loop-wires-today.py");
 
 /// The first draft's sha256 as the agent's side's file was measured, its
 /// pin's figure.
 pub const FIRST_DRAFT_SHA256: &str =
-    "e083d6decb4abb1480947ed8d6c8eecb14bf2db877e5f894d0697cf143fa1af0";
+    "03fd4478335695a071881c1e1f2ece183de79bd92b13a083c0a2156d6b8c384c";
 
 /// **What a save does not do**, beside the stored digest (the Planner's
 /// read of 2026-11-26): until the laying lines exist a reload runs the loop

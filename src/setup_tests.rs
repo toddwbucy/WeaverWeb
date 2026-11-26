@@ -498,10 +498,14 @@ fn the_walk_names_a_pane_without_a_status_or_with_a_filled_input() {
 /// each name `weaver-admin-Spec` section 4 reserves whole. A name of
 /// sixteen characters passes the rule, to the next refusal, and a setup of
 /// it begun the old way stands, its checkbox checked (the operator's ruling
-/// of 2026-11-24).
+/// of 2026-11-24). `admin` and every name beginning so are refused with one
+/// sentence, and `stack` with its own (the operator's rulings of
+/// 2026-11-26).
 ///
-/// Perturbation: begin a setup with the column's default, and its checkbox
-/// starts unchecked.
+/// Perturbations: begin a setup with the column's default, and its checkbox
+/// starts unchecked; drop the beginning `admin` from the page's rule, and
+/// `admin` passes it to the next refusal, the rig's 503 for a build serving
+/// no pairing, never the rule's 400 (measured 2026-11-26).
 #[cfg(feature = "enrollment")]
 #[tokio::test]
 async fn a_name_outside_the_rule_is_refused_opening_no_setup() {
@@ -519,10 +523,8 @@ async fn a_name_outside_the_rule_is_refused_opening_no_setup() {
         ("abcdefghijklmnopq", "16 characters at most"),
         ("gatecon", "a box's own accounts"),
         ("admincon", "a box's own accounts"),
-        (
-            "admin",
-            "a folder the appliance keeps beside each agent's own",
-        ),
+        ("admin", "a name beginning with admin is refused"),
+        ("adminx", "a name beginning with admin is refused"),
         (
             "stack",
             "a folder the appliance keeps beside each agent's own",
@@ -563,12 +565,14 @@ async fn a_name_outside_the_rule_is_refused_opening_no_setup() {
 }
 
 /// **The store refuses every reserved name by its own CHECK** (Spec 6.2,
-/// migration `0034`): a setup's insert past the start page's rule, of each
-/// of admin's two reserved names and the appliance's two folders, is a
-/// fault and writes no row, and a name beside them is taken.
+/// migrations `0034` and `0037`): a setup's insert past the start page's
+/// rule, of each of admin's two reserved names, a name beginning `admin`
+/// and `stack`, is a fault and writes no row, and a name beside them is
+/// taken.
 ///
-/// Perturbation: drop `admin` from `0034`'s CHECK, and its insert writes a
-/// row (measured 2026-11-25).
+/// Perturbations: drop `admin` from `0034`'s CHECK, and its insert writes a
+/// row (measured 2026-11-25); drop `admin%` from `0037`'s, and `adminx`'s
+/// insert writes a row (measured 2026-11-26).
 #[tokio::test]
 async fn the_store_refuses_every_reserved_name_by_its_check() {
     let Some(rig) = rig().await else {
@@ -590,8 +594,9 @@ async fn the_store_refuses_every_reserved_name_by_its_check() {
         ("gatecon", true),
         ("admincon", true),
         ("admin", true),
+        ("adminx", true),
         ("stack", true),
-        ("admins", false),
+        ("stacks", false),
     ] {
         let setup_id = s.mint_key("st").await.unwrap();
         let first = s
@@ -607,7 +612,7 @@ async fn the_store_refuses_every_reserved_name_by_its_check() {
             .await;
         assert_eq!(written.is_err(), refused, "{name}: {written:?}");
     }
-    assert_eq!(setups(s).await, 1, "admins alone stands");
+    assert_eq!(setups(s).await, 1, "stacks alone stands");
 }
 
 /// **A console that serves no pairing says so past the admin gate** (Spec

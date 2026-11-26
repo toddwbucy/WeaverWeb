@@ -52,8 +52,9 @@ def nesting(value):
         item, level = stack.pop()
         if isinstance(item, list):
             children = item
-        elif isinstance(item, dict):
-            children = list(item.keys()) + list(item.values())
+        elif isinstance(item, tuple):
+            # An object as read: every member, a name given twice among them.
+            children = [pair[0] for pair in item] + [pair[1] for pair in item]
         else:
             continue
         deepest = max(deepest, level)
@@ -71,23 +72,42 @@ def has_surrogate(value):
                 return True
         elif isinstance(item, list):
             stack.extend(item)
-        elif isinstance(item, dict):
-            stack.extend(item.keys())
-            stack.extend(item.values())
+        elif isinstance(item, tuple):
+            for pair in item:
+                stack.extend(pair)
     return False
+
+
+def every_member(pairs):
+    """An object as read, each member kept: JSON makes no tuple, so a tuple is an object."""
+    return tuple(pairs)
+
+
+def as_value(item):
+    """The parse with each object a dict, the last member of a name standing, as serde_json's
+    Value keeps it. Called after the depth check, so the nesting is under 128."""
+    if isinstance(item, list):
+        return [as_value(child) for child in item]
+    if isinstance(item, tuple):
+        value = {}
+        for pair in item:
+            value[pair[0]] = as_value(pair[1])
+        return value
+    return item
 
 
 def parse_content(content):
     """content parsed as serde_json::from_str::<Value> parses it at 1.0.151, or None."""
     try:
         value = json.loads(content, parse_constant=no_constant, parse_float=finite_float,
-                           parse_int=finite_int)
+                           parse_int=finite_int, object_pairs_hook=every_member)
     except (ValueError, RecursionError, OverflowError):
         return None
-    # serde_json counts down from 128 and refuses at 0: 127 levels parse, 128 do not.
+    # serde_json counts down from 128 and refuses at 0: 127 levels parse, 128 do not. It
+    # refuses as it reads, so a member a later one of the same name replaces is judged too.
     if nesting(value) >= DEPTH_LIMIT or has_surrogate(value):
         return None
-    return value
+    return as_value(value)
 
 
 def quoted_texts(content, budget):

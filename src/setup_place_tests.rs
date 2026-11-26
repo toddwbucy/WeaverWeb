@@ -1033,8 +1033,8 @@ async fn confirm_stands_only_where_every_member_is_read_and_writes_one_tuple() {
 /// **A setup confirmed through its pages** under the rig's fake Hugging
 /// Face: the split model picked as the decoder and, where `adapter`, the
 /// fake's adapter at the scale 0.5, each pull run to verified, the
-/// placement kept, the base's identity kept and the drives report standing,
-/// then Confirm posted, under the admin's session `ada`. The setup.
+/// placement kept, the base's identity kept and the report with its drives
+/// mounted standing, then Confirm posted, under the admin's session `ada`. The setup.
 pub(crate) async fn confirmed(
     rig: &Rig,
     reported: &Reported,
@@ -1045,8 +1045,9 @@ pub(crate) async fn confirmed(
     confirmed_on(rig, reported, ada, name, adapter, true).await
 }
 
-/// A setup confirmed as `confirmed` does, the drives report sent before
-/// Confirm where `drives`, and otherwise on the reports already standing.
+/// A setup confirmed as `confirmed` does, the report with its drives
+/// mounted sent before Confirm where `laid`, and otherwise on the report
+/// already standing.
 async fn confirmed_on(
     rig: &Rig,
     reported: &Reported,

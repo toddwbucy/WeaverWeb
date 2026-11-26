@@ -220,8 +220,8 @@ async fn the_pairing_pages_report_is_served_waiting_refused_and_read() {
 ///
 /// Perturbations: draw the state drive's place in the sentence for both
 /// where the models drive's belongs, and the image proof's sentence fails;
-/// draw the data plane's address in the management row, and the separate
-/// planes' rows fail.
+/// draw the data plane's address or its prefix length in the management
+/// row, and the separate planes' rows fail.
 #[tokio::test]
 async fn the_pair_page_draws_the_network_and_what_a_blank_appliance_lacks() {
     let reported = Arc::new(Reported::default());
@@ -270,6 +270,20 @@ async fn the_pair_page_draws_the_network_and_what_a_blank_appliance_lacks() {
             "{sentence}: {shown}"
         );
         assert_eq!(shown.matches(LACKS).count(), 1, "{shown}");
+    }
+
+    // Two prefix lengths, told apart.
+    *reported.pairing.lock().unwrap() = Some(edited(|v| {
+        v["network"]["management"]["prefix_length"] = json!(26);
+        v["network"]["data"]["prefix_length"] = json!(22);
+    }));
+    let page = read(&rig.app, &uri, &ada).await;
+    let shown = pane(&page, PAIRING_PANE);
+    for row in [
+        r#"<tr><th>Management</th><td class="mono">192.0.2.10</td><td>26</td></tr>"#,
+        r#"<tr><th>Data</th><td class="mono">198.51.100.10</td><td>22</td></tr>"#,
+    ] {
+        assert!(shown.contains(row), "{row}: {shown}");
     }
 
     // The image proof's shape.

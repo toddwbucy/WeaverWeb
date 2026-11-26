@@ -505,27 +505,55 @@ impl<'de> Deserialize<'de> for Bytes {
 }
 
 /// The path of the first object, at any depth, that gives a name twice.
+/// The walk visits each value once and hashes each name once, and builds
+/// the path only where a name is found twice, from the steps that lead
+/// there, so its work is linear in the report: no path is built for a value
+/// the walk passes (the Planner's fix round of 2026-11-26).
 fn name_twice(node: &Node, path: &str) -> Option<String> {
+    let mut steps = Vec::new();
+    let name = twice_at(node, &mut steps)?;
+    let mut at = path.to_owned();
+    for step in steps.iter().rev() {
+        at = match step {
+            Step::Name(name) => join(&at, &text(name)),
+            Step::Item(i) => format!("{at}[{i}]"),
+        };
+    }
+    Some(format!(
+        "{} gives {} twice",
+        cut(shown(&at)),
+        quoted(&text(name))
+    ))
+}
+
+/// A step of a path: a member by its name, or an array's item by its index.
+enum Step<'a> {
+    Name(&'a [u8]),
+    Item(usize),
+}
+
+/// The name the first object at any depth gives twice, the steps to that
+/// object pushed onto `steps` innermost first as the walk returns.
+fn twice_at<'a>(node: &'a Node, steps: &mut Vec<Step<'a>>) -> Option<&'a [u8]> {
     match node {
         Node::Object(entries) => {
-            let mut seen = HashSet::new();
+            let mut seen = HashSet::with_capacity(entries.len());
             for (name, _) in entries {
                 if !seen.insert(name.as_slice()) {
-                    return Some(format!(
-                        "{} gives {} twice",
-                        cut(shown(path)),
-                        quoted(&text(name))
-                    ));
+                    return Some(name);
                 }
             }
-            entries
-                .iter()
-                .find_map(|(name, value)| name_twice(value, &join(path, &text(name))))
+            entries.iter().find_map(|(name, value)| {
+                let found = twice_at(value, steps)?;
+                steps.push(Step::Name(name));
+                Some(found)
+            })
         }
-        Node::Array(items) => items
-            .iter()
-            .enumerate()
-            .find_map(|(i, item)| name_twice(item, &format!("{path}[{i}]"))),
+        Node::Array(items) => items.iter().enumerate().find_map(|(i, item)| {
+            let found = twice_at(item, steps)?;
+            steps.push(Step::Item(i));
+            Some(found)
+        }),
         _ => None,
     }
 }

@@ -144,6 +144,15 @@
   <p>Arrived {{ arrived }}. Refused for cause {{ number }}: {{ words }}.</p>
   {%- when report::Shown::Read with { arrived, body } %}
   <p>Arrived {{ arrived }}, taken {{ body.taken }}.</p>
+  {%- match body.lacks %}
+  {%- when Some with (report::Lacks::State with (state)) %}
+  <p><span class="status hold">not mounted</span> The appliance reports no drive mounted at <code>{{ state }}</code>, where its state drive goes.</p>
+  {%- when Some with (report::Lacks::Models with (models)) %}
+  <p><span class="status hold">not mounted</span> The appliance reports no drive mounted at <code>{{ models }}</code>, where its models drive goes.</p>
+  {%- when Some with (report::Lacks::Both with { state, models }) %}
+  <p><span class="status hold">not mounted</span> The appliance reports no drive mounted at <code>{{ state }}</code> and none at <code>{{ models }}</code>, where its state and models drives go.</p>
+  {%- when None %}
+  {%- endmatch %}
   <table>
     <caption>The appliance</caption>
     <tbody>
@@ -193,6 +202,15 @@
     <caption>The CUDA runtime</caption>
     <tbody>
     <tr><th>Version</th><td class="mono">{{ body.cuda_runtime_version }}</td></tr>
+    </tbody>
+  </table>
+  <table>
+    <caption>The network</caption>
+    <thead><tr><th>Plane</th><th>Address</th><th>Prefix length</th></tr></thead>
+    <tbody>
+    <tr><th>Management</th><td class="mono">{{ body.network.management }}</td><td>{{ body.network.management_prefix }}</td></tr>
+    <tr><th>Data</th><td class="mono">{{ body.network.data }}</td><td>{{ body.network.data_prefix }}</td></tr>
+    <tr><th>Planes</th><td colspan="2">{{ body.network.planes }}</td></tr>
     </tbody>
   </table>
   {%- if body.cards.is_empty() %}

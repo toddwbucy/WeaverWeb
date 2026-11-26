@@ -11,10 +11,10 @@
 <section class="pane">
   <header><span class="stage"><b>1</b> Declare</span><h2>The two directories</h2><span class="backing built">built</span><span class="status ok">ok</span><span class="source">what the operator lays before pairing</span></header>
   <div class="body">
-  <p>The operator lays the disks before pairing, and the appliance's setup script walks through it: a state disk and a models disk, each mounted at its default path. Weaver Web lists and formats no disk.</p>
+  <p>The operator lays the disks before pairing, and the appliance's setup script walks through it: a state disk and a models disk, each mounted at a place the operator chooses. Weaver Web lists and formats no disk.</p>
   <p>The state directory holds each agent's directory of its own, named for the agent, with the agent's folder and its home side by side inside it. The models directory holds the models in Hugging Face's layout.</p>
   </div>
-  <footer>The box reports the two directories at their default paths, and the next pane judges them.</footer>
+  <footer>The box reports each directory at the place the operator chose, and the next pane names and judges them.</footer>
 </section>
 <section class="pane">
   <header><span class="stage"><b>1</b> Declare</span><h2>The directories as mounted</h2><span class="backing built">built</span><span class="status {{ directories.class() }}">{{ directories.word() }}</span><span class="source">the box's survey</span></header>

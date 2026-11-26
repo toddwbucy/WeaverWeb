@@ -4856,10 +4856,13 @@ it lays the disks; Weaver Web asks nothing for it (the Planner's reading of
 2026-11-26, put to the operator). The connectors' two accounts are not the agent's:
 "The admincon and gatecon accounts are in the template, made on the development side.
 Their names never change. The script does not make them." **With the account the
-script lays the agent's folder of per-agent files**, on the operator's words of the
-same day: it "holds the per-agent files, laid once the name is known: gatecon's config
-and the loop directory. Root owns, and the agent's group reads." Its location is the
-appliance's, and no document here names it. What the box lays from the tuple once
+script lays the agent's folder of per-agent files**, laid once the name is known, on
+the operator's words of the same day. It holds the loop's directory and gate-con's list
+of allowed destinations; root owns both, and the agent's group reads them. That list is
+the Planner's reading of the operator's words "gatecon's config" (2026-11-26), put to
+the operator and his to change. gate-con's credential config, which carries its key,
+is not in that folder's sentence: it stays gate-con's own, as section 8 states. The
+folder's location is the appliance's, and no document here names it. What the box lays from the tuple once
 Confirm stands is the rest of the agent (below). On the state drive each agent has a directory of its own under the state mount,
 named for it, which holds the agent's folder and its home side by side.
 

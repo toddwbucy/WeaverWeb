@@ -1282,9 +1282,9 @@ sudo and not root, changes its first password at the first login, and runs the
 appliance's setup script by one command, with no auto-run at the first login (the
 operator's rulings of 2026-11-25, superseding the console prompt of the rulings of
 2026-11-23), and the script asks for the console's address and port. The box dials the console over TLS
-and shows the code and the fingerprint of the certificate it met. In the console, on Pair
-a box, where the agent is named, the Pair page shows the box waiting, and the operator compares the fingerprint with the console's own
-and enters the code. The connectors hand over the public halves of keys made in the box
+and shows the code and the fingerprint of the certificate it met. In the console, New
+agent lists the box as awaiting final initialization, and the operator compares the
+fingerprint with the console's own, chooses the box, names the agent and enters the code. The connectors hand over the public halves of keys made in the box
 and receive their certificates. From then on every connection between the two is mutual
 TLS, and the code is spent. **The pairing carries the survey's report**, which is the
 receipt (the operator's rulings of 2026-11-25): the appliance sends it with its first
@@ -1319,7 +1319,7 @@ operator's rulings of 2026-11-23: the script walks the operator through finishin
 the disks included, and ends in pairing, and the console shows no command and formats
 nothing (section 10.4). The appliance comes with no state disk and no models disk: the
 operator adds both, sized to their need, and what happens to a disk that already holds
-data is the person at the console's to decide, keep or erase, with no replacement case
+data is the person who runs the setup script's to decide, keep or erase, with no replacement case
 (the operator's ruling of 2026-11-24, `weaver-web-Spec` section 8.2). Laying the disks is the appliance's script's
 alone, and a host's own script is later, and named as later. A host install points at a state
 directory and a models directory and attaches and formats nothing (section 10.4). On a

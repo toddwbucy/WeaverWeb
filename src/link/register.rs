@@ -1396,6 +1396,19 @@ impl Store {
         epoch: i64,
         arrival: i64,
     ) -> anyhow::Result<bool> {
+        // **Which loop ran is written wherever the tuple is** (Spec 2.12,
+        // the Planner's ruling of 2026-11-26): a tuple written with a load,
+        // the live load event's payload or a `show` answer's `load`, carries
+        // a `composer`, read by one allow-list; a tuple cleared (an unload,
+        // a `show` at rest) or kept leaves the member, which names the loop
+        // of the last load. In this one statement, under its arrival
+        // sequence, so a replayed or older observation never moves it.
+        let loop_ran = match &observation.tuple {
+            TupleWrite::Write(Some(tuple)) => {
+                Some(crate::store::loop_text::loop_ran_of(tuple.get("composer")))
+            }
+            TupleWrite::Write(None) | TupleWrite::Keep => None,
+        };
         let affected = sqlx::query(
             "UPDATE agent SET \
                load_state = CASE WHEN $11 = 'record' THEN load_state ELSE $2 END, \
@@ -1410,7 +1423,9 @@ impl Store {
                tuple_source = CASE WHEN $8 THEN tuple_source ELSE $7 END, \
                constituents = CASE WHEN $9 THEN constituents ELSE $10 END, \
                constituents_at = CASE WHEN $9 THEN constituents_at ELSE $3 END, \
-               state_source = CASE WHEN $11 = 'record' THEN state_source ELSE $7 END \
+               state_source = CASE WHEN $11 = 'record' THEN state_source ELSE $7 END, \
+               loop_ran = CASE WHEN $12 THEN $13 ELSE loop_ran END, \
+               loop_ran_at = CASE WHEN $12 THEN $3 ELSE loop_ran_at END \
              WHERE agent_id = $1 \
                AND (load_epoch IS NULL OR (load_epoch, load_arrival) < ($4, $5)) \
                AND (tuple_epoch IS NULL OR (tuple_epoch, tuple_arrival) < ($4, $5))",
@@ -1432,6 +1447,8 @@ impl Store {
             ConstituentsWrite::Keep => None,
         })
         .bind(observation.transition.as_str())
+        .bind(loop_ran.is_some())
+        .bind(loop_ran.flatten())
         .execute(&self.pool)
         .await?
         .rows_affected();

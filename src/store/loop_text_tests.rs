@@ -28,6 +28,16 @@ async fn session_of(s: &Store, person: &str) -> i64 {
     .expect("the person's session")
 }
 
+/// An audit record as the test reads it: target kind, target, action,
+/// outcome and the first record it answers.
+type Record = (
+    String,
+    Option<String>,
+    String,
+    Option<String>,
+    Option<String>,
+);
+
 /// One save as the page makes it: the identity minted, the first record
 /// naming it with the digest and the byte count, then the write.
 async fn save(
@@ -141,13 +151,7 @@ async fn a_loops_text_enters_no_audit_record() {
     let karl: AgentId = o.karl.parse().unwrap();
     let (loop_id, first, saved) = save(&s, &o.bea, &karl, 0, MARK).await;
     assert_eq!(saved, Saved::Done { version: 1 });
-    let records: Vec<(
-        String,
-        Option<String>,
-        String,
-        Option<String>,
-        Option<String>,
-    )> = sqlx::query_as(
+    let records: Vec<Record> = sqlx::query_as(
         "SELECT target_kind, target_id, action, outcome, answers FROM audit \
              WHERE target_kind = 'loop' ORDER BY at, audit_id",
     )

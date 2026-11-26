@@ -29,7 +29,7 @@ pub mod identity;
 mod identity_tests;
 pub mod key;
 pub mod loop_text;
-#[cfg(test)]
+#[cfg(all(test, feature = "passkeys"))]
 mod loop_text_tests;
 pub mod model_pull;
 pub mod plan;

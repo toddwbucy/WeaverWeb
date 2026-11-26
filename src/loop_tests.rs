@@ -346,13 +346,16 @@ async fn loop_records(s: &Store) -> Vec<(Option<String>, String, Option<String>,
 }
 
 /// **A wire file is refused one byte past 262,144, empty, holding a NUL,
-/// or not UTF-8**, each with its one sentence and no record; 262,144 bytes
+/// a carriage return left after the fold (a lone one, or the first of
+/// `\r\r\n`), or not UTF-8**, each with its one sentence and no record; a
+/// `%` not followed by two hex digits (`%+5`) is not the form; 262,144 bytes
 /// save; and **the fixture saved through the form keeps its digest**,
 /// though the browser sends its line breaks as CRLF.
 ///
 /// Perturbations: move the bound one byte, and 262,145 bytes save; decode
 /// the form lossily, and a byte sequence that is not UTF-8 saves with
-/// U+FFFD (each measured 2026-11-26).
+/// U+FFFD; drop the hex check, and `%+5` decodes; drop the carriage
+/// return's refusal, and a lone one saves (each measured 2026-11-26).
 #[tokio::test]
 async fn a_wire_file_is_refused_past_its_bound_empty_with_a_nul_or_not_utf8() {
     let Some(o) = operated(&["show"]).await else {
@@ -373,6 +376,18 @@ async fn a_wire_file_is_refused_past_its_bound_empty_with_a_nul_or_not_utf8() {
             "The file is 262,145 bytes; a wire file is at most 262,144.",
         ),
         (save_form(b"a\0b\n", "0"), "The file holds a NUL byte."),
+        (
+            save_form(b"a\rb\n", "0"),
+            "The file holds a carriage return that is not part of a line break.",
+        ),
+        (
+            save_form(b"a\r\nb\n", "0"),
+            "The file holds a carriage return that is not part of a line break.",
+        ),
+        (
+            "text=%+5&version=0".to_owned(),
+            "The form is not the loop page's: it carries the text and the version once each.",
+        ),
         (save_form(b"a\xffb\n", "0"), "The file is not UTF-8."),
         (
             format!("{}\r", save_form(b"x", "0")),
@@ -680,4 +695,221 @@ async fn the_reload_pane_says_why_it_is_not_offered() {
     let page = decoded(&send_as(&o.rig.app, "GET", &uri, None, &cay_session).await.2);
     assert!(page.contains(disabled), "{page}");
     assert!(page.contains(RELOAD_NOT_OPERATOR), "{page}");
+}
+
+/// The agent's alerts as the store holds them, polled until `found` holds
+/// of them or the bound passes.
+async fn alerts_until(
+    s: &Store,
+    agent: &AgentId,
+    found: impl Fn(&[crate::store::alerts::Alert]) -> bool,
+) -> Vec<crate::store::alerts::Alert> {
+    let until = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let alerts = s.alerts_on(agent, 50).await.unwrap();
+        if found(&alerts) || tokio::time::Instant::now() >= until {
+            return alerts;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+}
+
+/// **A refused second step never hides the unload that ran** (point 1 of
+/// the Planner's round of 2026-11-26): the `unload` answered 0, the
+/// `load`'s first record failing in the audit (a trigger in this test's
+/// own store), the page draws both steps at the refusal's status, 500; the
+/// door raised its alert for the `load`, and **the reload raises no second
+/// one**.
+///
+/// Perturbations: answer a 500 with nothing drawn, and the page is the
+/// plain fault; raise the reload's alert whether or not the door raised
+/// one, and a second alert stands (each measured 2026-11-26).
+#[tokio::test]
+async fn a_refused_load_draws_the_unload_that_ran() {
+    use crate::link::frames::FromClient;
+    use crate::verbs_tests::{no_frame, take_verb};
+    let Some(mut o) = operated(&["show", "unload", "load"]).await else {
+        return;
+    };
+    let s = o.rig.store().clone();
+    let karl: AgentId = o.karl.parse().unwrap();
+    sqlx::raw_sql(
+        "CREATE FUNCTION test_the_load_first_fails() RETURNS trigger AS $$ BEGIN \
+           RAISE EXCEPTION 'the load''s first record fails, by this test'; END; $$ LANGUAGE plpgsql; \
+         CREATE TRIGGER test_the_load_first_fails BEFORE INSERT ON audit FOR EACH ROW \
+           WHEN (NEW.action = 'load' AND NEW.refusal IS NULL AND NEW.answers IS NULL) \
+           EXECUTE FUNCTION test_the_load_first_fails();",
+    )
+    .execute(&s.pool)
+    .await
+    .unwrap();
+    let asked = reloaded(&o);
+    let (id, verb, _) = take_verb(&mut o.admin_con).await;
+    assert_eq!(verb, "unload");
+    o.admin_con
+        .send(FromClient::Verb {
+            id,
+            outcome: Some(outcome("unload", 0, "state")),
+            error: None,
+        })
+        .await;
+    no_frame(&mut o.admin_con).await;
+    let (status, _, page) = asked.await.unwrap();
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{page}");
+    crate::surfaces::assert_framed(&page);
+    let read = decoded(&page);
+    assert!(
+        read.contains("<td>unload</td>") && read.contains("<td>admin's answer</td>"),
+        "{read}"
+    );
+    assert!(read.contains("<td>load</td>"), "{read}");
+    assert!(read.contains("not asked:"), "{read}");
+    let alerts = alerts_until(&s, &karl, |a| a.iter().any(|a| a.subject == "load")).await;
+    assert!(alerts.iter().any(|a| a.subject == "load"), "{alerts:#?}");
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    let alerts = s.alerts_on(&karl, 50).await.unwrap();
+    assert!(
+        !alerts.iter().any(|a| a.subject == "reload"),
+        "the door raised one, so the reload raises none: {alerts:#?}"
+    );
+}
+
+/// **A reload left half done raises an alert** (point 2): the `unload`
+/// exited 0, then the person's grant ended before the `load` was asked;
+/// no `load` frame leaves, the door raises nothing (no authorization
+/// stood), and the reload raises its own, naming the reason.
+///
+/// Perturbation: raise nothing from the reload, and no alert stands
+/// (measured 2026-11-26).
+#[tokio::test]
+async fn a_reload_left_half_done_raises_an_alert() {
+    use crate::link::frames::FromClient;
+    use crate::verbs_tests::{no_frame, take_verb};
+    let Some(mut o) = operated(&["show", "unload", "load"]).await else {
+        return;
+    };
+    let s = o.rig.store().clone();
+    let karl: AgentId = o.karl.parse().unwrap();
+    let asked = reloaded(&o);
+    let (id, verb, _) = take_verb(&mut o.admin_con).await;
+    assert_eq!(verb, "unload");
+    let removed = host::grant_remove(&s, &o.bea, "operator", Some(&o.karl), None).await;
+    assert!(removed.ok, "{}", removed.value);
+    o.admin_con
+        .send(FromClient::Verb {
+            id,
+            outcome: Some(outcome("unload", 0, "state")),
+            error: None,
+        })
+        .await;
+    no_frame(&mut o.admin_con).await;
+    let (status, _, _) = asked.await.unwrap();
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "no grant answers as an unknown agent"
+    );
+    let alerts = alerts_until(&s, &karl, |a| a.iter().any(|a| a.subject == "reload")).await;
+    let raised = alerts
+        .iter()
+        .find(|a| a.subject == "reload")
+        .unwrap_or_else(|| panic!("the reload raised no alert: {alerts:#?}"));
+    assert!(
+        raised
+            .summary
+            .starts_with("the reload unloaded the agent and the load was not sent: "),
+        "{}",
+        raised.summary
+    );
+    assert!(!alerts.iter().any(|a| a.subject == "load"), "{alerts:#?}");
+}
+
+/// A reload's audit record as the test reads it: target kind, target,
+/// refusal and outcome.
+type ReloadRecord = (String, Option<String>, Option<String>, Option<String>);
+
+/// **Only a person holding `operator` reloads** (point 3; decision 6 of
+/// the loop page's brief): an observer whose role is authored to carry
+/// `unload` and `load` is refused 403 before any frame leaves, with one
+/// refusal record naming the agent with the action `loop reload`; a person
+/// holding no grant is answered as for an unknown agent, with one record.
+///
+/// Perturbation: drop the handler's `operator` check, and the observer's
+/// reload sends an `unload` frame (measured 2026-11-26).
+#[tokio::test]
+async fn only_an_operator_holder_reloads() {
+    use crate::verbs_tests::no_frame;
+    let Some(mut o) = operated(&["show", "unload", "load"]).await else {
+        return;
+    };
+    let s = o.rig.store().clone();
+    let set = host::role_set(
+        &s,
+        "observer",
+        &["show".to_owned(), "unload".to_owned(), "load".to_owned()],
+        None,
+    )
+    .await;
+    assert!(set.ok, "{}", set.value);
+    let (cay, cay_session) = signed_in(&o.rig.app, &s, &mut authenticator(), "cay").await;
+    let uri = format!("/agents/{}/loop/reload", o.karl);
+    let (status, _, _) = send_as(&o.rig.app, "POST", &uri, None, &cay_session).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let granted = host::grant_add(&s, &cay, "observer", Some(&o.karl), None).await;
+    assert!(granted.ok, "{}", granted.value);
+    let (status, _, answer) = send_as(&o.rig.app, "POST", &uri, None, &cay_session).await;
+    assert_eq!(
+        (status, answer.as_str()),
+        (
+            StatusCode::FORBIDDEN,
+            "only a person holding operator on the agent reloads it"
+        )
+    );
+    no_frame(&mut o.admin_con).await;
+    let records: Vec<ReloadRecord> = sqlx::query_as(
+        "SELECT target_kind, target_id, refusal, outcome FROM audit WHERE action = 'loop reload' \
+         ORDER BY at, audit_id",
+    )
+    .fetch_all(&s.pool)
+    .await
+    .unwrap();
+    let karl = Some(o.karl.clone());
+    assert_eq!(
+        records,
+        vec![
+            (
+                "agent".to_owned(),
+                karl.clone(),
+                Some("no grant on the agent".to_owned()),
+                None
+            ),
+            (
+                "agent".to_owned(),
+                karl,
+                Some("only a person holding operator on the agent reloads it".to_owned()),
+                None
+            ),
+        ]
+    );
+}
+
+/// **A save naming the integer's top version is stale** (point 8): 409
+/// with its outcome failed, never a 500.
+#[tokio::test]
+async fn a_save_at_the_top_version_is_stale() {
+    let Some(o) = operated(&["show"]).await else {
+        return;
+    };
+    let s = o.rig.store().clone();
+    let (status, _, answer) = send_as(
+        &o.rig.app,
+        "POST",
+        &format!("/agents/{}/loop", o.karl),
+        Some(save_form(b"# top\n", "2147483647")),
+        &o.bea_session,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{answer}");
+    let last = loop_records(&s).await.pop().unwrap();
+    assert_eq!(last.3.as_deref(), Some("failed"));
 }

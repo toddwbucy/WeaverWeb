@@ -1635,7 +1635,7 @@ and the member reads `compiled`. The form is the Planner's ruling of
 2026-11-26 to the agent's side, and both members are in the trace's
 vocabulary as built (`weaver-harness-loop-contract` section 6). **A load
 whose `composer` is absent, or holds `file` with no digest of that shape,
-clears the member and keeps its date**, so the row says the last load named
+clears the member and writes the date**, so the row says the last load named
 no loop it reads; nothing guesses the compiled loop from a silence, and no
 older load's loop stands for a newer load. **A tuple cleared or kept leaves
 the member**: an unload, or a `show` answering with no `load` (the agent at
@@ -1644,7 +1644,12 @@ write, under the same arrival sequence, so a replayed or older observation
 never moves it. Without `show`, a reload whose connection dropped while the
 model loaded would land its load event replayed, which writes nothing, and
 `show` would move the tuple to the new load with the member left on the
-older one.
+older one. **The date is a live load event's always, and a `show`'s only where
+it changes the member** (the Planner's decision of 2026-11-26), an empty
+member included, or where the row holds no date yet: a `show`'s date is its
+arrival, so a connection opening a day after the load would otherwise date a
+load that did not run that day. A load the server never saw as an event, of
+the same loop as before, leaves the date.
 
 **The row holds no key material and no path of the agent's own.** The server
 holds fingerprints and the agent's box holds keys, per section 8, and the box
@@ -2292,8 +2297,13 @@ it decides are stated here and in section 2.8, and the reasons are there.
   before the first record). **The audit holds the version's digest and its
   byte count, never its text**: the action reads `loop save sha256 <64 hex>
   bytes <n>`, the refusal and the outcome copying it, as a turn's text and an
-  SSH key's line enter no record. Reload is two of the person's own asks,
-  `unload` then `load`, each passing every gate a verb passes.
+  SSH key's line enter no record. **A reload is taken by a person holding
+  `operator` on the agent** (decision 6 of the loop page's brief), its two
+  refusals recorded before any frame leaves, each with the target kind
+  `agent` naming it and the action `loop reload`, as a verb's refusal names
+  its agent with the verb (no grant answered as an unknown agent, no
+  `operator` refused); then it is two of the person's own asks, `unload` then
+  `load`, each passing every gate a verb passes.
 
   A row that holds a tuple and names no source (one written before
   migration `0012`) is set beside nothing, and the pane says it holds a
@@ -4890,15 +4900,17 @@ takes the name** (the operator's word of 2026-11-16), named from `weaver-<name>`
 agent's own account is laid right after the pairing, over admincon, once the name
 returns from Weaver Web." `admin-con pair` answers `paired` with the name (section 8.2),
 and the appliance's setup script then lays the account at the appliance's screen, as
-it lays the disks; Weaver Web asks nothing for it (the Planner's reading of
-2026-11-26, put to the operator). The connectors' two accounts are not the agent's:
+it lays the disks; Weaver Web asks nothing for it, on the operator's ruling of
+2026-11-26: "Yes. The script creates the agent's account and folders at the screen,
+and the trace directory with them." The connectors' two accounts are not the agent's:
 "The admincon and gatecon accounts are in the template, made on the development side.
 Their names never change. The script does not make them." **With the account the
 script lays the agent's folder of per-agent files**, laid once the name is known, on
-the operator's words of the same day. It holds the loop's directory and gate-con's list
-of allowed destinations; root owns both, and the agent's group reads them. That list is
-the Planner's reading of the operator's words "gatecon's config" (2026-11-26), put to
-the operator and his to change. gate-con's credential config, which carries its key,
+the operator's words of the same day. It holds the loop's directory and gatecon's
+destinations file; root owns both, and the agent's group reads them. The file is the
+operator's, by his words of 2026-11-26: "Each install puts the digest of gatecon's
+destinations file in the trace." That it sits in this folder is the Planner's reading of
+his words of 2026-11-25, and his to change. gate-con's credential config, which carries its key,
 is not in that folder's sentence: it stays gate-con's own, as section 8 states. The
 folder's location is the appliance's, and no document here names it. What the box lays from the tuple once
 Confirm stands is the rest of the agent (below). On the state drive each agent has a directory of its own under the state mount,
@@ -5371,8 +5383,10 @@ parsed first (400), as every reading page does (section 2.13). Reads are not aud
    the page's read. "The compiled loop ran at the last load."; "The wires ran at the
    last load, sha256 `<hex>`," followed by "the saved version `<n>`." where a stored
    version of this agent has that digest, else "a digest no saved version here has.";
-   "The last load named no loop this page reads." where the last load event named
-   none; "No load event is recorded for this agent." where none has landed. It says nothing
+   "The last load named no loop this page reads." where the last load named
+   none; "No load event is recorded for this agent." where none has landed. The
+   header names the date the member carries, a live load event's or the `show`
+   that changed it (section 2.12), and the footer says so. It says nothing
    of what the appliance holds now, which only test (section 10) will read.
 3. **Reload** (`3 Run`): one button, offered where the person holds `operator` on the
    agent, their grants carry `unload` and `load`, and the connection's ceiling grants
@@ -5389,11 +5403,16 @@ admin writes' one order of section 2.13:
    fixture saved through the page keeps its digest; then the text refused, each with
    one sentence (400), where it is empty ("The file is empty."), longer than 262,144
    bytes ("The file is 262,145 bytes; a wire file is at most 262,144."), holds a NUL
-   ("The file holds a NUL byte."), or is not UTF-8 ("The file is not UTF-8."); the
+   ("The file holds a NUL byte."), holds a carriage return left after the line breaks
+   are stored, a lone one or the first of `\r\r\n` ("The file holds a carriage return
+   that is not part of a line break."; refused and never folded, since a browser's
+   parser draws each as a line feed and a save with no edit would change the digest,
+   the Planner's decision of 2026-11-26), or is not UTF-8 ("The file is not UTF-8."); the
    version a whole number of at most 2^31 - 1 ("The version is not a whole number of
    at most 2,147,483,647."); a form that does not carry the text and the version once
-   each, or carries another field, refused too ("The form is not the loop page's: it
-   carries the text and the version once each."). The bound is the contract's, counted
+   each, or carries another field, or a `%` not followed by two hex digits (`%+5`),
+   refused too ("The form is not the loop page's: it carries the text and the version
+   once each."). The bound is the contract's, counted
    after the line breaks are stored. **The route reads its form under a bound of
    2 MiB** (2,097,152 bytes; a body past it is refused 413 before any parse): the
    largest file the contract admits, in its longest form, is 262,144 line breaks, each
@@ -5403,14 +5422,20 @@ admin writes' one order of section 2.13:
 2. **The session**, then the version's identity (`lp-`) minted, then **the grant**: no
    grant answered as an unknown agent (404), a grant without `operator` refused (403),
    each with one refusal record.
-3. **Resolve** the agent on the register (unknown: 404, no record).
+3. **Resolve** the agent on the register (unknown: 404, no record). **No request
+   reaches this answer today**: a live grant names an agent row (migration `0015`'s
+   reference), no code path deletes a row of the register, and the reference
+   refuses deleting one a grant names, so an unknown agent holds no grant and step 2
+   answers first, with its record. The check stands as the order's step, not as a
+   case.
 4. **The first record**, target kind `loop` naming the minted version, the action
    naming the digest and the byte count (section 2.13), then one transaction under the
    identity exclusion held shared that re-checks the session and the `operator` grant
    (gone: 403, outcome `failed`), checks the version read is the head's (otherwise
-   stale, 409, outcome `failed`, so nothing is saved unseen), and inserts the version
-   at the head's number plus one, its outcome committed with it. It answers 303 to the
-   page.
+   stale, 409, outcome `failed`, so nothing is saved unseen; a version read of
+   2,147,483,647, which no version follows, is stale the same way), and inserts the
+   version at the head's number plus one, its outcome committed with it. It answers
+   303 to the page.
 
 **A version is never changed or removed** (migration `0035`, by trigger), and its text
 enters no audit record, log line or error.
@@ -5418,12 +5443,24 @@ enters no audit record, log line or error.
 **Reload** (`POST /agents/{agent}/loop/reload`) is today's `unload` then `load`, as two
 of the person's own asks under one admission, as section 2.14's "save point, then
 unload" runs: the identity parsed, the session, the admission (shed: 503, no record),
-no grant answered as an unknown agent, then a task the request cannot cut asks
+**then the role** (decision 6 of the loop page's brief): no grant answered as an unknown
+agent (404), a grant without `operator` refused (403), each with one refusal record
+naming the agent with the action `loop reload` (section 2.13), before any frame leaves,
+whatever verbs another role carries; then a task the request cannot cut asks
 `unload` through `Listener::ask_under` and, **only where it exits 0**, `load`; any other
 answer ends the reload with no `load`. Each ask passes every gate a verb passes and is
 recorded and audited as one (section 2.13), and each answer is drawn as it came (section
 7.2), the page showing each step, or that the reload runs on past the silence bound
-(202). An agent at rest is loaded from the agent page; an `unload` refused because the
+(202). **A refusal is answered at its own status, and a step asked before it is
+drawn**, 500 included, so the page never hides an unload that ran; no grant answers as
+an unknown agent with no page. **A reload left half done raises an alert** (section
+2.14): where the `unload` exited 0 and no `load` was sent, and the door raised no alert
+for the refusal (`Listener::ask_under_raising` says whether it did), the reload raises
+one, kind `failed`, subject `reload`, naming the unload's first record, its summary
+saying the reload unloaded the agent and the load was not sent, with the reason; none
+where the refusal is that a `load` of the person's is already asked, since one is then
+under way. It runs in the reload's task, so a refusal after the page answered 202 is
+alerted too. An agent at rest is loaded from the agent page; an `unload` refused because the
 agent is not loaded ends the reload, its refusal drawn. **Once the load event lands**,
 the Which loop ran pane names the loop by its digest.
 
@@ -5519,6 +5556,26 @@ tag: perturbation
 edge: asserts
 from: weaver-web
 to: web-a-reload-asks-load-only-after-unload-exits-0
+```
+
+```graph
+node: web-only-an-operator-holder-reloads
+kind: assertion
+tag: perturbation
+
+edge: asserts
+from: weaver-web
+to: web-only-an-operator-holder-reloads
+```
+
+```graph
+node: web-a-reload-left-half-done-is-drawn-and-alerted
+kind: assertion
+tag: perturbation
+
+edge: asserts
+from: weaver-web
+to: web-a-reload-left-half-done-is-drawn-and-alerted
 ```
 
 ## 7. The seams
@@ -7965,8 +8022,8 @@ disk. On the addendum to the operator's rulings of 2026-11-16 (setup pages) the 
 a real account on the box, its home on the state drive. **The agent's own account takes
 its name**, on the operator's word of 2026-11-16, named from `weaver-<name>`, and the
 appliance's setup script lays it right after the pairing, once the name returns, with
-the agent's folder of per-agent files, on the operator's words of 2026-11-25; the
-connectors' two accounts are the image's (section 6.2). On the state drive each agent has a directory of its own under the state
+the agent's folder of per-agent files, on the operator's words of 2026-11-25 and his
+ruling of 2026-11-26; the connectors' two accounts are the image's (section 6.2). On the state drive each agent has a directory of its own under the state
 mount, named for it, which holds the agent's folder and its home side by side, and a
 host lays the same under its state directory. **The trace is never written to the
 agent's state or anywhere the agent can reach**, on the operator's word of 2026-11-17:
@@ -8317,14 +8374,16 @@ two connectors report.
 | an admission on a plane a pairing set to not enrolled is refused `not_live`, never as a store failure (section 8) | perturbation in `src/link/tests.rs`, `an_admission_on_a_plane_set_to_none_is_refused_not_live`: read the fingerprint as a string, and the admission fails decoding (measured 2026-11-25) |
 | a mistyped `local_address` is refused naming the member and never its value (section 8) | perturbation in `src/link/admin_con_tests.rs`, `a_mistyped_local_address_is_refused_naming_the_member`: drop the member from admin-con's list, and the refusal names none; drop the check by name in `client::parse_config`, and the refusal names the file's first member, since serde's flatten drops the member's place (each measured 2026-11-25) |
 | a loop's text enters no audit record: the save's records hold its digest and byte count (section 6.3) | perturbation in `src/store/loop_text_tests.rs`: write the text into the action, and the audit read finds it |
-| a wire file is refused one byte past 262,144 counted after CRLF is stored as LF, empty, holding a NUL, or not UTF-8, the fixture saved through the form keeps its digest, and the route's bound admits the largest file in its longest form (section 6.3) | perturbation in `src/loop_tests.rs`, `a_wire_file_is_refused_past_its_bound_empty_with_a_nul_or_not_utf8`: move the parse's bound one byte, and 262,145 bytes pass the parse and meet migration `0035`'s check, a 500 in place of the sentence; decode the form lossily, and a byte sequence that is not UTF-8 saves with U+FFFD; set the route's bound under 1,572,879 bytes, and `the_largest_file_crosses_the_requests_bound` is refused 413 |
-| a loop's save against a stale version refuses (section 6.3) | perturbation in `src/store/loop_text_tests.rs`: drop the head check, and a save naming a version past the head lands, leaving a gap; a save naming the version the next save replaced meets the unique version and is stale either way |
+| a wire file is refused one byte past 262,144 counted after CRLF is stored as LF, empty, holding a NUL or a carriage return left after the fold, or not UTF-8, a `%` not followed by two hex digits is not the form, the fixture saved through the form keeps its digest, and the route's bound admits the largest file in its longest form (section 6.3) | perturbation in `src/loop_tests.rs`, `a_wire_file_is_refused_past_its_bound_empty_with_a_nul_or_not_utf8`: move the parse's bound one byte, and 262,145 bytes pass the parse and meet migration `0035`'s check, a 500 in place of the sentence; decode the form lossily, and a byte sequence that is not UTF-8 saves with U+FFFD; drop the hex check, and `%+5` decodes; drop the carriage return's refusal, and a lone one saves; set the route's bound under 1,572,879 bytes, and `the_largest_file_crosses_the_requests_bound` is refused 413 |
+| a loop's save against a stale version refuses, the version 2,147,483,647 among them (section 6.3) | perturbation in `src/store/loop_text_tests.rs`: drop the head check, and a save naming a version past the head lands, leaving a gap; a save naming the version the next save replaced meets the unique version and is stale either way; `a_save_at_the_top_version_is_stale` in `src/loop_tests.rs`: compute the next version in the statement, and the save answers 500 |
 | only a person holding `operator` on the agent saves its loop, and no grant answers as an unknown agent (section 6.3) | perturbation in `src/loop_tests.rs`, `only_an_operator_holder_saves_a_loop`: drop the page's `operator` check, and the observer's save reaches the store, whose re-check refuses it with a first record and a failed outcome in place of the one refusal record; the store's re-check is `a_save_after_the_grant_ends_lands_nothing` in `src/store/loop_text_tests.rs` |
 | a loop's version is never changed or removed (section 6.3) | perturbation in `src/store/loop_text_tests.rs`: drop migration `0035`'s trigger, and an update of a version's text lands |
 | the first draft is today's compiled loop as wires, byte for byte (section 6.3) | the pin `the_first_draft_is_todays_loop_as_wires` in `src/loop_tests.rs`, the fixture's sha256 checked first, perturbation: one byte of the fixture changed |
 | the loop page says a saved loop is not on the appliance, beside the stored digest (section 6.3) | perturbation in `src/loop_tests.rs`: drop the sentence, and the page's test fails |
-| which loop ran is the `composer` wherever the tuple is written with a load, a live load event's or a `show` answer's `load`, never a replayed or older event's, and a `show` at rest leaves it (sections 2.12, 6.3) | perturbation in `src/link/tests.rs`, `which_loop_ran_is_the_composer_where_the_tuple_is_written`, against the real listener and a fake admin-con at the frame level: write the member from a replayed event, and a backfill moves it; write it with no `file` check, and a `composer` holding `file` and no digest reads as compiled; write it on a cleared tuple, and a `show` at rest clears it |
+| which loop ran is the `composer` wherever the tuple is written with a load, a live load event's or a `show` answer's `load`, never a replayed or older event's, and a `show` at rest leaves it, and its date is a live load event's always and a `show`'s only where it changes the member (sections 2.12, 6.3) | perturbation in `src/link/tests.rs`, `which_loop_ran_is_the_composer_where_the_tuple_is_written`, against the real listener and a fake admin-con at the frame level: write the member from a replayed event, and a backfill moves it; write it with no `file` check, and a `composer` holding `file` and no digest reads as compiled; write it on a cleared tuple, and a `show` at rest clears it; `the_loop_that_rans_date_moves_with_a_load_event_or_a_change`: drop the change condition, and a `show` naming the same loop moves the date |
 | a reload asks `load` only after `unload` exits 0 (section 6.3) | perturbation in `src/loop_tests.rs`, `a_reload_asks_load_only_after_unload_exits_0`, against the real listener and a fake admin-con at the frame level: ask `load` after any answer, and an `unload` refused is followed by a `load` frame |
+| only a person holding `operator` on the agent reloads, whatever verbs another role carries, each refusal one record before any frame (section 6.3) | perturbation in `src/loop_tests.rs`, `only_an_operator_holder_reloads`: drop the handler's `operator` check, and the observer's reload sends an `unload` frame |
+| a reload left half done draws the unload that ran at the refusal's status and raises one alert, the door's or its own (sections 2.14, 6.3) | perturbations in `src/loop_tests.rs`: `a_refused_load_draws_the_unload_that_ran`, answer a 500 with nothing drawn, and the page is the plain fault; raise the reload's alert whether or not the door raised one, and a second alert stands; `a_reload_left_half_done_raises_an_alert`, raise nothing from the reload, and no alert stands |
 
 **A watch that cannot fail is not a test.** For each perturbation above, the
 act that lands it states what removal makes it fail and confirms it does.
@@ -8954,11 +9013,21 @@ a `web-` assertion beside `weaver-admin`'s.
   functional, the operator's test; one removes it, the compiled loop then running.
   This repository asks that each answer one JSON object, in `weaver-admin`'s shape, and
   that a refusal name a word from a closed list with the line the grammar names. **The
-  file reaching a line with root's authority on its standard input** meets the
-  operator's ruling of 2026-10-03 that nothing from the link enters the command, and
-  is his to rule. gate-con's enrollment at the loop's install (section 8.2) stands
-  with them. Open: the lines and the ruling. Settled by WeaverAgent's act on its
-  contract, the operator's ruling, then this repository's act on loop install.
+  file reaching a line with root's authority on its standard input**, from this
+  server's page with nobody at the appliance's screen, is ruled, the one exception to
+  his rulings of 2026-10-03 and 2026-11-16, on the operator's ruling of 2026-11-26:
+  "Yes. Ruled again when sign-in returns. Each install puts the digest of gatecon's
+  destinations file in the trace." Two riders stay open: it is ruled again when sign-in
+  returns; and each install writes the digest of gatecon's destinations file to the
+  trace, which is the agent's side's line's work, this server showing the digest once
+  the trace carries it. gate-con's enrollment at the loop's install (section 8.2) stands
+  with them. Open: the lines and the two riders. Settled by WeaverAgent's act on its
+  contract, then this repository's act on loop install.
+- **A trace's copy for Weaver Analysis, opened 2026-11-26.** On the operator's words of
+  2026-11-26: "Weaver Analysis never opens that file. It works on its own copy, received
+  through Weaver Web. What it produces is a new trace that carries the original's
+  provenance ID." This server is the one that hands the copy. Open: all of it. Settled
+  by an act of its own, not yet planned.
 - **A break's reason, opened 2026-11-26** (section 6.3). A loop that breaks ends the
   agent's service. The agent's side plans the runner's last line as one JSON object,
   kept in the worker's log, which is not `admin.log` and no feed of this repository

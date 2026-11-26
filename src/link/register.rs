@@ -1403,6 +1403,10 @@ impl Store {
         // a `show` at rest) or kept leaves the member, which names the loop
         // of the last load. In this one statement, under its arrival
         // sequence, so a replayed or older observation never moves it.
+        // **The date is a live load event's always, and a `show`'s only
+        // where it changes the member** (the Planner's decision of
+        // 2026-11-26): a `show`'s date is its arrival, and a connection
+        // opening a day after the load names no load of that day.
         let loop_ran = match &observation.tuple {
             TupleWrite::Write(Some(tuple)) => {
                 Some(crate::store::loop_text::loop_ran_of(tuple.get("composer")))
@@ -1425,7 +1429,8 @@ impl Store {
                constituents_at = CASE WHEN $9 THEN constituents_at ELSE $3 END, \
                state_source = CASE WHEN $11 = 'record' THEN state_source ELSE $7 END, \
                loop_ran = CASE WHEN $12 THEN $13 ELSE loop_ran END, \
-               loop_ran_at = CASE WHEN $12 THEN $3 ELSE loop_ran_at END \
+               loop_ran_at = CASE WHEN $12 AND ($7 = 'event' OR loop_ran_at IS NULL \
+                 OR loop_ran IS DISTINCT FROM $13) THEN $3 ELSE loop_ran_at END \
              WHERE agent_id = $1 \
                AND (load_epoch IS NULL OR (load_epoch, load_arrival) < ($4, $5)) \
                AND (tuple_epoch IS NULL OR (tuple_epoch, tuple_arrival) < ($4, $5))",

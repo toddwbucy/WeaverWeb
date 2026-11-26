@@ -1409,7 +1409,7 @@ async fn an_unknown_setup_is_not_found_and_a_malformed_one_refused() {
 /// states: no setup standing, a setup begun the old way and unpaired, and
 /// paired. The name's pane says that once paired the appliance's setup
 /// script lays the agent's account and its folder under the name (the
-/// operator's words of 2026-11-25).
+/// operator's ruling of 2026-11-26).
 ///
 /// Perturbations: drop the number from the name's rule; close the form
 /// before the name's pane, so the name and the code stand outside it (each

@@ -4726,9 +4726,9 @@ mark `1 Declare` and no setup rail. The agent is named there, so the setup row a
 when the agent is named, and no migration moves: the row stays the pairing's record (the
 Planner's ruling of 2026-11-24 on the plan). One box carries one setup, and the
 replace-box write of section 8.2 stays as it is, since "One agent per VM is the
-recommendation" (the same rulings). The directories page shows what the box reports at
-the two default paths alone, since another path needs a new survey format in the suite
-repository, which is outside this act (the Planner's ruling of 2026-11-24 on the plan).
+recommendation" (the same rulings). The directories page names each directory at the
+place the report gives, `weaver-survey/2` carrying the two places as the operator chose
+them, and names no default (the brief of 2026-11-25).
 The steps after `paired` are the appliance's setup script's (section 8.2).
 
 **The operator's rulings of 2026-11-24**, in the operator's words: on where the report
@@ -5123,8 +5123,19 @@ directories as mounted, below, and does not show the report in full.
 arrival and `taken`, then its members grouped: the image, the kernel, the machine, the
 CPU (its flags as a count, the list folded), the memory, the driver and whether it is
 loaded, the CUDA runtime, and the cards, each with its ordinal, model, PCI address and
-memory. A box with no card says so, a reading and not a fault. A report whose drives
-are both not mounted is a valid report, read whole.
+memory. A box with no card says so, a reading and not a fault. **The network** follows,
+as a group (the brief of 2026-11-25): the management plane's address as the report
+spells it and its prefix length, the data plane's, and "separate" or "shared", read only
+and judging nothing. A report whose drives are both not mounted is a valid report, read
+whole. **A blank appliance pairs**, and the pane says what it lacks after the report's
+arrival, one sentence per case, each place as the report names it (working text the
+operator may reword): the state drive alone, "The appliance reports no drive mounted at
+`<state place>`, where its state drive goes."; the models drive alone, "The appliance
+reports no drive mounted at `<models place>`, where its models drive goes."; both, "The
+appliance reports no drive mounted at `<state place>` and none at `<models place>`,
+where its state and models drives go." Where both are mounted, no sentence stands. The
+directories page then shows each drive not mounted, and Confirm holds until a later
+report shows both mounted.
 
 **The directories as mounted**, on the operator's rulings of 2026-11-17 (the survey's
 reading) and 2026-11-23: each drive of the report, with its role, its directory (the
@@ -7852,6 +7863,7 @@ two connectors report.
 | at the pairing the box takes the console's chain only where the server's certificate chains to the authority presented with it, and the pairing is TLS 1.3 alone | perturbation in `src/link/pairing_tests.rs`: a console that presents its certificate with another authority's completes no handshake with the box, and a client offering the pairing protocol under TLS 1.2 alone completes none with the listener. Let the box's check pass any chain, or build the pairing's configuration on the default versions, and each completes |
 | a first frame without a `pairing` stage report is refused `no_report`, and one whose report is not one JSON object within 64 KiB is refused `report_refused`, each before the box is listed; a frame carrying a report at version 1's stage `drives`, alone or beside a `pairing` report, is refused `frame_refused` | perturbation in `src/link/pairing_tests.rs`, `a_first_frame_without_a_report_is_refused_no_report` and `a_report_that_is_not_one_object_within_64_kib_is_refused`: a hello with no report, one whose report is an array, one past 64 KiB and one naming `pairing` twice each hear their refusal and none is listed. Drop the checks at the first frame, and the box is listed. Read `drives` as `pairing` (a serde alias), and the two frames naming `drives` are not refused `frame_refused` (measured 2026-11-25) |
 | a first frame whose report's `format` does not read as `weaver-survey/2` is refused `format_refused` before the box is listed, whatever the cause, and a report of version 2 refused by the reader for another cause waits | perturbation in `src/link/pairing_tests.rs`, `a_report_not_of_version_2_by_its_format_is_refused_format_refused`, version 1's worked example, version 3, a version with a trailing space, `format` missing, null, a number or given twice, and whitespace past one newline each refused `format_refused`, a lone surrogate refused `frame_refused`, and two reports of version 2 refused by the reader for other causes waiting, and in `src/survey_tests.rs`, `the_first_frame_reads_the_format_alone`, each case by its outcome: drop the format's check at the frame, and the reports of other versions wait; take a `format` given twice, or read the report with its trailing whitespace trimmed, and both tests fail (each measured 2026-11-25) |
+| the Pair page's report draws the network as a group, each plane's address and prefix length and `separate` or `shared`, and where a drive is not mounted one sentence per case naming the report's place, none where both are mounted; the directories page names no default path | perturbation in `src/setup_panes_tests.rs`, `the_pair_page_draws_the_network_and_what_a_blank_appliance_lacks`, the laid report, the state drive alone and the models drive alone not mounted, and the image proof's shape (both not mounted, one address as both planes under `shared`): draw the state place where the models place belongs in the sentence for both, draw the data plane's address in the management row, draw no sentence, or put the default path back on the directories page, and the test fails (each measured 2026-11-26) |
 | the reports land with the row in one transaction, and nothing of a report is drawn before the code matches | perturbation in `src/enrollment_tests.rs`, `the_report_lands_with_the_row_in_one_transaction`, `a_lost_word_writes_no_row` and `nothing_of_a_report_is_drawn_before_the_code_matches`: a pairing leaves the first frame's `pairing` and `drives` reports on the setup byte for byte, a lost word leaves neither row nor report, and while two boxes wait with reports neither New agent nor the Pair page draws a member of either, though each lists both appliances. Drop the reports' insert, and the setup holds none; write the reports before the row's transaction, and a lost word leaves a report; draw a waiting box's report on its row, and the Pair page carries its member |
 | at most 16 boxes wait in all and 4 from one peer address, the first frame within 10 s and 288 KiB, and ten minutes from the dial the console closes the connection `expired` | perturbation in `src/link/pairing_tests.rs`, each bound alone, the time bounds shortened: the fifth box from one address and the seventeenth in all are refused `busy`, a silent box and a first line past 288 KiB are closed unanswered and give their places back, and a box past its life hears `expired`. Drop any one bound, and its box is held |
 | the server never asks a verb outside the agent's ceiling | perturbation: drop the ceiling check, ask a verb admin-con's hello did not declare, and it leaves the server; and admin-con's half, drop its typed error answer, and it reaches the invoker. **One clause is owed**: check against the row's copy, narrow the ceiling by reconnecting between the check and the enqueue, and an ask outside the new ceiling leaves. The race has no deterministic staging, and the guard is held by review: the check reads the live connection's ceiling under the live map's lock that finds the connection |

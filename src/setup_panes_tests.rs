@@ -209,6 +209,111 @@ async fn the_pairing_pages_report_is_served_waiting_refused_and_read() {
     );
 }
 
+/// **The Pair page's report draws the network and what a blank appliance
+/// lacks** (the brief of 2026-11-25, child 4 of its plan): the network as a
+/// group, each plane's address as the report spells it and its prefix
+/// length, and "separate" or "shared", judging nothing; and where a drive
+/// is not mounted, one sentence per case naming the place the report gives,
+/// none where both are mounted. The image proof's shape, both drives not
+/// mounted and one address as both planes under `shared`, reads and draws
+/// the sentence for both. The directories page names no default path.
+///
+/// Perturbations: draw the state drive's place in the sentence for both
+/// where the models drive's belongs, and the image proof's sentence fails;
+/// draw the data plane's address in the management row, and the separate
+/// planes' rows fail.
+#[tokio::test]
+async fn the_pair_page_draws_the_network_and_what_a_blank_appliance_lacks() {
+    let reported = Arc::new(Reported::default());
+    let Some((rig, _fake, _, _cache)) = rig_boxed(false, reported.clone()).await else {
+        return;
+    };
+    let (ada, setup) = setup_of(&rig, "karl").await;
+    let uri = format!("/pair/{setup}");
+    const LACKS: &str = r#"<span class="status hold">not mounted</span>"#;
+
+    *reported.pairing.lock().unwrap() = Some(laid_pairing_report());
+    let page = read(&rig.app, &uri, &ada).await;
+    let laid = pane(&page, PAIRING_PANE);
+    assert_eq!(status(laid), r#"<span class="status ok">read</span>"#);
+    for row in [
+        "<caption>The network</caption>",
+        "<thead><tr><th>Plane</th><th>Address</th><th>Prefix length</th></tr></thead>",
+        r#"<tr><th>Management</th><td class="mono">192.0.2.10</td><td>24</td></tr>"#,
+        r#"<tr><th>Data</th><td class="mono">198.51.100.10</td><td>24</td></tr>"#,
+        r#"<tr><th>Planes</th><td colspan="2">separate</td></tr>"#,
+    ] {
+        assert!(laid.contains(row), "{row}: {laid}");
+    }
+    assert!(!laid.contains(LACKS), "both mounted: {laid}");
+    assert!(pair_walk(&page).is_empty(), "{:?}", pair_walk(&page));
+
+    let not_mounted =
+        |role: &str, place: &str| json!({"role": role, "mount_point": place, "mounted": false});
+    let cases = [
+        (
+            edited(|v| v["drives"][0] = not_mounted("state", "/mnt/weaver/state")),
+            "The appliance reports no drive mounted at <code>/mnt/weaver/state</code>, where its state drive goes.",
+        ),
+        (
+            edited(|v| v["drives"][1] = not_mounted("models", "/srv/weaver-models")),
+            "The appliance reports no drive mounted at <code>/srv/weaver-models</code>, where its models drive goes.",
+        ),
+    ];
+    for (report, sentence) in cases {
+        *reported.pairing.lock().unwrap() = Some(report);
+        let page = read(&rig.app, &uri, &ada).await;
+        let shown = pane(&page, PAIRING_PANE);
+        assert_eq!(status(shown), r#"<span class="status ok">read</span>"#);
+        assert!(
+            shown.contains(&format!("<p>{LACKS} {sentence}</p>")),
+            "{sentence}: {shown}"
+        );
+        assert_eq!(shown.matches(LACKS).count(), 1, "{shown}");
+    }
+
+    // The image proof's shape.
+    let mut proof: Value = serde_json::from_str(&pairing_report()).unwrap();
+    proof["network"] = json!({
+        "management": {"address": "192.0.2.10", "prefix_length": 24},
+        "data": {"address": "192.0.2.10", "prefix_length": 24},
+        "planes": "shared",
+    });
+    *reported.pairing.lock().unwrap() = Some(proof.to_string());
+    let page = read(&rig.app, &uri, &ada).await;
+    let shown = pane(&page, PAIRING_PANE);
+    assert_eq!(status(shown), r#"<span class="status ok">read</span>"#);
+    assert!(
+        shown.contains(&format!(
+            "<p>{LACKS} The appliance reports no drive mounted at <code>/mnt/weaver/state</code> and none at <code>/mnt/weaver/models</code>, where its state and models drives go.</p>"
+        )),
+        "{shown}"
+    );
+    assert_eq!(shown.matches(LACKS).count(), 1, "{shown}");
+    for row in [
+        r#"<tr><th>Management</th><td class="mono">192.0.2.10</td><td>24</td></tr>"#,
+        r#"<tr><th>Data</th><td class="mono">192.0.2.10</td><td>24</td></tr>"#,
+        r#"<tr><th>Planes</th><td colspan="2">shared</td></tr>"#,
+    ] {
+        assert!(shown.contains(row), "{row}: {shown}");
+    }
+    assert!(!shown.contains("<form"), "read only: {shown}");
+    assert!(pair_walk(&page).is_empty(), "{:?}", pair_walk(&page));
+
+    let page = read(&rig.app, &format!("/setup/{setup}/directories"), &ada).await;
+    assert!(!page.contains("default path"), "{page}");
+    assert!(
+        page.contains(
+            "a state disk and a models disk, each mounted at a place the operator chooses."
+        ),
+        "{page}"
+    );
+    assert!(
+        page.contains("The box reports each directory at the place the operator chose, and the next pane names and judges them."),
+        "{page}"
+    );
+}
+
 /// **A value a report chose is drawn through the templates' escaping**
 /// (Spec 6.2): a read report whose machine's product and a card's model
 /// hold a script element draws them escaped, as askama escapes `<` and

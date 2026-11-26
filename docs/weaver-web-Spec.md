@@ -1629,8 +1629,9 @@ and the member reads `compiled`. The form is the Planner's ruling of
 2026-11-26 to the agent's side, and both members are in the trace's
 vocabulary as built (`weaver-harness-loop-contract` section 6). **A load
 event whose `composer` is absent, or holds `file` with no digest of that
-shape, writes no member**, and the row says the last load named no loop it
-reads; nothing guesses the compiled loop from a silence. It is written in
+shape, clears the member and keeps its date**, so the row says the last
+load named no loop it reads; nothing guesses the compiled loop from a
+silence, and no older load's loop stands for a newer load. It is written in
 the tuple's own write, under the same arrival sequence, so a replayed or
 older load never moves it, and a `show` never does: `show`'s facts carry
 another shape of `composer`, and the member is the load event's word alone.
@@ -5360,8 +5361,8 @@ parsed first (400), as every reading page does (section 2.13). Reads are not aud
    the page's read. "The compiled loop ran at the last load."; "The wires ran at the
    last load, sha256 `<hex>`," followed by "the saved version `<n>`." where a stored
    version of this agent has that digest, else "a digest no saved version here has.";
-   "The last load named no loop this page reads." where the row holds a load and no
-   member; "No load is recorded for this agent." where it holds none. It says nothing
+   "The last load named no loop this page reads." where the last load event named
+   none; "No load event is recorded for this agent." where none has landed. It says nothing
    of what the appliance holds now, which only test (section 10) will read.
 3. **Reload** (`3 Run`): one button, offered where the person holds `operator` on the
    agent, their grants carry `unload` and `load`, and the connection's ceiling grants
@@ -8300,7 +8301,7 @@ two connectors report.
 | a mistyped `local_address` is refused naming the member and never its value (section 8) | perturbation in `src/link/admin_con_tests.rs`, `a_mistyped_local_address_is_refused_naming_the_member`: drop the member from admin-con's list, and the refusal names none; drop the check by name in `client::parse_config`, and the refusal names the file's first member, since serde's flatten drops the member's place (each measured 2026-11-25) |
 | a loop's text enters no audit record: the save's records hold its digest and byte count (section 6.3) | perturbation in `src/store/loop_text_tests.rs`: write the text into the action, and the audit read finds it |
 | a wire file is refused one byte past 262,144 counted after CRLF is stored as LF, empty, holding a NUL, or not UTF-8, and the fixture saved through the form keeps its digest (section 6.3) | perturbation in `src/loop_tests.rs`: move the bound one byte, and 262,145 bytes save; decode the form lossily, and a byte sequence that is not UTF-8 saves with U+FFFD |
-| a loop's save against a stale version refuses (section 6.3) | perturbation in `src/store/loop_text_tests.rs`: drop the head check, and a second save naming the version the first replaced lands |
+| a loop's save against a stale version refuses (section 6.3) | perturbation in `src/store/loop_text_tests.rs`: drop the head check, and a save naming a version past the head lands, leaving a gap; a save naming the version the next save replaced meets the unique version and is stale either way |
 | only a person holding `operator` on the agent saves its loop, and no grant answers as an unknown agent (section 6.3) | perturbation in `src/loop_tests.rs`: drop the `operator` check, and an observer's save lands |
 | a loop's version is never changed or removed (section 6.3) | perturbation in `src/store/loop_text_tests.rs`: drop migration `0035`'s trigger, and an update of a version's text lands |
 | the first draft is today's compiled loop as wires, byte for byte (section 6.3) | the pin `the_first_draft_is_todays_loop_as_wires` in `src/loop_tests.rs`, the fixture's sha256 checked first, perturbation: one byte of the fixture changed |

@@ -406,7 +406,7 @@ async fn the_pair_page_lists_the_waiting_box_as_it_claims() {
 /// declaration's first page, Declarations lists the agent and New agent
 /// no longer does. Its paired line says the appliance's setup script now
 /// lays the agent's account and its folder under the agent's name (the
-/// operator's words of 2026-11-25).
+/// operator's ruling of 2026-11-26).
 ///
 /// Perturbation: write a gate fingerprint with the row, and its gate plane
 /// reads live; count a gate not enrolled as connected in `Agent::present`,

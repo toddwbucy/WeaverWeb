@@ -329,7 +329,7 @@ async fn the_pair_page_draws_the_network_and_what_a_blank_appliance_lacks() {
 }
 
 /// **The Build page says the agent's account and its folder are laid at the
-/// pairing** (Spec 6.2, the operator's words of 2026-11-25), and the box
+/// pairing** (Spec 6.2, the operator's ruling of 2026-11-26), and the box
 /// lays the rest of the agent from the tuple once Confirm stands. It never
 /// says the box lays the whole agent after Confirm. The Pair page's paired
 /// line is pinned where a pairing draws it, in

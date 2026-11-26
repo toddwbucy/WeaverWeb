@@ -4890,15 +4890,17 @@ takes the name** (the operator's word of 2026-11-16), named from `weaver-<name>`
 agent's own account is laid right after the pairing, over admincon, once the name
 returns from Weaver Web." `admin-con pair` answers `paired` with the name (section 8.2),
 and the appliance's setup script then lays the account at the appliance's screen, as
-it lays the disks; Weaver Web asks nothing for it (the Planner's reading of
-2026-11-26, put to the operator). The connectors' two accounts are not the agent's:
+it lays the disks; Weaver Web asks nothing for it, on the operator's ruling of
+2026-11-26: "Yes. The script creates the agent's account and folders at the screen,
+and the trace directory with them." The connectors' two accounts are not the agent's:
 "The admincon and gatecon accounts are in the template, made on the development side.
 Their names never change. The script does not make them." **With the account the
 script lays the agent's folder of per-agent files**, laid once the name is known, on
-the operator's words of the same day. It holds the loop's directory and gate-con's list
-of allowed destinations; root owns both, and the agent's group reads them. That list is
-the Planner's reading of the operator's words "gatecon's config" (2026-11-26), put to
-the operator and his to change. gate-con's credential config, which carries its key,
+the operator's words of the same day. It holds the loop's directory and gatecon's
+destinations file; root owns both, and the agent's group reads them. The file is the
+operator's, by his words of 2026-11-26: "Each install puts the digest of gatecon's
+destinations file in the trace." That it sits in this folder is the Planner's reading of
+his words of 2026-11-25, and his to change. gate-con's credential config, which carries its key,
 is not in that folder's sentence: it stays gate-con's own, as section 8 states. The
 folder's location is the appliance's, and no document here names it. What the box lays from the tuple once
 Confirm stands is the rest of the agent (below). On the state drive each agent has a directory of its own under the state mount,
@@ -7965,8 +7967,8 @@ disk. On the addendum to the operator's rulings of 2026-11-16 (setup pages) the 
 a real account on the box, its home on the state drive. **The agent's own account takes
 its name**, on the operator's word of 2026-11-16, named from `weaver-<name>`, and the
 appliance's setup script lays it right after the pairing, once the name returns, with
-the agent's folder of per-agent files, on the operator's words of 2026-11-25; the
-connectors' two accounts are the image's (section 6.2). On the state drive each agent has a directory of its own under the state
+the agent's folder of per-agent files, on the operator's words of 2026-11-25 and his
+ruling of 2026-11-26; the connectors' two accounts are the image's (section 6.2). On the state drive each agent has a directory of its own under the state
 mount, named for it, which holds the agent's folder and its home side by side, and a
 host lays the same under its state directory. **The trace is never written to the
 agent's state or anywhere the agent can reach**, on the operator's word of 2026-11-17:

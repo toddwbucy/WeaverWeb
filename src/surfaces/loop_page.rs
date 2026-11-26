@@ -2,6 +2,7 @@
 //! conforms: web-the-loop-page-says-a-saved-loop-is-not-on-the-appliance
 //! conforms: web-a-wire-file-is-refused-past-its-bound-empty-with-a-nul-or-not-utf8
 //! conforms: web-only-an-operator-holder-saves-a-loop
+//! conforms: web-a-reload-asks-load-only-after-unload-exits-0
 //!
 //! **The loop page** (Spec 6.3; the operator's words of 2026-11-25, "The
 //! loop page for January is a text editor on the wire file, plus reload"):
@@ -25,6 +26,12 @@
 //! with one refusal record, the agent resolved, the first record, then the
 //! store's transaction (`Store::save_loop`). The text enters no record,
 //! log line or error.
+//!
+//! **Reload** (`POST /agents/{agent}/loop/reload`) is today's `unload`
+//! then `load`, two of the person's own asks under one admission, run in a
+//! task the request cannot cut, as "save point, then unload" runs (Spec
+//! 2.14): `load` is asked only where `unload` exits 0. Each ask passes every
+//! gate a verb passes and is recorded and audited as one.
 
 use askama::Template;
 use axum::Router;
@@ -34,11 +41,16 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
 
+use crate::link::listener::{Act, Admission, Asker, Listener, VerbError};
 use crate::store::audit::{PersonMethod, Principal, Target};
 use crate::store::identity::is_agent_id;
 use crate::store::loop_text::{LoopVersion, Saved, WIRE_FILE_MOST, action, digest};
 use crate::store::{AgentId, Store};
-use crate::surfaces::reading::{Seams, fault, not_found, readable, session_of, when};
+use crate::surfaces::alerts::Step;
+use crate::surfaces::reading::{
+    NO_SUCH_AGENT, Seams, fault, live_ceiling, not_found, readable, refusal_status, session_of,
+    when,
+};
 
 /// **Today's compiled loop written as wires**, the first draft: the agent's
 /// side's file at its pushed head, carried byte for byte.
@@ -69,26 +81,36 @@ const VERSION_MOST: i64 = i32::MAX as i64;
 
 /// The loop page's routes, merged into the reading surface's.
 pub fn routes(seams: Seams) -> Router<Store> {
-    let save_seams = seams.clone();
-    Router::new().route(
-        "/agents/{agent}/loop",
-        get(
-            move |State(store): State<Store>, headers: HeaderMap, Path(agent): Path<String>| {
-                let seams = seams.clone();
-                async move { page(store, &seams, headers, agent).await }
-            },
+    let (save_seams, reload_seams) = (seams.clone(), seams.clone());
+    Router::new()
+        .route(
+            "/agents/{agent}/loop/reload",
+            axum::routing::post(
+                move |State(store): State<Store>, headers: HeaderMap, Path(agent): Path<String>| {
+                    let seams = reload_seams.clone();
+                    async move { reload(store, &seams, headers, agent).await }
+                },
+            ),
         )
-        .post(
-            move |State(store): State<Store>,
-                  headers: HeaderMap,
-                  Path(agent): Path<String>,
-                  body: Bytes| {
-                let seams = save_seams.clone();
-                async move { save(store, &seams, headers, agent, body).await }
-            },
+        .route(
+            "/agents/{agent}/loop",
+            get(
+                move |State(store): State<Store>, headers: HeaderMap, Path(agent): Path<String>| {
+                    let seams = seams.clone();
+                    async move { page(store, &seams, headers, agent).await }
+                },
+            )
+            .post(
+                move |State(store): State<Store>,
+                      headers: HeaderMap,
+                      Path(agent): Path<String>,
+                      body: Bytes| {
+                    let seams = save_seams.clone();
+                    async move { save(store, &seams, headers, agent, body).await }
+                },
+            )
+            .layer(DefaultBodyLimit::max(LOOP_FORM_MOST)),
         )
-        .layer(DefaultBodyLimit::max(LOOP_FORM_MOST)),
-    )
 }
 
 /// A number with its thousands grouped by commas, as the refusals say it.
@@ -318,11 +340,33 @@ struct LoopPage {
     /// The version read, 0 where none is saved: the form's.
     version: i32,
     text: String,
+    /// The reload pane: offered, or disabled with its reason.
+    reload: ReloadView,
     no_loop_saved: &'static str,
     not_on_the_appliance: &'static str,
     ran: String,
     ran_at: String,
 }
+
+/// **The reload pane** (Spec 6.3): offered where the person holds
+/// `operator`, their grants carry `unload` and `load`, and the live
+/// connection's ceiling grants both; otherwise disabled with the reason,
+/// since a page offers or disables a verb and never hides one. Presentation
+/// alone: each ask checks everything again.
+struct ReloadView {
+    offered: bool,
+    reason: &'static str,
+}
+
+/// Why reload is not offered, by the first condition that fails.
+pub const RELOAD_NOT_OPERATOR: &str = "Reload is for a person holding operator on the agent.";
+/// Why reload is not offered: the grants.
+pub const RELOAD_NOT_GRANTED: &str = "Your grants on this agent do not carry both unload and load.";
+/// Why reload is not offered: no connection.
+pub const RELOAD_NOT_CONNECTED: &str = "admin-con is not connected, so no verb can be asked.";
+/// Why reload is not offered: the ceiling.
+pub const RELOAD_NOT_CEILING: &str =
+    "The connection's ceiling does not grant both unload and load.";
 
 /// The stored head as the pane says it.
 struct HeadView {
@@ -372,6 +416,26 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, agent: String) ->
         (Ok(admin), Ok(chrome)) => (admin, chrome),
         (Err(e), _) | (_, Err(e)) => return fault(e),
     };
+    let granted = match store.verbs_on(&session.person_id, &id).await {
+        Ok(granted) => granted,
+        Err(e) => return fault(e),
+    };
+    let ceiling = live_ceiling(&row);
+    let operator = roles.iter().any(|r| r == "operator");
+    let reason = if !operator {
+        RELOAD_NOT_OPERATOR
+    } else if !(granted.contains("unload") && granted.contains("load")) {
+        RELOAD_NOT_GRANTED
+    } else if !row.admin.connected {
+        RELOAD_NOT_CONNECTED
+    } else if !["unload", "load"]
+        .iter()
+        .all(|v| ceiling.iter().any(|c| c == v))
+    {
+        RELOAD_NOT_CEILING
+    } else {
+        ""
+    };
     let text = head
         .as_ref()
         .map(|h| h.text.clone())
@@ -384,7 +448,11 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, agent: String) ->
         chrome,
         agent_id: agent,
         label: format!("{}/{}", row.r#box, row.name),
-        operator: roles.iter().any(|r| r == "operator"),
+        operator,
+        reload: ReloadView {
+            offered: reason.is_empty(),
+            reason,
+        },
         version,
         roles: roles.join(", "),
         head: head.map(|h| HeadView {
@@ -419,4 +487,194 @@ async fn read_loop(
     };
     let ran = ran_said(member.as_deref(), at.is_some(), version);
     Ok((head, ran, at.map(when).unwrap_or_default()))
+}
+
+/// **A reload's steps as a page** (Spec 6.3): each step's ask and how it
+/// was answered, or that the reload runs on past the page's wait.
+#[derive(Template)]
+#[template(path = "loop_reload.html")]
+struct ReloadPage {
+    here: &'static str,
+    who: String,
+    admin: bool,
+    chrome: super::Chrome,
+    agent_id: String,
+    steps: Vec<Step>,
+    pending: bool,
+}
+
+/// What admin answered, as a step says it: its answer, or its refusal by
+/// the refusal's kind.
+fn answer_said(outcome: &crate::link::frames::VerbOutcome) -> String {
+    if outcome.exit_code == Some(0) {
+        return "admin's answer".to_owned();
+    }
+    format!(
+        "admin's refusal: {}",
+        outcome
+            .answer
+            .as_ref()
+            .and_then(|a| a.get("kind"))
+            .and_then(|k| k.as_str())
+            .unwrap_or("unnamed")
+    )
+}
+
+/// **The reload, `unload` then `load`** (Spec 6.3), run in the task the
+/// request detaches: `unload` asked as the person's, then `load` **only
+/// where `unload` exits 0**; any other answer, a refusal or no answer, ends
+/// the reload with no `load`. The one admission is held across both asks.
+pub async fn unload_then_load(
+    listener: Listener,
+    admission: Admission,
+    asker: Asker,
+    agent: AgentId,
+) -> Vec<Step> {
+    let mut steps = Vec::new();
+    let (admission, asked) = listener
+        .ask_under(admission, &asker, &agent, Act::Verb("unload".into()))
+        .await;
+    let (first, answered) = match asked {
+        Ok(enqueued) => {
+            let first = enqueued.first.clone();
+            (first, enqueued.answer().await)
+        }
+        Err(refused) => {
+            steps.push(Step {
+                verb: "unload".into(),
+                first: String::new(),
+                status: format!("not asked: {refused}"),
+                refused: Some(refused),
+            });
+            return steps;
+        }
+    };
+    let unloaded = matches!(&answered, Ok(outcome) if outcome.exit_code == Some(0));
+    steps.push(Step {
+        verb: "unload".into(),
+        first,
+        status: match &answered {
+            Ok(outcome) if unloaded => answer_said(outcome),
+            Ok(outcome) => format!("{}; no load sent", answer_said(outcome)),
+            Err(e) => format!("{e}; no load sent"),
+        },
+        refused: None,
+    });
+    if !unloaded {
+        return steps;
+    }
+    let Some(admission) = admission else {
+        steps.push(Step {
+            verb: "load".into(),
+            first: String::new(),
+            status: "not asked: the unload's ask ended abnormally".into(),
+            refused: Some(VerbError::Server(
+                "the unload's ask ended abnormally".into(),
+            )),
+        });
+        return steps;
+    };
+    let (_admission, asked) = listener
+        .ask_under(admission, &asker, &agent, Act::Verb("load".into()))
+        .await;
+    steps.push(match asked {
+        Ok(enqueued) => {
+            let first = enqueued.first.clone();
+            Step {
+                verb: "load".into(),
+                first,
+                status: match enqueued.answer().await {
+                    Ok(outcome) => answer_said(&outcome),
+                    Err(e) => e.to_string(),
+                },
+                refused: None,
+            }
+        }
+        Err(refused) => Step {
+            verb: "load".into(),
+            first: String::new(),
+            status: format!("not asked: {refused}"),
+            refused: Some(refused),
+        },
+    });
+    steps
+}
+
+/// **A reload** (Spec 6.3): the identity parsed, the session, the
+/// admission (shed: 503, no record), no grant answered as an unknown agent,
+/// then the two asks in a task the request cannot cut; the page shows each
+/// step, or that the reload runs on past the silence bound (202).
+async fn reload(store: Store, seams: &Seams, headers: HeaderMap, agent: String) -> Response {
+    if !is_agent_id(&agent) {
+        return (
+            StatusCode::BAD_REQUEST,
+            "the agent asked for is not of its identity's shape",
+        )
+            .into_response();
+    }
+    let id: AgentId = match agent.parse() {
+        Ok(id) => id,
+        Err(e) => return fault(anyhow::Error::msg(e)),
+    };
+    let session = match session_of(&store, &seams.policy, &headers).await {
+        Ok(session) => session,
+        Err(answer) => return answer,
+    };
+    let Some(admission) = seams.asker.admit_ask(&session.person_id) else {
+        return (StatusCode::SERVICE_UNAVAILABLE, VerbError::Shed.to_string()).into_response();
+    };
+    match store.roles_on(&session.person_id, &id).await {
+        Ok(roles) if roles.is_empty() => return not_found(),
+        Ok(_) => {}
+        Err(e) => return fault(e),
+    }
+    let asker = Asker {
+        session_id: session.session_id,
+        person_id: session.person_id.clone(),
+    };
+    let (listener, task_agent) = (seams.asker.clone(), id.clone());
+    let sequence =
+        tokio::spawn(async move { unload_then_load(listener, admission, asker, task_agent).await });
+    // **A refusal at its own status** (Spec 2.8): the reload stops at its
+    // first refusal, so the steps carry at most one; no grant answers as an
+    // unknown agent, and a fault answers 500. admin's own refusal is an
+    // asked verb answering, 200.
+    let (status, steps, pending) = match tokio::time::timeout(seams.asker.silence(), sequence).await
+    {
+        Ok(Ok(steps)) => match steps.iter().find_map(|s| s.refused.as_ref()) {
+            None => (StatusCode::OK, steps, false),
+            Some(refusal) => match refusal_status(refusal) {
+                StatusCode::NOT_FOUND => {
+                    return (StatusCode::NOT_FOUND, NO_SUCH_AGENT).into_response();
+                }
+                StatusCode::INTERNAL_SERVER_ERROR => {
+                    return fault(anyhow::anyhow!("a reload's step was not asked: {refusal}"));
+                }
+                status => (status, steps, false),
+            },
+        },
+        Ok(Err(e)) => return fault(anyhow::anyhow!("the reload's task ended: {e}")),
+        Err(_) => (StatusCode::ACCEPTED, Vec::new(), true),
+    };
+    let (admin, chrome) = match (
+        store.is_admin(&session.person_id).await,
+        super::Chrome::of(&store, &session.person_id).await,
+    ) {
+        (Ok(admin), Ok(chrome)) => (admin, chrome),
+        (Err(e), _) | (_, Err(e)) => return fault(e),
+    };
+    match (ReloadPage {
+        here: "agents",
+        who: session.name,
+        admin,
+        chrome,
+        agent_id: agent,
+        steps,
+        pending,
+    })
+    .render()
+    {
+        Ok(html) => (status, [(header::CACHE_CONTROL, "no-store")], Html(html)).into_response(),
+        Err(e) => fault(e),
+    }
 }

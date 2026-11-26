@@ -135,15 +135,13 @@
 {%- endif %}
 {%- if let Some(report) = report %}
 <section class="pane">
-  <header><span class="stage"><b>1</b> Declare</span><h2>The box's report at the pairing stage</h2><span class="backing built">built</span><span class="status {{ report.class() }}">{{ report.word() }}</span><span class="source">the box's survey, read as <code>weaver-survey/1</code></span></header>
+  <header><span class="stage"><b>1</b> Declare</span><h2>The box's report at the pairing stage</h2><span class="backing built">built</span><span class="status {{ report.class() }}">{{ report.word() }}</span><span class="source">the box's survey, read as <code>weaver-survey/2</code></span></header>
   <div class="body">
   {%- match report %}
   {%- when report::Shown::Waiting %}
   <p>No report has arrived at the pairing stage. A box brings its report with the pairing; this row was paired before the report crossed with it, and the appliance's setup script sends one with admin-con setup report.</p>
   {%- when report::Shown::Refused with { arrived, number, words } %}
   <p>Arrived {{ arrived }}. Refused for cause {{ number }}: {{ words }}.</p>
-  {%- when report::Shown::Misfiled with { arrived, names } %}
-  <p>Arrived {{ arrived }}. The report kept as the pairing stage's names its stage {{ names }}.</p>
   {%- when report::Shown::Read with { arrived, body } %}
   <p>Arrived {{ arrived }}, taken {{ body.taken }}.</p>
   <table>
@@ -211,16 +209,17 @@
   </table>
   {%- endif %}
   {%- endmatch %}
+  {%- if let Some(arrived) = drives_kept %}
+  <p><span class="status hold">not read</span> A report kept under the stage drives, which <code>weaver-survey/2</code> does not have, arrived {{ arrived }}. It feeds nothing.</p>
+  {%- endif %}
   </div>
   {%- match report %}
   {%- when report::Shown::Waiting %}
   <footer>Waits on the box's report at the pairing stage, which a row paired before the report crossed with the pairing receives from admin-con setup report.</footer>
   {%- when report::Shown::Refused with { arrived: _, number: _, words: _ } %}
   <footer>Neither the report's text nor the refusal's detail is drawn, the detail being in the console's log. Waits on a report at the pairing stage that the reader reads.</footer>
-  {%- when report::Shown::Misfiled with { arrived: _, names: _ } %}
-  <footer>Waits on a report at the pairing stage that names its own stage.</footer>
   {%- when report::Shown::Read with { arrived: _, body: _ } %}
-  <footer>The box's survey of itself at the pairing stage, read whole and read only. The declaration's first page judges its directories, from the latest report of either stage.</footer>
+  <footer>The box's survey of itself at the pairing stage, read whole and read only. The declaration's first page judges its directories, from this report.</footer>
   {%- endmatch %}
 </section>
 {%- endif %}

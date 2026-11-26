@@ -66,13 +66,10 @@ pub struct PairArgs {
     /// What `admin-con request` printed: its `request` line.
     #[arg(long)]
     pub admin_request: PathBuf,
-    /// The survey's `pairing` stage report, one JSON object within 64 KiB,
-    /// which crosses with the pairing as its receipt.
+    /// The survey's report, one JSON object within 64 KiB, which crosses
+    /// with the pairing as its receipt, kept as the `pairing` stage's.
     #[arg(long)]
     pub report: PathBuf,
-    /// The survey's `drives` stage report, where the script holds one.
-    #[arg(long)]
-    pub drives_report: Option<PathBuf>,
     /// The management card's address to dial from (Spec 8), an IP literal;
     /// absent, the dial goes by the machine's routes.
     #[arg(long)]
@@ -107,18 +104,17 @@ pub enum SetupCommand {
     },
 }
 
-/// A report's stage as the command takes it.
+/// A report's stage as the command takes it: `pairing` alone, the one
+/// stage of `weaver-survey/2`, so version 1's `drives` is a usage error.
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 pub enum StageArg {
     Pairing,
-    Drives,
 }
 
 impl From<StageArg> for Stage {
     fn from(stage: StageArg) -> Stage {
         match stage {
             StageArg::Pairing => Stage::Pairing,
-            StageArg::Drives => Stage::Drives,
         }
     }
 }
@@ -391,17 +387,13 @@ pub async fn pair<O: Write, E: Write>(p: &mut Printer<O, E>, args: &PairArgs) ->
         Ok(request) => request,
         Err(why) => return p.ended(Status::Usage, &why),
     };
-    let mut reports = Vec::new();
-    for (stage, path) in [
-        (Stage::Pairing, Some(&args.report)),
-        (Stage::Drives, args.drives_report.as_ref()),
-    ] {
-        let Some(path) = path else { continue };
-        match read_report_file(path) {
-            Ok(report) => reports.push(PairReport { stage, report }),
-            Err(why) => return p.ended(Status::Usage, &why),
-        }
-    }
+    let reports = match read_report_file(&args.report) {
+        Ok(report) => vec![PairReport {
+            stage: Stage::Pairing,
+            report,
+        }],
+        Err(why) => return p.ended(Status::Usage, &why),
+    };
     if std::fs::symlink_metadata(&args.answer).is_ok() {
         return p.ended(
             Status::Usage,

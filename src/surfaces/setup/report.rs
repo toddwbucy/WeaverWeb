@@ -1,32 +1,27 @@
 //! conforms: web-no-page-judges-the-models-disks-margin
 //!
-//! **The panes a box's report feeds** (Spec 6.2): the pairing stage's report
-//! and the directories page's directories as mounted, each a report as the
-//! source reads it (`crate::box_report`), and the status each carries:
-//! read, refused, misfiled or waiting. A refused report is drawn by its
+//! **The panes a box's report feeds** (Spec 6.2): the report on the Pair
+//! page and the directories page's directories as mounted, each the report
+//! as the source reads it (`crate::box_report`), and the status each
+//! carries: read, refused or waiting. A refused report is drawn by its
 //! arrival and its cause, by number and in the format's words, and never by
 //! its text or the refusal's detail, which is the console's log's (Spec
 //! 8.3). Every value is drawn through the templates' escaping.
 
-use crate::box_report::{Report, STATE_DRIVE_FLOOR, gib, role_name, stage_name};
+use crate::box_report::{Report, STATE_DRIVE_FLOOR, gib, role_name};
 use crate::survey::{Mount, Role, Survey};
 
 use super::when;
 
-/// **A stage's report as a pane draws it**: its status, and in that status
-/// what it shows.
+/// **The report as a pane draws it**: its status, and in that status what
+/// it shows.
 pub(crate) enum Shown<T> {
-    /// No report has arrived at the stage.
+    /// No report has arrived.
     Waiting,
     Refused {
         arrived: String,
         number: u8,
         words: &'static str,
-    },
-    /// Kept under the stage, and naming the other.
-    Misfiled {
-        arrived: String,
-        names: &'static str,
     },
     Read {
         arrived: String,
@@ -47,10 +42,6 @@ impl<T> Shown<T> {
                 number: refused.cause.number(),
                 words: refused.cause.words(),
             },
-            Report::Misfiled { arrived_at, names } => Shown::Misfiled {
-                arrived: when(*arrived_at),
-                names: stage_name(*names),
-            },
             Report::Read { arrived_at, survey } => Shown::Read {
                 arrived: when(*arrived_at),
                 body: body(survey),
@@ -59,11 +50,11 @@ impl<T> Shown<T> {
     }
 
     /// The class of the pane's status mark: `ok` read, `hold` waiting, and
-    /// `fail` refused or misfiled.
+    /// `fail` refused.
     pub(crate) fn class(&self) -> &'static str {
         match self {
             Shown::Waiting => "hold",
-            Shown::Refused { .. } | Shown::Misfiled { .. } => "fail",
+            Shown::Refused { .. } => "fail",
             Shown::Read { .. } => "ok",
         }
     }
@@ -73,13 +64,12 @@ impl<T> Shown<T> {
         match self {
             Shown::Waiting => "waiting",
             Shown::Refused { .. } => "refused",
-            Shown::Misfiled { .. } => "misfiled",
             Shown::Read { .. } => "read",
         }
     }
 }
 
-/// **The pairing stage's report, read** (Spec 6.2): its `taken`, then its
+/// **The report, read** (Spec 6.2): its `taken`, then its
 /// members grouped, the CPU's flags as a count with the list folded.
 pub(crate) struct PairingBody {
     pub(crate) taken: String,
@@ -149,7 +139,7 @@ impl PairingBody {
     }
 }
 
-/// **The latest report of either stage, read** (Spec 6.2): its `taken` and
+/// **The report, read** (Spec 6.2): its `taken` and
 /// each directory as mounted, with its judgments.
 pub(crate) struct DrivesBody {
     pub(crate) taken: String,

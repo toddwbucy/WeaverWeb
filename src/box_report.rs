@@ -1,18 +1,18 @@
 //! **What the box reports to the setup pages** (Spec 6.2): the cards the
 //! placement page offers as the devices, and the box's members of the
-//! deployment tuple, which Confirm reads. Both come from the reports the
-//! setup keeps (`agent_setup_report`, each stage's latest, verbatim), read
-//! by the survey's reader (`crate::survey`, Spec 8.3).
+//! deployment tuple, which Confirm reads. Both come from the report the
+//! setup keeps (`agent_setup_report`, the `pairing` stage's latest,
+//! verbatim), read by the survey's reader (`crate::survey`, Spec 8.3).
 //!
-//! **Which report feeds what** is 6.2's: the cards, every box member, and
-//! the directories page's directories, from the latest report of either
-//! stage, so one tuple stands on one report (the Planner's rulings of
-//! 2026-11-24 on the plan and on its review: the
-//! operator lays the disks before pairing, so a drives-stage report may
-//! never come, and one that is sent is still read). A report absent,
-//! refused, or kept under one stage while naming the other feeds nothing,
-//! and what it would feed holds, naming it. A store that fails to answer is
-//! a fault, never an absent report.
+//! **One report feeds everything** (Spec 6.2; `weaver-survey/2`, whose
+//! setup script makes one report, `stage` bounded to `pairing`): the cards,
+//! every box member, and the directories page's directories, so one tuple
+//! stands on one report. A report run again replaces it. A report absent or
+//! refused feeds nothing, and what it would feed holds, naming it. A row
+//! kept under the stage `drives`, which version 1 had and version 2 does
+//! not, is named by its stage and arrival and feeds nothing (migration
+//! `0031` is frozen, so the row stands). A store that fails to answer is a
+//! fault, never an absent report.
 //!
 //! **The seam** (`BoxReports`) is how the setup pages' tests supply a
 //! report. It reads on the connection it is handed, so Confirm reads the
@@ -25,7 +25,7 @@ use futures::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 use sqlx::PgConnection;
 
-use crate::survey::{self, Mount, Refused, Role, Stage, Survey};
+use crate::survey::{self, Mount, Refused, Role, Survey};
 
 /// **The state drive's figure** (Spec 6.2, the operator's ruling of
 /// 2026-11-17): a state drive whose filesystem's size is under 9 GiB,
@@ -46,7 +46,7 @@ pub struct Card {
     pub model: String,
 }
 
-/// **One stage's kept report, as the source reads it.**
+/// **The kept report, as the source reads it.**
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Report {
     /// None has arrived.
@@ -56,28 +56,27 @@ pub enum Report {
         arrived_at: DateTime<Utc>,
         refused: Refused,
     },
-    /// Read whole, but its `stage` names the other stage than the one it
-    /// was kept under.
-    Misfiled {
-        arrived_at: DateTime<Utc>,
-        names: Stage,
-    },
-    /// Read whole, under its own stage.
+    /// Read whole.
     Read {
         arrived_at: DateTime<Utc>,
         survey: Box<Survey>,
     },
 }
 
-/// **The setup's two reports**, each stage's latest.
+/// **The setup's report**, the `pairing` stage's latest, and when a row
+/// kept under the stage `drives` arrived, where one stands.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reports {
-    pub pairing: Report,
-    pub drives: Report,
+    pub report: Report,
+    /// A row of version 1's second stage: named, and feeding nothing.
+    pub drives_kept: Option<DateTime<Utc>>,
 }
 
+/// The one stage a report is kept under (`weaver-survey/2`).
+pub const STAGE: &str = "pairing";
+
 /// **The box's members of the deployment tuple** (Spec 6.2, the operator's
-/// rulings of 2026-11-17), from the latest report of either stage: the machine's
+/// rulings of 2026-11-17), from the report: the machine's
 /// facts and none of the moment's, so no drive's free space and not
 /// whether the driver is loaded.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -144,14 +143,6 @@ pub struct DriveMember {
     pub project_quota: bool,
 }
 
-/// A stage by the name the format gives it.
-pub fn stage_name(stage: Stage) -> &'static str {
-    match stage {
-        Stage::Pairing => "pairing",
-        Stage::Drives => "drives",
-    }
-}
-
 /// A drive's role by the name the format gives it.
 pub fn role_name(role: Role) -> &'static str {
     match role {
@@ -166,16 +157,12 @@ pub fn gib(bytes: u64) -> String {
 }
 
 impl Report {
-    /// One kept report read: refused, misfiled, or read under `stage`.
-    fn of(stage: Stage, report: &str, arrived_at: DateTime<Utc>) -> Report {
+    /// The kept report read: refused or read.
+    fn of(report: &str, arrived_at: DateTime<Utc>) -> Report {
         match survey::read(report.as_bytes()) {
             Err(refused) => Report::Refused {
                 arrived_at,
                 refused,
-            },
-            Ok(survey) if survey.stage != stage => Report::Misfiled {
-                arrived_at,
-                names: survey.stage,
             },
             Ok(survey) => Report::Read {
                 arrived_at,
@@ -184,7 +171,7 @@ impl Report {
         }
     }
 
-    /// The survey, where the report is read under its own stage.
+    /// The survey, where the report is read.
     pub fn survey(&self) -> Option<&Survey> {
         match self {
             Report::Read { survey, .. } => Some(survey.as_ref()),
@@ -196,26 +183,26 @@ impl Report {
     pub fn arrived_at(&self) -> Option<DateTime<Utc>> {
         match self {
             Report::Waiting => None,
-            Report::Refused { arrived_at, .. }
-            | Report::Misfiled { arrived_at, .. }
-            | Report::Read { arrived_at, .. } => Some(*arrived_at),
+            Report::Refused { arrived_at, .. } | Report::Read { arrived_at, .. } => {
+                Some(*arrived_at)
+            }
         }
     }
 }
 
 impl Reports {
-    /// **The setup's reports read**, from the rows the store hands over:
-    /// stage, the verbatim report and its arrival. A stage with no row is
-    /// waiting.
+    /// **The setup's report read**, from the rows the store hands over:
+    /// stage, the verbatim report and its arrival. With no `pairing` row
+    /// the report is waiting; a `drives` row is named by its arrival alone.
     pub fn of(rows: &[(String, String, DateTime<Utc>)]) -> Reports {
         let mut reports = Reports {
-            pairing: Report::Waiting,
-            drives: Report::Waiting,
+            report: Report::Waiting,
+            drives_kept: None,
         };
         for (stage, report, arrived_at) in rows {
             match stage.as_str() {
-                "pairing" => reports.pairing = Report::of(Stage::Pairing, report, *arrived_at),
-                "drives" => reports.drives = Report::of(Stage::Drives, report, *arrived_at),
+                STAGE => reports.report = Report::of(report, *arrived_at),
+                "drives" => reports.drives_kept = Some(*arrived_at),
                 _ => {}
             }
         }
@@ -223,43 +210,11 @@ impl Reports {
     }
 
     /// **The cards the placement page offers and Confirm checks**: the
-    /// latest report's of either stage, and none where the latest does not
-    /// read, so the devices and the box's members stand on one report.
+    /// report's, and none where it does not read, so the devices and the
+    /// box's members stand on one report.
     pub fn cards(&self) -> Option<Vec<Card>> {
-        self.cards_from().map(|(_, cards)| cards)
-    }
-
-    /// **The cards Confirm checks the kept devices against**, or why none
-    /// is read, by the latest report's stage and state.
-    pub fn cards_or_why(&self) -> Result<Vec<Card>, String> {
-        if let Some((_, cards)) = self.cards_from() {
-            return Ok(cards);
-        }
-        let (stage, latest) = self.latest();
-        let stage = stage_name(stage);
-        Err(match latest {
-            Report::Refused { refused, .. } => format!(
-                "the {stage} stage's report, the latest, is refused for cause {}: {}, so no card is read",
-                refused.cause.number(),
-                refused.cause.words()
-            ),
-            Report::Misfiled { names, .. } => format!(
-                "the report kept as the {stage} stage's, the latest, names its stage {}, so no card is read",
-                stage_name(*names)
-            ),
-            Report::Waiting | Report::Read { .. } => {
-                "no report of either stage has arrived, so no card is read".to_owned()
-            }
-        })
-    }
-
-    /// The cards the placement page offers, with the stage whose report
-    /// brings them: the latest report's, where it reads.
-    pub fn cards_from(&self) -> Option<(Stage, Vec<Card>)> {
-        let (stage, latest) = self.latest();
-        let survey = latest.survey()?;
-        Some((
-            stage,
+        let survey = self.report.survey()?;
+        Some(
             survey
                 .cards
                 .iter()
@@ -270,42 +225,41 @@ impl Reports {
                     })
                 })
                 .collect(),
-        ))
+        )
     }
 
-    /// **The latest report of either stage**, by its arrival, and its
-    /// stage: the drives stage's on a tie, and the drives stage's waiting
-    /// where neither has arrived.
-    pub fn latest(&self) -> (Stage, &Report) {
-        match (self.pairing.arrived_at(), self.drives.arrived_at()) {
-            (Some(pairing), Some(drives)) if pairing > drives => (Stage::Pairing, &self.pairing),
-            (Some(_), None) => (Stage::Pairing, &self.pairing),
-            _ => (Stage::Drives, &self.drives),
+    /// **The cards Confirm checks the kept devices against**, or why none
+    /// is read, by the report's state.
+    pub fn cards_or_why(&self) -> Result<Vec<Card>, String> {
+        if let Some(cards) = self.cards() {
+            return Ok(cards);
         }
+        Err(match &self.report {
+            Report::Refused { refused, .. } => format!(
+                "the report is refused for cause {}: {}, so no card is read",
+                refused.cause.number(),
+                refused.cause.words()
+            ),
+            Report::Waiting | Report::Read { .. } => {
+                "no report has arrived, so no card is read".to_owned()
+            }
+        })
     }
 
-    /// **The box's members Confirm reads**, from the latest report of
-    /// either stage, or why Confirm holds: no report arrived, the latest
-    /// refused or misfiled, a drive not mounted, or the state drive's
-    /// filesystem under the figure, each named.
+    /// **The box's members Confirm reads**, from the report, or why
+    /// Confirm holds: no report arrived, the report refused, a drive not
+    /// mounted, or the state drive's filesystem under the figure, each
+    /// named.
     pub fn members(&self) -> Result<BoxMembers, String> {
-        let (stage, latest) = self.latest();
-        let stage = stage_name(stage);
-        let survey = match latest {
+        let survey = match &self.report {
             Report::Waiting => {
-                return Err("no report of either stage has arrived".to_owned());
+                return Err("no report has arrived".to_owned());
             }
             Report::Refused { refused, .. } => {
                 return Err(format!(
-                    "the {stage} stage's report, the latest, is refused for cause {}: {}",
+                    "the report is refused for cause {}: {}",
                     refused.cause.number(),
                     refused.cause.words()
-                ));
-            }
-            Report::Misfiled { names, .. } => {
-                return Err(format!(
-                    "the report kept as the {stage} stage's, the latest, names its stage {}",
-                    stage_name(*names)
                 ));
             }
             Report::Read { survey, .. } => survey,
@@ -347,7 +301,7 @@ impl Reports {
         }
         Ok(BoxMembers {
             report: ReportMember {
-                stage: stage_name(survey.stage).to_owned(),
+                stage: STAGE.to_owned(),
                 taken: survey.taken,
             },
             image: ImageMember {
@@ -391,8 +345,8 @@ impl Reports {
 /// **The source of what the box reports for a setup**, read on the
 /// connection handed to it.
 pub trait BoxReports: Send + Sync {
-    /// The setup's reports, each stage's latest, read. A store that fails
-    /// to answer is an error, never an absent report.
+    /// The setup's report, read. A store that fails to answer is an
+    /// error, never an absent report.
     fn reports<'a>(
         &'a self,
         conn: &'a mut PgConnection,

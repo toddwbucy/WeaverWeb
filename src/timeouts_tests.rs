@@ -138,6 +138,7 @@ const CALLS: &[(&str, &str, Why)] = &[
     ("src/listen.rs", "bounded", Socket),
     ("src/passkeys.rs", "from_config", NotTokio), // the ceremony's lifetime
     ("src/surfaces/alerts.rs", "choose", Join),   // the decision, 202 pending
+    ("src/surfaces/loop_page.rs", "reload", Join), // the reload, 202 pending
     ("src/surfaces/reading.rs", "verb_shown", Join), // a verb's answer, 202
     ("src/surfaces/reading.rs", "turn_shown", Join), // a turn's answer, 202
 ];

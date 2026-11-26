@@ -530,7 +530,10 @@ async fn a_name_outside_the_rule_is_refused_opening_no_setup() {
     ] {
         let (status, body) = finalize_named(&rig.app, &ada, name).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{name}: {body}");
-        assert!(body.contains(why), "{name}: {body}");
+        // New agent drawn again, its words escaped as page text (the
+        // review of pull request 214, finding 7).
+        assert!(body.contains("<h1>New agent</h1>"), "{name}: {body}");
+        assert!(body.contains(&why.replace('\'', "&#39;")), "{name}: {body}");
         assert_eq!(setups(s).await, 0, "{name} opens no setup");
         assert_eq!(
             audited(s, "pair").await,
@@ -737,14 +740,15 @@ async fn a_second_open_setup_of_one_name_is_refused() {
     let (status, _, other) = begin(rig.store(), &ada, "otto").await;
     assert_eq!(status, StatusCode::SEE_OTHER, "another name opens its own");
     assert_ne!(other, first);
-    // **A setup begun the old way is listed by neither New agent nor
-    // Declarations** while its box is unpaired: New agent lists waiting
-    // appliances, and Declarations paired setups. Its Pair page still
-    // serves it, by its link.
+    // **A setup begun the old way is listed by New agent and not by
+    // Declarations** while its box is unpaired: New agent lists it under
+    // Setups not yet paired, with a link to its own Pair page (the review
+    // of pull request 214, findings 5 and 6), and Declarations lists paired
+    // setups alone. Its Pair page serves it, by that link.
     let pair = page(&rig.app, "/pair", &ada).await;
     let start = page(&rig.app, "/setup", &ada).await;
     for setup in [first.unwrap(), other.unwrap()] {
-        assert!(!pair.contains(&setup), "{pair}");
+        assert!(pair.contains(&format!(r#"href="/pair/{setup}""#)), "{pair}");
         assert!(!start.contains(&setup), "{start}");
         let own = page(&rig.app, &format!("/pair/{setup}"), &ada).await;
         assert!(own.contains("<h1>Pair "), "{own}");
@@ -934,6 +938,48 @@ async fn every_pane_carries_its_stage_backing_and_status() {
     );
 }
 
+/// **New agent lists each open setup not paired, with a link to its own
+/// Pair page** (Spec 6.2; the review of pull request 214, findings 5 and
+/// 6): with none, the pane is not drawn; a setup begun the old way and
+/// never paired is listed by its name after the form, and its link opens
+/// that setup's Pair page.
+///
+/// Perturbation: draw the pane for no setup, and the setup begun is
+/// never listed; list every open setup, paired or not, and the
+/// paired one is listed too (each measured 2026-11-26).
+#[tokio::test]
+async fn new_agent_lists_each_unpaired_setup_with_a_link_to_its_pair_page() {
+    let Some(rig) = rig().await else {
+        return;
+    };
+    let s = rig.store();
+    let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (status, _, body) = send_as(&rig.app, "GET", "/pair", None, &ada).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(!body.contains("Setups not yet paired"), "none: {body}");
+    let (_, _, setup) = begin(rig.store(), &ada, "karl").await;
+    let setup = setup.unwrap();
+    let (status, _, body) = send_as(&rig.app, "GET", "/pair", None, &ada).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let pane = body
+        .find("<h2>Setups not yet paired</h2>")
+        .unwrap_or_else(|| panic!("the pane is drawn: {body}"));
+    let link = format!(r#"<li><a href="/pair/{setup}">karl</a></li>"#);
+    assert!(body[pane..].contains(&link), "{link}: {body}");
+    let form = body
+        .rfind("<h2>Name the agent</h2>")
+        .or_else(|| body.rfind("<h2>Appliances awaiting final initialization</h2>"))
+        .unwrap();
+    assert!(form < pane, "the pane stands after the form: {body}");
+    let (status, _, page) = send_as(&rig.app, "GET", &format!("/pair/{setup}"), None, &ada).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains("karl"), "that setup's Pair page: {page}");
+    // A paired setup is not listed.
+    paired(s, &setup).await;
+    let (_, _, body) = send_as(&rig.app, "GET", "/pair", None, &ada).await;
+    assert!(!body.contains("Setups not yet paired"), "paired: {body}");
+}
+
 /// **A declaration opens once its box is paired** (the Planner's ruling
 /// of 2026-11-24 on the review): every declaration page of a setup whose
 /// box is not paired leads to its Pair page, and each declaration write,
@@ -956,6 +1002,12 @@ async fn a_declaration_opens_once_its_box_is_paired() {
         assert_eq!(headers[header::LOCATION], format!("/pair/{setup}"), "{uri}");
     }
     let unpaired = crate::store::admin::Refusal::SetupUnpaired.to_string();
+    // **It points to the setup's own Pair page, which New agent lists**
+    // (the review of pull request 214, findings 5 and 6).
+    assert!(
+        unpaired.ends_with("pair it on its own Pair page, which New agent lists"),
+        "{unpaired}"
+    );
     for (page, body, action) in [
         (
             "models",

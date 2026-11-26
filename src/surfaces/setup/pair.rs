@@ -3,6 +3,8 @@
 //! conforms: web-a-code-that-matches-another-waiting-appliance-and-not-the-chosen-one-is-a-miss-one-refusal-record-and-writes-no-setup
 //! conforms: web-a-name-an-open-setup-holds-is-refused-on-new-agent-before-any-code-is-compared
 //! conforms: web-new-agents-entry-runs-from-its-comparison-to-its-outcome-in-a-task-the-request-cannot-cancel
+//! conforms: web-a-malformed-entry-on-new-agent-is-drawn-back-into-the-page-with-no-record
+//! conforms: web-on-an-unknown-outcome-new-agent-draws-the-registers-live-rows-holding-the-name
 //!
 //! **The Pair page's waiting box and the code's entry** (Spec 8.2, 6.2).
 //! The pane lists the boxes waiting, each by the name it claims, its peer
@@ -247,7 +249,9 @@ mod entry {
     use crate::store::identity::is_setup_id;
     use crate::store::key::AgentId;
     use crate::store::setup::Field;
-    use crate::surfaces::admin::{fault, first_of, refused, settled, writer};
+    use crate::surfaces::admin::{
+        NOT_AN_ADMIN, admin_session, fault, first_of, refused, settled, writer,
+    };
     use crate::surfaces::gate::Session;
 
     use super::super::{
@@ -816,6 +820,7 @@ mod entry {
                 words,
                 retire,
             }),
+            rows: None,
         }
     }
 
@@ -830,17 +835,18 @@ mod entry {
     ) -> Response {
         let name = match agent_name(ask.name.trim()) {
             Ok(name) => name.to_owned(),
-            Err(why) => return (StatusCode::BAD_REQUEST, why).into_response(),
+            Err(why) => return malformed(&store, seams, &headers, &ask, why.to_string()).await,
         };
         if !is_handle(&ask.appliance) {
-            return (StatusCode::BAD_REQUEST, NO_APPLIANCE).into_response();
+            return malformed(&store, seams, &headers, &ask, NO_APPLIANCE.to_owned()).await;
         }
         let Ok(code) = Code::read(&ask.code) else {
-            return (StatusCode::BAD_REQUEST, MALFORMED_APPLIANCE_CODE).into_response();
+            let words = MALFORMED_APPLIANCE_CODE.to_owned();
+            return malformed(&store, seams, &headers, &ask, words).await;
         };
         // **The comparison is never skipped** (Spec 8.2).
         if ask.compared.as_deref() != Some("on") {
-            return (StatusCode::BAD_REQUEST, NOT_COMPARED).into_response();
+            return malformed(&store, seams, &headers, &ask, NOT_COMPARED.to_owned()).await;
         }
         let setup_id = match store.mint_key("st").await {
             Ok(setup_id) => setup_id,
@@ -868,14 +874,21 @@ mod entry {
         // **The name free of an open setup**, one refusal record where it
         // is not; the exchange's write decides a race past this read.
         match store.open_setup_named(&name).await {
-            Ok(false) => {}
-            Ok(true) => {
+            Ok(None) => {}
+            Ok(Some(paired)) => {
                 if let Err(answer) =
                     record_refusal(&store, &session, &setup_id, "the name is held").await
                 {
                     return answer;
                 }
-                let words = Refusal::SetupNameHeld(name.clone()).to_string();
+                // **A holder never paired is pointed to its own Pair page**,
+                // which New agent lists below the form.
+                let words = if paired {
+                    Refusal::SetupNameHeld(name.clone())
+                } else {
+                    Refusal::SetupNameHeldUnpaired(name.clone())
+                }
+                .to_string();
                 let kept = kept(&name, "", words, false);
                 return first_answer(&store, seams, &session, StatusCode::CONFLICT, kept).await;
             }
@@ -904,6 +917,11 @@ mod entry {
             appliance: ask.appliance.clone(),
             code,
         }));
+        // **On unknown the page draws what the write made** (Spec 8.2): the
+        // register's live rows holding the name, each with its admin
+        // fingerprint, which the operator compares with the appliance's
+        // unknown line.
+        let mut unknown = false;
         let (status, words, retire, appliance) = match continued.await {
             Ok(Ok(Finalized::Ended(ended))) => match first_words(&ended.outcome, &name) {
                 None => {
@@ -913,15 +931,18 @@ mod entry {
                     )
                         .into_response();
                 }
-                Some((status, words)) => (
-                    status,
-                    words,
-                    matches!(
-                        ended.outcome,
-                        Outcome::Refused(PairingRefusal::BoxAndNameLive)
-                    ),
-                    "",
-                ),
+                Some((status, words)) => {
+                    unknown = matches!(ended.outcome, Outcome::Unknown(_));
+                    (
+                        status,
+                        words,
+                        matches!(
+                            ended.outcome,
+                            Outcome::Refused(PairingRefusal::BoxAndNameLive)
+                        ),
+                        "",
+                    )
+                }
             },
             Ok(Ok(Finalized::Missed { left })) => (
                 StatusCode::CONFLICT,
@@ -946,8 +967,48 @@ mod entry {
             Ok(Err(early)) => return early,
             Err(e) => return fault(anyhow::Error::new(e)),
         };
-        let kept = kept(&name, appliance, words, retire);
+        let mut kept = kept(&name, appliance, words, retire);
+        if unknown {
+            kept.rows = match store.live_rows_named(&name).await {
+                Ok(rows) => Some(super::rows_of(&rows)),
+                Err(e) => return fault(e),
+            };
+        }
         first_answer(&store, seams, &session, status, kept).await
+    }
+
+    /// **A malformed entry is drawn back into New agent** (Spec 8.2; the
+    /// review of pull request 214, finding 7): at 400, with its words, the
+    /// name as typed and the appliance chosen kept and the code's field
+    /// empty, as every later refusal is drawn. It stays no miss: the
+    /// admin's session is read as New agent's own page reads it, and no
+    /// record is written, no setup key minted and no connection asked.
+    /// Whoever is not an admin is answered as that page answers.
+    async fn malformed(
+        store: &Store,
+        seams: &Seams,
+        headers: &HeaderMap,
+        ask: &FinalizeAsk,
+        words: String,
+    ) -> Response {
+        let session = match admin_session(store, &seams.policy, headers).await {
+            Ok(Ok(session)) => session,
+            Ok(Err(_)) => return (StatusCode::FORBIDDEN, NOT_AN_ADMIN).into_response(),
+            Err(answer) => return answer,
+        };
+        let name: String = ask
+            .name
+            .trim()
+            .chars()
+            .take(crate::store::setup::NAME_MOST)
+            .collect();
+        let appliance = if is_handle(&ask.appliance) {
+            ask.appliance.as_str()
+        } else {
+            ""
+        };
+        let kept = kept(&name, appliance, words, false);
+        first_answer(store, seams, &session, StatusCode::BAD_REQUEST, kept).await
     }
 
     /// **What New agent says of an appliance no longer listed**: its wait
@@ -1075,7 +1136,7 @@ mod entry {
             Outcome::Unknown(_) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!(
-                    "unknown: whether the pairing's write landed cannot be said. The register page lists the rows it holds for {name}: compare their admin fingerprint with the one the appliance's unknown line shows, and adopt only where it matches"
+                    "unknown: whether the pairing's write landed cannot be said. The rows below are the register's live rows holding {name} as read when this page was drawn, and a row this write makes may appear a moment later: compare their admin fingerprint with the one the appliance's unknown line shows, and adopt only where it matches"
                 ),
             ),
         })

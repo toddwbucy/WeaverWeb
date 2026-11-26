@@ -53,7 +53,7 @@ Each carries its own Spec sections and section 9 rows, passes the repository's g
    - **A report run again replaces the one row,** by the setup's latest-per-stage rule. That is the path for an appliance whose drives were laid after its first report.
 3. **The pairing reads the version.** Files: `src/link/pairing.rs` and `src/link/frames.rs`.
    - At the first frame, before the box is listed, the console reads the `pairing` report's `format` member alone. Any version but `weaver-survey/2` is refused **`format_refused`**, a new word in Spec 8.2's list, which the box prints.
-   - The refusal's detail names the version read and the version taken. It is the console's log line, since the pair protocol's refusal frame carries the reason word alone, as every reason does. Giving the box the detail would need a new member in that frame, which the script seat reads.
+   - The detail is written nowhere, and the box hears the word alone (the Planner's ruling of 2026-11-25). Spec 8.2 keeps no log line before a code matches, so the check answers one thing, whether the `format` reads as `weaver-survey/2`, and builds no detail. The box knows which version it wrote, and the setup script says so in its own words.
    - Nothing else of the report is judged at the frame. A version 2 report refused for another cause still pairs, and the Pair page shows its cause, as today.
 4. **The pages.** Files: `src/surfaces/setup/report.rs`, `setup_pairing.html`, `setup_directories.html`, and `src/surfaces/setup/models.rs` where it names a place.
    - **The Pair page's report pane** gains a Network group: the management plane's address and prefix length, the data plane's, and "separate" or "shared". It is read only and judges nothing.

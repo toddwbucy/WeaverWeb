@@ -295,8 +295,37 @@ pub fn read(report: &[u8]) -> Result<Survey, Refused> {
         return refused(Cause::Encoding, "the report is not one JSON object");
     };
     let top = Members::new(top, "");
+    format_of(&top)?;
+    members(&top)
+}
+
+/// **Whether a report reads as this version, by its `format` alone** (Spec
+/// 8.2): what the pairing's first frame asks of a report before the box is
+/// listed, and the one thing it answers. No where the bytes are past the
+/// bound, are not one JSON object in UTF-8 with nothing after it but one
+/// newline (the reader's own grammar), or give `format` other than once at
+/// the top as this version's string. No other member is judged, so a report
+/// of this version refused for another cause passes, and the pages show its
+/// cause. It builds no detail of its own, since nothing at the frame would
+/// read one (the Planner's ruling of 2026-11-25).
+pub fn format_taken(report: &[u8]) -> bool {
+    if report.len() > REPORT_BOUND {
+        return false;
+    }
+    let Ok(Node::Object(top)) = parse(report) else {
+        return false;
+    };
+    let mut formats = top.iter().filter(|(name, _)| name.as_slice() == b"format");
+    matches!(
+        (formats.next(), formats.next()),
+        (Some((_, Node::String(format))), None) if format == FORMAT
+    )
+}
+
+/// **The top's `format`**: this version, or refused naming what it is.
+fn format_of(top: &Members<'_>) -> Result<(), Refused> {
     match top.find("format") {
-        Some(Node::String(format)) if format == FORMAT => {}
+        Some(Node::String(format)) if format == FORMAT => Ok(()),
         // **The version read and the version taken** (the format's section
         // 7: the reader "refuses a report of version 1 by its version's
         // name").
@@ -306,15 +335,14 @@ pub fn read(report: &[u8]) -> Result<Survey, Refused> {
             } else {
                 ""
             };
-            return refused(
+            refused(
                 Cause::Format,
                 format!("format {} read{earlier}; {FORMAT} taken", quoted(other)),
-            );
+            )
         }
-        Some(_) => return refused(Cause::Format, "format is not a string"),
-        None => return refused(Cause::Format, "format is missing"),
+        Some(_) => refused(Cause::Format, "format is not a string"),
+        None => refused(Cause::Format, "format is missing"),
     }
-    members(&top)
 }
 
 /// **The tree**: every name an object gives, in order and twice where it is

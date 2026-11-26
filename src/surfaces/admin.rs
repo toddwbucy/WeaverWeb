@@ -136,6 +136,7 @@ pub(crate) fn refused(refusal: &Refusal) -> Response {
         | Refusal::PullRunning(_)
         | Refusal::PullNotRunning(_)
         | Refusal::SetupNameHeld(_)
+        | Refusal::SetupNameHeldUnpaired(_)
         | Refusal::KeyHeld
         | Refusal::KeysFull
         | Refusal::Unpickable(_)

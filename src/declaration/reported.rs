@@ -1038,4 +1038,25 @@ mod tests {
             "differs (declared nothing (not declared on this row; a serving load refuses its absence), reported false)"
         );
     }
+
+    /// **`show`'s `composer` carries the load event's three members**, so
+    /// one allow-list reads both (`store::loop_text::loop_ran_of`, Spec
+    /// 2.12): `binary`, `file` and `sha256`, the last two left out where
+    /// absent, and `LoadFacts` names it `composer`.
+    #[test]
+    fn shows_composer_carries_the_load_events_three_members() {
+        let (attributes, fields) = strukt(&code(passage(WIRE, "521 to 530")), "Composer");
+        assert!(attributes.iter().any(|a| a.contains("Deserialize")));
+        let names: Vec<&str> = fields.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, ["binary", "file", "sha256"]);
+        let facts = code(passage(WIRE, "486 to 519"));
+        assert!(facts.contains(&"pub composer: Composer,"));
+        let filled = passage(
+            "crates/weaver-harness/src/flow/context_enter_startup.rs",
+            "149 to 153",
+        );
+        for member in ["binary:", "file:", "sha256:"] {
+            assert!(filled.contains(member), "{filled}");
+        }
+    }
 }

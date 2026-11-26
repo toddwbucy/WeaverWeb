@@ -1,6 +1,7 @@
 //! conforms: web-a-loops-text-enters-no-audit-record
 //! conforms: web-a-loop-save-against-a-stale-version-refuses
 //! conforms: web-a-loop-version-is-never-changed-or-removed
+//! conforms: web-the-loop-that-ran-is-the-composer-where-the-tuple-is-written
 //!
 //! **An agent's loop, versioned** (Spec 6.3, migration `0035`): the wire
 //! file a person holding `operator` on the agent saves through the loop
@@ -53,6 +54,32 @@ pub fn digest(text: &str) -> String {
 /// all carry it.
 pub fn action(sha256: &str, bytes: usize) -> String {
     format!("loop save sha256 {sha256} bytes {bytes}")
+}
+
+/// **Which loop a `composer` names, by allow-list** (Spec 2.12): the
+/// member the register row keeps as `loop_ran`. One reading for both the
+/// live load event's `composer` and a `show` answer's `load.composer`, which
+/// carry the same three members (`binary`, `file`, `sha256`; the dated copy
+/// `src/declaration/reported-5ec7ecf8.md`). A `composer` holding `file`
+/// names the wires by `sha256`, 64 lowercase hex, and only then; one holding
+/// no `file` is the compiled loop. Anything else, an absent `composer`, one
+/// not an object, a `binary` not a string, or a `file` with no digest of
+/// that shape, names no loop this page reads: `None`.
+pub fn loop_ran_of(composer: Option<&serde_json::Value>) -> Option<String> {
+    let composer = composer?.as_object()?;
+    composer.get("binary")?.as_str()?;
+    match composer.get("file") {
+        None => Some("compiled".to_owned()),
+        Some(file) => {
+            file.as_str()?;
+            let sha256 = composer.get("sha256")?.as_str()?;
+            (sha256.len() == 64
+                && sha256
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
+            .then(|| sha256.to_owned())
+        }
+    }
 }
 
 /// How a save ended, where the store answered.

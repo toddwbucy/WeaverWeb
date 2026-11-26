@@ -43,6 +43,35 @@ pub struct LoadFacts {
 }
 ```
 
+## `crates/weaver-types/src/wire.rs`, lines 521 to 530
+
+`show`'s `composer`, the member of `LoadFacts` above: the same three members the load event's `composer` carries, `file` a path here and a string in the event, both JSON strings, and each absent member left out. Added for the loop page's act (WeaverWeb Spec 2.12, 6.3; the Planner's reading of 2026-11-26), whose one allow-list reads both.
+
+```rust
+/// The composing loop, this crate's spelling: the record's own is
+/// `weaver-trace`'s and the floor links downward only.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Composer {
+    pub binary: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<std::path::PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
+}
+```
+
+## `crates/weaver-harness/src/flow/context_enter_startup.rs`, lines 149 to 153
+
+Where the run fills `show`'s `composer`: from the run's own loop identity, the one its load event names, `binary` and `sha256` copied and `file` made a path.
+
+```rust
+            composer: weaver_types::Composer {
+                binary: self.composer.binary.clone(),
+                file: self.composer.file.as_ref().map(Into::into),
+                sha256: self.composer.sha256.clone(),
+            },
+```
+
 ## `crates/weaver-types/src/config.rs`, lines 150 to 175
 
 The store election as `show` reports it: `engine`, kebab-case, `none` or `sqlite`.

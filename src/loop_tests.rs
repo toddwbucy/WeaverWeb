@@ -305,3 +305,225 @@ async fn the_agent_page_links_its_loop_page() {
         .expect("the link");
     assert!(link > declare, "under the Declare pane");
 }
+
+/// A form's value percent-encoded as a browser sends it: every byte but
+/// an unreserved one as `%XX`.
+pub(crate) fn encoded(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 3);
+    for b in bytes {
+        if b.is_ascii_alphanumeric() || b"-._~".contains(b) {
+            out.push(*b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+/// A save's form as the page posts it, its text's line breaks sent as
+/// CRLF, as a browser sends a textarea's.
+pub(crate) fn save_form(text: &[u8], version: &str) -> String {
+    let mut sent = Vec::with_capacity(text.len());
+    for b in text {
+        if *b == b'\n' {
+            sent.extend_from_slice(b"\r\n");
+        } else {
+            sent.push(*b);
+        }
+    }
+    format!("text={}&version={version}", encoded(&sent))
+}
+
+/// The loop records the audit holds: target, action, refusal and outcome.
+async fn loop_records(s: &Store) -> Vec<(Option<String>, String, Option<String>, Option<String>)> {
+    sqlx::query_as(
+        "SELECT target_id, action, refusal, outcome FROM audit WHERE target_kind = 'loop' \
+         ORDER BY at, audit_id",
+    )
+    .fetch_all(&s.pool)
+    .await
+    .unwrap()
+}
+
+/// **A wire file is refused one byte past 262,144, empty, holding a NUL,
+/// or not UTF-8**, each with its one sentence and no record; 262,144 bytes
+/// save; and **the fixture saved through the form keeps its digest**,
+/// though the browser sends its line breaks as CRLF.
+///
+/// Perturbations: move the bound one byte, and 262,145 bytes save; decode
+/// the form lossily, and a byte sequence that is not UTF-8 saves with
+/// U+FFFD (each measured 2026-11-26).
+#[tokio::test]
+async fn a_wire_file_is_refused_past_its_bound_empty_with_a_nul_or_not_utf8() {
+    let Some(o) = operated(&["show"]).await else {
+        return;
+    };
+    let s = o.rig.store().clone();
+    let karl: AgentId = o.karl.parse().unwrap();
+    let uri = format!("/agents/{}/loop", o.karl);
+    let post = |form: String| {
+        let (app, uri, session) = (o.rig.app.clone(), uri.clone(), o.bea_session.clone());
+        async move { send_as(&app, "POST", &uri, Some(form), &session).await }
+    };
+    let past = vec![b'#'; 262_145];
+    for (form, said) in [
+        (save_form(b"", "0"), "The file is empty."),
+        (
+            save_form(&past, "0"),
+            "The file is 262,145 bytes; a wire file is at most 262,144.",
+        ),
+        (save_form(b"a\0b\n", "0"), "The file holds a NUL byte."),
+        (save_form(b"a\xffb\n", "0"), "The file is not UTF-8."),
+        (
+            format!("{}\r", save_form(b"x", "0")),
+            "The version is not a whole number of at most 2,147,483,647.",
+        ),
+        (
+            save_form(b"x", "2147483648"),
+            "The version is not a whole number of at most 2,147,483,647.",
+        ),
+        (
+            "text=x".to_owned(),
+            "The form is not the loop page's: it carries the text and the version once each.",
+        ),
+    ] {
+        let (status, _, answer) = post(form).await;
+        assert_eq!((status, answer.as_str()), (StatusCode::BAD_REQUEST, said));
+    }
+    assert!(
+        loop_records(&s).await.is_empty(),
+        "a parse refusal writes no record"
+    );
+    assert!(s.loop_head(&karl).await.unwrap().is_none());
+    let (status, headers, answer) = post(save_form(FIRST_DRAFT.as_bytes(), "0")).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{answer}");
+    assert_eq!(headers[axum::http::header::LOCATION], uri.as_str());
+    let head = s.loop_head(&karl).await.unwrap().unwrap();
+    assert_eq!(
+        head.sha256, FIRST_DRAFT_SHA256,
+        "the fixture keeps its digest"
+    );
+    assert_eq!(head.text, FIRST_DRAFT);
+    let most = vec![b'#'; 262_144];
+    let (status, _, answer) = post(save_form(&most, "1")).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{answer}");
+    let head = s.loop_head(&karl).await.unwrap().unwrap();
+    assert_eq!((head.version, head.bytes), (2, 262_144));
+}
+
+/// **The request's bound admits the largest file the contract admits, in
+/// its longest form**: 262,144 line breaks, each sent as `%0D%0A`, 1,572,864
+/// bytes of value, saves; a body past the route's bound is refused 413.
+#[tokio::test]
+async fn the_largest_file_crosses_the_requests_bound() {
+    let Some(o) = operated(&["show"]).await else {
+        return;
+    };
+    let s = o.rig.store().clone();
+    let karl: AgentId = o.karl.parse().unwrap();
+    let uri = format!("/agents/{}/loop", o.karl);
+    let form = save_form(&[b'\n'; 262_144], "0");
+    assert_eq!(form.len(), "text=&version=0".len() + 1_572_864);
+    let (status, _, answer) = send_as(&o.rig.app, "POST", &uri, Some(form), &o.bea_session).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{answer}");
+    let head = s.loop_head(&karl).await.unwrap().unwrap();
+    assert_eq!(head.bytes, 262_144);
+    assert_eq!(head.text, "\n".repeat(262_144));
+    let past = format!(
+        "text={}&version=1",
+        "a".repeat(crate::surfaces::loop_page::LOOP_FORM_MOST)
+    );
+    let (status, _, _) = send_as(&o.rig.app, "POST", &uri, Some(past), &o.bea_session).await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+/// **Only a person holding `operator` on the agent saves its loop**: an
+/// observer is refused 403 and a person holding no grant is answered
+/// exactly as for an unknown agent, each with one refusal record naming
+/// the digest and the byte count and no first record; the operator's form
+/// is on the page and the observer's page has none; a save against a
+/// stale version is 409 with its outcome failed.
+///
+/// Perturbation: drop the page's `operator` check, and the observer's
+/// save reaches the store, which refuses it at its own re-check, writing a
+/// first record and a failed outcome in place of the one refusal (measured
+/// 2026-11-26); the store's re-check is `a_save_after_the_grant_ends_lands_nothing`.
+#[tokio::test]
+async fn only_an_operator_holder_saves_a_loop() {
+    let Some(o) = operated(&["show"]).await else {
+        return;
+    };
+    let s = o.rig.store().clone();
+    let karl: AgentId = o.karl.parse().unwrap();
+    let (cay, cay_session) = signed_in(&o.rig.app, &s, &mut authenticator(), "cay").await;
+    let uri = format!("/agents/{}/loop", o.karl);
+    let form = save_form(b"# cay's\n", "0");
+    let said = crate::store::loop_text::action(&digest("# cay's\n"), 8);
+    let (none, _, unheld) =
+        send_as(&o.rig.app, "POST", &uri, Some(form.clone()), &cay_session).await;
+    let (unknown, _, of_unknown) = send_as(
+        &o.rig.app,
+        "POST",
+        "/agents/ag-0000000000000000/loop",
+        Some(form.clone()),
+        &cay_session,
+    )
+    .await;
+    assert_eq!((none, unheld.as_str()), (unknown, of_unknown.as_str()));
+    assert_eq!(none, StatusCode::NOT_FOUND);
+    let granted = host::grant_add(&s, &cay, "observer", Some(&o.karl), None).await;
+    assert!(granted.ok, "{}", granted.value);
+    let (status, _, answer) =
+        send_as(&o.rig.app, "POST", &uri, Some(form.clone()), &cay_session).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{answer}");
+    let records = loop_records(&s).await;
+    assert_eq!(records.len(), 3, "{records:?}");
+    for (target, action, refusal, outcome) in &records {
+        assert!(target.as_deref().is_some_and(|t| t.starts_with("lp-")));
+        assert_eq!(action, &said);
+        assert!(outcome.is_none());
+        assert!(refusal.is_some(), "{records:?}");
+    }
+    assert_eq!(records[0].2.as_deref(), Some("no grant on the agent"));
+    assert_eq!(
+        records[2].2.as_deref(),
+        Some("only a person holding operator on the agent saves its loop")
+    );
+    assert!(s.loop_head(&karl).await.unwrap().is_none());
+    let observer = send_as(&o.rig.app, "GET", &uri, None, &cay_session).await.2;
+    assert!(
+        !observer.contains(&format!("action=\"{uri}\"")),
+        "{observer}"
+    );
+    assert!(observer.contains("readonly"));
+    let operator = send_as(&o.rig.app, "GET", &uri, None, &o.bea_session)
+        .await
+        .2;
+    assert!(
+        operator.contains(&format!("<form method=\"post\" action=\"{uri}\">")),
+        "{operator}"
+    );
+    assert!(operator.contains("name=\"version\" value=\"0\""));
+    let (status, _, _) = send_as(
+        &o.rig.app,
+        "POST",
+        &uri,
+        Some(save_form(b"# one\n", "0")),
+        &o.bea_session,
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let (status, _, answer) = send_as(
+        &o.rig.app,
+        "POST",
+        &uri,
+        Some(save_form(b"# two\n", "0")),
+        &o.bea_session,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{answer}");
+    let last = loop_records(&s).await.pop().unwrap();
+    assert_eq!(last.3.as_deref(), Some("failed"));
+    let head = s.loop_head(&karl).await.unwrap().unwrap();
+    assert_eq!((head.version, head.text.as_str()), (1, "# one\n"));
+}

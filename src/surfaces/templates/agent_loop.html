@@ -18,8 +18,18 @@
   <p class="note">{{ no_loop_saved }}</p>
   <p class="note">{{ not_on_the_appliance }}</p>
   {%- endif %}
+  {%- if operator %}
+  <form method="post" action="/agents/{{ agent_id }}/loop">
+  <input type="hidden" name="version" value="{{ version }}">
+  <textarea id="loop-text" name="text" aria-label="the wire file" rows="40" cols="100" spellcheck="false" autocomplete="off">
+{{ text }}</textarea>
+  <div class="row"><button type="submit">Save</button></div>
+  </form>
+  {%- else %}
   <textarea id="loop-text" aria-label="the wire file" rows="40" cols="100" spellcheck="false" autocomplete="off" readonly>
 {{ text }}</textarea>
+  <p class="note read">Saving the loop is for a person holding operator on the agent.</p>
+  {%- endif %}
   </div>
   <footer>The grammar is the agent's side's: one UTF-8 Python file of at most 262,144 bytes defining on_turn(board, text). Weaver Web keeps the text and judges its bytes alone.</footer>
 </section>

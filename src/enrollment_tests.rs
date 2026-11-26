@@ -3370,6 +3370,303 @@ async fn a_miss_compared_as_its_connection_ends_still_leaves_its_record() {
     drop(dialed);
 }
 
+/// **On an unknown outcome New agent draws the register's rows holding the
+/// name** (Spec 8.2; the review of pull request 214, finding 8): the
+/// pairing's COMMIT outlasts the read-back's bound, so whether its write
+/// landed cannot be said; the page says "the rows below" and draws the
+/// live row already holding the name, its agent, its box and its admin
+/// fingerprint, as the old Pair page does, each as read when the page was
+/// drawn, since a row this write makes may land a moment later. The commit
+/// then completes on its own. With no earlier row of the name, the page
+/// says the register held none when it was drawn, that the write may still
+/// land, and to load New agent again before dialing anew (the Planner's
+/// second round of 2026-11-26, point 1).
+///
+/// Perturbations: draw no rows on the unknown outcome, and the row and its
+/// fingerprint are absent; say the register holds no row, as before, and
+/// the empty case fails (each measured 2026-11-26).
+#[tokio::test]
+async fn on_an_unknown_outcome_new_agent_draws_the_registers_rows_holding_the_name() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let karl = registered(s, "box-old", "karl", &rig.authority).await;
+    // The pairing's `ok` outcome holds its COMMIT for 1.5 s, past the
+    // read-back's bound of 200 ms, and the server gives up on the
+    // COMMIT's answer at 100 ms.
+    sqlx::query(
+        "CREATE FUNCTION slow_commit() RETURNS trigger LANGUAGE plpgsql AS \
+         $$ BEGIN PERFORM pg_sleep(1.5); RETURN NULL; END $$",
+    )
+    .execute(&s.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE CONSTRAINT TRIGGER slow_commit AFTER INSERT ON audit \
+         DEFERRABLE INITIALLY DEFERRED FOR EACH ROW \
+         WHEN (NEW.action = 'pair' AND NEW.outcome = 'ok') \
+         EXECUTE FUNCTION slow_commit()",
+    )
+    .execute(&s.pool)
+    .await
+    .unwrap();
+    let dialed = dial(&rig, &box_keys("box-new").claim).await;
+    let code = dialed.code().to_string();
+    let a = handle_of(&rig, "box-new").await;
+    let first_box = tokio::spawn(the_box(dialed, Box::Whole));
+    crate::store::commit::GIVE_UP_ON_COMMIT
+        .with(|g| g.set(Some(("pair", Duration::from_millis(100)))));
+    crate::store::commit::READ_BACK_BOUND_FOR_TEST
+        .with(|b| b.set(Some(Duration::from_millis(200))));
+    let (status, _, body) = finalize(&rig, &ada, "karl", &a, &code).await;
+    crate::store::commit::READ_BACK_BOUND_FOR_TEST.with(|b| b.set(None));
+    assert!(
+        crate::store::commit::GIVE_UP_ON_COMMIT.with(|g| g.get().is_none()),
+        "the answer was given up"
+    );
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    assert!(
+        body.contains("The rows below are the register&#39;s live rows holding karl as read when this page was drawn, and a row this write makes may appear a moment later"),
+        "{body}"
+    );
+    assert!(!body.contains("register page lists"), "{body}");
+    assert!(
+        body.contains("<caption>The register's live rows holding karl, as read when this page was drawn; a row this write makes may appear a moment later</caption>"),
+        "{body}"
+    );
+    assert!(
+        body.contains(&format!(
+            r#"<tr><td class="mono">{}</td><td class="mono">box-old</td>"#,
+            karl.as_str()
+        )),
+        "the row, by its agent and its box: {body}"
+    );
+    assert!(
+        body.contains(&format!(
+            r#"<td class="mono">{}</td>"#,
+            grouped(&"2".repeat(64))
+        )),
+        "the row's admin fingerprint: {body}"
+    );
+    let _ = tokio::time::timeout(SOON, first_box).await;
+    // The commit completes on its own, its outcome standing.
+    let until = tokio::time::Instant::now() + SOON;
+    while pair_audit(s, "pair").await.1 != 1 {
+        assert!(tokio::time::Instant::now() < until, "the commit completes");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    // **With no earlier row of the name**, the page never says nothing was
+    // written: the register held none when it was drawn, and the write may
+    // still land.
+    let dialed = dial(&rig, &box_keys("box-two").claim).await;
+    let code = dialed.code().to_string();
+    let b = handle_of(&rig, "box-two").await;
+    let the_box = tokio::spawn(the_box(dialed, Box::Whole));
+    crate::store::commit::GIVE_UP_ON_COMMIT
+        .with(|g| g.set(Some(("pair", Duration::from_millis(100)))));
+    crate::store::commit::READ_BACK_BOUND_FOR_TEST
+        .with(|b| b.set(Some(Duration::from_millis(200))));
+    let (status, _, body) = finalize(&rig, &ada, "otto", &b, &code).await;
+    crate::store::commit::READ_BACK_BOUND_FOR_TEST.with(|b| b.set(None));
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    assert!(
+        body.contains("The register held no live row named otto when this page was drawn. The write may still land: load New agent again before dialing anew."),
+        "{body}"
+    );
+    assert!(!body.contains("The register holds no live row"), "{body}");
+    assert!(!body.contains("<caption>"), "no table: {body}");
+    let _ = tokio::time::timeout(SOON, the_box).await;
+    let until = tokio::time::Instant::now() + SOON;
+    while pair_audit(s, "pair").await.1 != 2 {
+        assert!(tokio::time::Instant::now() < until, "the commit completes");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// **A malformed entry on New agent is drawn back into the form** (Spec
+/// 8.2; the review of pull request 214, finding 7): a refused name, no
+/// appliance's handle, a code not of its alphabet and an unticked
+/// comparison each answer New agent drawn again at 400, with the words,
+/// the name as typed and the chosen appliance kept, and the code's field
+/// empty. Each is still no miss: no record, no setup, the appliance still
+/// listed with every try left. Whoever is not an admin is answered as New
+/// agent's own page answers them, with no record.
+///
+/// Perturbation: answer the four with bare text, as before, and the first
+/// post's body is the words alone, with no form (measured 2026-11-26).
+#[tokio::test]
+async fn a_malformed_entry_on_new_agent_is_drawn_back_into_the_form() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (_, bea) = crate::admin_tests::signed_in(&rig.app, s, &mut authenticator(), "bea").await;
+    let dialed = dial(&rig, &box_keys("box-a").claim).await;
+    let code = dialed.code().to_string();
+    let a = handle_of(&rig, "box-a").await;
+    let refused_name = crate::store::setup::agent_name("9karl").unwrap_err();
+    for (name, appliance, typed, compared, words, kept) in [
+        ("9karl", a.as_str(), code.as_str(), "on", refused_name, true),
+        (
+            "karl",
+            "not-a-handle",
+            code.as_str(),
+            "on",
+            "choose the appliance from the appliances awaiting final initialization",
+            false,
+        ),
+        (
+            "karl",
+            a.as_str(),
+            "abc",
+            "on",
+            "the code is ten characters of 0-9 and A-Z without I, L, O and U, as the SSH session shows it: check it and type it again",
+            true,
+        ),
+        (
+            "karl",
+            a.as_str(),
+            code.as_str(),
+            "",
+            "Compare Weaver Web&#39;s fingerprint with the one the appliance shows, and tick the box.",
+            true,
+        ),
+    ] {
+        let mut fields = vec![("name", name), ("appliance", appliance), ("code", typed)];
+        if !compared.is_empty() {
+            fields.push(("compared", compared));
+        }
+        let (status, _, body) = send_as(&rig.app, "POST", "/pair", Some(form(&fields)), &ada).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{words}: {body}");
+        assert!(body.contains("<h1>New agent</h1>"), "{words}: {body}");
+        assert!(body.contains(words), "{words}: {body}");
+        assert!(
+            body.contains(&format!(r#"name="name" value="{name}""#)),
+            "{words}: the name kept: {body}"
+        );
+        assert_eq!(
+            body.contains(&format!(r#"value="{a}" required checked>"#)),
+            kept,
+            "{words}: the choice kept where it was a handle: {body}"
+        );
+        assert!(
+            body.contains(r#"<input type="text" name="code" autocomplete="off""#),
+            "{words}: the code's field empty: {body}"
+        );
+        assert!(!body.contains(&code), "{words}: the code never drawn back");
+    }
+    let (status, _, body) = send_as(
+        &rig.app,
+        "POST",
+        "/pair",
+        Some(form(&[
+            ("name", "9karl"),
+            ("appliance", &a),
+            ("code", &code),
+        ])),
+        &bea,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(body, crate::surfaces::admin::NOT_AN_ADMIN);
+    assert_eq!(pair_audit(s, "pair").await, (0, 0, 0), "no record of any");
+    assert_eq!(setups_named(s, "karl").await, 0);
+    assert_eq!(rig.listener.waiting().len(), 1, "the appliance still waits");
+    // No probe counted a miss: the next miss leaves two tries.
+    let wrong = neither(&code, &code);
+    let (status, _, body) = finalize(&rig, &ada, "karl", &a, wrong).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(body.contains("2 tries are left on it."), "{body}");
+    drop(dialed);
+}
+
+/// **An appliance whose wait ended leaves the list before its close**
+/// (Spec 8.2; the review of pull request 214, finding 4): the close to a
+/// box that stopped reading may wait the write bound twice, held here by
+/// `pairing::Lever::HoldClose`; a post choosing the appliance while the
+/// close is held answers at once that its wait ended, with no record, and
+/// the list no longer shows it. The box hears `expired` once the close goes
+/// on.
+///
+/// Perturbation: give the place back at the return, after the close, and
+/// the post finds the appliance still listed, its probe unread, and
+/// answers 503 "did not answer in time" past the probe's bound.
+#[tokio::test]
+async fn an_appliance_whose_wait_ended_leaves_the_list_before_its_close() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    rig.listener
+        .set_pairing_bounds(crate::link::pairing::Bounds {
+            life: Duration::from_secs(2),
+            ..crate::link::pairing::Bounds::default()
+        });
+    rig.listener
+        .set_pairing_lever(Some(crate::link::pairing::Lever::HoldClose));
+    let mut dialed = dial(&rig, &box_keys("box-a").claim).await;
+    let code = dialed.code().to_string();
+    let handle = handle_of(&rig, "box-a").await;
+    let until = tokio::time::Instant::now() + SOON;
+    while !rig.listener.wait_ended(&handle) {
+        assert!(tokio::time::Instant::now() < until, "the wait ends");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let (status, _, body) = finalize(&rig, &ada, "karl", &handle, &code).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(
+        body.contains("The appliance&#39;s wait ended. Run the setup script again to dial anew."),
+        "{body}"
+    );
+    assert!(rig.listener.waiting().is_empty(), "no longer listed");
+    assert_eq!(pair_audit(s, "pair").await, (0, 0, 0), "no record");
+    assert_eq!(setups_named(s, "karl").await, 0);
+    rig.listener.release_pairing_close();
+    let heard = tokio::time::timeout(SOON, dialed.next()).await.unwrap();
+    assert!(matches!(heard, Heard::Expired), "{heard:?}");
+}
+
+/// **A connection its last miss closes leaves the list before its close**
+/// (Spec 8.2; the review of pull request 214, as the Planner found it
+/// beside finding 4): the third miss is answered closed, and while the close
+/// is held (`pairing::Lever::HoldClose`) a post choosing the same appliance
+/// answers at once that it is no longer waiting, with no record. The box
+/// hears `code_missed` once the close goes on.
+///
+/// Perturbation: give the place back at the return, after the close, and
+/// the post finds the appliance still listed, its probe unread, and
+/// answers 503 "did not answer in time" past the probe's bound.
+#[tokio::test]
+async fn a_connection_its_last_miss_closes_leaves_the_list_before_its_close() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    rig.listener
+        .set_pairing_lever(Some(crate::link::pairing::Lever::HoldClose));
+    let mut dialed = dial(&rig, &box_keys("box-a").claim).await;
+    let code = dialed.code().to_string();
+    let a = handle_of(&rig, "box-a").await;
+    let wrong = neither(&code, &code);
+    for _ in 0..crate::link::pairing::TRIES {
+        let (status, _, body) = finalize(&rig, &ada, "karl", &a, wrong).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    }
+    let (status, _, body) = finalize(&rig, &ada, "karl", &a, &code).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert!(
+        body.contains("The appliance you chose is no longer waiting. Refresh the list."),
+        "{body}"
+    );
+    assert!(rig.listener.waiting().is_empty(), "no longer listed");
+    assert_eq!(pair_audit(s, "pair").await, (0, 0, 3), "the misses alone");
+    assert_eq!(setups_named(s, "karl").await, 0);
+    rig.listener.release_pairing_close();
+    let heard = match tokio::time::timeout(SOON, dialed.next()).await.unwrap() {
+        Heard::Refused(reason) => reason,
+        other => panic!("the box heard no refusal: {other:?}"),
+    };
+    assert_eq!(heard, crate::link::frames::pair_reason::CODE_MISSED);
+}
+
 /// **A chosen appliance that does not answer is said so, and never called
 /// gone** (Spec 8.2; the fix round of 2026-11-25, point 2): the chosen
 /// connection reads the probe and answers none (`pairing::Lever::Silent`),
@@ -3501,6 +3798,13 @@ async fn a_name_an_open_setup_holds_is_refused_before_any_code_is_compared() {
     let (status, _, body) = finalize(&rig, &ada, "karl", &handle, &code).await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     assert!(body.contains("an open setup holds the name karl"), "{body}");
+    // **A holder never paired is pointed to its own Pair page**, listed
+    // below the form (the review of pull request 214, findings 5 and 6).
+    assert!(
+        body.contains("its appliance is not paired, so choose another name, or pair it on its own Pair page, listed below"),
+        "{body}"
+    );
+    assert!(body.contains("<h2>Setups not yet paired</h2>"), "{body}");
     assert!(body.contains("<h1>New agent</h1>"), "{body}");
     assert_eq!(pair_audit(s, "pair").await, (0, 0, 1));
     assert_eq!(setups_named(s, "karl").await, 1);
@@ -3510,6 +3814,18 @@ async fn a_name_an_open_setup_holds_is_refused_before_any_code_is_compared() {
     assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
     let (_, last) = the_box.await.unwrap();
     assert_eq!(last, Some(LastWord::Paired));
+    // A paired holder keeps the sentence that continues under Declarations.
+    let dialed = dial(&rig, &box_keys("box-b").claim).await;
+    let code = dialed.code().to_string();
+    let handle = handle_of(&rig, "box-b").await;
+    let (status, _, body) = finalize(&rig, &ada, "otto", &handle, &code).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(
+        body.contains("so choose another name, or continue that agent under Declarations</p>"),
+        "{body}"
+    );
+    assert!(!body.contains("its appliance is not paired"), "{body}");
+    drop(dialed);
 }
 
 /// **A chosen appliance whose wait ended is said so, apart from one gone**

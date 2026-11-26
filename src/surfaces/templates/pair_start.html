@@ -17,6 +17,21 @@
 {%- if let Some(entered) = entered %}
 <p class="note" role="status"><span class="status {{ entered.status }}">{{ entered.status }}</span> {{ entered.words }}{% if entered.retire %}: retire it on <a href="/admin/agents">the register</a>, and pair the appliance again{% endif %}</p>
 {%- endif %}
+{%- if let Some(rows) = rows %}
+{%- if rows.is_empty() %}
+<p class="note">The register held no live row named {{ name }} when this page was drawn. The write may still land: load New agent again before dialing anew.</p>
+{%- else %}
+<table>
+  <caption>The register's live rows holding {{ name }}, as read when this page was drawn; a row this write makes may appear a moment later</caption>
+  <thead><tr><th>Agent</th><th>Box</th><th>Gate</th><th>Admin</th><th>State</th></tr></thead>
+  <tbody>
+  {%- for r in rows %}
+  <tr><td class="mono">{{ r.agent_id }}</td><td class="mono">{{ r.box }}</td><td class="mono">{{ r.gate }}</td><td class="mono">{{ r.admin }}</td><td>{{ r.label }}</td></tr>
+  {%- endfor %}
+  </tbody>
+</table>
+{%- endif %}
+{%- endif %}
 <div class="stack">
 <section class="pane">
   <header><span class="stage"><b>1</b> Declare</span><h2>What an agent needs</h2><span class="backing built">built</span><span class="status ok">ok</span><span class="source">the operator's rulings</span></header>
@@ -102,6 +117,20 @@
   <p>The appliance's setup script shows Weaver Web's fingerprint and a code. The appliance is listed here, and the agent named and the code entered here.</p>
   </div>
   <footer>Waits on the enrollment, which this build of Weaver Web does not serve.</footer>
+</section>
+{%- endif %}
+{%- if !unpaired.is_empty() %}
+<section class="pane">
+  <header><span class="stage"><b>1</b> Declare</span><h2>Setups not yet paired</h2><span class="backing built">built</span><span class="status hold">hold</span><span class="source">the open setups whose appliance is not paired</span></header>
+  <div class="body">
+  <p>Each was begun before New agent and holds its name until its appliance is paired. Pair it on its own Pair page:</p>
+  <ul>
+    {%- for u in unpaired %}
+    <li><a href="{{ u.href }}">{{ u.name }}</a></li>
+    {%- endfor %}
+  </ul>
+  </div>
+  <footer>Each setup's Pair page carries its own steps and code field. Nothing here releases or deletes a setup.</footer>
 </section>
 {%- endif %}
 </div>

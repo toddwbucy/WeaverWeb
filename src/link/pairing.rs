@@ -196,6 +196,11 @@ pub(crate) enum Lever {
     EndOnMiss,
     /// The connection reads each probe and answers none, holding it.
     Silent,
+    /// The connection's closing write is held until the test releases it
+    /// (`Waiting::release_close`), as a box that stopped reading holds it
+    /// for up to the write bound twice: a frame of a few bytes fits the
+    /// socket's buffers, so a peer that merely stops reading holds nothing.
+    HoldClose,
 }
 
 struct Slot {
@@ -219,6 +224,9 @@ pub struct Waiting {
     ended: Mutex<VecDeque<String>>,
     #[cfg(test)]
     lever: Mutex<Option<Lever>>,
+    /// `Lever::HoldClose`'s release.
+    #[cfg(test)]
+    close_held: tokio::sync::Notify,
 }
 
 /// A held place in the table, given back when dropped.
@@ -256,6 +264,8 @@ impl Default for Waiting {
             ended: Mutex::new(VecDeque::new()),
             #[cfg(test)]
             lever: Mutex::new(None),
+            #[cfg(test)]
+            close_held: tokio::sync::Notify::new(),
         }
     }
 }
@@ -279,6 +289,21 @@ impl Waiting {
     #[cfg(test)]
     fn lever(&self) -> Option<Lever> {
         *self.lever.lock().unwrap()
+    }
+
+    /// `Lever::HoldClose`'s release: the held close goes on.
+    #[cfg(all(test, feature = "passkeys", feature = "enrollment"))]
+    pub(crate) fn release_close(&self) {
+        self.close_held.notify_one();
+    }
+
+    /// Where `Lever::HoldClose` is set, wait for the test's release, as a
+    /// close to a box that stopped reading waits on its write.
+    #[cfg(test)]
+    async fn hold_close(&self) {
+        if self.lever() == Some(Lever::HoldClose) {
+            self.close_held.notified().await;
+        }
     }
 
     /// A place for one connection, or none past either bound.
@@ -661,7 +686,16 @@ pub(crate) async fn serve(start: StartHandshake<TcpStream>, mut cx: Context<'_>)
                 }
             }
             Event::Expired => {
+                // **The place is given back before the close**: the close
+                // may wait the write bound twice on a box that stopped
+                // reading, and an entry choosing the appliance meanwhile
+                // is answered that its wait ended, not left to its probe's
+                // bound as "still listed". Its probes go with it.
                 cx.waiting.wait_ended_at(reservation.id);
+                drop(reservation);
+                drop(probes);
+                #[cfg(test)]
+                cx.waiting.hold_close().await;
                 close_with(&mut reader, &PairToBox::Expired, cx.write_bound).await;
                 return;
             }
@@ -690,9 +724,15 @@ pub(crate) async fn serve(start: StartHandshake<TcpStream>, mut cx: Context<'_>)
                     // 8.2), the box told why, so it dials anew.
                     if chosen && misses >= TRIES {
                         let _ = answer.send(Answer::Closed);
+                        // The place back before the close, as at the
+                        // wait's end: a later entry is answered as gone.
+                        drop(reservation);
+                        drop(probes);
                         let missed = PairToBox::Refused {
                             reason: pair_reason::CODE_MISSED.to_owned(),
                         };
+                        #[cfg(test)]
+                        cx.waiting.hold_close().await;
                         close_with(&mut reader, &missed, cx.write_bound).await;
                         return;
                     }

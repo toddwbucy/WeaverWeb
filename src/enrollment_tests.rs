@@ -3370,6 +3370,93 @@ async fn a_miss_compared_as_its_connection_ends_still_leaves_its_record() {
     drop(dialed);
 }
 
+/// **An appliance whose wait ended leaves the list before its close**
+/// (Spec 8.2; the review of pull request 214, finding 4): the close to a
+/// box that stopped reading may wait the write bound twice, held here by
+/// `pairing::Lever::HoldClose`; a post choosing the appliance while the
+/// close is held answers at once that its wait ended, with no record, and
+/// the list no longer shows it. The box hears `expired` once the close goes
+/// on.
+///
+/// Perturbation: give the place back at the return, after the close, and
+/// the post finds the appliance still listed, its probe unread, and
+/// answers 503 "did not answer in time" past the probe's bound.
+#[tokio::test]
+async fn an_appliance_whose_wait_ended_leaves_the_list_before_its_close() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    rig.listener
+        .set_pairing_bounds(crate::link::pairing::Bounds {
+            life: Duration::from_secs(2),
+            ..crate::link::pairing::Bounds::default()
+        });
+    rig.listener
+        .set_pairing_lever(Some(crate::link::pairing::Lever::HoldClose));
+    let mut dialed = dial(&rig, &box_keys("box-a").claim).await;
+    let code = dialed.code().to_string();
+    let handle = handle_of(&rig, "box-a").await;
+    let until = tokio::time::Instant::now() + SOON;
+    while !rig.listener.wait_ended(&handle) {
+        assert!(tokio::time::Instant::now() < until, "the wait ends");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let (status, _, body) = finalize(&rig, &ada, "karl", &handle, &code).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(
+        body.contains("The appliance&#39;s wait ended. Run the setup script again to dial anew."),
+        "{body}"
+    );
+    assert!(rig.listener.waiting().is_empty(), "no longer listed");
+    assert_eq!(pair_audit(s, "pair").await, (0, 0, 0), "no record");
+    assert_eq!(setups_named(s, "karl").await, 0);
+    rig.listener.release_pairing_close();
+    let heard = tokio::time::timeout(SOON, dialed.next()).await.unwrap();
+    assert!(matches!(heard, Heard::Expired), "{heard:?}");
+}
+
+/// **A connection its last miss closes leaves the list before its close**
+/// (Spec 8.2; the review of pull request 214, as the Planner found it
+/// beside finding 4): the third miss is answered closed, and while the close
+/// is held (`pairing::Lever::HoldClose`) a post choosing the same appliance
+/// answers at once that it is no longer waiting, with no record. The box
+/// hears `code_missed` once the close goes on.
+///
+/// Perturbation: give the place back at the return, after the close, and
+/// the post finds the appliance still listed, its probe unread, and
+/// answers 503 "did not answer in time" past the probe's bound.
+#[tokio::test]
+async fn a_connection_its_last_miss_closes_leaves_the_list_before_its_close() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    rig.listener
+        .set_pairing_lever(Some(crate::link::pairing::Lever::HoldClose));
+    let mut dialed = dial(&rig, &box_keys("box-a").claim).await;
+    let code = dialed.code().to_string();
+    let a = handle_of(&rig, "box-a").await;
+    let wrong = neither(&code, &code);
+    for _ in 0..crate::link::pairing::TRIES {
+        let (status, _, body) = finalize(&rig, &ada, "karl", &a, wrong).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    }
+    let (status, _, body) = finalize(&rig, &ada, "karl", &a, &code).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert!(
+        body.contains("The appliance you chose is no longer waiting. Refresh the list."),
+        "{body}"
+    );
+    assert!(rig.listener.waiting().is_empty(), "no longer listed");
+    assert_eq!(pair_audit(s, "pair").await, (0, 0, 3), "the misses alone");
+    assert_eq!(setups_named(s, "karl").await, 0);
+    rig.listener.release_pairing_close();
+    let heard = match tokio::time::timeout(SOON, dialed.next()).await.unwrap() {
+        Heard::Refused(reason) => reason,
+        other => panic!("the box heard no refusal: {other:?}"),
+    };
+    assert_eq!(heard, crate::link::frames::pair_reason::CODE_MISSED);
+}
+
 /// **A chosen appliance that does not answer is said so, and never called
 /// gone** (Spec 8.2; the fix round of 2026-11-25, point 2): the chosen
 /// connection reads the probe and answers none (`pairing::Lever::Silent`),

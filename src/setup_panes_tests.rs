@@ -355,6 +355,32 @@ async fn the_build_page_says_the_account_is_laid_at_the_pairing() {
     );
 }
 
+/// **Build links the agent's loop page where Confirm stands and the box
+/// is paired** (Spec 6.2, 6.3), and not before Confirm.
+#[tokio::test]
+async fn the_build_page_links_the_loop_page_once_confirmed() {
+    let reported = Arc::new(Reported::default());
+    let Some((rig, _fake, _, _cache)) = rig_boxed(false, reported.clone()).await else {
+        return;
+    };
+    let (ada, setup) = setup_of(&rig, "karl").await;
+    let agent: String = sqlx::query_scalar("SELECT agent_id FROM agent_setup WHERE setup_id = $1")
+        .bind(&setup)
+        .fetch_one(&rig.store().pool)
+        .await
+        .unwrap();
+    let link = format!("<a href=\"/agents/{agent}/loop\">its loop page</a>");
+    let open = read(&rig.app, &format!("/setup/{setup}/build"), &ada).await;
+    assert!(!open.contains(&link), "not before Confirm: {open}");
+    sqlx::query("UPDATE agent_setup SET state = 'confirmed' WHERE setup_id = $1")
+        .bind(&setup)
+        .execute(&rig.store().pool)
+        .await
+        .unwrap();
+    let confirmed = read(&rig.app, &format!("/setup/{setup}/build"), &ada).await;
+    assert!(confirmed.contains(&link), "{confirmed}");
+}
+
 /// **A value a report chose is drawn through the templates' escaping**
 /// (Spec 6.2): a read report whose machine's product and a card's model
 /// hold a script element draws them escaped, as askama escapes `<` and

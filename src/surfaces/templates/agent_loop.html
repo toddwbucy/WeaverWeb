@@ -1,0 +1,34 @@
+{% extends "instrument.html" %}
+{% block title %}the loop of {{ label }} - weaver-web{% endblock %}
+{% block body %}
+{#- The loop page (Spec 6.3): the agent's wire file, which loop ran at its
+    last load, for every person holding a grant on the agent. The
+    textarea's text starts on the line after its tag, since a browser drops
+    one newline right after it. No inline script. -#}
+<h1>The loop of {{ label }}</h1>
+<p class="lede"><span class="mono">{{ agent_id }}</span>; your roles: {{ roles }}; <a href="/agents/{{ agent_id }}">back to the agent</a></p>
+<div class="stack">
+<section class="pane" id="wire-file">
+  <header><span class="stage"><b>1</b> Declare</span><h2>The wire file</h2><span class="backing built">built</span>{% if head.is_some() %}<span class="status ok">saved</span>{% else %}<span class="status hold">first draft</span>{% endif %}<span class="source">{% if head.is_some() %}the version saved here{% else %}today's compiled loop as wires{% endif %}</span></header>
+  <div class="body">
+  {%- if let Some(head) = head %}
+  <p class="saved">Version {{ head.version }}, saved {{ head.saved_at }} by {{ head.saved_by }}: {{ head.bytes }} bytes, sha256 <span class="mono">{{ head.sha256 }}</span>.</p>
+  <p class="note">{{ not_on_the_appliance }}</p>
+  {%- else %}
+  <p class="note">{{ no_loop_saved }}</p>
+  <p class="note">{{ not_on_the_appliance }}</p>
+  {%- endif %}
+  <textarea id="loop-text" aria-label="the wire file" rows="40" cols="100" spellcheck="false" autocomplete="off" readonly>
+{{ text }}</textarea>
+  </div>
+  <footer>The grammar is the agent's side's: one UTF-8 Python file of at most 262,144 bytes defining on_turn(board, text). Weaver Web keeps the text and judges its bytes alone.</footer>
+</section>
+<section class="pane" id="loop-ran">
+  <header><span class="stage"><b>3</b> Run</span><h2>Which loop ran</h2><span class="backing built">built</span><span class="source">the last load event{% if !ran_at.is_empty() %}, {{ ran_at }}{% endif %}</span></header>
+  <div class="body">
+  <p>{{ ran }}</p>
+  </div>
+  <footer>What ran at the last load, as its load event named it; not what the appliance holds now.</footer>
+</section>
+</div>
+{% endblock %}

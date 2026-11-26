@@ -905,6 +905,9 @@ struct BuildPage {
     admin: bool,
     chrome: super::Chrome,
     frame: Frame,
+    /// **The agent's loop page** (Spec 6.2, 6.3), where Confirm stands and
+    /// the setup's box is paired: the register row the pairing wrote.
+    loop_href: Option<String>,
 }
 
 /// **One page of a setup**, drawn from the store and the config alone.
@@ -962,6 +965,11 @@ async fn page(
             admin: true,
             chrome,
             frame,
+            loop_href: setup
+                .paired
+                .as_ref()
+                .filter(|_| setup.state == "confirmed")
+                .map(|(agent, _)| format!("/agents/{agent}/loop")),
         }
         .render(),
         // Each is its child module's, never routed here.

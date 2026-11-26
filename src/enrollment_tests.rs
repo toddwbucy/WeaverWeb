@@ -3821,10 +3821,10 @@ async fn a_name_an_open_setup_holds_is_refused_before_any_code_is_compared() {
     let (status, _, body) = finalize(&rig, &ada, "otto", &handle, &code).await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     assert!(
-        body.contains("continue that agent under Declarations once its appliance is paired"),
+        body.contains("so choose another name, or continue that agent under Declarations</p>"),
         "{body}"
     );
-    assert!(!body.contains("pair it on its own Pair page"), "{body}");
+    assert!(!body.contains("its appliance is not paired"), "{body}");
     drop(dialed);
 }
 

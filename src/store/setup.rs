@@ -163,15 +163,18 @@ impl Store {
         Ok(rows.iter().map(setup_of).collect())
     }
 
-    /// **An open setup holds `name`**, for New agent's entry (Spec 8.2):
-    /// one setup holds a name at a time, and the exchange's insert decides
-    /// a race past this read.
-    pub async fn open_setup_named(&self, name: &str) -> anyhow::Result<bool> {
+    /// **Whether an open setup holds `name`, and if so whether its box is
+    /// paired**, for New agent's entry (Spec 8.2): one setup holds a name at
+    /// a time, and the exchange's insert decides a race past this read.
+    /// `None` where no open setup holds it, else `Some(paired)`, a setup
+    /// begun the old way and never paired answering `Some(false)`.
+    pub async fn open_setup_named(&self, name: &str) -> anyhow::Result<Option<bool>> {
         Ok(sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM agent_setup WHERE name = $1 AND state = 'open')",
+            "SELECT agent_id IS NOT NULL AND paired_as IS NOT NULL \
+             FROM agent_setup WHERE name = $1 AND state = 'open'",
         )
         .bind(name)
-        .fetch_one(&self.pool)
+        .fetch_optional(&self.pool)
         .await?)
     }
 

@@ -6,6 +6,7 @@
 //! conforms: web-the-pair-page-shows-the-pairing-stages-report-read-only-once-paired
 //! conforms: web-new-agent-holds-what-an-agent-needs-the-steps-at-the-appliance-and-one-form-with-no-click-before-them
 //! conforms: web-new-agent-gives-weaver-webs-management-address-and-never-the-data-doors-and-says-so-where-one-door-serves-both-planes
+//! conforms: web-new-agent-lists-each-open-setup-not-paired-with-a-link-to-its-own-pair-page
 //!
 //! **New agent, and Declare's path** (Spec 6.2, 8.2), an admin's, the
 //! server-wide admin grant. **New agent is the first page of stage 1**
@@ -496,6 +497,14 @@ struct FirstWaiting {
     chosen: bool,
 }
 
+/// **An open setup whose box is not paired, as New agent lists it**: begun
+/// the old way, it holds its name, and its own Pair page is the one way to
+/// pair it (the review of pull request 214, findings 5 and 6).
+struct FirstUnpaired {
+    name: String,
+    href: String,
+}
+
 /// **What a post to New agent keeps**, drawn back into the form: the name
 /// as typed, the appliance chosen, and what happened.
 #[derive(Default)]
@@ -530,6 +539,9 @@ struct FirstPage {
     name_most: usize,
     name: String,
     entered: Option<pair::Entered>,
+    /// The open setups not paired, each with a link to its own Pair page;
+    /// their pane is drawn only where one exists.
+    unpaired: Vec<FirstUnpaired>,
 }
 
 /// **New agent, as drawn** for `session`, with what a post kept.
@@ -563,6 +575,16 @@ async fn first_view(
         ),
         None => (false, Vec::new(), Vec::new()),
     };
+    let unpaired = store
+        .open_setups()
+        .await?
+        .into_iter()
+        .filter(|s| s.in_pairing_step())
+        .map(|s| FirstUnpaired {
+            href: pair_href(&s.setup_id),
+            name: s.name,
+        })
+        .collect();
     Ok(FirstPage {
         here: "pair",
         who: session.name.clone(),
@@ -582,6 +604,7 @@ async fn first_view(
         name_most: crate::store::setup::NAME_MOST,
         name: kept.name,
         entered: kept.entered,
+        unpaired,
     })
 }
 

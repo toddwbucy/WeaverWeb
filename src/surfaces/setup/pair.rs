@@ -868,14 +868,21 @@ mod entry {
         // **The name free of an open setup**, one refusal record where it
         // is not; the exchange's write decides a race past this read.
         match store.open_setup_named(&name).await {
-            Ok(false) => {}
-            Ok(true) => {
+            Ok(None) => {}
+            Ok(Some(paired)) => {
                 if let Err(answer) =
                     record_refusal(&store, &session, &setup_id, "the name is held").await
                 {
                     return answer;
                 }
-                let words = Refusal::SetupNameHeld(name.clone()).to_string();
+                // **A holder never paired is pointed to its own Pair page**,
+                // which New agent lists below the form.
+                let words = if paired {
+                    Refusal::SetupNameHeld(name.clone())
+                } else {
+                    Refusal::SetupNameHeldUnpaired(name.clone())
+                }
+                .to_string();
                 let kept = kept(&name, "", words, false);
                 return first_answer(&store, seams, &session, StatusCode::CONFLICT, kept).await;
             }

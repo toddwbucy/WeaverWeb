@@ -3588,6 +3588,13 @@ async fn a_name_an_open_setup_holds_is_refused_before_any_code_is_compared() {
     let (status, _, body) = finalize(&rig, &ada, "karl", &handle, &code).await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     assert!(body.contains("an open setup holds the name karl"), "{body}");
+    // **A holder never paired is pointed to its own Pair page**, listed
+    // below the form (the review of pull request 214, findings 5 and 6).
+    assert!(
+        body.contains("its appliance is not paired, so choose another name, or pair it on its own Pair page, listed below"),
+        "{body}"
+    );
+    assert!(body.contains("<h2>Setups not yet paired</h2>"), "{body}");
     assert!(body.contains("<h1>New agent</h1>"), "{body}");
     assert_eq!(pair_audit(s, "pair").await, (0, 0, 1));
     assert_eq!(setups_named(s, "karl").await, 1);
@@ -3597,6 +3604,18 @@ async fn a_name_an_open_setup_holds_is_refused_before_any_code_is_compared() {
     assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
     let (_, last) = the_box.await.unwrap();
     assert_eq!(last, Some(LastWord::Paired));
+    // A paired holder keeps the sentence that continues under Declarations.
+    let dialed = dial(&rig, &box_keys("box-b").claim).await;
+    let code = dialed.code().to_string();
+    let handle = handle_of(&rig, "box-b").await;
+    let (status, _, body) = finalize(&rig, &ada, "otto", &handle, &code).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(
+        body.contains("continue that agent under Declarations once its appliance is paired"),
+        "{body}"
+    );
+    assert!(!body.contains("pair it on its own Pair page"), "{body}");
+    drop(dialed);
 }
 
 /// **A chosen appliance whose wait ended is said so, apart from one gone**

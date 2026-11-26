@@ -104,5 +104,19 @@
   <footer>Waits on the enrollment, which this build of Weaver Web does not serve.</footer>
 </section>
 {%- endif %}
+{%- if !unpaired.is_empty() %}
+<section class="pane">
+  <header><span class="stage"><b>1</b> Declare</span><h2>Setups not yet paired</h2><span class="backing built">built</span><span class="status hold">hold</span><span class="source">the open setups whose appliance is not paired</span></header>
+  <div class="body">
+  <p>Each was begun before New agent and holds its name until its appliance is paired. Pair it on its own Pair page:</p>
+  <ul>
+    {%- for u in unpaired %}
+    <li><a href="{{ u.href }}">{{ u.name }}</a></li>
+    {%- endfor %}
+  </ul>
+  </div>
+  <footer>Each setup's Pair page carries its own steps and code field. Nothing here releases or deletes a setup.</footer>
+</section>
+{%- endif %}
 </div>
 {% endblock %}

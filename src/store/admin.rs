@@ -101,6 +101,9 @@ pub enum Refusal {
     /// An open setup holds the name, and one holds a name at a time (Spec
     /// 6.2).
     SetupNameHeld(String),
+    /// An open setup whose box is not paired holds the name: New agent
+    /// lists it with a link to its own Pair page.
+    SetupNameHeldUnpaired(String),
     /// No such setup (Spec 6.2).
     NoSuchSetup,
     /// No such SSH public key (Spec 6.2).
@@ -240,6 +243,10 @@ impl std::fmt::Display for Refusal {
                 f,
                 "an open setup holds the name {name}, and one setup holds a name at a time, so choose another name, or continue that agent under Declarations once its appliance is paired"
             ),
+            Refusal::SetupNameHeldUnpaired(name) => write!(
+                f,
+                "an open setup holds the name {name}, and one setup holds a name at a time; its appliance is not paired, so choose another name, or pair it on its own Pair page, listed below"
+            ),
             Refusal::NoSuchSetup => write!(f, "no such setup"),
             Refusal::NoSuchKey => write!(f, "no such SSH key"),
             Refusal::KeyHeld => write!(f, "that SSH key is held already"),
@@ -266,7 +273,7 @@ impl std::fmt::Display for Refusal {
             ),
             Refusal::SetupUnpaired => write!(
                 f,
-                "the setup's box is not paired, and its declaration opens once it is: pair it under New agent"
+                "the setup's box is not paired, and its declaration opens once it is: pair it on its own Pair page, which New agent lists"
             ),
             Refusal::NoAdapterPicked => write!(
                 f,

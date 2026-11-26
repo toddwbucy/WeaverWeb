@@ -7307,7 +7307,11 @@ confirms it. Otherwise the box pairs again, so `pair` and `replace box` resolve 
 way. **New agent's unknown answer draws the same rows**, the register's live rows holding
 the name below its words, each by its agent, its box and its live credentials'
 fingerprints, since no other page shows a row's admin fingerprint (the review of pull
-request 214, finding 8).
+request 214, finding 8). The rows are as read when the page is drawn, and the write's
+COMMIT may still be running then, so the words say a row this write makes may appear a
+moment later; with no row of the name the page says the register held none when it was
+drawn, that the write may still land, and to load New agent again before dialing anew,
+never that nothing was written (the Planner's second round of 2026-11-26).
 
 **Each connector's key is made inside the appliance and never leaves it**: admin-con's
 at the pairing, gate-con's at the loop's install. The console
@@ -8006,7 +8010,7 @@ two connectors report.
 | New agent lists each open setup not paired with a link to its own Pair page | perturbation in `src/setup_tests.rs`, `new_agent_lists_each_unpaired_setup_with_a_link_to_its_pair_page`: list no setup, and the setup begun is never listed; list every open setup, paired or not, and the paired one is listed too (each measured 2026-11-26) |
 | New agent's entry runs from its comparison to its outcome in a task the request cannot cancel | perturbation in `src/enrollment_tests.rs`, `new_agents_entry_dropped_once_matched_still_pairs_and_makes_its_setup`: run `continue_finalize` in the request's own future, and the dropped request takes the box's connection with it (measured 2026-11-25) |
 | a malformed entry on New agent is drawn back into the page, with no record | perturbation in `src/enrollment_tests.rs`, `a_malformed_entry_on_new_agent_is_drawn_back_into_the_form`: answer the four early refusals with bare text, and the page is gone; draw the page for whoever is not an admin, and they are answered 400 and not as New agent's page answers them (each measured 2026-11-26) |
-| on an unknown outcome New agent draws the register's live rows holding the name | perturbation in `src/enrollment_tests.rs`, `on_an_unknown_outcome_new_agent_draws_the_registers_rows_holding_the_name`: the pairing's COMMIT held past the read-back's bound, draw no rows on the unknown answer, and the live row holding the name and its admin fingerprint are absent (measured 2026-11-26) |
+| on an unknown outcome New agent draws the register's live rows holding the name | perturbation in `src/enrollment_tests.rs`, `on_an_unknown_outcome_new_agent_draws_the_registers_rows_holding_the_name`: the pairing's COMMIT held past the read-back's bound, draw no rows on the unknown answer, and the live row holding the name and its admin fingerprint are absent; with no earlier row of the name, say the register holds no row, and the test fails (each measured 2026-11-26) |
 | a value a report chose is drawn through the templates' escaping | perturbation in `src/setup_panes_tests.rs`, `a_value_a_report_chose_is_drawn_escaped`, and end to end in `src/enrollment_tests.rs`, `the_panes_are_served_in_each_status_as_the_box_reports`: draw the machine's product through askama's `safe` filter, and a script element stands on the page (each measured) |
 | a refused report is logged once, at its arrival, with its detail, and its log can change neither the write nor its answer | perturbation in `src/enrollment_tests.rs`, `a_refused_reports_arrival_is_logged_once_with_its_detail_escaped`: drop the line, and none is logged; log the detail in its debug form, and the escape is doubled; log at each page's read as well, and two views add lines; refuse the write where the reader refuses, and the box's report is not accepted (each measured) |
 | the base's identity is BLAKE3 over the parts in split order | perturbation in `src/hugging_face/base_identity.rs`'s tests: hash in the listing's order, or part 1 alone, and the digest differs from BLAKE3 over part 1's bytes, then part 2's (each measured) |

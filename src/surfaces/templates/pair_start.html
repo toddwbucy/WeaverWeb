@@ -19,10 +19,10 @@
 {%- endif %}
 {%- if let Some(rows) = rows %}
 {%- if rows.is_empty() %}
-<p class="note">The register holds no live row named {{ name }}.</p>
+<p class="note">The register held no live row named {{ name }} when this page was drawn. The write may still land: load New agent again before dialing anew.</p>
 {%- else %}
 <table>
-  <caption>The register's live rows holding {{ name }}</caption>
+  <caption>The register's live rows holding {{ name }}, as read when this page was drawn; a row this write makes may appear a moment later</caption>
   <thead><tr><th>Agent</th><th>Box</th><th>Gate</th><th>Admin</th><th>State</th></tr></thead>
   <tbody>
   {%- for r in rows %}

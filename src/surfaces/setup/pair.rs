@@ -1136,7 +1136,7 @@ mod entry {
             Outcome::Unknown(_) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!(
-                    "unknown: whether the pairing's write landed cannot be said. The rows below are the register's live rows holding {name}: compare their admin fingerprint with the one the appliance's unknown line shows, and adopt only where it matches"
+                    "unknown: whether the pairing's write landed cannot be said. The rows below are the register's live rows holding {name} as read when this page was drawn, and a row this write makes may appear a moment later: compare their admin fingerprint with the one the appliance's unknown line shows, and adopt only where it matches"
                 ),
             ),
         })

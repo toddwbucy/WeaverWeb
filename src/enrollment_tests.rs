@@ -3375,11 +3375,16 @@ async fn a_miss_compared_as_its_connection_ends_still_leaves_its_record() {
 /// pairing's COMMIT outlasts the read-back's bound, so whether its write
 /// landed cannot be said; the page says "the rows below" and draws the
 /// live row already holding the name, its agent, its box and its admin
-/// fingerprint, as the old Pair page does. The commit then completes on
-/// its own.
+/// fingerprint, as the old Pair page does, each as read when the page was
+/// drawn, since a row this write makes may land a moment later. The commit
+/// then completes on its own. With no earlier row of the name, the page
+/// says the register held none when it was drawn, that the write may still
+/// land, and to load New agent again before dialing anew (the Planner's
+/// second round of 2026-11-26, point 1).
 ///
-/// Perturbation: draw no rows on the unknown outcome, and the row and its
-/// fingerprint are absent (measured 2026-11-26).
+/// Perturbations: draw no rows on the unknown outcome, and the row and its
+/// fingerprint are absent; say the register holds no row, as before, and
+/// the empty case fails (each measured 2026-11-26).
 #[tokio::test]
 async fn on_an_unknown_outcome_new_agent_draws_the_registers_rows_holding_the_name() {
     let Some(rig) = rig().await else { return };
@@ -3408,7 +3413,7 @@ async fn on_an_unknown_outcome_new_agent_draws_the_registers_rows_holding_the_na
     let dialed = dial(&rig, &box_keys("box-new").claim).await;
     let code = dialed.code().to_string();
     let a = handle_of(&rig, "box-new").await;
-    let the_box = tokio::spawn(the_box(dialed, Box::Whole));
+    let first_box = tokio::spawn(the_box(dialed, Box::Whole));
     crate::store::commit::GIVE_UP_ON_COMMIT
         .with(|g| g.set(Some(("pair", Duration::from_millis(100)))));
     crate::store::commit::READ_BACK_BOUND_FOR_TEST
@@ -3421,12 +3426,12 @@ async fn on_an_unknown_outcome_new_agent_draws_the_registers_rows_holding_the_na
     );
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
     assert!(
-        body.contains("The rows below are the register&#39;s live rows holding karl"),
+        body.contains("The rows below are the register&#39;s live rows holding karl as read when this page was drawn, and a row this write makes may appear a moment later"),
         "{body}"
     );
     assert!(!body.contains("register page lists"), "{body}");
     assert!(
-        body.contains("<caption>The register's live rows holding karl</caption>"),
+        body.contains("<caption>The register's live rows holding karl, as read when this page was drawn; a row this write makes may appear a moment later</caption>"),
         "{body}"
     );
     assert!(
@@ -3443,10 +3448,37 @@ async fn on_an_unknown_outcome_new_agent_draws_the_registers_rows_holding_the_na
         )),
         "the row's admin fingerprint: {body}"
     );
-    let _ = tokio::time::timeout(SOON, the_box).await;
+    let _ = tokio::time::timeout(SOON, first_box).await;
     // The commit completes on its own, its outcome standing.
     let until = tokio::time::Instant::now() + SOON;
     while pair_audit(s, "pair").await.1 != 1 {
+        assert!(tokio::time::Instant::now() < until, "the commit completes");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    // **With no earlier row of the name**, the page never says nothing was
+    // written: the register held none when it was drawn, and the write may
+    // still land.
+    let dialed = dial(&rig, &box_keys("box-two").claim).await;
+    let code = dialed.code().to_string();
+    let b = handle_of(&rig, "box-two").await;
+    let the_box = tokio::spawn(the_box(dialed, Box::Whole));
+    crate::store::commit::GIVE_UP_ON_COMMIT
+        .with(|g| g.set(Some(("pair", Duration::from_millis(100)))));
+    crate::store::commit::READ_BACK_BOUND_FOR_TEST
+        .with(|b| b.set(Some(Duration::from_millis(200))));
+    let (status, _, body) = finalize(&rig, &ada, "otto", &b, &code).await;
+    crate::store::commit::READ_BACK_BOUND_FOR_TEST.with(|b| b.set(None));
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    assert!(
+        body.contains("The register held no live row named otto when this page was drawn. The write may still land: load New agent again before dialing anew."),
+        "{body}"
+    );
+    assert!(!body.contains("The register holds no live row"), "{body}");
+    assert!(!body.contains("<caption>"), "no table: {body}");
+    let _ = tokio::time::timeout(SOON, the_box).await;
+    let until = tokio::time::Instant::now() + SOON;
+    while pair_audit(s, "pair").await.1 != 2 {
         assert!(tokio::time::Instant::now() < until, "the commit completes");
         tokio::time::sleep(Duration::from_millis(50)).await;
     }

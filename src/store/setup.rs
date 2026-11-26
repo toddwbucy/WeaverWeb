@@ -38,8 +38,10 @@ pub const MAX_TOKENS_PER_TURN: i64 = 4096;
 /// section 4 reserves whole, at WeaverAgent's `6b91747e`, every reserved
 /// suffix of that section holding a `-`, which the character rule refuses;
 /// and the two folders the appliance keeps beside each agent's own folder,
-/// named after the agent (the Planner's lean of 2026-11-25, which the
-/// operator may strike; migration `0034`).
+/// named after the agent, refused on the operator's rulings of 2026-11-26:
+/// `admin` ("Refuse on the appliance any agent named admin, admincon or
+/// gatecon") and `stack` ("75 (e). Yes, refuse stack."), which the
+/// Planner's lean of 2026-11-25 first proposed (migration `0034`).
 const RESERVED: [(&str, &str); 4] = [
     ("gatecon", ACCOUNT),
     ("admincon", ACCOUNT),

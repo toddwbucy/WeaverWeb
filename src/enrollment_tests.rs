@@ -3370,6 +3370,102 @@ async fn a_miss_compared_as_its_connection_ends_still_leaves_its_record() {
     drop(dialed);
 }
 
+/// **A malformed entry on New agent is drawn back into the form** (Spec
+/// 8.2; the review of pull request 214, finding 7): a refused name, no
+/// appliance's handle, a code not of its alphabet and an unticked
+/// comparison each answer New agent drawn again at 400, with the words,
+/// the name as typed and the chosen appliance kept, and the code's field
+/// empty. Each is still no miss: no record, no setup, the appliance still
+/// listed with every try left. Whoever is not an admin is answered as New
+/// agent's own page answers them, with no record.
+///
+/// Perturbation: answer the four with bare text, as before, and the first
+/// post's body is the words alone, with no form (measured 2026-11-26).
+#[tokio::test]
+async fn a_malformed_entry_on_new_agent_is_drawn_back_into_the_form() {
+    let Some(rig) = rig().await else { return };
+    let s = rig.store();
+    let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (_, bea) = crate::admin_tests::signed_in(&rig.app, s, &mut authenticator(), "bea").await;
+    let dialed = dial(&rig, &box_keys("box-a").claim).await;
+    let code = dialed.code().to_string();
+    let a = handle_of(&rig, "box-a").await;
+    let refused_name = crate::store::setup::agent_name("9karl").unwrap_err();
+    for (name, appliance, typed, compared, words, kept) in [
+        ("9karl", a.as_str(), code.as_str(), "on", refused_name, true),
+        (
+            "karl",
+            "not-a-handle",
+            code.as_str(),
+            "on",
+            "choose the appliance from the appliances awaiting final initialization",
+            false,
+        ),
+        (
+            "karl",
+            a.as_str(),
+            "abc",
+            "on",
+            "the code is ten characters of 0-9 and A-Z without I, L, O and U, as the SSH session shows it: check it and type it again",
+            true,
+        ),
+        (
+            "karl",
+            a.as_str(),
+            code.as_str(),
+            "",
+            "Compare Weaver Web&#39;s fingerprint with the one the appliance shows, and tick the box.",
+            true,
+        ),
+    ] {
+        let mut fields = vec![("name", name), ("appliance", appliance), ("code", typed)];
+        if !compared.is_empty() {
+            fields.push(("compared", compared));
+        }
+        let (status, _, body) = send_as(&rig.app, "POST", "/pair", Some(form(&fields)), &ada).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{words}: {body}");
+        assert!(body.contains("<h1>New agent</h1>"), "{words}: {body}");
+        assert!(body.contains(words), "{words}: {body}");
+        assert!(
+            body.contains(&format!(r#"name="name" value="{name}""#)),
+            "{words}: the name kept: {body}"
+        );
+        assert_eq!(
+            body.contains(&format!(r#"value="{a}" required checked>"#)),
+            kept,
+            "{words}: the choice kept where it was a handle: {body}"
+        );
+        assert!(
+            body.contains(r#"<input type="text" name="code" autocomplete="off""#),
+            "{words}: the code's field empty: {body}"
+        );
+        assert!(!body.contains(&code), "{words}: the code never drawn back");
+    }
+    let (status, _, body) = send_as(
+        &rig.app,
+        "POST",
+        "/pair",
+        Some(form(&[
+            ("name", "9karl"),
+            ("appliance", &a),
+            ("code", &code),
+        ])),
+        &bea,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(body, crate::surfaces::admin::NOT_AN_ADMIN);
+    assert_eq!(pair_audit(s, "pair").await, (0, 0, 0), "no record of any");
+    assert_eq!(setups_named(s, "karl").await, 0);
+    assert_eq!(rig.listener.waiting().len(), 1, "the appliance still waits");
+    // No probe counted a miss: the next miss leaves two tries.
+    let wrong = neither(&code, &code);
+    let (status, _, body) = finalize(&rig, &ada, "karl", &a, wrong).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(body.contains("2 tries are left on it."), "{body}");
+    drop(dialed);
+}
+
 /// **An appliance whose wait ended leaves the list before its close**
 /// (Spec 8.2; the review of pull request 214, finding 4): the close to a
 /// box that stopped reading may wait the write bound twice, held here by

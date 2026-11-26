@@ -3,6 +3,7 @@
 //! conforms: web-a-code-that-matches-another-waiting-appliance-and-not-the-chosen-one-is-a-miss-one-refusal-record-and-writes-no-setup
 //! conforms: web-a-name-an-open-setup-holds-is-refused-on-new-agent-before-any-code-is-compared
 //! conforms: web-new-agents-entry-runs-from-its-comparison-to-its-outcome-in-a-task-the-request-cannot-cancel
+//! conforms: web-a-malformed-entry-on-new-agent-is-drawn-back-into-the-page-with-no-record
 //!
 //! **The Pair page's waiting box and the code's entry** (Spec 8.2, 6.2).
 //! The pane lists the boxes waiting, each by the name it claims, its peer
@@ -247,7 +248,9 @@ mod entry {
     use crate::store::identity::is_setup_id;
     use crate::store::key::AgentId;
     use crate::store::setup::Field;
-    use crate::surfaces::admin::{fault, first_of, refused, settled, writer};
+    use crate::surfaces::admin::{
+        NOT_AN_ADMIN, admin_session, fault, first_of, refused, settled, writer,
+    };
     use crate::surfaces::gate::Session;
 
     use super::super::{
@@ -830,17 +833,18 @@ mod entry {
     ) -> Response {
         let name = match agent_name(ask.name.trim()) {
             Ok(name) => name.to_owned(),
-            Err(why) => return (StatusCode::BAD_REQUEST, why).into_response(),
+            Err(why) => return malformed(&store, seams, &headers, &ask, why.to_string()).await,
         };
         if !is_handle(&ask.appliance) {
-            return (StatusCode::BAD_REQUEST, NO_APPLIANCE).into_response();
+            return malformed(&store, seams, &headers, &ask, NO_APPLIANCE.to_owned()).await;
         }
         let Ok(code) = Code::read(&ask.code) else {
-            return (StatusCode::BAD_REQUEST, MALFORMED_APPLIANCE_CODE).into_response();
+            let words = MALFORMED_APPLIANCE_CODE.to_owned();
+            return malformed(&store, seams, &headers, &ask, words).await;
         };
         // **The comparison is never skipped** (Spec 8.2).
         if ask.compared.as_deref() != Some("on") {
-            return (StatusCode::BAD_REQUEST, NOT_COMPARED).into_response();
+            return malformed(&store, seams, &headers, &ask, NOT_COMPARED.to_owned()).await;
         }
         let setup_id = match store.mint_key("st").await {
             Ok(setup_id) => setup_id,
@@ -955,6 +959,40 @@ mod entry {
         };
         let kept = kept(&name, appliance, words, retire);
         first_answer(&store, seams, &session, status, kept).await
+    }
+
+    /// **A malformed entry is drawn back into New agent** (Spec 8.2; the
+    /// review of pull request 214, finding 7): at 400, with its words, the
+    /// name as typed and the appliance chosen kept and the code's field
+    /// empty, as every later refusal is drawn. It stays no miss: the
+    /// admin's session is read as New agent's own page reads it, and no
+    /// record is written, no setup key minted and no connection asked.
+    /// Whoever is not an admin is answered as that page answers.
+    async fn malformed(
+        store: &Store,
+        seams: &Seams,
+        headers: &HeaderMap,
+        ask: &FinalizeAsk,
+        words: String,
+    ) -> Response {
+        let session = match admin_session(store, &seams.policy, headers).await {
+            Ok(Ok(session)) => session,
+            Ok(Err(_)) => return (StatusCode::FORBIDDEN, NOT_AN_ADMIN).into_response(),
+            Err(answer) => return answer,
+        };
+        let name: String = ask
+            .name
+            .trim()
+            .chars()
+            .take(crate::store::setup::NAME_MOST)
+            .collect();
+        let appliance = if is_handle(&ask.appliance) {
+            ask.appliance.as_str()
+        } else {
+            ""
+        };
+        let kept = kept(&name, appliance, words, false);
+        first_answer(store, seams, &session, StatusCode::BAD_REQUEST, kept).await
     }
 
     /// **What New agent says of an appliance no longer listed**: its wait

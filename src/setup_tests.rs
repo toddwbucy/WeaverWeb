@@ -530,7 +530,10 @@ async fn a_name_outside_the_rule_is_refused_opening_no_setup() {
     ] {
         let (status, body) = finalize_named(&rig.app, &ada, name).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{name}: {body}");
-        assert!(body.contains(why), "{name}: {body}");
+        // New agent drawn again, its words escaped as page text (the
+        // review of pull request 214, finding 7).
+        assert!(body.contains("<h1>New agent</h1>"), "{name}: {body}");
+        assert!(body.contains(&why.replace('\'', "&#39;")), "{name}: {body}");
         assert_eq!(setups(s).await, 0, "{name} opens no setup");
         assert_eq!(
             audited(s, "pair").await,

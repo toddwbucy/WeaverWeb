@@ -7084,7 +7084,13 @@ it compares: it uppercases the entry, drops spaces and hyphens, and reads I and 
 and O as 0. An entry that is not then ten characters of the code's alphabet (the
 one-time secret, below) is refused at section 2.13's first step and answered as
 malformed, so the operator knows to retype it, and it writes no record and is no miss.
-On a setup begun the old way, five misses close its code field for ten minutes from the
+**On New agent a malformed entry is drawn back into the page** (the review of pull
+request 214, finding 7): a refused name, no appliance's handle, a code not of its
+alphabet and an unticked comparison each answer New agent drawn again at 400, with the
+words, the name as typed and the chosen appliance kept and the code's field empty, as
+every later refusal is drawn. To stay no miss it reads the admin's session as New agent's
+own page reads it, mints no setup key, writes no record and asks no connection, and
+whoever is not an admin is answered as that page answers. On a setup begun the old way, five misses close its code field for ten minutes from the
 fifth, the life of a waiting connection. A pending enrollment ends with its exchange, which links the
 setup row to the row it writes. A waiting connection that expires leaves the setup in
 its pairing step, and the box dials again.
@@ -7996,6 +8002,7 @@ two connectors report.
 | a name an open setup holds is refused on New agent before any code is compared | perturbation in `src/enrollment_tests.rs`, `a_name_an_open_setup_holds_is_refused_before_any_code_is_compared`: drop the name's check before the comparison, and the code is spent on an exchange the store's insert refuses, the appliance's connection closed (measured 2026-11-25); where the setup holding the name is not paired, the refusal points to its own Pair page, listed below the form (`SetupNameHeldUnpaired`), and a paired holder's keeps the way on under Declarations: answer an unpaired holder with the paired holder's words, and the test fails (measured 2026-11-26) |
 | New agent lists each open setup not paired with a link to its own Pair page | perturbation in `src/setup_tests.rs`, `new_agent_lists_each_unpaired_setup_with_a_link_to_its_pair_page`: list no setup, and the setup begun is never listed; list every open setup, paired or not, and the paired one is listed too (each measured 2026-11-26) |
 | New agent's entry runs from its comparison to its outcome in a task the request cannot cancel | perturbation in `src/enrollment_tests.rs`, `new_agents_entry_dropped_once_matched_still_pairs_and_makes_its_setup`: run `continue_finalize` in the request's own future, and the dropped request takes the box's connection with it (measured 2026-11-25) |
+| a malformed entry on New agent is drawn back into the page, with no record | perturbation in `src/enrollment_tests.rs`, `a_malformed_entry_on_new_agent_is_drawn_back_into_the_form`: answer the four early refusals with bare text, and the page is gone; draw the page for whoever is not an admin, and they are answered 400 and not as New agent's page answers them (each measured 2026-11-26) |
 | a value a report chose is drawn through the templates' escaping | perturbation in `src/setup_panes_tests.rs`, `a_value_a_report_chose_is_drawn_escaped`, and end to end in `src/enrollment_tests.rs`, `the_panes_are_served_in_each_status_as_the_box_reports`: draw the machine's product through askama's `safe` filter, and a script element stands on the page (each measured) |
 | a refused report is logged once, at its arrival, with its detail, and its log can change neither the write nor its answer | perturbation in `src/enrollment_tests.rs`, `a_refused_reports_arrival_is_logged_once_with_its_detail_escaped`: drop the line, and none is logged; log the detail in its debug form, and the escape is doubled; log at each page's read as well, and two views add lines; refuse the write where the reader refuses, and the box's report is not accepted (each measured) |
 | the base's identity is BLAKE3 over the parts in split order | perturbation in `src/hugging_face/base_identity.rs`'s tests: hash in the listing's order, or part 1 alone, and the digest differs from BLAKE3 over part 1's bytes, then part 2's (each measured) |

@@ -34,16 +34,16 @@
   <footer>The grammar is the agent's side's: one UTF-8 Python file of at most 262,144 bytes defining on_turn(board, text). Weaver Web keeps the text and judges its bytes alone.</footer>
 </section>
 <section class="pane" id="loop-ran">
-  <header><span class="stage"><b>3</b> Run</span><h2>Which loop ran</h2><span class="backing built">built</span><span class="source">the last load event{% if !ran_at.is_empty() %}, {{ ran_at }}{% endif %}</span></header>
+  <header><span class="stage"><b>3</b> Run</span><h2>Which loop ran</h2><span class="backing built">built</span><span class="source">the agent's last load{% if !ran_at.is_empty() %}, named at {{ ran_at }}{% endif %}</span></header>
   <div class="body">
   <p>{{ ran }}</p>
   </div>
-  <footer>What ran at the last load, as its load event named it; not what the appliance holds now.</footer>
+  <footer>What ran at the last load, as its load event or admin's show named it, dated at the load event or at the show that changed it; not what the appliance holds now.</footer>
 </section>
 <section class="pane" id="reload">
   <header><span class="stage"><b>3</b> Run</span><h2>Reload</h2><span class="backing built">built</span><span class="source">admin-con, each step's answer</span></header>
   <div class="body">
-  <p>A reload is today's unload, then load once the unload is answered; it runs the loop the appliance holds.</p>
+  <p>A reload is today's unload, then load only where the unload exits 0; it runs the loop the appliance holds.</p>
   <form method="post" action="/agents/{{ agent_id }}/loop/reload"><button type="submit" class="verb"{% if !reload.offered %} disabled{% endif %}>Reload</button></form>
   {%- if !reload.offered %}
   <p class="note read">{{ reload.reason }}</p>

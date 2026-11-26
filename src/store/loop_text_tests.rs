@@ -223,7 +223,14 @@ async fn a_loop_version_is_never_changed_or_removed() {
         let e = result.expect_err(statement).to_string();
         assert!(e.contains("append-only"), "{statement}: {e}");
     }
-    let refused = |text: String, sha256: String| {
+    // **Each refusal by the constraint it names, and one insert through the
+    // same statement that lands**, so a fault of the statement itself, not
+    // the schema's check, cannot pass for a refusal. The names are the ones
+    // Postgres gives migration `0035`'s unnamed CHECKs: the text's bound,
+    // on its own column, `agent_loop_text_check`; the digest's, which
+    // reads the text too and so is a table constraint, `agent_loop_check1`
+    // (`agent_loop_check` being the byte count's).
+    let inserted = |text: String, sha256: String| {
         let (s, karl, bea) = (s.clone(), karl.clone(), o.bea.clone());
         async move {
             let id = s.mint_key("lp").await.unwrap();
@@ -238,17 +245,31 @@ async fn a_loop_version_is_never_changed_or_removed() {
             .bind(bea)
             .execute(&s.pool)
             .await
-            .is_err()
+            .map(|_| ())
+            .map_err(|e| {
+                e.as_database_error()
+                    .and_then(|d| d.constraint())
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| format!("no constraint named: {e}"))
+            })
         }
     };
-    assert!(
-        refused("# a\n".into(), digest("# b\n")).await,
+    assert_eq!(
+        inserted("# a\n".into(), digest("# b\n")).await,
+        Err("agent_loop_check1".to_owned()),
         "a digest not the text's"
     );
     let past = "#".repeat(WIRE_FILE_MOST + 1);
-    assert!(
-        refused(past.clone(), digest(&past)).await,
+    assert_eq!(
+        inserted(past.clone(), digest(&past)).await,
+        Err("agent_loop_text_check".to_owned()),
         "one byte past the bound"
+    );
+    let most = "#".repeat(WIRE_FILE_MOST);
+    assert_eq!(
+        inserted(most.clone(), digest(&most)).await,
+        Ok(()),
+        "the same statement lands with the text's digest at the bound"
     );
 }
 

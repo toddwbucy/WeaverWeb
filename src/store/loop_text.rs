@@ -206,10 +206,17 @@ impl Store {
             tx.rollback().await?;
             return Ok(Saved::AuthorityGone);
         }
+        // **A version read at the integer's top is stale**: no version
+        // follows it, and the sum is never left to the database, which
+        // fails it out of range before the head check filters the row.
+        let Some(next) = read.checked_add(1) else {
+            tx.rollback().await?;
+            return Ok(Saved::Stale);
+        };
         let bytes = i32::try_from(text.len())?;
         let version: Option<i32> = sqlx::query_scalar(
             "INSERT INTO agent_loop (loop_id, agent_id, version, text, bytes, sha256, saved_by) \
-             SELECT $1, $2, $3 + 1, $4, $5, $6, $7 \
+             SELECT $1, $2, $8, $4, $5, $6, $7 \
              WHERE coalesce((SELECT max(version) FROM agent_loop WHERE agent_id = $2), 0) = $3 \
              ON CONFLICT (agent_id, version) DO NOTHING RETURNING version",
         )
@@ -220,6 +227,7 @@ impl Store {
         .bind(bytes)
         .bind(digest(text))
         .bind(person)
+        .bind(next)
         .fetch_optional(&mut *tx)
         .await?;
         let Some(version) = version else {

@@ -16,9 +16,10 @@
 //! carried byte for byte in `tests/fixtures/loop-wires-today.py` and
 //! pinned by its sha256. **One sentence says what a save does not do**:
 //! a saved loop is kept here and is not on the appliance, until loop
-//! install lays it there. **Which loop ran** is the register row's member
-//! the live load event wrote (Spec 2.12), never a guess at what the
-//! appliance holds now.
+//! install lays it there. **Which loop ran** is the register row's member,
+//! written wherever the tuple is written with a load, from a live load
+//! event's `composer` or a `show` answer's (Spec 2.12), never a guess at
+//! what the appliance holds now.
 //!
 //! **A save** (`POST /agents/{agent}/loop`) takes the admin writes' one
 //! order (Spec 2.13, 6.3): the form parsed from its raw bytes with no
@@ -135,7 +136,12 @@ fn percent_decoded(raw: &[u8]) -> Option<Vec<u8>> {
         match raw[i] {
             b'+' => out.push(b' '),
             b'%' => {
+                // **Two hex digits, each checked**: `from_str_radix` takes a
+                // leading sign, so `%+5` would decode as the byte 0x05.
                 let hex = raw.get(i + 1..i + 3)?;
+                if !hex.iter().all(u8::is_ascii_hexdigit) {
+                    return None;
+                }
                 let hex = std::str::from_utf8(hex).ok()?;
                 out.push(u8::from_str_radix(hex, 16).ok()?);
                 i += 2;
@@ -150,6 +156,9 @@ fn percent_decoded(raw: &[u8]) -> Option<Vec<u8>> {
 /// What the form must hold, sent by any client.
 pub const NOT_THE_FORM: &str =
     "The form is not the loop page's: it carries the text and the version once each.";
+/// A carriage return that is not part of a line break.
+pub const CARRIAGE_RETURN: &str =
+    "The file holds a carriage return that is not part of a line break.";
 /// The version's refusal.
 pub const NOT_A_VERSION: &str = "The version is not a whole number of at most 2,147,483,647.";
 
@@ -198,6 +207,13 @@ pub fn parse_save(body: &[u8]) -> Result<(String, i32), String> {
     }
     if text.contains('\0') {
         return Err("The file holds a NUL byte.".to_owned());
+    }
+    // **A carriage return left after the fold is refused, never folded**
+    // (the Planner's decision of 2026-11-26): a browser's parser turns a
+    // lone one into a line feed in the textarea, so a save with no edit
+    // would change the digest.
+    if text.contains('\r') {
+        return Err(CARRIAGE_RETURN.to_owned());
     }
     Ok((
         text,
@@ -550,6 +566,7 @@ pub async fn unload_then_load(
         }
     };
     let unloaded = matches!(&answered, Ok(outcome) if outcome.exit_code == Some(0));
+    let unload_first = first.clone();
     steps.push(Step {
         verb: "unload".into(),
         first,
@@ -564,19 +581,28 @@ pub async fn unload_then_load(
         return steps;
     }
     let Some(admission) = admission else {
+        let refused = VerbError::Server("the unload's ask ended abnormally".into());
+        half_done(&listener, &asker, &agent, &unload_first, &refused);
         steps.push(Step {
             verb: "load".into(),
             first: String::new(),
-            status: "not asked: the unload's ask ended abnormally".into(),
-            refused: Some(VerbError::Server(
-                "the unload's ask ended abnormally".into(),
-            )),
+            status: format!("not asked: {refused}"),
+            refused: Some(refused),
         });
         return steps;
     };
-    let (_admission, asked) = listener
-        .ask_under(admission, &asker, &agent, Act::Verb("load".into()))
+    let (_admission, asked, door_raised) = listener
+        .ask_under_raising(admission, &asker, &agent, Act::Verb("load".into()))
         .await;
+    // **The agent stands unloaded with no load sent**: an alert, unless the
+    // door raised one for this refusal, or a `load` of the person's is
+    // already under way (Spec 2.14, 6.3).
+    if let Err(refused) = &asked
+        && !door_raised
+        && !matches!(refused, VerbError::AlreadyAsked { .. })
+    {
+        half_done(&listener, &asker, &agent, &unload_first, refused);
+    }
     steps.push(match asked {
         Ok(enqueued) => {
             let first = enqueued.first.clone();
@@ -600,10 +626,49 @@ pub async fn unload_then_load(
     steps
 }
 
+/// **A reload left half done raises an alert** (Spec 2.14, 6.3): the
+/// `unload` exited 0 and no `load` was sent, so the agent stands unloaded.
+/// Its summary names the reason the load was not sent.
+fn half_done(
+    listener: &Listener,
+    asker: &Asker,
+    agent: &AgentId,
+    unload_first: &str,
+    refused: &VerbError,
+) {
+    listener.alerts().raise(crate::alerting::Failure {
+        raise: crate::store::alerts::Raise {
+            agent: agent.clone(),
+            kind: crate::store::alerts::AlertKind::Failed,
+            subject: "reload".into(),
+            summary: format!("the reload unloaded the agent and the load was not sent: {refused}"),
+            detail: String::new(),
+            first: Some(unload_first.to_owned()),
+            options: Vec::new(),
+            source: "server",
+            once: false,
+        },
+        plane: "admin",
+        principal: asker.person_id.clone(),
+        outcome: "failed",
+        reason: serde_json::json!({ "load_not_sent": refused.to_string() }),
+    });
+}
+
+/// The refusals' words and their action, the reload's own records.
+const RELOAD_ACTION: &str = "loop reload";
+/// A reload by a person holding no grant on the agent.
+const RELOAD_NO_GRANT: &str = "no grant on the agent";
+/// A reload by a person whose grants hold no `operator`.
+const RELOAD_NO_OPERATOR: &str = "only a person holding operator on the agent reloads it";
+
 /// **A reload** (Spec 6.3): the identity parsed, the session, the
-/// admission (shed: 503, no record), no grant answered as an unknown agent,
-/// then the two asks in a task the request cannot cut; the page shows each
-/// step, or that the reload runs on past the silence bound (202).
+/// admission (shed: 503, no record), then the role, decision 6 of the
+/// loop page's brief: no grant answered as an unknown agent (404), no
+/// `operator` refused (403), each with one refusal record naming the agent
+/// with the action `loop reload`, before any frame leaves; then the two
+/// asks in a task the request cannot cut. The page shows each step, or that
+/// the reload runs on past the silence bound (202).
 async fn reload(store: Store, seams: &Seams, headers: HeaderMap, agent: String) -> Response {
     if !is_agent_id(&agent) {
         return (
@@ -623,10 +688,30 @@ async fn reload(store: Store, seams: &Seams, headers: HeaderMap, agent: String) 
     let Some(admission) = seams.asker.admit_ask(&session.person_id) else {
         return (StatusCode::SERVICE_UNAVAILABLE, VerbError::Shed.to_string()).into_response();
     };
-    match store.roles_on(&session.person_id, &id).await {
-        Ok(roles) if roles.is_empty() => return not_found(),
-        Ok(_) => {}
+    let roles = match store.roles_on(&session.person_id, &id).await {
+        Ok(roles) => roles,
         Err(e) => return fault(e),
+    };
+    let refused = if roles.is_empty() {
+        Some((StatusCode::NOT_FOUND, RELOAD_NO_GRANT))
+    } else if !roles.iter().any(|r| r == "operator") {
+        Some((StatusCode::FORBIDDEN, RELOAD_NO_OPERATOR))
+    } else {
+        None
+    };
+    if let Some((status, why)) = refused {
+        let principal = Principal::Person {
+            person_id: &session.person_id,
+            method: PersonMethod::Session,
+        };
+        return match store
+            .audit_refusal(principal, Target::Agent(id.as_str()), RELOAD_ACTION, why)
+            .await
+        {
+            Ok(_) if status == StatusCode::NOT_FOUND => not_found(),
+            Ok(_) => (status, why).into_response(),
+            Err(e) => fault(e.context("the refusal could not be recorded")),
+        };
     }
     let asker = Asker {
         session_id: session.session_id,
@@ -637,8 +722,10 @@ async fn reload(store: Store, seams: &Seams, headers: HeaderMap, agent: String) 
         tokio::spawn(async move { unload_then_load(listener, admission, asker, task_agent).await });
     // **A refusal at its own status** (Spec 2.8): the reload stops at its
     // first refusal, so the steps carry at most one; no grant answers as an
-    // unknown agent, and a fault answers 500. admin's own refusal is an
-    // asked verb answering, 200.
+    // unknown agent. **A step asked before the refusal is drawn**, at the
+    // refusal's status, 500 included, so the page never hides an unload
+    // that ran; a 500 with nothing asked before it is a fault. admin's own
+    // refusal is an asked verb answering, 200.
     let (status, steps, pending) = match tokio::time::timeout(seams.asker.silence(), sequence).await
     {
         Ok(Ok(steps)) => match steps.iter().find_map(|s| s.refused.as_ref()) {
@@ -647,7 +734,7 @@ async fn reload(store: Store, seams: &Seams, headers: HeaderMap, agent: String) 
                 StatusCode::NOT_FOUND => {
                     return (StatusCode::NOT_FOUND, NO_SUCH_AGENT).into_response();
                 }
-                StatusCode::INTERNAL_SERVER_ERROR => {
+                StatusCode::INTERNAL_SERVER_ERROR if !steps.iter().any(|s| s.refused.is_none()) => {
                     return fault(anyhow::anyhow!("a reload's step was not asked: {refusal}"));
                 }
                 status => (status, steps, false),

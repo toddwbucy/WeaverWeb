@@ -5380,8 +5380,15 @@ admin writes' one order of section 2.13:
    one sentence (400), where it is empty ("The file is empty."), longer than 262,144
    bytes ("The file is 262,145 bytes; a wire file is at most 262,144."), holds a NUL
    ("The file holds a NUL byte."), or is not UTF-8 ("The file is not UTF-8."); the
-   version a whole number of at most 2^31 - 1. The bound is the contract's, counted
-   after the line breaks are stored. The grammar is not judged: it is the runner's and
+   version a whole number of at most 2^31 - 1 ("The version is not a whole number of
+   at most 2,147,483,647."); a form that does not carry the text and the version once
+   each, or carries another field, refused too ("The form is not the loop page's: it
+   carries the text and the version once each."). The bound is the contract's, counted
+   after the line breaks are stored. **The route reads its form under a bound of
+   2 MiB** (2,097,152 bytes; a body past it is refused 413 before any parse): the
+   largest file the contract admits, in its longest form, is 262,144 line breaks, each
+   sent as `%0D%0A`, 1,572,864 bytes of value, so the bound admits it with the field
+   names and the largest version beside it. The grammar is not judged: it is the runner's and
    the laying line's, and Weaver Web runs no Python.
 2. **The session**, then the version's identity (`lp-`) minted, then **the grant**: no
    grant answered as an unknown agent (404), a grant without `operator` refused (403),
@@ -8300,9 +8307,9 @@ two connectors report.
 | an admission on a plane a pairing set to not enrolled is refused `not_live`, never as a store failure (section 8) | perturbation in `src/link/tests.rs`, `an_admission_on_a_plane_set_to_none_is_refused_not_live`: read the fingerprint as a string, and the admission fails decoding (measured 2026-11-25) |
 | a mistyped `local_address` is refused naming the member and never its value (section 8) | perturbation in `src/link/admin_con_tests.rs`, `a_mistyped_local_address_is_refused_naming_the_member`: drop the member from admin-con's list, and the refusal names none; drop the check by name in `client::parse_config`, and the refusal names the file's first member, since serde's flatten drops the member's place (each measured 2026-11-25) |
 | a loop's text enters no audit record: the save's records hold its digest and byte count (section 6.3) | perturbation in `src/store/loop_text_tests.rs`: write the text into the action, and the audit read finds it |
-| a wire file is refused one byte past 262,144 counted after CRLF is stored as LF, empty, holding a NUL, or not UTF-8, and the fixture saved through the form keeps its digest (section 6.3) | perturbation in `src/loop_tests.rs`: move the bound one byte, and 262,145 bytes save; decode the form lossily, and a byte sequence that is not UTF-8 saves with U+FFFD |
+| a wire file is refused one byte past 262,144 counted after CRLF is stored as LF, empty, holding a NUL, or not UTF-8, the fixture saved through the form keeps its digest, and the route's bound admits the largest file in its longest form (section 6.3) | perturbation in `src/loop_tests.rs`, `a_wire_file_is_refused_past_its_bound_empty_with_a_nul_or_not_utf8`: move the parse's bound one byte, and 262,145 bytes pass the parse and meet migration `0035`'s check, a 500 in place of the sentence; decode the form lossily, and a byte sequence that is not UTF-8 saves with U+FFFD; set the route's bound under 1,572,879 bytes, and `the_largest_file_crosses_the_requests_bound` is refused 413 |
 | a loop's save against a stale version refuses (section 6.3) | perturbation in `src/store/loop_text_tests.rs`: drop the head check, and a save naming a version past the head lands, leaving a gap; a save naming the version the next save replaced meets the unique version and is stale either way |
-| only a person holding `operator` on the agent saves its loop, and no grant answers as an unknown agent (section 6.3) | perturbation in `src/loop_tests.rs`: drop the `operator` check, and an observer's save lands |
+| only a person holding `operator` on the agent saves its loop, and no grant answers as an unknown agent (section 6.3) | perturbation in `src/loop_tests.rs`, `only_an_operator_holder_saves_a_loop`: drop the page's `operator` check, and the observer's save reaches the store, whose re-check refuses it with a first record and a failed outcome in place of the one refusal record; the store's re-check is `a_save_after_the_grant_ends_lands_nothing` in `src/store/loop_text_tests.rs` |
 | a loop's version is never changed or removed (section 6.3) | perturbation in `src/store/loop_text_tests.rs`: drop migration `0035`'s trigger, and an update of a version's text lands |
 | the first draft is today's compiled loop as wires, byte for byte (section 6.3) | the pin `the_first_draft_is_todays_loop_as_wires` in `src/loop_tests.rs`, the fixture's sha256 checked first, perturbation: one byte of the fixture changed |
 | the loop page says a saved loop is not on the appliance, beside the stored digest (section 6.3) | perturbation in `src/loop_tests.rs`: drop the sentence, and the page's test fails |

@@ -1282,6 +1282,12 @@ impl Listener {
         self.inner.waiting.set_lever(lever);
     }
 
+    /// `pairing::Lever::HoldClose`'s release: a held close goes on.
+    #[cfg(all(test, feature = "passkeys", feature = "enrollment"))]
+    pub(crate) fn release_pairing_close(&self) {
+        self.inner.waiting.release_close();
+    }
+
     /// A test's lever: the waiting boxes' bounds, shortened.
     #[cfg(test)]
     pub fn set_pairing_bounds(&self, bounds: crate::link::pairing::Bounds) {

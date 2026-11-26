@@ -177,7 +177,7 @@ agent in a way that blocks many.
 
 | stage | what it holds | backing |
 | --- | --- | --- |
-| 1 Declare | New agent, the stage's first page (the operator's ruling of 2026-11-25: "A. Eight stages stay. New agent is the first page of stage 1."), a page of its own where the agent is named (the operator's rulings of 2026-11-23: "Pairing is its own page", and "the agent is named at pairing"), holding what an agent needs, the steps at the appliance and one form, with no click before them (the operator's rulings of 2026-11-25), and the box's side of the setup (the operator's rulings of 2026-11-16, setup pages, and their addendum, of 2026-11-23 and of 2026-11-25): the operator adds a state disk and a models disk at least 10 GB larger than the model; over SSH the operator runs the appliance's setup script by one command, which walks the operator through finishing setup, the disks and the cards included, asks this server's management address and the appliance's name, and ends in pairing; the appliance dials this server over TLS, is listed as awaiting final initialization, and shows a short one-time code and this server's fingerprint; on New agent the operator compares the fingerprint, chooses the appliance, names the agent and enters the code; the connectors send the public halves of keys made in the box, this server signs them, and mutual TLS comes up; the survey's report crosses over TLS; once the name returns, the setup script lays the agent's own account and its folder of per-agent files (the operator's words of 2026-11-25), and this server asks nothing for it. The pairing is the connectors' and serves a host too. Weaver Web lists and formats no disk. Then a start page, the setup pages and the build page (the operator's rulings of 2026-11-16, setup pages, and their addendum, and of 2026-11-23): the start page lists the paired agents whose declaration is open, the agent being named where its box is paired, under New agent; the declaration starts at directories, and the setup pages run, in order, the directories as the box mounted them, the models, the placement and the confirmed deployment tuple; the build page holds the board, which wires what was declared, and the prompt tuple panel | partly: New agent is built; the start page and the setup pages stand to the confirm page, each part live or held (Spec 6.2); the declaration screen of 2026-11-11 saves versioned declarations and shows the file each will become (Spec 6.1), and stays as built beside them; the build page is held, the board waiting on contracts WeaverAgent has yet to write |
+| 1 Declare | New agent, the stage's first page (the operator's ruling of 2026-11-25: "A. Eight stages stay. New agent is the first page of stage 1."), a page of its own where the agent is named (the operator's rulings of 2026-11-23: "Pairing is its own page", and "the agent is named at pairing"), holding what an agent needs, the steps at the appliance and one form, with no click before them (the operator's rulings of 2026-11-25), and the box's side of the setup (the operator's rulings of 2026-11-16, setup pages, and their addendum, of 2026-11-23 and of 2026-11-25): the operator adds a state disk and a models disk at least 10 GB larger than the model; the operator connects to the appliance over SSH as its starting user, changes its first password at the first login, and runs the appliance's setup script by one command, which walks the operator through finishing setup, the disks and the cards included, asks this server's management address and the appliance's name, and ends in pairing; the appliance dials this server over TLS, is listed as awaiting final initialization, and shows a short one-time code and this server's fingerprint; on New agent the operator compares the fingerprint, chooses the appliance, names the agent and enters the code; the connectors send the public halves of keys made in the box, this server signs them, and mutual TLS comes up; the survey's report crosses over TLS; once the name returns, the setup script lays the agent's own account and its folder of per-agent files (the operator's words of 2026-11-25), and this server asks nothing for it. The pairing is the connectors' and serves a host too. Weaver Web lists and formats no disk. Then a start page, the setup pages and the build page (the operator's rulings of 2026-11-16, setup pages, and their addendum, and of 2026-11-23): the start page lists the paired agents whose declaration is open, the agent being named where its box is paired, under New agent; the declaration starts at directories, and the setup pages run, in order, the directories as the box mounted them, the models, the placement and the confirmed deployment tuple; the build page holds the board, which wires what was declared, and the prompt tuple panel | partly: New agent is built; the start page and the setup pages stand to the confirm page, each part live or held (Spec 6.2); the declaration screen of 2026-11-11 saves versioned declarations and shows the file each will become (Spec 6.1), and stays as built beside them; the build page is held, the board waiting on contracts WeaverAgent has yet to write |
 | 2 Provision | After pairing, the box pulls the model from this server's cache over TLS. Laying the disks is the operator's with the appliance's script, and a host's own script is later. A host install points at a state directory and a models directory and attaches and formats nothing. Every root act runs on the box at a screen the operator is sitting at, and this server's reach is the two connectors from pairing onward (section 10). Installing the declaration Declare saved is the operator's work on the box as built, and no console verb does it. Then `validate`, which reads the installed declaration. Registration and its one-time config handover stand as built | partly: the register page and the one-time config handover are built, and the installing of the declaration and the validate step are not |
 | 3 Run | load, serve turns through the gate, unload | built; `load` is offered as every verb is, where the person's grants and the connection's ceiling carry it |
 | 4 Observe | availability, alerts, the live trace | built |
@@ -239,8 +239,10 @@ beside them, reached from the build page's stub for the fields no setup page ask
   hypervisor goes; states what an agent needs, VMs only at this stage, the two disks
   the operator adds with the 10 GB margin as guidance, and a note on GB10 Spark-class
   devices, offering no host install (the operator's rulings of 2026-11-23, 2026-11-24
-  and 2026-11-25); and says what to do at the appliance: connect over SSH, run the setup
-  script by one command (the operator's rulings of 2026-11-25), give it Weaver Web's
+  and 2026-11-25); and says what to do at the appliance: connect over SSH as the appliance's
+  starting user, change its first password at the first login, and run the setup script
+  by one command, with no auto-run at the first login (the operator's rulings of
+  2026-11-25), give it Weaver Web's
   address on the management plane, shown on the page, and name the appliance, after
   which it dials this server. The page lists the appliances awaiting final
   initialization, each by the name typed in its setup script. The operator compares the
@@ -248,8 +250,8 @@ beside them, reached from the build page's stub for the fields no setup page ask
   (the operator's ruling of 2026-11-24), chooses the appliance, names the agent, the one
   place an agent is named because the appliance names its directories and admin entry
   after it, enters the short one-time code (section 10.1), and finalizes the pairing in
-  one form. A miss writes nothing, and three close that appliance's connection. The
-  setup is a virtual machine. Once paired, the agent's Pair page shows the report the
+  one form. A miss writes one refusal record and makes no setup, and three close that
+  appliance's connection. The setup is a virtual machine. Once paired, the agent's Pair page shows the report the
   box's survey sent over TLS, read only, and leads into the agent's directories (the
   operator's rulings of 2026-11-24).
 - **The start page** lists the paired agents whose declaration is open.
@@ -1022,13 +1024,13 @@ this crate designs around the gap until it closes.
   lets the console tell the two apart (section 10.5).
 - **The appliance's setup script**, unfiled on 2026-11-16, on `toddwbucy/WeaverTools`
   and `toddwbucy/WeaverAgent`, on the operator's rulings of 2026-11-16 (setup pages) and
-  their addendum and the operator's rulings of 2026-11-23: the script a setup prompt's
-  one command starts at the appliance's first console login, run with root's authority,
-  which walks the operator through finishing setup, the disks included, asks the
+  their addendum and the operator's rulings of 2026-11-23: the script the operator runs
+  by one command over SSH as the appliance's starting user, with no auto-run at the first
+  login (the operator's rulings of 2026-11-25), run with root's authority, which walks the operator through finishing setup, the disks included, asks the
   console's address and port, starts the connectors' pairing and shows the short
   one-time code and the console's fingerprint, ending in pairing. The
   appliance comes with no disks: the operator adds the state disk and the models disk,
-  and where a disk already holds data the script asks at the console whether to keep it
+  and where a disk already holds data the script asks the operator whether to keep it
   or erase it, with no replacement case (the operator's ruling of 2026-11-24,
   `weaver-web-Spec` section 8.2). Beside it,
   the survey the image ships, run locally, with its report sent over TLS, the connectors
@@ -1184,9 +1186,10 @@ this crate designs around the gap until it closes.
   operator's first SSH. The operator's rulings of 2026-11-16 (setup pages) and their
   addendum move the pairing to a short one-time code the box shows beside the
   fingerprint of the certificate it met, which the operator compares with the console's
-  own before entering the code, and setup uses no SSH. Whether that closes the cell is
-  the operator's to say, then one first console login of the sealed image paired
-  through the pages shows it.
+  own before entering the code, so the enrollment's trust does not rest on the SSH
+  session the operator runs the script in, and Weaver Web itself uses no SSH. Whether
+  that closes the cell is the operator's to say, then one first pairing of the sealed
+  image through the pages shows it.
 - **The console as the model store.** The model count or fleet size at which its cache
   stops being tolerable. No measurement exists, because the fleet is one. Settled by a
   measurement on a fleet larger than one.
@@ -1273,13 +1276,15 @@ address it dials from.
 
 **The box shows a short one-time code with the console's fingerprint, and the operator
 enters the code in the console**, on the operator's rulings of 2026-11-16 (setup pages)
-and their addendum, which supersede the line the operator ran in the appliance over SSH.
-At the appliance's first console login, at the hypervisor's console, a setup prompt's one
-command starts the appliance's setup script (the operator's rulings of 2026-11-23), and
-the script asks for the console's address and port. The box dials the console over TLS
-and shows the code and the fingerprint of the certificate it met. In the console, on Pair
-a box, where the agent is named, the Pair page shows the box waiting, and the operator compares the fingerprint with the console's own
-and enters the code. The connectors hand over the public halves of keys made in the box
+and their addendum, which supersede the pairing line the operator ran in the appliance over SSH.
+The operator connects to the appliance over SSH as its starting user, a normal user with
+sudo and not root, changes its first password at the first login, and runs the
+appliance's setup script by one command, with no auto-run at the first login (the
+operator's rulings of 2026-11-25, superseding the console prompt of the rulings of
+2026-11-23), and the script asks for the console's address and port. The box dials the console over TLS
+and shows the code and the fingerprint of the certificate it met. In the console, New
+agent lists the box as awaiting final initialization, and the operator compares the
+fingerprint with the console's own, chooses the box, names the agent and enters the code. The connectors hand over the public halves of keys made in the box
 and receive their certificates. From then on every connection between the two is mutual
 TLS, and the code is spent. **The pairing carries the survey's report**, which is the
 receipt (the operator's rulings of 2026-11-25): the appliance sends it with its first
@@ -1294,8 +1299,8 @@ carries does.
 **The one-time secret is the only secret the operator carries by hand**, shown by the
 box as the short one-time code, the single exception the operator accepts, in the
 operator's words of 2026-11-14: "a one-time use password on the line after that none".
-The rulings of 2026-11-16 and their addendum move it from a command line to the box's
-console and the console's Pair page. It is the exception because no other way to
+The rulings of 2026-11-16 and their addendum move it from a command line to the setup
+script's session, where the box shows it, and the console's page. It is the exception because no other way to
 begin exists. **Three bounds hold it.** It is single-use. It is short-lived, on the
 order of ten minutes. It is bound to one pending enrollment, the box waiting and the
 agent the operator named under New agent, so it cannot enroll a box the operator did
@@ -1314,18 +1319,20 @@ operator's rulings of 2026-11-23: the script walks the operator through finishin
 the disks included, and ends in pairing, and the console shows no command and formats
 nothing (section 10.4). The appliance comes with no state disk and no models disk: the
 operator adds both, sized to their need, and what happens to a disk that already holds
-data is the person at the console's to decide, keep or erase, with no replacement case
+data is the person who runs the setup script's to decide, keep or erase, with no replacement case
 (the operator's ruling of 2026-11-24, `weaver-web-Spec` section 8.2). Laying the disks is the appliance's script's
 alone, and a host's own script is later, and named as later. A host install points at a state
 directory and a models directory and attaches and formats nothing (section 10.4). On a
 virtual machine the first setup cannot forgo the hypervisor, in the operator's words of
 2026-11-16, where the operator attaches the drives. The survey the image ships runs
-locally, and its report crosses to the console over TLS. **Setup uses no SSH, and the
-console never uses SSH.** The operator's SSH door is the operator's administrative way
-into the machine, separate from Weaver Web. **The setup script's first question sets
-root's password, and the operator's SSH public key reaches the box through the console
-over TLS after pairing**, on the addendum to the operator's rulings of 2026-11-16 (setup
-pages). So the console holds the operator's SSH public keys, public halves and no
+locally, and its report crosses to the console over TLS. **The operator runs the setup over
+SSH, and the console never uses SSH.** The operator's SSH door is the operator's
+administrative way into the machine, separate from Weaver Web, which reaches the box
+through its two connectors alone. **The appliance's starting user is a normal user with
+sudo, not root, whose first password is changed at the first login, and the operator's
+SSH public key reaches the box through the console over TLS after pairing**, on the
+operator's rulings of 2026-11-25 and the addendum to the operator's rulings of
+2026-11-16 (setup pages). So the console holds the operator's SSH public keys, public halves and no
 secret, as a console setting, the setup script fetches them over the paired link, and the operator's SSH door takes them (`weaver-web-Spec` section 6.2).
 
 **Trust on first use was a hazard to enrollment** while pairing ran over the operator's
@@ -1355,7 +1362,7 @@ says what stays, what is replaced and what coexists.
 
 **The connectors' keys and certificates live on the appliance's root disk**, on the
 operator's ruling of 2026-11-15. **A new image is a new enrollment**, on the same
-ruling, made by a new pairing at the image's first console login (section 10.1).
+ruling, made by a new pairing, run from the new image's setup script (section 10.1).
 
 **Each appliance is meant to hold its own certificates, and the console refuses a second
 live holder of a certificate it issued**, the operator's rulings of 2026-11-14.
@@ -1458,9 +1465,9 @@ load's: a required mount that is not a separate filesystem refuses that load. **
 console attaches and mounts nothing.** On a virtual machine the operator attaches the
 disks in the hypervisor and lays them before pairing, a state disk and a models disk at
 least 10 GB larger than the model, each mounted at the place the setup script sets, its
-default preset, with the appliance's
-setup script, which a setup prompt's one command starts at the first console login and
-which walks the operator through it, on the operator's rulings of 2026-11-23, which take
+default preset, with the appliance's setup script, which the operator runs by one command
+over SSH and which walks the operator through it, on the operator's rulings of 2026-11-23
+and 2026-11-25, which take
 up those of 2026-11-16 (setup pages) and supersede the ruling of 2026-11-15 that the
 operator mounts them over SSH. Weaver Web lists and formats no disk, and tells the appliance nothing about its disks:
 the operator adds them, and the script keeps or erases a disk that holds data as the

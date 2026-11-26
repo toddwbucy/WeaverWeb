@@ -1620,21 +1620,31 @@ authorship, which is why each carries its date in the row rather than riding
 the row's version.
 
 **The row keeps which loop ran at its last load** (migration `0036`, the
-loop page's act of 2026-11-26): the live load event's `composer`, read by
-allow-list into one member, `loop_ran`, with its date. A `composer` holding
+loop page's act of 2026-11-26): **written wherever the tuple is written with
+a load** (the Planner's ruling of 2026-11-26), from a live load event's
+`composer` or from a `show` answer's `load.composer`, read by one allow-list
+(`store::loop_text::loop_ran_of`) into one member, `loop_ran`, with its
+date. `show`'s `composer` carries the same three members as the event's,
+`binary`, `file` and `sha256`, filled from the run's own loop identity, the
+one its load event names, `file` a path there and a string in the event and
+both JSON strings (the dated copy, `src/declaration/reported-5ec7ecf8.md`). A `composer` holding
 `file` holds the wire file's digest in `sha256`, 64 lowercase hex, the one
 the runner sent and the relay accepted, and the member keeps that digest; a
 `composer` holding no `file` is the compiled loop, `{binary: "worker"}`,
 and the member reads `compiled`. The form is the Planner's ruling of
 2026-11-26 to the agent's side, and both members are in the trace's
 vocabulary as built (`weaver-harness-loop-contract` section 6). **A load
-event whose `composer` is absent, or holds `file` with no digest of that
-shape, clears the member and keeps its date**, so the row says the last
-load named no loop it reads; nothing guesses the compiled loop from a
-silence, and no older load's loop stands for a newer load. It is written in
-the tuple's own write, under the same arrival sequence, so a replayed or
-older load never moves it, and a `show` never does: `show`'s facts carry
-another shape of `composer`, and the member is the load event's word alone.
+whose `composer` is absent, or holds `file` with no digest of that shape,
+clears the member and keeps its date**, so the row says the last load named
+no loop it reads; nothing guesses the compiled loop from a silence, and no
+older load's loop stands for a newer load. **A tuple cleared or kept leaves
+the member**: an unload, or a `show` answering with no `load` (the agent at
+rest), says nothing of the last load's loop. It is written in the tuple's own
+write, under the same arrival sequence, so a replayed or older observation
+never moves it. Without `show`, a reload whose connection dropped while the
+model loaded would land its load event replayed, which writes nothing, and
+`show` would move the tuple to the new load with the member left on the
+older one.
 
 **The row holds no key material and no path of the agent's own.** The server
 holds fingerprints and the agent's box holds keys, per section 8, and the box
@@ -5492,13 +5502,13 @@ to: web-the-loop-page-says-a-saved-loop-is-not-on-the-appliance
 ```
 
 ```graph
-node: web-the-loop-that-ran-is-the-live-load-events-composer
+node: web-the-loop-that-ran-is-the-composer-where-the-tuple-is-written
 kind: assertion
 tag: perturbation
 
 edge: asserts
 from: weaver-web
-to: web-the-loop-that-ran-is-the-live-load-events-composer
+to: web-the-loop-that-ran-is-the-composer-where-the-tuple-is-written
 ```
 
 ```graph
@@ -8313,7 +8323,7 @@ two connectors report.
 | a loop's version is never changed or removed (section 6.3) | perturbation in `src/store/loop_text_tests.rs`: drop migration `0035`'s trigger, and an update of a version's text lands |
 | the first draft is today's compiled loop as wires, byte for byte (section 6.3) | the pin `the_first_draft_is_todays_loop_as_wires` in `src/loop_tests.rs`, the fixture's sha256 checked first, perturbation: one byte of the fixture changed |
 | the loop page says a saved loop is not on the appliance, beside the stored digest (section 6.3) | perturbation in `src/loop_tests.rs`: drop the sentence, and the page's test fails |
-| which loop ran is the live load event's `composer` alone, never `show`'s and never a replayed or older event's (sections 2.12, 6.3) | perturbation in `src/loop_tests.rs`, against the real listener and a fake relay: write the member from a replayed event, and a backfill moves it; write it with no `file` check, and a `composer` holding `file` and no digest reads as compiled |
+| which loop ran is the `composer` wherever the tuple is written with a load, a live load event's or a `show` answer's `load`, never a replayed or older event's, and a `show` at rest leaves it (sections 2.12, 6.3) | perturbation in `src/link/tests.rs`, `which_loop_ran_is_the_composer_where_the_tuple_is_written`, against the real listener and a fake admin-con at the frame level: write the member from a replayed event, and a backfill moves it; write it with no `file` check, and a `composer` holding `file` and no digest reads as compiled; write it on a cleared tuple, and a `show` at rest clears it |
 | a reload asks `load` only after `unload` exits 0 (section 6.3) | perturbation in `src/loop_tests.rs`, against the fake invoker: ask `load` after any answer, and an `unload` refused is followed by a `load` |
 
 **A watch that cannot fail is not a test.** For each perturbation above, the

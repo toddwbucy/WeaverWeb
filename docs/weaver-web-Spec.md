@@ -1039,10 +1039,12 @@ sign in. **The bar stands in two rows** (the operator's words of
 three tabs, in this order:
 
 - **Agents**, the agents' work. Its sub-tabs stand in the path's order,
-  each carrying the stage marks it serves: Declarations, 1 Declare, which
-  opens the start page (section 6.2), and Pair a box and Register,
-  2 Provision, for an admin; then Your agents, 3 Run and 4 Observe, the agents the person
-  holds a grant on.
+  each carrying the stage marks it serves: New agent, 1 Declare, the first
+  page of stage 1 (the operator's ruling of 2026-11-25: "New agent is the
+  first page of stage 1"), and Declarations, 1 Declare, which opens the
+  start page (section 6.2), then Register, 2 Provision, each for an admin,
+  and the admin's Agents tab opens New agent; then Your agents, 3 Run and
+  4 Observe, the agents the person holds a grant on.
 - **Agent Operations**, holding The Record, the record of the whole
   lifecycle and no stage's own. The operator's word of 2026-11-13 places
   experiments, the conversation with an agent, multi-agent workflow
@@ -1073,10 +1075,14 @@ poll's in the pane it re-fetches: Run's panes and the agent page's
 connectors answer an agent without a grant with a fragment saying so, at
 404, rather than keep what they last drew. The status stays the truth: an
 htmx answer is never 200 with a refusal inside it.
-**`GET /` sends the browser on**, as built on 2026-11-10: to `/sign-in` where
-the request names no session that serves, and to The Record where it names
-one, The Record being where every sign-in lands. It reads the session as any use
-does, and is a redirect (`303 See Other`) and never a page of its own.
+**`GET /` sends the browser on**: to `/sign-in` where the request names no
+session that serves, and where it names one, to `/pair` where the session's
+person holds the admin grant and to `/agents` where not, since the agents' work
+is done in that order (the operator's ruling of 2026-11-25, on the order of
+work). **Every sign-in lands where `GET /` sends its session**, a passkey's and
+a sign-in token's alike (the Planner's ruling of 2026-11-25). It reads the
+session as any use does and the admin grant as the admin pages do, and is a
+redirect (`303 See Other`) and never a page of its own.
 
 **Sign-in by passkey is name-first**, as built on 2026-10-09 (`/sign-in`): the person
 gives their name, found by its canonical form, and answers a challenge for
@@ -1127,8 +1133,8 @@ session and the other is refused; the person checked again as enabled under
 a share lock and the name again as theirs; a bearer drawn under section
 2.13's rule and stored as its digest; and the session naming the person,
 the method `sign-in token` and no passkey, its outcome committed with it.
-The browser is sent to The Record (`303 See Other`) with the `__Host-` cookie
-set. **The session it opens is an ordinary session** in every other way:
+The browser is sent where `GET /` sends the session (`303 See Other`) with the
+`__Host-` cookie set. **The session it opens is an ordinary session** in every other way:
 the `Origin` check, the cookie, both limits, the grants and the audit of
 everything done in it hold as for one a passkey opened.
 
@@ -4185,7 +4191,7 @@ rulings of 2026-11-16 (setup pages) and their addendum, which replace the two sc
 the rulings of 2026-11-11 as the stage's path (`weaver-web-PRD` section 3.0), and on the
 operator's rulings of 2026-11-23: "Pairing is its own page", "the agent is named at
 pairing", and "The declaration starts at directories, not drives". **Pairing comes
-before the declaration, on Provision's Pair a box** (section 6.2): it asks the agent's
+before the declaration, on New agent, the first page of stage 1** (section 6.2): it asks the agent's
 name, says what to do at the appliance, shows the box waiting and takes the short
 one-time code the box shows once the operator has compared the fingerprint, with a
 checkbox saying whether the box is a virtual machine or a host and a warning where the
@@ -4688,12 +4694,12 @@ written, and nothing is installed, validated or seeded.
 
 ### 6.2 The setup pages
 
-**Declare's path is Pair a box, the start page, the setup pages and the build page**,
+**Declare's path is New agent, the start page, the setup pages and the build page**,
 on the operator's rulings of 2026-11-16 (setup pages) and items 1 to 20 of their
 addendum, and on the operator's rulings of 2026-11-23. The decisions this section takes
 are this document's election of 2026-11-16, revised the same day after the appliance
-flow was walked by hand. The pages light what exists and draw the rest held. Live: Pair
-a box, the Pair page's checkbox, link address and port, its waiting boxes, fingerprint
+flow was walked by hand. The pages light what exists and draw the rest held. Live: New
+agent, the Pair page's checkbox, link address and port, its waiting boxes, fingerprint
 and code where the console's build serves the enrollment (section 8.2), the start page,
 the survey's report, the directories as the box mounted them, the models page and its
 need for the models directory, the placement page's context length, turn context and
@@ -4708,14 +4714,15 @@ through the pages, confirm the tuple) waits on the appliance's setup script, whi
 another act builds against the box commands as they stand (the Planner's ruling of
 2026-11-24 on the plan).
 
-**Pairing is Provision's, and the declaration starts at directories**, on the
-operator's rulings of 2026-11-23, in their words: "Pairing is its own page"; "the agent
+**Pairing is New agent's, the first page of stage 1, and the declaration starts at
+directories**, on the operator's rulings of 2026-11-23, in their words: "Pairing is its own page"; "the agent
 is named at pairing. The agent must be identified at every level where it interacts.";
 "The declaration starts at directories, not drives"; and "The operator lays the disks
 before pairing, with our help: a models disk at least 10 GB larger than the model, and a
-state disk, mounted at our default paths unless they choose others." Pair a box stands
-under Provision beside Register, its pages' panes carrying the stage mark `2 Provision`
-and no setup rail. The agent is named there, so the setup row a pairing links is made
+state disk, mounted at our default paths unless they choose others." And on his ruling
+of 2026-11-25: "A. Eight stages stay. New agent is the first page of stage 1." New agent
+stands first under Agents, before Declarations, its pages' panes carrying the stage
+mark `1 Declare` and no setup rail. The agent is named there, so the setup row a pairing links is made
 when the agent is named, and no migration moves: the row stays the pairing's record (the
 Planner's ruling of 2026-11-24 on the plan). One box carries one setup, and the
 replace-box write of section 8.2 stays as it is, since "One agent per VM is the
@@ -4736,10 +4743,27 @@ opens a requirements page first. It covers VMs only at this stage. No host insta
 offered. One note: GB10 Spark-class devices are hardware we want to deploy to and do not
 have yet." **The directories page keeps the directories as mounted** and no longer shows
 the report in full, which is the Planner's reading of "The next page carries it into the
-declaration", put to the operator. Where the entry stands, that the name's field sits at
-the requirements page's end, and what that page leaves out are the Planner's readings
-too, put to the operator, and the pages are built to them meanwhile (the brief's
-addendum 4).
+declaration", put to the operator.
+
+**The operator's rulings of 2026-11-25** move the requirements and the name onto New
+agent: "New agent is the first page of stage 1"; his yes to "The first tab holds the
+requirements, then the name and Begin, with no click before them"; the setup script,
+"One script, run by command over SSH. No auto-run at first login.", whose last steps
+are "Ask for Weaver Web's address on the management plane.", "Dial Weaver Web. Weaver
+Web lists the appliance as awaiting final initialization. The SSH session shows the
+code." and "The operator pastes the code into Weaver Web, picks the appliance, names the
+agent, and finalizes the pairing."; and the network's premise, a trusted network, "the
+same place you would deploy a hypervisor". **New agent is built to the brief of
+2026-11-25** (`docs/project/brief-2026-11-25-the-first-tab-and-the-first-page.md`),
+whose nine points the Planner accepted: no setup stands before a code matches, the
+first page offers no replacement (acting on the operator's lean of 2026-11-24, not on a
+ruling), its setup is a virtual machine, the outcomes and the names in the brief's
+words, a plain link to refresh the list, appliance and never box in what the operator
+reads, and neither the starting user nor the first password named until the operator
+rules. **A setup begun before New agent named agents in one form**, by a name alone,
+keeps its Pair page as built, the code's field and the replacement among it; no page
+makes one now and New agent does not list one, and nothing is deployed, so no data
+moves.
 
 **The pages are an admin's**, the server-wide admin grant, as the declaration screen's
 (section 6.1): a setup comes before the register row its pairing writes, so no agent row
@@ -4750,18 +4774,20 @@ admin as principal by `session`. Reads are not audited.
 
 **The routes:**
 
-- `GET /pair`, Pair a box: Create new agent, which opens the requirements page, and the
-  named agents whose box is not yet paired, each a link to its pairing
-- `GET /pair/new`, the requirements page: what an agent needs, ending in the agent's
-  name, one field, and Begin, its one form. It is reached from Create new agent alone,
-  and no other page names an agent.
-- `POST /pair`: a new setup of the name, landing on its pairing
-- `GET /pair/{su}`, the Pair page: the agent's pairing, what to do at the appliance,
-  Weaver Web's address, the checkbox and the waiting box, and once the box is paired the
-  pairing stage's report, read only
+- `GET /pair`, New agent: what an agent needs, the steps at the appliance with Weaver
+  Web's management address, Weaver Web's fingerprint, the appliances awaiting final
+  initialization, and the one form, with no click before them. No other page names an
+  agent.
+- `POST /pair`: the agent named and the chosen appliance's code entered (section 8.2),
+  where the console's build serves the enrollment, landing on the agent's Pair page once
+  paired
+- `GET /pair/{su}`, the Pair page: once the box is paired, the pairing stage's report,
+  read only, and the way on to the declaration; for a setup begun the old way and not
+  yet paired, its pairing as built: what to do at the appliance, Weaver Web's address,
+  the checkbox and the waiting box
 - `POST /pair/{su}`: the checkbox
-- `POST /pair/{su}/code`: a code's entry (section 8.2), where the console's build serves
-  the enrollment
+- `POST /pair/{su}/code`: a code's entry for a setup begun the old way (section 8.2),
+  where the console's build serves the enrollment
 - `GET /setup`, the start page: the paired agents whose declaration is open, each a link
   to its directories page
 - `GET /setup/{su}/{page}`, where `{page}` is `directories`, `models`, `placement`,
@@ -4777,16 +4803,18 @@ admin as principal by `session`. Reads are not audited.
 - `GET /admin/ssh-key`, `POST /admin/ssh-key` and `POST /admin/ssh-key/{sk}/remove`: the
   operator's SSH public keys
 
-Declare's sub-tab under Agents, Declarations with its stage mark 1 Declare, opens the
-start page, and Provision's, Pair a box with its stage mark 2 Provision, stands beside
-Register. The declaration screen of section 6.1 stays as built, its rows untouched,
+Declare's two sub-tabs under Agents, each with its stage mark 1 Declare, stand first:
+New agent, which opens `/pair`, and Declarations, which opens the start page. Register,
+with its stage mark 2 Provision, follows them. The declaration screen of section 6.1
+stays as built, its rows untouched,
 reached from the build page's stub for the fields no setup page asks. **Once the box is
 paired, the Pair page's way on is the directories page of that agent's setup**, the
-declaration's first page, and the agent leaves Pair a box's list for the start page's.
+declaration's first page, and the agent leaves New agent's list for the start page's.
 **A declaration opens once its box is paired** (the Planner's ruling of 2026-11-24 on
 the review): a declaration page of a setup whose box is not paired leads to its Pair
 page, and a pick, the adapter's drop, the placement and Confirm on it are refused 409
-(`SetupUnpaired`), as a confirmed setup's writes are, before any record and with nothing
+(`SetupUnpaired`, whose words point to the setup's own Pair page, which New agent
+lists), as a confirmed setup's writes are, before any record and with nothing
 written. The models page's two fragments, a choice's header and the pulls, are refused
 the same way, before Hugging Face is asked (the Planner's ruling of 2026-11-24 on the
 second review). A pairing is never undone, so the check stands outside the write's transaction
@@ -4802,10 +4830,10 @@ same ruling). It is recorded in the tuple and read by those warnings alone; the 
 success leads into the directories page for that agent, and Declarations, the start
 page, lists the paired agents whose declaration is open.
 
-**The name Pair a box takes is the name admin derives the agent's identities from.** On
+**The name New agent takes is the name admin derives the agent's identities from.** On
 the operator's rulings of 2026-11-16 (setup pages) the appliance names its directories
 and its admin entry after the agent, and admin derives the agent's accounts, groups,
-cgroup and scope from `weaver-<name>`. **So Pair a box refuses every name
+cgroup and scope from `weaver-<name>`. **So New agent refuses every name
 `weaver-admin-Spec` section 4 refuses**, read at WeaverAgent's `6b91747e` (merged
 2026-11-15): its characters, its reserved suffixes and its two reserved names, which
 this document cites and does not restate, since they name a box's accounts. **It refuses
@@ -4813,7 +4841,10 @@ too every name WeaverAgent's `create-agent.sh` refuses** at the same commit: a l
 letter, then lowercase letters and digits, 2 to 16 characters in all. That rule is the
 stricter, and the only one of the two that bounds the length, since the name becomes an
 account, a group and a directory. A name either rule refuses could not stand on a box,
-so Pair a box takes neither. The rule keeps its name, the start page's rule
+so New agent takes neither. **It refuses too `admin` and `stack`**, the two folders the
+appliance keeps beside the folder it makes for each agent, named after the agent, so an
+agent of either name would collide with one (the Planner's lean of 2026-11-25, which
+the operator may strike; migration `0034` holds them in the store's CHECK). The rule keeps its name, the start page's rule
 (`store::setup::agent_name`), unchanged, since the start page held it until the
 operator's rulings of 2026-11-23 moved the naming to the pairing. The register's own
 grammar (section 2.12) is wider and does not change here. **The agent's accounts take
@@ -4823,14 +4854,14 @@ agent. On the state drive each agent has a directory of its own under the state 
 named for it, which holds the agent's folder and its home side by side.
 
 **Every pane carries its stage, its backing and its status**, healthy states included:
-the header's stage mark, `1 Declare` on the start page and the setup pages and
-`2 Provision` on Pair a box's, its backing (`built`, `partly` or `unbuilt`) and a
+the header's stage mark, `1 Declare` on New agent's pages, the start page and the setup
+pages, its backing (`built`, `partly` or `unbuilt`) and a
 status word in a status mark (`ok`, `hold` or `fail`, the design system's Marks). **A
 held pane says in its footer what it waits on and shows no value it did not read**: no
 blank field passed off as a value, no input holding a value, no default device, and no
 precision taken from a file's name.
 
-**The setup is one row, mutable until Confirm** (migration `0026`), made when Pair a
+**The setup is one row, mutable until Confirm** (migration `0026`), made when New agent
 box names the agent, before its box pairs. It names its
 identity, `st-` and sixteen lowercase hex, the agent's name by the start page's rule
 above, the checkbox, the person who began it and when, its state, `open` or `confirmed`,
@@ -4862,9 +4893,8 @@ record (the Planner's ruling of 2026-11-24 on the second review).
 
 | page | live | held, and on what |
 | --- | --- | --- |
-| Pair a box | Create new agent, which opens the requirements page; the named agents whose box is not yet paired | nothing |
-| Requirements | in order: an agent runs in a VM made from the appliance, and this version covers VMs only; "One agent per VM is the recommendation."; the operator's part, "The operator holds the hypervisor, the cards, the disks and the network between VMs." (the operator's words of 2026-11-23); the two disks, on the operator's rulings of 2026-11-23 and 2026-11-24: the appliance comes with no state disk and no models disk, "It comes with itself."; the operator adds both in the hypervisor, sized to their need, a models disk at least 10 GB larger than the model and a state disk of at least 10 GiB; that the operator lays the disks before pairing, with our help, each mounted at its default path, the page stating the default paths alone until the console reads others (the operator's ruling of 2026-11-24; the ruling of 2026-11-23 is quoted in its words above); where a disk already holds data, the appliance's setup script asks at the console whether to keep it or erase it; and the 10 GB margin stated as guidance and never judged; that the VM must reach Weaver Web's address and port, which the agent's Pair page shows; the note, "GB10 Spark-class devices are hardware we want to deploy to and do not have yet."; then the name, refused by the start page's rule or where an open setup holds it, and Begin. It names no CPU requirement and offers no host install, and no page offers one. It is read by Pair a box's grant and holds no form but the name's | nothing |
-| Pair | what to do at the appliance: log in at its console, where the setup prompt at the first console login starts the appliance's setup script, which ends in pairing, give the script Weaver Web's address and port, and compare the fingerprint row by row before entering the code, naming no command until the script is merged; the checkbox, virtual machine or host, starting checked; the console's link address and port (`link_address`, else `link_listen`), which the box's setup asks for, and that the box must reach them; the warning where that address is a loopback address and the checkbox says virtual machine, and where it is an unspecified address, `0.0.0.0` or `::`, for a host and a virtual machine alike, since a listener binds it for every interface and it names no machine to dial (RFC 1122 admits `0.0.0.0` as a source alone, and RFC 4291 refuses `::` as a destination); the waiting boxes, each by the name it claims, its peer address and its wait, the console's fingerprint in four rows of four groups, the fingerprint's confirmation and the code's field, where the console's build serves the enrollment (section 8.2); once the box is paired, the survey's report at the `pairing` stage in a pane that holds no form, read or refused by section 8.3's reader and shown as below, saying before it arrives that none has and that the appliance's setup script sends it, and the way on to the directories page; before the box is paired, no report pane | nothing on the console's side; a box that dials: the appliance's setup script |
+| New agent | in order: "New agent"; "This page pairs an appliance with Weaver Web and names its agent."; the trusted network; **What an agent needs**: an agent runs in a VM made from the appliance, this version covering VMs only, one agent per VM the recommendation; the operator's part, "The operator holds the hypervisor, the cards, the disks and the network between VMs." (the operator's words of 2026-11-23); the two disks, on the operator's rulings of 2026-11-23, 2026-11-24 and 2026-11-25: the appliance comes with neither, "It comes with itself.", the operator adds both in the hypervisor, sized to their need, a models disk at least 10 GB larger than the model and a state disk of at least 10 GiB, the margin guidance and never judged; the setup script lists the drives, the operator picks each, its mount path preset to the default and another typed if the operator chooses, and a disk holding data kept or erased at the script's ask; the note, "GB10 Spark-class devices are hardware we want to deploy to and do not have yet."; **At the appliance**, five steps: start it with its two disks and connect over SSH as its starting user, its first password changed at the first login, neither named until the operator rules (`STARTING_USER`, `FIRST_PASSWORD`); run the command (`SETUP_COMMAND`, the script's name at the WeaverAgent seat's head and written in one place); the script prepares the disks, marks the cards and asks for Weaver Web's address on the management plane; step 4, that address, `link_address` else `link_listen` and never the data door's, with "Both planes share one door." where one door serves both (section 8); the script asks the appliance's name and dials, and the SSH session shows the fingerprint and the code; the loopback and unspecified warnings of the Pair page on that address, the setup being a virtual machine; **Weaver Web's fingerprint** in four rows of four groups and the comparison's box; **Appliances awaiting final initialization**, each by the name typed in its setup script, its peer address and its wait, a choice by its handle, a loopback peer warned, "No appliance is waiting." with none, and "Refresh the list", a plain link to `/pair` with no polling; **Name the agent**, its field bounded by the start page's rule with the number from `NAME_MOST` stated, the code's field and Finalize the pairing, a button only once an appliance is listed. The last three panes are one form, its choice, comparison's box, name and code each `required`. After the form, **Setups not yet paired**, drawn only where an open setup's box is not paired, each such setup by its name with a link to its own Pair page, the one way to pair a setup begun before New agent; it releases and deletes nothing (the Planner's decision of 2026-11-26 on the review of pull request 214, the operator's to overrule). It names no CPU requirement and offers no host install and no replacement | the appliances, their form and the fingerprint, where the console's build serves no enrollment: the enrollment |
+| Pair | for a setup begun the old way and not yet paired, as built, reached from New agent's list of setups not yet paired: what to do at the appliance: log in at its console, where the setup prompt at the first console login starts the appliance's setup script, which ends in pairing, give the script Weaver Web's address and port, and compare the fingerprint row by row before entering the code, naming no command until the script is merged; the checkbox, virtual machine or host, starting checked; the console's link address and port (`link_address`, else `link_listen`), which the box's setup asks for, and that the box must reach them; the warning where that address is a loopback address and the checkbox says virtual machine, and where it is an unspecified address, `0.0.0.0` or `::`, for a host and a virtual machine alike, since a listener binds it for every interface and it names no machine to dial (RFC 1122 admits `0.0.0.0` as a source alone, and RFC 4291 refuses `::` as a destination); the waiting boxes, each by the name it claims, its peer address and its wait, the console's fingerprint in four rows of four groups, the fingerprint's confirmation and the code's field, where the console's build serves the enrollment (section 8.2); once the box is paired, the survey's report at the `pairing` stage in a pane that holds no form, read or refused by section 8.3's reader and shown as below, saying before it arrives that none has and that the appliance's setup script sends it, and the way on to the directories page; before the box is paired, no report pane | nothing on the console's side; a box that dials: the appliance's setup script |
 | Start | the paired agents whose declaration is open, each a link to its directories page | nothing |
 | Directories | the two directories as the operator lays them before pairing; the directories as mounted, from the latest report of either stage, its stage named, with the judgments below; the host's form drawn and marked unbuilt, its models directory prefilled from `model_cache` where set; the SSH key that goes down, by its fingerprint, with a link to change it | nothing on the console's side: Weaver Web lists and formats no disk, and the box reports its directories |
 | Models | the repository and its branch, where a tag or a 40-hex commit is taken too, resolved to a commit; each choice with its size and its header's facts; a gated repository with its accept link and a check again; the pick, which asks a pull (section 2.15), an adapter's carrying its scale; the adapter's pane, `ok` with none picked, saying the agent then loads its base alone, and a picked adapter's Drop; the pulls' progress and record; the base's identity, computed from the cache; the models directory's need, the bytes of the picks' distinct blobs, judged against the models directory as the latest report of either stage shows it; the roster beyond one decoder and its one adapter drawn and marked unbuilt | nothing on the console's side; the box's pull from the cache: the act of the box's pull (section 10) |
@@ -7011,19 +7041,42 @@ the commands on the box in `link::key_config` and `link::box_commands`.
 An enrollment whose box and name match a live row, and the row's author with the
 exchange's audit principal, are settled below.
 
-**The pending enrollment is the setup row of section 6.2 in its pairing step**, on this
-document's election of 2026-11-17, so the one-time code is bound to one pending
-enrollment the operator opened and cannot enroll an appliance the operator did not
-expect. On the operator's rulings of 2026-11-16 (setup pages) and their addendum a box
-that dialed the console waits, and the operator binds it on the Pair page of the agent
-Pair a box has named, by entering the code the box shows, the agent being named at
-pairing on the operator's rulings of 2026-11-23 (section 6.2). **As built, a
+**The pending enrollment is New agent's post**, on the operator's rulings of 2026-11-25
+and the brief of that date (section 6.2): the agent's name, the waiting appliance the
+operator chose by its handle, and the code, entered in one form, so the one-time code is
+bound to one connection the operator chose and cannot enroll an appliance the operator
+did not expect. **No setup stands before the code matches**: the exchange's step 6 makes
+the setup row of section 6.2 with the register row, a virtual machine begun by the
+admin who entered the code, already linked to the row, so a miss, a refusal or a lost
+word writes no setup and no named agent stands without an appliance. A setup begun the
+old way, by a name alone before 2026-11-25, is the pending enrollment of its Pair page as
+built, on this document's election of 2026-11-17, and its code's field binds the code
+to it. **As built, a
 pending enrollment cannot be a register row**, because a row holding no live credential
 is retired and never live again (section 2.12), so it stands apart from the register
 until its exchange writes the row with admin-con's credential live. It is an admin's, as the
 setup pages are (section 6.2) and as registration is (section 2.13). **Entering a code
-is an admin write** in section 2.13's order, and a code that matches no waiting
-connection is one refusal record. **An entry runs from the field's lock to its outcome's
+is an admin write** in section 2.13's order. On New agent: the name read by the start
+page's rule, the handle, the code and the comparison's box read to their shapes, each
+refused with no record; the admin gate with its one refusal record; the name checked
+free of an open setup, one refusal record where it is not, and the handle resolved to a
+listed connection, an unlisted one answered with no record, as gone or, where its ten
+minutes passed lately, as its wait ended; then the chosen connection's code compared
+alone, never another's. **A code that does not match the chosen connection is one
+refusal record**, naming the setup the post would have made and never the code, and a
+miss; `pairing::TRIES`, three, misses on one connection close it, the box told
+`code_missed`, and its setup script dials anew. The misses are counted in the server's
+memory by the connection's own task, where its code is compared, and end with it; the
+count rides the connection's answer, so every compared miss the entry learns of leaves its
+record, even where the connection ends as it answers, and a miss compared after its entry gave
+up still counts. **A chosen connection that takes no probe or gives no answer within five
+seconds** is answered 503, "The appliance you chose did not answer in time. Enter the
+code again.", with the name and the choice kept and no record: it is still listed, so it
+is never called gone, and whether its code was compared is not known. The form marks the
+choice, the comparison's box, the name and the code `required`, the server's checks
+standing beside, and offers Finalize the pairing only once an appliance is listed. On a
+setup begun the old way, a code that
+matches no waiting connection is one refusal record. **An entry runs from the field's lock to its outcome's
 record in a task the request cannot cancel**, as a person's ask does (section 2.13), so
 a box whose code matched is answered and its act recorded though the request that
 entered it is gone. **The page reads an entry in Crockford's form** before
@@ -7031,8 +7084,14 @@ it compares: it uppercases the entry, drops spaces and hyphens, and reads I and 
 and O as 0. An entry that is not then ten characters of the code's alphabet (the
 one-time secret, below) is refused at section 2.13's first step and answered as
 malformed, so the operator knows to retype it, and it writes no record and is no miss.
-Five misses on one setup close its code field for ten minutes from the fifth, the life
-of a waiting connection. A pending enrollment ends with its exchange, which links the
+**On New agent a malformed entry is drawn back into the page** (the review of pull
+request 214, finding 7): a refused name, no appliance's handle, a code not of its
+alphabet and an unticked comparison each answer New agent drawn again at 400, with the
+words, the name as typed and the chosen appliance kept and the code's field empty, as
+every later refusal is drawn. To stay no miss it reads the admin's session as New agent's
+own page reads it, mints no setup key, writes no record and asks no connection, and
+whoever is not an admin is answered as that page answers. On a setup begun the old way, five misses close its code field for ten minutes from the
+fifth, the life of a waiting connection. A pending enrollment ends with its exchange, which links the
 setup row to the row it writes. A waiting connection that expires leaves the setup in
 its pairing step, and the box dials again.
 
@@ -7057,28 +7116,37 @@ The first frame arrives within 10 seconds and holds at most 288 KiB, two reports
 64 KiB each escaped as JSON strings with room for the request, so the table holds at
 most 16 such frames; a longer line is closed unanswered. The server sends a
 heartbeat while the box waits, and ten minutes from the dial it closes the connection
-`expired`, the life the rulings name. **The Pair page lists the boxes waiting**, each
-by the name it claims, its peer address and how long it has waited, marked as the box's
-claim, beside the console's fingerprint and the code's field. **The localhost warning of
-section 6.2 reads the pairing connection's peer address** once a box has dialed: a box
-on a loopback address is the console's own machine, and with the checkbox saying virtual
-machine the page warns and never refuses.
+`expired`, the life the rulings name. **New agent lists the appliances waiting**, under
+"Appliances awaiting final initialization", each by the name typed in its setup script,
+its peer address and how long it has waited, marked as the appliance's claim, beside the
+console's fingerprint and the form. **Each is chosen by its handle**: sixteen lowercase
+hex drawn from the operating system's random source when its connection takes its
+place, which names the connection to the form and is never its code. The latest 64
+handles whose wait ended are kept in memory, so a post choosing one says so. The Pair page
+of a setup begun the old way lists them as built. **The localhost warning of section 6.2
+reads the pairing connection's peer address** once a box has dialed: a box on a
+loopback address is the console's own machine, and with the setup a virtual machine, as
+New agent's always is, the page warns and never refuses.
 
-**The pairing.** At the appliance's first console login it shows a setup prompt, and one
-command there starts the appliance's setup script, which walks the operator through
-finishing setup, the disks included, and ends in pairing with Weaver Web (the operator's
-ruling of 2026-11-23). The script asks for the console's address and port, localhost
-allowed. The box dials the console over TLS and shows a short one-time code and the
+**The pairing.** The operator connects to the appliance over SSH as its starting user
+and runs the setup script by one command, with no auto-run at the first login (the
+operator's rulings of 2026-11-25, superseding the console prompt of his ruling of
+2026-11-23). The script walks the operator through finishing setup, the cards and the
+disks included, and ends in pairing with Weaver Web. It asks for the console's address
+on the management plane, and for the appliance's name. The box dials the console over TLS and shows a short one-time code and the
 fingerprint of the certificate it met, on the operator's rulings of 2026-11-16 (setup
 pages) and their addendum, which supersede the line the operator ran in the appliance
-over SSH. On the Pair page the operator compares the fingerprint with the console's own
-and enters the code. **The Pair page says what to do at the appliance**: log in at its
-console, where the setup prompt at the first console login starts the setup script, give
-the script Weaver Web's address and port, shown filled in the next pane, and compare the
-fingerprint row by row before entering the code. It names no command, on the Planner's
-ruling of 2026-11-24 on the plan, and the command's name joins it once the appliance's
-setup script is merged. The pairing belongs with the connectors and serves a host too,
-and setup uses no SSH. The members are ruled: the console's address and port, the code,
+over SSH; the operator's rulings of 2026-11-25 run the script itself over SSH. On New
+agent the operator compares the fingerprint with the console's own, chooses the
+appliance, names the agent and enters the code. **New agent says what to do at the
+appliance** in five steps: start it with its two disks and connect over SSH as its
+starting user, run the command, the script's work, Weaver Web's management address and
+port at step 4, and the script's dial, which lists the appliance below. The command is
+the WeaverAgent seat's script's name as it stands, written once (`SETUP_COMMAND` in
+`surfaces::setup`), and the starting user and the first password are named nowhere until
+the operator rules, each written once beside it, so his answer changes one line. The
+Pair page of a setup begun the old way says what it said as built. The pairing belongs
+with the connectors and serves a host too. The members are ruled: the console's address and port, the code,
 and the console's certificate fingerprint, which the operator compares. **As built, the
 link address `register` writes into admin-con's config is `link_address`, else
 `link_listen`, and into gate-con's `gate_address`, else `gate_listen`, else admin-con's**
@@ -7147,8 +7215,9 @@ console. Fifty bits make that grinding costly within ten minutes and not impossi
 which is why the fingerprint's comparison is never skipped: such a party holds no key of
 the console's, so it presents a chain of its own, and the fingerprint the box prints is
 not the console's. The code is single-use, since a match spends its connection, its life
-is its connection's ten minutes, and its attempts are five misses on one setup (the
-pending enrollment, above). Every token the store holds as built is kept as its digest
+is its connection's ten minutes, and its attempts are three misses on its connection
+when chosen on New agent, or five on a setup begun the old way (the pending enrollment,
+above). Every token the store holds as built is kept as its digest
 (sections 2.8 and 2.13), and the code is never held. **A match spends its connection
 only once its entry holds it**: a comparison the entry stopped waiting for, past the 5 s
 it gives each waiting connection, spends nothing, and the box waits on.
@@ -7178,7 +7247,8 @@ authority's fingerprint at its console. Once the operator has compared the finge
 and entered the code on the Pair page, and the console has matched it to one waiting
 connection, the console takes six steps under the authority lock:
 1. It refuses `setup_closed` where the setup has left its pairing step since the entry,
-   and `box_and_name_live`, with the register's retire offered, where a live row holds
+   or, for New agent's entry, where a setup of its identity stands or an open setup now
+   holds the name, and `box_and_name_live`, with the register's retire offered, where a live row holds
    the box the connection claims and the setup's name. **The check is a register write
    of the exchange's own**, sharing the register's insert and taken under the row's
    lock, so registration's re-registration, which retires a live row of the same box and
@@ -7195,7 +7265,8 @@ connection, the console takes six steps under the authority lock:
 6. It writes the register row of section 2.12 with admin-con's fingerprint live and the
    gate plane not enrolled, the first frame's reports on the setup, each the latest of
    its stage, and the setup
-   row's link to it, in one identity transaction that first re-checks the session and
+   row's link to it, for New agent's entry the setup itself made in the same write and
+   refused `setup_closed` where an open setup took the name since step 1, in one identity transaction that first re-checks the session and
    the admin grant, with the audit's outcome naming the first record, and then sends its
    last word.
 
@@ -7233,7 +7304,14 @@ box's credentials, which match nothing the box holds. `pair`'s `unknown` line ca
 `admin`, the fingerprint of the answer's certificate, the setup script shows it and asks
 the operator whether the page shows the same, and it adopts only where the operator
 confirms it. Otherwise the box pairs again, so `pair` and `replace box` resolve one
-way.
+way. **New agent's unknown answer draws the same rows**, the register's live rows holding
+the name below its words, each by its agent, its box and its live credentials'
+fingerprints, since no other page shows a row's admin fingerprint (the review of pull
+request 214, finding 8). The rows are as read when the page is drawn, and the write's
+COMMIT may still be running then, so the words say a row this write makes may appear a
+moment later; with no row of the name the page says the register held none when it was
+drawn, that the write may still land, and to load New agent again before dialing anew,
+never that nothing was written (the Planner's second round of 2026-11-26).
 
 **Each connector's key is made inside the appliance and never leaves it**: admin-con's
 at the pairing, gate-con's at the loop's install. The console
@@ -7291,7 +7369,9 @@ which enrolls gate-con, and the pairing runs neither:
    the exchange's step 4. Out, one line of these:
    - `paired` (0), with `agent`, `agent_id` and `box`, the answer written
    - `refused` (4), with `reason`: `busy`, `box_and_name_live`, `setup_closed`,
-     `request_refused`, `frame_refused`, `no_report` or `report_refused`
+     `request_refused`, `frame_refused`, `no_report`, `report_refused` or
+     `code_missed`, the last when the operator's third miss on New agent closed the
+     connection, so the setup script dials anew
    - `expired` (5), the window past with no code entered
    - `unreachable` (3), with the address it dialed
    - `unknown` (6), the connection ended after the answer was written and before the
@@ -7349,7 +7429,7 @@ ruling of 2026-11-15 that a new image is a new enrollment and on this document's
 election of 2026-11-17 that a row's box changes through this write alone (section 2.12).
 The keys and certificates stand on the root disk and the agent's state drive, its folder
 and its save points, carries over, so the new image runs `request` and `pair` as a new
-box does. Pair a box names the agent that stands, and the Pair page asks whether to
+box does. New agent names the agent that stands, and the Pair page asks whether to
 replace its box, saying that the old box's credentials end. After the fingerprint and
 the code, one audited write in section 2.13's order, its action `replace box`, does what
 `rotate` does as built, with the box changed: the old box's live credentials revoked and
@@ -7364,8 +7444,7 @@ deployment tuple at Confirm (section 6.2).
 **What crosses after the pairing**, on the operator's rulings of 2026-11-16 (setup
 pages) and their addendum. The survey the image ships runs locally, and `admin-con setup
 report` hands its report across the paired link (section 8.3). The operator's SSH public
-keys cross the paired link to the box, since the operator's SSH door takes them, and the
-setup script's first question sets root's password. The console holds the keys as a
+keys cross the paired link to the box, since the operator's SSH door takes them. The console holds the keys as a
 console setting, public halves and no secret, and the appliance's setup script fetches
 them with `admin-con setup describe` (sections 6.2 and 8.3). **The operator lays the
 disks before pairing, with the setup script's help**, on the operator's rulings of
@@ -7441,7 +7520,7 @@ operator's rulings of 2026-11-14 and 2026-11-15 and the operator's rulings of 20
 **The model store.** On the operator's rulings of 2026-11-16 (setup pages) the console
 pulls models from Hugging Face alone, a local source and the other sources being later,
 through the operator's Hugging Face account, connected once as a console setting before
-Pair a box with a read-only or a read-write token. A pull records the repository,
+New agent with a read-only or a read-write token. A pull records the repository,
 the commit, every file's SHA-256 and size, one per part for a split model, the account
 that pulled and the time. Each download goes through the commit and never through a
 branch name, and the console hashes each file after download and compares. The pulled
@@ -7588,8 +7667,8 @@ refused**, on the operator's ruling of 2026-11-15, **and so is a load whose stat
 is not one**, the state mount being required for every agent at a minimum of 10 GiB on
 the operator's rulings of 2026-11-16 (setup pages), which supersede the ruling of
 2026-11-15 that required it only where the declaration elects state (`weaver-web-PRD`
-section 10.4). The appliance's setup script, started at the setup prompt of the
-appliance's first console login, lists the disks the operator added and keeps, erases or
+section 10.4). The appliance's setup script, which the operator runs by one command over
+SSH (section 8.2), lists the disks the operator added and keeps, erases or
 formats each as the person at the console chooses, and mounts them, with no replacement
 case (section 8.2). The operator lays the disks so before pairing (the operator's
 rulings of 2026-11-23 and 2026-11-24). The console attaches and mounts nothing. The
@@ -7752,7 +7831,7 @@ two connectors report.
 | the connectors' build holds no `x509-parser` | measurement in `tests/connectors_link.rs`: the package's normal graph without the default features holds no `x509-parser`, and the default graph holds it, which the `enrollment` feature brings in. Make the parser a dependency the default features do not gate, and the graph holds it |
 | at the pairing the box takes the console's chain only where the server's certificate chains to the authority presented with it, and the pairing is TLS 1.3 alone | perturbation in `src/link/pairing_tests.rs`: a console that presents its certificate with another authority's completes no handshake with the box, and a client offering the pairing protocol under TLS 1.2 alone completes none with the listener. Let the box's check pass any chain, or build the pairing's configuration on the default versions, and each completes |
 | a first frame without a `pairing` stage report is refused `no_report`, and one whose report is not one JSON object within 64 KiB is refused `report_refused`, each before the box is listed | perturbation in `src/link/pairing_tests.rs`, `a_first_frame_without_a_report_is_refused_no_report` and `a_report_that_is_not_one_object_within_64_kib_is_refused`: a hello with no report, one with only a `drives` report, one whose report is an array, one past 64 KiB and one naming `pairing` twice each hear their refusal and none is listed. Drop the checks at the first frame, and the box is listed |
-| the reports land with the row in one transaction, and nothing of a report is drawn before the code matches | perturbation in `src/enrollment_tests.rs`, `the_report_lands_with_the_row_in_one_transaction`, `a_lost_word_writes_no_row` and `nothing_of_a_report_is_drawn_before_the_code_matches`: a pairing leaves the first frame's `pairing` and `drives` reports on the setup byte for byte, a lost word leaves neither row nor report, and while two boxes wait with reports neither the start page nor the Pair page draws a member of either. Drop the reports' insert, and the setup holds none; write the reports before the row's transaction, and a lost word leaves a report; draw a waiting box's report on its row, and the Pair page carries its member |
+| the reports land with the row in one transaction, and nothing of a report is drawn before the code matches | perturbation in `src/enrollment_tests.rs`, `the_report_lands_with_the_row_in_one_transaction`, `a_lost_word_writes_no_row` and `nothing_of_a_report_is_drawn_before_the_code_matches`: a pairing leaves the first frame's `pairing` and `drives` reports on the setup byte for byte, a lost word leaves neither row nor report, and while two boxes wait with reports neither New agent nor the Pair page draws a member of either, though each lists both appliances. Drop the reports' insert, and the setup holds none; write the reports before the row's transaction, and a lost word leaves a report; draw a waiting box's report on its row, and the Pair page carries its member |
 | at most 16 boxes wait in all and 4 from one peer address, the first frame within 10 s and 288 KiB, and ten minutes from the dial the console closes the connection `expired` | perturbation in `src/link/pairing_tests.rs`, each bound alone, the time bounds shortened: the fifth box from one address and the seventeenth in all are refused `busy`, a silent box and a first line past 288 KiB are closed unanswered and give their places back, and a box past its life hears `expired`. Drop any one bound, and its box is held |
 | the server never asks a verb outside the agent's ceiling | perturbation: drop the ceiling check, ask a verb admin-con's hello did not declare, and it leaves the server; and admin-con's half, drop its typed error answer, and it reaches the invoker. **One clause is owed**: check against the row's copy, narrow the ceiling by reconnecting between the check and the enqueue, and an ask outside the new ceiling leaves. The race has no deterministic staging, and the guard is held by review: the check reads the live connection's ceiling under the live map's lock that finds the connection |
 | a verb its principal may not ask is refused before an ask | perturbation, in `src/verbs_tests.rs` against the real listener and a fake admin-con: drop the grant check, and an observer's `stop` leaves the server; drop the session's re-check under the hold, disable the person between the gate and the check, and the ask leaves; release the hold before the enqueue, and a revocation commits while the frame of the ask it revoked is still to be sent; reserve the slot under the hold, and a grant's removal waits on a stalled connector; run the ask in the request's own future, and a dropped request loses an authorized ask after its first, and a refusal its record; admit every ask, and a client posting past its share detaches tasks without bound; drop the per-connection cap on persons' slots, and asks parked on the server's own waits take the channel and an opening's `show` waits behind them; read the grants without the deadline, and an ask stalled on the store never answers and keeps its place; answer no grant with 403, and the page tells a stranger the agent exists. The server's `show`-only rule stands in the row of its asks, and the register verbs through the server in their own row |
@@ -7786,7 +7865,7 @@ two connectors report.
 | the host's write of a role refuses a stale version | perturbation in `src/host_tests.rs`: drop the version from the role's update, hold one write after its read while another commits, and the held write overwrites the other's verbs. A grant's removal carries its version too; the re-check of its liveness under the exclusion already refuses a grant another removal revoked, so the version adds no instrument of its own there |
 | a person's name stays unique in its canonical form at rename | perturbation in `src/admin_tests.rs`: drop the check at rename, and a rename to a name another person's form already holds, in case or in width, fails at the store's key as a fault rather than refusing; drop that key too, and it lands; leave the person's own row in the check, and a person renamed to their own name in another case is refused |
 | an admin's write to a person is refused without a live admin grant, re-checked in its transaction, never on their own row, never leaves no enabled admin, and a disable revokes the outstanding token | perturbation in `src/admin_tests.rs`: drop the page's admin check, and a person holding no live admin grant reads every person; drop the write's admin check at the surface, and such a person's write is audited as begun rather than refused; drop the live admin grant from the transaction's re-check, revoke the grant between the surface's read and the write, and the write lands; take the disable's transaction without the exclusion, have two admins disable each other at once, and no enabled admin remains; drop the session's standing from the re-check, and the second of those disables is refused only as the last admin; drop the count of the admins that would remain, and the last enabled admin is disabled; drop the disable's or the rename's own-row refusal, and an admin disables or renames themselves; drop the token's revocation from the disable, and a disabled person's token stays live; drop the passkey check at the admin's token, and a token is issued for a person holding a credential; drop the name's check at the admin's enroll, and a taken name fails at the store's key as a fault rather than refusing; drop the version from the rename, and a rename from a stale page lands; drop the identity shape's refusal from the rename, and a name spells an identity; drop the first record, and a write lands unaudited; drop `no-store` from the token's answer, and it may be cached; drop the parse of a submitted identity at the boundary, at any of the four writes naming a person, and a malformed one is the server's failure (500) rather than the ask's (400); drop it at a passkey's removal, and the audit's passkey target check refuses a malformed one as the server's failure (500); drop that check too, and a malformed passkey lands an audit row as the removal's target |
-| an admin write runs from its first record to its outcome in a task the request cannot cancel | perturbation, one test per surface file, each of the twenty-five writes in turn: its request dropped while its first record is held (`READ_HOLD`, at `first_of`), the write lands, its first record is answered by its `ok` outcome, and the next page view reads the state it left. `src/admin_tests.rs`: the five writes to persons. `src/grants_tests.rs`: grant add, grant remove and role set. `src/agents_tests.rs`: register, rotate, revoke and retire, a register's and a rotation's two client configs held for the session that minted them. `src/hugging_face_tests.rs`: connect, check and disconnect. `src/model_pull_tests.rs`: a pull's cancel, the puller still told. `src/ssh_key_tests.rs`: add and remove. `src/setup_tests.rs`: begin, on Pair a box, and the Pair page's write. `src/setup_models_tests.rs`: a pick, its pull run to verified, and the adapter's drop. `src/setup_place_tests.rs`: a placement and Confirm. `src/declarations_tests.rs`: a save. Run step four in the request's own future (`admin::step_four` awaiting it in place), and the first write's outcome never comes in each of the ten tests. Leave the cancel's signal out of its task, and the next pull waits behind the cancelled one (each measured) |
+| an admin write runs from its first record to its outcome in a task the request cannot cancel | perturbation, one test per surface file, each of the twenty-five writes in turn: its request dropped while its first record is held (`READ_HOLD`, at `first_of`), the write lands, its first record is answered by its `ok` outcome, and the next page view reads the state it left. `src/admin_tests.rs`: the five writes to persons. `src/grants_tests.rs`: grant add, grant remove and role set. `src/agents_tests.rs`: register, rotate, revoke and retire, a register's and a rotation's two client configs held for the session that minted them. `src/hugging_face_tests.rs`: connect, check and disconnect. `src/model_pull_tests.rs`: a pull's cancel, the puller still told. `src/ssh_key_tests.rs`: add and remove. `src/setup_tests.rs`: the Pair page's write; New agent's entry in `src/enrollment_tests.rs`. `src/setup_models_tests.rs`: a pick, its pull run to verified, and the adapter's drop. `src/setup_place_tests.rs`: a placement and Confirm. `src/declarations_tests.rs`: a save. Run step four in the request's own future (`admin::step_four` awaiting it in place), and the first write's outcome never comes in each of the ten tests. Leave the cancel's signal out of its task, and the next pull waits behind the cancelled one (each measured) |
 | an admin write's step four is bounded from its place until its COMMIT is sent, never sends one past it, and runs to its end once it has | perturbation through the real router, session gate and store, the bound shortened. `src/deadline.rs`, `a_step_whose_commit_went_out_runs_past_its_deadline`, `a_step_short_of_its_commit_at_its_deadline_is_never_sent` and `a_mark_outside_a_bounded_step_is_no_mark`: the mark set by `store::commit` alone ends the bound. `src/admin_tests.rs`, `an_admin_write_stalled_past_its_bound_never_commits`: a rename held just before its COMMIT to its very deadline, the bound 1.5 s, is answered 503 at the bound, the hold never let go, the name stands, its first record reads with no outcome, and no connection stays lent or transaction open; a retry then lands. `an_admin_write_whose_commit_answers_past_its_bound_is_answered_as_made`, `a_token_whose_commit_answers_past_its_bound_is_shown_once` (`src/admin_tests.rs`), `a_rotation_whose_commit_answers_past_its_bound_hands_its_pair_over` (`src/agents_tests.rs`) and `a_cancel_whose_commit_answers_past_its_bound_reaches_the_puller` (`src/model_pull_tests.rs`): each held just after its COMMIT answered until past the deadline, and each answered as made, the name changed, the token shown once and live, both configs handed over and the new one admitted, the puller told and its held pull stopped. Their converses, `a_token_stalled_before_its_commit_is_not_issued`, `a_rotation_stalled_before_its_commit_is_not_made` and `a_cancel_stalled_before_its_commit_is_not_made`: held just before the COMMIT, each answered 503 "not made", the COMMIT never sent and nothing changed. `src/grants_tests.rs`, `a_dropped_grant_add_never_lands_after_its_retry_and_a_removal`, and `src/ssh_key_tests.rs`, `a_dropped_key_add_never_lands_after_its_retry_and_a_removal`: the add's request dropped while held before its first record, the bound 3 s, a retry lands and a removal follows before the deadline step four recorded, step four reports the first dropped, its hold is let go, and the removal stands, the add's one first record the retry's. Bound step four with `deadline::before`, and the four answered-past-the-bound tests fail, answered 503 "not made". Await it with no bound, and the held COMMITs go out, the stalled rename landing and the token issued, the rotation made and the pull cancelled with no 503, and the late grant and the late key are never reported dropped. Bound it with tokio's `timeout_at`, and both sets fail, the holds before the COMMIT let go at the deadline (each measured 2026-11-18) |
 | a credential ID belongs to one passkey of one person | perturbation in `src/passkeys_tests.rs` and `src/keys_tests.rs`, through a soft passkey: drop the addition's check of a credential ID already held, under the identity exclusion, and a registration whose ID another person holds fails at the store's key rather than refusing, its grant spent either way; drop that key too (the passkey table's primary key on the credential ID) with the checks, and the ID lands a second passkey row, so one credential signs in as either person |
 | a signature counter that did not rise refuses the sign-in, and the stored passkey is updated by a locked read, merge and write | perturbation in `src/sign_in_tests.rs`, the counter rule driven through its `Assertion` seam where a soft passkey cannot reach: drop the library's `CredentialPossibleCompromise` arm, and a clone's sign-in is refused unaudited; swallow the error where the possible clone's refusal cannot be recorded, and it answers the ordinary refusal over a record the audit lost; drop the rule's own comparison, and a counter raised between the options and the finish signs in; drop the write of the merged passkey, and the stored counter never rises; drop the row's lock, and of two concurrent assertions with one nonzero counter both succeed, and a concurrent assertion erases another's backup-eligibility upgrade; apply the refusal to a zero counter, and two zero-counter assertions are refused; drop the rule's commit, and the counter does not persist where the opening then fails |
@@ -7796,7 +7875,7 @@ two connectors report.
 | an enrollment token is issued only for a person holding no passkey, lives at most seven days, is kept as its digest, and is its person's one live token | perturbation in `src/host_tests.rs`: drop the passkey check, and a token is issued for a person holding a credential, which an admin could redeem over theirs; drop the command's lifetime bound, and a token past seven days is refused only by the store, as a fault; drop the store's lifetime check, and a row past seven days lands; store the token in the clear, and a read of the token table is a set of usable tokens; leave an earlier token live when issuing, and the newest is refused against the one live token per person. And in `src/config.rs`: configure a lifetime past seven days, and it is taken |
 | a sign-in token is issued by the host alone and only where the config names `token`, lives at most an hour, is kept as its digest, is its person's one live token, is revoked by a disable or the host reset, and opens one session, by its person's name, naming its method and no passkey; and a person issued one takes an enrollment token from the host alone | perturbation in `src/sign_in_token_tests.rs`: drop the command's refusal where the config names no `token`, and a server configured as before issues one; mount the token's route whatever the config, and such a server serves it; drop the store's lifetime check, and a row past an hour lands; store the token in the clear, and a read of the token table is a set of usable tokens; leave an earlier token live when issuing, and the newest is refused against the one live token per person; drop the redemption's match on a token still live, and one token opens two sessions, one after the other or two at once; drop the check of the name, and a token signs in under another person's name; drop the expiry, and an expired token signs in; drop the check of its person, at the lookup and at the opening, and a disabled person's token opens a session; drop the disable's revocation, and a token issued before a disable signs in after an enable; drop the host reset's revocation, and a token printed before a reset signs in after it; drop the admin's refusal, and an admin issues an enrollment token for a person who signs in by token; drop the revocation at a sign-in token's issue, and an admin's enrollment token issued before it still starts an enrollment after; drop the session's check of its method against its passkey, and a session of a passkey's method naming no passkey lands. And in `src/config.rs`: take an empty `sign_in` or one naming a method twice, and it loads |
 | where the config names `no_sign_in_as`, every browser request with no cookie is served as that one person through one standing session, opened by the sign-in token's own path; a config naming none serves no one without a session; the start refuses a person unknown or disabled; a refusal while the server runs writes no audit record; a person named by `pe-` identity is served; two first uses open one session, and a use the held session serves waits on no opening; an opening ends the person's other tokens | perturbation in `src/standing_tests.rs`: drop the standing person's turn in `gate::session`, and The Record asked with no cookie links to sign-in; drop it in `gate::session_in_background`, and a poll reads no one; build the policy without the standing person, and nothing is served; let the start's check refuse nothing, and an unknown and a disabled person pass it; let the opening's read refuse no disabled person, and twenty uses write forty audit records; match the redemption on the config's spelling, and a person named by `pe-` identity is never served; hold the opening lock across every use, and a served use waits on an opening; drop the second look under the lock, and eight first uses open eight sessions; drop the sign-in token issue's revocation of the enrollment token, and one stays live across an opening. And in `src/config.rs`: take an empty name, or a name with a `sign_in` that does not name `token`, and it loads |
-| `GET /` sends a browser to sign-in without a session and to The Record with one | test in `src/sign_in_token_tests.rs`: a request with no cookie, one whose cookie names no session and one naming a live session each get their redirect, and the first two never The Record |
+| `GET /` sends a browser to sign-in without a session, and with one to `/pair` where its person holds the admin grant and to `/agents` where not; every sign-in lands there too | perturbation in `src/sign_in_token_tests.rs`, `the_root_sends_a_browser_on`: a request with no cookie and one whose cookie names no session are sent to sign-in, and a person without the admin grant lands on `/agents` from the token's sign-in and from `GET /`, an admin on `/pair`; in `src/sign_in_tests.rs`, `a_person_enrolled_signs_in_and_the_session_serves`, a passkey's sign-in names the same next page for each; and in `src/standing_tests.rs` the standing person, an admin, is sent to `/pair`. Send every session to `/pair`, and the person without the grant fails; send every session to The Record, and the admin fails |
 | an enrollment token is single-use and redeemed only within its lifetime | perturbation, against a soft passkey (`webauthn-authenticator-rs`, a dev-dependency) in `src/passkeys_tests.rs`: drop the token's expiry, its end, its person's enable or the person's holding no passkey from what makes a token redeemable, and that token starts a ceremony; drop the transaction's re-check, and a passkey appearing between the options and the finish leaves the person holding two; leave the token unended at the redemption, and it redeems again; drop the check of a credential ID already held, and the finish fails at the store rather than refusing. A redemption sets no cookie and writes no session row, which the end-to-end test asserts |
 | an enrollment token is 32 bytes of the operating system's cryptographic randomness | perturbation in `src/store/identity_tests.rs`: draw bearers from a counter, and consecutive bearers share a prefix, the next guessed from the last |
 | a ceremony identity is drawn as every bearer the server issues is | perturbation in `src/passkeys_tests.rs`: draw ceremony identities from a counter, and consecutive identities share a prefix, the next guessed from the last |
@@ -7867,9 +7946,9 @@ two connectors report.
 | no two lineages share a name, and a lineage keeps its name | perturbation in `src/declarations_tests.rs`, `no_two_lineages_share_a_name_and_a_lineage_keeps_its_name`: drop the screen's check, or the store's under the key, and a second lineage saves under a held name, or a save renames its lineage, each check exercised alone; the index on a root's name stands beneath both |
 | only the server-wide admin grant reads or writes a declaration, and a refused save is one record | perturbation in `src/declarations_tests.rs`, `only_the_admin_grant_reads_or_writes_a_declaration`: drop the gate, and a person holding only a per-agent role reads the list and saves; a refused save writes exactly one audit record, carrying the refusal, and no row |
 | the declaration screen reaches no agent and no host | `the_declaration_screen_reaches_no_agent_and_no_host` in `src/declarations_tests.rs`, with a real listener and a fake connector of each plane connected and admitted: every route is exercised, a save, a save from it and two refusals among them, and neither connector is sent a line, the server sending a connector no heartbeat of its own |
-| the bar stands in two rows: Agents, Agent Operations and IAM on top in that order, each opening the first sub-tab the person may open, then who is signed in, the open-alert count as a status and the sign-out at the right; beneath, the sub-tabs of the page's tab in their order, the agents' carrying their stage marks, the current one marked and the row named by its tab; a person sees the sub-tabs they may open, and a page without a session Agent Operations and sign-in alone | perturbation in `src/navigation_tests.rs`, `the_top_row_holds_three_tabs_and_the_status_at_the_right` and `the_second_row_holds_the_sub_tabs_of_the_pages_tab`, on the base template: swap Agents and Agent Operations or put IAM before Agent Operations, and the admin's top row fails on its order; open an admin's Agents at Your agents or IAM at Passkeys, or a person's IAM at Persons, and that person's top row fails; set the open-alert count among the tabs, before who or between Agents and Agent Operations, and it fails on its place; drop Agent Operations from a page without a session, put sign-in before it, or name the tab The Record, and that row fails; give a page of no tab the agents' tab, and the sign-in page fails on its second row; mark Agent Operations on every page, and the second row's test fails on the tab (12 cases); swap Declarations and Register or Persons and Grants, or put Your agents before Register or Passkeys before Persons, and the second row fails on its order; drop any of the four stage marks or number Declare 2, and it fails on the agents' row; move Declarations, Register, Persons or Grants out of the admin's condition, and a person's row names it; leave The Record unmarked or mark Register on Declarations, and it fails on the current sub-tab; name the agents' row Your agents or leave the IAM row unnamed, and it fails on the row's name; name the sub-tab Agents, or head The Record's page Record or Your agents' page Agents, and it fails on the name (20 cases); each caught; under Agents, Pair a box stands with its stage mark 2 Provision between Declarations and Register: drop it from the bar, and both the second row's test and `every_page_declares_its_tab_and_sub_tab` fail (measured 2026-11-24) |
-| every page declares its sub-tab, and one table names each sub-tab's tab | perturbation in `src/navigation_tests.rs`, `every_page_declares_its_tab_and_sub_tab`, over every page an admin opens and a scan of every `here` the surfaces declare: put Register under IAM, Persons under Agents or The Record under Agents, or leave Passkeys of no tab, and a page fails on its tab; have the agent page declare The Record, the hand-over Your agents or the declaration screen Register, and that page fails on its tab and sub-tab; have the passkeys page name no sub-tab, and it fails on the page and the scan (8 cases, each caught); it walks Pair a box and the Pair page, each declaring Pair a box under Agents, in the old pairing page's place |
-| a page's way forward stands where its condition holds and nowhere else | perturbation in `src/navigation_tests.rs`: drop a saved declaration's way forward, or the name its link carries, or plant one on the empty screen, and `a_saved_declaration_leads_on_to_registering_its_name` fails; let the register's form fill any name, or none, or drop the field's value, and it fails on the prefill; invert the hand-over's read of the admin's grant, or fix it either way, drop the box sentence under a grant, or point the Grants link at the agent's page, and `the_hand_over_leads_on_to_the_agents_page_or_says_why_not` fails (11 cases, each caught); in `src/surfaces/agents.rs`, read a failed grant read as none held, and `a_grant_read_is_held_not_held_or_unread` fails; render an unread grant as none held, or drop either of its two links, and `the_hand_over_says_an_unread_grant_is_unread` fails (4 cases, each caught); in `src/setup_place_tests.rs`, `confirm_stands_only_where_every_member_is_read_and_writes_one_tuple`: draw Confirm's form with a member unread, or the confirm page's next page before Confirm, and the held page offers it, `src/setup_tests.rs`'s walk naming the second too; drop Confirm's refusal of a member unread before its first record, and the refused post records one (each measured); in `src/enrollment_tests.rs`, `a_pairing_issues_one_certificate_and_leaves_the_gate_not_enrolled`, once the box is paired the Pair page's way on is the directories page, the start page lists the agent and Pair a box no longer does: offer no way on once paired, or list paired setups on Pair a box too, and it fails; in `src/setup_tests.rs`, `a_second_open_setup_of_one_name_is_refused`, list unpaired setups on the start page too, and it fails (each measured 2026-11-24); in `src/setup_tests.rs`, `a_declaration_opens_once_its_box_is_paired`, every declaration page of an unpaired setup leading to its Pair page and its pick, drop, placement and Confirm refused 409 with no record: serve the page, or take the placement, drop or Confirm, or the pick, or serve the header or the pull fragment, and it fails (each measured 2026-11-24) |
+| the bar stands in two rows: Agents, Agent Operations and IAM on top in that order, each opening the first sub-tab the person may open, then who is signed in, the open-alert count as a status and the sign-out at the right; beneath, the sub-tabs of the page's tab in their order, the agents' carrying their stage marks, the current one marked and the row named by its tab; a person sees the sub-tabs they may open, and a page without a session Agent Operations and sign-in alone | perturbation in `src/navigation_tests.rs`, `the_top_row_holds_three_tabs_and_the_status_at_the_right` and `the_second_row_holds_the_sub_tabs_of_the_pages_tab`, on the base template: swap Agents and Agent Operations or put IAM before Agent Operations, and the admin's top row fails on its order; open an admin's Agents at Your agents or IAM at Passkeys, or a person's IAM at Persons, and that person's top row fails; set the open-alert count among the tabs, before who or between Agents and Agent Operations, and it fails on its place; drop Agent Operations from a page without a session, put sign-in before it, or name the tab The Record, and that row fails; give a page of no tab the agents' tab, and the sign-in page fails on its second row; mark Agent Operations on every page, and the second row's test fails on the tab (12 cases); swap Declarations and Register or Persons and Grants, or put Your agents before Register or Passkeys before Persons, and the second row fails on its order; drop any of the four stage marks or number Declare 2, and it fails on the agents' row; move Declarations, Register, Persons or Grants out of the admin's condition, and a person's row names it; leave The Record unmarked or mark Register on Declarations, and it fails on the current sub-tab; name the agents' row Your agents or leave the IAM row unnamed, and it fails on the row's name; name the sub-tab Agents, or head The Record's page Record or Your agents' page Agents, and it fails on the name (20 cases); each caught; under Agents, New agent stands first with its stage mark 1 Declare, before Declarations, as the first page of stage 1 (the operator's ruling of 2026-11-25), and the admin's Agents opens it: drop it from the bar, and both the second row's test and `every_page_declares_its_tab_and_sub_tab` fail; swap it with Declarations, and the second row fails on its order; open the admin's Agents at `/setup`, and the admin's top row fails; head its page Pair a box, and the second row's test fails on the name (each measured 2026-11-25) |
+| every page declares its sub-tab, and one table names each sub-tab's tab | perturbation in `src/navigation_tests.rs`, `every_page_declares_its_tab_and_sub_tab`, over every page an admin opens and a scan of every `here` the surfaces declare: put Register under IAM, Persons under Agents or The Record under Agents, or leave Passkeys of no tab, and a page fails on its tab; have the agent page declare The Record, the hand-over Your agents or the declaration screen Register, and that page fails on its tab and sub-tab; have the passkeys page name no sub-tab, and it fails on the page and the scan (8 cases, each caught); it walks New agent, the requirements page and the Pair page, each declaring New agent under Agents |
+| a page's way forward stands where its condition holds and nowhere else | perturbation in `src/navigation_tests.rs`: drop a saved declaration's way forward, or the name its link carries, or plant one on the empty screen, and `a_saved_declaration_leads_on_to_registering_its_name` fails; let the register's form fill any name, or none, or drop the field's value, and it fails on the prefill; invert the hand-over's read of the admin's grant, or fix it either way, drop the box sentence under a grant, or point the Grants link at the agent's page, and `the_hand_over_leads_on_to_the_agents_page_or_says_why_not` fails (11 cases, each caught); in `src/surfaces/agents.rs`, read a failed grant read as none held, and `a_grant_read_is_held_not_held_or_unread` fails; render an unread grant as none held, or drop either of its two links, and `the_hand_over_says_an_unread_grant_is_unread` fails (4 cases, each caught); in `src/setup_place_tests.rs`, `confirm_stands_only_where_every_member_is_read_and_writes_one_tuple`: draw Confirm's form with a member unread, or the confirm page's next page before Confirm, and the held page offers it, `src/setup_tests.rs`'s walk naming the second too; drop Confirm's refusal of a member unread before its first record, and the refused post records one (each measured); in `src/enrollment_tests.rs`, `a_pairing_issues_one_certificate_and_leaves_the_gate_not_enrolled`, once the box is paired the Pair page's way on is the directories page, the start page lists the agent and New agent no longer does: offer no way on once paired, or list paired setups on New agent too, and it fails; in `src/setup_tests.rs`, `a_second_open_setup_of_one_name_is_refused`, list unpaired setups on the start page too, and it fails (each measured 2026-11-24); in `src/setup_tests.rs`, `a_declaration_opens_once_its_box_is_paired`, every declaration page of an unpaired setup leading to its Pair page and its pick, drop, placement and Confirm refused 409 with no record: serve the page, or take the placement, drop or Confirm, or the pick, or serve the header or the pull fragment, and it fails (each measured 2026-11-24) |
 | the agent page leads every reader on to The Record and an admin alone back to the declaration saved under the agent's name, the rail linking Declare and Provision for an admin alone | perturbation in `src/navigation_tests.rs`, `the_agent_page_leads_on_to_record_and_back_to_its_declaration`: offer the way back to every reader, or to none, and it fails on the person's page or the admin's; drop the way on to The Record or its words that the record is not filtered by the agent, or name it Record, and it fails; name the lineage's root, or a lineage of another name, and it fails on version 2; link no mark, render a linked mark as a span or point Provision at another page, and it fails on the rail; send an agent with no declaration to the list, and it fails on the way back (11 cases, each caught) |
 | the reported members are the agent's as read: each member the Declare pane reads from `show`'s facts or a load event is a field of that shape's struct at the pin, of the type it reads, under the rename it reads, and each it takes as absent is not one | `the_reported_members_are_the_agents_as_read` and `the_reported_members_were_read_at_the_builds_pin` in `src/declaration/reported.rs`, against the dated copy `src/declaration/reported-5ec7ecf8.md`: misname `show`'s state election, read a turn context from `show` or an artifact from a load event, read the load event's election by `show`'s name, or spell either flag as the other shape does, and it fails on the reader's tables; rename `LoadFacts`'s members, name the tee otherwise, give the serving record a turn context, add an engine or a turn context the reader does not read, or make the artifact optional, and it fails on the copy; move the pin without a reread, and the second fails (13 cases, each caught) |
 | each reported member reads equal, differs or not in this report, by the shape its source names, a state election by the first entry for each kind, and an absence is set beside the report as the agent reads it | `each_member_reads_equal_differs_or_not_in_this_report`, `an_absence_is_set_beside_the_report_as_the_agent_reads_it`, `a_kind_named_again_whose_first_entry_is_declared_reads_equal` and `a_kind_named_again_whose_first_entry_is_not_declared_differs` in `src/declaration/reported.rs`: read a state election's kinds in their order or a path named twice twice, compare a state election by its words, or show a difference between two elections that read alike by those words, read a null member as reported, read the tee's election in `show`'s spelling, read any engine or turn context word, or swap a difference's two sides, and the first fails; read an absent turn context as independent, an absent surprisal as true, an absent residual readout as false or an absent state election as the other default, and the second fails; keep every entry of a kind named again, and `a_kind_named_again_whose_first_entry_is_declared_reads_equal` fails; keep its last entry rather than its first, and that test and `a_kind_named_again_whose_first_entry_is_not_declared_differs` fail; drop the words that say the kind was named again, and both fail (16 cases, each caught) |
@@ -7889,8 +7968,8 @@ two connectors report.
 | a FIFO at a blob's name or at the seal key's is refused and never waited on | perturbation in `src/model_pull_tests.rs`, `a_fifo_at_a_blobs_name_is_refused_and_never_waited_on`, and in `src/hugging_face/seal.rs`'s tests: open the blob or the key waiting, and the puller, or the key's read, waits on the FIFO until a writer opens it |
 | the Hugging Face client reads no proxy from the environment | perturbation in `tests/hugging_face_proxy.rs`, a test binary of its own: drop `.no_proxy()`, and with the proxy variables naming a port where nothing listens, a request to the fake fails to connect |
 | a snapshot's link never replaces a file the repository holds | perturbation in `src/hugging_face/cache.rs`'s tests: stage the link under a fixed name beside its place, and a repository file of that name loses its link |
-| every pane of every setup page and of Pair a box carries its stage, a backing and a status word, and a held pane names what it waits on with no input holding a value; no page of the setup names a Pairing step, its pages stand in the order Directories, Models, Placement, Confirm, Build, and no page holds "the image's setup script", "first boot" or the held setup command's pane | test in `src/setup_tests.rs`, `every_pane_carries_its_stage_backing_and_status`, walking every page's rendered panes in each state it draws, and `src/setup_place_tests.rs` walking the placement and confirm pages in each of theirs: drop a pane's status mark from a template, or fill a held pane's input, and the walk names the pane (both measured); judge a pane's text areas together, and an empty one masks another that holds a value (measured); the walk's own perturbations run on every build in `the_walk_names_a_pane_without_a_status_or_with_a_filled_input`; Pair a box's pages, the requirements page and the Pair page before and after its box is paired among them, are walked for the stage mark `2 Provision` (`walk_staged`): stage the Pair page's first pane `1 Declare`, and the walk names it; put a Pairing step back on the setup's rail, Models before Directories, the held setup command's pane back, or the image's setup script in a pane's text, and `every_pane_carries_its_stage_backing_and_status` fails (each measured 2026-11-24) |
-| Pair a box, by the start page's rule, refuses every name admin's name rule or the box's agent-creation rule refuses | perturbation in `src/setup_tests.rs`, one case per clause, each refused and opening no setup: an uppercase letter, a `-`, a `_`, a leading digit, one character, seventeen characters, and each of the two names `weaver-admin-Spec` section 4 reserves whole, which the character rule admits; a name of sixteen characters opens one. Drop a clause from the page's rule and its case meets the store's CHECK, which holds the same rule, and answers as a fault rather than a refusal; drop it from the CHECK too and its case opens a setup (each clause measured from the page, the reserved names from both). A name ending in one of section 4's reserved suffixes carries a `-`, so the character rule refuses it. Skip the rule at Pair a box, and an uppercase name meets only the store's CHECK, answered as a fault (measured 2026-11-24) |
+| every pane of every setup page and of New agent carries its stage, a backing and a status word, and a held pane names what it waits on with no input holding a value; no page of the setup names a Pairing step, its pages stand in the order Directories, Models, Placement, Confirm, Build, and no page holds "the image's setup script", "first boot" or the held setup command's pane | test in `src/setup_tests.rs`, `every_pane_carries_its_stage_backing_and_status`, walking every page's rendered panes in each state it draws, and `src/setup_place_tests.rs` walking the placement and confirm pages in each of theirs: drop a pane's status mark from a template, or fill a held pane's input, and the walk names the pane (both measured); judge a pane's text areas together, and an empty one masks another that holds a value (measured); the walk's own perturbations run on every build in `the_walk_names_a_pane_without_a_status_or_with_a_filled_input`; New agent (held here; live in `new_agent_holds_what_an_agent_needs_the_steps_and_one_form` and `an_appliance_that_dialed_before_its_agent_was_named_is_listed_and_pairs`) and the Pair page before and after its box is paired are walked for the stage mark `1 Declare`, as the setup's pages are, New agent being the first page of stage 1 (the operator's ruling of 2026-11-25): stage the Pair page's first pane `2 Provision`, and the walk names it (measured 2026-11-25); put a Pairing step back on the setup's rail, Models before Directories, the held setup command's pane back, or the image's setup script in a pane's text, and `every_pane_carries_its_stage_backing_and_status` fails (each measured 2026-11-24) |
+| New agent, by the start page's rule, refuses every name admin's name rule or the box's agent-creation rule refuses | perturbation in `src/setup_tests.rs`, one case per clause, each refused and opening no setup: an uppercase letter, a `-`, a `_`, a leading digit, one character, seventeen characters, each of the two names `weaver-admin-Spec` section 4 reserves whole, which the character rule admits, and `admin` and `stack`, the appliance's two folders, each refused with its own sentence; a name of sixteen characters opens one. `the_store_refuses_every_reserved_name_by_its_check` inserts each of the four past the page's rule: drop `admin` from `0034`'s CHECK, and its insert writes a row; drop it from the page's rule, and New agent's post takes it past the rule (both measured 2026-11-25). Drop a clause from the page's rule and its case meets the store's CHECK, which holds the same rule, and answers as a fault rather than a refusal; drop it from the CHECK too and its case opens a setup (each clause measured from the page, the reserved names from both). A name ending in one of section 4's reserved suffixes carries a `-`, so the character rule refuses it. Skip the rule at New agent, and an uppercase name meets only the store's CHECK, answered as a fault (measured 2026-11-24) |
 | the Pair page says what to do at the appliance, lists the waiting box as it claims, shows Weaver Web's fingerprint in four rows of four groups, and warns where the console's link address is a loopback address and the checkbox says virtual machine, and where it is an unspecified address, for a host and a virtual machine alike | perturbation in `src/setup_tests.rs`, `the_loopback_warning_shows_for_a_virtual_machine_alone` and `the_unspecified_warning_shows_for_a_host_and_a_virtual_machine`, and in `src/surfaces/setup.rs`'s tests, `the_link_address_is_read_for_its_port_its_loopback_and_unspecified`: draw the loopback warning for a host too, and the host's page warns; drop the unspecified check, or drop its paragraph from the template, and `link_listen` at `0.0.0.0` with no `link_address` draws no warning; draw it for a virtual machine alone, and the host's page draws none; read `link_listen` over `link_address`, and a `link_address` the box reaches beside it warns; take IPv4's unspecified address alone, and `::` draws none (each measured); in `src/setup_tests.rs`, `the_pair_page_says_what_to_do_at_the_appliance`: drop the step giving the script Weaver Web's address and port, and it fails; in `src/enrollment_tests.rs`, `the_pair_page_shows_the_fingerprint_in_four_rows_of_four_groups`: draw the sixteen groups in one row, or name the row the console's fingerprint, and it fails; in `src/enrollment_tests.rs`, `the_pair_page_lists_the_waiting_box_as_it_claims`, no box waiting said so and a dialed box's row by its claim, peer address and wait: drop the row, and it fails; in `src/setup_tests.rs`, `a_console_serving_no_pairing_says_so_past_the_admin_gate`, the 503 naming Weaver Web: call the server the console, and it fails (each measured 2026-11-24) |
 | a crafted post naming a second model, a second adapter role or the CPU is refused, saving nothing | perturbation in `src/setup_models_tests.rs`, `a_crafted_pick_is_refused_saving_nothing`, against a fake Hugging Face that counts every request, and in `src/surfaces/setup/models.rs`'s tests: take a field the pick does not take, or a field given twice, and a crafted pick is no longer refused by its shape (each measured). The same test holds a role beyond the roster and a field the pick does not take to their refusals' words, which name the roster as one decoder and at most one adapter on it and no one agent's |
 | a pick asks Hugging Face only after the admin gate | perturbation in `src/setup_models_tests.rs`, `a_pick_asks_hugging_face_only_after_the_admin_gate`, against the fake: read the listing before the gate, and the fake counts a request from a person holding no admin grant (measured) |
@@ -7918,7 +7997,20 @@ two connectors report.
 | each pane a report feeds carries the report's status, read, refused, misfiled or waiting, and the directories page shows each directory's judgment on it, read from the latest report of either stage | perturbation in `src/setup_panes_tests.rs`, `the_pairing_pages_report_is_served_waiting_refused_misfiled_and_read`, `the_directories_page_draws_the_directories_as_mounted_with_their_judgments` and `the_placement_page_names_a_kept_device_a_later_report_lacks`, and end to end in `src/enrollment_tests.rs`, `the_panes_are_served_in_each_status_as_the_box_reports` and `src/enrollment_tests.rs`, `the_reports_a_box_sends_feed_placement_and_confirm`: draw a waiting report healthy, and the pairing stage's report's pane and the end-to-end panes fail; draw the devices refused as waiting, and the placement page fails; drop the unmounted drive's judgment, or judge the state drive under at the figure, and the directories page fails (each measured); read the directories from the `drives` stage's report alone, and a `pairing` report alone is drawn waiting (measured 2026-11-24) |
 | once the box is paired, the Pair page shows the pairing stage's report in a pane that holds no form, saying before it arrives what sends it; an unpaired setup's Pair page shows none, and the directories page does not show it | perturbation in `src/setup_panes_tests.rs`, `the_pairing_pages_report_is_served_waiting_refused_misfiled_and_read`, and end to end in `src/enrollment_tests.rs`, `the_panes_are_served_in_each_status_as_the_box_reports`: draw the pane whether or not the box is paired, and the unpaired setup's Pair page draws it; read no report for the Pair page, and the paired one draws none (each measured 2026-11-24) |
 | a new setup's checkbox starts checked, and a setup saved unchecked stays unchecked | perturbation in `src/setup_tests.rs`, `a_name_outside_the_rule_is_refused_opening_no_setup` and `the_loopback_warning_shows_for_a_virtual_machine_alone`: begin a setup with the column's default, and its checkbox starts unchecked (measured 2026-11-24) |
-| the requirements page is reached from Create new agent alone, and an agent is named from it alone | perturbation in `src/setup_tests.rs`, `the_requirements_page_is_reached_from_create_new_agent_alone`: Pair a box holds Create new agent and no name's field, the requirements page states its panes in order, the two disks' five statements in order and no other path offered, and ends in the name's form, its one, naming no CPU requirement and offering no host install, and no other page links it or holds the name's form, each read with the setup's box not paired and no register row standing, once paired, and once a second row is registered; draw the name's form on Pair a box beside Create new agent, or on the unpaired Pair page alone, or link the requirements page from `/setup` while no declaration is open, or drop the two disks' sentence that the appliance comes with no disk, or put "unless they choose others" back in it, and it fails (measured 2026-11-24) |
+| New agent holds what an agent needs, the steps at the appliance and one form, with no click before them | perturbation in `src/setup_tests.rs`, `new_agent_holds_what_an_agent_needs_the_steps_and_one_form`, against the real listener: its five panes in order, the brief's sentences in order, the command from `SETUP_COMMAND`, the starting user and the first password unnamed, the name's bounds with the number from `NAME_MOST`, one form holding the comparison's box, the name, the code and Finalize the pairing, no polling and no "box" in the page's body, and no other page holding the form, read with no setup, with a setup begun the old way and unpaired, and once paired; drop the number from the name's rule, or close the form before the name's pane, and it fails (each measured 2026-11-25) |
+| New agent gives Weaver Web's management address and never the data door's, and says so where one door serves both planes | perturbation in `src/setup_tests.rs`, `new_agent_gives_the_management_address_and_never_the_data_doors`, over five configs: draw `gate_address()` in step 4, and the data door's address shows; say "Both planes share one door." whatever the doors, and a data door apart is said to share (each measured 2026-11-25) |
+| an appliance that dialed before its agent was named is listed on New agent and pairs, the exchange making its setup with the row | perturbation in `src/enrollment_tests.rs`, `an_appliance_that_dialed_before_its_agent_was_named_is_listed_and_pairs`: no setup stands before the post, the appliance is listed by its claim and chosen by its handle, the page never holds the code, and the post makes the setup, a virtual machine begun by the admin, linked to the row as `pair`; run the exchange as for a setup that stands (`begun_by` none), and the post makes no setup and pairs nothing (measured 2026-11-25) |
+| a code that matches another waiting appliance and not the chosen one is a miss, one refusal record, and writes no setup | perturbation in `src/enrollment_tests.rs`, `a_code_of_another_waiting_appliance_is_a_miss_and_pairs_nothing`: match the code across the table (`Waiting::take`) in place of the chosen connection, and the post pairs the other appliance (measured 2026-11-25) |
+| three misses close the chosen connection alone, the box told `code_missed` | perturbation in `src/enrollment_tests.rs`, `three_misses_close_the_chosen_connection_alone`: send the last try's miss as any other and keep the connection, and the box hears no refusal; count no miss on the connection, and the third still leaves a try (each measured 2026-11-25) |
+| misses on one chosen connection leave another's tries whole | perturbation in `src/enrollment_tests.rs`, `misses_on_one_appliance_leave_anothers_tries_whole`: count the misses in one counter shared by every waiting connection, and the other's first miss closes it (measured 2026-11-25) |
+| every compared miss New agent learns of leaves its record | perturbation in `src/enrollment_tests.rs`, `a_miss_compared_as_its_connection_ends_still_leaves_its_record`, the connection ending as it answers (`pairing::Lever::EndOnMiss`): count the miss at the entry on the table's slot, and the miss is answered as gone with no record (measured 2026-11-25) |
+| a chosen appliance that does not answer is said so, and never called gone | perturbation in `src/enrollment_tests.rs`, `a_chosen_appliance_that_does_not_answer_is_said_so_and_never_called_gone`, the connection reading the probe and answering none (`pairing::Lever::Silent`): answer it as gone, and the post says "no longer waiting" while the list still shows it (measured 2026-11-25) |
+| a chosen appliance whose wait ended is said so, apart from one gone, with no record | perturbation in `src/enrollment_tests.rs`, `a_chosen_appliance_whose_wait_ended_is_said_so_apart_from_one_gone`: keep no handle when a wait ends, and the ended wait is answered as gone (measured 2026-11-25) |
+| a name an open setup holds is refused on New agent before any code is compared | perturbation in `src/enrollment_tests.rs`, `a_name_an_open_setup_holds_is_refused_before_any_code_is_compared`: drop the name's check before the comparison, and the code is spent on an exchange the store's insert refuses, the appliance's connection closed (measured 2026-11-25); where the setup holding the name is not paired, the refusal points to its own Pair page, listed below the form (`SetupNameHeldUnpaired`), and a paired holder's keeps the way on under Declarations: answer an unpaired holder with the paired holder's words, and the test fails (measured 2026-11-26) |
+| New agent lists each open setup not paired with a link to its own Pair page | perturbation in `src/setup_tests.rs`, `new_agent_lists_each_unpaired_setup_with_a_link_to_its_pair_page`: list no setup, and the setup begun is never listed; list every open setup, paired or not, and the paired one is listed too (each measured 2026-11-26) |
+| New agent's entry runs from its comparison to its outcome in a task the request cannot cancel | perturbation in `src/enrollment_tests.rs`, `new_agents_entry_dropped_once_matched_still_pairs_and_makes_its_setup`: run `continue_finalize` in the request's own future, and the dropped request takes the box's connection with it (measured 2026-11-25) |
+| a malformed entry on New agent is drawn back into the page, with no record | perturbation in `src/enrollment_tests.rs`, `a_malformed_entry_on_new_agent_is_drawn_back_into_the_form`: answer the four early refusals with bare text, and the page is gone; draw the page for whoever is not an admin, and they are answered 400 and not as New agent's page answers them (each measured 2026-11-26) |
+| on an unknown outcome New agent draws the register's live rows holding the name | perturbation in `src/enrollment_tests.rs`, `on_an_unknown_outcome_new_agent_draws_the_registers_rows_holding_the_name`: the pairing's COMMIT held past the read-back's bound, draw no rows on the unknown answer, and the live row holding the name and its admin fingerprint are absent; with no earlier row of the name, say the register holds no row, and the test fails (each measured 2026-11-26) |
 | a value a report chose is drawn through the templates' escaping | perturbation in `src/setup_panes_tests.rs`, `a_value_a_report_chose_is_drawn_escaped`, and end to end in `src/enrollment_tests.rs`, `the_panes_are_served_in_each_status_as_the_box_reports`: draw the machine's product through askama's `safe` filter, and a script element stands on the page (each measured) |
 | a refused report is logged once, at its arrival, with its detail, and its log can change neither the write nor its answer | perturbation in `src/enrollment_tests.rs`, `a_refused_reports_arrival_is_logged_once_with_its_detail_escaped`: drop the line, and none is logged; log the detail in its debug form, and the escape is doubled; log at each page's read as well, and two views add lines; refuse the write where the reader refuses, and the box's report is not accepted (each measured) |
 | the base's identity is BLAKE3 over the parts in split order | perturbation in `src/hugging_face/base_identity.rs`'s tests: hash in the listing's order, or part 1 alone, and the digest differs from BLAKE3 over part 1's bytes, then part 2's (each measured) |
@@ -8328,7 +8420,8 @@ a `web-` assertion beside `weaver-admin`'s.
   8.2**, opened 2026-11-15 (section 8.2). Both ends derive it from the pairing
   connection's TLS exporter: fifty bits, shown as ten characters of Crockford's base32
   in two groups of five, single-use, living with its connection's ten minutes and never
-  held by the console. Five misses on one setup close its code field for ten minutes.
+  held by the console. Three misses on the chosen connection close it on New agent, and
+  five misses on a setup begun the old way close its code field for ten minutes.
 - **The link port's default, opened 2026-11-15** (section 8.2). As built, `link_listen`
   defaults to `127.0.0.1:8081`, a loopback address that no appliance on another machine
   can dial, so an operator who enrolls appliances sets it, and the address a connector
@@ -8481,7 +8574,8 @@ a `web-` assertion beside `weaver-admin`'s.
 - **The setup pages, opened 2026-11-16** (section 6.1). The operator's rulings of
   2026-11-16 (setup pages) and their addendum rule the start page, the setup pages in
   their order and the build page, the operator's rulings of 2026-11-23 move the pairing
-  to Provision's Pair a box and start the declaration at directories, and section 6.2
+  to a page of its own and start the declaration at directories, his ruling of
+  2026-11-25 makes that page New agent, the first page of stage 1, and section 6.2
   builds them to the confirm page, the
   placement page taking the turn context and the box's max-tokens-per-turn bounding the
   context length. Open, since no ruling places them: the page that holds the system

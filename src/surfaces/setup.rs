@@ -4,18 +4,23 @@
 //! conforms: web-a-pages-way-forward-stands-where-its-condition-holds
 //! conforms: web-an-admin-write-runs-from-its-first-record-to-its-outcome-in-a-task-the-request-cannot-cancel
 //! conforms: web-the-pair-page-shows-the-pairing-stages-report-read-only-once-paired
-//! conforms: web-the-requirements-page-is-reached-from-create-new-agent-alone-and-an-agent-is-named-from-it-alone
+//! conforms: web-new-agent-holds-what-an-agent-needs-the-steps-at-the-appliance-and-one-form-with-no-click-before-them
+//! conforms: web-new-agent-gives-weaver-webs-management-address-and-never-the-data-doors-and-says-so-where-one-door-serves-both-planes
+//! conforms: web-new-agent-lists-each-open-setup-not-paired-with-a-link-to-its-own-pair-page
 //!
-//! **Pair a box, and Declare's path** (Spec 6.2, 8.2), an admin's, the
-//! server-wide admin grant. **Pair a box is Provision's** (the operator's
-//! rulings of 2026-11-23: "Pairing is its own page", and "the agent is
-//! named at pairing"): `GET /pair` offers Create new agent and lists the
-//! named agents whose box is not yet paired; `GET /pair/new` is the
-//! requirements page (the operator's ruling of 2026-11-24), which ends in
-//! the agent's name; `POST /pair` begins a setup of the name; `GET
-//! /pair/{setup}` is that agent's pairing, which says what to do at the
-//! appliance and, once the box is paired, shows the pairing stage's
-//! report, and `POST /pair/{setup}` keeps its checkbox. **The declaration is Declare's**: `GET /setup` lists the
+//! **New agent, and Declare's path** (Spec 6.2, 8.2), an admin's, the
+//! server-wide admin grant. **New agent is the first page of stage 1**
+//! (the operator's ruling of 2026-11-25; and of 2026-11-23: "Pairing is its
+//! own page", and "the agent is named at pairing"): `GET /pair` holds, with
+//! no click before them, what an agent needs, the steps at the appliance,
+//! Weaver Web's management address and fingerprint, and the appliances
+//! awaiting final initialization; `POST /pair` names the agent and enters
+//! the chosen appliance's code, and the exchange makes the setup with the
+//! row, so nothing is written before the code matches. `GET /pair/{setup}`
+//! is that agent's Pair page, which shows the pairing stage's report and
+//! leads on to the declaration, and `POST /pair/{setup}` keeps its
+//! checkbox. A setup begun before New agent named agents in one form keeps
+//! its Pair page as built, its code field among it. **The declaration is Declare's**: `GET /setup` lists the
 //! paired agents whose declaration is open, and `GET /setup/{setup}/{page}`
 //! draws one page of the setup. The models page and its fragments are the child
 //! module `models` (`setup/models.rs`), the placement page and its post
@@ -54,7 +59,7 @@ use crate::store::Store;
 use crate::store::admin::Refusal;
 use crate::store::audit::Target;
 use crate::store::identity::is_setup_id;
-use crate::store::setup::{Setup, agent_name};
+use crate::store::setup::Setup;
 use crate::surfaces::admin::{
     NOT_AN_ADMIN, admin_session, fault, first_of, refused, settled, step_four, writer,
 };
@@ -92,8 +97,24 @@ pub struct Seams {
 /// The answer to a setup's identity of the wrong shape.
 const MALFORMED_SETUP: &str = "a setup's identity is st- and sixteen lowercase hex";
 
+/// **The appliance's setup command** (the WeaverAgent seat's script at its
+/// head of 2026-11-25, not final until the script lands in a repository):
+/// written here alone, so a change of the script's name changes one line.
+/// The page says it runs with root's authority and names no program that
+/// grants it, since `tests/no_privilege.rs` admits that program's name in
+/// admin-con's invoker alone (Spec 7.2).
+pub(crate) const SETUP_COMMAND: &str = "weaver-setup";
+
+/// **The appliance's starting user and its first password, as New agent
+/// names them**: neither is printed until the operator rules on 72 (v),
+/// since a password in a template enters a public repository (`CLAUDE.md`,
+/// hard boundaries). Written here alone, so his answer changes one line
+/// each.
+pub(crate) const STARTING_USER: &str = "the appliance's starting user";
+pub(crate) const FIRST_PASSWORD: &str = "Its first password";
+
 /// **The setup's pages, in the path's order** (Spec 6.2). Pairing is no
-/// page of the setup: it is Provision's Pair a box, before the declaration.
+/// page of the setup: it is New agent's, before the declaration.
 /// **The declaration starts at directories** (the operator's ruling of
 /// 2026-11-23: "The declaration starts at directories, not drives").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -148,9 +169,7 @@ pub fn routes(seams: Seams) -> Router<Store> {
         }};
     }
     let start_seams = seams.clone();
-    let pair_start_seams = seams.clone();
-    let requirements_seams = seams.clone();
-    let begin_seams = seams.clone();
+    let first_seams = seams.clone();
     let pair_seams = seams.clone();
     let pairing_seams = seams.clone();
     let mut router = Router::new()
@@ -164,21 +183,8 @@ pub fn routes(seams: Seams) -> Router<Store> {
         .route(
             "/pair",
             get(move |State(store): State<Store>, headers: HeaderMap| {
-                let seams = pair_start_seams.clone();
-                async move { pair_start(store, &seams, headers).await }
-            })
-            .post(
-                move |State(store): State<Store>, headers: HeaderMap, Form(ask): Form<BeginAsk>| {
-                    let seams = begin_seams.clone();
-                    async move { begin(store, &seams, headers, ask).await }
-                },
-            ),
-        )
-        .route(
-            "/pair/new",
-            get(move |State(store): State<Store>, headers: HeaderMap| {
-                let seams = requirements_seams.clone();
-                async move { requirements(store, &seams, headers).await }
+                let seams = first_seams.clone();
+                async move { first_page(store, &seams, headers).await }
             }),
         )
         .route(
@@ -199,10 +205,13 @@ pub fn routes(seams: Seams) -> Router<Store> {
                 },
             ),
         );
-    // The code's entry, which the server's binary carries (Spec 8.2).
+    // The code's entries, which the server's binary carries (Spec 8.2):
+    // New agent's, and a setup's begun before it.
     #[cfg(feature = "enrollment")]
     {
-        router = router.route("/pair/{setup}/code", pair::route(seams.clone()));
+        router = router
+            .route("/pair", pair::finalize_route(seams.clone()))
+            .route("/pair/{setup}/code", pair::route(seams.clone()));
     }
     // The pages drawn here alone. The rest are their child modules'.
     for p in [Page::Directories, Page::Build] {
@@ -398,7 +407,7 @@ impl OpenView {
     }
 }
 
-/// The page of a pairing: Pair a box's page for `setup_id`.
+/// The page of a pairing: New agent's page for `setup_id`.
 fn pair_href(setup_id: &str) -> String {
     format!("/pair/{setup_id}")
 }
@@ -411,8 +420,8 @@ fn declare_next(setup_id: &str) -> Next {
     }
 }
 
-/// The open setups, the admin's session and the chrome, for the start page
-/// and Pair a box, or the answer.
+/// The open setups, the admin's session and the chrome, for the start
+/// page, or the answer.
 async fn open_read(
     store: &Store,
     seams: &Seams,
@@ -448,7 +457,7 @@ struct StartPage {
 
 /// **The start page, Declarations**: the paired agents whose declaration is
 /// open, each a link to the declaration's first page. An agent is named
-/// where its box is paired, on Pair a box.
+/// where its box is paired, on New agent.
 async fn start(store: Store, seams: &Seams, headers: HeaderMap) -> Response {
     let (session, chrome, open) = match open_read(&store, seams, &headers).await {
         Ok(read) => read,
@@ -474,122 +483,168 @@ async fn start(store: Store, seams: &Seams, headers: HeaderMap) -> Response {
     }
 }
 
+/// An appliance awaiting final initialization as New agent lists it.
+struct FirstWaiting {
+    /// The handle the form chooses it by, never its code.
+    handle: String,
+    claim: String,
+    peer: String,
+    waited: String,
+    /// Dialed from a loopback address, Weaver Web's own machine, which a
+    /// virtual machine never is: the page warns and never refuses.
+    loopback: bool,
+    /// The appliance the post being answered chose.
+    chosen: bool,
+}
+
+/// **An open setup whose box is not paired, as New agent lists it**: begun
+/// the old way, it holds its name, and its own Pair page is the one way to
+/// pair it (the review of pull request 214, findings 5 and 6).
+struct FirstUnpaired {
+    name: String,
+    href: String,
+}
+
+/// **What a post to New agent keeps**, drawn back into the form: the name
+/// as typed, the appliance chosen, and what happened.
+#[derive(Default)]
+struct Kept {
+    name: String,
+    appliance: String,
+    entered: Option<pair::Entered>,
+    /// On an unknown outcome, the register's live rows holding the name,
+    /// drawn below the answer; `None` draws no table.
+    rows: Option<Vec<pair::RowView>>,
+}
+
 #[derive(Template)]
 #[template(path = "pair_start.html")]
-struct PairStartPage {
+struct FirstPage {
     here: &'static str,
     who: String,
     admin: bool,
     chrome: super::Chrome,
-    waiting: Vec<OpenView>,
+    command: &'static str,
+    starting_user: &'static str,
+    first_password: &'static str,
+    /// Weaver Web's management door, which the script asks for.
+    link: Link,
+    /// One door serves both planes (Spec 8).
+    one_door: bool,
+    loopback_warning: bool,
+    unspecified_warning: bool,
+    /// The enrollment is served: false draws the appliances' pane held.
+    live: bool,
+    fingerprint: Vec<String>,
+    waiting: Vec<FirstWaiting>,
+    /// An appliance listed dialed from a loopback address.
+    any_loopback: bool,
+    name_most: usize,
+    name: String,
+    entered: Option<pair::Entered>,
+    /// On an unknown outcome, the register's live rows holding the name.
+    rows: Option<Vec<pair::RowView>>,
+    /// The open setups not paired, each with a link to its own Pair page;
+    /// their pane is drawn only where one exists.
+    unpaired: Vec<FirstUnpaired>,
 }
 
-/// **Pair a box**: Create new agent, which opens the requirements page, and
-/// the named agents whose box is not yet paired, each a link to its
-/// pairing.
-async fn pair_start(store: Store, seams: &Seams, headers: HeaderMap) -> Response {
-    let (session, chrome, open) = match open_read(&store, seams, &headers).await {
-        Ok(read) => read,
-        Err(answer) => return answer,
+/// **New agent, as drawn** for `session`, with what a post kept.
+async fn first_view(
+    store: &Store,
+    seams: &Seams,
+    session: &Session,
+    kept: Kept,
+) -> anyhow::Result<FirstPage> {
+    let chrome = super::Chrome::of(store, &session.person_id).await?;
+    // **The management door's address** (Spec 8): the script dials it for
+    // the pairing and admin-con, never the data door's.
+    let link = link_of(seams.cfg.link_address());
+    let (live, fingerprint, waiting) = match seams.enrollment.as_ref() {
+        Some(enrollment) => (
+            cfg!(feature = "enrollment"),
+            pair::fingerprint_rows(&enrollment.authority.fingerprint()),
+            enrollment
+                .listener
+                .waiting()
+                .into_iter()
+                .map(|w| FirstWaiting {
+                    chosen: w.handle == kept.appliance,
+                    handle: w.handle,
+                    claim: w.r#box,
+                    peer: w.peer.to_string(),
+                    waited: pair::waited(w.waited),
+                    loopback: w.peer.is_loopback(),
+                })
+                .collect(),
+        ),
+        None => (false, Vec::new(), Vec::new()),
     };
-    let page = PairStartPage {
+    let unpaired = store
+        .open_setups()
+        .await?
+        .into_iter()
+        .filter(|s| s.in_pairing_step())
+        .map(|s| FirstUnpaired {
+            href: pair_href(&s.setup_id),
+            name: s.name,
+        })
+        .collect();
+    Ok(FirstPage {
         here: "pair",
         who: session.name.clone(),
         admin: true,
         chrome,
-        waiting: open
-            .into_iter()
-            .filter(Setup::in_pairing_step)
-            .map(|s| {
-                let href = pair_href(&s.setup_id);
-                OpenView::of(s, href)
-            })
-            .collect(),
-    };
-    match page.render() {
-        Ok(html) => Html(html).into_response(),
-        Err(e) => fault(e),
-    }
+        command: SETUP_COMMAND,
+        starting_user: STARTING_USER,
+        first_password: FIRST_PASSWORD,
+        one_door: seams.cfg.data_door().is_none(),
+        loopback_warning: link.loopback,
+        unspecified_warning: link.unspecified,
+        link,
+        live,
+        fingerprint,
+        any_loopback: waiting.iter().any(|w| w.loopback),
+        waiting,
+        name_most: crate::store::setup::NAME_MOST,
+        name: kept.name,
+        entered: kept.entered,
+        rows: kept.rows,
+        unpaired,
+    })
 }
 
-#[derive(Template)]
-#[template(path = "pair_new.html")]
-struct RequirementsPage {
-    here: &'static str,
-    who: String,
-    admin: bool,
-    chrome: super::Chrome,
-    name_most: usize,
-}
-
-/// **The requirements page**, Create new agent's (Spec 8.2, the operator's
-/// ruling of 2026-11-24): what an agent needs, read by Pair a box's grant,
-/// ending in the agent's name, its one form, which posts to `POST /pair`.
-async fn requirements(store: Store, seams: &Seams, headers: HeaderMap) -> Response {
+/// **New agent** (Spec 8.2; the operator's rulings of 2026-11-25): what an
+/// agent needs, the steps at the appliance, Weaver Web's management address
+/// and fingerprint, the appliances awaiting final initialization, and the
+/// one form that names the agent and finalizes the pairing, with no click
+/// before them.
+async fn first_page(store: Store, seams: &Seams, headers: HeaderMap) -> Response {
     let session = match admin_session(&store, &seams.policy, &headers).await {
         Ok(Ok(session)) => session,
         Ok(Err(_)) => return (StatusCode::FORBIDDEN, NOT_AN_ADMIN).into_response(),
         Err(answer) => return answer,
     };
-    let chrome = match super::Chrome::of(&store, &session.person_id).await {
-        Ok(chrome) => chrome,
-        Err(e) => return fault(e),
-    };
-    let page = RequirementsPage {
-        here: "pair",
-        who: session.name.clone(),
-        admin: true,
-        chrome,
-        name_most: crate::store::setup::NAME_MOST,
-    };
-    match page.render() {
-        Ok(html) => Html(html).into_response(),
+    first_answer(&store, seams, &session, StatusCode::OK, Kept::default()).await
+}
+
+/// New agent drawn at `status`, with what a post kept: the answer to every
+/// post that passed the admin gate and did not pair.
+async fn first_answer(
+    store: &Store,
+    seams: &Seams,
+    session: &Session,
+    status: StatusCode,
+    kept: Kept,
+) -> Response {
+    match first_view(store, seams, session, kept)
+        .await
+        .map(|p| p.render())
+    {
+        Ok(Ok(html)) => (status, Html(html)).into_response(),
+        Ok(Err(e)) => fault(e),
         Err(e) => fault(e),
     }
-}
-
-#[derive(Deserialize)]
-pub struct BeginAsk {
-    name: String,
-}
-
-/// **A new setup of the name**, from Pair a box, the name held to the
-/// start page's rule before anything else, so a refused name opens no
-/// setup and is recorded nowhere. It lands on the agent's pairing.
-async fn begin(store: Store, seams: &Seams, headers: HeaderMap, ask: BeginAsk) -> Response {
-    const ACTION: &str = "setup begin";
-    let name = match agent_name(ask.name.trim()) {
-        Ok(name) => name,
-        Err(why) => return (StatusCode::BAD_REQUEST, why).into_response(),
-    };
-    let setup_id = match store.mint_key("st").await {
-        Ok(setup_id) => setup_id,
-        Err(e) => return fault(e),
-    };
-    let target = Target::Setup(&setup_id);
-    let session = match writer(&store, &seams.policy, &headers, target, ACTION).await {
-        Ok(session) => session,
-        Err(answer) => return answer,
-    };
-    let name = name.to_owned();
-    step_four(&seams.policy, async move {
-        let first = match first_of(&store, &session, Target::Setup(&setup_id), ACTION).await {
-            Ok(first) => first,
-            Err(answer) => return answer,
-        };
-        let written = store
-            .begin_setup(
-                &session.person_id,
-                session.session_id,
-                &first,
-                &setup_id,
-                &name,
-            )
-            .await;
-        settled(&store, &first, &written).await;
-        landed_at(written, &pair_href(&setup_id))
-    })
-    .await
 }
 
 /// Back to the setup's page, the write landed.
@@ -760,7 +815,7 @@ fn pairing_page(
     }
 }
 
-/// **An agent's pairing**, Pair a box's page for `setup_id`: what to do at
+/// **An agent's pairing**, New agent's page for `setup_id`: what to do at
 /// the appliance, Weaver Web's address, the checkbox and the waiting box.
 async fn pair_box(store: Store, seams: &Seams, headers: HeaderMap, setup_id: &str) -> Response {
     let (session, setup) = match admin_read(&store, seams, &headers, setup_id).await {

@@ -156,7 +156,12 @@ pub(crate) async fn rows(s: &Store, query: &str) -> i64 {
 /// and the passkey's `pk-` identity, the cookie reads The Record under the
 /// person's name, the stored counter rose to the authenticator's, and the
 /// audit holds the opening's first record (the person, by passkey
-/// assertion) and its `ok` outcome.
+/// assertion) and its `ok` outcome. **The answer names where the browser
+/// goes on**, where `GET /` sends the session (Spec 2.8): `/agents` while
+/// the person holds no admin grant, `/pair` once they hold it.
+///
+/// Perturbations: answer every sign-in with `/pair`, and the first fails;
+/// answer every sign-in with The Record, and the second fails.
 #[tokio::test]
 async fn a_person_enrolled_signs_in_and_the_session_serves() {
     let Some(fresh) = fresh_store().await else {
@@ -169,6 +174,13 @@ async fn a_person_enrolled_signs_in_and_the_session_serves() {
 
     let (status, headers, answer) = sign_in(&app, &mut key, "ada").await;
     assert_eq!(status, StatusCode::OK, "{answer}");
+    let next = |answer: &str| {
+        serde_json::from_str::<Value>(answer).unwrap()["next"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    assert_eq!(next(&answer), "/agents", "no admin grant: {answer}");
     let cookie = headers.get(header::SET_COOKIE).unwrap().to_str().unwrap();
     assert!(cookie.starts_with("__Host-weaver_session="), "{cookie}");
     let passkey_id: String =
@@ -229,6 +241,12 @@ async fn a_person_enrolled_signs_in_and_the_session_serves() {
         [on_the_passkey(None), on_the_passkey(Some("ok"))],
         "the opening is audited on the passkey it began with"
     );
+
+    let granted = crate::host::grant_add(s, &person, "admin", None, None).await;
+    assert!(granted.ok, "{}", granted.value);
+    let (status, _, answer) = sign_in(&app, &mut key, "ada").await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(next(&answer), "/pair", "the admin grant: {answer}");
 }
 
 /// **A sign-in that cannot proceed opens nothing**: an unknown name, a

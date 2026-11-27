@@ -155,7 +155,7 @@ async fn a_stored_key_renders_by_its_fingerprint_and_its_line_enters_no_audit_ro
     assert_eq!(held[0].fingerprint, fingerprint(&given));
 
     let keys_page = page(&rig.app, "/admin/ssh-key", &ada).await;
-    let (_, _, setup) = begin(&rig.app, &ada, "karl").await;
+    let (_, _, setup) = begin(rig.store(), &ada, "karl").await;
     let setup = setup.unwrap();
     crate::setup_tests::paired(rig.store(), &setup).await;
     let drives = page(&rig.app, &format!("/setup/{setup}/directories"), &ada).await;

@@ -33,11 +33,26 @@ pub const NAME_MOST: usize = 16;
 /// the one place it is written, so a later per-agent value replaces it here.
 pub const MAX_TOKENS_PER_TURN: i64 = 4096;
 
-/// **The names `weaver-admin-Spec` section 4 reserves whole**, at
-/// WeaverAgent's `6b91747e`: the character rule below admits them, so they
-/// are refused by name. Every reserved suffix of that section holds a `-`,
-/// which the character rule refuses.
-const RESERVED: [&str; 2] = ["gatecon", "admincon"];
+/// **The names no agent takes, each with why**, which the character rule
+/// below admits, so they are refused by name: the two `weaver-admin-Spec`
+/// section 4 reserves whole, at WeaverAgent's `6b91747e`, every reserved
+/// suffix of that section holding a `-`, which the character rule refuses;
+/// and the two folders the appliance keeps beside each agent's own folder,
+/// named after the agent (the Planner's lean of 2026-11-25, which the
+/// operator may strike; migration `0034`).
+const RESERVED: [(&str, &str); 4] = [
+    ("gatecon", ACCOUNT),
+    ("admincon", ACCOUNT),
+    ("admin", FOLDER),
+    ("stack", FOLDER),
+];
+
+/// Why a name of one of the appliance's own accounts is refused.
+const ACCOUNT: &str = "that name names one of a box's own accounts, so no agent takes it";
+
+/// Why a name of one of the appliance's own folders is refused.
+const FOLDER: &str =
+    "that name names a folder the appliance keeps beside each agent's own, so no agent takes it";
 
 /// **The start page's rule** (Spec 6.2): the name as given, or why it is
 /// refused. A lowercase letter, then lowercase letters and digits, 2 to 16
@@ -64,8 +79,8 @@ pub fn agent_name(name: &str) -> Result<&str, &'static str> {
     if name.len() > NAME_MOST {
         return Err("a name is 16 characters at most");
     }
-    if RESERVED.contains(&name) {
-        return Err("that name names one of a box's own accounts, so no agent takes it");
+    if let Some((_, why)) = RESERVED.iter().find(|(reserved, _)| *reserved == name) {
+        return Err(why);
     }
     Ok(name)
 }
@@ -138,7 +153,7 @@ const SELECT: &str = "SELECT s.setup_id, s.name, s.virtual_machine, p.name AS be
 
 impl Store {
     /// **The setups left open**, the oldest first, for the start page and
-    /// Pair a box.
+    /// New agent.
     pub async fn open_setups(&self) -> anyhow::Result<Vec<Setup>> {
         let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
             "{SELECT} WHERE s.state = 'open' ORDER BY s.begun_at, s.setup_id"
@@ -146,6 +161,21 @@ impl Store {
         .fetch_all(&self.pool)
         .await?;
         Ok(rows.iter().map(setup_of).collect())
+    }
+
+    /// **Whether an open setup holds `name`, and if so whether its box is
+    /// paired**, for New agent's entry (Spec 8.2): one setup holds a name at
+    /// a time, and the exchange's insert decides a race past this read.
+    /// `None` where no open setup holds it, else `Some(paired)`, a setup
+    /// begun the old way and never paired answering `Some(false)`.
+    pub async fn open_setup_named(&self, name: &str) -> anyhow::Result<Option<bool>> {
+        Ok(sqlx::query_scalar(
+            "SELECT agent_id IS NOT NULL AND paired_as IS NOT NULL \
+             FROM agent_setup WHERE name = $1 AND state = 'open'",
+        )
+        .bind(name)
+        .fetch_optional(&self.pool)
+        .await?)
     }
 
     /// The setup `setup_id` names, or `None`.
@@ -573,12 +603,21 @@ mod tests {
             "abcdefghijklmnopq",
             "gatecon",
             "admincon",
+            "admin",
+            "stack",
             "ad a",
             "ad\u{e9}",
         ] {
             assert!(agent_name(refused).is_err(), "{refused:?} is refused");
         }
-        for kept in ["ab", "abcdefghijklmnop", "ada7", "gatecon2"] {
+        for kept in [
+            "ab",
+            "abcdefghijklmnop",
+            "ada7",
+            "gatecon2",
+            "admins",
+            "stacks",
+        ] {
             assert_eq!(agent_name(kept), Ok(kept));
         }
     }

@@ -543,9 +543,12 @@ async fn serve(cfg: Arc<ServerConfig>) -> anyhow::Result<()> {
                 puller: puller.clone(),
             }),
         ))
-        // **Pair a box, Declare's path, the start page and the setup pages,
-        // and the operator's SSH keys** (Spec 6.2, 8.2): an admin's, drawn from the store
-        // and the config alone, reaching no agent and no box.
+        // **New agent, Declare's path, the start page and the setup pages,
+        // and the operator's SSH keys** (Spec 6.2, 8.2): an admin's. New
+        // agent's entry asks the link listener's waiting connections, each a
+        // box that dialed this server, and runs the pairing's exchange over
+        // the chosen one. The other pages are drawn from the store and the
+        // config alone, reaching no agent and no box.
         .merge(weaver_web::surfaces::script_policy(
             weaver_web::surfaces::setup::routes(weaver_web::surfaces::setup::Seams {
                 policy: policy.clone(),

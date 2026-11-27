@@ -436,7 +436,7 @@ pub(crate) async fn rig_boxed(
 /// An admin and a setup begun by them, its box not paired.
 pub(crate) async fn setup_unpaired_of(rig: &Rig, name: &str) -> (String, String) {
     let (_, ada) = admin(&rig.app, rig.store(), &mut authenticator(), "ada").await;
-    let (_, _, setup) = begin(&rig.app, &ada, name).await;
+    let (_, _, setup) = begin(rig.store(), &ada, name).await;
     (ada, setup.unwrap())
 }
 
@@ -444,7 +444,7 @@ pub(crate) async fn setup_unpaired_of(rig: &Rig, name: &str) -> (String, String)
 /// is open.
 pub(crate) async fn setup_of(rig: &Rig, name: &str) -> (String, String) {
     let (_, ada) = admin(&rig.app, rig.store(), &mut authenticator(), "ada").await;
-    let (_, _, setup) = begin(&rig.app, &ada, name).await;
+    let (_, _, setup) = begin(rig.store(), &ada, name).await;
     let setup = setup.unwrap();
     crate::setup_tests::paired(rig.store(), &setup).await;
     (ada, setup)

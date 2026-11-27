@@ -35,9 +35,11 @@ fn edited(stage: &str, edit: impl FnOnce(&mut Value)) -> String {
     value.to_string()
 }
 
-/// The walk of a Provision page: the Pair page's panes carry `2 Provision`.
-fn provisioned(page: &str) -> Vec<String> {
-    crate::setup_tests::walk_staged(page, crate::setup_tests::PROVISION)
+/// The walk of the Pair page: its panes carry `1 Declare`, a page under
+/// New agent, the first page of stage 1 (the operator's ruling of
+/// 2026-11-25).
+fn pair_walk(page: &str) -> Vec<String> {
+    crate::setup_tests::walk(page)
 }
 
 /// The pane of `page` headed `heading`, whole.
@@ -83,7 +85,7 @@ async fn the_pairing_pages_report_is_served_waiting_refused_misfiled_and_read() 
     };
     let (ada, setup) = setup_of(&rig, "karl").await;
     let uri = format!("/pair/{setup}");
-    let (_, _, unpaired) = crate::setup_tests::begin(&rig.app, &ada, "otto").await;
+    let (_, _, unpaired) = crate::setup_tests::begin(rig.store(), &ada, "otto").await;
     *reported.pairing.lock().unwrap() = Some(report("pairing"));
     let page = read(&rig.app, &format!("/pair/{}", unpaired.unwrap()), &ada).await;
     assert!(!page.contains(PAIRING_PANE), "unpaired: {page}");
@@ -106,7 +108,7 @@ async fn the_pairing_pages_report_is_served_waiting_refused_misfiled_and_read() 
         "{waiting}"
     );
     assert!(!waiting.contains("<form"), "{waiting}");
-    assert!(provisioned(&page).is_empty(), "{:?}", provisioned(&page));
+    assert!(pair_walk(&page).is_empty(), "{:?}", pair_walk(&page));
 
     *reported.pairing.lock().unwrap() = Some(REFUSED.to_owned());
     let page = read(&rig.app, &uri, &ada).await;
@@ -122,7 +124,7 @@ async fn the_pairing_pages_report_is_served_waiting_refused_misfiled_and_read() 
         !page.contains("weaver-survey/2"),
         "neither the text nor the detail quoting it is drawn: {page}"
     );
-    assert!(provisioned(&page).is_empty(), "{:?}", provisioned(&page));
+    assert!(pair_walk(&page).is_empty(), "{:?}", pair_walk(&page));
 
     *reported.pairing.lock().unwrap() = Some(report("drives"));
     let page = read(&rig.app, &uri, &ada).await;
@@ -135,7 +137,7 @@ async fn the_pairing_pages_report_is_served_waiting_refused_misfiled_and_read() 
         misfiled.contains("The report kept as the pairing stage's names its stage drives."),
         "{misfiled}"
     );
-    assert!(provisioned(&page).is_empty(), "{:?}", provisioned(&page));
+    assert!(pair_walk(&page).is_empty(), "{:?}", pair_walk(&page));
 
     *reported.pairing.lock().unwrap() = Some(report("pairing"));
     let page = read(&rig.app, &uri, &ada).await;
@@ -185,7 +187,7 @@ async fn the_pairing_pages_report_is_served_waiting_refused_misfiled_and_read() 
         assert!(shown.contains(&row), "{row}: {shown}");
     }
     assert!(shown.contains("Arrived "), "{shown}");
-    assert!(provisioned(&page).is_empty(), "{:?}", provisioned(&page));
+    assert!(pair_walk(&page).is_empty(), "{:?}", pair_walk(&page));
 
     *reported.pairing.lock().unwrap() = Some(edited("pairing", |v| {
         v["cards"] = json!([]);

@@ -1,5 +1,10 @@
 //! conforms: web-the-pairing-page-reads-an-entry-in-crockfords-form-and-a-malformed-entry-is-no-miss
 //! conforms: web-on-unknown-the-pairing-page-shows-what-the-write-made
+//! conforms: web-a-code-that-matches-another-waiting-appliance-and-not-the-chosen-one-is-a-miss-one-refusal-record-and-writes-no-setup
+//! conforms: web-a-name-an-open-setup-holds-is-refused-on-new-agent-before-any-code-is-compared
+//! conforms: web-new-agents-entry-runs-from-its-comparison-to-its-outcome-in-a-task-the-request-cannot-cancel
+//! conforms: web-a-malformed-entry-on-new-agent-is-drawn-back-into-the-page-with-no-record
+//! conforms: web-on-an-unknown-outcome-new-agent-draws-the-registers-live-rows-holding-the-name
 //!
 //! **The Pair page's waiting box and the code's entry** (Spec 8.2, 6.2).
 //! The pane lists the boxes waiting, each by the name it claims, its peer
@@ -22,6 +27,17 @@
 //! naming the setup and never the code**, counted on the setup row; and on
 //! a match the first record of `pair` or `replace box`, whose target is the
 //! agent row, and the exchange in a task a dropped request cannot cut.
+//!
+//! **New agent's entry takes the same order** (Spec 8.2, 2.13; the brief of
+//! 2026-11-25): the name to the start page's rule, the appliance's handle,
+//! the code and the confirmation read to their shapes, refused with no
+//! record; the admin gate with its one refusal record; the name free of an
+//! open setup, one refusal record where it is not, and the appliance
+//! resolved among the waiting, gone answered with no record; then the
+//! chosen connection's code compared alone, **a miss one refusal record
+//! naming the setup the post would make**, the last of `pairing::TRIES`
+//! closing that connection; and on a match the exchange, whose write makes
+//! the setup with the row. **A miss writes no setup.**
 
 use std::sync::Arc;
 
@@ -147,7 +163,7 @@ pub(super) fn fingerprint_rows(fingerprint: &str) -> Vec<String> {
         .collect()
 }
 
-fn waited(d: std::time::Duration) -> String {
+pub(super) fn waited(d: std::time::Duration) -> String {
     let secs = d.as_secs();
     format!("{} min {} s", secs / 60, secs % 60)
 }
@@ -209,7 +225,7 @@ pub(super) async fn pane(
 }
 
 #[cfg(feature = "enrollment")]
-pub(super) use entry::route;
+pub(super) use entry::{finalize_route, route};
 
 #[cfg(feature = "enrollment")]
 mod entry {
@@ -233,10 +249,16 @@ mod entry {
     use crate::store::identity::is_setup_id;
     use crate::store::key::AgentId;
     use crate::store::setup::Field;
-    use crate::surfaces::admin::{fault, first_of, refused, settled, writer};
+    use crate::surfaces::admin::{
+        NOT_AN_ADMIN, admin_session, fault, first_of, refused, settled, writer,
+    };
     use crate::surfaces::gate::Session;
 
-    use super::super::{MALFORMED_SETUP, Seams, pair_href, pairing_page, pairing_report};
+    use super::super::{
+        Kept, MALFORMED_SETUP, Seams, first_answer, pair_href, pairing_page, pairing_report,
+    };
+    use crate::link::pairing::{Chosen, Taken, is_handle};
+    use crate::store::setup::agent_name;
 
     /// What an entry posts: the code as typed, the confirmation that the
     /// fingerprints were compared, and, for a setup whose name a live row
@@ -448,6 +470,51 @@ mod entry {
                 return Err((StatusCode::CONFLICT, words).into_response());
             }
         };
+        exchange_matched(Matched {
+            store,
+            cfg,
+            enrollment,
+            session,
+            setup_id,
+            name,
+            replace,
+            begun: false,
+            taken,
+        })
+        .await
+    }
+
+    /// **What a matched entry carries on with**: the setup, the agent's
+    /// name, the replaced row where one is, whether the exchange makes the
+    /// setup (New agent's), and the taken connection.
+    struct Matched {
+        store: Store,
+        cfg: Arc<ServerConfig>,
+        enrollment: super::Enrollment,
+        session: Session,
+        setup_id: String,
+        name: String,
+        replace: Option<AgentId>,
+        begun: bool,
+        taken: Taken,
+    }
+
+    /// **A match from its first record through the outcome's record**
+    /// (Spec 8.2), in the entry's task: the act's identity, the first
+    /// record, the exchange under the authority lock in a task of its own,
+    /// and the outcome.
+    async fn exchange_matched(matched: Matched) -> Result<Ended, Response> {
+        let Matched {
+            store,
+            cfg,
+            enrollment,
+            session,
+            setup_id,
+            name,
+            replace,
+            begun,
+            taken,
+        } = matched;
         let act = match replace {
             Some(id) => PairingAct::Replace(id),
             None => PairingAct::Pair(
@@ -515,6 +582,7 @@ mod entry {
                                 first: &first,
                                 store: &store,
                             },
+                            begun_by: begun.then_some(person.as_str()),
                         },
                         taken,
                     )
@@ -690,5 +758,387 @@ mod entry {
             Ok(html) => (status, Html(html)).into_response(),
             Err(e) => fault(e),
         }
+    }
+
+    /// What New agent's form posts: the agent's name, the appliance chosen
+    /// by its handle, the code as typed and the confirmation that the
+    /// fingerprints were compared.
+    #[derive(Deserialize)]
+    pub struct FinalizeAsk {
+        #[serde(default)]
+        name: String,
+        #[serde(default)]
+        appliance: String,
+        #[serde(default)]
+        code: String,
+        #[serde(default)]
+        compared: Option<String>,
+    }
+
+    /// The answer to an appliance's handle of the wrong shape.
+    const NO_APPLIANCE: &str =
+        "choose the appliance from the appliances awaiting final initialization";
+
+    /// The answer to New agent's entry that is not a code.
+    const MALFORMED_APPLIANCE_CODE: &str = "the code is ten characters of 0-9 and A-Z without I, L, O and U, as the SSH session shows it: check it and type it again";
+
+    /// The answer to New agent's entry whose fingerprints were not compared.
+    const NOT_COMPARED: &str =
+        "Compare Weaver Web's fingerprint with the one the appliance shows, and tick the box.";
+
+    /// The appliance chosen is no longer listed, and no wait of it ended.
+    const GONE: &str = "The appliance you chose is no longer waiting. Refresh the list.";
+
+    /// The appliance chosen waited its ten minutes.
+    const WAIT_ENDED: &str = "The appliance's wait ended. Run the setup script again to dial anew.";
+
+    /// The chosen appliance took no probe or gave no answer in time: it is
+    /// still listed, so it is never called gone, and whether the code was
+    /// compared is not known (the fix round of 2026-11-25).
+    const SILENT: &str = "The appliance you chose did not answer in time. Enter the code again.";
+
+    /// The chosen connection's last try missed (the brief of 2026-11-25
+    /// words the count, `pairing::TRIES`).
+    const CLOSED: &str = "That code missed three times, so the appliance's connection is closed. Run the setup script again to dial anew.";
+
+    pub(in super::super) fn finalize_route(seams: Seams) -> axum::routing::MethodRouter<Store> {
+        axum::routing::post(
+            move |State(store): State<Store>, headers: HeaderMap, Form(ask): Form<FinalizeAsk>| {
+                let seams = seams.clone();
+                async move { finalize(store, &seams, headers, ask).await }
+            },
+        )
+    }
+
+    /// What a post kept, drawn back into New agent beside what happened.
+    fn kept(name: &str, appliance: &str, words: String, retire: bool) -> Kept {
+        Kept {
+            name: name.to_owned(),
+            appliance: appliance.to_owned(),
+            entered: Some(Entered {
+                status: "fail",
+                words,
+                retire,
+            }),
+            rows: None,
+        }
+    }
+
+    /// **New agent's entry** (Spec 8.2), in the admin writes' order: the
+    /// agent named and the chosen appliance's code entered in one post,
+    /// the setup made by the exchange's write once the code matches.
+    async fn finalize(
+        store: Store,
+        seams: &Seams,
+        headers: HeaderMap,
+        ask: FinalizeAsk,
+    ) -> Response {
+        let name = match agent_name(ask.name.trim()) {
+            Ok(name) => name.to_owned(),
+            Err(why) => return malformed(&store, seams, &headers, &ask, why.to_string()).await,
+        };
+        if !is_handle(&ask.appliance) {
+            return malformed(&store, seams, &headers, &ask, NO_APPLIANCE.to_owned()).await;
+        }
+        let Ok(code) = Code::read(&ask.code) else {
+            let words = MALFORMED_APPLIANCE_CODE.to_owned();
+            return malformed(&store, seams, &headers, &ask, words).await;
+        };
+        // **The comparison is never skipped** (Spec 8.2).
+        if ask.compared.as_deref() != Some("on") {
+            return malformed(&store, seams, &headers, &ask, NOT_COMPARED.to_owned()).await;
+        }
+        let setup_id = match store.mint_key("st").await {
+            Ok(setup_id) => setup_id,
+            Err(e) => return fault(e),
+        };
+        let session = match writer(
+            &store,
+            &seams.policy,
+            &headers,
+            Target::Setup(&setup_id),
+            ACTION,
+        )
+        .await
+        {
+            Ok(session) => session,
+            Err(answer) => return answer,
+        };
+        let Some(enrollment) = seams.enrollment.clone() else {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "this build of Weaver Web serves no pairing",
+            )
+                .into_response();
+        };
+        // **The name free of an open setup**, one refusal record where it
+        // is not; the exchange's write decides a race past this read.
+        match store.open_setup_named(&name).await {
+            Ok(None) => {}
+            Ok(Some(paired)) => {
+                if let Err(answer) =
+                    record_refusal(&store, &session, &setup_id, "the name is held").await
+                {
+                    return answer;
+                }
+                // **A holder never paired is pointed to its own Pair page**,
+                // which New agent lists below the form.
+                let words = if paired {
+                    Refusal::SetupNameHeld(name.clone())
+                } else {
+                    Refusal::SetupNameHeldUnpaired(name.clone())
+                }
+                .to_string();
+                let kept = kept(&name, "", words, false);
+                return first_answer(&store, seams, &session, StatusCode::CONFLICT, kept).await;
+            }
+            Err(e) => return fault(e),
+        }
+        // **The appliance resolved among the waiting**: one gone is unknown,
+        // answered with no record, and one whose wait ended is said so.
+        if !enrollment
+            .listener
+            .waiting()
+            .iter()
+            .any(|w| w.handle == ask.appliance)
+        {
+            let (status, words) = unlisted(&enrollment.listener, &ask.appliance);
+            let kept = kept(&name, "", words.to_owned(), false);
+            return first_answer(&store, seams, &session, status, kept).await;
+        }
+        let listener = enrollment.listener.clone();
+        let continued = tokio::spawn(continue_finalize(Finalize {
+            store: store.clone(),
+            cfg: seams.cfg.clone(),
+            enrollment,
+            session: session.clone(),
+            setup_id: setup_id.clone(),
+            name: name.clone(),
+            appliance: ask.appliance.clone(),
+            code,
+        }));
+        // **On unknown the page draws what the write made** (Spec 8.2): the
+        // register's live rows holding the name, each with its admin
+        // fingerprint, which the operator compares with the appliance's
+        // unknown line.
+        let mut unknown = false;
+        let (status, words, retire, appliance) = match continued.await {
+            Ok(Ok(Finalized::Ended(ended))) => match first_words(&ended.outcome, &name) {
+                None => {
+                    return (
+                        StatusCode::SEE_OTHER,
+                        [(header::LOCATION, pair_href(&setup_id))],
+                    )
+                        .into_response();
+                }
+                Some((status, words)) => {
+                    unknown = matches!(ended.outcome, Outcome::Unknown(_));
+                    (
+                        status,
+                        words,
+                        matches!(
+                            ended.outcome,
+                            Outcome::Refused(PairingRefusal::BoxAndNameLive)
+                        ),
+                        "",
+                    )
+                }
+            },
+            Ok(Ok(Finalized::Missed { left })) => (
+                StatusCode::CONFLICT,
+                format!(
+                    "That code does not match the appliance you chose. {left} {} left on it.",
+                    if left == 1 { "try is" } else { "tries are" }
+                ),
+                false,
+                ask.appliance.as_str(),
+            ),
+            Ok(Ok(Finalized::Closed)) => (StatusCode::CONFLICT, CLOSED.to_owned(), false, ""),
+            Ok(Ok(Finalized::Silent)) => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                SILENT.to_owned(),
+                false,
+                ask.appliance.as_str(),
+            ),
+            Ok(Ok(Finalized::Gone)) => {
+                let (status, words) = unlisted(&listener, &ask.appliance);
+                (status, words.to_owned(), false, "")
+            }
+            Ok(Err(early)) => return early,
+            Err(e) => return fault(anyhow::Error::new(e)),
+        };
+        let mut kept = kept(&name, appliance, words, retire);
+        if unknown {
+            kept.rows = match store.live_rows_named(&name).await {
+                Ok(rows) => Some(super::rows_of(&rows)),
+                Err(e) => return fault(e),
+            };
+        }
+        first_answer(&store, seams, &session, status, kept).await
+    }
+
+    /// **A malformed entry is drawn back into New agent** (Spec 8.2; the
+    /// review of pull request 214, finding 7): at 400, with its words, the
+    /// name as typed and the appliance chosen kept and the code's field
+    /// empty, as every later refusal is drawn. It stays no miss: the
+    /// admin's session is read as New agent's own page reads it, and no
+    /// record is written, no setup key minted and no connection asked.
+    /// Whoever is not an admin is answered as that page answers.
+    async fn malformed(
+        store: &Store,
+        seams: &Seams,
+        headers: &HeaderMap,
+        ask: &FinalizeAsk,
+        words: String,
+    ) -> Response {
+        let session = match admin_session(store, &seams.policy, headers).await {
+            Ok(Ok(session)) => session,
+            Ok(Err(_)) => return (StatusCode::FORBIDDEN, NOT_AN_ADMIN).into_response(),
+            Err(answer) => return answer,
+        };
+        let name: String = ask
+            .name
+            .trim()
+            .chars()
+            .take(crate::store::setup::NAME_MOST)
+            .collect();
+        let appliance = if is_handle(&ask.appliance) {
+            ask.appliance.as_str()
+        } else {
+            ""
+        };
+        let kept = kept(&name, appliance, words, false);
+        first_answer(store, seams, &session, StatusCode::BAD_REQUEST, kept).await
+    }
+
+    /// **What New agent says of an appliance no longer listed**: its wait
+    /// ended, else gone.
+    fn unlisted(
+        listener: &crate::link::listener::Listener,
+        handle: &str,
+    ) -> (StatusCode, &'static str) {
+        if listener.wait_ended(handle) {
+            (StatusCode::CONFLICT, WAIT_ENDED)
+        } else {
+            (StatusCode::NOT_FOUND, GONE)
+        }
+    }
+
+    /// **What New agent's entry's task owns**, so it runs apart from the
+    /// request.
+    struct Finalize {
+        store: Store,
+        cfg: Arc<ServerConfig>,
+        enrollment: super::Enrollment,
+        session: Session,
+        setup_id: String,
+        name: String,
+        appliance: String,
+        code: Code,
+    }
+
+    /// How New agent's entry ended.
+    enum Finalized {
+        Ended(Ended),
+        Missed { left: u8 },
+        Closed,
+        Silent,
+        Gone,
+    }
+
+    /// **New agent's entry from the comparison through the outcome's
+    /// record** (Spec 8.2), in a task a dropped request cannot cut: the
+    /// chosen connection asked alone, a miss recorded, and a match carried
+    /// on to the exchange, which makes the setup.
+    async fn continue_finalize(entry: Finalize) -> Result<Finalized, Response> {
+        let Finalize {
+            store,
+            cfg,
+            enrollment,
+            session,
+            setup_id,
+            name,
+            appliance,
+            code,
+        } = entry;
+        let taken = match enrollment.listener.take_chosen(&appliance, &code).await {
+            Chosen::Matched(taken) => *taken,
+            Chosen::Gone => return Ok(Finalized::Gone),
+            Chosen::Silent => return Ok(Finalized::Silent),
+            Chosen::Missed { left } => {
+                record_refusal(
+                    &store,
+                    &session,
+                    &setup_id,
+                    "the code matches not the appliance chosen",
+                )
+                .await?;
+                return Ok(Finalized::Missed { left });
+            }
+            Chosen::Closed => {
+                record_refusal(
+                    &store,
+                    &session,
+                    &setup_id,
+                    "the code matches not the appliance chosen, and its connection is closed",
+                )
+                .await?;
+                return Ok(Finalized::Closed);
+            }
+        };
+        exchange_matched(Matched {
+            store,
+            cfg,
+            enrollment,
+            session,
+            setup_id,
+            name,
+            replace: None,
+            begun: true,
+            taken,
+        })
+        .await
+        .map(Finalized::Ended)
+    }
+
+    /// **What New agent says of an exchange's end**, in the appliance's
+    /// words: none where it paired, which leads to the agent's Pair page.
+    fn first_words(outcome: &Outcome, name: &str) -> Option<(StatusCode, String)> {
+        Some(match outcome {
+            Outcome::Paired { .. } => return None,
+            Outcome::Refused(refusal) => (
+                StatusCode::CONFLICT,
+                format!("refused, the appliance was told {}: {refusal}", refusal.reason()),
+            ),
+            Outcome::Request(why) => (
+                StatusCode::CONFLICT,
+                format!("refused, the appliance was told request_refused: {why}"),
+            ),
+            Outcome::BoxGone => (
+                StatusCode::CONFLICT,
+                "the appliance's connection ended before its answer, so nothing was written: run the setup script again to dial anew".to_owned(),
+            ),
+            Outcome::Busy => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "another register write held Weaver Web past the appliance's ten minutes, so the appliance was refused busy and nothing was written: run the setup script again to dial anew".to_owned(),
+            ),
+            Outcome::LostWord => (
+                StatusCode::CONFLICT,
+                format!(
+                    "the appliance did not say it wrote the answer within {} s, so nothing was written: run the setup script again to dial anew",
+                    crate::link::listener::HANDSHAKE_SECS
+                ),
+            ),
+            Outcome::AuthorityGone => (
+                StatusCode::FORBIDDEN,
+                "the session or the admin grant that entered the code ended before the write, so nothing was written: run the setup script again to dial anew".to_owned(),
+            ),
+            Outcome::Unknown(_) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!(
+                    "unknown: whether the pairing's write landed cannot be said. The rows below are the register's live rows holding {name} as read when this page was drawn, and a row this write makes may appear a moment later: compare their admin fingerprint with the one the appliance's unknown line shows, and adopt only where it matches"
+                ),
+            ),
+        })
     }
 }

@@ -1,37 +1,137 @@
 {% extends "instrument.html" %}
-{% block title %}Pair a box - weaver-web{% endblock %}
+{% block title %}New agent - weaver-web{% endblock %}
 {% block body %}
-{#- Pair a box, Provision's page (Spec 8.2; the operator's rulings of
-    2026-11-23: "Pairing is its own page", and "the agent is named at
-    pairing"; and of 2026-11-24: "'Create new agent' opens a requirements
-    page first"): Create new agent, which opens the requirements page where
-    the agent is named, and the named agents whose box is not yet paired. -#}
-<h1>Pair a box</h1>
+{#- New agent, the first page of stage 1 (Spec 8.2; the operator's rulings
+    of 2026-11-25: "New agent is the first page of stage 1", the script run
+    by command over SSH, the trusted network, and his yes to "the first page
+    of Weaver Web lists the appliances waiting, and the operator clicks
+    theirs, names the agent and enters the code"; of 2026-11-24 and
+    2026-11-23 for what an agent needs). With no click before them: what an
+    agent needs, the steps at the appliance, Weaver Web's management address
+    and fingerprint, the appliances awaiting final initialization, and the
+    one form, whose post names the agent and finalizes the pairing. Every
+    word the operator reads says appliance. -#}
+<h1>New agent</h1>
+<p>This page pairs an appliance with Weaver Web and names its agent.</p>
+<p class="note">Weaver Web and its appliances are not meant to be deployed on a network you do not trust. They are meant for a trusted network, the same place you would deploy a hypervisor.</p>
+{%- if let Some(entered) = entered %}
+<p class="note" role="status"><span class="status {{ entered.status }}">{{ entered.status }}</span> {{ entered.words }}{% if entered.retire %}: retire it on <a href="/admin/agents">the register</a>, and pair the appliance again{% endif %}</p>
+{%- endif %}
+{%- if let Some(rows) = rows %}
+{%- if rows.is_empty() %}
+<p class="note">The register held no live row named {{ name }} when this page was drawn. The write may still land: load New agent again before dialing anew.</p>
+{%- else %}
+<table>
+  <caption>The register's live rows holding {{ name }}, as read when this page was drawn; a row this write makes may appear a moment later</caption>
+  <thead><tr><th>Agent</th><th>Box</th><th>Gate</th><th>Admin</th><th>State</th></tr></thead>
+  <tbody>
+  {%- for r in rows %}
+  <tr><td class="mono">{{ r.agent_id }}</td><td class="mono">{{ r.box }}</td><td class="mono">{{ r.gate }}</td><td class="mono">{{ r.admin }}</td><td>{{ r.label }}</td></tr>
+  {%- endfor %}
+  </tbody>
+</table>
+{%- endif %}
+{%- endif %}
 <div class="stack">
 <section class="pane">
-  <header><span class="stage"><b>2</b> Provision</span><h2>A new agent</h2><span class="backing built">built</span><span class="status ok">ok</span><span class="source">the requirements page</span></header>
+  <header><span class="stage"><b>1</b> Declare</span><h2>What an agent needs</h2><span class="backing built">built</span><span class="status ok">ok</span><span class="source">the operator's rulings</span></header>
   <div class="body">
-  <p><a href="/pair/new">Create new agent</a></p>
+  <ul>
+    <li>An agent runs in a VM made from the appliance. This version covers VMs only. One agent per VM is the recommendation.</li>
+    <li>The operator holds the hypervisor, the cards, the disks and the network between VMs.</li>
+    <li>The appliance comes with no state disk and no models disk. It comes with itself.</li>
+    <li>The operator adds both in the hypervisor, sized to their need: a models disk at least 10 GB larger than the model, and a state disk of at least 10 GiB. The 10 GB margin is guidance. No page judges it.</li>
+    <li>The setup script lists the drives. The operator picks the models drive and the state drive. Each mount path is preset to our default, and the operator may type another. Where a disk already holds data, the script asks whether to keep it or erase it.</li>
+    <li>GB10 Spark-class devices are hardware we want to deploy to and do not have yet.</li>
+  </ul>
   </div>
-  <footer>Opens the requirements page, which ends in the agent's name.</footer>
+  <footer>The operator's rulings of 2026-11-23, 2026-11-24 and 2026-11-25. The declaration's first page shows the two directories as the appliance reports them.</footer>
 </section>
 <section class="pane">
-  <header><span class="stage"><b>2</b> Provision</span><h2>Agents waiting on their box</h2><span class="backing built">built</span><span class="status ok">ok</span><span class="source">the store's open setups</span></header>
+  <header><span class="stage"><b>1</b> Declare</span><h2>At the appliance</h2><span class="backing built">built</span>{% if loopback_warning || unspecified_warning %}<span class="status fail">fail</span>{% else %}<span class="status ok">ok</span>{% endif %}<span class="source">the appliance's setup script, and Weaver Web's config: <code>link_address</code>, else <code>link_listen</code></span></header>
   <div class="body">
-  {%- if waiting.is_empty() %}
-  <p>No named agent waits on its box.</p>
-  {%- else %}
-  <table>
-    <thead><tr><th>Name</th><th>Named</th></tr></thead>
-    <tbody>
-    {%- for setup in waiting %}
-    <tr><td><a href="{{ setup.href }}">{{ setup.name }}</a></td><td>{{ setup.begun_by }}, {{ setup.begun_at }}</td></tr>
-    {%- endfor %}
-    </tbody>
-  </table>
+  <ol>
+    <li>Start the appliance with its two disks attached, and connect to it over SSH as {{ starting_user }}. {{ first_password }} is changed at the first login.</li>
+    <li>Run <code>{{ command }}</code> with root's authority.</li>
+    <li>The script prepares and mounts the two disks, marks each card for a plane, and asks for Weaver Web's address on the management plane.</li>
+    <li>Give it this address: <span class="mono">{{ link.address }}</span>, port <span class="mono">{% match link.port %}{% when Some with (port) %}{{ port }}{% when None %}none named{% endmatch %}</span>.{% if one_door %} Both planes share one door.{% endif %}</li>
+    <li>The script asks for a name for the appliance, then dials Weaver Web. The appliance is listed below under the name you gave it, and the SSH session shows Weaver Web's fingerprint and a code.</li>
+  </ol>
+  {%- if loopback_warning %}
+  <p><span class="status fail">loopback</span> This is a loopback address, which a VM cannot reach on Weaver Web's host. Set <code>link_address</code> in Weaver Web's config to an address the appliance reaches.</p>
+  {%- endif %}
+  {%- if unspecified_warning %}
+  <p><span class="status fail">unspecified</span> This is an unspecified address, which a listener binds for every interface and which names no machine to dial. Set <code>link_address</code> in Weaver Web's config to an address the appliance reaches.</p>
   {%- endif %}
   </div>
-  <footer>An agent stays here until its box is paired, then its declaration opens under Declarations.</footer>
+  <footer>The address is Weaver Web's management door, read from its own config, and never the appliance's. The script asks for it, and the appliance must reach it.</footer>
 </section>
+{%- if live %}
+<form method="post" action="/pair" class="stack">
+<section class="pane">
+  <header><span class="stage"><b>1</b> Declare</span><h2>Weaver Web's fingerprint</h2><span class="backing built">built</span><span class="status ok">ok</span><span class="source">the authority Weaver Web loaded</span></header>
+  <div class="body">
+  <p class="mono">{% for row in fingerprint %}{% if !loop.first %}<br>{% endif %}{{ row }}{% endfor %}</p>
+  <label><input type="checkbox" name="compared" value="on" required> The fingerprint the appliance shows is Weaver Web's, above, row by row and group for group.</label>
+  </div>
+  <footer>The SSH session shows the same four rows of four groups. Compare them before the code.</footer>
+</section>
+<section class="pane">
+  <header><span class="stage"><b>1</b> Declare</span><h2>Appliances awaiting final initialization</h2><span class="backing built">built</span>{% if any_loopback %}<span class="status fail">fail</span>{% else %}<span class="status ok">ok</span>{% endif %}<span class="source">the link port, each by the name typed in its setup script</span></header>
+  <div class="body">
+  {%- if waiting.is_empty() %}
+  <p>No appliance is waiting. Run the setup script on the appliance; it is listed here once it dials.</p>
+  {%- else %}
+  <fieldset>
+    <legend>Each by the name typed in its setup script</legend>
+    {%- for w in waiting %}
+    <label><input type="radio" name="appliance" value="{{ w.handle }}" required{% if w.chosen %} checked{% endif %}> <span class="mono">{{ w.claim }}</span>, from <span class="mono">{{ w.peer }}</span>, waiting {{ w.waited }}</label>
+    {%- endfor %}
+  </fieldset>
+  {%- for w in waiting %}{% if w.loopback %}
+  <p><span class="status fail">loopback</span> The appliance named {{ w.claim }} dialed from a loopback address, Weaver Web's own machine, which a VM is not.</p>
+  {%- endif %}{% endfor %}
+  {%- endif %}
+  <p><a href="/pair">Refresh the list</a></p>
+  </div>
+  <footer>Each appliance is listed by the name typed in its setup script, as it claims it, until its code is entered or its ten minutes pass.</footer>
+</section>
+<section class="pane">
+  <header><span class="stage"><b>1</b> Declare</span><h2>Name the agent</h2><span class="backing built">built</span><span class="status ok">ok</span><span class="source">the start page's rule</span></header>
+  <div class="body">
+  <label>Name the agent: <input type="text" name="name" value="{{ name }}" maxlength="{{ name_most }}" autocomplete="off" spellcheck="false" required></label>
+  <label>Code from the SSH session: <input type="text" name="code" autocomplete="off" spellcheck="false" maxlength="16" required></label>
+  {%- if waiting.is_empty() %}
+  <p>Finalize the pairing is offered once an appliance is listed above.</p>
+  {%- else %}
+  <button type="submit">Finalize the pairing</button>
+  {%- endif %}
+  </div>
+  <footer>A lowercase letter, then lowercase letters and digits, 2 to {{ name_most }} characters in all. The appliance names the agent's accounts, its directories and its admin entry after it, so the name is one it can take. Once paired, the agent's Pair page shows the appliance's report and leads on to its declaration.</footer>
+</section>
+</form>
+{%- else %}
+<section class="pane">
+  <header><span class="stage"><b>1</b> Declare</span><h2>Appliances awaiting final initialization</h2><span class="backing unbuilt">unbuilt</span><span class="status hold">hold</span></header>
+  <div class="body">
+  <p>The appliance's setup script shows Weaver Web's fingerprint and a code. The appliance is listed here, and the agent named and the code entered here.</p>
+  </div>
+  <footer>Waits on the enrollment, which this build of Weaver Web does not serve.</footer>
+</section>
+{%- endif %}
+{%- if !unpaired.is_empty() %}
+<section class="pane">
+  <header><span class="stage"><b>1</b> Declare</span><h2>Setups not yet paired</h2><span class="backing built">built</span><span class="status hold">hold</span><span class="source">the open setups whose appliance is not paired</span></header>
+  <div class="body">
+  <p>Each was begun before New agent and holds its name until its appliance is paired. Pair it on its own Pair page:</p>
+  <ul>
+    {%- for u in unpaired %}
+    <li><a href="{{ u.href }}">{{ u.name }}</a></li>
+    {%- endfor %}
+  </ul>
+  </div>
+  <footer>Each setup's Pair page carries its own steps and code field. Nothing here releases or deletes a setup.</footer>
+</section>
+{%- endif %}
 </div>
 {% endblock %}

@@ -1538,10 +1538,10 @@ whose credentials are live, so one physical agent cannot be registered twice
 into two rows with independent credentials; re-registering a live pair
 retires the previous row by revoking its credentials in the same act, and an
 appliance's pairing that names a live pair is refused instead (section 8.2).
-**A row's box changes only through the replace-box write of section 8.2**,
-one audited write after the fingerprint and the code, on this document's
-election of 2026-11-17, which keeps the box the row held, and the schema
-refuses any other write that moves it. **A row holding no
+**A row's box never changes**: a VM that pairs after a reset, and a new
+image for an agent that stands, each is a new agent with a row of its own
+(section 8.2, the operator's rulings of 2026-11-24 and 2026-11-27), and the
+schema refuses any write that moves a row's box. **A row holding no
 live credential is retired, and never live again**: an admin retires one
 through the server by revoking every live plane in one write, **a rotation
 refuses one, the host's `rotate` as the web's**, read under the row's lock
@@ -2613,8 +2613,8 @@ it decides are stated here and in section 2.8, and the reasons are there.
   server-side authorization item states, its commit point the store commit
   or the authority's file switch, and is audited the same way. **A register verb's
   audit target is the server's authority for `authority init` and `authority
-  rotate`, and the agent's row for `register`, `revoke`, `rotate`, `pair` and
-  `replace box`, and its action is the verb**, in the host's records as in a
+  rotate`, and the agent's row for `register`, `revoke`, `rotate` and `pair`, and
+  its action is the verb**, in the host's records as in a
   person's. **As built on 2026-10-09** (`/admin/agents`, on the operator's ruling
   of that date that everything done with agents belongs in the web page): the
   page, for an admin, lists the register's rows, each agent's box and name, its
@@ -2671,20 +2671,18 @@ it decides are stated here and in section 2.8, and the reasons are there.
   grant on a retired agent stands**: the row is never live again, so the
   grant names an agent that will not answer, and the grants page marks it
   for an admin to revoke. `authority init` and `authority rotate` stay host
-  commands, being the server's own authority. **`pair` and `replace box`,
-  an appliance's enrollment** (section 8.2, this document's election of
-  2026-11-17), are admin writes through the server alone, with no host
-  command, and take the same four steps: the setup's identity parsed, and
-  for `pair` the code read in section 8.2's form (malformed: answered as
+  commands, being the server's own authority. **`pair`, an appliance's
+  enrollment** (section 8.2, this document's election of 2026-11-17), is an
+  admin write through the server alone, with no host command, and takes the
+  same four steps: the setup's identity parsed, the code read in section
+  8.2's form (malformed: answered as
   malformed, no record and no miss), the first gate, the setup resolved for
   the admin (unknown: not found, no record) and the code compared with each
   waiting connection's, then the audited write under the authority lock,
   which holds the identity exclusion shared and re-reads the row under its
   lock inside its transaction. **A code that matches no waiting connection
   is one refusal record**, naming the setup and never the code, unlike an
-  unknown reference, since the misses are what the fifth counts. `replace
-  box` re-reads the row it replaces and refuses one retired since step
-  three, as a rotation does.
+  unknown reference, since the misses are what the fifth counts.
 
 **An agent holds one conversation.** Every gate connection lands in the
 agent's one session working structure, per `toddwbucy/WeaverAgent#59`, so
@@ -4724,8 +4722,7 @@ of 2026-11-25: "A. Eight stages stay. New agent is the first page of stage 1." N
 stands first under Agents, before Declarations, its pages' panes carrying the stage
 mark `1 Declare` and no setup rail. The agent is named there, so the setup row a pairing links is made
 when the agent is named, and no migration moves: the row stays the pairing's record (the
-Planner's ruling of 2026-11-24 on the plan). One box carries one setup, and the
-replace-box write of section 8.2 stays as it is, since "One agent per VM is the
+Planner's ruling of 2026-11-24 on the plan). One box carries one setup, since "One agent per VM is the
 recommendation" (the same rulings). The directories page names each directory at the
 place the report gives, `weaver-survey/2` carrying the two places as the operator chose
 them, and names no default (the brief of 2026-11-25).
@@ -4756,12 +4753,12 @@ agent, and finalizes the pairing."; and the network's premise, a trusted network
 same place you would deploy a hypervisor". **New agent is built to the brief of
 2026-11-25** (`docs/project/brief-2026-11-25-the-first-tab-and-the-first-page.md`),
 whose nine points the Planner accepted: no setup stands before a code matches, the
-first page offers no replacement (acting on the operator's lean of 2026-11-24, not on a
-ruling), its setup is a virtual machine, the outcomes and the names in the brief's
+first page offers no replacement, which the operator's ruling of 2026-11-27 makes the
+rule for every page (section 8.2), its setup is a virtual machine, the outcomes and the names in the brief's
 words, a plain link to refresh the list, appliance and never box in what the operator
 reads, and neither the starting user nor the first password named until the operator
 rules. **A setup begun before New agent named agents in one form**, by a name alone,
-keeps its Pair page as built, the code's field and the replacement among it; no page
+keeps its Pair page as built, with the code's field and no replacement; no page
 makes one now and New agent does not list one, and nothing is deployed, so no data
 moves.
 
@@ -4887,8 +4884,8 @@ length, the turn context and the devices the placement page keeps (the devices s
 migration `0029`). **The pages write no declaration row**, and the document's grammar of
 section 6.1 is not extended. Every write is audited with the target kind `setup`, naming
 the row. **An appliance's pairing links the setup to the register row** its exchange
-writes, or whose box a replacement sets, and keeps which of the two it was (section
-8.2), and **the setup keeps one survey report**, at the stage `pairing`, the one stage
+writes, and keeps the act, `pair` (a setup linked before the operator's ruling of
+2026-11-27 may read `replace box`, section 8.2), and **the setup keeps one survey report**, at the stage `pairing`, the one stage
 of `weaver-survey/2`, verbatim with the time it arrived; a second run's report replaces
 the row (section 8.3, the operator's ruling of 2026-11-25). A row kept under version
 1's stage `drives` before that ruling stays in the store, frozen by migration `0031`,
@@ -7328,22 +7325,18 @@ entered the code**, by session, its action `pair` and its target the agent row t
 exchange writes, and the row's author is that admin's `pe-` identity (section 3.2),
 since a pending enrollment is an admin's act and the server acts on the admin's entry.
 **A lost word at step 5 writes nothing.** The box then holds an answer whose
-certificates are not live, for a row that does not exist or, on a replacement, a row
-whose live credentials stay the old box's, and its connectors' hello meets them as not
+certificates are not live, for a row that does not exist, and its connectors' hello meets them as not
 live (section 8), so a failed pairing fails loud. **The recovery is a second pairing**:
 a box that adopted an answer whose word was lost pairs again, and the second pairing's
-configs replace the first's. **On `unknown` the Pair page says what the write made**,
-and not whether the row stands, since a replacement's row stands whether its write
-committed or not. Either write makes the answer's certificate the row's live admin
-credential, `pair` on the row it writes and `replace box` on the row whose box it sets
-to the new box's claim, so the page shows the row's box and its live credentials by
-their fingerprints, each as the register keeps it (section 2.12) in the authority's
-fingerprint's grouping. Where the write did not commit, the page shows no row or the old
-box's credentials, which match nothing the box holds. `pair`'s `unknown` line carries
+configs replace the first's. **On `unknown` the Pair page says what the write made**:
+`pair` makes the answer's certificate the live admin credential of the row it writes,
+so the page shows the row's box and its live credentials by their fingerprints, each as
+the register keeps it (section 2.12) in the authority's fingerprint's grouping. Where
+the write did not commit, the page shows no row the write made, and any row it shows
+holds other credentials, which match nothing the box holds. `pair`'s `unknown` line carries
 `admin`, the fingerprint of the answer's certificate, the setup script shows it and asks
 the operator whether the page shows the same, and it adopts only where the operator
-confirms it. Otherwise the box pairs again, so `pair` and `replace box` resolve one
-way. **New agent's unknown answer draws the same rows**, the register's live rows holding
+confirms it. Otherwise the box pairs again, so `pair` resolves one way. **New agent's unknown answer draws the same rows**, the register's live rows holding
 the name below its words, each by its agent, its box and its live credentials'
 fingerprints, since no other page shows a row's admin fingerprint (the review of pull
 request 214, finding 8). The rows are as read when the page is drawn, and the write's
@@ -7463,22 +7456,55 @@ The box facts admin-con's config needs are added by the image's install, as for 
 registered agent, and gate-con's by the loop's install. **The pairing changes nothing in the units** (section 8.1), since
 `adopt` writes the config each unit reads.
 
-**A new image for an agent that stands replaces the row's box**, on the operator's
-ruling of 2026-11-15 that a new image is a new enrollment and on this document's
-election of 2026-11-17 that a row's box changes through this write alone (section 2.12).
-The keys and certificates stand on the root disk and the agent's state drive, its folder
-and its save points, carries over, so the new image runs `request` and `pair` as a new
-box does. New agent names the agent that stands, and the Pair page asks whether to
-replace its box, saying that the old box's credentials end. After the fingerprint and
-the code, one audited write in section 2.13's order, its action `replace box`, does what
-`rotate` does as built, with the box changed: the old box's live credentials revoked and
-their connections closed, the new box's admin-con certificate signed for the same `ag-`,
-its gate plane not enrolled until the loop's install, and the row's box set to the new
-box's claim. The row is not retired, since a retired row
-never lives again and the agent stays one agent. The old box's certificates are refused
-from then on at admission, as a revoked credential is. The agent's record and its
-deployment tuples stay one agent's, and the new image's version is recorded as a new
-deployment tuple at Confirm (section 6.2).
+**A reset VM that pairs is a new agent**, on the operator's ruling of 2026-11-27, in
+his words: "Ruled, 9 (d) B: a reset VM that pairs with any Weaver Web is a new agent,
+whoever the operator is. Remove "replace box". Record the state disk's origin as
+provenance. The sender's record ends where the VM left them, and the receiver's begins
+where they got it. A reset kept local follows the same rule. The suite records the fact
+and does not tell the operator what it means." **A new image for an agent that stands
+is the same case**, on his words of 2026-11-24, when a review asked what happens where a
+replacement appliance carries a state disk: "that is a new agent with a state disk from
+a different agent. different agent and the state file while orignating from a different
+agent that is the provanance of what is fundamentally a new agent." (section 10). So no
+write moves a row to another box (section 2.12): a reset VM, a new image and a VM given
+a state disk kept from another agent each run `request` and `pair` as a new box does,
+and the pairing writes a new row with a new `ag-` identity. An upgrade in place that
+keeps the root disk is no pairing, and this section does not cover it.
+
+**The reset is the appliance's**, in the operator's words of 2026-11-27: "Reset is run
+by the sender, before a VM leaves. The use is moving an agent to another hypervisor, or
+sharing the VM with a trusted person or organization. The operator clones the VM, runs
+weaver-setup --reset, and then ships it. The reset drops the network settings and the
+drive assignment, and it tears down the pairing: the admincon certificate and the mutual
+TLS with this Weaver Web. That link is one to one and must never travel with the VM. The
+loop in the agent and whatever is on the drives stay. The receiver runs the normal first
+setup, the same as on a fresh appliance."
+
+**The sender's record ends where the VM left.** A reset sends the sender's Weaver Web
+no frame and leaves it no record, so that Weaver Web learns nothing from a reset. The
+row of the VM the clone was made from goes on as it was, and a row whose VM has left
+loses contact; either row's record ends only at an admin's retire (section 2.12), one
+audited write, after which the row is never live again. **The receiver's record begins
+at the pairing**: the `pair` first record and its outcome in the audit, the new register
+row, the setup row with `paired_as` `pair`, and the pairing report, landed in the
+pairing's own transaction (section 8.3). Nothing on the receiver's side links its row to
+the sender's. **A reset kept local** pairs as a new row with the Weaver Web it left, and
+a pairing whose box and name a live row holds is refused `box_and_name_live`, as any
+pairing is.
+
+**The state disk's origin is recorded as provenance**, and a page shows the fact and
+adds no sentence on what it means. What a pairing records today is the pairing report
+(`weaver-survey/2`, section 8.3): its state drive carries its mount point and, where
+mounted, its label, filesystem, size, free bytes and project quota, and nothing of where
+the disk came from. What the origin holds, whether the reset writes a record on the
+state disk, and how the record crosses the link are the appliance's and its format's,
+and open (section 10). Until they are settled the origin is not carried.
+
+**Rows written before the ruling stay as written.** A row a replace-box write moved
+keeps its identity, its last box and its live credentials, and its setups keep their
+`paired_as`; `setup describe` answers from the row's latest setup. The table
+`agent_box` keeps the boxes such rows held and takes no new row, and every audit record
+whose action is `replace box` stands.
 
 **What crosses after the pairing**, on the operator's rulings of 2026-11-16 (setup
 pages) and their addendum. The survey the image ships runs locally, and `admin-con setup
@@ -7510,8 +7536,7 @@ keeps on it."), then asks for the disk's name, and another name changes nothing 
 is not this disk's name, so nothing was changed."). It formats an empty disk after the
 same entry of its name. It refuses the state disk as the models disk, for every
 appliance ("That disk is already the state disk."), and a state disk under 10 GiB. After
-pairing it reads `setup describe` for the agent's name and the SSH keys, and nothing in
-the drive setup reads `replacement`. It does not refuse to erase a disk whose filesystem
+pairing it reads `setup describe` for the agent's name and the SSH keys. It does not refuse to erase a disk whose filesystem
 it cannot read, where it names no agent and the erase still takes the word erase and the
 disk's name, and it does not check after pairing that a kept state disk's folder is the
 paired agent's. `setup describe` answers the models drive's need, and the box pulls the
@@ -7522,7 +7547,7 @@ is sitting at, so admin's grant does not grow, and from pairing onward the conso
 whole reach is its two connectors.
 
 **The setup connection's two asks are this document's election of 2026-11-17** (section
-8.3): `setup describe` answers the agent, whether its pairing was a replacement, its
+8.3): `setup describe` answers the agent, its
 models, the models drive's need, the SSH
 public keys and, once Confirm stands, the members the agent is laid from, and `setup
 report` carries the survey's report. Both are built, `link::box_commands` on the box
@@ -7617,9 +7642,6 @@ a `setup` frame after a hello is refused as malformed. It makes two asks:
 - **`admin-con setup describe`.** In: its config alone. Out: one `described` line (0)
   with these members:
   - `agent` and `agent_id`, the register row's name and identity
-  - `replacement`, `true` where the setup's pairing was the replace-box write (section
-    8.2) and `false` where it wrote a new row. The drive setup does not read it, since it
-    has no replacement case (the operator's ruling of 2026-11-24, section 8.2)
   - `models`, absent until the models page's first pick, then one entry per role the
     setup holds, `decoder` and, where one is picked, `adapter`, each with `repository`,
     `commit`, `artifact` (the path of the choice's first part, or of the adapter's one
@@ -7883,9 +7905,9 @@ two connectors report.
 | a row whose gate plane is not enrolled reads admin alone and never present, and raises no turns banner | perturbation in `src/reading_tests.rs`, `an_agent_with_admin_con_alone_reads_admin_alone_and_never_present`: with admin-con connected the agent page reads "admin alone" with `ok` and the turn form held, with it gone "admin alone, admin-con down", never present, and no page carries "turns unavailable". Raise the banner for a gate that is not revoked, and the agent page carries it |
 | a first frame that is not this console's hello is refused `frame_refused` | perturbation in `src/link/pairing_tests.rs`, `a_first_frame_naming_a_gate_request_is_refused_frame_refused`: the earlier hello, which carried a gate request, hears `refused` with `frame_refused` and the box is never listed. Close such a frame unanswered, and the box hears no reason |
 | a lost word writes no row | perturbation in `src/enrollment_tests.rs`: a box that closes after the answer and before its word leaves no row and no link on the setup, the act's outcome `failed`, and the page answering the entry draws no row for the name. Write the row whether the word came or not, and a row stands for an answer no box adopted |
-| on `unknown` the Pair page shows what the write made, the row's box and its live credentials' fingerprints | perturbation in `src/enrollment_tests.rs`: a `replace box` whose admin's session closes between the answer and the box's word does not commit, the box reads no last word, and the page answering the entry shows the old box and its credentials' fingerprints and not the answer's; a `replace box` that commits, its box gone before the last word, shows the new box and the new certificates' fingerprints on the Pair page; and after a lost word for `pair` the page draws no row. Draw the answer's fingerprints in the rows' place, and the page after the write that did not commit shows them, which would match the box's line whether the write committed or not |
-| a row's box changes only through the replace-box write, and the row keeps the box it held | perturbation in `src/enrollment_tests.rs` and in the schema (migration `0030`): a `replace box` keeps the row's identity, sets its box and its new credentials, and keeps the old box in `agent_box`, and an update moving a row's box outside that write is refused. Write the new box without the history's row, and the schema refuses the write; drop the schema's trigger too, and the old box leaves the record |
-| `setup describe` answers `replacement` true after a replace-box write alone | perturbation in `src/enrollment_tests.rs`, against the real listener with the box's own commands: `setup describe` answers `replacement` `false` after a `pair` and `true` after a `replace box`, under the replacement's credential, and the replaced box's credential is refused. Answer false after a replacement, and the test fails. `describe`'s other members, the picks, the need and the laying once Confirm stands, are shown in `src/setup_place_tests.rs`. The drive setup reads no `replacement` (the operator's ruling of 2026-11-24); its keep, erase and format are the appliance's script's and tested there (`weaver-web-PRD` section 8) |
+| on `unknown` the Pair page shows what the write made, the row's box and its live credentials' fingerprints | perturbation in `src/enrollment_tests.rs`: a `pair` whose admin's session closes between the answer and the box's word does not commit, the box reads no last word, and the page answering the entry draws no row the write made; a `pair` that commits, its box gone before the last word, shows the row's box and the answer's certificates' fingerprints on the Pair page. Draw the answer's fingerprints whether or not a row stands, and the page after the write that did not commit shows them, which would match the box's line whether the write committed or not |
+| a row's box never moves, no new `replace box` is written, and a pairing whose box and name a live row holds is refused and writes nothing | perturbation in `src/enrollment_tests.rs` and in the schema (the migration that closes the replace-box write): an update moving a row's box, a setup written with `paired_as` `replace box` and an insert into `agent_box` are each refused, while the rows written before stay readable; the Pair page of a setup begun before New agent offers no replacement, and its pairing over a name a live row holds is refused `box_and_name_live` and writes no row. Drop each trigger's refusal, and its write lands; offer the replacement's fieldset again, and the page test finds it |
+| `setup describe` carries no member on how the setup paired | perturbation in `src/enrollment_tests.rs`, against the real listener with the box's own commands: `setup describe` after a `pair` answers the row's `agent` and `agent_id` and carries no `replacement`. Send the member again, and the test fails. `describe`'s other members, the picks, the need and the laying once Confirm stands, are shown in `src/setup_place_tests.rs`. The drive setup's keep, erase and format are the appliance's script's and tested there (`weaver-web-PRD` section 8) |
 | a setup ask is refused while its credential's connection stands, and counts for nothing in presence | perturbation in `src/enrollment_tests.rs`, against the real listener with the box's own commands: two setup asks in turn are each answered and leave the row's admin plane unconnected, with no link time, not present and still labelled setup running; beside a standing admin connection, `setup describe` and `setup report` are refused `already_connected` and no report lands. Admit the ask without the live connection's check, and the ask beside it is answered; write the plane's link state at a setup ask, and the row reads the admin plane connected |
 | a setup ask not answered within the silence bound or 20 seconds of its connection's accept, whichever is shorter, its lookup and admission included, is refused `store_unavailable` within the box's own bound and lets its claim go, and a lookup that fails is refused `store_unavailable` | perturbation in `src/enrollment_tests.rs`, against the real listener with the box's own commands. `a_setup_ask_the_store_holds_past_the_bound_is_refused_and_lets_its_claim_go`: a report held behind the setup's row, locked by another transaction, and a describe whose store call stalls are each refused `store_unavailable` within the box's own bound, the held report has landed nothing once the hold goes, and the next ask is answered. Await the report with no bound, and the box reads `unknown`. Await the describe with no bound, and it reads `fault`. Land the report outside its transaction before its checks, and the held report lands once the hold goes. `a_setup_ask_whose_admission_waits_is_refused_within_the_boxs_bound`: a describe whose admission waits on the agent's row, held by another transaction, is refused `store_unavailable` within a box's bound under the silence bound, and the next ask is answered. Run the admission outside the deadline, or bound the ask by the silence bound alone, and the box gives up first, reading `fault`. `a_setup_ask_whose_lookup_waits_is_refused_within_the_boxs_bound`: a describe whose lookup waits for a connection, the store's pool held past the box's bound, is refused `store_unavailable` within it, and the next ask is answered. Make the deadline after the lookup, the lookup unbounded, or run the lookup outside the deadline, and the box gives up first. `a_setup_ask_whose_lookup_and_admission_wait_is_refused_within_the_boxs_bound`: a lookup that waits 0.8 s, then an admission that waits on the agent's row, are refused at the deadline from the accept, within a box's bound of 1.4 s. Make the admission's deadline after the lookup, and the box gives up first. `a_setup_ask_whose_lookup_fails_is_refused_store_unavailable`: a lookup failed by the test's lever is refused `store_unavailable`, and the next ask is answered. End the connection with no refusal, and the box reads `fault` (each measured) |
 | the setup keeps one report, verbatim, a second run's replacing the row | perturbation in `src/enrollment_tests.rs`, `the_setup_keeps_its_one_report_verbatim_a_second_run_replacing_it`: a report and a second run's leave the second alone, byte for byte; one past the bound is refused on the box and at the listener, the kept report unchanged. Insert a row per report, and the first stands beside the second |
@@ -8533,9 +8555,10 @@ a `web-` assertion beside `weaver-admin`'s.
 - **Rotation of an enrolled appliance, opened 2026-11-15** (section 8.2). As built,
   rotation mints a pair on the server and writes two configs, which an enrolled
   appliance's keys cannot take, and the reconnect policy's guidance on `not_live` names
-  a registration or a rotation. Open: whether rotation is section 8.2's replace-box
-  write run on the same box or a path of its own, and what an enrolled appliance's
-  connectors tell the operator on `not_live`. Settled by the act of an enrolled box's
+  a registration or a rotation. Open: the path of its own that rotation takes, the one
+  candidate left since the operator's ruling of 2026-11-27 took the replace-box write
+  out of section 8.2, and what an enrolled appliance's connectors tell the operator on
+  `not_live`. Settled by the act of an enrolled box's
   rotation, with the operator.
 - **Rotation of the authority with enrolled appliances, opened 2026-11-15** (section
   8.2). Section 8 makes it a re-registration of every agent. For an enrolled appliance,
@@ -8545,8 +8568,26 @@ a `web-` assertion beside `weaver-admin`'s.
 - **An enrollment over a live row, closed 2026-11-17 by section 8.2**, opened 2026-11-15
   (section 8.2). Refused `box_and_name_live`, with the register's retire offered, by a
   register write of the exchange's own, so registration's re-registration stays
-  registration's alone. A new image for an agent that stands takes the replace-box
-  write, which keeps the row's identity and its box history (section 2.12).
+  registration's alone.
+- **A new image for an agent that stands, closed 2026-11-27 by section 8.2**, which
+  this document had closed the other way on 2026-11-17, electing a write that kept the
+  row and set its box. On the operator's words of 2026-11-24 it is a new
+  agent: "that is a new agent with a state disk from a different agent. different agent
+  and the state file while orignating from a different agent that is the provanance of
+  what is fundamentally a new agent." His ruling of 2026-11-27 removed the write. The
+  pairing writes a new row (section 2.12).
+- **The state disk's origin, opened 2026-11-27** (section 8.2). The operator's ruling of
+  that date records the origin as provenance, and a page shows it as a fact alone. The
+  pairing report (`weaver-survey/2`) carries nothing of it. Open, and not this
+  repository's to answer: what the origin holds (whether the state disk was kept or
+  formatted at this setup, the name of the agent whose folder it holds, a record the
+  reset writes on the disk); whether the reset writes such a record at all; and whether
+  the survey's format moves to a third version with a member under the state drive or
+  the origin crosses as a report stage of its own, the format's owner moving first. A
+  filesystem's identity survives a clone of the VM, so it cannot be the origin's
+  identity alone; and a clone holds the sender's admin-con key until the reset runs.
+  Settled by the appliance's format, merged in the suite repository, and the operator's
+  wording of the page's label, then by the act that carries the origin.
 - **Registration beside the pairing for a host, opened 2026-11-15** (section 8.2) as
   whether a single-host install may enroll. The operator's rulings of 2026-11-16 (setup
   pages) put a host in the setup flow beside a virtual machine, and their addendum has

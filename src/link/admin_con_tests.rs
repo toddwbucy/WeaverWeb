@@ -4647,3 +4647,112 @@ async fn a_refused_trace_opening_is_a_closed_door_with_one_entry_per_change() {
         ["service_version_unknown", "service_version_unknown"]
     );
 }
+
+/// The trace openings the trace's fake service has admitted.
+fn trace_openings(trace: &Trace) -> usize {
+    trace
+        .service
+        .with(|s| s.opened.iter().filter(|p| **p == Purpose::Trace).count())
+}
+
+/// **A close before the header is confirmed under a deadline only where
+/// the deadline leaves room** (Spec 7.2; the brief's decision 5), the arm
+/// `measure` and `verify` take with their opening's deadline: with room, a
+/// relay whose window passed admits the second opening; with too little,
+/// the first close is the refusal of the position and no second opening is
+/// made.
+///
+/// Perturbation (measured 2026-11-27): drop the room's check, and a second
+/// opening is made with too little room and admitted.
+#[tokio::test]
+async fn a_close_under_a_deadline_is_confirmed_only_with_room() {
+    let trace = Trace::new();
+    trace.append(1, "turn");
+    let reach = admin_con::Reach::new(trace.socket.clone(), "karl", None);
+    let at = super::tests::position(0);
+    trace.service.window_passes_next();
+    let until = tokio::time::Instant::now() + Duration::from_secs(5);
+    assert!(matches!(
+        admin_con::dial_relay(&reach, &at, Some(until)).await,
+        Dial::Open(_)
+    ));
+    assert_eq!(trace_openings(&trace), 2);
+    trace.service.window_passes_next();
+    let until = tokio::time::Instant::now() + Duration::from_millis(1500);
+    assert!(matches!(
+        admin_con::dial_relay(&reach, &at, Some(until)).await,
+        Dial::Refused
+    ));
+    assert_eq!(trace_openings(&trace), 3, "no second opening without room");
+}
+
+/// **A confirming opening that runs out of time is a closed door, not the
+/// relay's refusal** (Spec 7.2; `weaver-admin-operator-contract` section
+/// 8.5): a first opening closes before the header, the second is admitted
+/// by the service and sends no header, and it is cut `CONFIRM_MARGIN`
+/// short of the deadline as `Dial::Closed`, so the caller places no mark
+/// and keeps its position.
+///
+/// Perturbation (measured 2026-11-27): read the timeout as `Dial::Refused`
+/// again, and the slow relay is a refusal of the position; drop the
+/// margin, and the second opening runs to the caller's own deadline.
+#[tokio::test]
+async fn a_confirming_opening_that_runs_out_of_time_is_a_closed_door() {
+    let trace = Trace::new();
+    trace.append(1, "turn");
+    let reach = admin_con::Reach::new(trace.socket.clone(), "karl", None);
+    let at = super::tests::position(7);
+    trace.service.window_passes_then_stalls();
+    let started = tokio::time::Instant::now();
+    let until = started + Duration::from_secs(3);
+    match admin_con::dial_relay(&reach, &at, Some(until)).await {
+        Dial::Closed(why) => assert!(why.contains("position kept"), "{why}"),
+        Dial::Refused => panic!("a timeout read as the relay's refusal"),
+        _ => panic!("a stalled confirmation is a closed door"),
+    }
+    let took = started.elapsed();
+    assert!(
+        took < Duration::from_millis(2600),
+        "cut short of the deadline by its margin, took {took:?}"
+    );
+    assert_eq!(trace_openings(&trace), 2);
+}
+
+/// **Every word the service can refuse a trace opening with is a closed
+/// door**, each spelled as the contract's table has it (the brief's trace
+/// column), and the words that say admin-con or its config is at fault
+/// each raise one entry; `opening_late`, `full` and `relay_unreachable`
+/// raise none.
+#[tokio::test]
+async fn every_word_refusing_a_trace_opening_is_a_closed_door() {
+    let trace = Trace::new();
+    let at = super::tests::position(0);
+    for (refusal, raises) in [
+        ("opening_malformed", true),
+        ("opening_late", false),
+        ("version_unknown", true),
+        ("purpose_unknown", true),
+        ("name_refused", true),
+        ("full", false),
+        ("relay_unreachable", false),
+    ] {
+        let entries = Entries::new("admin-con");
+        let reach = admin_con::Reach::new(trace.socket.clone(), "karl", Some(entries.clone()));
+        trace.service.refuse(Some(Purpose::Trace), refusal);
+        match admin_con::dial_relay(&reach, &at, None).await {
+            Dial::Shut { word: w, .. } => assert_eq!(w, refusal),
+            _ => panic!("{refusal}: a refused opening is a closed door"),
+        }
+        let kinds: Vec<String> = entries
+            .pending()
+            .iter()
+            .filter_map(|(_, e)| e["kind"].as_str().map(str::to_owned))
+            .collect();
+        let expected: Vec<String> = if raises {
+            vec![format!("service_{refusal}")]
+        } else {
+            vec![]
+        };
+        assert_eq!(kinds, expected, "{refusal}");
+    }
+}

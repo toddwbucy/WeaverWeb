@@ -419,7 +419,7 @@ pub(crate) struct Reach {
     agent: String,
     entries: Option<Entries>,
     /// The last word the service refused the trace opening with, cleared
-    /// at an admission.
+    /// at every opening the relay answered with a header (`Dial::Open`).
     last: Arc<Mutex<Option<String>>>,
 }
 
@@ -460,7 +460,11 @@ impl Reach {
 /// `CONFIRM_ROOM` (always, with none): a relay whose window passed admits
 /// the second, a relay that died refuses it `relay_unreachable`, and a
 /// second close is read as the refusal of the position, which is not proof
-/// (`weaver-admin-operator-contract` section 8.5).
+/// (`weaver-admin-operator-contract` section 8.5). **A second opening with
+/// no header by `CONFIRM_MARGIN` short of the deadline is a closed door**,
+/// as a first opening past its deadline is: a timeout is not a close, and
+/// it comes just when a late request is the likely cause, so no mark is
+/// placed and the position is kept.
 pub(crate) async fn dial_relay(
     reach: &Reach,
     from: &Position,
@@ -480,7 +484,12 @@ pub(crate) async fn dial_relay(
         {
             tokio::time::timeout_at(until - CONFIRM_MARGIN, reach.dial(from))
                 .await
-                .unwrap_or(Dial::Refused)
+                .unwrap_or_else(|_| {
+                    Dial::Closed(format!(
+                        "the trace closed before its header at offset {}, and a second opening had no header within the deadline: the door is closed and the position kept",
+                        from.offset
+                    ))
+                })
         }
         Some(_) => return Dial::Refused,
     };

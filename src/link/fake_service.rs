@@ -201,6 +201,7 @@ pub(crate) struct State {
     pub(crate) relay_died: bool,
     pub(crate) die_next: bool,
     pub(crate) window_next: bool,
+    pub(crate) stall_next: bool,
     log: Option<(u64, mpsc::UnboundedSender<LogOut>)>,
     log_seq: u64,
     /// Every opening the fake answered `open`, by purpose.
@@ -260,6 +261,7 @@ impl FakeService {
             relay_died: false,
             die_next: false,
             window_next: false,
+            stall_next: false,
             log: None,
             log_seq: 0,
             opened: Vec::new(),
@@ -327,6 +329,17 @@ impl FakeService {
     /// header byte, as a relay whose window passed; the next is admitted.
     pub(crate) fn window_passes_next(&self) {
         self.with(|s| s.window_next = true);
+    }
+
+    /// The next trace opening is answered `open` and closed before any
+    /// header byte, as a relay whose window passed, and the one after it is
+    /// answered `open` and sends nothing until the connector closes, as a
+    /// relay that took the request late and is slow to answer.
+    pub(crate) fn window_passes_then_stalls(&self) {
+        self.with(|s| {
+            s.window_next = true;
+            s.stall_next = true;
+        });
     }
 
     /// Send one message down the log connection standing, if one stands.
@@ -928,21 +941,34 @@ async fn run_verb(
 /// **A trace connection**: the relay's dial before `open`, then the splice.
 async fn trace(reader: BufReader<UnixStream>, state: Arc<Mutex<State>>) {
     let mut reader = reader;
-    let (relay, die, window) = {
+    let (relay, die, window, stall) = {
         let mut s = state.lock().unwrap();
         let relay = s.relay.clone().filter(|_| !s.relay_died);
         let die = std::mem::take(&mut s.die_next);
         let window = std::mem::take(&mut s.window_next);
+        // The stall waits for the opening after the window's.
+        let stall = !die && !window && std::mem::take(&mut s.stall_next);
         if die {
             s.relay_died = true;
         }
-        (relay, die, window)
+        (relay, die, window, stall)
     };
     let unreachable = || refused(Refused::new(word::RELAY_UNREACHABLE, "no relay stands"));
     let Some(relay) = relay else {
         write(reader.get_mut(), &unreachable()).await;
         return;
     };
+    if stall {
+        // `open`, then nothing until the connector closes.
+        let open = open_line(&state, Purpose::Trace);
+        write(reader.get_mut(), &open).await;
+        let _ = tokio::time::timeout(
+            Duration::from_secs(60),
+            tokio::io::copy(&mut reader, &mut tokio::io::sink()),
+        )
+        .await;
+        return;
+    }
     if die || window {
         // `open`, then a close before any header byte.
         let open = open_line(&state, Purpose::Trace);

@@ -1645,11 +1645,11 @@ pub async fn run<I: Invoker>(
 /// exactly as it stands, whatever the ceiling grants. The link's half (asks
 /// still waiting answered `not_started`, the verb in flight's answer sent)
 /// is done by the time this runs; here the verb in flight, if any, is
-/// waited for within the stop's grace, so its process is reaped and its
-/// outcome logged before admin-con exits. **The child is never killed**:
-/// past the grace admin-con exits and the child, in its own session, runs
-/// on, its outcome recorded in the box's `admin.log`. To the server, this
-/// exit is lost contact, raised to the operator.
+/// waited for within the stop's grace, so its run's end is read and its
+/// outcome logged before admin-con exits. **admin-con never stops a run**:
+/// past the grace admin-con exits and the run goes on at the weaver-admin
+/// service, its outcome recorded in the box's `admin.log`. To the server,
+/// this exit is lost contact, raised to the operator.
 pub(super) async fn orderly_stop(slot: &Slot, agent: &str, deadline: tokio::time::Instant) {
     match tokio::time::timeout_at(deadline, slot.permit.clone().acquire_owned()).await {
         Ok(_) => tracing::info!(
@@ -1658,7 +1658,7 @@ pub(super) async fn orderly_stop(slot: &Slot, agent: &str, deadline: tokio::time
         Err(_) => {
             let running = slot.running.lock().unwrap().clone();
             tracing::warn!(
-                "{agent}: {} still runs at the end of the stop's grace; it runs on, never killed, its outcome in the box's admin.log",
+                "{agent}: {} still runs at the end of the stop's grace; it runs on at the service, its outcome in the box's admin.log",
                 running.as_deref().unwrap_or("a verb")
             );
         }
@@ -1682,7 +1682,7 @@ struct ServeOptions {
 }
 
 /// **admin-con's invocation slot, one per process** (Spec 7.2): held from
-/// an invocation's start until its process exits and is reaped, across
+/// an invocation's start while admin-con can read its run standing, across
 /// connection attempts, so a verb asked on a fresh connection while a
 /// timed-out one still runs queues behind it and never runs beside it. The
 /// box's own guard stands beside this one, weaver-admin's invocation lock;

@@ -12,11 +12,12 @@
 //! invocation.
 //!
 //! **There is no privileged code here.** The verbs reach admin behind the
-//! [`Invoker`] trait, whose service implementation is the sudo invoker of
-//! `link::sudo_invoker`, the one privileged invocation in this crate. This
-//! module owns the order around it: the process-wide invocation slot, the
-//! verb bound, and the orderly stop, which invokes nothing (Spec 7.2, 8,
-//! 2.14). No file is
+//! [`Invoker`] trait, whose service implementation is
+//! `link::service_invoker`, the client of the weaver-admin service's
+//! socket, which runs the fixed lines itself and reads the grant on every
+//! verb (`weaver-admin-operator-contract` section 8). This module owns the
+//! order around it: the process-wide invocation slot, the verb bound, and
+//! the orderly stop, which invokes nothing (Spec 7.2, 8, 2.14). No file is
 //! read: the record reaches admin-con through the relay alone.
 //!
 //! **One task owns the door and the connection's outbound stream**, so
@@ -93,9 +94,12 @@ pub const STOP_GRACE: Duration = Duration::from_secs(1080);
 
 /// **The verb plane's one reach to admin** (Spec 7.2, 8): `grants` answers
 /// which verbs the box grants admin-con on this agent, and `run` invokes
-/// one. The one privileged implementation is
-/// [`crate::link::sudo_invoker::SudoInvoker`].
+/// one. The service's implementation is
+/// [`crate::link::service_invoker::ServiceInvoker`].
 pub trait Invoker: Send + Sync + 'static {
+    /// The connector's entries, handed over once at the start, where an
+    /// invoker raises its own failures (Spec 2.14). Most keep none.
+    fn attach(&self, _entries: &Entries) {}
     /// The verbs the box grants on this agent, read-only: the ceiling.
     fn grants(&self) -> impl Future<Output = anyhow::Result<Vec<String>>> + Send;
     /// Run one verb on this agent for a principal, answering admin's object
@@ -142,8 +146,8 @@ impl Invoker for NoVerbs {
 // ---------- the config ----------
 
 /// admin-con's config: what `weaver-web register` wrote, plus the box facts
-/// filled at install with no default (the trace relay's socket and the
-/// absolute path of `weaver-admin` the box's sudo rule names), the backfill
+/// filled at install with no default (the trace relay's socket, the
+/// weaver-admin service's socket and the agent's `admin.log`), the backfill
 /// bound for the first connection after a server restart, and the verb's
 /// bound and the stop's grace (Spec 7.2, 8).
 #[derive(Debug, Clone, Deserialize)]
@@ -155,12 +159,12 @@ pub struct AdminConConfig {
     /// laid**: the door reads closed for that reason and no relay is dialed.
     #[serde(default)]
     pub trace_socket: Option<PathBuf>,
-    /// The absolute path of `weaver-admin` the box's sudo rule names, the
-    /// one config value in a privileged command line beside the agent's
-    /// name (Spec 7.2). **Absent with no agent laid**: the ceiling is empty
-    /// and no `sudo` runs.
+    /// **The weaver-admin service's socket, absolute** (Spec 7.2;
+    /// `weaver-admin-operator-contract` section 8): where admin-con asks
+    /// the grants and a verb. **Absent with no agent laid**: the ceiling is
+    /// empty and nothing is asked.
     #[serde(default)]
-    pub weaver_admin: Option<PathBuf>,
+    pub admin_socket: Option<PathBuf>,
     /// **The agent's `admin.log`, absolute** (Spec 2.14, 8): a box fact
     /// with no default, read line by line from admin-con's start and sent
     /// upstream as entries (`link::admin_log`). **Absent with no agent
@@ -239,6 +243,14 @@ fn default_drain_bound() -> Duration {
     DRAIN_BOUND
 }
 
+/// **Members an older admin-con read, now refused by name** (Spec 7.2):
+/// a config naming one was laid for the sudo invoker, and starting on it
+/// would leave admin-con silently unlaid.
+const RETIRED: &[(&str, &str)] = &[(
+    "weaver_admin",
+    "weaver_admin is retired; admin-con asks the service at admin_socket",
+)];
+
 /// The members an admin-con config may carry: the only names a parse error
 /// may print.
 const MEMBERS: &[&str] = &[
@@ -252,7 +264,7 @@ const MEMBERS: &[&str] = &[
     "key",
     "local_address",
     "trace_socket",
-    "weaver_admin",
+    "admin_socket",
     "admin_log",
     "backfill_bytes",
     "verb_bound_secs",
@@ -261,13 +273,19 @@ const MEMBERS: &[&str] = &[
 
 impl AdminConConfig {
     /// Read the config under the trust rule of `client::read_private`, and
-    /// refuse one minted for the gate plane, one missing a member, a
-    /// backfill past `MAX_BACKFILL_BYTES`, or a `weaver_admin` or
-    /// `trace_socket` that is not absolute: the box's sudo rule names the
-    /// one absolutely, and the other is a box fact never resolved against
+    /// refuse one naming a retired member, one minted for the gate plane,
+    /// one missing a member, a backfill past `MAX_BACKFILL_BYTES`, or a box
+    /// fact that is not absolute: a box fact is never resolved against
     /// admin-con's working directory.
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let content = client::read_private(path)?;
+        if let Ok(table) = content.parse::<toml::Table>()
+            && let Some((_, why)) = RETIRED
+                .iter()
+                .find(|(member, _)| table.contains_key(*member))
+        {
+            anyhow::bail!("{}: {why}", path.display());
+        }
         let cfg: Self = client::parse_config(path, &content, MEMBERS)?;
         cfg.link
             .expect_plane(Plane::Admin)
@@ -284,7 +302,7 @@ impl AdminConConfig {
         // and not all a half-done install, refused naming what is missing.
         let facts = [
             ("trace_socket", &cfg.trace_socket),
-            ("weaver_admin", &cfg.weaver_admin),
+            ("admin_socket", &cfg.admin_socket),
             ("admin_log", &cfg.admin_log),
         ];
         let missing: Vec<&str> = facts
@@ -301,7 +319,7 @@ impl AdminConConfig {
             );
         }
         for (member, fact) in [
-            ("weaver_admin", &cfg.weaver_admin),
+            ("admin_socket", &cfg.admin_socket),
             ("trace_socket", &cfg.trace_socket),
             ("admin_log", &cfg.admin_log),
         ] {
@@ -324,7 +342,7 @@ impl AdminConConfig {
 #[derive(Debug, Clone, Copy)]
 pub struct Laid<'a> {
     pub trace_socket: &'a Path,
-    pub weaver_admin: &'a Path,
+    pub admin_socket: &'a Path,
     pub admin_log: &'a Path,
 }
 
@@ -335,27 +353,28 @@ impl AdminConConfig {
     pub fn laid(&self) -> Option<Laid<'_>> {
         Some(Laid {
             trace_socket: self.trace_socket.as_deref()?,
-            weaver_admin: self.weaver_admin.as_deref()?,
+            admin_socket: self.admin_socket.as_deref()?,
             admin_log: self.admin_log.as_deref()?,
         })
     }
 }
 
-/// **The invoker a config chooses** (Spec 7.2): the sudo invoker of the
-/// laid agent's `weaver_admin`, or, with no agent laid, none, so the
-/// ceiling is empty and no `sudo` runs.
+/// **The invoker a config chooses** (Spec 7.2): the client of the laid
+/// agent's `admin_socket`, or, with no agent laid, none, so the ceiling is
+/// empty and nothing is asked.
 pub enum Invoking {
-    Sudo(crate::link::sudo_invoker::SudoInvoker),
+    Service(crate::link::service_invoker::ServiceInvoker),
     NoAgentLaid,
 }
 
 /// The invoker `cfg` chooses, read from `laid` alone.
 pub fn invoking(cfg: &AdminConConfig) -> anyhow::Result<Invoking> {
     Ok(match cfg.laid() {
-        Some(laid) => Invoking::Sudo(crate::link::sudo_invoker::SudoInvoker::new(
-            laid.weaver_admin,
+        Some(laid) => Invoking::Service(crate::link::service_invoker::ServiceInvoker::new(
+            laid.admin_socket,
             &cfg.link.agent,
-        )?),
+            cfg.verb_bound,
+        )),
         None => Invoking::NoAgentLaid,
     })
 }
@@ -370,7 +389,7 @@ pub async fn run_as_configured(
     status: &watch::Sender<LinkStatus>,
 ) -> anyhow::Result<()> {
     match invoking(&cfg)? {
-        Invoking::Sudo(invoker) => {
+        Invoking::Service(invoker) => {
             run(cfg, Arc::new(invoker), source, backoff, shutdown, status).await
         }
         Invoking::NoAgentLaid => {
@@ -1399,6 +1418,7 @@ pub async fn run<I: Invoker>(
     // box's admin.log read on a thread of its own, sent upstream by the
     // connection's pump.
     let entries = Entries::new("admin-con");
+    invoker.attach(&entries);
     // **No `admin_log`, nothing read** (Spec 7.2): with no agent laid the
     // file does not exist yet, and its absence is no failure.
     let laid = cfg.laid();

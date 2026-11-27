@@ -209,10 +209,18 @@ impl VerbFault {
     /// The ask names a verb outside the ceiling admin-con declared: the
     /// server's own defect, answered and not run, the connection kept.
     pub const OUTSIDE_CEILING: &'static str = "outside_ceiling";
-    /// admin-con holds as many asks as it waits behind, its bound.
+    /// admin-con holds as many asks as it waits behind, its bound; or the
+    /// weaver-admin service holds another run of the agent, which the
+    /// message names. Nothing ran.
     pub const BUSY: &'static str = "busy";
-    /// admin-con stopped before the verb was invoked: it did not run, and
-    /// may be asked again. admin-con's own, like `busy`.
+    /// The weaver-admin service read the grant at the verb and found it not
+    /// granted, though the ceiling named it: the box's rule changed since
+    /// the hello. Nothing ran (`weaver-admin-operator-contract` section 8.4).
+    pub const NOT_GRANTED: &'static str = "not_granted";
+    /// The verb was not started: admin-con stopped before invoking it, or
+    /// the service refused it before its root program started (the
+    /// message naming the service's word). It did not run, and may be
+    /// asked again.
     pub const NOT_STARTED: &'static str = "not_started";
     /// The invocation passed its bound and was ended: whether admin acted
     /// is not known. A bound passed is this fault, never an outcome, so

@@ -141,10 +141,10 @@ impl Rig {
 
     fn agent(&self, name: &str, extra: &str) -> String {
         format!(
-            "\n[[agent]]\nbox = \"box1\"\nname = \"{name}\"\ngate_socket = \"{}\"\ntrace_socket = \"{}\"\nweaver_admin = \"{}\"\nadmin_log = \"{}\"\n{extra}",
+            "\n[[agent]]\nbox = \"box1\"\nname = \"{name}\"\ngate_socket = \"{}\"\ntrace_socket = \"{}\"\nadmin_socket = \"{}\"\nadmin_log = \"{}\"\n{extra}",
             self.s(&format!("box/{name}/gate.sock")),
             self.s(&format!("box/{name}/trace.sock")),
-            self.s("box/admin-program"),
+            self.s("box/admin.sock"),
             self.s(&format!("box/{name}/admin.log")),
         )
     }
@@ -362,7 +362,7 @@ fn a_staged_config_is_the_handover_and_the_box_facts_and_loads() {
             admin.trace_socket,
             Some(rig.p(&format!("box/{agent}/trace.sock")))
         );
-        assert_eq!(admin.weaver_admin, Some(rig.p("box/admin-program")));
+        assert_eq!(admin.admin_socket, Some(rig.p("box/admin.sock")));
         assert_eq!(
             admin.admin_log,
             Some(rig.p(&format!("box/{agent}/admin.log")))

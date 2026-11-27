@@ -1,23 +1,25 @@
 //! admin-con against a fake trace relay serving a temporary trace file
-//! (`fake_relay`) and the real listener, with a fake invoker where a verb
-//! must run, and against a fake server where the real one cannot be made to
-//! ask outside the ceiling. No agent is reached and no verb is invoked for
+//! (`fake_relay`) and the real listener, with the fake weaver-admin service
+//! (`fake_service`) behind admin-con's real client of it where a verb must
+//! run, and against a fake server where the real one cannot be made to ask
+//! outside the ceiling. No agent is reached and no verb is invoked for
 //! real.
 
 use super::admin_con::{self, AdminConConfig, Invoker, NoVerbs};
 use super::client::{Backoff, LinkStatus};
 use super::client_tests::{FAST, FakeServer};
 use super::fake_relay::FakeRelay;
+use super::fake_service::{Act, FakeService, Script};
 use super::frames::{FromClient, Line, Plane, Principal, ToClient, VerbFault, VerbOutcome};
 use super::listener::{Listener, VerbError};
+use super::service_invoker::ServiceInvoker;
 use super::tests::{Lab, SILENCE, SOON, lab_config, operator};
 use crate::store::AgentId;
 use crate::traceview::TraceEvent;
 use serde_json::json;
-use std::collections::VecDeque;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::watch;
@@ -34,9 +36,9 @@ const ADA: &str = "pe-00000000000000ad";
 /// load at the box's bound and would hold every stop for minutes.
 pub(super) const GRACE: Duration = Duration::from_secs(5);
 
-/// A `weaver_admin` for configs whose invoker never runs a line: absolute,
+/// An `admin_socket` for configs whose invoker is given in code: absolute,
 /// as the config requires, and naming nothing.
-pub(super) const NO_WEAVER_ADMIN: &str = "/nonexistent/weaver-admin";
+pub(super) const NO_ADMIN_SOCKET: &str = "/nonexistent/admin.sock";
 
 /// A trace file in a temporary directory, and the fake relay that serves
 /// it: the door admin-con reads it through.
@@ -115,7 +117,7 @@ impl Trace {
     }
 }
 
-/// One scripted invocation of the fake invoker.
+/// One scripted invocation, as the fake service runs it.
 #[derive(Default)]
 pub(super) struct Step {
     pub(super) delay: Duration,
@@ -128,126 +130,83 @@ pub(super) struct Step {
     pub(super) then_state: Option<String>,
 }
 
-/// A fake invoker: permits a configured set, answers `show` with the state
-/// it holds at the invocation's start, and records what ran.
-pub(super) struct FakeInvoker {
-    grants: Vec<String>,
-    state: Mutex<String>,
-    steps: Mutex<VecDeque<Step>>,
-    ran: Mutex<Vec<String>>,
-    /// A delay for every run of one verb, whatever its order.
-    slow: Mutex<Option<(String, Duration)>>,
-    /// A verb whose every run faults.
-    fails: Mutex<Option<String>>,
-    /// How many `show` runs answer `in_transition` before one answers its
-    /// state: a run's processes still being ended.
-    transitions: Mutex<usize>,
+/// Append one line to a file and sync it.
+fn append_line(path: &Path, line: &str) {
+    let mut f = std::fs::OpenOptions::new().append(true).open(path).unwrap();
+    f.write_all(line.as_bytes()).unwrap();
+    f.sync_all().unwrap();
 }
 
-impl FakeInvoker {
+/// **The fake weaver-admin service, and admin-con's real client of it**
+/// (`link::fake_service`, `link::service_invoker`): the service grants a
+/// configured set, answers `show` with the state it holds as the verb
+/// starts, and records what ran; admin-con's verbs reach it over its
+/// socket exactly as they reach the box's.
+pub(super) struct Service {
+    pub(super) fake: FakeService,
+    invoker: ServiceInvoker,
+}
+
+impl Service {
     pub(super) fn new(grants: &[&str], state: &str) -> Arc<Self> {
-        Arc::new(Self {
-            grants: grants.iter().map(|g| (*g).to_owned()).collect(),
-            state: Mutex::new(state.to_owned()),
-            steps: Mutex::new(VecDeque::new()),
-            ran: Mutex::new(Vec::new()),
-            slow: Mutex::new(None),
-            fails: Mutex::new(None),
-            transitions: Mutex::new(0),
-        })
+        let fake = FakeService::start(grants, state);
+        let invoker = ServiceInvoker::new(&fake.socket, "karl", admin_con::VERB_BOUND);
+        Arc::new(Self { fake, invoker })
     }
 
     /// The next `n` runs of `show` answer `in_transition`.
     pub(super) fn in_transition_for(&self, n: usize) {
-        *self.transitions.lock().unwrap() = n;
+        self.fake.with(|s| s.in_transition = n);
     }
 
     fn fail(&self, verb: &str) {
-        *self.fails.lock().unwrap() = Some(verb.to_owned());
+        self.fake.with(|s| s.fails = Some(verb.to_owned()));
     }
 
     pub(super) fn slow(&self, verb: &str, delay: Duration) {
-        *self.slow.lock().unwrap() = Some((verb.to_owned(), delay));
+        self.fake.with(|s| s.slow = Some((verb.to_owned(), delay)));
     }
 
     pub(super) fn script(&self, step: Step) {
-        self.steps.lock().unwrap().push_back(step);
+        let mut script = Script::of(None, Act::State);
+        script.delay = step.delay;
+        script.then_state = step.then_state;
+        script.before = step
+            .first_append
+            .map(|(path, line)| Box::new(move || append_line(&path, &line)) as _);
+        script.after = step
+            .then_append
+            .map(|(path, line)| Box::new(move || append_line(&path, &line)) as _);
+        self.fake.script(script);
     }
 
     pub(super) fn set_state(&self, state: &str) {
-        *self.state.lock().unwrap() = state.to_owned();
+        self.fake.with(|s| s.show_state = state.to_owned());
     }
 
+    /// The verbs the service ran, in order.
     pub(super) fn ran(&self) -> Vec<String> {
-        self.ran.lock().unwrap().clone()
+        self.fake
+            .with(|s| s.ran.iter().map(|(verb, _)| verb.clone()).collect())
     }
 }
 
-impl Invoker for FakeInvoker {
+impl Invoker for Service {
+    fn attach(&self, entries: &crate::link::entries::Entries) {
+        self.invoker.attach(entries);
+    }
+
     async fn grants(&self) -> anyhow::Result<Vec<String>> {
-        Ok(self.grants.clone())
+        self.invoker.grants().await
     }
 
     async fn run(
         &self,
         agent: &str,
         verb: &str,
-        _principal: &Principal,
+        principal: &Principal,
     ) -> Result<VerbOutcome, VerbFault> {
-        self.ran.lock().unwrap().push(verb.to_owned());
-        if self.fails.lock().unwrap().as_deref() == Some(verb) {
-            return Err(VerbFault {
-                kind: VerbFault::FAULT.into(),
-                message: format!("{verb} faulted"),
-            });
-        }
-        let step = self.steps.lock().unwrap().pop_front().unwrap_or_default();
-        if let Some((path, line)) = step.first_append {
-            let mut f = std::fs::OpenOptions::new().append(true).open(path).unwrap();
-            f.write_all(line.as_bytes()).unwrap();
-            f.sync_all().unwrap();
-        }
-        let snapshot = self.state.lock().unwrap().clone();
-        if let Some((path, line)) = step.then_append {
-            let mut f = std::fs::OpenOptions::new().append(true).open(path).unwrap();
-            f.write_all(line.as_bytes()).unwrap();
-            f.sync_all().unwrap();
-        }
-        if let Some(state) = step.then_state {
-            self.set_state(&state);
-        }
-        tokio::time::sleep(step.delay).await;
-        let slow = self.slow.lock().unwrap().clone();
-        if let Some((slow, delay)) = slow
-            && slow == verb
-        {
-            tokio::time::sleep(delay).await;
-        }
-        let load = if snapshot == "idle" {
-            json!({"declaration": "sha-show"})
-        } else {
-            serde_json::Value::Null
-        };
-        let in_transition = verb == "show" && {
-            let mut left = self.transitions.lock().unwrap();
-            let some = *left > 0;
-            if some {
-                *left -= 1;
-            }
-            some
-        };
-        Ok(VerbOutcome {
-            verb: verb.to_owned(),
-            agent: agent.to_owned(),
-            exit_code: Some(0),
-            answer: Some(if in_transition {
-                json!({"kind": "in_transition", "constituents": [4100]})
-            } else {
-                json!({"kind": "state", "state": snapshot, "load": load})
-            }),
-            raw_stdout: None,
-            stderr: None,
-        })
+        self.invoker.run(agent, verb, principal).await
     }
 }
 
@@ -370,9 +329,9 @@ async fn installed_as(
     let path = PathBuf::from(answer.value["configs"][1].as_str().unwrap());
     assert!(path.ends_with("admin-con.toml"));
     let mut extra = format!(
-        "trace_socket = {}\nweaver_admin = {}\nadmin_log = {}\n",
+        "trace_socket = {}\nadmin_socket = {}\nadmin_log = {}\n",
         toml::Value::String(socket.display().to_string()),
-        toml::Value::String(NO_WEAVER_ADMIN.to_owned()),
+        toml::Value::String(NO_ADMIN_SOCKET.to_owned()),
         toml::Value::String(socket.with_file_name("admin.log").display().to_string())
     );
     if let Some(bytes) = backfill {
@@ -553,7 +512,7 @@ async fn the_server_never_asks_a_verb_outside_the_ceiling() {
     let trace = Trace::new();
     let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
-    let invoker = FakeInvoker::new(&["show"], "idle");
+    let invoker = Service::new(&["show"], "idle");
     let mut con = Running::start(config(&path), invoker.clone());
     con.wait("admitted", |s| s.admitted).await;
     let row = lab
@@ -585,7 +544,7 @@ async fn a_ceiling_naming_force_unload_is_carried() {
     let trace = Trace::new();
     let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
-    let invoker = FakeInvoker::new(&["show", "force-unload"], "idle");
+    let invoker = Service::new(&["show", "force-unload"], "idle");
     let mut con = Running::start(config(&path), invoker.clone());
     con.wait("admitted", |s| s.admitted).await;
     let row = lab
@@ -614,11 +573,11 @@ async fn a_ceiling_naming_force_unload_is_carried() {
 async fn admin_con_answers_an_ask_outside_its_ceiling_and_keeps_the_connection() {
     let server = FakeServer::start().await;
     let trace = Trace::new();
-    let invoker = FakeInvoker::new(&["show"], "idle");
+    let invoker = Service::new(&["show"], "idle");
     let cfg = AdminConConfig {
         link: server.link(Plane::Admin),
         trace_socket: Some(trace.socket.clone()),
-        weaver_admin: Some(PathBuf::from(NO_WEAVER_ADMIN)),
+        admin_socket: Some(PathBuf::from(NO_ADMIN_SOCKET)),
         admin_log: Some(trace.admin_log.clone()),
         backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
         verb_bound: admin_con::VERB_BOUND,
@@ -986,7 +945,7 @@ async fn an_answer_takes_its_place_at_the_invocation() {
     let trace = Trace::new();
     let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
-    let invoker = FakeInvoker::new(&["show"], "idle");
+    let invoker = Service::new(&["show"], "idle");
     let mut con = Running::start(config(&path), invoker.clone());
     con.wait("admitted", |s| s.admitted).await;
     lab.wait_for(&id, "the admission's show", |a| {
@@ -1019,7 +978,7 @@ async fn the_drain_runs_before_the_invocation() {
     let trace = Trace::new();
     let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
-    let invoker = FakeInvoker::new(&["show"], "unloaded");
+    let invoker = Service::new(&["show"], "unloaded");
     let mut con = Running::start(config(&path), invoker.clone());
     con.wait("admitted", |s| s.admitted).await;
     lab.wait_for(&id, "the admission's show", |a| {
@@ -1052,7 +1011,7 @@ async fn one_verb_runs_at_a_time() {
     let trace = Trace::new();
     let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
-    let invoker = FakeInvoker::new(&["show"], "idle");
+    let invoker = Service::new(&["show"], "idle");
     let mut con = Running::start(config(&path), invoker.clone());
     con.wait("admitted", |s| s.admitted).await;
     lab.wait_for(&id, "the admission's show", |a| {
@@ -1109,7 +1068,7 @@ async fn an_admin_con_config_that_is_not_trusted_is_refused_at_start() {
         "good.toml",
         text(
             Plane::Admin,
-            "trace_socket = \"/trace.sock\"\nweaver_admin = \"/w\"\nadmin_log = \"/admin.log\"\n",
+            "trace_socket = \"/trace.sock\"\nadmin_socket = \"/w\"\nadmin_log = \"/admin.log\"\n",
         ),
     );
     let cfg = AdminConConfig::load(&good).unwrap();
@@ -1119,7 +1078,7 @@ async fn an_admin_con_config_that_is_not_trusted_is_refused_at_start() {
         "gate.toml",
         text(
             Plane::Gate,
-            "trace_socket = \"/trace.sock\"\nweaver_admin = \"/w\"\nadmin_log = \"/admin.log\"\n",
+            "trace_socket = \"/trace.sock\"\nadmin_socket = \"/w\"\nadmin_log = \"/admin.log\"\n",
         ),
     );
     assert!(refused(&gate).contains("gate plane"));
@@ -1128,14 +1087,14 @@ async fn an_admin_con_config_that_is_not_trusted_is_refused_at_start() {
     let bare = write("bare.toml", text(Plane::Admin, ""));
     let bare = AdminConConfig::load(&bare).unwrap();
     assert_eq!(
-        (bare.trace_socket, bare.weaver_admin, bare.admin_log),
+        (bare.trace_socket, bare.admin_socket, bare.admin_log),
         (None, None, None)
     );
     let relative = write(
         "relative.toml",
         text(
             Plane::Admin,
-            "trace_socket = \"trace.sock\"\nweaver_admin = \"/w\"\nadmin_log = \"/admin.log\"\n",
+            "trace_socket = \"trace.sock\"\nadmin_socket = \"/w\"\nadmin_log = \"/admin.log\"\n",
         ),
     );
     assert!(refused(&relative).contains("trace_socket"));
@@ -1143,7 +1102,7 @@ async fn an_admin_con_config_that_is_not_trusted_is_refused_at_start() {
         "relative-log.toml",
         text(
             Plane::Admin,
-            "trace_socket = \"/trace.sock\"\nweaver_admin = \"/w\"\nadmin_log = \"admin.log\"\n",
+            "trace_socket = \"/trace.sock\"\nadmin_socket = \"/w\"\nadmin_log = \"admin.log\"\n",
         ),
     );
     assert!(refused(&relative_log).contains("admin_log"));
@@ -1151,7 +1110,7 @@ async fn an_admin_con_config_that_is_not_trusted_is_refused_at_start() {
         "unnamed.toml",
         text(
             Plane::Admin,
-            "trace_socket = \"/trace.sock\"\nweaver_admin = \"/w\"\nadmin_log = \"/admin.log\"\n",
+            "trace_socket = \"/trace.sock\"\nadmin_socket = \"/w\"\nadmin_log = \"/admin.log\"\n",
         )
         .lines()
         .filter(|l| !l.starts_with("agent_id"))
@@ -1164,7 +1123,7 @@ async fn an_admin_con_config_that_is_not_trusted_is_refused_at_start() {
         text(
             Plane::Admin,
             &format!(
-                "trace_socket = \"/trace.sock\"\nweaver_admin = \"/w\"\nadmin_log = \"/admin.log\"\nbackfill_bytes = {}\n",
+                "trace_socket = \"/trace.sock\"\nadmin_socket = \"/w\"\nadmin_log = \"/admin.log\"\nbackfill_bytes = {}\n",
                 admin_con::MAX_BACKFILL_BYTES + 1
             ),
         ),
@@ -1329,7 +1288,7 @@ async fn a_verb_past_its_bound_answers_unknown() {
     let trace = Trace::new();
     let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
-    let invoker = FakeInvoker::new(&["show"], "idle");
+    let invoker = Service::new(&["show"], "idle");
     let mut cfg = config(&path);
     cfg.verb_bound = Duration::from_millis(300);
     let mut con = Running::start(cfg, invoker.clone());
@@ -1454,7 +1413,7 @@ async fn the_admissions_show_is_answered_during_a_long_replay() {
     trace.append_raw(body.as_bytes());
     let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), Some(8 * 1024 * 1024)).await;
-    let invoker = FakeInvoker::new(&["show"], "idle");
+    let invoker = Service::new(&["show"], "idle");
     let started = tokio::time::Instant::now();
     let mut con = Running::start(config(&path), invoker.clone());
     con.wait("admitted", |s| s.admitted).await;
@@ -1546,11 +1505,11 @@ async fn an_ask_during_the_replay_waits_behind_one_frame_not_a_step() {
         throttle * (per_step / throttle_every) as u32 > deadline,
         "one step must outlast the shortest deadline for this test to say anything"
     );
-    let invoker = FakeInvoker::new(&["show"], "idle");
+    let invoker = Service::new(&["show"], "idle");
     let cfg = AdminConConfig {
         link: server.link(Plane::Admin),
         trace_socket: Some(trace.socket.clone()),
-        weaver_admin: Some(PathBuf::from(NO_WEAVER_ADMIN)),
+        admin_socket: Some(PathBuf::from(NO_ADMIN_SOCKET)),
         admin_log: Some(trace.admin_log.clone()),
         backfill_bytes: 16 * 1024 * 1024,
         verb_bound: admin_con::VERB_BOUND,
@@ -1643,11 +1602,11 @@ async fn an_ordinary_verb_asked_during_the_replay_waits_for_caught_up_and_the_dr
         body.push_str(&format!("{{\"wall_ms\":1,\"payload\":{{\"n\":{n}}}}}\n"));
     }
     trace.append_raw(body.as_bytes());
-    let invoker = FakeInvoker::new(&["show"], "idle");
+    let invoker = Service::new(&["show"], "idle");
     let cfg = AdminConConfig {
         link: server.link(Plane::Admin),
         trace_socket: Some(trace.socket.clone()),
-        weaver_admin: Some(PathBuf::from(NO_WEAVER_ADMIN)),
+        admin_socket: Some(PathBuf::from(NO_ADMIN_SOCKET)),
         admin_log: Some(trace.admin_log.clone()),
         backfill_bytes: 4 * 1024 * 1024,
         verb_bound: admin_con::VERB_BOUND,
@@ -1716,7 +1675,7 @@ async fn the_admissions_show_converges_on_its_snapshot() {
     trace.append(1, "unload");
     let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
-    let invoker = FakeInvoker::new(&["show"], "idle");
+    let invoker = Service::new(&["show"], "idle");
     invoker.script(Step {
         first_append: Some((trace.path.clone(), record(2, "load"))),
         ..Step::default()
@@ -1749,7 +1708,7 @@ async fn a_stop_against_a_server_that_stopped_reading_returns_within_the_grace()
     let cfg = AdminConConfig {
         link: server.link(Plane::Admin),
         trace_socket: Some(trace.socket.clone()),
-        weaver_admin: Some(PathBuf::from(NO_WEAVER_ADMIN)),
+        admin_socket: Some(PathBuf::from(NO_ADMIN_SOCKET)),
         admin_log: Some(trace.admin_log.clone()),
         backfill_bytes: 32 * 1024 * 1024,
         verb_bound: admin_con::VERB_BOUND,
@@ -1795,7 +1754,7 @@ async fn a_stop_during_an_opening_that_waits_on_its_read_returns_within_the_grac
     let cfg = AdminConConfig {
         link: server.link(Plane::Admin),
         trace_socket: Some(trace.socket.clone()),
-        weaver_admin: Some(PathBuf::from(NO_WEAVER_ADMIN)),
+        admin_socket: Some(PathBuf::from(NO_ADMIN_SOCKET)),
         admin_log: Some(trace.admin_log.clone()),
         backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
         verb_bound: admin_con::VERB_BOUND,
@@ -1855,7 +1814,7 @@ async fn a_verb_whose_link_ends_in_flight_is_answered_as_unknown() {
     let trace = Trace::new();
     let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
-    let invoker = FakeInvoker::new(&["show"], "idle");
+    let invoker = Service::new(&["show"], "idle");
     let mut con = Running::start(config(&path), invoker.clone());
     con.wait("admitted", |s| s.admitted).await;
     lab.wait_for(&id, "the admission's show", |a| {
@@ -1892,7 +1851,7 @@ async fn a_verb_still_waiting_at_shutdown_is_answered_not_started() {
     let trace = Trace::new();
     let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
-    let invoker = FakeInvoker::new(&["show"], "idle");
+    let invoker = Service::new(&["show"], "idle");
     let mut con = Running::start(config(&path), invoker.clone());
     con.wait("admitted", |s| s.admitted).await;
     lab.wait_for(&id, "the admission's show", |a| {
@@ -1938,7 +1897,7 @@ async fn a_verb_still_draining_at_a_stop_is_answered_not_started() {
     trace.append(1, "turn");
     let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
-    let invoker = FakeInvoker::new(&["show"], "idle");
+    let invoker = Service::new(&["show"], "idle");
     let con = Running::start(config(&path), invoker.clone());
     let until = tokio::time::Instant::now() + Duration::from_secs(30);
     while lab.agent(&id).await.state_source.as_deref() != Some("show") {
@@ -2135,7 +2094,7 @@ async fn a_closed_door_is_admitted_at_once_and_its_opening_asks_show() {
     let mut trace = Trace::closed();
     let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
-    let invoker = FakeInvoker::new(&["show", "load"], "unloaded");
+    let invoker = Service::new(&["show", "load"], "unloaded");
     let mut con = Running::start(config(&path), invoker.clone());
     con.wait("admitted", |s| s.admitted).await;
     let row = lab
@@ -2244,7 +2203,7 @@ async fn an_opening_waits_for_the_invocation_in_flight() {
     let mut trace = Trace::closed();
     let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
-    let invoker = FakeInvoker::new(&["show", "load"], "unloaded");
+    let invoker = Service::new(&["show", "load"], "unloaded");
     let mut cfg = config(&path);
     cfg.verb_bound = Duration::from_millis(500);
     let mut con = Running::start(cfg, invoker.clone());
@@ -2371,7 +2330,7 @@ async fn a_verb_behind_a_never_idle_writer_runs_at_the_drains_bound() {
     let writer = never_idle(&trace);
     let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
-    let invoker = FakeInvoker::new(&["show", "unload"], "idle");
+    let invoker = Service::new(&["show", "unload"], "idle");
     let mut cfg = config(&path);
     cfg.boundary_bound = Duration::from_secs(1);
     cfg.drain_bound = Duration::from_secs(1);
@@ -2785,7 +2744,7 @@ async fn a_refused_position_is_marked_once_under_the_servers_position() {
     }
     let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
-    let invoker = FakeInvoker::new(&["show"], "idle");
+    let invoker = Service::new(&["show"], "idle");
     let mut cfg = config(&path);
     cfg.drain_bound = Duration::from_millis(300);
     let mut con = Running::start(cfg, invoker.clone());
@@ -2838,7 +2797,7 @@ async fn an_opening_serves_its_show_before_a_verb_queued_at_it() {
     let mut trace = Trace::closed();
     let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
-    let invoker = FakeInvoker::new(&["show", "validate"], "unloaded");
+    let invoker = Service::new(&["show", "validate"], "unloaded");
     let mut con = Running::start(config(&path), invoker.clone());
     con.wait("admitted", |s| s.admitted).await;
     lab.wait_for(&id, "the admission's show", |a| {
@@ -2895,7 +2854,7 @@ async fn an_openings_show_is_taken_past_a_full_queue() {
     let mut trace = Trace::closed();
     let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
-    let invoker = FakeInvoker::new(&["show", "validate"], "unloaded");
+    let invoker = Service::new(&["show", "validate"], "unloaded");
     let mut con = Running::start(config(&path), invoker.clone());
     con.wait("admitted", |s| s.admitted).await;
     lab.wait_for(&id, "the admission's show", |a| {
@@ -2973,7 +2932,7 @@ async fn an_acknowledgement_past_a_bounded_boundary_is_caught_up() {
     trace.append_raw(body.as_bytes());
     let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
-    let invoker = FakeInvoker::new(&["show"], "idle");
+    let invoker = Service::new(&["show"], "idle");
     let mut con = Running::start(config(&path), invoker.clone());
     con.wait("admitted", |s| s.admitted).await;
     let until = tokio::time::Instant::now() + Duration::from_secs(30);
@@ -3072,7 +3031,7 @@ async fn a_rewritten_file_below_an_acknowledgement_past_the_boundary_is_replayed
     trace.append_raw(filler(1, 2 * 1024 * 1024).as_bytes());
     let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
-    let invoker = FakeInvoker::new(&["show"], "unloaded");
+    let invoker = Service::new(&["show"], "unloaded");
     let mut con = Running::start(config(&path), invoker.clone());
     con.wait("admitted", |s| s.admitted).await;
     let until = tokio::time::Instant::now() + Duration::from_secs(30);
@@ -3195,11 +3154,11 @@ async fn the_verification_gets_only_what_remains_of_the_openings_bound() {
 async fn no_opening_is_taken_while_an_openings_hold_stands() {
     let server = FakeServer::start().await;
     let mut trace = Trace::closed();
-    let invoker = FakeInvoker::new(&["show"], "idle");
+    let invoker = Service::new(&["show"], "idle");
     let cfg = AdminConConfig {
         link: server.link(Plane::Admin),
         trace_socket: Some(trace.socket.clone()),
-        weaver_admin: Some(PathBuf::from(NO_WEAVER_ADMIN)),
+        admin_socket: Some(PathBuf::from(NO_ADMIN_SOCKET)),
         admin_log: Some(trace.admin_log.clone()),
         backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
         verb_bound: admin_con::VERB_BOUND,
@@ -3315,7 +3274,7 @@ async fn the_openings_bound_keeps_a_reserve_for_the_verification() {
         .counts
         .chunk_pause_ms
         .store(300, Ordering::SeqCst);
-    let invoker = FakeInvoker::new(&["show"], "idle");
+    let invoker = Service::new(&["show"], "idle");
     let mut cfg = config(&path);
     cfg.boundary_bound = Duration::from_secs(2);
     let started = tokio::time::Instant::now();
@@ -3359,7 +3318,7 @@ async fn failed_verifications_move_the_openings_toward_the_servers_position() {
         .counts
         .header_delay_ms
         .store(1_000, Ordering::SeqCst);
-    let invoker = FakeInvoker::new(&["show"], "idle");
+    let invoker = Service::new(&["show"], "idle");
     let mut cfg = config(&path);
     cfg.boundary_bound = Duration::from_secs(2);
     let mut con = Running::start(cfg, invoker.clone());
@@ -3395,12 +3354,12 @@ async fn failed_verifications_move_the_openings_toward_the_servers_position() {
 async fn an_openings_show_asked_late_is_still_served_first() {
     let server = FakeServer::start().await;
     let mut trace = Trace::closed();
-    let invoker = FakeInvoker::new(&["show", "validate"], "idle");
+    let invoker = Service::new(&["show", "validate"], "idle");
     invoker.slow("validate", Duration::from_secs(3));
     let cfg = AdminConConfig {
         link: server.link(Plane::Admin),
         trace_socket: Some(trace.socket.clone()),
-        weaver_admin: Some(PathBuf::from(NO_WEAVER_ADMIN)),
+        admin_socket: Some(PathBuf::from(NO_ADMIN_SOCKET)),
         admin_log: Some(trace.admin_log.clone()),
         backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
         verb_bound: admin_con::VERB_BOUND,
@@ -3527,12 +3486,12 @@ async fn a_new_file_at_offset_zero_is_marked() {
 async fn the_openings_hold_covers_the_servers_deadline() {
     let server = FakeServer::start().await;
     let mut trace = Trace::closed();
-    let invoker = FakeInvoker::new(&["show", "validate"], "idle");
+    let invoker = Service::new(&["show", "validate"], "idle");
     invoker.slow("validate", Duration::from_secs(3));
     let cfg = AdminConConfig {
         link: server.link(Plane::Admin),
         trace_socket: Some(trace.socket.clone()),
-        weaver_admin: Some(PathBuf::from(NO_WEAVER_ADMIN)),
+        admin_socket: Some(PathBuf::from(NO_ADMIN_SOCKET)),
         admin_log: Some(trace.admin_log.clone()),
         backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
         verb_bound: admin_con::VERB_BOUND,
@@ -3641,7 +3600,7 @@ async fn a_hello_answered_late_still_leaves_the_verification_its_reserve() {
     let cfg = AdminConConfig {
         link: server.link(Plane::Admin),
         trace_socket: Some(trace.socket.clone()),
-        weaver_admin: Some(PathBuf::from(NO_WEAVER_ADMIN)),
+        admin_socket: Some(PathBuf::from(NO_ADMIN_SOCKET)),
         admin_log: Some(trace.admin_log.clone()),
         backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
         verb_bound: admin_con::VERB_BOUND,
@@ -3707,7 +3666,7 @@ async fn the_hellos_verification_runs_beside_the_admissions_show() {
         .counts
         .resume_header_delay_ms
         .store(5_000, Ordering::SeqCst);
-    let invoker = FakeInvoker::new(&["show"], "idle");
+    let invoker = Service::new(&["show"], "idle");
     let mut cfg = config(&path);
     cfg.boundary_bound = Duration::from_secs(20);
     let mut con = Running::start(cfg, invoker.clone());
@@ -3775,11 +3734,11 @@ where
 async fn a_faulting_openings_show_keeps_the_hold() {
     let server = FakeServer::start().await;
     let mut trace = Trace::closed();
-    let invoker = FakeInvoker::new(&["show", "load"], "idle");
+    let invoker = Service::new(&["show", "load"], "idle");
     let cfg = AdminConConfig {
         link: server.link(Plane::Admin),
         trace_socket: Some(trace.socket.clone()),
-        weaver_admin: Some(PathBuf::from(NO_WEAVER_ADMIN)),
+        admin_socket: Some(PathBuf::from(NO_ADMIN_SOCKET)),
         admin_log: Some(trace.admin_log.clone()),
         backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
         verb_bound: admin_con::VERB_BOUND,
@@ -3851,11 +3810,11 @@ async fn a_faulting_openings_show_keeps_the_hold() {
 async fn a_late_openings_show_still_runs_before_a_queued_verb() {
     let server = FakeServer::start().await;
     let mut trace = Trace::closed();
-    let invoker = FakeInvoker::new(&["show", "validate"], "idle");
+    let invoker = Service::new(&["show", "validate"], "idle");
     let cfg = AdminConConfig {
         link: server.link(Plane::Admin),
         trace_socket: Some(trace.socket.clone()),
-        weaver_admin: Some(PathBuf::from(NO_WEAVER_ADMIN)),
+        admin_socket: Some(PathBuf::from(NO_ADMIN_SOCKET)),
         admin_log: Some(trace.admin_log.clone()),
         backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
         verb_bound: admin_con::VERB_BOUND,
@@ -3932,12 +3891,12 @@ async fn a_late_openings_show_still_runs_before_a_queued_verb() {
 async fn a_closed_door_hello_holds_ordinary_asks_until_its_show() {
     let server = FakeServer::start().await;
     let trace = Trace::closed();
-    let invoker = FakeInvoker::new(&["show", "load"], "idle");
+    let invoker = Service::new(&["show", "load"], "idle");
     invoker.fail("show");
     let cfg = AdminConConfig {
         link: server.link(Plane::Admin),
         trace_socket: Some(trace.socket.clone()),
-        weaver_admin: Some(PathBuf::from(NO_WEAVER_ADMIN)),
+        admin_socket: Some(PathBuf::from(NO_ADMIN_SOCKET)),
         admin_log: Some(trace.admin_log.clone()),
         backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
         verb_bound: admin_con::VERB_BOUND,
@@ -3998,11 +3957,11 @@ async fn a_closed_door_hello_holds_ordinary_asks_until_its_show() {
 async fn a_show_answered_but_not_landed_keeps_the_hold() {
     let server = FakeServer::start().await;
     let trace = Trace::closed();
-    let invoker = FakeInvoker::new(&["show", "load"], "idle");
+    let invoker = Service::new(&["show", "load"], "idle");
     let cfg = AdminConConfig {
         link: server.link(Plane::Admin),
         trace_socket: Some(trace.socket.clone()),
-        weaver_admin: Some(PathBuf::from(NO_WEAVER_ADMIN)),
+        admin_socket: Some(PathBuf::from(NO_ADMIN_SOCKET)),
         admin_log: Some(trace.admin_log.clone()),
         backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
         verb_bound: admin_con::VERB_BOUND,
@@ -4093,7 +4052,7 @@ async fn an_openings_show_the_store_does_not_land_keeps_the_hold() {
     let mut trace = Trace::closed();
     let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
-    let invoker = FakeInvoker::new(&["show", "load"], "unloaded");
+    let invoker = Service::new(&["show", "load"], "unloaded");
     let mut con = Running::start(config(&path), invoker.clone());
     con.wait("admitted", |s| s.admitted).await;
     lab.wait_for(&id, "the admission's show", |a| {
@@ -4152,10 +4111,14 @@ async fn a_shutdown_invokes_nothing_though_the_ceiling_grants_unload() {
     let Some(lab) = Lab::open().await else { return };
     let trace = Trace::new();
     let out = crate::test_dir::tempdir().unwrap();
-    let (_id, path) = installed(&lab, &trace.socket, out.path(), None).await;
-    let invoker = FakeInvoker::new(&["show", "unload"], "idle");
+    let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
+    let invoker = Service::new(&["show", "unload"], "idle");
     let mut con = Running::start(config(&path), invoker.clone());
     con.wait("admitted", |s| s.admitted).await;
+    lab.wait_for(&id, "the admission's show", |a| {
+        a.state_source.as_deref() == Some("show")
+    })
+    .await;
     assert_eq!(invoker.ran(), ["show"]);
     con.stop().await;
     assert_eq!(invoker.ran(), ["show"], "the shutdown invoked nothing");
@@ -4172,7 +4135,7 @@ async fn admin_con_sends_another_partys_line_upstream() {
     let trace = Trace::new();
     let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
-    let invoker = FakeInvoker::new(&["show"], "idle");
+    let invoker = Service::new(&["show"], "idle");
     let mut con = Running::start(config(&path), invoker.clone());
     con.wait("admitted", |s| s.admitted).await;
     // The tailer starts at the file's end: let it find the file first.
@@ -4236,7 +4199,7 @@ async fn a_window_whose_acks_were_dropped_is_sent_again() {
     let trace = Trace::new();
     let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
-    let invoker = FakeInvoker::new(&["show"], "idle");
+    let invoker = Service::new(&["show"], "idle");
     let mut con = Running::start(config(&path), invoker.clone());
     con.wait("admitted", |s| s.admitted).await;
     tokio::time::sleep(crate::link::admin_log::POLL * 3).await;
@@ -4292,7 +4255,7 @@ async fn a_steady_stream_never_postpones_the_resend() {
     let trace = Trace::new();
     let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
-    let invoker = FakeInvoker::new(&["show"], "idle");
+    let invoker = Service::new(&["show"], "idle");
     let mut con = Running::start(config(&path), invoker.clone());
     con.wait("admitted", |s| s.admitted).await;
     tokio::time::sleep(crate::link::admin_log::POLL * 3).await;
@@ -4346,7 +4309,7 @@ async fn a_steady_stream_never_postpones_the_resend() {
 
 /// **admin-con with no box fact is admitted with the door closed and no
 /// alert** (Spec 7.2): a config holding none of `trace_socket`,
-/// `weaver_admin` and `admin_log`, as the pairing's `adopt` leaves it, on a
+/// `admin_socket` and `admin_log`, as the pairing's `adopt` leaves it, on a
 /// row whose gate is not enrolled, as a pairing writes it, loads and is run
 /// as the binary runs it (`admin_con::run_as_configured`, which chooses its invoker); it
 /// is admitted on the admin plane against the real listener, declares an
@@ -4355,8 +4318,8 @@ async fn a_steady_stream_never_postpones_the_resend() {
 ///
 /// Perturbation: read an absent `admin_log` as a failure (tail the file
 /// next to the config, which does not exist), and an alert stands; choose
-/// the sudo invoker with no agent laid, and admin-con is never admitted
-/// (each measured 2026-11-25).
+/// the service's invoker with no agent laid, and its unanswered grants
+/// raise an alert (measured 2026-11-25 and 2026-11-27).
 #[tokio::test]
 async fn admin_con_with_no_box_fact_is_admitted_with_the_door_closed_and_no_alert() {
     let Some(lab) = Lab::open().await else { return };
@@ -4409,13 +4372,16 @@ async fn admin_con_with_no_box_fact_is_admitted_with_the_door_closed_and_no_aler
 
 /// **The three box facts stand together, and one fact chooses** (Spec 7.2):
 /// a config with none loads with no agent laid and chooses no invoker; one
-/// with all three chooses the sudo invoker; one with some and not all is
-/// refused at load naming what is missing; and a door with no agent laid is
+/// with all three chooses the service's invoker; one with some and not all is
+/// refused at load naming what is missing; one naming the retired
+/// `weaver_admin` is refused naming it; and a door with no agent laid is
 /// closed for that reason, the relay never dialed.
 ///
 /// Perturbation: drop the refusal of some and not all, and the half-laid
 /// config loads; drop the empty path's branch in `dial_relay`, and the door
-/// answers the relay's dial error instead (each measured 2026-11-25).
+/// answers the relay's dial error instead (each measured 2026-11-25); drop
+/// the refusal of a retired member, and the old config loads (measured
+/// 2026-11-27).
 #[tokio::test]
 async fn the_box_facts_stand_together_and_one_fact_chooses_the_invoker() {
     use std::os::unix::fs::PermissionsExt;
@@ -4452,17 +4418,17 @@ async fn the_box_facts_stand_together_and_one_fact_chooses_the_invoker() {
     ));
     let all = write(
         "all.toml",
-        "trace_socket = \"/t.sock\"\nweaver_admin = \"/w\"\nadmin_log = \"/a.log\"\n",
+        "trace_socket = \"/t.sock\"\nadmin_socket = \"/w\"\nadmin_log = \"/a.log\"\n",
     )
     .unwrap();
-    assert_eq!(all.laid().unwrap().weaver_admin, Path::new("/w"));
+    assert_eq!(all.laid().unwrap().admin_socket, Path::new("/w"));
     assert!(matches!(
         admin_con::invoking(&all).unwrap(),
-        admin_con::Invoking::Sudo(_)
+        admin_con::Invoking::Service(_)
     ));
     let half = write(
         "half.toml",
-        "trace_socket = \"/t.sock\"\nweaver_admin = \"/w\"\n",
+        "trace_socket = \"/t.sock\"\nadmin_socket = \"/w\"\n",
     )
     .unwrap_err()
     .to_string();
@@ -4474,8 +4440,22 @@ async fn the_box_facts_stand_together_and_one_fact_chooses_the_invoker() {
         .unwrap_err()
         .to_string();
     assert!(
-        one.contains("trace_socket and weaver_admin are missing"),
+        one.contains("trace_socket and admin_socket are missing"),
         "{one}"
+    );
+    // **A retired member is refused by name**, so a config laid for the
+    // sudo invoker never starts silently unlaid.
+    let old = write(
+        "old.toml",
+        "trace_socket = \"/t.sock\"\nweaver_admin = \"/w\"\nadmin_log = \"/a.log\"\n",
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        old.ends_with(
+            "old.toml: weaver_admin is retired; admin-con asks the service at admin_socket"
+        ),
+        "{old}"
     );
     match admin_con::dial_relay(Path::new(""), &super::tests::position(0)).await {
         crate::link::relay::Dial::Closed(why) => assert_eq!(why, admin_con::NO_AGENT_LAID),

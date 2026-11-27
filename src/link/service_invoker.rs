@@ -78,9 +78,15 @@ const QUIET: [&str; 4] = [
     word::NOT_STARTED,
 ];
 
+/// Whether `word` says admin-con or its config is at fault, so a refusal
+/// by it adds a connector failure entry.
+pub(crate) fn is_defect(word: &str) -> bool {
+    DEFECTS.contains(&word)
+}
+
 /// **The entry kind for a word of the service's**, the alert's subject at
 /// the server: one per word, so an operator reads which.
-fn entry_kind(word: &str) -> String {
+pub(crate) fn entry_kind(word: &str) -> String {
     format!("service_{word}")
 }
 

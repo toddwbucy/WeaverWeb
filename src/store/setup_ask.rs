@@ -1,11 +1,12 @@
-//! conforms: web-setup-describe-answers-replacement-true-after-a-replace-box-write-alone
+//! conforms: web-setup-describe-carries-no-replacement
 //! conforms: web-the-setup-keeps-the-latest-report-of-each-stage-verbatim
 //! conforms: web-describes-laying-names-an-adapter-only-where-the-tuple-holds-one
 //!
 //! **The setup connection's two asks at the store** (Spec 8.3): what `admin-con
 //! setup describe` is answered, and where `admin-con setup report` lands. Each
-//! serves the setup the row's pairing linked, the latest where a replacement
-//! linked a second, and each re-reads the asking credential as live inside its
+//! serves the setup the row's pairing linked, the latest where a row moved
+//! by a replace-box write before the operator's ruling of 2026-11-27 holds a
+//! second (Spec 8.2), and each re-reads the asking credential as live inside its
 //! transaction, so a credential revoked since the connection's lookup is
 //! refused at the act as at the door.
 //!
@@ -27,11 +28,11 @@ use crate::store::key::AgentId;
 use crate::store::tuple::Laying;
 
 /// The setup a row's pairing linked, the latest of them.
-const LINKED_SETUP: &str = "SELECT setup_id, state, paired_as FROM agent_setup WHERE agent_id = $1 \
+const LINKED_SETUP: &str = "SELECT setup_id, state FROM agent_setup WHERE agent_id = $1 \
      ORDER BY paired_at DESC, setup_id LIMIT 1";
 
 /// The same, its row held shared.
-const LINKED_SETUP_SHARED: &str = "SELECT setup_id, state, paired_as FROM agent_setup \
+const LINKED_SETUP_SHARED: &str = "SELECT setup_id, state FROM agent_setup \
      WHERE agent_id = $1 ORDER BY paired_at DESC, setup_id LIMIT 1 FOR SHARE";
 
 /// Whether the row's admin credential is the one asking and live, read under
@@ -93,8 +94,6 @@ impl Store {
             return Ok(Err(Refusal::NoSetup));
         };
         let setup_id: String = setup.get("setup_id");
-        let replacement =
-            setup.get::<Option<String>, _>("paired_as").as_deref() == Some("replace box");
 
         let picks = sqlx::query(
             "SELECT m.role, m.repository, m.commit_id, m.choice, m.pull_id, mp.state \
@@ -192,7 +191,6 @@ impl Store {
         Ok(Ok(Described {
             agent,
             agent_id: agent_id.as_str().to_owned(),
-            replacement,
             models: (!models.is_empty()).then_some(models),
             bytes,
             laying,

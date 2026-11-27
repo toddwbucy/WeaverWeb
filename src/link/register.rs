@@ -1503,18 +1503,19 @@ async fn insert_row(
 }
 
 /// **What an appliance's pairing writes** (Spec 8.2): `pair`, a new row
-/// under an identity minted for it, or `replace box`, the live row whose
-/// box it sets to the new box's claim.
+/// under an identity minted for it. A reset VM, a new image and a VM given
+/// another agent's state disk each pair so, as a new agent; no write moves
+/// a row to another box (the operator's rulings of 2026-11-24 and
+/// 2026-11-27, Spec 2.12).
 #[derive(Debug, Clone)]
 pub enum PairingAct {
     Pair(AgentId),
-    Replace(AgentId),
 }
 
 impl PairingAct {
     pub fn agent_id(&self) -> &AgentId {
         match self {
-            PairingAct::Pair(id) | PairingAct::Replace(id) => id,
+            PairingAct::Pair(id) => id,
         }
     }
 
@@ -1522,7 +1523,6 @@ impl PairingAct {
     pub fn action(&self) -> &'static str {
         match self {
             PairingAct::Pair(_) => "pair",
-            PairingAct::Replace(_) => "replace box",
         }
     }
 }
@@ -1532,11 +1532,8 @@ impl PairingAct {
 pub enum PairingRefusal {
     /// The setup left its pairing step: confirmed, or paired already.
     SetupClosed,
-    /// A live row other than the one replaced holds the box the connection
-    /// claims and the setup's name.
+    /// A live row holds the box the connection claims and the setup's name.
     BoxAndNameLive,
-    /// The row a replacement names holds no live credential.
-    Retired,
     /// Five misses closed the setup's code field since the match: the
     /// entry's lock is the guard, and this its second (Spec 8.2).
     FieldClosed,
@@ -1547,13 +1544,12 @@ pub enum PairingRefusal {
 
 impl PairingRefusal {
     /// The reason the box reads (Spec 8.2, `pair`'s `refused` line). A
-    /// retired replacement and a closed field are the setup's own refusal
-    /// to the box, since the setup can go no further as entered.
+    /// closed field is the setup's own refusal to the box, since the setup
+    /// can go no further as entered.
     pub fn reason(&self) -> &'static str {
         use crate::link::frames::pair_reason;
         match self {
             PairingRefusal::SetupClosed
-            | PairingRefusal::Retired
             | PairingRefusal::FieldClosed
             | PairingRefusal::NameHeld => pair_reason::SETUP_CLOSED,
             PairingRefusal::BoxAndNameLive => pair_reason::BOX_AND_NAME_LIVE,
@@ -1568,7 +1564,6 @@ impl std::fmt::Display for PairingRefusal {
             PairingRefusal::BoxAndNameLive => {
                 "a live row holds the box the connection claims and the setup's name"
             }
-            PairingRefusal::Retired => "the row the replacement names was retired",
             PairingRefusal::FieldClosed => {
                 "five misses closed the setup's code field for ten minutes from the fifth"
             }
@@ -1592,22 +1587,13 @@ pub struct Pairing<'a> {
     pub begun_by: Option<&'a str>,
 }
 
-/// The replaced row as its lock read it: its version, its box and the two
-/// fingerprints the replacement revokes.
-struct Replaced {
-    version: i64,
-    r#box: String,
-    /// The row's fingerprints that stand, a gate not enrolled holding none.
-    fingerprints: Vec<String>,
-}
-
 /// **The pairing still stands**, read under the setup's lock and the rows'
-/// (Spec 8.2): the setup in its pairing step, a replaced row live, and no
-/// other live row holding the claimed box and the setup's name.
+/// (Spec 8.2): the setup in its pairing step, and no live row holding the
+/// claimed box and the setup's name.
 async fn pairing_stands(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     pairing: &Pairing<'_>,
-) -> anyhow::Result<Result<Option<Replaced>, PairingRefusal>> {
+) -> anyhow::Result<Result<(), PairingRefusal>> {
     if pairing.begun_by.is_some() {
         return made_stands(tx, pairing).await;
     }
@@ -1630,70 +1616,17 @@ async fn pairing_stands(
     if setup.get::<bool, _>("closed") {
         return Ok(Err(PairingRefusal::FieldClosed));
     }
-    let replaced = match pairing.act {
-        PairingAct::Pair(_) => None,
-        PairingAct::Replace(id) => {
-            let row = sqlx::query(
-                "SELECT version, box, name, gate_fingerprint, admin_fingerprint FROM agent \
-                 WHERE agent_id = $1 AND (gate_state = 'live' OR admin_state = 'live') \
-                 FOR UPDATE",
-            )
-            .bind(id.as_str())
-            .fetch_optional(&mut **tx)
-            .await?;
-            match row {
-                Some(row) if row.get::<String, _>("name") == pairing.name => Some(Replaced {
-                    version: row.get("version"),
-                    r#box: row.get("box"),
-                    fingerprints: [
-                        row.get::<Option<String>, _>("gate_fingerprint"),
-                        row.get::<Option<String>, _>("admin_fingerprint"),
-                    ]
-                    .into_iter()
-                    .flatten()
-                    .collect(),
-                }),
-                _ => return Ok(Err(PairingRefusal::Retired)),
-            }
-        }
-    };
-    let live = sqlx::query(
-        "SELECT agent_id FROM agent WHERE box = $1 AND name = $2 \
-         AND (gate_state = 'live' OR admin_state = 'live') AND agent_id <> $3 FOR UPDATE",
-    )
-    .bind(pairing.r#box)
-    .bind(pairing.name)
-    .bind(pairing.act.agent_id().as_str())
-    .fetch_optional(&mut **tx)
-    .await?;
-    if live.is_some() {
-        return Ok(Err(PairingRefusal::BoxAndNameLive));
-    }
-    Ok(Ok(replaced))
+    box_and_name_free(tx, pairing).await
 }
 
-/// **New agent's pairing still stands** (Spec 8.2): no setup of its
-/// identity, no open setup holding the name, a new row's act, and no live
-/// row holding the claimed box and the name. The setup's own insert, under
-/// the one-open index, decides a race the read cannot lock.
-async fn made_stands(
+/// **No live row holds the claimed box and the setup's name**, read under
+/// the rows' locks: a reset kept local, whose old row still stands under
+/// the same box and name, is refused `box_and_name_live` as any pairing is
+/// (Spec 8.2), and the admin retires the old row first.
+async fn box_and_name_free(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     pairing: &Pairing<'_>,
-) -> anyhow::Result<Result<Option<Replaced>, PairingRefusal>> {
-    let PairingAct::Pair(_) = pairing.act else {
-        return Ok(Err(PairingRefusal::SetupClosed));
-    };
-    let held: bool = sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM agent_setup WHERE setup_id = $1) \
-         OR EXISTS (SELECT 1 FROM agent_setup WHERE name = $2 AND state = 'open')",
-    )
-    .bind(pairing.setup_id)
-    .bind(pairing.name)
-    .fetch_one(&mut **tx)
-    .await?;
-    if held {
-        return Ok(Err(PairingRefusal::NameHeld));
-    }
+) -> anyhow::Result<Result<(), PairingRefusal>> {
     let live = sqlx::query(
         "SELECT agent_id FROM agent WHERE box = $1 AND name = $2 \
          AND (gate_state = 'live' OR admin_state = 'live') FOR UPDATE",
@@ -1705,7 +1638,29 @@ async fn made_stands(
     if live.is_some() {
         return Ok(Err(PairingRefusal::BoxAndNameLive));
     }
-    Ok(Ok(None))
+    Ok(Ok(()))
+}
+
+/// **New agent's pairing still stands** (Spec 8.2): no setup of its
+/// identity, no open setup holding the name, a new row's act, and no live
+/// row holding the claimed box and the name. The setup's own insert, under
+/// the one-open index, decides a race the read cannot lock.
+async fn made_stands(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    pairing: &Pairing<'_>,
+) -> anyhow::Result<Result<(), PairingRefusal>> {
+    let held: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM agent_setup WHERE setup_id = $1) \
+         OR EXISTS (SELECT 1 FROM agent_setup WHERE name = $2 AND state = 'open')",
+    )
+    .bind(pairing.setup_id)
+    .bind(pairing.name)
+    .fetch_one(&mut **tx)
+    .await?;
+    if held {
+        return Ok(Err(PairingRefusal::NameHeld));
+    }
+    box_and_name_free(tx, pairing).await
 }
 
 impl Store {
@@ -1721,17 +1676,15 @@ impl Store {
         let mut tx = conn.begin().await?;
         let stands = pairing_stands(&mut tx, pairing).await?;
         tx.rollback().await?;
-        Ok(stands.map(|_| ()))
+        Ok(stands)
     }
 
     /// **The exchange's step 6** (Spec 8.2), on the authority lock's own
     /// connection, after the box's word: one identity transaction that
     /// re-checks the session and the admin grant, reads the pairing again
-    /// under its locks, writes the row with admin-con's fingerprint live
-    /// and the gate plane not enrolled, or for a replacement keeps the box
-    /// the row held and sets the new one, links
-    /// the setup, and commits with the audit's outcome. Answers the
-    /// fingerprints a replacement revoked, whose connections close.
+    /// under its locks, writes a new row with admin-con's fingerprint live
+    /// and the gate plane not enrolled, links the setup, lands the reports,
+    /// and commits with the audit's outcome.
     pub async fn pairing_write_on(
         conn: &mut sqlx::PgConnection,
         admin: AdminWrite<'_>,
@@ -1739,71 +1692,27 @@ impl Store {
         admin_fingerprint: &str,
         authority: &str,
         reports: &[crate::link::frames::PairReport],
-    ) -> anyhow::Result<Result<Vec<String>, PairingRefusal>> {
+    ) -> anyhow::Result<Result<(), PairingRefusal>> {
         let mut tx = conn.begin().await?;
         admin.stands(&mut tx).await?;
-        let replaced = match pairing_stands(&mut tx, pairing).await? {
-            Ok(replaced) => replaced,
-            Err(refusal) => return Ok(Err(refusal)),
-        };
-        let id = pairing.act.agent_id();
-        let mut revoked = Vec::new();
-        match replaced {
-            None => {
-                insert_row(
-                    &mut tx,
-                    &NewRow {
-                        agent_id: id,
-                        name: pairing.name,
-                        r#box: pairing.r#box,
-                        author: Some(admin.person),
-                        gate_fingerprint: None,
-                        admin_fingerprint,
-                        authority,
-                        setup_running: true,
-                    },
-                )
-                .await?;
-            }
-            Some(replaced) => {
-                // **The box the row held is kept** (Spec 2.12) before the
-                // row's box moves, which the schema allows only beside it.
-                sqlx::query("INSERT INTO agent_box (agent_id, box, setup_id) VALUES ($1, $2, $3)")
-                    .bind(id.as_str())
-                    .bind(&replaced.r#box)
-                    .bind(pairing.setup_id)
-                    .execute(&mut *tx)
-                    .await?;
-                let affected = sqlx::query(
-                    "UPDATE agent SET box = $3, \
-                       gate_fingerprint = NULL, gate_state = 'none', gate_state_at = now(), \
-                       admin_fingerprint = $4, admin_state = 'live', admin_state_at = now(), \
-                       gate_authority = NULL, admin_authority = $5, \
-                       gate_link_at = CASE WHEN gate_connected THEN now() ELSE gate_link_at END, \
-                       admin_link_at = CASE WHEN admin_connected THEN now() ELSE admin_link_at END, \
-                       gate_connected = false, admin_connected = false, \
-                       gate_incarnation = NULL, admin_incarnation = NULL, \
-                       setup_running = true, author = $6, version = version + 1 \
-                     WHERE agent_id = $1 AND version = $2",
-                )
-                .bind(id.as_str())
-                .bind(replaced.version)
-                .bind(pairing.r#box)
-                .bind(admin_fingerprint)
-                .bind(authority)
-                .bind(admin.person)
-                .execute(&mut *tx)
-                .await?
-                .rows_affected();
-                if affected != 1 {
-                    anyhow::bail!("the replaced row moved under its lock");
-                }
-                for fp in replaced.fingerprints {
-                    notify(&mut tx, &fp).await?;
-                    revoked.push(fp);
-                }
-            }
+        if let Err(refusal) = pairing_stands(&mut tx, pairing).await? {
+            return Ok(Err(refusal));
         }
+        let id = pairing.act.agent_id();
+        insert_row(
+            &mut tx,
+            &NewRow {
+                agent_id: id,
+                name: pairing.name,
+                r#box: pairing.r#box,
+                author: Some(admin.person),
+                gate_fingerprint: None,
+                admin_fingerprint,
+                authority,
+                setup_running: true,
+            },
+        )
+        .await?;
         match pairing.begun_by {
             // **New agent's setup is made here, paired**, with the row, a
             // virtual machine (the checkbox's ruled start and the
@@ -1873,7 +1782,7 @@ impl Store {
                 );
             }
         }
-        Ok(Ok(revoked))
+        Ok(Ok(()))
     }
 
     /// **The live rows holding a name**, for the Pair page (Spec 8.2):
@@ -1889,23 +1798,5 @@ impl Store {
         .fetch_all(&self.pool)
         .await?;
         rows.iter().map(agent_from_row).collect()
-    }
-
-    /// **The boxes a row held**, oldest first (Spec 2.12): each with the
-    /// time a replacement moved it.
-    pub async fn boxes_held(
-        &self,
-        agent_id: &AgentId,
-    ) -> anyhow::Result<Vec<(String, DateTime<Utc>)>> {
-        let rows = sqlx::query(
-            "SELECT box, replaced_at FROM agent_box WHERE agent_id = $1 ORDER BY replaced_at",
-        )
-        .bind(agent_id.as_str())
-        .fetch_all(&self.pool)
-        .await?;
-        Ok(rows
-            .iter()
-            .map(|r| (r.get("box"), r.get("replaced_at")))
-            .collect())
     }
 }

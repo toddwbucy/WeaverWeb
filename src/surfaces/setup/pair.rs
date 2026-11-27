@@ -20,13 +20,12 @@
 //! identity and the code read to their shapes, an entry that is not ten
 //! characters of the code's alphabet answered as malformed with no record
 //! and no miss, and the confirmation required; then the admin gate with
-//! its one refusal record; the setup and a replaced row resolved, unknown
-//! answered as not found with no record; then the setup in its pairing
+//! its one refusal record; the setup resolved, unknown answered as not
+//! found with no record; then the setup in its pairing
 //! step and its field open, each refusal one record; then the code
 //! compared with each waiting connection's, **a miss one refusal record
 //! naming the setup and never the code**, counted on the setup row; and on
-//! a match the first record of `pair` or `replace box`, whose target is the
-//! agent row, and the exchange in a task a dropped request cannot cut.
+//! a match the first record of `pair`, whose target is the new agent row, and the exchange in a task a dropped request cannot cut.
 //!
 //! **New agent's entry takes the same order** (Spec 8.2, 2.13; the brief of
 //! 2026-11-25): the name to the start page's rule, the appliance's handle,
@@ -247,7 +246,6 @@ mod entry {
     use crate::store::admin::Refusal;
     use crate::store::audit::{PersonMethod, Principal, Target};
     use crate::store::identity::is_setup_id;
-    use crate::store::key::AgentId;
     use crate::store::setup::Field;
     use crate::surfaces::admin::{
         NOT_AN_ADMIN, admin_session, fault, first_of, refused, settled, writer,
@@ -260,17 +258,16 @@ mod entry {
     use crate::link::pairing::{Chosen, Taken, is_handle};
     use crate::store::setup::agent_name;
 
-    /// What an entry posts: the code as typed, the confirmation that the
-    /// fingerprints were compared, and, for a setup whose name a live row
-    /// holds, the row whose box the pairing replaces.
+    /// What an entry posts: the code as typed and the confirmation that the
+    /// fingerprints were compared. No entry names a row to move: every
+    /// pairing writes a new row (Spec 8.2, the operator's ruling of
+    /// 2026-11-27).
     #[derive(Deserialize)]
     pub struct PairAsk {
         #[serde(default)]
         code: String,
         #[serde(default)]
         compared: Option<String>,
-        #[serde(default)]
-        replace: Option<String>,
     }
 
     const ACTION: &str = "pair";
@@ -340,19 +337,6 @@ mod entry {
             )
                 .into_response();
         }
-        let replace = match ask.replace.as_deref() {
-            None | Some("") => None,
-            Some(spec) => match spec.parse::<AgentId>() {
-                Ok(id) => Some(id),
-                Err(_) => {
-                    return (
-                        StatusCode::BAD_REQUEST,
-                        "an agent's identity is ag- and sixteen lowercase hex",
-                    )
-                        .into_response();
-                }
-            },
-        };
         let session = match writer(
             &store,
             &seams.policy,
@@ -380,17 +364,6 @@ mod entry {
             Ok(None) => return refused(&Refusal::NoSuchSetup),
             Err(e) => return fault(e),
         };
-        if let Some(id) = &replace {
-            match store.agent(id).await {
-                Ok(Some(row))
-                    if row.name == setup.name
-                        && (row.gate.state == crate::link::register::CredentialState::Live
-                            || row.admin.state == crate::link::register::CredentialState::Live) => {
-                }
-                Ok(_) => return refused(&Refusal::NoSuchAgent),
-                Err(e) => return fault(e),
-            }
-        }
         // **One task from the field's lock through the outcome's record**
         // (Spec 8.2), which a dropped request cannot cut: the request awaits
         // what the task ended with and renders it.
@@ -402,7 +375,6 @@ mod entry {
             setup_id: setup_id.to_owned(),
             name: setup.name.clone(),
             code,
-            replace,
         }));
         match continued.await {
             Ok(Ok(ended)) => answer(&store, seams, &session, setup_id, &setup.name, ended).await,
@@ -420,7 +392,6 @@ mod entry {
         setup_id: String,
         name: String,
         code: Code,
-        replace: Option<AgentId>,
     }
 
     /// **An entry from the field's lock through the outcome's record**
@@ -438,7 +409,6 @@ mod entry {
             setup_id,
             name,
             code,
-            replace,
         } = entry;
         let compared = compare(&store, &enrollment, &session, &setup_id, &code)
             .await
@@ -477,7 +447,6 @@ mod entry {
             session,
             setup_id,
             name,
-            replace,
             begun: false,
             taken,
         })
@@ -485,8 +454,8 @@ mod entry {
     }
 
     /// **What a matched entry carries on with**: the setup, the agent's
-    /// name, the replaced row where one is, whether the exchange makes the
-    /// setup (New agent's), and the taken connection.
+    /// name, whether the exchange makes the setup (New agent's), and the
+    /// taken connection.
     struct Matched {
         store: Store,
         cfg: Arc<ServerConfig>,
@@ -494,7 +463,6 @@ mod entry {
         session: Session,
         setup_id: String,
         name: String,
-        replace: Option<AgentId>,
         begun: bool,
         taken: Taken,
     }
@@ -511,20 +479,16 @@ mod entry {
             session,
             setup_id,
             name,
-            replace,
             begun,
             taken,
         } = matched;
-        let act = match replace {
-            Some(id) => PairingAct::Replace(id),
-            None => PairingAct::Pair(
-                store
-                    .mint_key("ag")
-                    .await
-                    .and_then(|id| id.parse().map_err(anyhow::Error::msg))
-                    .map_err(fault)?,
-            ),
-        };
+        let act = PairingAct::Pair(
+            store
+                .mint_key("ag")
+                .await
+                .and_then(|id| id.parse().map_err(anyhow::Error::msg))
+                .map_err(fault)?,
+        );
         let first = first_of(
             &store,
             &session,
@@ -1093,7 +1057,6 @@ mod entry {
             session,
             setup_id,
             name,
-            replace: None,
             begun: true,
             taken,
         })

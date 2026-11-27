@@ -105,8 +105,9 @@ pub struct Setup {
     pub devices: Option<Vec<i32>>,
     pub version: i64,
     /// **The pairing's link** (Spec 6.2, 8.2): the register row the
-    /// exchange wrote or whose box it set, and which write it was, `pair`
-    /// or `replace box`. None while the setup is in its pairing step.
+    /// exchange wrote and which write it was, `pair`, or `replace box` on a
+    /// setup linked before the operator's ruling of 2026-11-27. None while
+    /// the setup is in its pairing step.
     pub paired: Option<(String, String)>,
     /// The code field's misses since it last opened, under five.
     pub code_misses: i16,

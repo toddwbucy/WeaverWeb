@@ -141,10 +141,9 @@ impl Rig {
 
     fn agent(&self, name: &str, extra: &str) -> String {
         format!(
-            "\n[[agent]]\nbox = \"box1\"\nname = \"{name}\"\ngate_socket = \"{}\"\nadmin_socket = \"{}\"\nadmin_log = \"{}\"\n{extra}",
+            "\n[[agent]]\nbox = \"box1\"\nname = \"{name}\"\ngate_socket = \"{}\"\nadmin_socket = \"{}\"\n{extra}",
             self.s(&format!("box/{name}/gate.sock")),
             self.s("box/admin.sock"),
-            self.s(&format!("box/{name}/admin.log")),
         )
     }
 
@@ -358,10 +357,6 @@ fn a_staged_config_is_the_handover_and_the_box_facts_and_loads() {
         let admin = AdminConConfig::load(&admin_path).expect("admin-con loads its staged config");
         assert_eq!(admin.link.agent, agent);
         assert_eq!(admin.admin_socket, Some(rig.p("box/admin.sock")));
-        assert_eq!(
-            admin.admin_log,
-            Some(rig.p(&format!("box/{agent}/admin.log")))
-        );
         let (grace, bound) = if agent == "a2" {
             (Duration::from_secs(1500), Duration::from_secs(1200))
         } else {

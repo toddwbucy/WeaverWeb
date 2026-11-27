@@ -5,7 +5,6 @@
 //! connector's own half, its backlog and its reading of `admin.log`, on
 //! files the tests make. No name, path or uid is a real one.
 
-use std::io::Write;
 use std::time::Duration;
 
 use serde_json::json;
@@ -13,6 +12,7 @@ use serde_json::json;
 use crate::agents_tests::{Connector, Rig};
 use crate::alerts_tests::{alerts, wait_alerts, wait_log};
 use crate::link::admin_log;
+use crate::link::admin_service::LogEvent;
 use crate::link::entries::{BACKLOG_ENTRIES, Entries};
 use crate::link::frames::{ENTRY_BOUND, FromClient, Position, Refusal, ToClient};
 use crate::store::AgentId;
@@ -486,126 +486,6 @@ fn a_backlog_past_its_bound_drops_the_oldest_and_reports_the_count() {
     assert_eq!(entries.held().1, 0);
 }
 
-/// Wait for the backlog to hold `n` entries.
-fn wait_pending(entries: &Entries, n: usize) -> Vec<(String, serde_json::Value)> {
-    let until = std::time::Instant::now() + Duration::from_secs(5);
-    loop {
-        let pending = entries.pending();
-        if pending.len() >= n {
-            return pending;
-        }
-        assert!(
-            std::time::Instant::now() < until,
-            "never {n} entries: {pending:#?}"
-        );
-        std::thread::sleep(Duration::from_millis(20));
-    }
-}
-
-/// **admin.log is read from admin-con's start, each line passed along, a
-/// truncation or a replacement read from its start after a
-/// discontinuity**: what stood at the start is not read; a line appended is
-/// an entry, own by its caller uid; a truncation, or another file renamed
-/// over the path, and a line after it are a discontinuity and that line.
-#[test]
-fn admin_log_is_read_from_the_start_and_a_truncation_is_marked() {
-    let dir = crate::test_dir::tempdir().unwrap();
-    let path = dir.path().join("admin.log");
-    std::fs::write(
-        &path,
-        format!("{}\n", line("show", MINE, json!({"kind": "state"}))),
-    )
-    .unwrap();
-    let entries = Entries::new("admin-con");
-    let (stop, shutdown) = tokio::sync::watch::channel(false);
-    let tail = admin_log::tail(path.clone(), entries.clone(), MINE as u32, shutdown);
-    std::thread::sleep(admin_log::POLL * 2);
-    assert!(entries.pending().is_empty(), "no history at start");
-    let mut f = std::fs::OpenOptions::new()
-        .append(true)
-        .open(&path)
-        .unwrap();
-    writeln!(
-        f,
-        "{}",
-        line("load", THEIRS, json!({"kind": "config_invalid"}))
-    )
-    .unwrap();
-    writeln!(f, "{}", line("show", MINE, json!({"kind": "state"}))).unwrap();
-    writeln!(f, "not json").unwrap();
-    let pending = wait_pending(&entries, 3);
-    assert_eq!(pending[0].0, admin_log::SOURCE);
-    assert_eq!(pending[0].1["own"], false);
-    assert_eq!(pending[0].1["line"]["verb"], "load");
-    assert_eq!(pending[1].1["own"], true);
-    assert_eq!(pending[2].1["unparsed"], true);
-    std::fs::write(
-        &path,
-        format!("{}\n", line("stop", THEIRS, json!({"kind": "at_rest"}))),
-    )
-    .unwrap();
-    let pending = wait_pending(&entries, 5);
-    assert!(
-        pending[3].1["discontinuity"]
-            .as_str()
-            .is_some_and(|d| d.contains("truncated")),
-        "{pending:#?}"
-    );
-    assert_eq!(pending[4].1["line"]["verb"], "stop");
-    let fresh = dir.path().join("fresh.log");
-    std::fs::write(
-        &fresh,
-        format!(
-            "{}\n",
-            line("validate", THEIRS, json!({"kind": "validated"}))
-        ),
-    )
-    .unwrap();
-    std::fs::rename(&fresh, &path).unwrap();
-    let pending = wait_pending(&entries, 7);
-    assert!(
-        pending[5].1["discontinuity"]
-            .as_str()
-            .is_some_and(|d| d.contains("replaced")),
-        "{pending:#?}"
-    );
-    assert_eq!(pending[6].1["line"]["verb"], "validate");
-    stop.send_replace(true);
-    tail.join().unwrap();
-}
-
-/// **A link or a FIFO planted at the path is refused, never read**: each
-/// is the connector's own failure, once.
-#[test]
-fn admin_log_refuses_a_link_and_a_fifo() {
-    let dir = crate::test_dir::tempdir().unwrap();
-    let real = dir.path().join("real.log");
-    std::fs::write(&real, "").unwrap();
-    let link = dir.path().join("admin.log");
-    std::os::unix::fs::symlink(&real, &link).unwrap();
-    let fifo = dir.path().join("fifo.log");
-    let c = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
-    // SAFETY: a path the test made, a mode for its own user.
-    assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
-    for (path, why) in [(link, "symlink"), (fifo, "not a regular file")] {
-        let entries = Entries::new("admin-con");
-        let (stop, shutdown) = tokio::sync::watch::channel(false);
-        let tail = admin_log::tail(path, entries.clone(), MINE as u32, shutdown);
-        let pending = wait_pending(&entries, 1);
-        std::thread::sleep(admin_log::POLL * 2);
-        stop.send_replace(true);
-        tail.join().unwrap();
-        let pending_after = entries.pending();
-        assert_eq!(pending_after.len(), 1, "once: {pending_after:#?}");
-        assert_eq!(pending[0].0, "admin-con");
-        assert_eq!(pending[0].1["kind"], "admin_log_unreadable");
-        assert!(
-            pending[0].1["message"].as_str().unwrap().contains(why),
-            "{pending:#?}"
-        );
-    }
-}
-
 /// **An entry is acknowledged only once durable, and applied from that
 /// copy**: on a new connection, 1,000 entries are sent and acknowledged
 /// while the drainer is held; once it resumes, each is one line of the log.
@@ -669,91 +549,6 @@ async fn entries_acknowledged_are_applied_from_their_durable_copy() {
     assert_eq!(lines.last().unwrap()["entry"]["message"], "retried");
     tokio::time::sleep(Duration::from_millis(1500)).await;
     assert_eq!(entry_lines(&rig).len(), count as usize + 1, "once");
-}
-
-/// **A file absent at admin-con's start is read from its start once it
-/// appears**: its absence is a failure, once, and both lines written to it
-/// are sent.
-///
-/// Perturbation: take every first open as the start's baseline, and the
-/// lines written before the file was found are skipped.
-#[test]
-fn admin_log_absent_at_the_start_is_read_from_its_start() {
-    let dir = crate::test_dir::tempdir().unwrap();
-    let path = dir.path().join("admin.log");
-    let entries = Entries::new("admin-con");
-    let (stop, shutdown) = tokio::sync::watch::channel(false);
-    let tail = admin_log::tail(path.clone(), entries.clone(), MINE as u32, shutdown);
-    let failed = wait_pending(&entries, 1);
-    assert_eq!(failed[0].1["kind"], "admin_log_unreadable");
-    std::fs::write(
-        &path,
-        format!(
-            "{}\n{}\n",
-            line("load", THEIRS, json!({"kind": "config_invalid"})),
-            line("stop", THEIRS, json!({"kind": "at_rest"}))
-        ),
-    )
-    .unwrap();
-    let pending = wait_pending(&entries, 3);
-    assert_eq!(pending[1].1["line"]["verb"], "load");
-    assert_eq!(pending[2].1["line"]["verb"], "stop");
-    stop.send_replace(true);
-    tail.join().unwrap();
-}
-
-/// **A copy-truncate regrown past the offset between two looks is seen**:
-/// the digest of the last bytes read no longer matches, the discontinuity
-/// is marked, and the new content is read from its start, whole, never
-/// resumed mid-line.
-///
-/// Perturbation: drop the digest check, and the regrown file is resumed
-/// at the old offset, mid-line.
-#[test]
-fn admin_log_truncated_and_regrown_between_looks_is_reread_whole() {
-    let dir = crate::test_dir::tempdir().unwrap();
-    let path = dir.path().join("admin.log");
-    std::fs::write(&path, "").unwrap();
-    let entries = Entries::new("admin-con");
-    let (stop, shutdown) = tokio::sync::watch::channel(false);
-    let tail = admin_log::tail(path.clone(), entries.clone(), MINE as u32, shutdown);
-    let mut f = std::fs::OpenOptions::new()
-        .append(true)
-        .open(&path)
-        .unwrap();
-    writeln!(f, "{}", line("show", MINE, json!({"kind": "state"}))).unwrap();
-    drop(f);
-    wait_pending(&entries, 1);
-    // Truncated in place and regrown past the offset in one write, well
-    // inside a look's interval.
-    let long = line(
-        "load",
-        THEIRS,
-        json!({"kind": "config_invalid", "pad": "p".repeat(400)}),
-    );
-    std::fs::write(
-        &path,
-        format!(
-            "{long}\n{}\n",
-            line("stop", THEIRS, json!({"kind": "at_rest"}))
-        ),
-    )
-    .unwrap();
-    let pending = wait_pending(&entries, 4);
-    assert!(
-        pending[1].1["discontinuity"]
-            .as_str()
-            .is_some_and(|d| d.contains("truncated")),
-        "{pending:#?}"
-    );
-    assert_eq!(pending[2].1["line"]["verb"], "load", "{pending:#?}");
-    assert_eq!(pending[3].1["line"]["verb"], "stop");
-    assert!(
-        pending.iter().all(|(_, e)| e["unparsed"] != true),
-        "no line read from its middle: {pending:#?}"
-    );
-    stop.send_replace(true);
-    tail.join().unwrap();
 }
 
 /// **A row that keeps failing holds no other**: entries of one run whose
@@ -844,11 +639,17 @@ async fn every_shape_a_connector_sends_passes_the_door() {
     let invalid = vec![0xffu8; 8 * 1024];
     entries.push(
         admin_log::SOURCE,
-        admin_log::entry_of(&invalid, MINE as u32),
+        admin_log::entry_of(&LogEvent::Text {
+            text: String::from_utf8_lossy(&invalid).into_owned(),
+            through_service: false,
+        }),
     );
     entries.push(
         admin_log::SOURCE,
-        admin_log::entry_of(br#"{"verb":"show","uid":1}"#, MINE as u32),
+        admin_log::entry_of(&LogEvent::Line {
+            line: json!({"verb": "show", "uid": 1}),
+            through_service: false,
+        }),
     );
     entries.push(admin_log::SOURCE, admin_log::discontinuity("truncated"));
     entries.push(
@@ -890,7 +691,10 @@ async fn every_shape_a_connector_sends_passes_the_door() {
     let fresh = Entries::new("admin-con");
     fresh.push(
         admin_log::SOURCE,
-        admin_log::entry_of(&invalid, MINE as u32),
+        admin_log::entry_of(&LogEvent::Text {
+            text: String::from_utf8_lossy(&invalid).into_owned(),
+            through_service: false,
+        }),
     );
     let (source, entry) = fresh.pending().remove(0);
     assert!(entry.get("oversized").is_some(), "{entry}");
@@ -983,46 +787,6 @@ async fn the_drain_is_fair_to_a_row_behind_slow_failures() {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     assert_eq!(entry_lines(&o.rig)[0]["entry"]["message"], "fresh");
-}
-
-/// **A baseline in the middle of a line skips through its end**: started
-/// on a file ending with half a record, admin-con sends nothing of it when
-/// the writer finishes it, and the next line whole.
-///
-/// Perturbation: take the baseline at the file's end with no skip, and the
-/// half record's rest is sent as a line of its own.
-#[test]
-fn admin_log_started_mid_line_skips_its_rest() {
-    let dir = crate::test_dir::tempdir().unwrap();
-    let path = dir.path().join("admin.log");
-    let first = line("load", THEIRS, json!({"kind": "config_invalid"})).to_string();
-    let (head, rest) = first.split_at(first.len() / 2);
-    std::fs::write(
-        &path,
-        format!("{}\n{head}", line("show", MINE, json!({"kind": "state"}))),
-    )
-    .unwrap();
-    let entries = Entries::new("admin-con");
-    let (stop, shutdown) = tokio::sync::watch::channel(false);
-    let tail = admin_log::tail(path.clone(), entries.clone(), MINE as u32, shutdown);
-    let mut f = std::fs::OpenOptions::new()
-        .append(true)
-        .open(&path)
-        .unwrap();
-    write!(
-        f,
-        "{rest}\n{}\n",
-        line("stop", THEIRS, json!({"kind": "at_rest"}))
-    )
-    .unwrap();
-    drop(f);
-    let pending = wait_pending(&entries, 1);
-    std::thread::sleep(admin_log::POLL * 2);
-    let pending_after = entries.pending();
-    stop.send_replace(true);
-    tail.join().unwrap();
-    assert_eq!(pending_after.len(), 1, "{pending_after:#?}");
-    assert_eq!(pending[0].1["line"]["verb"], "stop", "{pending:#?}");
 }
 
 /// **The drainer lives and dies with its listener, and the next one drains
@@ -1161,44 +925,4 @@ async fn a_stop_writes_its_teardowns_alerts_before_it_returns() {
         "{lines:#?}"
     );
     let _ = asked.await;
-}
-
-/// **Every line after the baseline is an entry, a blank one too**: a
-/// blank line between two records is sent marked unparsed and empty.
-///
-/// Perturbation: skip a blank line again, and two entries come where three
-/// are owed.
-#[test]
-fn admin_log_sends_a_blank_line_as_unparsed() {
-    let dir = crate::test_dir::tempdir().unwrap();
-    let path = dir.path().join("admin.log");
-    std::fs::write(&path, "").unwrap();
-    let entries = Entries::new("admin-con");
-    let (stop, shutdown) = tokio::sync::watch::channel(false);
-    let tail = admin_log::tail(path.clone(), entries.clone(), MINE as u32, shutdown);
-    let mut f = std::fs::OpenOptions::new()
-        .append(true)
-        .open(&path)
-        .unwrap();
-    write!(
-        f,
-        "{}\n\n{}\n",
-        line("load", THEIRS, json!({"kind": "config_invalid"})),
-        line("stop", THEIRS, json!({"kind": "at_rest"}))
-    )
-    .unwrap();
-    drop(f);
-    let pending = wait_pending(&entries, 2);
-    std::thread::sleep(admin_log::POLL * 2);
-    let pending = if pending.len() < 3 {
-        entries.pending()
-    } else {
-        pending
-    };
-    stop.send_replace(true);
-    tail.join().unwrap();
-    assert_eq!(pending.len(), 3, "{pending:#?}");
-    assert_eq!(pending[1].1["unparsed"], true);
-    assert_eq!(pending[1].1["line"], "");
-    assert_eq!(pending[2].1["line"]["verb"], "stop");
 }

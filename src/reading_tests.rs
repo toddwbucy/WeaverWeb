@@ -835,8 +835,6 @@ async fn an_unrecovered_call_passes_the_relay_the_window_and_the_live_view() {
     // The fake weaver-admin service the trace is opened on.
     let service = crate::link::fake_service::FakeService::start(&[], "idle");
     service.with(|s| s.relay = Some(relay.socket.clone()));
-    let admin_log = relay.socket.with_file_name("admin.log");
-    std::fs::write(&admin_log, "").unwrap();
     let path = dir.path().join("admin-con.toml");
     let mut file = std::fs::OpenOptions::new()
         .write(true)
@@ -846,9 +844,8 @@ async fn an_unrecovered_call_passes_the_relay_the_window_and_the_live_view() {
         .unwrap();
     write!(
         file,
-        "{config}\nadmin_socket = {}\nadmin_log = {}\n",
+        "{config}\nadmin_socket = {}\n",
         toml::Value::String(service.socket.display().to_string()),
-        toml::Value::String(admin_log.display().to_string()),
     )
     .unwrap();
     drop(file);

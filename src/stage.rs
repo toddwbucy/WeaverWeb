@@ -103,7 +103,6 @@ pub struct Agent {
     pub name: String,
     pub gate_socket: String,
     pub admin_socket: String,
-    pub admin_log: String,
     pub stop_grace_secs: Option<u64>,
     pub verb_bound_secs: Option<u64>,
     /// admin-con's `backfill_bytes`, its default where absent, refused above
@@ -702,7 +701,6 @@ fn plan(params: &Params, euid: u32) -> anyhow::Result<(Vec<Entry>, Vec<PlannedFi
             for (m, v) in [
                 ("gate_socket", &agent.gate_socket),
                 ("admin_socket", &agent.admin_socket),
-                ("admin_log", &agent.admin_log),
             ] {
                 path_ok(&member(m), v)?;
             }
@@ -714,7 +712,6 @@ fn plan(params: &Params, euid: u32) -> anyhow::Result<(Vec<Entry>, Vec<PlannedFi
             gate_facts.insert("gate_socket".into(), agent.gate_socket.clone().into());
             let mut admin_facts = toml::Table::new();
             admin_facts.insert("admin_socket".into(), agent.admin_socket.clone().into());
-            admin_facts.insert("admin_log".into(), agent.admin_log.clone().into());
             let grace = agent.stop_grace_secs.unwrap_or(STOP_GRACE.as_secs());
             for (m, v) in [
                 ("verb_bound_secs", agent.verb_bound_secs),

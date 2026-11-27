@@ -2968,8 +2968,8 @@ const ANSWER_KINDS: [&str; 14] = [
 /// What an entry is, as the door checked it.
 #[derive(Debug)]
 enum EntryShape {
-    /// A line of `admin.log`, as admin wrote it, and whether admin-con found
-    /// it its own.
+    /// A line of `admin.log`, as admin wrote it, and whether it came through
+    /// WeaverWeb, the service's judgment admin-con carries.
     Line { own: bool },
     /// A discontinuity of the file, or a line past the bound.
     Marked,

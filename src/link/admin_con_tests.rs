@@ -6,7 +6,7 @@
 //! real.
 
 use super::admin_con::{self, AdminConConfig, Invoker, NoVerbs};
-use super::admin_service::{Purpose, word};
+use super::admin_service::{LogEvent, Purpose, word};
 use super::client::{Backoff, LinkStatus};
 use super::client_tests::{FAST, FakeServer};
 use super::entries::Entries;
@@ -50,8 +50,6 @@ pub(super) struct Trace {
     pub(super) service: FakeService,
     /// The service's socket, the config's `admin_socket`.
     pub(super) socket: PathBuf,
-    /// An empty `admin.log` beside the socket, the config's `admin_log`.
-    pub(super) admin_log: PathBuf,
 }
 
 /// One trace record: its kind, and `n` in its payload to tell events apart.
@@ -92,15 +90,12 @@ impl Trace {
         service.with(|s| s.relay = Some(relay.socket.clone()));
         let socket = service.socket.clone();
         // Beside the socket, where `installed` names it.
-        let admin_log = socket.with_file_name("admin.log");
-        std::fs::write(&admin_log, "").unwrap();
         Self {
             _dir: dir,
             path,
             relay,
             service,
             socket,
-            admin_log,
         }
     }
 
@@ -301,8 +296,8 @@ impl Running {
 }
 
 /// An agent registered by the verbs, and its admin config as `register`
-/// wrote it with `admin_socket` and `admin_log` (and a backfill bound,
-/// where given) added.
+/// wrote it with `admin_socket` (and a backfill bound, where given)
+/// added.
 pub(super) async fn installed(
     lab: &Lab,
     socket: &Path,
@@ -335,9 +330,8 @@ async fn installed_as(
     let path = PathBuf::from(answer.value["configs"][1].as_str().unwrap());
     assert!(path.ends_with("admin-con.toml"));
     let mut extra = format!(
-        "admin_socket = {}\nadmin_log = {}\n",
-        toml::Value::String(socket.display().to_string()),
-        toml::Value::String(socket.with_file_name("admin.log").display().to_string())
+        "admin_socket = {}\n",
+        toml::Value::String(socket.display().to_string())
     );
     if let Some(bytes) = backfill {
         extra.push_str(&format!("backfill_bytes = {bytes}\n"));
@@ -582,7 +576,6 @@ async fn admin_con_answers_an_ask_outside_its_ceiling_and_keeps_the_connection()
     let cfg = AdminConConfig {
         link: server.link(Plane::Admin),
         admin_socket: Some(trace.socket.clone()),
-        admin_log: Some(trace.admin_log.clone()),
         backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
         verb_bound: admin_con::VERB_BOUND,
         stop_grace: GRACE,
@@ -1068,55 +1061,29 @@ async fn an_admin_con_config_that_is_not_trusted_is_refused_at_start() {
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
         path
     };
-    let good = write(
-        "good.toml",
-        text(
-            Plane::Admin,
-            "admin_socket = \"/w\"\nadmin_log = \"/admin.log\"\n",
-        ),
-    );
+    let good = write("good.toml", text(Plane::Admin, "admin_socket = \"/w\"\n"));
     let cfg = AdminConConfig::load(&good).unwrap();
     assert_eq!(cfg.backfill_bytes, admin_con::DEFAULT_BACKFILL_BYTES);
     let refused = |path: &Path| AdminConConfig::load(path).unwrap_err().to_string();
-    let gate = write(
-        "gate.toml",
-        text(
-            Plane::Gate,
-            "admin_socket = \"/w\"\nadmin_log = \"/admin.log\"\n",
-        ),
-    );
+    let gate = write("gate.toml", text(Plane::Gate, "admin_socket = \"/w\"\n"));
     assert!(refused(&gate).contains("gate plane"));
     // With no agent laid the two box facts are absent, and the config
     // loads (Spec 7.2).
     let bare = write("bare.toml", text(Plane::Admin, ""));
     let bare = AdminConConfig::load(&bare).unwrap();
-    assert_eq!((bare.admin_socket, bare.admin_log), (None, None));
+    assert_eq!(bare.admin_socket, None);
     let relative = write(
         "relative.toml",
-        text(
-            Plane::Admin,
-            "admin_socket = \"admin.sock\"\nadmin_log = \"/admin.log\"\n",
-        ),
+        text(Plane::Admin, "admin_socket = \"admin.sock\"\n"),
     );
     assert!(refused(&relative).contains("admin_socket"));
-    let relative_log = write(
-        "relative-log.toml",
-        text(
-            Plane::Admin,
-            "admin_socket = \"/w\"\nadmin_log = \"admin.log\"\n",
-        ),
-    );
-    assert!(refused(&relative_log).contains("admin_log"));
     let unnamed = write(
         "unnamed.toml",
-        text(
-            Plane::Admin,
-            "admin_socket = \"/w\"\nadmin_log = \"/admin.log\"\n",
-        )
-        .lines()
-        .filter(|l| !l.starts_with("agent_id"))
-        .map(|l| format!("{l}\n"))
-        .collect(),
+        text(Plane::Admin, "admin_socket = \"/w\"\n")
+            .lines()
+            .filter(|l| !l.starts_with("agent_id"))
+            .map(|l| format!("{l}\n"))
+            .collect(),
     );
     assert!(refused(&unnamed).contains("agent_id"));
     let big = write(
@@ -1124,7 +1091,7 @@ async fn an_admin_con_config_that_is_not_trusted_is_refused_at_start() {
         text(
             Plane::Admin,
             &format!(
-                "admin_socket = \"/w\"\nadmin_log = \"/admin.log\"\nbackfill_bytes = {}\n",
+                "admin_socket = \"/w\"\nbackfill_bytes = {}\n",
                 admin_con::MAX_BACKFILL_BYTES + 1
             ),
         ),
@@ -1510,7 +1477,6 @@ async fn an_ask_during_the_replay_waits_behind_one_frame_not_a_step() {
     let cfg = AdminConConfig {
         link: server.link(Plane::Admin),
         admin_socket: Some(trace.socket.clone()),
-        admin_log: Some(trace.admin_log.clone()),
         backfill_bytes: 16 * 1024 * 1024,
         verb_bound: admin_con::VERB_BOUND,
         stop_grace: GRACE,
@@ -1606,7 +1572,6 @@ async fn an_ordinary_verb_asked_during_the_replay_waits_for_caught_up_and_the_dr
     let cfg = AdminConConfig {
         link: server.link(Plane::Admin),
         admin_socket: Some(trace.socket.clone()),
-        admin_log: Some(trace.admin_log.clone()),
         backfill_bytes: 4 * 1024 * 1024,
         verb_bound: admin_con::VERB_BOUND,
         stop_grace: GRACE,
@@ -1707,7 +1672,6 @@ async fn a_stop_against_a_server_that_stopped_reading_returns_within_the_grace()
     let cfg = AdminConConfig {
         link: server.link(Plane::Admin),
         admin_socket: Some(trace.socket.clone()),
-        admin_log: Some(trace.admin_log.clone()),
         backfill_bytes: 32 * 1024 * 1024,
         verb_bound: admin_con::VERB_BOUND,
         stop_grace: GRACE,
@@ -1752,7 +1716,6 @@ async fn a_stop_during_an_opening_that_waits_on_its_read_returns_within_the_grac
     let cfg = AdminConConfig {
         link: server.link(Plane::Admin),
         admin_socket: Some(trace.socket.clone()),
-        admin_log: Some(trace.admin_log.clone()),
         backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
         verb_bound: admin_con::VERB_BOUND,
         stop_grace: GRACE,
@@ -3155,7 +3118,6 @@ async fn no_opening_is_taken_while_an_openings_hold_stands() {
     let cfg = AdminConConfig {
         link: server.link(Plane::Admin),
         admin_socket: Some(trace.socket.clone()),
-        admin_log: Some(trace.admin_log.clone()),
         backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
         verb_bound: admin_con::VERB_BOUND,
         stop_grace: GRACE,
@@ -3355,7 +3317,6 @@ async fn an_openings_show_asked_late_is_still_served_first() {
     let cfg = AdminConConfig {
         link: server.link(Plane::Admin),
         admin_socket: Some(trace.socket.clone()),
-        admin_log: Some(trace.admin_log.clone()),
         backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
         verb_bound: admin_con::VERB_BOUND,
         stop_grace: GRACE,
@@ -3486,7 +3447,6 @@ async fn the_openings_hold_covers_the_servers_deadline() {
     let cfg = AdminConConfig {
         link: server.link(Plane::Admin),
         admin_socket: Some(trace.socket.clone()),
-        admin_log: Some(trace.admin_log.clone()),
         backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
         verb_bound: admin_con::VERB_BOUND,
         stop_grace: GRACE,
@@ -3594,7 +3554,6 @@ async fn a_hello_answered_late_still_leaves_the_verification_its_reserve() {
     let cfg = AdminConConfig {
         link: server.link(Plane::Admin),
         admin_socket: Some(trace.socket.clone()),
-        admin_log: Some(trace.admin_log.clone()),
         backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
         verb_bound: admin_con::VERB_BOUND,
         stop_grace: GRACE,
@@ -3731,7 +3690,6 @@ async fn a_faulting_openings_show_keeps_the_hold() {
     let cfg = AdminConConfig {
         link: server.link(Plane::Admin),
         admin_socket: Some(trace.socket.clone()),
-        admin_log: Some(trace.admin_log.clone()),
         backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
         verb_bound: admin_con::VERB_BOUND,
         stop_grace: GRACE,
@@ -3806,7 +3764,6 @@ async fn a_late_openings_show_still_runs_before_a_queued_verb() {
     let cfg = AdminConConfig {
         link: server.link(Plane::Admin),
         admin_socket: Some(trace.socket.clone()),
-        admin_log: Some(trace.admin_log.clone()),
         backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
         verb_bound: admin_con::VERB_BOUND,
         stop_grace: GRACE,
@@ -3887,7 +3844,6 @@ async fn a_closed_door_hello_holds_ordinary_asks_until_its_show() {
     let cfg = AdminConConfig {
         link: server.link(Plane::Admin),
         admin_socket: Some(trace.socket.clone()),
-        admin_log: Some(trace.admin_log.clone()),
         backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
         verb_bound: admin_con::VERB_BOUND,
         stop_grace: GRACE,
@@ -3951,7 +3907,6 @@ async fn a_show_answered_but_not_landed_keeps_the_hold() {
     let cfg = AdminConConfig {
         link: server.link(Plane::Admin),
         admin_socket: Some(trace.socket.clone()),
-        admin_log: Some(trace.admin_log.clone()),
         backfill_bytes: admin_con::DEFAULT_BACKFILL_BYTES,
         verb_bound: admin_con::VERB_BOUND,
         stop_grace: GRACE,
@@ -4115,9 +4070,10 @@ async fn a_shutdown_invokes_nothing_though_the_ceiling_grants_unload() {
 
 /// **admin-con sends the box's `admin.log` upstream, end to end** (Spec
 /// 2.14): a line another party's act appended reaches the server through
-/// admin-con's tailer, its backlog and its connection's pump, and raises
-/// its alert from the box, an `unload` stopped at its save point raising
-/// the prompt; a line of admin-con's own uid raises nothing.
+/// admin-con's log connection on the service, its backlog and its
+/// connection's pump, and raises its alert from the box, an `unload`
+/// stopped at its save point raising the prompt; a line the service judges
+/// came through its own account raises nothing.
 #[tokio::test]
 async fn admin_con_sends_another_partys_line_upstream() {
     let Some(lab) = Lab::open().await else { return };
@@ -4127,29 +4083,20 @@ async fn admin_con_sends_another_partys_line_upstream() {
     let invoker = Service::new(&["show"], "idle");
     let mut con = Running::start(config(&path), invoker.clone());
     con.wait("admitted", |s| s.admitted).await;
-    // The tailer starts at the file's end: let it find the file first.
-    tokio::time::sleep(crate::link::admin_log::POLL * 3).await;
-    let me = u64::from(crate::link::admin_log::my_uid());
-    let line = |verb: &str, uid: u64, outcome: serde_json::Value| {
-        json!({"wall_ms": 1, "command": format!("weaver-admin {verb} karl"), "uid": uid,
-            "verb": verb, "agent": "karl", "outcome": outcome.to_string()})
+    log_open(&trace).await;
+    let line = |verb: &str, own: bool, outcome: serde_json::Value| LogEvent::Line {
+        line: json!({"wall_ms": 1, "command": format!("weaver-admin {verb} karl"), "uid": 1001,
+            "verb": verb, "agent": "karl", "outcome": outcome.to_string()}),
+        through_service: own,
     };
-    let mut f = std::fs::OpenOptions::new()
-        .append(true)
-        .open(&trace.admin_log)
-        .unwrap();
-    writeln!(f, "{}", line("load", me, json!({"kind": "config_invalid"}))).unwrap();
-    writeln!(
-        f,
-        "{}",
-        line(
-            "unload",
-            me + 1,
-            json!({"kind": "save_point_not_taken", "missed": "finished"})
-        )
-    )
-    .unwrap();
-    drop(f);
+    trace
+        .service
+        .log(&line("load", true, json!({"kind": "config_invalid"})));
+    trace.service.log(&line(
+        "unload",
+        false,
+        json!({"kind": "save_point_not_taken", "missed": "finished"}),
+    ));
     let until = tokio::time::Instant::now() + Duration::from_secs(10);
     let found = loop {
         let found = lab.store.alerts_on(&id, 10).await.unwrap();
@@ -4191,24 +4138,16 @@ async fn a_window_whose_acks_were_dropped_is_sent_again() {
     let invoker = Service::new(&["show"], "idle");
     let mut con = Running::start(config(&path), invoker.clone());
     con.wait("admitted", |s| s.admitted).await;
-    tokio::time::sleep(crate::link::admin_log::POLL * 3).await;
+    log_open(&trace).await;
     lab.listener.drop_entry_acks(crate::link::entries::WINDOW);
-    let me = u64::from(crate::link::admin_log::my_uid());
-    let mut f = std::fs::OpenOptions::new()
-        .append(true)
-        .open(&trace.admin_log)
-        .unwrap();
     let lines = crate::link::entries::WINDOW as i64 + 8;
     for n in 0..lines {
-        writeln!(
-            f,
-            "{}",
-            json!({"wall_ms": n, "uid": me, "verb": "show", "agent": "karl",
-                "outcome": json!({"kind": "state", "state": "idle"}).to_string()})
-        )
-        .unwrap();
+        trace.service.log(&LogEvent::Line {
+            line: json!({"wall_ms": n, "uid": 1001, "verb": "show", "agent": "karl",
+                "outcome": json!({"kind": "state", "state": "idle"}).to_string()}),
+            through_service: true,
+        });
     }
-    drop(f);
     let until = tokio::time::Instant::now() + Duration::from_secs(30);
     loop {
         let taken: Option<i64> =
@@ -4247,68 +4186,65 @@ async fn a_steady_stream_never_postpones_the_resend() {
     let invoker = Service::new(&["show"], "idle");
     let mut con = Running::start(config(&path), invoker.clone());
     con.wait("admitted", |s| s.admitted).await;
-    tokio::time::sleep(crate::link::admin_log::POLL * 3).await;
+    log_open(&trace).await;
     let window = crate::link::entries::WINDOW;
     lab.listener.drop_entry_acks(window);
-    let me = u64::from(crate::link::admin_log::my_uid());
-    let line = move |n: usize| {
-        json!({"wall_ms": n, "uid": me, "verb": "show", "agent": "karl",
-            "outcome": json!({"kind": "state", "state": "idle"}).to_string()})
-        .to_string()
-    };
-    let admin_log = trace.admin_log.clone();
-    let append = move |n: usize| {
-        let mut f = std::fs::OpenOptions::new()
-            .append(true)
-            .open(&admin_log)
-            .unwrap();
-        writeln!(f, "{}", line(n)).unwrap();
+    let service = &trace.service;
+    let append = |n: usize| {
+        service.log(&LogEvent::Line {
+            line: json!({"wall_ms": n, "uid": 1001, "verb": "show", "agent": "karl",
+                "outcome": json!({"kind": "state", "state": "idle"}).to_string()}),
+            through_service: true,
+        });
     };
     for n in 0..window {
         append(n);
     }
     let started = tokio::time::Instant::now();
     // A line every quarter of the bound, for three bounds.
-    let stream = tokio::spawn(async move {
+    let stream = async {
         for n in window..window + 12 {
             tokio::time::sleep(Duration::from_secs(1)).await;
             append(n);
         }
-    });
+    };
     let until = started + Duration::from_secs(8);
-    loop {
-        let taken: Option<i64> =
-            sqlx::query_scalar("SELECT max(last_seq) FROM entry_run WHERE agent_id = $1")
-                .bind(id.as_str())
-                .fetch_one(&lab.store.pool)
-                .await
-                .unwrap();
-        if taken.unwrap_or(0) > window as i64 {
-            break;
+    let check = async {
+        loop {
+            let taken: Option<i64> =
+                sqlx::query_scalar("SELECT max(last_seq) FROM entry_run WHERE agent_id = $1")
+                    .bind(id.as_str())
+                    .fetch_one(&lab.store.pool)
+                    .await
+                    .unwrap();
+            if taken.unwrap_or(0) > window as i64 {
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < until,
+                "the stream postponed the resend: taken through {taken:?}"
+            );
+            tokio::time::sleep(Duration::from_millis(200)).await;
         }
-        assert!(
-            tokio::time::Instant::now() < until,
-            "the stream postponed the resend: taken through {taken:?}"
-        );
-        tokio::time::sleep(Duration::from_millis(200)).await;
+    };
+    tokio::select! {
+        _ = check => {}
+        _ = stream => panic!("the stream ended before the resend"),
     }
-    stream.abort();
     con.stop().await;
 }
 
 /// **admin-con with no box fact is admitted with the door closed and no
-/// alert** (Spec 7.2): a config holding neither `admin_socket` nor
-/// `admin_log`, as the pairing's `adopt` leaves it, on a
+/// alert** (Spec 7.2): a config holding no `admin_socket`, as the
+/// pairing's `adopt` leaves it, on a
 /// row whose gate is not enrolled, as a pairing writes it, loads and is run
 /// as the binary runs it (`admin_con::run_as_configured`, which chooses its invoker); it
 /// is admitted on the admin plane against the real listener, declares an
 /// empty ceiling, reads the door closed, and raises no entry, so the agent
 /// carries no alert.
 ///
-/// Perturbation: read an absent `admin_log` as a failure (tail the file
-/// next to the config, which does not exist), and an alert stands; choose
-/// the service's invoker with no agent laid, and its unanswered grants
-/// raise an alert (measured 2026-11-25 and 2026-11-27).
+/// Perturbation: choose the service's invoker with no agent laid, and its
+/// unanswered grants raise an alert (measured 2026-11-27).
 #[tokio::test]
 async fn admin_con_with_no_box_fact_is_admitted_with_the_door_closed_and_no_alert() {
     let Some(lab) = Lab::open().await else { return };
@@ -4359,20 +4295,18 @@ async fn admin_con_with_no_box_fact_is_admitted_with_the_door_closed_and_no_aler
     con.stop().await;
 }
 
-/// **The two box facts stand together, and one fact chooses** (Spec 7.2):
-/// a config with none loads with no agent laid and chooses no invoker; one
-/// with both chooses the service's invoker; one with one alone is refused
-/// at load naming what is missing; one naming the retired `weaver_admin` or
-/// `trace_socket` is refused naming it; and a door with no agent laid is
-/// closed for that reason, the service never dialed.
+/// **One box fact, `admin_socket`, chooses** (Spec 7.2): a config without
+/// it loads with no agent laid and chooses no invoker; one with it chooses
+/// the service's invoker; one naming a retired member, `weaver_admin`,
+/// `trace_socket` or `admin_log`, is refused naming it; and a door with no
+/// agent laid is closed for that reason, the service never dialed.
 ///
-/// Perturbation: drop the refusal of some and not all, and the half-laid
-/// config loads; drop the empty path's branch in `dial_relay`, and the door
-/// answers the relay's dial error instead (each measured 2026-11-25); drop
-/// the refusal of a retired member, and the old config loads (measured
+/// Perturbation: drop the empty path's branch in `dial_relay`, and the door
+/// answers the relay's dial error instead (measured 2026-11-25); drop the
+/// refusal of a retired member, and the old config loads (measured
 /// 2026-11-27).
 #[tokio::test]
-async fn the_box_facts_stand_together_and_one_fact_chooses_the_invoker() {
+async fn one_box_fact_chooses_the_invoker_and_retired_members_are_refused() {
     use std::os::unix::fs::PermissionsExt;
     let dir = crate::test_dir::tempdir().unwrap();
     let authority =
@@ -4405,35 +4339,29 @@ async fn the_box_facts_stand_together_and_one_fact_chooses_the_invoker() {
         admin_con::invoking(&bare).unwrap(),
         admin_con::Invoking::NoAgentLaid
     ));
-    let all = write(
-        "all.toml",
-        "admin_socket = \"/w\"\nadmin_log = \"/a.log\"\n",
-    )
-    .unwrap();
+    let all = write("all.toml", "admin_socket = \"/w\"\n").unwrap();
     assert_eq!(all.laid().unwrap().admin_socket, Path::new("/w"));
     assert!(matches!(
         admin_con::invoking(&all).unwrap(),
         admin_con::Invoking::Service(_)
     ));
-    let half = write("half.toml", "admin_socket = \"/w\"\n")
-        .unwrap_err()
-        .to_string();
-    assert!(
-        half.contains("stand together") && half.contains("admin_log is missing"),
-        "{half}"
-    );
-    let one = write("one.toml", "admin_log = \"/a.log\"\n")
-        .unwrap_err()
-        .to_string();
-    assert!(one.contains("admin_socket is missing"), "{one}");
-    // **A retired member is refused by name**, so a config laid for the
-    // sudo invoker never starts silently unlaid.
-    let old = write(
-        "old.toml",
-        "weaver_admin = \"/w\"\nadmin_log = \"/a.log\"\n",
+    let log = write(
+        "log.toml",
+        "admin_socket = \"/w\"\nadmin_log = \"/a.log\"\n",
     )
     .unwrap_err()
     .to_string();
+    assert!(
+        log.ends_with(
+            "log.toml: admin_log is retired; admin-con reads the admin log through the service at admin_socket"
+        ),
+        "{log}"
+    );
+    // **A retired member is refused by name**, so a config laid for the
+    // sudo invoker never starts silently unlaid.
+    let old = write("old.toml", "weaver_admin = \"/w\"\n")
+        .unwrap_err()
+        .to_string();
     assert!(
         old.ends_with(
             "old.toml: weaver_admin is retired; admin-con asks the service at admin_socket"
@@ -4442,7 +4370,7 @@ async fn the_box_facts_stand_together_and_one_fact_chooses_the_invoker() {
     );
     let older = write(
         "older.toml",
-        "trace_socket = \"/t.sock\"\nadmin_socket = \"/w\"\nadmin_log = \"/a.log\"\n",
+        "trace_socket = \"/t.sock\"\nadmin_socket = \"/w\"\n",
     )
     .unwrap_err()
     .to_string();
@@ -4755,4 +4683,14 @@ async fn every_word_refusing_a_trace_opening_is_a_closed_door() {
         };
         assert_eq!(kinds, expected, "{refusal}");
     }
+}
+
+/// Wait until admin-con holds its log connection on the trace's service.
+async fn log_open(trace: &Trace) {
+    let until = tokio::time::Instant::now() + SOON;
+    while !trace.service.with(|s| s.opened.contains(&Purpose::Log)) {
+        assert!(tokio::time::Instant::now() < until, "no log connection");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(50)).await;
 }

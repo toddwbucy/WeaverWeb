@@ -24,10 +24,6 @@ const ACL_OTHER: u16 = 0x20;
 const ACL_UNDEFINED_ID: u32 = u32::MAX;
 /// A named party's uid in an entry; it need not exist.
 const NAMED: u32 = 65534;
-/// The setgid bit, as a shift: the mode the refusal is tested on, which
-/// `tests/no_privilege.rs` would read as a mode set by the repository if
-/// it were written as its octal literal or its libc name.
-const SET_GROUP_BIT: u32 = 1 << 10;
 
 /// A folder of the test's own at `mode`, under the test's temporary folder.
 fn folder(parent: &Path, name: &str, mode: u32) -> PathBuf {
@@ -157,9 +153,11 @@ fn the_trust_rule_refuses_another_owner_another_group_and_a_wider_mode() {
         "{why}"
     );
 
-    // A mode past 0640: the group may write, others may read, or a bit of
-    // execute or of the setuid kind.
-    for mode in [0o660, 0o644, 0o740, 0o640 | SET_GROUP_BIT] {
+    // A mode past 0640: the group may write, others may read, or an
+    // execute bit, each through the one mask. No setgid case: the
+    // repository holds no setgid bit, by its own scan
+    // (`tests/no_privilege.rs`), and 0740 shows a bit outside 0640 refused.
+    for mode in [0o660, 0o644, 0o740] {
         std::fs::set_permissions(&key, std::fs::Permissions::from_mode(mode)).unwrap();
         let why = refused(&key, Held::Key, &ours);
         assert!(

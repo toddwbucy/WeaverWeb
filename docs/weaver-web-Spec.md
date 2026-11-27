@@ -7015,10 +7015,13 @@ half-rendered.
   value it stages into that agent's config (1080 unless the parameter
   file sets it, so 1140), and the template carries 1140 for an instance
   started without one.
-- **`Environment=PATH=`, admin-con's path parameter**, since the invoker
-  finds sudo by `PATH` and a path to it is a box path this repository does
-  not carry (section 7.2), so the unit's environment is part of what the
-  invocation trusts.
+- **`Environment=PATH=`, admin-con's path parameter.** It was set while
+  admin-con invoked sudo, for the reason then that "the invoker finds sudo by
+  `PATH` and a path to it is a box path this repository does not carry
+  (section 7.2), so the unit's environment is part of what the invocation
+  trusts". admin-con now runs nothing (section 7.2), and the unit is
+  unchanged since the weaver-admin service replaced the invoker: whether it
+  keeps the parameter is section 10's election.
 - **No `Delegate=`.** `toddwbucy/WeaverWeb#46` asked for it on
   2026-10-14, when admin made the agent's control group beneath the
   invoker's, which then had to be delegated. Since `toddwbucy/WeaverAgent#166`
@@ -7026,13 +7029,18 @@ half-rendered.
   root's that the service manager makes, and the invoker's containment is no
   longer judged (`weaver-admin-Spec` section 6.1), so admin-con's unit needs
   no delegation and asks for none.
-- **Nothing the contract forbids.** `weaver-admin-operator-contract`
-  section 2 requires the invoker's execution context to leave admin and the
-  agent what they need (the operator's ruling of 2026-11-09 on
-  `toddwbucy/WeaverAgent#166`), and calls providing it the invoker's
-  install's. So admin-con's unit sets none of these, and a test reads the
-  rendered unit for each:
-  - **no new privileges, under which sudo cannot gain root**:
+- **Nothing the contract forbids.** These were left out while admin-con
+  invoked sudo, because `weaver-admin-operator-contract` section 2 requires
+  the invoker's execution context to leave admin and the agent what they
+  need (the operator's ruling of 2026-11-09 on `toddwbucy/WeaverAgent#166`),
+  and calls providing it the invoker's install's. admin-con now runs nothing
+  (section 7.2), and the unit is unchanged since the weaver-admin service
+  replaced the invoker: it still sets none of these, and a test reads the
+  rendered unit for each. Whether it keeps setting none waits on the
+  contract's section 2 (section 10). Each item's reason below is the one
+  given while the invoker stood:
+  - **no new privileges**, left out because "under which sudo cannot gain
+    root":
     `NoNewPrivileges`, and every directive the service manager documents as
     implying it for a unit that runs as an account other than root:
     `SystemCallFilter`, `SystemCallArchitectures`, `RestrictAddressFamilies`,
@@ -7050,9 +7058,12 @@ half-rendered.
     `ProtectSystem`, `ProtectHome`, `ProtectControlGroups`, `ProtectProc`,
     `ProcSubset`, `ReadOnlyPaths`, `InaccessiblePaths`, `TemporaryFileSystem`,
     `BindReadOnlyPaths`, `RootDirectory` and `RootImage`;
-  - **no resource limit**: no `Limit` directive of any kind, since a limit
-    set on admin-con passes through sudo and admin to the agent, whose
-    model loading it must not cut, so the box's defaults apply.
+  - **no resource limit**: no `Limit` directive of any kind. It was left
+    out while admin-con invoked sudo, "since a limit set on admin-con passes
+    through sudo and admin to the agent, whose model loading it must not
+    cut, so the box's defaults apply". admin-con now starts no process for
+    admin, and the unit is unchanged since the weaver-admin service replaced
+    the invoker.
 
   gate-con's unit and the server's take none of these either. They need
   none, and hardening them is security posture, which the hard boundaries
@@ -8966,3 +8977,13 @@ a `web-` assertion beside `weaver-admin`'s.
   paragraphs on load and unload and on the console's stop and start. Settled by
   WeaverAgent's act on the operator contract, then by this repository's act on
   admin-con's verb map.
+- **admin-con's unit now that it runs nothing, opened 2026-11-27** (section 8.1): whether
+  admin-con's unit keeps the path parameter and keeps setting none of the
+  no-new-privileges directives, the capability and system call filters, the private
+  views and the limits, each of which was left so while admin-con invoked sudo. The
+  unit is unchanged since the weaver-admin service replaced the invoker
+  (`act/the-connectors-side-of-the-socket`). Whether admin-con's context must still
+  leave admin and the agent what they need is set by `weaver-admin-operator-contract`
+  section 2, which is WeaverAgent's and may change with the service in the invoker's
+  place, so this waits on that section first. Hardening the unit is security posture,
+  which the hard boundaries keep out of this repository either way.

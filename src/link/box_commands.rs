@@ -501,15 +501,22 @@ pub async fn pair<O: Write, E: Write>(p: &mut Printer<O, E>, args: &PairArgs) ->
     }
 }
 
-/// admin-con's link from its config, or the `usage` it is.
+/// What a setup command's refusal of its config or key adds: the group it
+/// runs under (Spec 8.3).
+const SETUP_GROUP: &str = "`admin-con setup describe` and `setup report` read admin-con's config and key as admin-con does, so they run with the admin connector's group, the group of those two files, as their effective group";
+
+/// admin-con's link from its config, or the `usage` it is. The config and
+/// the key are read under the connector's trust rule, so these commands run
+/// with the admin connector's group as their effective group, and a refusal
+/// says so.
 fn setup_link(config: &Path) -> Result<Link, String> {
-    let content = read_private(config).map_err(|e| format!("{e:#}"))?;
+    let content = read_private(config).map_err(|e| format!("{e:#}; {SETUP_GROUP}"))?;
     let mut link: LinkConfig =
         parse_config(config, &content, LINK_MEMBERS).map_err(|e| format!("{e:#}"))?;
     link.expect_plane(Plane::Admin)
         .map_err(|e| format!("{e:#}"))?;
     link.load_key(config, &Trust::connector())
-        .map_err(|e| format!("{e:#}"))?;
+        .map_err(|e| format!("{e:#}; {SETUP_GROUP}"))?;
     Link::new(link).map_err(|e| format!("{}: {e:#}", config.display()))
 }
 
@@ -923,5 +930,25 @@ pub(crate) mod tests {
                 assert!(err.contains("a frame\\x1b[2J"), "{err}");
             }
         }
+    }
+
+    /// **A setup command refused its config says which group it runs
+    /// under** (Spec 8.3): a config the trust rule refuses, here one others
+    /// may read, is refused naming the file's mode and adding that the setup
+    /// commands run with the admin connector's group as their effective
+    /// group.
+    #[test]
+    fn a_setup_command_refused_its_config_names_the_group_it_runs_under() {
+        let dir = crate::test_dir::tempdir().unwrap();
+        let config = dir.path().join("admin-con.toml");
+        std::fs::write(&config, "plane = \"admin\"\n").unwrap();
+        std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let why = setup_link(&config).err().expect("refused");
+        assert!(why.contains("has mode 0644"), "{why}");
+        assert!(why.ends_with(SETUP_GROUP), "{why}");
+        assert!(
+            why.contains("run with the admin connector's group"),
+            "{why}"
+        );
     }
 }

@@ -24,6 +24,10 @@ const ACL_OTHER: u16 = 0x20;
 const ACL_UNDEFINED_ID: u32 = u32::MAX;
 /// A named party's uid in an entry; it need not exist.
 const NAMED: u32 = 65534;
+/// The setgid bit, as a shift: the mode the refusal is tested on, which
+/// `tests/no_privilege.rs` would read as a mode set by the repository if
+/// it were written as its octal literal or its libc name.
+const SET_GROUP_BIT: u32 = 1 << 10;
 
 /// A folder of the test's own at `mode`, under the test's temporary folder.
 fn folder(parent: &Path, name: &str, mode: u32) -> PathBuf {
@@ -143,14 +147,19 @@ fn the_trust_rule_refuses_another_owner_another_group_and_a_wider_mode() {
     };
     let why = refused(&key, Held::Key, &other_group);
     assert!(
-        why.contains(&format!("has group {}", ours.group))
-            && why.contains("read through its own group alone"),
+        why.contains(&format!(
+            "has group {}, and this runs with effective group {}",
+            ours.group, other_group.group
+        )) && why.contains(&format!(
+            "read through its own group alone, so run it with group {} as its effective group",
+            ours.group
+        )),
         "{why}"
     );
 
     // A mode past 0640: the group may write, others may read, or a bit of
     // execute or of the setuid kind.
-    for mode in [0o660, 0o644, 0o740, 0o2640] {
+    for mode in [0o660, 0o644, 0o740, 0o640 | SET_GROUP_BIT] {
         std::fs::set_permissions(&key, std::fs::Permissions::from_mode(mode)).unwrap();
         let why = refused(&key, Held::Key, &ours);
         assert!(
@@ -183,7 +192,7 @@ fn the_trust_rule_refuses_a_folder_others_may_write_or_enter() {
         let key = file(&dir, "gate-con.key", "key", 0o640);
         let why = refused(&key, Held::Key, &ours);
         assert!(
-            why.contains("is writable by group or others, or not root's")
+            why.contains(&format!("has mode {mode:04o}, writable by group or others"))
                 && why.contains("a folder only root writes"),
             "{mode:o}: {why}"
         );
@@ -194,6 +203,60 @@ fn the_trust_rule_refuses_a_folder_others_may_write_or_enter() {
     std::os::unix::fs::symlink(&real, &linked).unwrap();
     let why = refused(&linked.join("gate-con.key"), Held::Key, &ours);
     assert!(why.contains("is a symlink"), "{why}");
+}
+
+/// **A folder of another owner, or of a group neither the connector's nor
+/// root's, is refused while its file passes**: the file is judged first, so
+/// the folder's judgment (`client::judge_folder`) is read on the folder's
+/// own status, the file's read admitted under the same trust beside it. A
+/// test cannot make a folder of another owner or of a group it is not in,
+/// so the folder's owner and group are varied on its status.
+///
+/// Perturbations: drop the folder's owner clause, and the folder of another
+/// owner is admitted; drop its group clause, and the folder of another group
+/// is admitted (each measured 2026-11-27).
+#[test]
+fn the_trust_rule_refuses_a_folder_of_another_owner_or_group_though_its_file_passes() {
+    use crate::link::client::judge_folder;
+    let t = crate::test_dir::tempdir().unwrap();
+    let dir = folder(t.path(), "f", 0o750);
+    let key = file(&dir, "gate-con.key", "key", 0o640);
+    let ours = Trust::connector();
+    assert_eq!(read_trusted(&key, Held::Key, &ours).unwrap(), "key");
+
+    let c = std::ffi::CString::new(dir.as_os_str().as_encoded_bytes()).unwrap();
+    // SAFETY: an all-zero stat is valid, and stat fills it from a
+    // NUL-terminated path.
+    let mut real: libc::stat = unsafe { std::mem::zeroed() };
+    assert_eq!(unsafe { libc::stat(c.as_ptr(), &mut real) }, 0);
+    judge_folder(&dir, &real, &ours).unwrap();
+
+    let mut other_owner = real;
+    other_owner.st_uid = ours.owner.wrapping_add(1);
+    let why = format!("{:#}", judge_folder(&dir, &other_owner, &ours).unwrap_err());
+    assert!(
+        why.contains(&format!(
+            "is owned by uid {}, not uid {}",
+            other_owner.st_uid, ours.owner
+        )) && why.contains("a folder only root writes"),
+        "{why}"
+    );
+
+    let mut other_group = real;
+    other_group.st_gid = ours.group.wrapping_add(1).max(1);
+    let why = format!("{:#}", judge_folder(&dir, &other_group, &ours).unwrap_err());
+    assert!(
+        why.contains(&format!(
+            "has group {}, neither this connector's group {} nor root's",
+            other_group.st_gid, ours.group
+        )),
+        "{why}"
+    );
+
+    // Root's group is admitted for the folder, as the install may lay it.
+    let mut roots_group = real;
+    roots_group.st_gid = 0;
+    judge_folder(&dir, &roots_group, &ours).unwrap();
 }
 
 /// **A key carrying any access-list entry beyond its three base ones is

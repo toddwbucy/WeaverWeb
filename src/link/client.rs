@@ -224,10 +224,11 @@ fn open_trusted(path: &Path, held: Held, trust: &Trust) -> anyhow::Result<std::f
     }
     if st.st_gid != trust.group {
         anyhow::bail!(
-            "{} has group {}, not this connector's group {}; a connector's config and key are read through its own group alone",
+            "{} has group {}, and this runs with effective group {}; a connector's config and key are read through its own group alone, so run it with group {} as its effective group",
             path.display(),
             st.st_gid,
-            trust.group
+            trust.group,
+            st.st_gid
         );
     }
     let mode = st.st_mode & 0o7777;
@@ -243,16 +244,39 @@ fn open_trusted(path: &Path, held: Held, trust: &Trust) -> anyhow::Result<std::f
     // refusal names the file.
     let st =
         fstat(dir.as_raw_fd()).map_err(|e| anyhow::anyhow!("reading {}: {e}", folder.display()))?;
-    if st.st_uid != trust.owner
-        || (st.st_gid != trust.group && st.st_gid != 0)
-        || st.st_mode & 0o027 != 0
-    {
+    judge_folder(folder, &st, trust)?;
+    Ok(file)
+}
+
+/// **The folder's judgment**: root's (the trust's owner), of the connector's
+/// group or root's, writable by no group or other and nothing for others.
+/// Each refusal names what it found.
+pub(crate) fn judge_folder(folder: &Path, st: &libc::stat, trust: &Trust) -> anyhow::Result<()> {
+    const WHY: &str = "a connector's config and key stand in a folder only root writes";
+    if st.st_uid != trust.owner {
         anyhow::bail!(
-            "{} is writable by group or others, or not root's; a connector's config and key stand in a folder only root writes",
-            folder.display()
+            "{} is owned by uid {}, not uid {}; {WHY}",
+            folder.display(),
+            st.st_uid,
+            trust.owner
         );
     }
-    Ok(file)
+    if st.st_gid != trust.group && st.st_gid != 0 {
+        anyhow::bail!(
+            "{} has group {}, neither this connector's group {} nor root's; {WHY}",
+            folder.display(),
+            st.st_gid,
+            trust.group
+        );
+    }
+    if st.st_mode & 0o027 != 0 {
+        anyhow::bail!(
+            "{} has mode {:04o}, writable by group or others or open to others; {WHY}",
+            folder.display(),
+            st.st_mode & 0o7777
+        );
+    }
+    Ok(())
 }
 
 fn fstat(fd: RawFd) -> std::io::Result<libc::stat> {

@@ -3146,11 +3146,17 @@ async fn a_config_directory_another_party_could_write_is_refused() {
     assert!(dir.join("gate-con.toml").exists());
 }
 
-/// **The publish renames the inode it staged.** An entry swapped in at a
-/// staging name between the staging and the publish is not the file this
-/// run wrote, and the publish refuses it rather than renaming it into
-/// place, for the gate config before anything is published and for the
-/// admin config after the gate's is.
+/// **The publish renames the inode it staged, and each plane's key before
+/// its config.** An entry swapped in at a staging name between the staging
+/// and the publish is not the file this run wrote, and the publish refuses
+/// it rather than renaming it into place: the gate key before anything is
+/// published, the admin key after the gate's two, and the admin config
+/// after the admin key. **No config ever stands without its key**, checked
+/// after each refusal.
+///
+/// Perturbation: publish each config before its key (`ENTRIES`), and the
+/// swapped gate key leaves the gate config standing alone (measured
+/// 2026-11-27).
 #[test]
 fn a_staging_entry_swapped_before_the_publish_is_refused() {
     let tmp = crate::test_dir::tempdir().unwrap();
@@ -3181,21 +3187,46 @@ fn a_staging_entry_swapped_before_the_publish_is_refused() {
     std::fs::create_dir(&out).unwrap();
     let (gate, admin) = super::verbs::mint_pair("swap", &authority).unwrap();
 
-    // The gate staging entry swapped: nothing is published.
-    let dir = super::verbs::ConfigDir::open(&out, "box", "swap").unwrap();
-    let staged =
-        super::verbs::stage_pair(&cfg, &authority, dir, PLACEHOLDER_ID, "swap", &gate, &admin)
-            .unwrap();
-    let agent_dir = out.join("box").join("swap");
-    std::fs::remove_file(agent_dir.join("gate-con.toml.staging")).unwrap();
-    std::fs::write(agent_dir.join("gate-con.toml.staging"), "swapped in").unwrap();
+    let stage = |name: &str| {
+        let dir = super::verbs::ConfigDir::open(&out, "box", name).unwrap();
+        let staged =
+            super::verbs::stage_pair(&cfg, &authority, dir, PLACEHOLDER_ID, name, &gate, &admin)
+                .unwrap();
+        (staged, out.join("box").join(name))
+    };
+    let swap = |agent_dir: &std::path::Path, entry: &str| {
+        let at = agent_dir.join(format!("{entry}.staging"));
+        std::fs::remove_file(&at).unwrap();
+        std::fs::write(&at, "swapped in").unwrap();
+    };
+    let no_config_alone = |agent_dir: &std::path::Path| {
+        for plane in ["gate-con", "admin-con"] {
+            assert!(
+                !agent_dir.join(format!("{plane}.toml")).exists()
+                    || agent_dir.join(format!("{plane}.key")).exists(),
+                "{plane}'s config stands without its key"
+            );
+        }
+    };
+    let published = |agent_dir: &std::path::Path, entries: &[&str]| {
+        let paths: Vec<String> = entries
+            .iter()
+            .map(|e| agent_dir.join(e).display().to_string())
+            .collect();
+        format!("published: [{}]", paths.join(", "))
+    };
+
+    // The gate key's staging entry swapped: nothing is published.
+    let (staged, agent_dir) = stage("swap");
+    swap(&agent_dir, "gate-con.key");
     let refused = staged.publish(false).unwrap_err().to_string();
     assert!(
         refused.contains("not the file this run staged"),
         "{refused}"
     );
     assert!(refused.contains("published: []"), "{refused}");
-    assert!(refused.contains("admin-con.key.staging]"), "{refused}");
+    assert!(refused.contains("admin-con.toml.staging]"), "{refused}");
+    no_config_alone(&agent_dir);
     for entry in [
         "gate-con.toml",
         "gate-con.key",
@@ -3205,44 +3236,41 @@ fn a_staging_entry_swapped_before_the_publish_is_refused() {
         assert!(!agent_dir.join(entry).exists(), "{entry}");
     }
 
-    // The admin config's staging entry swapped: the gate's config and key
+    // The admin key's staging entry swapped: the gate's key and config
     // stand, the admin's are refused.
-    let dir = super::verbs::ConfigDir::open(&out, "box", "swap2").unwrap();
-    let staged = super::verbs::stage_pair(
-        &cfg,
-        &authority,
-        dir,
-        PLACEHOLDER_ID,
-        "swap2",
-        &gate,
-        &admin,
-    )
-    .unwrap();
-    let agent_dir = out.join("box").join("swap2");
-    std::fs::remove_file(agent_dir.join("admin-con.toml.staging")).unwrap();
-    std::fs::write(agent_dir.join("admin-con.toml.staging"), "swapped in").unwrap();
+    let (staged, agent_dir) = stage("swap2");
+    swap(&agent_dir, "admin-con.key");
     let refused = staged.publish(false).unwrap_err().to_string();
     assert!(
-        refused.contains(&format!(
-            "published: [{}, {}]",
-            agent_dir.join("gate-con.toml").display(),
-            agent_dir.join("gate-con.key").display()
-        )),
+        refused.contains(&published(&agent_dir, &["gate-con.key", "gate-con.toml"])),
         "{refused}"
     );
-    assert!(
-        refused.contains("not the file this run staged"),
-        "{refused}"
-    );
+    no_config_alone(&agent_dir);
     assert!(agent_dir.join("gate-con.toml").exists());
     assert!(agent_dir.join("gate-con.key").exists());
     assert!(!agent_dir.join("admin-con.toml").exists());
     assert!(!agent_dir.join("admin-con.key").exists());
     assert_eq!(
-        std::fs::read_to_string(agent_dir.join("admin-con.toml.staging")).unwrap(),
+        std::fs::read_to_string(agent_dir.join("admin-con.key.staging")).unwrap(),
         "swapped in",
         "the swapped entry is left where it was found"
     );
+
+    // The admin config's staging entry swapped: the admin key stands with
+    // the gate's two, and the admin config is refused.
+    let (staged, agent_dir) = stage("swap3");
+    swap(&agent_dir, "admin-con.toml");
+    let refused = staged.publish(false).unwrap_err().to_string();
+    assert!(
+        refused.contains(&published(
+            &agent_dir,
+            &["gate-con.key", "gate-con.toml", "admin-con.key"]
+        )),
+        "{refused}"
+    );
+    no_config_alone(&agent_dir);
+    assert!(agent_dir.join("admin-con.key").exists());
+    assert!(!agent_dir.join("admin-con.toml").exists());
 }
 
 /// **The admission's show is the connection's initialisation.** An

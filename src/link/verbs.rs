@@ -441,8 +441,11 @@ const ADMIN_CONFIG: &str = "admin-con.toml";
 // child 6), beside its config.
 const GATE_KEY: &str = "gate-con.key";
 const ADMIN_KEY: &str = "admin-con.key";
-/// The four files a pair is, in the order they are staged and published.
-const ENTRIES: [&str; 4] = [GATE_CONFIG, GATE_KEY, ADMIN_CONFIG, ADMIN_KEY];
+/// The four files a pair is, in the order they are staged and published:
+/// **each plane's key before its config**, so a failure between two renames
+/// never leaves a config standing without the key it names, nor, on a
+/// rotation, a new certificate beside the old key.
+const ENTRIES: [&str; 4] = [GATE_KEY, GATE_CONFIG, ADMIN_KEY, ADMIN_CONFIG];
 const STAGING: &str = ".staging";
 
 fn staging(entry: &str) -> String {
@@ -902,9 +905,9 @@ pub(super) enum Retained {
     /// A staged pair the register carries, live, for the row named: the
     /// commit an earlier run's lost answer hid, to publish now.
     Publish(Box<Agent>, String, String),
-    /// A staged pair this run discards before minting its own, and why: half
-    /// a pair from a run that crashed between its creates, or a pair whose
-    /// commit never landed. The discard is a mutation, so it runs after the
+    /// A staged pair this run discards before minting its own, and why: part
+    /// of a pair from a run that stopped between its creates or partway
+    /// through its publish, or a pair whose commit never landed. The discard is a mutation, so it runs after the
     /// verb's first record (`discard_staged`).
     Discard(&'static str),
 }
@@ -917,8 +920,10 @@ pub(super) enum Retained {
 /// register is asked whether the row for this box and name carries both,
 /// live: where it does, the pair is the one that commit made live and is
 /// published; where it does not, the commit never landed and the pair is
-/// discarded for a fresh one. Half a pair is a run that crashed between
-/// its two creates, which reached no store; it is discarded. A staged file
+/// discarded for a fresh one. Part of a pair is a run that stopped between
+/// its creates, which reached no store, or partway through its publish,
+/// whose published files a register then refuses to overwrite; it is
+/// discarded. A staged file
 /// that is not a config refuses, since it is not this server's. **This
 /// reads and decides, and changes nothing**: a verb inspects before its
 /// first record, and the discard it may decide runs after.
@@ -954,7 +959,7 @@ async fn inspect_retained(
     }
     if !there.iter().all(|t| *t) {
         return Ok(Retained::Discard(
-            "part of a staged pair, from a run that crashed between its creates",
+            "part of a staged pair, from a run that stopped between its creates or partway through its publish",
         ));
     }
     let read = |entry: &str| -> anyhow::Result<String> {
@@ -1076,11 +1081,12 @@ pub(super) fn stage_pair(
     gate: &ClientCredential,
     admin: &ClientCredential,
 ) -> anyhow::Result<Staged> {
+    // In `ENTRIES`' order.
     let contents = [
-        client_config(cfg, authority, agent_id, name, Plane::Gate, gate),
         gate.key_pem.clone(),
-        client_config(cfg, authority, agent_id, name, Plane::Admin, admin),
+        client_config(cfg, authority, agent_id, name, Plane::Gate, gate),
         admin.key_pem.clone(),
+        client_config(cfg, authority, agent_id, name, Plane::Admin, admin),
     ];
     let mut identities = [(0, 0); 4];
     for (i, entry) in ENTRIES.iter().enumerate() {

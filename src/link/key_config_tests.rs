@@ -6,6 +6,7 @@
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
+use rcgen::PublicKeyData;
 use rustls::pki_types::UnixTime;
 
 use crate::link::authority::Authority;
@@ -350,4 +351,126 @@ fn adopt_names_the_boxs_clock_for_a_certificate_signed_and_out_of_its_window() {
         Err(AdoptRefused::Refused(NOT_SIGNED))
     ));
     assert!(!out.exists());
+}
+
+/// **The key compared is the certificate's own, in its public-key field**:
+/// a certificate over another key, a P-384 one, that carries the requested
+/// P-256 key's bytes in an extension is `key_mismatch`, and nothing is
+/// written.
+///
+/// Perturbation: find the key's bytes anywhere in the certificate, as a
+/// search for its prefix did, and the extension's copy passes the key's
+/// check, the certificate then refused `not_signed` by an authority not the
+/// answer's (measured 2026-11-27).
+#[test]
+fn adopt_reads_the_certificates_own_key_and_not_a_copy_in_an_extension() {
+    let b = bench();
+    let (gate_key_file, gate_key, gate_line) = b.requested(Plane::Gate);
+    let (_, admin_key, _) = b.requested(Plane::Admin);
+    let requested = rcgen::KeyPair::from_pem(&gate_key)
+        .unwrap()
+        .subject_public_key_info();
+
+    let issuer_key = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).unwrap();
+    let mut issuer_params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+    issuer_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+    let issuer = rcgen::Issuer::from_params(&issuer_params, &issuer_key);
+    let other_key = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P384_SHA384).unwrap();
+    let mut params = rcgen::CertificateParams::new(vec!["karl".to_owned()]).unwrap();
+    params
+        .custom_extensions
+        .push(rcgen::CustomExtension::from_oid_content(
+            &[1, 3, 6, 1, 4, 1, 32473, 1],
+            requested,
+        ));
+    let smuggled = params.signed_by(&other_key, &issuer).unwrap().pem();
+
+    let mut answer = AnswerFile::read(&b.answer(&b.authority, &gate_key, &admin_key)).unwrap();
+    answer.gate = Some(smuggled);
+    let path = b.path("smuggled.json");
+    answer.write_new(&path).unwrap();
+    let out = b.path("out.toml");
+    assert!(matches!(
+        key_config::adopt(&Adopting {
+            plane: Plane::Gate,
+            request: &gate_line,
+            answer: &path,
+            key_file: &gate_key_file,
+            out: &out,
+        }),
+        Err(AdoptRefused::Refused(KEY_MISMATCH))
+    ));
+    assert!(!out.exists(), "nothing written");
+}
+
+/// **`request` lays a key carrying no inherited access list**: in a folder
+/// whose default list grants another uid read, the new key's own list is
+/// removed before its mode and its first byte, so the key reads no list at
+/// all, and the key's trust rule admits it.
+///
+/// Perturbation: drop the removal, and the key carries the default's named
+/// entry, its mask opened to read by the 0640 (measured 2026-11-27).
+#[test]
+fn request_lays_a_key_without_the_folders_default_access_list() {
+    use std::os::fd::AsRawFd;
+    let b = bench();
+    let folder = b.path("defaults");
+    std::fs::create_dir(&folder).unwrap();
+    std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o750)).unwrap();
+    // The default list: owner rwx, uid 65534 r, group r-x, mask r-x,
+    // others nothing; version 2, then {tag, perm, id}, sorted by tag.
+    let mut value = 2u32.to_le_bytes().to_vec();
+    for (tag, perm, id) in [
+        (0x01u16, 7u16, u32::MAX),
+        (0x02, 4, 65534),
+        (0x04, 5, u32::MAX),
+        (0x10, 5, u32::MAX),
+        (0x20, 0, u32::MAX),
+    ] {
+        value.extend_from_slice(&tag.to_le_bytes());
+        value.extend_from_slice(&perm.to_le_bytes());
+        value.extend_from_slice(&id.to_le_bytes());
+    }
+    let dir = std::fs::File::open(&folder).unwrap();
+    // SAFETY: a valid descriptor, a NUL-terminated name and a buffer of its
+    // stated length.
+    let set = unsafe {
+        libc::fsetxattr(
+            dir.as_raw_fd(),
+            c"system.posix_acl_default".as_ptr(),
+            value.as_ptr().cast(),
+            value.len(),
+            0,
+        )
+    };
+    if set < 0 {
+        let e = std::io::Error::last_os_error();
+        if e.raw_os_error() == Some(libc::ENOTSUP) {
+            eprintln!("skipped: the temporary folder's filesystem keeps no access lists");
+            return;
+        }
+        panic!("setting the default access list: {e}");
+    }
+
+    let key_file = folder.join("gate-con.key");
+    key_config::request(&key_file, egid()).unwrap();
+    let key = std::fs::File::open(&key_file).unwrap();
+    // SAFETY: a valid descriptor, a NUL-terminated name, a zero-length read.
+    let size = unsafe {
+        libc::fgetxattr(
+            key.as_raw_fd(),
+            c"system.posix_acl_access".as_ptr(),
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    assert!(
+        size < 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ENODATA),
+        "the key carries an access list of {size} bytes"
+    );
+    assert_eq!(
+        std::fs::symlink_metadata(&key_file).unwrap().mode() & 0o7777,
+        0o640
+    );
+    client::read_trusted(&key_file, Held::Key, &Trust::connector()).unwrap();
 }

@@ -65,21 +65,97 @@ const P256_SPKI: [u8; 27] = [
     0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00, 0x04,
 ];
 
-/// **The one P-256 public key a certificate or a request carries**, as its
-/// SubjectPublicKeyInfo's bytes: `None` where there is none or more than
-/// one, so a key compared is never a guess.
-fn p256_key(der: &[u8]) -> Option<&[u8]> {
-    let len = P256_SPKI.len() + 64;
-    let mut found = der
-        .windows(P256_SPKI.len())
-        .enumerate()
-        .filter(|(_, w)| *w == P256_SPKI)
-        .map(|(at, _)| at);
-    let at = found.next()?;
-    if found.next().is_some() || at + len > der.len() {
+/// One DER element: its tag, its content, the whole element, and what
+/// follows it.
+struct Element<'a> {
+    tag: u8,
+    content: &'a [u8],
+    whole: &'a [u8],
+    rest: &'a [u8],
+}
+
+/// **One DER element** at the start of `der`. Definite lengths of at most
+/// four bytes alone, as a certificate's are; `None` on anything else.
+fn der_element(der: &[u8]) -> Option<Element<'_>> {
+    let (&tag, rest) = der.split_first()?;
+    let (&first, rest) = rest.split_first()?;
+    let (len, rest) = if first < 0x80 {
+        (usize::from(first), rest)
+    } else {
+        let n = usize::from(first & 0x7f);
+        if n == 0 || n > 4 || rest.len() < n {
+            return None;
+        }
+        let len = rest[..n]
+            .iter()
+            .fold(0usize, |len, b| (len << 8) | usize::from(*b));
+        (len, &rest[n..])
+    };
+    if rest.len() < len {
         return None;
     }
-    Some(&der[at..at + len])
+    let header = der.len() - rest.len();
+    Some(Element {
+        tag,
+        content: &rest[..len],
+        whole: &der[..header + len],
+        rest: &rest[len..],
+    })
+}
+
+const SEQUENCE: u8 = 0x30;
+const INTEGER: u8 = 0x02;
+/// A certificate's `[0] EXPLICIT Version`.
+const VERSION: u8 = 0xa0;
+
+/// **The P-256 key in the public-key field of a structure**: `der` is one
+/// SEQUENCE whose first member is the signed part, a SEQUENCE; its members
+/// are walked past `skip`, each tag checked, and the next is the
+/// SubjectPublicKeyInfo, which must be a P-256 key's. Bytes of a key
+/// anywhere else in the structure, an extension's among them, are never
+/// read as its key.
+fn spki_field<'a>(der: &'a [u8], skip: &[u8]) -> Option<&'a [u8]> {
+    let outer = der_element(der)?;
+    if outer.tag != SEQUENCE || !outer.rest.is_empty() {
+        return None;
+    }
+    let signed = der_element(outer.content)?;
+    if signed.tag != SEQUENCE {
+        return None;
+    }
+    let mut members = signed.content;
+    for (i, want) in skip.iter().enumerate() {
+        let member = der_element(members)?;
+        // A certificate's version is optional; its absence is version 1.
+        if i == 0 && *want == VERSION && member.tag != VERSION {
+            continue;
+        }
+        if member.tag != *want {
+            return None;
+        }
+        members = member.rest;
+    }
+    let spki = der_element(members)?;
+    (spki.tag == SEQUENCE
+        && spki.whole.len() == P256_SPKI.len() + 64
+        && spki.whole.starts_with(&P256_SPKI))
+    .then_some(spki.whole)
+}
+
+/// The P-256 key a certificate carries in its public-key field: past the
+/// version, the serial, the signature's algorithm, the issuer, the validity
+/// and the subject.
+fn certificate_key(der: &[u8]) -> Option<&[u8]> {
+    spki_field(
+        der,
+        &[VERSION, INTEGER, SEQUENCE, SEQUENCE, SEQUENCE, SEQUENCE],
+    )
+}
+
+/// The P-256 key a certificate request carries: past the version and the
+/// subject.
+fn csr_key(der: &[u8]) -> Option<&[u8]> {
+    spki_field(der, &[INTEGER, SEQUENCE])
 }
 
 /// **A new key and its certificate request**, ECDSA P-256 with SHA-256, the
@@ -104,10 +180,16 @@ pub enum RequestRefused {
 }
 
 /// **`request`'s key file** (Spec 8.2; the brief of 2026-11-27, child 6):
-/// created new at `key_file`, never through a link; its group set to
-/// `group` and its mode to 0640 by descriptor before the first key byte is
+/// created new at `key_file`, never through a link; any access list it
+/// inherited from its folder's default removed, its group set to `group`
+/// and its mode to 0640, all by descriptor before the first key byte is
 /// written, its owner the account that runs it, which is root; holding the
-/// key's PEM alone, synced with its directory. Answers the certificate
+/// key's PEM alone, synced with its directory. **The inherited list is
+/// removed, not refused**: a folder's default list is the folder's and may
+/// grant the service read on configs, and a file created under one carries
+/// its named entries behind a mask of nothing, which the 0640 would open;
+/// removed before the mode is set, the key carries the three base entries
+/// alone, and a list still found after is refused. Answers the certificate
 /// request's PEM. A failure after the create removes the file, so a re-run
 /// is not refused by it.
 pub fn request(key_file: &Path, group: libc::gid_t) -> Result<String, RequestRefused> {
@@ -137,6 +219,7 @@ pub fn request(key_file: &Path, group: libc::gid_t) -> Result<String, RequestRef
                 &std::io::Error::last_os_error(),
             ));
         }
+        remove_access_list(fd).map_err(|e| fault("removing the inherited access list of", &e))?;
         // SAFETY: as above.
         if unsafe { libc::fchmod(fd, 0o640) } < 0 {
             return Err(fault(
@@ -155,6 +238,33 @@ pub fn request(key_file: &Path, group: libc::gid_t) -> Result<String, RequestRef
         let _ = std::fs::remove_file(key_file);
     }
     made
+}
+
+const ACL_ACCESS: &std::ffi::CStr = c"system.posix_acl_access";
+
+/// **The file's access list removed by descriptor**, then read back to be
+/// none: a filesystem that keeps no lists has none to remove.
+fn remove_access_list(fd: std::os::fd::RawFd) -> std::io::Result<()> {
+    // SAFETY: a valid descriptor and a NUL-terminated name.
+    if unsafe { libc::fremovexattr(fd, ACL_ACCESS.as_ptr()) } < 0 {
+        let e = std::io::Error::last_os_error();
+        if !matches!(e.raw_os_error(), Some(libc::ENODATA) | Some(libc::ENOTSUP)) {
+            return Err(e);
+        }
+    }
+    // SAFETY: a valid descriptor, a NUL-terminated name, and a zero-length
+    // read, which asks the size alone.
+    let size = unsafe { libc::fgetxattr(fd, ACL_ACCESS.as_ptr(), std::ptr::null_mut(), 0) };
+    if size >= 0 {
+        return Err(std::io::Error::other(
+            "an access list still stands after its removal",
+        ));
+    }
+    let e = std::io::Error::last_os_error();
+    match e.raw_os_error() {
+        Some(libc::ENODATA) | Some(libc::ENOTSUP) => Ok(()),
+        _ => Err(e),
+    }
 }
 
 /// The directory that holds `path`, synced, so a new name survives a crash.
@@ -212,7 +322,7 @@ pub fn read_request_line(path: &Path) -> Result<String, String> {
 fn request_key(request_pem: &str) -> Option<Vec<u8>> {
     let mut bytes = request_pem.as_bytes();
     match rustls_pemfile::read_one(&mut bytes).ok()?? {
-        rustls_pemfile::Item::Csr(der) => p256_key(der.as_ref()).map(<[u8]>::to_vec),
+        rustls_pemfile::Item::Csr(der) => csr_key(der.as_ref()).map(<[u8]>::to_vec),
         _ => None,
     }
 }
@@ -384,7 +494,7 @@ pub fn adopt_at(a: &Adopting<'_>, now: UnixTime) -> Result<AnswerFile, AdoptRefu
     };
     // The answer's certificate for this plane is over the request's key,
     // and verifies under the answer's authority as a client's.
-    if p256_key(certificate.as_ref()) != Some(requested.as_slice()) {
+    if certificate_key(certificate.as_ref()) != Some(requested.as_slice()) {
         return Err(AdoptRefused::Refused(KEY_MISMATCH));
     }
     let mut roots = rustls::RootCertStore::empty();

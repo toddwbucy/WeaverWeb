@@ -4318,9 +4318,8 @@ async fn a_steady_stream_never_postpones_the_resend() {
 ///
 /// Perturbation: read an absent `admin_log` as a failure (tail the file
 /// next to the config, which does not exist), and an alert stands; choose
-/// the sudo invoker with no agent laid, and admin-con is never admitted
-/// (each measured 2026-11-25, the second against the sudo invoker that
-/// child 3 of `act/the-connectors-side-of-the-socket` replaced).
+/// the service's invoker with no agent laid, and its unanswered grants
+/// raise an alert (measured 2026-11-25 and 2026-11-27).
 #[tokio::test]
 async fn admin_con_with_no_box_fact_is_admitted_with_the_door_closed_and_no_alert() {
     let Some(lab) = Lab::open().await else { return };
@@ -4374,12 +4373,15 @@ async fn admin_con_with_no_box_fact_is_admitted_with_the_door_closed_and_no_aler
 /// **The three box facts stand together, and one fact chooses** (Spec 7.2):
 /// a config with none loads with no agent laid and chooses no invoker; one
 /// with all three chooses the service's invoker; one with some and not all is
-/// refused at load naming what is missing; and a door with no agent laid is
+/// refused at load naming what is missing; one naming the retired
+/// `weaver_admin` is refused naming it; and a door with no agent laid is
 /// closed for that reason, the relay never dialed.
 ///
 /// Perturbation: drop the refusal of some and not all, and the half-laid
 /// config loads; drop the empty path's branch in `dial_relay`, and the door
-/// answers the relay's dial error instead (each measured 2026-11-25).
+/// answers the relay's dial error instead (each measured 2026-11-25); drop
+/// the refusal of a retired member, and the old config loads (measured
+/// 2026-11-27).
 #[tokio::test]
 async fn the_box_facts_stand_together_and_one_fact_chooses_the_invoker() {
     use std::os::unix::fs::PermissionsExt;
@@ -4440,6 +4442,20 @@ async fn the_box_facts_stand_together_and_one_fact_chooses_the_invoker() {
     assert!(
         one.contains("trace_socket and admin_socket are missing"),
         "{one}"
+    );
+    // **A retired member is refused by name**, so a config laid for the
+    // sudo invoker never starts silently unlaid.
+    let old = write(
+        "old.toml",
+        "trace_socket = \"/t.sock\"\nweaver_admin = \"/w\"\nadmin_log = \"/a.log\"\n",
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        old.ends_with(
+            "old.toml: weaver_admin is retired; admin-con asks the service at admin_socket"
+        ),
+        "{old}"
     );
     match admin_con::dial_relay(Path::new(""), &super::tests::position(0)).await {
         crate::link::relay::Dial::Closed(why) => assert_eq!(why, admin_con::NO_AGENT_LAID),

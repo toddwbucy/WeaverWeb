@@ -1,4 +1,4 @@
-//! conforms: web-no-privilege-outside-the-sudo-invoker
+//! conforms: web-no-privilege-in-the-repository
 //!
 //! **No privileged invocation in the repository** (Spec 7.2, 8; the
 //! operator's rulings of 2026-11-26): nothing tracked runs a

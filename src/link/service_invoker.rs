@@ -1,4 +1,5 @@
 //! conforms: web-a-verb-asks-the-service-and-reads-its-run-after-a-drop
+//! conforms: web-ceiling-is-what-the-services-grants-name
 //!
 //! **admin-con's invoker: it asks the weaver-admin service** (Spec 7.2, 8;
 //! `weaver-admin-operator-contract` section 8, the operator's rulings of

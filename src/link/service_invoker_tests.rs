@@ -58,6 +58,9 @@ async fn run(invoker: &ServiceInvoker, verb: &str) -> Result<VerbOutcome, VerbFa
 /// **Every word that can answer a verb's control connection, read as the
 /// brief's table places it**: the six of the opening and the eight of the
 /// verb's own, each with its kind and its entry or none.
+///
+/// Perturbation (measured 2026-11-27): read the service's `busy` as
+/// `fault`, and the `busy` row is red.
 #[tokio::test]
 async fn every_word_at_a_verb_is_placed() {
     // (word, the kind admin-con answers, an entry raised)
@@ -226,6 +229,9 @@ async fn a_final_line_is_the_answer() {
 
 /// **The grants**: the list the service names, among the eight; every
 /// refusal, of the opening or of the ask, an error naming its word.
+///
+/// Perturbation (measured 2026-11-27): answer the eight verbs whatever the
+/// service names, and a verb it does not grant is declared.
 #[tokio::test]
 async fn the_grants_are_the_services_list_and_every_refusal_names_its_word() {
     let fake = FakeService::start(&["show", "load", "fly"], "idle");
@@ -306,8 +312,8 @@ async fn a_drop_before_started_reads_the_run_by_its_verb() {
 /// nothing standing reads that run as not its own, by `last_known`, and
 /// answers `not_started`.
 ///
-/// Perturbation: drop `last_known` from the reading with no id held, and
-/// the second `load` answers the first one's outcome.
+/// Perturbation (measured 2026-11-27): drop `last_known` from the reading
+/// with no id held, and the second `load` answers the first one's outcome.
 #[tokio::test]
 async fn a_drop_with_nothing_of_its_own_is_not_started() {
     let fake = FakeService::start(&["load"], "idle");
@@ -326,8 +332,8 @@ async fn a_drop_with_nothing_of_its_own_is_not_started() {
 /// service restarted while the run went on, so what came of it is the next
 /// `show`'s to say.
 ///
-/// Perturbation: read another `instance` as "did not run", and the verb
-/// answers `not_started`.
+/// Perturbation (measured 2026-11-27): read another `instance` as "did not
+/// run", and the verb answers `not_started`.
 #[tokio::test]
 async fn a_restart_after_a_drop_is_unknown() {
     let fake = FakeService::start(&["load"], "idle");
@@ -528,6 +534,10 @@ async fn a_verb_past_its_bound_holds_the_slot_until_its_final_line() {
 /// past its bound runs on while the server restarts, and the fresh
 /// connection's admission `show` waits for that run and never runs beside
 /// it.
+///
+/// Perturbation (measured 2026-11-27): free the slot as the invocation's
+/// task begins rather than at its end, and the admission's `show` runs
+/// beside the `validate`.
 #[tokio::test]
 async fn the_slot_is_held_across_a_reconnection() {
     let Some(mut con) = Con::open(&["show", "validate"]).await else {
@@ -635,8 +645,8 @@ async fn a_show_lands_its_constituents_on_the_row() {
 /// writes the outcome `failed` and raises a failure, never "whether admin
 /// acted is unknown".
 ///
-/// Perturbation: leave `not_granted` out of the listener's `NEVER_RAN`,
-/// and the outcome stays unwritten and the alert reads unknown.
+/// Perturbation (measured 2026-11-27): leave `not_granted` out of the
+/// listener's `NEVER_RAN`, and the outcome stays unwritten.
 #[tokio::test]
 async fn not_granted_is_audited_as_never_run() {
     let Some(con) = Con::open(&["show", "load"]).await else {
